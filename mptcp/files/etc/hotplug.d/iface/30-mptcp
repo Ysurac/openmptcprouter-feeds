@@ -1,0 +1,91 @@
+#!/bin/sh
+#
+# Load the multipath config
+#
+# Author: Mario Krueger <openwrt at xedp3x.de>
+# Released under GPL 3 or later
+
+[ "$ACTION" = ifup -o "$ACTION" = ifupdate ] || exit 0
+
+enable=`uci -q get network.globals.multipath` || exit 0
+[ "$enable" = "enable" ] || exit 0
+
+. /lib/functions.sh
+. /lib/functions/network.sh
+
+id=0
+count=1
+
+set_default() {
+    local mode
+    local config="$1"
+    count=$(($count+1))
+    local iface
+    config_get iface "$config" ifname
+    [ "$iface" = "$INTERFACE" ] && id=$count
+    config_get mode "$config" multipath
+    [ "$mode" = "master" ] && {
+        local gateway
+        network_get_gateway gateway $config || {
+                logger -t multipath master device $DEVICE has no gateway!
+                #Fallback: use upcomming interface...
+		network_get_gateway gateway $INTERFACE
+		config=$INTERFACE
+        }
+        local iface
+        config_get iface "$config" ifname
+        ip route del default
+        ip route add default scope global nexthop via $gateway dev $iface || {
+		#Fallback: use upcomming interface...
+		network_get_gateway gateway $INTERFACE
+		ip route add default scope global nexthop via $gateway dev $INTERFACE
+		logger -t multipath Faild to set default multipath device! Use $INTERFACE as fallback...
+	}
+    }
+}
+
+config_load network
+config_foreach set_default interface
+[ $id = 0 ] && {
+        logger -t multipath device $INTERFACE not fount!
+        echo device $INTERFACE not fount!
+        exit 1
+}
+
+mode=`uci -q get network.$INTERFACE.multipath` || mode='off'
+
+case "$mode" in
+  "off")
+        multipath $DEVICE off
+        exit 0;;
+  "master")
+        mode="on";;
+  "on");;
+  "backup");;
+  "handover");;
+  *)
+        logger -t multipath Wrong multipath value for device $DEVICE
+        exit 1;;
+esac
+
+# Update kernel flags
+multipath $DEVICE $mode
+
+# IPv4 Updates:
+
+local ipaddr
+local gateway
+local network
+local netmask
+network_get_ipaddr  ipaddr  $INTERFACE
+network_get_gateway gateway $INTERFACE
+network_get_subnet  network $INTERFACE
+__network_ifstatus  netmask $INTERFACE "['ipv4-address'][0]['mask']"
+network=`ipcalc.sh $network | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
+
+ip rule del table $id
+ip route flush $id
+ip rule add from $ipaddr table $id
+ip route add $network/$netmask dev $DEVICE scope link table $id
+ip route add default via $gateway dev $DEVICE table $id
+ip route flush $id
