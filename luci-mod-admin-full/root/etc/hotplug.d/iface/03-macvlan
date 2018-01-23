@@ -1,0 +1,41 @@
+#!/bin/sh
+# vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
+
+. /lib/functions.sh
+
+config_load network
+
+_setup_macaddr() {
+	uci -q get "network.$1_dev.macaddr" >/dev/null && return
+	uci -q set "network.$1_dev.macaddr=$2"
+}
+
+# Configuration by interface
+_setup_interface() {
+	uci -q get "network.$1_dev.ifname" >/dev/null && return
+	
+	# do not create macvlan for vlan
+	local _ifname
+	config_get _ifname "$1" ifname
+	case "$_ifname" in
+		eth*.*) return ;;
+	esac
+	
+	local _type
+	config_get _type "$1" type
+	[ "$_type" = "macvlan" ] || return 0
+	
+	uci -q batch <<-EOF
+	set network.$1_dev=device
+	set network.$1_dev.name=$1
+	set network.$1_dev.type=macvlan
+	set network.$1_dev.ifname=eth0
+	set network.$1.ifname=$1
+	set network.$1.defaultroute=0
+	EOF
+	
+	_macaddr=$(uci -q get "network.$1.macaddr")
+	_setup_macaddr "$1" "${_macaddr:-auto$(date +%s)}"
+	uci -q set "network.$1.type=macvlan"  # legacy
+}
+config_foreach _setup_interface interface
