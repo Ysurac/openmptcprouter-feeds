@@ -1,0 +1,131 @@
+#!/bin/sh
+# shellcheck disable=SC1091,SC2039
+# vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
+
+. /lib/functions.sh
+
+[ "$(uci -q get "network.lan.proto")" = static ] || \
+	uci -q batch <<-EOF
+	set network.lan=interface
+	set network.lan.proto=static
+	set network.lan.ipaddr=192.168.100.1
+	set network.lan.netmask=255.255.255.0
+	set network.lan.ifname=eth0
+	EOF
+
+uci -q batch <<EOF
+delete network.none
+delete network.if6rd
+reorder network.loopback=0
+reorder network.globals=1
+reorder network.lan=2
+set network.globals.multipath=enable
+EOF
+
+# Set the ip rule for the lan with a pref of 100
+uci -q show network.lan_rule >/dev/null || \
+	uci -q batch <<-EOF
+	set network.lan_rule=rule
+	set network.lan_rule.lookup=lan
+	set network.lan_rule.priority=100
+	EOF
+
+if [ "$(uci -q get network.vpn0.proto)" = "none" ]; then
+	uci -q delete network.vpn0
+fi
+
+_setup_multipath() {
+	uci -q get "network.$1.multipath" >/dev/null && return
+	uci -q set "network.$1.multipath=$2"
+}
+
+_setup_macaddr() {
+	uci -q get "network.$1_dev.macaddr" >/dev/null && return
+	uci -q set "network.$1_dev.macaddr=$2"
+}
+
+_setup_dhcp() {
+	uci -q get "network.$1.ipaddr" >/dev/null && return
+	uci -q set "network.$1.proto=dhcp"
+}
+
+_setup_macvlan() {
+	uci -q get "network.$1_dev.ifname" >/dev/null && return
+
+	# do not create macvlan for vlan
+	local _ifname
+	_ifname=$(uci -q get "network.$1.ifname")
+	case "$_ifname" in
+	eth*.*) return ;;
+	esac
+
+	uci -q batch <<-EOF
+	set network.$1_dev=device
+	set network.$1_dev.name=$1
+	set network.$1_dev.type=macvlan
+	set network.$1_dev.ifname=eth0
+	set network.$1.ifname=$1
+	EOF
+	_macaddr=$(uci -q get "network.$1.macaddr")
+	_setup_macaddr "$1" "${_macaddr:-auto$(date +%s)}"
+	uci -q set "network.$1.type=macvlan"  # legacy
+}
+
+
+config_load network
+
+_setup() {
+	case "$1" in
+	wan)
+		uci -q batch <<-EOF
+		set network.$1.metric=${1#wan}
+		set network.$1.ip4table=$((200+${1#wan}))
+		del_list firewall.wan.network=$1
+		add_list firewall.wan.network=$1
+		EOF
+		_setup_multipath "$1" on
+		_setup_dhcp "$1"
+		;;
+	wan*)
+		uci -q batch <<-EOF
+		set network.$1.metric=${1#wan}
+		set network.$1.ip4table=$((200+${1#wan}))
+		del_list firewall.wan.network=$1
+		add_list firewall.wan.network=$1
+		EOF
+		_setup_multipath "$1" on
+		_setup_macvlan "$1"
+		;;
+	if0)
+		proto=$(uci -q get "network.$1.proto")
+		[ "$proto" = "none" ] || proto="dhcp"
+		uci -q batch <<-EOF
+		set network.$1.proto=$proto
+		set network.$1.metric=2000
+		del_list firewall.wan.network=$1
+		add_list firewall.wan.network=$1
+		EOF
+		_setup_multipath "$1" off
+		_setup_macvlan "$1"
+		_setup_macvlan lan
+		;;
+	glorytun)
+		proto=$(uci -q get "network.$1.proto")
+		uci -q batch <<-EOF
+		set network.$1.metric=5000
+		EOF
+		_setup_multipath "$1" off
+		;;
+	*)
+		_setup_multipath "$1" off
+		;;
+	esac
+}
+config_load network
+config_foreach _setup interface
+
+# Add the lan as a named routing table
+if ! grep -s -q "lan" /etc/iproute2/rt_tables; then
+	echo "50 lan" >> /etc/iproute2/rt_tables
+fi
+uci -q set network.lan.ip4table='lan'

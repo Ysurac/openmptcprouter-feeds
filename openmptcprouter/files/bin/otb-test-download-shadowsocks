@@ -1,0 +1,24 @@
+#!/bin/sh
+# vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
+
+HOST="proof.ovh.net"
+
+_ipt() {
+	iptables -w -t nat "$1" socks_emitted_by_myself \
+		-d "$HOST" -j socks_redir -m comment --comment "Test download proof"
+}
+
+_chain_exists() {
+	iptables -w -t nat -nL "$1" 1>/dev/null 2>/dev/null
+}
+
+if ! _chain_exists "socks_emitted_by_myself" || ! _chain_exists "socks_redir"; then
+	echo "Couldn't find the iptables chain to plug myself into. Is ss-redir running?"
+	return 1
+fi
+
+trap : HUP INT TERM
+
+_ipt -A
+curl http://$HOST/files/10Gio.dat >/dev/null || echo
+_ipt -D
