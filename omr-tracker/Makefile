@@ -18,7 +18,7 @@ define Package/$(PKG_NAME)
   SECTION:=net
   CATEGORY:=Network
   TITLE:=OpenMPTCProuter tracker
-  DEPENDS:=+openmptcprouter +bind-dig
+  DEPENDS:=+bind-dig
   PKGARCH:=all
 endef
 
