@@ -1,0 +1,119 @@
+#!/bin/sh
+# shellcheck disable=SC1091,SC1090
+# vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
+
+[ -n "$1" ] || exit
+
+. /lib/functions.sh
+
+# retrieve args
+OMR_TRACKER_INTERFACE="$1"
+shift
+
+# export vars
+export OMR_TRACKER_INTERFACE
+export OMR_TRACKER_HOST
+export OMR_TRACKER_TIMEOUT
+export OMR_TRACKER_STATUS
+export OMR_TRACKER_DEVICE
+export OMR_TRACKER_DEVICE_IP
+export OMR_TRACKER_DEVICE_GATEWAY
+
+dscp=56   # set DSCP CS7 (56) in outgoing packets
+initial_hosts="$OMR_TRACKER_HOSTS"
+initial_timeout="$OMR_TRACKER_TIMEOUT"
+
+# set constants for rto updating
+# we've changed the default values of the RFC to K=3 and beta=0.25 instead of K=4 and beta=0.125
+# this allows us to lower the gap between rtt and rto when the latency increases quickly as our
+# measurements are less frequent than the standard timeout computation of the TCP stack
+_init_rto() {
+	srtt=
+	rttvar=
+	rto_init=$(( initial_timeout * 1000 ))
+	rto=$rto_init
+}
+
+# update rto as explained in rfc6298
+# rto    : retransmission timeout.
+# rtt    : round trip time
+# rttvar : round trip time variance
+# srtt   : smoothed round trip time
+# alpha  : smoothing coeff for srtt
+# beta   : smoothing coeff for rttvar
+# K      : coeff to increase rttvar impact on rto computation
+_update_rto() {
+	if [ -z "$srtt" ]; then
+		srtt=$1
+		rttvar=$(($1 / 2))
+	else
+		diff=$((srtt - $1))
+		rttvar=$(((75 * rttvar + 25 * (diff >= 0 ? diff : -diff)) / 100))
+		srtt=$(((75 * srtt + 25 * $1) / 100))
+	fi
+	rto=$((tmp = srtt + 3 * rttvar, tmp > rto_init ? tmp : rto_init))
+}
+
+_restart() {
+	OMR_TRACKER_HOST="${OMR_TRACKER_HOSTS%% *}"
+	[ "$OMR_TRACKER_HOST" = "$OMR_TRACKER_HOSTS" ] || {
+		OMR_TRACKER_HOSTS="${OMR_TRACKER_HOSTS#* } $OMR_TRACKER_HOST"
+		_init_rto
+	}
+}
+
+_post_tracking() {
+	for tracker_bin in /usr/share/omr/post-tracking.d/*; do
+		[ -x "$tracker_bin" ] && (
+			_log() {
+				logger -t "post-tracking-${tracker_bin##*/}" "$*"
+			}
+			. "$tracker_bin"
+		)
+	done
+}
+
+_restart
+
+# main loop
+while true; do
+	# setup tracker variables
+	OMR_TRACKER_DEVICE_IP=
+	OMR_TRACKER_DEVICE_GATEWAY=
+	OMR_TRACKER_STATUS="ERROR"
+	OMR_TRACKER_LATENCY=
+	OMR_TRACKER_TIMEOUT=$((rto / 1000 + (rto % 1000 ? 1 : 0)))
+
+	if [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
+		# retrieve iface ip and gateway
+		#OMR_TRACKER_DEVICE_IP=$(ip -4 -o addr show "$OMR_TRACKER_DEVICE" | awk '{ print substr($4, 1, length($4) - 3) }')
+		OMR_TRACKER_DEVICE_IP=$(ip -4 -br addr ls dev "$OMR_TRACKER_DEVICE" | awk -F'[ /]+' '{print $3}')
+
+		# execute specific tracker
+		if [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
+			# setup loop variable
+			tries="$OMR_TRACKER_TRIES"
+			# loop until tries attempts have been reached
+			while [ "$tries" -gt 0 ]; do
+				ret=$(dig @"$OMR_TRACKER_HOST" \
+					-b "$OMR_TRACKER_DEVICE_IP" \
+					+time="$OMR_TRACKER_TIMEOUT" \
+					+tries=1 \
+					"$@"
+				) && echo "$ret" | grep -sq "127.6.8.4" && {
+					OMR_TRACKER_LATENCY=$(echo "$ret" | awk '/Query time/{print $4}')
+					_update_rto "$OMR_TRACKER_LATENCY"
+					OMR_TRACKER_STATUS="OK"
+					break
+				}
+				tries=$((tries - 1))
+				OMR_TRACKER_TIMEOUT=$((OMR_TRACKER_TIMEOUT * 2))
+			done
+		fi
+	fi
+
+	[ "$OMR_TRACKER_HOSTS" = "$initial_hosts" ] || [ "$OMR_TRACKER_STATUS" = "OK" ] && _post_tracking
+	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && _restart
+
+	sleep "$OMR_TRACKER_INTERVAL"
+done
