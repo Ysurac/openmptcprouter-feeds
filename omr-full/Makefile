@@ -7,25 +7,31 @@
 
 include $(TOPDIR)/rules.mk
 
-PKG_NAME:=openmptcprouter
-PKG_VERSION:=0.53
+PKG_NAME:=omr-full
+PKG_VERSION:=0.1
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
 
 MY_DEPENDS := \
-    omr-tracker
+    mptcp       \
+    unbound     \
+    netifd      \
+    mc          \
+    omr-tracker \
+    openmptcprouter \
+    luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-bootstrap luci-base
 
 
 define Package/$(PKG_NAME)
 SECTION:=OMR
 CATEGORY:=OpenMPTCProuter
 DEPENDS:=$(foreach p,$(MY_DEPENDS),+$(p))
-TITLE:=OpenMPTCProuter config
+TITLE:=OpenMPTCProuter Full Package
 endef
 
 define Package/$(PKG_NAME)/description
-OpenMPTCProuter package
+OpenMPTCProuter Full package
 endef
 
 define Package/$(PKG_NAME)/conffiles
@@ -36,7 +42,7 @@ define Build/Compile
 endef
 
 define Package/$(PKG_NAME)/install
-	$(CP) ./files/* $(1)/
 endef
+
 
 $(eval $(call BuildPackage,$(PKG_NAME)))
