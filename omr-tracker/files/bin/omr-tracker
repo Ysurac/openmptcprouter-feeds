@@ -86,7 +86,6 @@ while true; do
 
 	if [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
 		# retrieve iface ip and gateway
-		#OMR_TRACKER_DEVICE_IP=$(ip -4 -o addr show "$OMR_TRACKER_DEVICE" | awk '{ print substr($4, 1, length($4) - 3) }')
 		OMR_TRACKER_DEVICE_IP=$(ip -4 -br addr ls dev "$OMR_TRACKER_DEVICE" | awk -F'[ /]+' '{print $3}')
 
 		# execute specific tracker
@@ -95,13 +94,14 @@ while true; do
 			tries="$OMR_TRACKER_TRIES"
 			# loop until tries attempts have been reached
 			while [ "$tries" -gt 0 ]; do
-				ret=$(dig @"$OMR_TRACKER_HOST" \
-					-b "$OMR_TRACKER_DEVICE_IP" \
-					+time="$OMR_TRACKER_TIMEOUT" \
-					+tries=1 \
+				ret=$(ping "$OMR_TRACKER_HOST" \
+					-I "$OMR_TRACKER_DEVICE_IP" \
+					-w "$OMR_TRACKER_TIMEOUT" \
+					-c 1 \
+					-q \
 					"$@"
-				) && echo "$ret" | grep -sq "127.6.8.4" && {
-					OMR_TRACKER_LATENCY=$(echo "$ret" | awk '/Query time/{print $4}')
+				) && echo "$ret" | grep -sq "0% packet loss" && {
+					OMR_TRACKER_LATENCY=$(echo "$ret" | cut -d "/" -s -f4 | cut -d "." -f1)
 					_update_rto "$OMR_TRACKER_LATENCY"
 					OMR_TRACKER_STATUS="OK"
 					break
