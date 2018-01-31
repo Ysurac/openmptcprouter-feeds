@@ -20,6 +20,15 @@ MY_DEPENDS := \
     mc          \
     omr-tracker \
     openmptcprouter \
+    dnsmasq-full \
+    uhttpd \
+    uhttpd-mod-ubus \
+    curl \
+    iperf3 \
+    luci-i18n-base-en \
+    luci-i18n-base-fr \
+    luci-i18n-firewall-en \
+    luci-i18n-firewall-fr \
     luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-bootstrap luci-base
 
 
