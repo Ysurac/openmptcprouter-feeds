@@ -25,6 +25,14 @@ MY_DEPENDS := \
     uhttpd-mod-ubus \
     curl \
     iperf3 \
+    arptables \
+    bind-dig \
+    conntrack conntrackd \
+    ebtables ebtables-utils \
+    ip-full \
+    iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace \
+    wireless-tools \
+    libiwinfo-lua \
     luci-i18n-base-en \
     luci-i18n-base-fr \
     luci-i18n-firewall-en \
