@@ -10,6 +10,7 @@ local basicParams = {
 	-- Widget, Name, Default(s), Description
 	--
 					
+	{ Flag,"enable",0, translate("Enable") },
 	{ Value,"port",65001, translate("TCP port # for both local and remote") },
 	{ Value,"dev","tun0", translate("Interface name") },
 	{ Value,"host","vpnserver.example.org", translate("Remote host name or ip address") },
