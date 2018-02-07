@@ -16,7 +16,7 @@ local basicParams = {
 	{ Value,"localip","192.168.99.2", translate("Local tunnel ip address") },
 	{ Value,"remoteip","192.168.99.1", translate("Remote tunnel ip address") },
 	{ Value,"key","secretkey", translate("The secret key") },
-	{ ListValue,"proto",{ "TCP", "UDP" }, translate("Protocol") },
+	{ ListValue,"proto",{ "tcp", "udp" }, translate("Protocol") },
 	{ Flag,"listener",0, translate("Server mode") },
 
 	{ Value,"bind","", translate("Bind address") },
