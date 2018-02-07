@@ -115,7 +115,7 @@ end
 local proto = s:option( DummyValue, "proto", translate("Protocol") )
 function proto.cfgvalue(self, section)
 	local val = AbstractValue.cfgvalue(self, section)
-	return val or "tcp"
+	return val or "TCP"
 end
 
 function updown.write(self, section, value)
@@ -126,7 +126,7 @@ function updown.write(self, section, value)
 		end
 	else
 		local type = proto.cfgvalue(self,section)
-		if type == 'udp' then
+		if type == 'UDP' then
 			luci.sys.call("/etc/init.d/glorytun-udp start %s" % section)
 		else
 			luci.sys.call("/etc/init.d/glorytun start %s" % section)
