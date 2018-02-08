@@ -26,7 +26,7 @@ local basicParams = {
 	{ Value,"mtu",1500, translate("MTU") },
 	{ Flag,"mtuauto",0, translate("MTU auto") },
 
-	{ Flag,"mptcp",0, translate("MPTCP") }
+	{ Flag,"mptcp",0, translate("MPTCP") },
 	{ Flag,"chacha20",0, translate("Use ChaCha20 stream cipher") }
 }
 
