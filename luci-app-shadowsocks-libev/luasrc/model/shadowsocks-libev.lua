@@ -230,6 +230,7 @@ names_options_common = {
 	"mtu",
 	"timeout",
 	"user",
+	"mptcp",
 }
 
 modes = {
