@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=openmptcprouter-full
-PKG_VERSION:=0.2
+PKG_VERSION:=0.3
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
@@ -37,7 +37,7 @@ MY_DEPENDS := \
     luci-i18n-base-fr \
     luci-i18n-firewall-en \
     luci-i18n-firewall-fr \
-    luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-bootstrap luci-base
+    luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-base
 
 
 define Package/$(PKG_NAME)

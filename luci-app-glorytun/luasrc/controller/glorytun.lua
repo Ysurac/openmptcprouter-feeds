@@ -1,4 +1,4 @@
--- Copyright 2017 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+-- Copyright 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 -- Licensed to the public under the Apache License 2.0.
 
 module("luci.controller.glorytun", package.seeall)

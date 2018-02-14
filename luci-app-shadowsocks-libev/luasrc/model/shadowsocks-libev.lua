@@ -1,3 +1,4 @@
+-- Copyright 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 -- Copyright 2017 Yousong Zhou <yszhou4tech@gmail.com>
 -- Licensed to the public under the Apache License 2.0.
 
