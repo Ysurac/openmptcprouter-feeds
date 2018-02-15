@@ -1,33 +1,35 @@
 #!/bin/sh
 
+. /lib/functions.sh
+
 _setup_macaddr() {
-        uci -q get "network.$1_dev.macaddr" >/dev/null && return
-        uci -q set "network.$1_dev.macaddr=$2"
+	uci -q get "network.$1_dev.macaddr" >/dev/null && return
+	uci -q set "network.$1_dev.macaddr=$2"
 }
 
 _setup_macvlan() {
-        uci -q get "network.$1_dev.ifname" >/dev/null && return
+	uci -q get "network.$1_dev.ifname" >/dev/null && return
 
-        # do not create macvlan for vlan
-        local _ifname
-        _ifname=$(uci -q get "network.$1.ifname")
-        case "$_ifname" in
-        eth*.*) return ;;
-        esac
+	# do not create macvlan for vlan
+	local _ifname
+	_ifname=$(uci -q get "network.$1.ifname")
+	case "$_ifname" in
+	eth*.*) return ;;
+	esac
 
-        uci -q batch <<-EOF
-        set network.$1_dev=device
-        set network.$1_dev.name=$1
-        set network.$1_dev.type=macvlan
-        set network.$1_dev.ifname=eth0
-        set network.$1.ifname=$1
-        EOF
-        _macaddr=$(uci -q get "network.$1.macaddr")
-        _setup_macaddr "$1" "${_macaddr:-auto$(date +%s)}"
-        uci -q set "network.$1.type=macvlan"  # legacy
+	uci -q batch <<-EOF
+	set network.$1_dev=device
+	set network.$1_dev.name=$1
+	set network.$1_dev.type=macvlan
+	set network.$1_dev.ifname=eth0
+	set network.$1.ifname=$1
+	EOF
+	_macaddr=$(uci -q get "network.$1.macaddr")
+	_setup_macaddr "$1" "${_macaddr:-auto$(date +%s)}"
+	uci -q set "network.$1.type=macvlan"  # legacy
 }
 
-if [ "$(uci show network | grep wan)" = "" ]; then
+if [ "$(uci -q show network | grep wan)" = "" ]; then
 	uci -q batch <<-EOF
 	set network.wan1=interface
 	set network.wan1.ifname=eth0
