@@ -30,7 +30,7 @@ MY_DEPENDS := \
     conntrack conntrackd \
     ebtables ebtables-utils \
     ip-full \
-    iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace \
+    iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace iptables-mod-conntrack-extra \
     wireless-tools \
     libiwinfo-lua \
     luci-i18n-base-en \
