@@ -10,6 +10,7 @@ set_route() {
 	#if [ "$multipath_config" != "off" ] && [ "$SETROUTE" != true ]; then
 		interface_gw=$(uci -q get "network.$INTERFACE.gateway")
 		interface_if=$(uci -q get "network.$INTERFACE.ifname")
+		_log "Replace default route by $interface_gw dev $interface_if"
 		ip route replace default scope global nexthop via $interface_gw dev $interface_if && SETROUTE=true
 	fi
 }
@@ -39,7 +40,14 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 fi
 
 multipath_config=$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath" || echo "off")
-[ "$multipath_config" = "master" ] && multipath_config="on"
+#[ "$multipath_config" = "master" ] && multipath_config="on"
 [ "$multipath_status" = "$multipath_config" ] && exit 0
 _log "$OMR_TRACKER_DEVICE switched to $multipath_config"
+if [ "$multipath_config" = "master" ]; then
+	if [ "$default_gw" = "$current_interface_gw" ] || [ "$default_gw" = "" ]; then
+		_log "Master up : Replace default route by $current_interface_gw dev $OMR_TRACKER_INTERFACE"
+		ip route replace default scope global nexthop via $current_interface_gw dev $OMR_TRACKER_INTERFACE
+	fi
+	multipath_config="on"
+fi
 multipath "$OMR_TRACKER_DEVICE" "$multipath_config"
