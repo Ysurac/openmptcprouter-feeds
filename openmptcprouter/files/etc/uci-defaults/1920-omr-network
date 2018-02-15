@@ -1,7 +1,34 @@
 #!/bin/sh
 
-uci -q batch <<-EOF >/dev/null
-	delete network.wan1=interface
+_setup_macaddr() {
+        uci -q get "network.$1_dev.macaddr" >/dev/null && return
+        uci -q set "network.$1_dev.macaddr=$2"
+}
+
+_setup_macvlan() {
+        uci -q get "network.$1_dev.ifname" >/dev/null && return
+
+        # do not create macvlan for vlan
+        local _ifname
+        _ifname=$(uci -q get "network.$1.ifname")
+        case "$_ifname" in
+        eth*.*) return ;;
+        esac
+
+        uci -q batch <<-EOF
+        set network.$1_dev=device
+        set network.$1_dev.name=$1
+        set network.$1_dev.type=macvlan
+        set network.$1_dev.ifname=eth0
+        set network.$1.ifname=$1
+        EOF
+        _macaddr=$(uci -q get "network.$1.macaddr")
+        _setup_macaddr "$1" "${_macaddr:-auto$(date +%s)}"
+        uci -q set "network.$1.type=macvlan"  # legacy
+}
+
+if [ "$(uci show network | grep wan)" = "" ]; then
+	uci -q batch <<-EOF
 	set network.wan1=interface
 	set network.wan1.ifname=eth0
 	set network.wan1.proto=none
@@ -9,7 +36,7 @@ uci -q batch <<-EOF >/dev/null
 	set network.wan1.ip4table=wan
 	set network.wan1.multipath=master
 	set network.wan1.defaultroute=0
-	delete network.wan2=interface
+	add_list firewall.wan.network=wan1
 	set network.wan2=interface
 	set network.wan2.ifname=eth0
 	set network.wan2.proto=none
@@ -17,7 +44,11 @@ uci -q batch <<-EOF >/dev/null
 	set network.wan2.ip4table=wan
 	set network.wan2.multipath=on
 	set network.wan2.defaultroute=0
+	add_list firewall.wan.network=wan2
 	commit network
-EOF
-rm -f /tmp/luci-indexcache
+	EOF
+	_setup_macvlan wan1
+	_setup_macvlan wan2
+	rm -f /tmp/luci-indexcache
+fi
 exit 0
