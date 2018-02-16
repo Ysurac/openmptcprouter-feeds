@@ -126,6 +126,15 @@ function options_common(s, tab)
 	s:taboption(tab, Flag, "mptcp", translate("Enable MPTCP"))
 end
 
+function options_obfs(s, tab)
+	local o
+	s:taboption(tab, Flag, "obfs", translate("Enable"))
+	o = s:taboption(tab, ListValue, "obfs_type", translate("Type"))
+	o:value("http")
+	o:value("tls")
+	o.default = "http"
+end
+
 function ucival_to_bool(val)
 	return val == "true" or val == "1" or val == "yes" or val == "on"
 end
@@ -141,6 +150,10 @@ function cfgvalue_overview(sdata)
 			"bind_address",
 			"manager_address",
 		})
+		local installed = nixio.fs.access("/usr/bin/obfs-server")
+		if installed then
+			cfgvalue_overview_(sdata, lines, names_options_obfs)
+		end
 	elseif stype == "ss_local" or stype == "ss_redir" or stype == "ss_tunnel" then
 		cfgvalue_overview_(sdata, lines, names_options_client)
 		if stype == "ss_tunnel" then
@@ -149,6 +162,10 @@ function cfgvalue_overview(sdata)
 			cfgvalue_overview_(sdata, lines, {"disable_sni"})
 		end
 		cfgvalue_overview_(sdata, lines, names_options_common)
+		local installed = nixio.fs.access("/usr/bin/obfs-local")
+		if installed then
+			cfgvalue_overview_(sdata, lines, names_options_obfs)
+		end
 	else
 		return nil, nil
 	end
@@ -232,6 +249,10 @@ names_options_common = {
 	"timeout",
 	"user",
 	"mptcp",
+}
+
+names_options_obfs = {
+	"obfs",
 }
 
 modes = {

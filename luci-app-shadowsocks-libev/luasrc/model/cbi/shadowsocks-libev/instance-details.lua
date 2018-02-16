@@ -22,9 +22,14 @@ m.title = "shadowsocks-libev - %s - %s" % {stype, sname}
 s = m:section(NamedSection, sname, stype)
 s:tab("general", translate("General Settings"))
 s:tab("advanced", translate("Advanced Settings"))
+s:tab("obfuscate", translate("Obfuscating"))
 s:taboption("general", Flag, "disabled", translate("Disable"))
 ss.option_install_package(s, "general")
 ss.options_common(s, "advanced")
+local obfs_installed = nixio.fs.access("/usr/bin/obfs-local")
+if obfs_installed then
+	ss.options_obfs(s, "obfuscate")
+end
 
 if stype == "ss_server" then
 	ss.options_server(s, "general")
@@ -47,6 +52,11 @@ else
 		o = s:taboption("advanced", Flag, "disable_sni",
 			translate("Disable SNI"),
 			translate("Disable parsing HTTP/HTTPS payload to find then resolve hostname at remote server"))
+	end
+	if obfs_installed then
+		o = s:taboption("obfuscate", Value, "obfs_host", translate("Host"))
+		o.default = "www.bing.com"
+		s:taboption("obfuscate", Value, "obfs_uri", translate("HTTP path uri"))
 	end
 end
 

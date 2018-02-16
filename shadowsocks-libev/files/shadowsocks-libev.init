@@ -77,25 +77,47 @@ ss_mkjson_common_conf() {
 
 ss_mkjson_ss_local_conf() {
 	ss_mkjson_server_conf
+	[ "$obfs" = 0 ] && obfs=false || obfs=true
+	obfs_options="--obfs $obfs_type"
+	[ -z "$obfs_host" ] || obfs_options="$obfs_options --obfs-host $obfs_host"
+	[ -z "$obfs_uri" ] || obfs_options="$obfs_options --obfs-uri $obfs_uri"
+	cat <<-EOF
+		${obfs:+${q}plugin${q}: ${q}/usr/bin/obfs-local $obfs_options${q},}
+	EOF
 }
 
 ss_mkjson_ss_redir_conf() {
 	ss_mkjson_server_conf || return 1
 	[ "$disable_sni" = 0 ] && disable_sni=false || disable_sni=true
+	[ "$obfs" = 0 ] && obfs=false || obfs=true
+	obfs_options="--obfs $obfs_type"
+	[ -z "$obfs_host" ] || obfs_options="$obfs_options --obfs-host $obfs_host"
+	[ -z "$obfs_uri" ] || obfs_options="$obfs_options --obfs-uri $obfs_uri"
 	cat <<-EOF
 		"disable_sni": $disable_sni,
+		${obfs:+${q}plugin${q}: ${q}/usr/bin/obfs-local $obfs_options${q},}
 	EOF
 }
 
 ss_mkjson_ss_server_conf() {
 	ss_mkjson_server_conf_
+	[ "$obfs" = 0 ] && obfs=false || obfs=true
+	obfs_options="--obfs $obfs_type"
+	cat <<-EOF
+		${obfs:+${q}plugin${q}: ${q}/usr/bin/obfs-server $obfs_options${q},}
+	EOF
 }
 
 ss_mkjson_ss_tunnel_conf() {
 	ss_mkjson_server_conf || return 1
 	[ -n "$tunnel_address" ] || return 1
+	[ "$obfs" = 0 ] && obfs=false || obfs=true
+	obfs_options="--obfs $obfs_type"
+	[ -z "$obfs_host" ] || obfs_options="$obfs_options --obfs-host $obfs_host"
+	[ -z "$obfs_uri" ] || obfs_options="$obfs_options --obfs-uri $obfs_uri"
 	cat <<-EOF
 		${tunnel_address:+${q}tunnel_address${q}: ${q}$tunnel_address${q},}
+		${obfs:+${q}plugin${q}: ${q}/usr/bin/obfs-local $obfs_options${q},}
 	EOF
 }
 
@@ -269,7 +291,9 @@ validate_common_options_() {
 		'mode:or("tcp_only", "udp_only", "tcp_and_udp"):tcp_only' \
 		'mtu:uinteger' \
 		'timeout:uinteger' \
-		'user:string'
+		'user:string' \
+		'obfs:bool:0' \
+		'obfs_type:or("http","tls"):http'
 }
 
 validate_server_section() {
@@ -283,7 +307,9 @@ validate_ss_local_section() {
 validate_ss_redir_section() {
 	validate_common_client_options_ ss_redir "$1" \
 		"${2}" \
-		'disable_sni:bool:0'
+		'disable_sni:bool:0' \
+		'obfs_host:string' \
+		'obfs_uri:string'
 }
 
 validate_ss_rules_section() {
