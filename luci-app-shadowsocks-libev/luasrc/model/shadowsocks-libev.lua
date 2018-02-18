@@ -43,7 +43,8 @@ function values_serverlist(o)
 		local server = sdata["server"]
 		local server_port = sdata["server_port"]
 		if server and server_port then
-			local desc = "%s - %s:%s" % {sname, sdata["server"], sdata["server_port"]}
+			local disabled = ucival_to_bool(sdata[".disabled"]) and " - disabled" or ""
+			local desc = "%s - %s:%s%s" % {sname, server, server_port, disabled}
 			o:value(sname, desc)
 		end
 	end)
@@ -99,7 +100,6 @@ function options_server(s, tab)
 	o = optfunc(Value, "key", translate("Key (base64 encoding)"))
 	o.datatype = "base64"
 	o.password = true
-	o.size = 12
 	o = optfunc(Value, "password", translate("Password"))
 	o.password = true
 	o.size = 12
@@ -123,6 +123,7 @@ function options_common(s, tab)
 	s:taboption(tab, Flag, "ipv6_first", translate("IPv6 First"), translate("Prefer IPv6 addresses when resolving names"))
 	s:taboption(tab, Flag, "fast_open", translate("Enable TCP Fast Open"))
 	s:taboption(tab, Flag, "reuse_port", translate("Enable SO_REUSEPORT"))
+	s:taboption(tab, Flag, "no_delay", translate("Enable TCP_NODELAY"))
 	s:taboption(tab, Flag, "mptcp", translate("Enable MPTCP"))
 end
 
@@ -148,7 +149,6 @@ function cfgvalue_overview(sdata)
 		cfgvalue_overview_(sdata, lines, names_options_common)
 		cfgvalue_overview_(sdata, lines, {
 			"bind_address",
-			"manager_address",
 		})
 		local installed = nixio.fs.access("/usr/bin/obfs-server")
 		if installed then
@@ -158,8 +158,6 @@ function cfgvalue_overview(sdata)
 		cfgvalue_overview_(sdata, lines, names_options_client)
 		if stype == "ss_tunnel" then
 			cfgvalue_overview_(sdata, lines, {"tunnel_address"})
-		elseif stype == "ss_redir" then
-			cfgvalue_overview_(sdata, lines, {"disable_sni"})
 		end
 		cfgvalue_overview_(sdata, lines, names_options_common)
 		local installed = nixio.fs.access("/usr/bin/obfs-local")
@@ -243,6 +241,7 @@ names_options_common = {
 	"verbose",
 	"ipv6_first",
 	"fast_open",
+	"no_delay",
 	"reuse_port",
 	"mode",
 	"mtu",
