@@ -37,7 +37,7 @@ MY_DEPENDS := \
     luci-i18n-base-fr \
     luci-i18n-firewall-en \
     luci-i18n-firewall-fr \
-    luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-base
+    luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-base luci-app-haproxy-tcp
 
 
 define Package/$(PKG_NAME)
