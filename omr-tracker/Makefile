@@ -9,7 +9,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=omr-tracker
-PKG_VERSION:=1.2
+PKG_VERSION:=1.3
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
@@ -18,7 +18,6 @@ define Package/$(PKG_NAME)
   SECTION:=net
   CATEGORY:=Network
   TITLE:=OpenMPTCProuter tracker
-  DEPENDS:=+nping
   PKGARCH:=all
 endef
 

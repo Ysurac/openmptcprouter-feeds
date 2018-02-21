@@ -86,21 +86,27 @@ while true; do
 	if [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
 		# retrieve iface ip and gateway
 		OMR_TRACKER_DEVICE_IP=$(ip -4 -br addr ls dev "$OMR_TRACKER_DEVICE" | awk -F'[ /]+' '{print $3}')
-		OMR_TRACKER_DEVICE_GATEWAY_MAC=$(arp $OMR_TRACKER_DEVICE_GATEWAY | awk '{print $4}')
 
 		# execute specific tracker
-		if [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
-			# setup loop variable
-			tries="$OMR_TRACKER_TRIES"
-			# loop until tries attempts have been reached
-			while [ "$tries" -gt 0 ]; do
-					ret=$(arpping -c 1 \
-						-r "$OMR_TRACKER_DEVICE" \
-						-S "$OMR_TRACKER_DEVICE_IP" \
-						-T "$OMR_TRACKER_HOST" \
-						"$OMR_TRACKER_DEVICE_GATEWAY_MAC")
-					) && echo "$ret" | grep -sq "Lost: 0 (0.00%)" && {
-						OMR_TRACKER_LATENCY=$(echo "$ret" | awk '/Avg/{print $(NF)}' | sed 's:ms::')
+		if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
+			retgw=$(ping "$OMR_TRACKER_DEVICE_GATEWAY" \
+				-I "$OMR_TRACKER_DEVICE_IP" \
+				-w 1 \
+				-c 1 \
+				-q
+			) && echo "$retgw" | grep -sq "0% packet loss" && {
+				# setup loop variable
+				tries="$OMR_TRACKER_TRIES"
+				ip route replace "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP"
+				# loop until tries attempts have been reached
+				while [ "$tries" -gt 0 ]; do
+					ret=$(ping "$OMR_TRACKER_HOST" \
+						-I "$OMR_TRACKER_DEVICE_IP" \
+						-w "$OMR_TRACKER_TIMEOUT" \
+						-c 1 \
+						-q
+					) && echo "$ret" | grep -sq "0% packet loss" && {
+						OMR_TRACKER_LATENCY=$(echo "$ret" | cut -d "/" -s -f4 | cut -d "." -f1)
 						_update_rto "$OMR_TRACKER_LATENCY"
 						OMR_TRACKER_STATUS="OK"
 						break
@@ -108,6 +114,7 @@ while true; do
 					tries=$((tries - 1))
 					OMR_TRACKER_TIMEOUT=$((OMR_TRACKER_TIMEOUT * 2))
 				done
+				ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP"
 			}
 		fi
 	fi
