@@ -1,6 +1,6 @@
 version: 2
 jobs:
-  build:
+  build_x86:
     machine: true
     timezone: Europe/Paris
 
@@ -50,7 +50,64 @@ jobs:
           name: Deploy
           command: |
             ssh -p ${OMR_DEPLOY_PORT:-22} deploy@$OMR_DEPLOY_HOST mkdir -p deploy/release
-            rsync -av --delete-after ~/openmptcprouter/x86_64/source/bin/ -e "ssh -q -p ${OMR_DEPLOY_PORT:-22}" deploy@$OMR_DEPLOY_HOST:deploy/release/x86_64
+            rsync -av --delete-after ~/openmptcprouter/$OMR_TARGET/source/bin/ -e "ssh -q -p ${OMR_DEPLOY_PORT:-22}" deploy@$OMR_DEPLOY_HOST:deploy/release/$OMR_TARGET
+            rm -rf ~/openmptcprouter/source/bin
+
+      - save_cache:
+          key: cache-{{ checksum "/tmp/cache-version" }}
+          paths:
+            - openmptcprouter
+
+  build_rpi3:
+    machine: true
+    timezone: Europe/Paris
+
+    environment:
+      - OMR_VERSION: $CIRCLE_TAG
+      - OMR_TARGET: rpi3
+
+    working_directory: ~/
+
+    steps:
+      - run:
+          name: Prepare
+          command: |
+            sudo apt-get update
+            sudo apt-get install -yq build-essential git unzip ncurses-dev libz-dev libssl-dev python subversion gettext gawk wget curl rsync perl
+            echo "cache 1 $OMR_TARGET" > /tmp/cache-target
+            echo "cache 4 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+
+      - restore_cache:
+          keys:
+            - cache-{{ checksum "/tmp/cache-version" }}
+            - cache-{{ checksum "/tmp/cache-target" }}
+
+      - run:
+          name: Build toolchain
+          no_output_timeout: 30m
+          command: |
+            git clone https://github.com/ysurac/openmptcprouter || true
+            cd openmptcprouter
+            export OMR_PATH="$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/${CIRCLE_BRANCH:-$CIRCLE_TAG}"
+            export OMR_FEED_URL="$CIRCLE_REPOSITORY_URL"
+            export OMR_FEED_SRC="${CIRCLE_BRANCH:-$CIRCLE_TAG}"
+            sh build.sh prepare {tools,toolchain}/install -j2
+
+      - save_cache:
+          key: cache-{{ checksum "/tmp/cache-target" }}
+          paths:
+            - openmptcprouter
+
+      - run:
+          name: Build
+          no_output_timeout: 30m
+          command: make -C ~/openmptcprouter/source/$OMR_TARGET package/{compile,install,index} target/install -j2
+
+      - run:
+          name: Deploy
+          command: |
+            ssh -p ${OMR_DEPLOY_PORT:-22} deploy@$OMR_DEPLOY_HOST mkdir -p deploy/release
+            rsync -av --delete-after ~/openmptcprouter/$OMR_TARGET/source/bin/ -e "ssh -q -p ${OMR_DEPLOY_PORT:-22}" deploy@$OMR_DEPLOY_HOST:deploy/release/$OMR_TARGET
             rm -rf ~/openmptcprouter/source/bin
 
       - save_cache:
@@ -62,4 +119,5 @@ workflows:
   version: 2
   main:
     jobs:
-      - build
+      - build_x86
+      - build_rpi3
