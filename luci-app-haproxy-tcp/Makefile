@@ -55,6 +55,7 @@ define Package/luci-app-haproxy-tcp/prerm
 /etc/init.d/haproxy-tcp disable
 /etc/init.d/haproxy-tcp stop
 rm -f /usr/sbin/haproxy-tcp
+rm -f /etc/hotplug.d/net/90-haproxy
 exit 0
 endef
 

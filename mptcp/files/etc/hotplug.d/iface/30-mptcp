@@ -34,12 +34,13 @@ set_default() {
         }
         local iface
         config_get iface "$config" ifname
-        ip route del default
-        ip route add default scope global nexthop via $gateway dev $iface || {
-		#Fallback: use upcomming interface...
-		network_get_gateway gateway $INTERFACE
-		ip route add default scope global nexthop via $gateway dev $INTERFACE
-		logger -t multipath Faild to set default multipath device! Use $INTERFACE as fallback...
+        [ -n "gateway" ] && {
+		ip route replace default via $gateway dev $iface || {
+			#Fallback: use upcomming interface...
+			network_get_gateway gateway $INTERFACE
+			ip route replace default via $gateway dev $INTERFACE
+			logger -t multipath Failed to set default multipath device! Use $INTERFACE as fallback...
+		}
 	}
     }
 }
@@ -47,8 +48,8 @@ set_default() {
 config_load network
 config_foreach set_default interface
 [ $id = 0 ] && {
-        logger -t multipath device $INTERFACE not fount!
-        echo device $INTERFACE not fount!
+        logger -t multipath device $INTERFACE not found!
+        echo device $INTERFACE not found!
         exit 1
 }
 
@@ -73,10 +74,6 @@ multipath $DEVICE $mode
 
 # IPv4 Updates:
 
-local ipaddr
-local gateway
-local network
-local netmask
 network_get_ipaddr  ipaddr  $INTERFACE
 network_get_gateway gateway $INTERFACE
 network_get_subnet  network $INTERFACE
