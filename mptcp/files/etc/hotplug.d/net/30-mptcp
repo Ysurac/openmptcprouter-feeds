@@ -51,6 +51,8 @@ set_default() {
     config_get netmask $config netmask
     network=`ipcalc.sh $network | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 
+    [ -n "$gateway" ] || return 1
+    
     ip rule del table $id
     ip route flush $id
     ip rule add from $ipaddr table $id
@@ -59,23 +61,7 @@ set_default() {
     ip route flush $id
 
     [ "$mode" = "master" ] && {
-        local gateway
-        network_get_gateway gateway $config || {
-                logger -t multipath master device $iface has no gateway!
-                #Fallback: use upcomming interface...
-		network_get_gateway gateway $config
-		config=$config
-        }
-        local iface
-        config_get iface "$config" ifname
-        [ -n "gateway" ] && {
-		ip route replace default via $gateway dev $iface || {
-			#Fallback: use upcomming interface...
-			network_get_gateway gateway $config
-			ip route replace default via $gateway dev $iface
-			logger -t multipath Failed to set default multipath device! Use $iface as fallback...
-		}
-	}
+	ip route replace default via $gateway dev $iface
     }
 }
 
