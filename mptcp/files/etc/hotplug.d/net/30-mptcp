@@ -5,8 +5,6 @@
 # Author: Mario Krueger <openwrt at xedp3x.de>
 # Released under GPL 3 or later
 
-[ "$ACTION" = ifup -o "$ACTION" = ifupdate ] || exit 0
-
 enable=`uci -q get network.globals.multipath` || exit 0
 [ "$enable" = "enable" ] || exit 0
 
@@ -47,17 +45,17 @@ set_default() {
     local gateway
     local network
     local netmask
-    network_get_ipaddr  ipaddr  $config
-    network_get_gateway gateway $config
+    config_get ipaddr $config ipaddr
+    config_get gateway $config gateway
     network_get_subnet  network $config
-    __network_ifstatus  netmask $config "['ipv4-address'][0]['mask']"
+    config_get netmask $config netmask
     network=`ipcalc.sh $network | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 
     ip rule del table $id
     ip route flush $id
     ip rule add from $ipaddr table $id
-    ip route add $network/$netmask dev $iface scope link table $id
-    ip route add default via $gateway dev $iface table $id
+    ip route replace $network/$netmask dev $iface scope link table $id
+    ip route replace default via $gateway dev $iface table $id
     ip route flush $id
 
     [ "$mode" = "master" ] && {
