@@ -22,24 +22,60 @@ set_default() {
     count=$(($count+1))
     local iface
     config_get iface "$config" ifname
-    [ "$iface" = "$INTERFACE" ] && id=$count
+    id=$count
     config_get mode "$config" multipath
+
+    mode=`uci -q get network.$config.multipath` || mode='off'
+    [ -n "$(ifconfig | grep $iface)" ] || return 1
+    case "$mode" in
+	"off")
+	    multipath $iface off
+	    return 1;;
+	"master")
+	    mode="on";;
+	"on");;
+	"backup");;
+	"handover");;
+	*)
+	    logger -t multipath Wrong multipath value for device $iface
+	    return 1;;
+    esac
+    # Update kernel flags
+    multipath $iface $mode
+    # IPv4 Updates:
+    local ipaddr
+    local gateway
+    local network
+    local netmask
+    network_get_ipaddr  ipaddr  $config
+    network_get_gateway gateway $config
+    network_get_subnet  network $config
+    __network_ifstatus  netmask $config "['ipv4-address'][0]['mask']"
+    network=`ipcalc.sh $network | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
+
+    ip rule del table $id
+    ip route flush $id
+    ip rule add from $ipaddr table $id
+    ip route add $network/$netmask dev $iface scope link table $id
+    ip route add default via $gateway dev $iface table $id
+    ip route flush $id
+
     [ "$mode" = "master" ] && {
         local gateway
         network_get_gateway gateway $config || {
-                logger -t multipath master device $DEVICE has no gateway!
+                logger -t multipath master device $iface has no gateway!
                 #Fallback: use upcomming interface...
-		network_get_gateway gateway $INTERFACE
-		config=$INTERFACE
+		network_get_gateway gateway $config
+		config=$config
         }
         local iface
         config_get iface "$config" ifname
         [ -n "gateway" ] && {
 		ip route replace default via $gateway dev $iface || {
 			#Fallback: use upcomming interface...
-			network_get_gateway gateway $INTERFACE
-			ip route replace default via $gateway dev $INTERFACE
-			logger -t multipath Failed to set default multipath device! Use $INTERFACE as fallback...
+			network_get_gateway gateway $config
+			ip route replace default via $gateway dev $iface
+			logger -t multipath Failed to set default multipath device! Use $iface as fallback...
 		}
 	}
     }
@@ -47,43 +83,3 @@ set_default() {
 
 config_load network
 config_foreach set_default interface
-[ $id = 0 ] && {
-        logger -t multipath device $INTERFACE not found!
-        echo device $INTERFACE not found!
-        exit 1
-}
-
-mode=`uci -q get network.$INTERFACE.multipath` || mode='off'
-[ -n "$(ifconfig | grep $DEVICE)" ] || exit 0
-
-case "$mode" in
-  "off")
-        multipath $DEVICE off
-        exit 0;;
-  "master")
-        mode="on";;
-  "on");;
-  "backup");;
-  "handover");;
-  *)
-        logger -t multipath Wrong multipath value for device $DEVICE
-        exit 1;;
-esac
-
-# Update kernel flags
-multipath $DEVICE $mode
-
-# IPv4 Updates:
-
-network_get_ipaddr  ipaddr  $INTERFACE
-network_get_gateway gateway $INTERFACE
-network_get_subnet  network $INTERFACE
-__network_ifstatus  netmask $INTERFACE "['ipv4-address'][0]['mask']"
-network=`ipcalc.sh $network | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
-
-ip rule del table $id
-ip route flush $id
-ip rule add from $ipaddr table $id
-ip route add $network/$netmask dev $DEVICE scope link table $id
-ip route add default via $gateway dev $DEVICE table $id
-ip route flush $id
