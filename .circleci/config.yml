@@ -1,5 +1,18 @@
 version: 2
 jobs:
+  prepare:
+    machine: true
+    timezone: Europe/Paris
+
+    working_directory: ~/
+
+    steps:
+      - run:
+          name: Prepare
+          command: |
+            sudo apt-get update
+            sudo apt-get install -yq build-essential git unzip ncurses-dev libz-dev libssl-dev python subversion gettext gawk wget curl rsync perl
+
   build_x86:
     machine: true
     timezone: Europe/Paris
@@ -12,14 +25,6 @@ jobs:
     working_directory: ~/
 
     steps:
-      - run:
-          name: Prepare
-          command: |
-            sudo apt-get update
-            sudo apt-get install -yq build-essential git unzip ncurses-dev libz-dev libssl-dev python subversion gettext gawk wget curl rsync perl
-            echo "cache 1 $OMR_TARGET" > /tmp/cache-target
-            echo "cache 4 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
-
       - restore_cache:
           keys:
             - cache-{{ checksum "/tmp/cache-version" }}
@@ -69,14 +74,6 @@ jobs:
     working_directory: ~/
 
     steps:
-      - run:
-          name: Prepare
-          command: |
-            sudo apt-get update
-            sudo apt-get install -yq build-essential git unzip ncurses-dev libz-dev libssl-dev python subversion gettext gawk wget curl rsync perl
-            echo "cache 1 $OMR_TARGET" > /tmp/cache-target
-            echo "cache 4 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
-
       - restore_cache:
           keys:
             - cache-{{ checksum "/tmp/cache-version" }}
@@ -101,7 +98,7 @@ jobs:
       - run:
           name: Build
           no_output_timeout: 30m
-          command: make -C ~/openmptcprouter/$OMR_TARGET/source package/{compile,install,index} target/install -j2
+          command: make -C ~/openmptcprouter/$OMR_TARGET/source package/{compile,install,index} target/compile -j2 package/compile -j2 target/install -j2
 
       - run:
           name: Deploy
@@ -119,5 +116,10 @@ workflows:
   version: 2
   main:
     jobs:
-      - build_x86
-      - build_rpi3
+      - prepare
+      - build_x86:
+          requires:
+            - prepare
+      - build_rpi3:
+          requires:
+            - prepare
