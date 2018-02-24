@@ -4,14 +4,110 @@ START=18
 
 USE_PROCD=1
 
+global_multipath_settings() {
+	local multipath mptcp_path_manager mptcp_schdeduler congestion
+	local multipath_status=0
+	config_load network
+	config_get multipath globals multipath
+	config_get mptcp_path_manager globals mptcp_path_manager
+	config_get mptcp_scheduler globals mptcp_scheduler
+	config_get congestion globals congestion
+	[ "$multipath" = "enable" ] && multipath_status=1
+
+	# Global MPTCP configuration
+	sysctl -qw net.mptcp.mptcp_enabled="$multipath_status"
+	[ -z "$mptcp_path_manager" ] || sysctl -qw net.mptcp.mptcp_path_manager="$mptcp_path_manager"
+	[ -z "$mptcp_scheduler" ] || sysctl -qw net.mptcp.mptcp_scheduler="$mptcp_scheduler"
+	[ -z "$congestion" ] || sysctl -qw net.ipv4.tcp_congestion_control="$congestion"
+}
+
+interface_multipath_settings() {
+	local mode iface
+	local config="$1"
+	local intf="$2"
+
+	config_get iface "$config" ifname
+	count=$(($count+1))
+	id=$count
+	echo $iface
+	[ -n "$intf" ] && [ "$iface" != "$intf" ] && return 0
+	echo "ok"
+	[ -z "$iface" ] && return 0
+	[ -n "$(ifconfig | grep $iface)" ] || return 0
+	config_get mode "$config" multipath "off"
+	echo "mode $mode"
+	[ "$mode" = "off" ] && {
+		ip rule del table $id > /dev/null 2>&1
+		ip route flush $id > /dev/null 2>&1
+		return 1
+	}
+
+	[ "$mode" = "master" ] && mode="on"
+	multipath "$iface" "$mode"
+
+	# IPv4 Updates:
+	local ipaddr
+	local gateway
+	local network
+	local netmask
+	local proto
+	config_get proto $config proto
+	if [ "$proto" = "static" ]; then
+		config_get ipaddr $config ipaddr
+		config_get gateway $config gateway
+		config_get netmask $config netmask
+		network=`ipcalc.sh $ipaddr $netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
+	else
+		network_get_ipaddr $config ipaddr
+		ipaddr=$(/sbin/ifconfig eth0 | grep 'inet addr' | cut -d: -f2 | awk '{print $1}')
+		gateway=$(ip r list dev $config | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
+		netmask=$(/sbin/ifconfig eth0 | grep 'Mask' | cut -d: -f2 | awk '{print $1}')
+		__network_ifstatus  netmask $config "['ipv4-address'][0]['mask']"
+		network=`ipcalc.sh $ipaddr $netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
+	fi
+	ip rule del table $id > /dev/null 2>&1
+	ip route flush $id > /dev/null 2>&1
+	[ -n "$gateway" ] || return 1
+	ip rule add from $ipaddr table $id
+	ip route replace $network/$netmask dev $iface scope link table $id
+	ip route replace default via $gateway dev $iface table $id
+	ip route flush $id
+
+	[ "$mode" = "master" ] && {
+		ip route replace default via $gateway dev $iface
+	}
+}
+
+load_interfaces() {
+	config_get ifname "$1" ifname
+	config_get multipath "$1" multipath "off"
+	[ "$multipath" != "off" ] && interface=" ${ifname} ${interfaces}"
+}
+
 start_service() {
-        /sbin/hotplug-call net
+	local intf=$1
+	local id count
+	. /lib/functions.sh
+	. /lib/functions/network.sh
+	global_multipath_settings
+	config_load network
+	config_foreach interface_multipath_settings interface $intf
 }
 
 reload_service() {
-        start
+	rc_procd start_service "$@"
+	return 0
 }
 
 service_triggers() {
-        procd_add_reload_trigger network
+	local interfaces
+	procd_add_reload_trigger network
+	config_load network
+	config_foreach load_interfaces interface
+
+	[ -n "${interfaces}" ] && {
+		for n in $interfaces ; do
+			procd_add_interface_trigger "interface.*" $n /etc/init.d/mptcp reload $n
+		done
+	}
 }
