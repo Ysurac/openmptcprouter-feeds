@@ -12,8 +12,6 @@ _setup_macaddr() {
 
 # Configuration by interface
 _setup_interface() {
-	uci -q get "network.$1_dev.ifname" >/dev/null && return
-	
 	# do not create macvlan for vlan
 	local _ifname
 	config_get _ifname "$1" ifname
@@ -23,6 +21,17 @@ _setup_interface() {
 	
 	local _type
 	config_get _type "$1" type
+
+	uci -q get "network.$1_dev.ifname" >/dev/null && {
+		[ "$_type" = "macvlan" ] || {
+			uci -q batch <<-EOF
+			delete network.$1_dev
+			commit network
+			EOF
+		}
+		return 0
+	}
+	
 	[ "$_type" = "macvlan" ] || return 0
 	
 	uci -q batch <<-EOF
