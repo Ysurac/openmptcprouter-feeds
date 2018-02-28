@@ -7,12 +7,7 @@
 
 include $(TOPDIR)/rules.mk
 
-LUCI_TITLE:=LuCI Support for HAProxy-TCP
-LUCI_DEPENDS:=+haproxy-nossl
-LUCI_PKGARCH:=all
-
 PKG_NAME:=luci-app-haproxy-tcp
-
 PKG_VERSION:=0.1.4
 PKG_RELEASE:=1
 
@@ -23,6 +18,19 @@ PKG_MAINTAINER:=chenhw2 <chenhw2@github.com>
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
 
 include ../luci/luci.mk
+
+define Package/luci-app-haproxy-tcp
+	SECTION:=luci
+	CATEGORY:=LuCI
+	SUBMENU:=3. Applications
+	TITLE:=LuCI Support for HAProxy-TCP
+	PKGARCH:=all
+	DEPENDS:=+haproxy-nossl
+endef
+
+define Package/luci-app-haproxy-tcp/description
+	LuCI Support for HAProxy-TCP.
+endef
 
 define Build/Configure
 endef
@@ -47,6 +55,7 @@ define Package/luci-app-haproxy-tcp/prerm
 /etc/init.d/haproxy-tcp disable
 /etc/init.d/haproxy-tcp stop
 rm -f /usr/sbin/haproxy-tcp
+rm -f /etc/hotplug.d/net/90-haproxy
 exit 0
 endef
 
