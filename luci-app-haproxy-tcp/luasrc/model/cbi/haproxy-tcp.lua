@@ -1,6 +1,6 @@
 local m, s, o
 
-if luci.sys.call("pgrep haproxy-tcp >/dev/null") == 0 then
+if luci.sys.call("pgrep haproxy >/dev/null") == 0 then
 	m = Map("haproxy-tcp", translate("HAProxy-TCP"), "%s - %s" %{translate("HAProxy-TCP"), translate("RUNNING")})
 else
 	m = Map("haproxy-tcp", translate("HAProxy-TCP"), "%s - %s" %{translate("HAProxy-TCP"), translate("NOT RUNNING")})
