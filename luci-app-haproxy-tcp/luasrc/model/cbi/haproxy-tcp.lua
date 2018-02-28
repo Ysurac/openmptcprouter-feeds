@@ -50,8 +50,8 @@ o.datatype    = "range(1, 10)"
 o.rmempty     = false
 
 
-o = s:option(DynamicList, "upstreams", translate("UpStream Server"), translate("e.g. [123.123.123.123:65101 check]"))
-o.placeholder = "123.123.123.123:65101"
+o = s:option(DynamicList, "upstreams", translate("UpStream Server"), translate("e.g. [123.123.123.123:65101 weight 1 check]"))
+o.placeholder = "123.123.123.123:65101 weight 1 check"
 o.rmempty     = false
 
 return m
