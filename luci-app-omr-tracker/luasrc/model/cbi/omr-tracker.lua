@@ -5,7 +5,7 @@ m = Map("omr-tracker", translate("OMR-Tracker"), translate("OMR-Tracker detect w
 s = m:section(TypedSection, "defaults", translate("Defaults Settings"))
 s.anonymous   = true
 
-o = s:option(Value, "timeout", translate("Timeout Connect (s)"))
+o = s:option(Value, "timeout", translate("Timeout (s)"))
 o.placeholder = "1"
 o.default     = "1"
 o.datatype    = "range(1, 100)"
@@ -17,7 +17,7 @@ o.default     = "4"
 o.datatype    = "range(1, 10)"
 o.rmempty     = false
 
-o = s:option(Value, "interval", translate("Interval (s)"))
+o = s:option(Value, "interval", translate("Retry interval (s)"))
 o.placeholder = "2"
 o.default     = "2"
 o.datatype    = "range(1, 100)"
