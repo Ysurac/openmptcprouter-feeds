@@ -18,7 +18,6 @@ MY_DEPENDS := \
     unbound     \
     netifd      \
     mc          \
-    omr-tracker \
     openmptcprouter \
     dnsmasq-full \
     uhttpd \
@@ -38,7 +37,7 @@ MY_DEPENDS := \
     luci-i18n-firewall-en \
     luci-i18n-firewall-fr \
     ca-bundle ca-certificates \
-    luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-base luci-app-haproxy-tcp
+    luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-base luci-app-haproxy-tcp luci-app-omr-tracker
 
 
 define Package/$(PKG_NAME)
