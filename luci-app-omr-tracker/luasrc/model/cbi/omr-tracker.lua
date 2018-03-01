@@ -23,6 +23,9 @@ o.default     = "2"
 o.datatype    = "range(1, 100)"
 o.rmempty     = false
 
+o = s:option(Value, "type", translate("Type"))
+o:value("ping","ping")
+o:value("dns","dns")
 
 o = s:option(DynamicList, "hosts", translate("Hosts"))
 o.placeholder = "4.2.2.1"
