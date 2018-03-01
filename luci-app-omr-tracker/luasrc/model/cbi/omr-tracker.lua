@@ -23,7 +23,7 @@ o.default     = "2"
 o.datatype    = "range(1, 100)"
 o.rmempty     = false
 
-o = s:option(Value, "type", translate("Type"))
+o = s:option(ListValue, "type", translate("Type"))
 o:value("ping","ping")
 o:value("dns","dns")
 
