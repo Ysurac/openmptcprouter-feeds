@@ -22,3 +22,7 @@ A LuCI interface was made to make it easier to use.
 
 MPTCP support is added in LuCI interface and init scripts.
 
+## Simple-obfs
+*Source:* [https://github.com/shadowsocks/simple-obfs](https://github.com/shadowsocks/simple-obfs)
+
+*Description:* A simple obfuscating tool, designed as plugin server of shadowsocks.
