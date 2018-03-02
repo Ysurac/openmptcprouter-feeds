@@ -23,9 +23,10 @@ o.default     = "2"
 o.datatype    = "range(1, 100)"
 o.rmempty     = false
 
-o = s:option(ListValue, "type", translate("Type"))
+o = s:option(ListValue, "type", translate("Type"), translate("Always ping gateway, then test connection by ping or dns. None mode only ping gateway"))
 o:value("ping","ping")
 o:value("dns","dns")
+o:value("none","none")
 
 o = s:option(DynamicList, "hosts", translate("Hosts"))
 o.placeholder = "4.2.2.1"
