@@ -11,6 +11,12 @@ set_route() {
 	#if [ "$multipath_config" != "off" ] && [ "$SETROUTE" != true ]; then
 	#if [ "$multipath_config" != "off" ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$SETROUTE" != true ]; then
 		interface_gw=$(uci -q get "network.$INTERFACE.gateway")
+		if [ -z $interface_gw ]; then
+			$interface_gw=$(ubus call network.interface.$INTERFACE status | jsonfilter -e '@.route[0].nexthop' | tr -d "\d")
+		fi
+		if [ -z $interface_gw ]; then
+			$interface_gw=$(ubus call network.interface.$INTERFACE status | jsonfilter -e '@.inactive.route[0].nexthop' | tr -d "\d")
+		fi
 		interface_if=$(uci -q get "network.$INTERFACE.ifname")
 		if [ "$interface_gw" != "" ]; then
 			_log "Replace default route by $interface_gw dev $interface_if"
@@ -30,14 +36,14 @@ case "$(multipath "$OMR_TRACKER_DEVICE")" in
 esac
 
 default_gw=$(ip route show default | grep -v metric | awk '/default/ {print $3}')
-current_interface_gw=$(uci -q get "network.$OMR_TRACKER_INTERFACE.gateway")
+#current_interface_gw=$(uci -q get "network.$OMR_TRACKER_INTERFACE.gateway")
 
 # An interface in error will never be used in MPTCP
 if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 	#[ "$multipath_status" = "off" ] && exit 0
 	#_log "$OMR_TRACKER_DEVICE switched off"
 	multipath "$OMR_TRACKER_DEVICE" off
-	if [ "$default_gw" = "$current_interface_gw" ] || [ "$default_gw" = "" ]; then
+	if [ "$default_gw" = "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
 		config_load network
 		config_foreach set_route interface $OMR_TRACKER_DEVICE
 	fi
@@ -49,9 +55,9 @@ multipath_config=$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath" || echo
 [ "$multipath_status" = "$multipath_config" ] && exit 0
 _log "$OMR_TRACKER_DEVICE switched to $multipath_config"
 if [ "$multipath_config" = "master" ]; then
-	if [ "$default_gw" != "$current_interface_gw" ] || [ "$default_gw" = "" ]; then
+	if [ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
 		_log "Master up : Replace default route by $current_interface_gw dev $OMR_TRACKER_INTERFACE"
-		ip route replace default scope global nexthop via $current_interface_gw dev $OMR_TRACKER_INTERFACE
+		ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_INTERFACE
 	fi
 	multipath_config="on"
 fi
