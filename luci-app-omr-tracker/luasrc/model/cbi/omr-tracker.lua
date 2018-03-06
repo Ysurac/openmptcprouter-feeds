@@ -1,6 +1,6 @@
 local m, s, o
 
-m = Map("omr-tracker", translate("OMR-Tracker"), translate("OMR-Tracker detect when a connection is down"))
+m = Map("omr-tracker", translate("OMR-Tracker"), translate("OMR-Tracker detect when a connection is down and execute needed scripts"))
 
 s = m:section(TypedSection, "defaults", translate("Defaults Settings"))
 s.anonymous   = true

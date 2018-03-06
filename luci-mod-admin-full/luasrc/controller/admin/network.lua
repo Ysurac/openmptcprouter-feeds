@@ -152,6 +152,9 @@ function index()
 
 		page = entry({"admin", "network", "diag_traceroute6"}, post("diag_traceroute6"), nil)
 		page.leaf = true
+
+		page = entry({"admin", "network", "diag_speedtest"}, post("diag_speedtest"), nil)
+		page.leaf = true
 --	end
 end
 
@@ -426,4 +429,12 @@ end
 
 function diag_traceroute6(addr)
 	diag_command("traceroute6 -q 1 -w 2 -n %q 2>&1", addr)
+end
+
+function diag_speedtest(addr)
+	if addr then
+		diag_command("speedtestc --server %q 2>&1", addr)
+	else
+		diag_command("speedtestc 2>&1", "speedtest.net")
+	end
 end

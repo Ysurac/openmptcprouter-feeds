@@ -262,8 +262,8 @@ s = m:section(TypedSection, "host", translate("Static Leases"),
 		"DHCP clients. They are also required for non-dynamic interface configurations where " ..
 		"only hosts with a corresponding lease are served.") .. "<br />" ..
 	translate("Use the <em>Add</em> Button to add a new lease entry. The <em>MAC-Address</em> " ..
-		"indentifies the host, the <em>IPv4-Address</em> specifies to the fixed address to " ..
-		"use and the <em>Hostname</em> is assigned as symbolic name to the requesting host. " ..
+		"indentifies the host, the <em>IPv4-Address</em> specifies the fixed address to " ..
+		"use, and the <em>Hostname</em> is assigned as a symbolic name to the requesting host. " ..
 		"The optional <em>Lease time</em> can be used to set non-standard host-specific " ..
 		"lease time, e.g. 12h, 3d or infinite."))
 
@@ -294,6 +294,19 @@ ip.datatype = "or(ip4addr,'ignore')"
 
 time = s:option(Value, "leasetime", translate("Lease time"))
 time.rmempty  = true
+
+duid = s:option(Value, "duid", translate("<abbr title=\"The DHCP Unique Identifier\">DUID</abbr>"))
+duid.datatype = "and(rangelength(20,36),hexstring)"
+fp = io.open("/var/hosts/odhcpd")
+if fp then
+	for line in fp:lines() do
+		local net_val, duid_val = string.match(line, "# (%S+)%s+(%S+)")
+		if duid_val then
+			duid:value(duid_val, duid_val)
+		end
+	end
+	fp:close()
+end
 
 hostid = s:option(Value, "hostid", translate("<abbr title=\"Internet Protocol Version 6\">IPv6</abbr>-Suffix (hex)"))
 

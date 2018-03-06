@@ -160,7 +160,6 @@ if has_firewall then
 	s:tab("firewall", translate("Firewall Settings"))
 end
 
-
 st = s:taboption("general", DummyValue, "__status", translate("Status"))
 
 local function set_status()
@@ -225,7 +224,7 @@ auto.default = (net:proto() == "none") and auto.disabled or auto.enabled
 
 -- Add MPTCP
 if fs.access("/proc/sys/net/mptcp") then
-	mptcp = s:taboption("advanced", ListValue, "multipath", translate("Multipath TCP"))
+	mptcp = s:taboption("advanced", ListValue, "multipath", translate("Multipath TCP"), translate("One interface must be set as master"))
 	mptcp:value("on", translate("enabled"))
 	mptcp:value("off", translate("disabled"))
 	mptcp:value("master", translate("master"))
@@ -363,7 +362,6 @@ if has_firewall then
 		end
 	end
 end
-
 
 function p.write() end
 function p.remove() end
