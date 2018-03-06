@@ -26,3 +26,8 @@ MPTCP support is added in LuCI interface and init scripts.
 *Source:* [https://github.com/shadowsocks/simple-obfs](https://github.com/shadowsocks/simple-obfs)
 
 *Description:* A simple obfuscating tool, designed as plugin server of shadowsocks.
+
+## SpeedTestC
+*Source:* [https://github.com/mobrembski/SpeedTestC](https://github.com/mobrembski/SpeedTestC)
+
+*Description:* Client for SpeedTest.net infrastructure written in pure C99 standard using only POSIX libraries.
