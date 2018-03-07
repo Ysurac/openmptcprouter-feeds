@@ -158,6 +158,12 @@ function index()
 
 		page = entry({"admin", "network", "diag_speedtest"}, post("diag_speedtest"), nil)
 		page.leaf = true
+
+		page = entry({"admin", "network", "diag_getip"}, post("diag_getip"), nil)
+		page.leaf = true
+
+		page = entry({"admin", "network", "diag_netstat"}, post("diag_netstat"), nil)
+		page.leaf = true
 --	end
 end
 
@@ -436,6 +442,14 @@ end
 
 function diag_iperf3(addr)
 	diag_command("iperf3 -c %q 2>&1", addr)
+end
+
+function diag_getip(addr)
+	diag_command("curl %q", addr)
+end
+
+function diag_netstat(addr)
+	diag_command("netstat -lapute 2>&1", "openmptcprouter.com")
 end
 
 function diag_speedtest(addr)
