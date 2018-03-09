@@ -31,3 +31,8 @@ MPTCP support is added in LuCI interface and init scripts.
 *Source:* [https://github.com/mobrembski/SpeedTestC](https://github.com/mobrembski/SpeedTestC)
 
 *Description:* Client for SpeedTest.net infrastructure written in pure C99 standard using only POSIX libraries.
+
+## Nginx
+*Source:* [https://www.nginx.org](https://www.nginx.org)
+
+*Description:* nginx is an HTTP and reverse proxy server, a mail proxy server, and a generic TCP/UDP proxy server. Used for TCP/UDP failover.
