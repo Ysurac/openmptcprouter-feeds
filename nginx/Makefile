@@ -57,7 +57,6 @@ PKG_CONFIG_DEPENDS := \
 	CONFIG_NGINX_HTTP_CACHE \
 	CONFIG_NGINX_HTTP_V2 \
 	CONFIG_NGINX_PCRE \
-	CONFIG_NGINX_STREAM \
 	CONFIG_NGINX_NAXSI \
 	CONFIG_NGINX_LUA \
 	CONFIG_NGINX_HTTP_REAL_IP \
@@ -209,11 +208,8 @@ endif
 ifeq ($(CONFIG_NGINX_HTTP_SECURE_LINK),y)
   ADDITIONAL_MODULES += --with-http_secure_link_module
 endif
-ifeq ($(CONFIG_NGINX_STREAM),y)
-  ADDITIONAL_MODULES += --with-stream
-endif
 
-TARGET_CFLAGS += -fvisibility=hidden -ffunction-sections -fdata-sections -DNGX_LUA_NO_BY_LUA_BLOCK
+TARGET_CFLAGS += -fvisibility=hidden -ffunction-sections -fdata-sections -DNGX_LUA_NO_BY_LUA_BLOCK -DNGX_HAVE_GCC_ATOMIC
 TARGET_LDFLAGS += -Wl,--gc-sections
 
 define Build/Configure
