@@ -15,7 +15,7 @@ include $(TOPDIR)/rules.mk
 #
 PKG_NAME:=shadowsocks-libev
 PKG_VERSION:=3.1.2
-PKG_RELEASE:=4
+PKG_RELEASE:=5
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://github.com/shadowsocks/shadowsocks-libev/releases/download/v$(PKG_VERSION)
@@ -88,6 +88,7 @@ endef
 define Package/shadowsocks-libev-ss-rules/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) ./files/ss-rules $(1)/usr/bin
+	$(INSTALL_BIN) ./files/ss-rules6 $(1)/usr/bin
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_DATA) ./files/firewall.ss-rules $(1)/etc
 	$(INSTALL_BIN) ./files/ss-rules.defaults $(1)/etc/uci-defaults

@@ -178,9 +178,11 @@ ss_rules_cb() {
 		ss_redir_servers="$ss_redir_servers $server"
 		if [ "$mode" = tcp_only -o "$mode" = "tcp_and_udp" ]; then
 			eval "ss_rules_redir_tcp_$cfg=$local_port"
+			eval "ss_rules6_redir_tcp_$cfg=$local_port"
 		fi
 		if [ "$mode" = udp_only -o "$mode" = "tcp_and_udp" ]; then
 			eval "ss_rules_redir_udp_$cfg=$local_port"
+			eval "ss_rules6_redir_udp_$cfg=$local_port"
 		fi
 	fi
 }
@@ -203,11 +205,54 @@ ss_rules() {
 	eval local_port_tcp="\$ss_rules_redir_tcp_$redir_tcp"
 	eval local_port_udp="\$ss_rules_redir_udp_$redir_udp"
 	[ -n "$local_port_tcp" -o -n "$local_port_udp" ] || return 1
-	ss_redir_servers="$(echo "$ss_redir_servers" | tr ' ' '\n' | sort -u)"
+	ss_redir_servers4="$(echo "$ss_redir_servers" | awk -F. 'NF == 4' | tr ' ' '\n' | sort -u)"
+	
 	[ "$dst_forward_recentrst" = 0 ] || args="$args --dst-forward-recentrst"
 
 	"$bin" \
-			-s "$ss_redir_servers" \
+			-s "$ss_redir_servers4" \
+			-l "$local_port_tcp" \
+			-L "$local_port_udp" \
+			--src-default "$src_default" \
+			--dst-default "$dst_default" \
+			--local-default "$local_default" \
+			--dst-bypass-file "$dst_ips_bypass_file" \
+			--dst-forward-file "$dst_ips_forward_file" \
+			--dst-bypass "$dst_ips_bypass" \
+			--dst-forward "$dst_ips_forward" \
+			--src-bypass "$src_ips_bypass" \
+			--src-forward "$src_ips_forward" \
+			--src-checkdst "$src_ips_checkdst" \
+			--ifnames "$ifnames" \
+			--ipt-extra "$ipt_args" \
+			$args \
+		|| "$bin" -f
+}
+
+ss_rules6() {
+	local cfg="ss_rules"
+	local bin="$ss_bindir/ss-rules6"
+	local cfgtype
+	local local_port_tcp local_port_udp
+	local args
+
+	[ -x "$bin" ] || return 1
+	config_get cfgtype "$cfg" TYPE
+	[ "$cfgtype" = ss_rules ] || return 1
+
+	eval "$(validate_ss_rules_section "$cfg" ss_validate_mklocal)"
+	validate_ss_rules_section "$cfg" || return 1
+	[ "$disabled" = 0 ] || return 1
+
+	eval local_port_tcp="\$ss_rules6_redir_tcp_$redir_tcp"
+	eval local_port_udp="\$ss_rules6_redir_udp_$redir_udp"
+	[ -n "$local_port_tcp" -o -n "$local_port_udp" ] || return 1
+	ss_redir_servers6="$(echo "$ss_redir_servers" | awk -F: 'NF>4' | tr ' ' '\n' | sort -u)"
+
+	[ "$dst_forward_recentrst" = 0 ] || args="$args --dst-forward-recentrst"
+
+	"$bin" \
+			-s "$ss_redir_servers6" \
 			-l "$local_port_tcp" \
 			-L "$local_port_udp" \
 			--src-default "$src_default" \
@@ -235,12 +280,14 @@ start_service() {
 		config_foreach ss_xxx "$cfgtype" "$cfgtype"
 	done
 	ss_rules
+	ss_rules6
 }
 
 stop_service() {
 	local bin="$ss_bindir/ss-rules"
-
 	[ -x "$bin" ] && "$bin" -f
+	local bin6="$ss_bindir/ss-rules6"
+	[ -x "$bin6" ] && "$bin6" -f
 	rm -rf "$ss_confdir"
 }
 
