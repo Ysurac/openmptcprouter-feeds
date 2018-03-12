@@ -1,6 +1,7 @@
 #!/bin/sh -e
 #
 # Copyright (C) 2017 Yousong Zhou <yszhou4tech@gmail.com>
+# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 #
 # The design idea was derived from ss-rules by Jian Chang <aa65535@live.com>
 #
@@ -51,6 +52,7 @@ EOF
 }
 
 o_dst_bypass_="
+	FE80::/10
 "
 o_src_default=bypass
 o_dst_default=bypass
@@ -120,8 +122,8 @@ ss_rules6_ipset_init() {
 		$(ss_rules6_ipset_mkadd ss_rules6_src_bypass "$o_src_bypass")
 		$(ss_rules6_ipset_mkadd ss_rules6_src_forward "$o_src_forward")
 		$(ss_rules6_ipset_mkadd ss_rules6_src_checkdst "$o_src_checkdst")
-		$(ss_rules6_ipset_mkadd ss_rules6_dst_bypass "$o_dst_bypass $(cat "$o_dst_bypass_file" 2>/dev/null)")
-		$(ss_rules6_ipset_mkadd ss_rules6_dst_forward "$o_dst_forward $(cat "$o_dst_forward_file" 2>/dev/null)")
+		$(ss_rules6_ipset_mkadd ss_rules6_dst_bypass "$o_dst_bypass $(cat "$o_dst_bypass_file" 2>/dev/null | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}')")
+		$(ss_rules6_ipset_mkadd ss_rules6_dst_forward "$o_dst_forward $(cat "$o_dst_forward_file" 2>/dev/null | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}')")
 	EOF
 }
 
@@ -212,12 +214,12 @@ ss_rules6_iptchains_init_() {
 		:ss_rules6_dst -
 		:ss_rules6_forward -
 		$(ss_rules6_iptchains_mkprerules "$proto")
+		-A ss_rules6_pre_src -m set --match-set ss_rules6_dst_bypass_ dst -j RETURN
 		-A ss_rules6_pre_src -p $proto $o_ipt_extra -j ss_rules6_src
 		-A ss_rules6_src -m set --match-set ss_rules6_src_bypass src -j RETURN
 		-A ss_rules6_src -m set --match-set ss_rules6_src_forward src -j ss_rules6_forward
 		-A ss_rules6_src -m set --match-set ss_rules6_src_checkdst src -j ss_rules6_dst
 		-A ss_rules6_src -j $src_default_target -m comment --comment "src_default: $o_src_default"
-		-A ss_rules6_pre_src -m set --match-set ss_rules6_dst_bypass_ dst -j RETURN
 		-A ss_rules6_dst -m set --match-set ss_rules6_dst_bypass dst -j RETURN
 		-A ss_rules6_dst -m set --match-set ss_rules6_dst_forward dst -j ss_rules6_forward
 		$recentrst_addset_rules
