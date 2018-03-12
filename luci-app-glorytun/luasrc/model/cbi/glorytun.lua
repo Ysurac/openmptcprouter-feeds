@@ -14,6 +14,7 @@ s.template = "cbi/tblsection"
 s.template_addremove = "glorytun/cbi-select-input-add"
 s.addremove = true
 s.add_select_options = { }
+s.add_select_options[''] = ''
 s.extedit = luci.dispatcher.build_url(
 	"admin", "services", "glorytun", "settings", "%s"
 )
