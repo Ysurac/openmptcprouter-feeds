@@ -9,19 +9,17 @@ local ifaces = sys.net:devices()
 m = Map("omr-quota", translate("Quota"), translate("Set quota, when quota is reached interface state is set to down"))
 
 s = m:section(TypedSection, "interface", translate("Interfaces"))
+s.template_addremove = "omr-quota/cbi-select-add"
 s.addremove = true
-s.anonymous = false
+s.add_select_options = { }
+for _, iface in ipairs(ifaces) do
+	if not (iface == "lo" or iface:match("^ifb.*")) then
+		s.add_select_options[iface] = iface
+	end
+end
 
 e = s:option(Flag, "enabled", translate("Enable"))
 e.rmempty = false
-
-intf = s:option(ListValue, "interface", translate("Interface name"))
-for _, iface in ipairs(ifaces) do
-	if not (iface == "lo" or iface:match("^ifb.*")) then
-		intf:value(iface)
-	end
-end
-intf.rmempty = false
 
 tx = s:option(Value, "txquota", translate("TX quota (kbit)"))
 tx.datatype = "uinteger"
