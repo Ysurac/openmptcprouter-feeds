@@ -40,6 +40,7 @@ s = m:section(TypedSection, "interface", translate("Interfaces"))
 s.template_addremove = "omr-tracker/cbi-select-add"
 s.addremove = true
 s.add_select_options = { }
+s.add_select_options[''] = ''
 for _, iface in ipairs(ifaces) do
 	if not (iface == "lo" or iface:match("^ifb.*")) then
 		s.add_select_options[iface] = iface
