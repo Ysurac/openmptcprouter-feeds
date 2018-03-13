@@ -33,7 +33,7 @@ o:value("none","none")
 
 o = s:option(DynamicList, "hosts", translate("Hosts"))
 o.placeholder = "4.2.2.1"
-o.default     = "4.2.2.1"
+o.default     = { "4.2.2.1", "8.8.8.8" }
 o.rmempty     = false
 
 s = m:section(TypedSection, "interface", translate("Interfaces"))
@@ -72,7 +72,7 @@ o:value("none","none")
 
 o = s:option(DynamicList, "hosts", translate("Hosts"))
 o.placeholder = "4.2.2.1"
-o.default     = "4.2.2.1"
+o.default     = { "4.2.2.1", "8.8.8.8" }
 o.rmempty     = false
 
 
