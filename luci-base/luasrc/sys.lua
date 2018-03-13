@@ -170,9 +170,9 @@ local function _nethints(what, callback)
 
 	luci.ip.neighbors(nil, function(neigh)
 		if neigh.mac and neigh.family == 4 then
-			_add(what, neigh.mac:upper(), neigh.dest:string(), nil, nil)
+			_add(what, neigh.mac:string(), neigh.dest:string(), nil, nil)
 		elseif neigh.mac and neigh.family == 6 then
-			_add(what, neigh.mac:upper(), nil, neigh.dest:string(), nil)
+			_add(what, neigh.mac:string(), nil, neigh.dest:string(), nil)
 		end
 	end)
 
