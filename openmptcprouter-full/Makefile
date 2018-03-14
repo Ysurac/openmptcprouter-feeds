@@ -64,7 +64,7 @@ MY_DEPENDS := \
     luci-app-nginx-ha luci-app-omr-tracker luci-app-qos \
     luci-app-vnstat omr-quota luci-app-omr-quota \
     speedtestc \
-    ip6tables-mod-nat luci-proto-ipv6
+    ip6tables-mod-nat luci-proto-ipv6 ethtool
 
 define Package/$(PKG_NAME)
 SECTION:=OMR
