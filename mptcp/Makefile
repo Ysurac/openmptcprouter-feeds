@@ -10,7 +10,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mptcp
 PKG_VERSION:=3.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 PKG_BUILD_DIR := $(BUILD_DIR)/$(PKG_NAME)
@@ -21,7 +21,7 @@ define Package/mptcp
   SECTION:=net
   CATEGORY:=Network
   TITLE:=Multipath TCP configuration scrips
-  DEPENDS:=+ip +iptables
+  DEPENDS:=+ip +iptables +ethtool
   KCONFIG:=\
       CONFIG_MPTCP=y \
       CONFIG_MPTCP_BINDER=y \
