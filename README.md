@@ -35,4 +35,7 @@ MPTCP support is added in LuCI interface and init scripts.
 ## Nginx
 *Source:* [https://www.nginx.org](https://www.nginx.org)
 
-*Description:* nginx is an HTTP and reverse proxy server, a mail proxy server, and a generic TCP/UDP proxy server. Used for TCP/UDP failover.
+*Description:* nginx is an HTTP and reverse proxy server, a mail proxy server, and a generic TCP/UDP proxy server. 
+
+An interface for TCP/UDP stream is added. Used for TCP/UDP failover.
+
