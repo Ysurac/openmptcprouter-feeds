@@ -22,7 +22,7 @@ global_multipath_settings() {
 }
 
 interface_multipath_settings() {
-	local mode iface name
+	local mode iface
 	local config="$1"
 	local intf="$2"
 
@@ -32,9 +32,6 @@ interface_multipath_settings() {
 	[ -n "$intf" ] && [ "$iface" != "$intf" ] && return 0
 	[ -z "$iface" ] && return 0
 	[ -n "$(ifconfig | grep $iface)" ] || return 0
-	[ -n "$(ubus -v call system board | jsonfilter -e '$.board_name' | grep raspberry)" ] && {
-		ethtool --offload $iface rx off tx off
-	}
 
 	config_get mode "$config" multipath "off"
 	[ "$mode" = "master" ] && mode="on"
@@ -89,12 +86,15 @@ load_interfaces() {
 
 start_service() {
 	local intf=$1
-	local id count boardname
+	local id count
 	. /lib/functions.sh
 	. /lib/functions/network.sh
 	global_multipath_settings
 	config_load network
 	config_foreach interface_multipath_settings interface $intf
+	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && {
+		ethtool --offload eth0 rx off tx off
+	}
 }
 
 reload_service() {
