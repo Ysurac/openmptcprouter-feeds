@@ -23,6 +23,62 @@ function Dec(x) {
 	return (/^-?\d+(?:\.\d+)?$/.test(x) ? +x : NaN);
 }
 
+function IPv4(x) {
+	if (!x.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/))
+		return null;
+
+	if (RegExp.$1 > 255 || RegExp.$2 > 255 || RegExp.$3 > 255 || RegExp.$4 > 255)
+		return null;
+
+	return [ +RegExp.$1, +RegExp.$2, +RegExp.$3, +RegExp.$4 ];
+}
+
+function IPv6(x) {
+	if (x.match(/^([a-fA-F0-9:]+):(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/)) {
+		var v6 = RegExp.$1, v4 = IPv4(RegExp.$2);
+
+		if (!v4)
+			return null;
+
+		x = v6 + ':' + (v4[0] * 256 + v4[1]).toString(16)
+		       + ':' + (v4[2] * 256 + v4[3]).toString(16);
+	}
+
+	if (!x.match(/^[a-fA-F0-9:]+$/))
+		return null;
+
+	var prefix_suffix = x.split(/::/);
+
+	if (prefix_suffix.length > 2)
+		return null;
+
+	var prefix = (prefix_suffix[0] || '0').split(/:/);
+	var suffix = prefix_suffix.length > 1 ? (prefix_suffix[1] || '0').split(/:/) : [];
+
+	if (suffix.length ? (prefix.length + suffix.length > 7) : (prefix.length > 8))
+		return null;
+
+	var i, word;
+	var words = [];
+
+	for (i = 0, word = parseInt(prefix[0], 16); i < prefix.length; word = parseInt(prefix[++i], 16))
+		if (prefix[i].length <= 4 && !isNaN(word) && word <= 0xFFFF)
+			words.push(word);
+		else
+			return null;
+
+	for (i = 0; i < (8 - prefix.length - suffix.length); i++)
+		words.push(0);
+
+	for (i = 0, word = parseInt(suffix[0], 16); i < suffix.length; word = parseInt(suffix[++i], 16))
+		if (suffix[i].length <= 4 && !isNaN(word) && word <= 0xFFFF)
+			words.push(word);
+		else
+			return null;
+
+	return words;
+}
+
 var cbi_validators = {
 
 	'integer': function()
@@ -53,69 +109,63 @@ var cbi_validators = {
 
 	'ip4addr': function()
 	{
-		if (this.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(\/(\S+))?$/))
-		{
-			return (RegExp.$1 >= 0) && (RegExp.$1 <= 255) &&
-			       (RegExp.$2 >= 0) && (RegExp.$2 <= 255) &&
-			       (RegExp.$3 >= 0) && (RegExp.$3 <= 255) &&
-			       (RegExp.$4 >= 0) && (RegExp.$4 <= 255) &&
-			       ((RegExp.$6.indexOf('.') < 0)
-			          ? ((RegExp.$6 >= 0) && (RegExp.$6 <= 32))
-			          : (cbi_validators.ip4addr.apply(RegExp.$6)))
-			;
-		}
-
-		return false;
+		var m = this.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?:\/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})|\/(\d{1,2}))?$/);
+		return !!(m && IPv4(m[1]) && (m[2] ? IPv4(m[2]) : (m[3] ? cbi_validators.ip4prefix.apply(m[3]) : true)));
 	},
 
 	'ip6addr': function()
 	{
-		if( this.match(/^([a-fA-F0-9:.]+)(\/(\d+))?$/) )
-		{
-			if( !RegExp.$2 || ((RegExp.$3 >= 0) && (RegExp.$3 <= 128)) )
-			{
-				var addr = RegExp.$1;
+		var m = this.match(/^([0-9a-fA-F:.]+)(?:\/(\d{1,3}))?$/);
+		return !!(m && IPv6(m[1]) && (m[2] ? cbi_validators.ip6prefix.apply(m[2]) : true));
+	},
 
-				if( addr == '::' )
-				{
-					return true;
-				}
+	'ip4prefix': function()
+	{
+		return !isNaN(this) && this >= 0 && this <= 32;
+	},
 
-				if( addr.indexOf('.') > 0 )
-				{
-					var off = addr.lastIndexOf(':');
+	'ip6prefix': function()
+	{
+		return !isNaN(this) && this >= 0 && this <= 128;
+	},
 
-					if( !(off && cbi_validators.ip4addr.apply(addr.substr(off+1))) )
-						return false;
+	'cidr': function()
+	{
+		return cbi_validators.cidr4.apply(this) ||
+			cbi_validators.cidr6.apply(this);
+	},
 
-					addr = addr.substr(0, off) + ':0:0';
-				}
+	'cidr4': function()
+	{
+		var m = this.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\/(\d{1,2})$/);
+		return !!(m && IPv4(m[1]) && cbi_validators.ip4prefix.apply(m[2]));
+	},
 
-				if( addr.indexOf('::') >= 0 )
-				{
-					var colons = 0;
-					var fill = '0';
+	'cidr6': function()
+	{
+		var m = this.match(/^([0-9a-fA-F:.]+)\/(\d{1,3})$/);
+		return !!(m && IPv6(m[1]) && cbi_validators.ip6prefix.apply(m[2]));
+	},
 
-					for( var i = 1; i < (addr.length-1); i++ )
-						if( addr.charAt(i) == ':' )
-							colons++;
+	'ipnet4': function()
+	{
+		var m = this.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+		return !!(m && IPv4(m[1]) && IPv4(m[2]));
+	},
 
-					if( colons > 7 )
-						return false;
+	'ipnet6': function()
+	{
+		var m = this.match(/^([0-9a-fA-F:.]+)\/([0-9a-fA-F:.]+)$/);
+		return !!(m && IPv6(m[1]) && IPv6(m[2]));
+	},
 
-					for( var i = 0; i < (7 - colons); i++ )
-						fill += ':0';
+	'ip6hostid': function()
+	{
+		if (this == "eui64" || this == "random")
+			return true;
 
-					if (addr.match(/^(.*?)::(.*?)$/))
-						addr = (RegExp.$1 ? RegExp.$1 + ':' : '') + fill +
-						       (RegExp.$2 ? ':' + RegExp.$2 : '');
-				}
-
-				return (addr.match(/^(?:[a-fA-F0-9]{1,4}:){7}[a-fA-F0-9]{1,4}$/) != null);
-			}
-		}
-
-		return false;
+		var v6 = IPv6(this);
+		return !(!v6 || v6[0] || v6[1] || v6[2] || v6[3]);
 	},
 
 	'ipmask': function()
@@ -126,40 +176,16 @@ var cbi_validators = {
 
 	'ipmask4': function()
 	{
-		var ip = this, mask = 32;
-
-		if (ip.match(/^(\S+)\/(\S+)$/))
-		{
-			ip = RegExp.$1;
-			mask = RegExp.$2;
-		}
-
-		if (!isNaN(mask) && (mask < 0 || mask > 32))
-			return false;
-
-		if (isNaN(mask) && !cbi_validators.ip4addr.apply(mask))
-			return false;
-
-		return cbi_validators.ip4addr.apply(ip);
+		return cbi_validators.cidr4.apply(this) ||
+			cbi_validators.ipnet4.apply(this) ||
+			cbi_validators.ip4addr.apply(this);
 	},
 
 	'ipmask6': function()
 	{
-		var ip = this, mask = 128;
-
-		if (ip.match(/^(\S+)\/(\S+)$/))
-		{
-			ip = RegExp.$1;
-			mask = RegExp.$2;
-		}
-
-		if (!isNaN(mask) && (mask < 0 || mask > 128))
-			return false;
-
-		if (isNaN(mask) && !cbi_validators.ip6addr.apply(mask))
-			return false;
-
-		return cbi_validators.ip6addr.apply(ip);
+		return cbi_validators.cidr6.apply(this) ||
+			cbi_validators.ipnet6.apply(this) ||
+			cbi_validators.ip6addr.apply(this);
 	},
 
 	'port': function()
@@ -481,8 +507,9 @@ function cbi_d_check(deps) {
 				istat = (istat && cbi_d_checkvalue(j, deps[i][j]))
 			}
 		}
-		if (istat) {
-			return !reverse;
+
+		if (istat ^ reverse) {
+			return true;
 		}
 	}
 	return def;
@@ -648,9 +675,6 @@ function cbi_combobox(id, values, def, man, focus) {
 	var dt = obj.getAttribute('cbi_datatype');
 	var op = obj.getAttribute('cbi_optional');
 
-	if (dt)
-		cbi_validate_field(sel, op == 'true', dt);
-
 	if (!values[obj.value]) {
 		if (obj.value == "") {
 			var optdef = document.createElement("option");
@@ -684,6 +708,9 @@ function cbi_combobox(id, values, def, man, focus) {
 	sel.appendChild(optman);
 
 	obj.style.display = "none";
+
+	if (dt)
+		cbi_validate_field(sel, op == 'true', dt);
 
 	cbi_bind(sel, "change", function() {
 		if (sel.selectedIndex == sel.options.length - 1) {
@@ -727,7 +754,7 @@ function cbi_filebrowser(id, defpath) {
 	browser.focus();
 }
 
-function cbi_browser_init(id, defpath)
+function cbi_browser_init(id, resource, defpath)
 {
 	function cbi_browser_btnclick(e) {
 		cbi_filebrowser(id, defpath);
@@ -738,7 +765,7 @@ function cbi_browser_init(id, defpath)
 
 	var btn = document.createElement('img');
 	btn.className = 'cbi-image-button';
-	btn.src = cbi_strings.path.resource + '/cbi/folder.gif';
+	btn.src = (resource || cbi_strings.path.resource) + '/cbi/folder.gif';
 	field.parentNode.insertBefore(btn, field.nextSibling);
 
 	cbi_bind(btn, 'click', cbi_browser_btnclick);
@@ -805,7 +832,7 @@ function cbi_dynlist_init(parent, datatype, optional, choices)
 			parent.appendChild(b);
 			if (datatype == 'file')
 			{
-				cbi_browser_init(t.id, parent.getAttribute('data-browser-path'));
+				cbi_browser_init(t.id, null, parent.getAttribute('data-browser-path'));
 			}
 
 			parent.appendChild(document.createElement('br'));

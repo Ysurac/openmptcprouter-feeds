@@ -28,39 +28,6 @@ fw.init(m.uci)
 
 local net = nw:get_network(arg[1])
 
-local function set_ifstate(name, option, value)
-	local found = false
-
-	m.uci:foreach("luci", "ifstate", function (s)
-		if s.interface == name then
-			m.uci:set("luci", s[".name"], option, value)
-			found = true
-			return false
-		end
-	end)
-
-	if not found then
-		local sid = m.uci:add("luci", "ifstate")
-		m.uci:set("luci", sid, "interface", name)
-		m.uci:set("luci", sid, option, value)
-	end
-
-	m.uci:save("luci")
-end
-
-local function get_ifstate(name, option)
-	local val
-
-	m.uci:foreach("luci", "ifstate", function (s)
-		if s.interface == name then
-			val = m.uci:get("luci", s[".name"], option)
-			return false
-		end
-	end)
-
-	return val
-end
-
 local function backup_ifnames(is_bridge)
 	if not net:is_floating() and not get_ifstate(net:name(), "ifname") then
 		local ifcs = net:get_interfaces() or { net:get_interface() }
@@ -269,12 +236,6 @@ end
 
 delegate = s:taboption("advanced", Flag, "delegate", translate("Use builtin IPv6-management"))
 delegate.default = delegate.enabled
-
-force_link = s:taboption("advanced", Flag, "force_link",
-	translate("Force link"),
-	translate("Set interface properties regardless of the link carrier (If set, carrier sense events do not invoke hotplug handlers)."))
-
-force_link.default = (net:proto() == "static") and force_link.enabled or force_link.disabled
 
 
 if not net:is_virtual() then

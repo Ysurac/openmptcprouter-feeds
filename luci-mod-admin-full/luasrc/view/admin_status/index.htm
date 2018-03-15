@@ -39,12 +39,11 @@
 		local wan6 = ntm:get_wan6net()
 
 		local conn_count = tonumber(
-			fs.readfile("/proc/sys/net/netfilter/nf_conntrack_count")) or 0
+			fs.readfile("/proc/sys/net/netfilter/nf_conntrack_count") or "") or 0
 
-		local conn_max = tonumber((
-			luci.sys.exec("sysctl net.nf_conntrack_max") or
-			luci.sys.exec("sysctl net.ipv4.netfilter.ip_conntrack_max") or
-			""):match("%d+")) or 4096
+		local conn_max = tonumber(luci.sys.exec(
+			"sysctl -n -e net.nf_conntrack_max net.ipv4.netfilter.ip_conntrack_max"
+		):match("%d+")) or 4096
 
 		local rv = {
 			uptime     = sysinfo.uptime or 0,
@@ -420,15 +419,16 @@
 						tr.className = 'cbi-section-table-row cbi-rowstyle-' + ((i % 2) + 1);
 
 					var host = hosts[duid2mac(info.leases6[i].duid)];
-					if (host)
-						tr.insertCell(-1).innerHTML = String.format(
-							'<div style="max-width:200px;overflow:hidden;text-overflow:ellipsis">%s</div>',
-							((host.name && (host.ipv4 || host.ipv6))
-								? '%h (%s)'.format(host.name, host.ipv4 || host.ipv6)
-								: '%h'.format(host.name || host.ipv4 || host.ipv6)).nobr()
-						);
+					if (!info.leases6[i].hostname)
+						tr.insertCell(-1).innerHTML =
+							(host && (host.name || host.ipv4 || host.ipv6))
+								? '<div style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space: nowrap">? (%h)</div>'.format(host.name || host.ipv4 || host.ipv6)
+								: '?';
 					else
-						tr.insertCell(-1).innerHTML = info.leases6[i].hostname ? info.leases6[i].hostname : '?';
+						tr.insertCell(-1).innerHTML =
+							(host && host.name && info.leases6[i].hostname != host.name)
+								? '<div style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space: nowrap">%h (%h)</div>'.format(info.leases6[i].hostname, host.name)
+								: info.leases6[i].hostname;
 
 					tr.insertCell(-1).innerHTML = info.leases6[i].ip6addr;
 					tr.insertCell(-1).innerHTML = info.leases6[i].duid;

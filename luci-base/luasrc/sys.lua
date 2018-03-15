@@ -7,6 +7,7 @@ local table  = require "table"
 local nixio  = require "nixio"
 local fs     = require "nixio.fs"
 local uci    = require "luci.model.uci"
+local ntm    = require "luci.model.network"
 
 local luci  = {}
 luci.util   = require "luci.util"
@@ -117,45 +118,12 @@ end
 
 net = {}
 
---			The following fields are defined for arp entry objects:
---			{ "IP address", "HW address", "HW type", "Flags", "Mask", "Device" }
-function net.arptable(callback)
-	local arp = (not callback) and {} or nil
-	local e, r, v
-	if fs.access("/proc/net/arp") then
-		for e in io.lines("/proc/net/arp") do
-			local r = { }, v
-			for v in e:gmatch("%S+") do
-				r[#r+1] = v
-			end
-
-			if r[1] ~= "IP" then
-				local x = {
-					["IP address"] = r[1],
-					["HW type"]    = r[2],
-					["Flags"]      = r[3],
-					["HW address"] = r[4],
-					["Mask"]       = r[5],
-					["Device"]     = r[6]
-				}
-
-				if callback then
-					callback(x)
-				else
-					arp = arp or { }
-					arp[#arp+1] = x
-				end
-			end
-		end
-	end
-	return arp
-end
-
 local function _nethints(what, callback)
 	local _, k, e, mac, ip, name
 	local cur = uci.cursor()
 	local ifn = { }
 	local hosts = { }
+	local lookup = { }
 
 	local function _add(i, ...)
 		local k = select(i, ...)
@@ -178,9 +146,14 @@ local function _nethints(what, callback)
 
 	if fs.access("/etc/ethers") then
 		for e in io.lines("/etc/ethers") do
-			mac, ip = e:match("^([a-f0-9]%S+) (%S+)")
-			if mac and ip then
-				_add(what, mac:upper(), ip, nil, nil)
+			mac, name = e:match("^([a-fA-F0-9:-]+)%s+(%S+)")
+			mac = luci.ip.checkmac(mac)
+			if mac and name then
+				if luci.ip.checkip4(name) then
+					_add(what, mac, name, nil, nil)
+				else
+					_add(what, mac, nil, nil, name)
+				end
 			end
 		end
 	end
@@ -190,8 +163,9 @@ local function _nethints(what, callback)
 			if s.leasefile and fs.access(s.leasefile) then
 				for e in io.lines(s.leasefile) do
 					mac, ip, name = e:match("^%d+ (%S+) (%S+) (%S+)")
+					mac = luci.ip.checkmac(mac)
 					if mac and ip then
-						_add(what, mac:upper(), ip, nil, name ~= "*" and name)
+						_add(what, mac, ip, nil, name ~= "*" and name)
 					end
 				end
 			end
@@ -201,7 +175,10 @@ local function _nethints(what, callback)
 	cur:foreach("dhcp", "host",
 		function(s)
 			for mac in luci.util.imatch(s.mac) do
-				_add(what, mac:upper(), s.ip, nil, s.name)
+				mac = luci.ip.checkmac(mac)
+				if mac then
+					_add(what, mac, s.ip, nil, s.name)
+				end
 			end
 		end)
 
@@ -224,8 +201,20 @@ local function _nethints(what, callback)
 		end
 	end
 
+	for _, e in pairs(hosts) do
+		lookup[#lookup+1] = (what > 1) and e[what] or (e[2] or e[3])
+	end
+
+	if #lookup > 0 then
+		lookup = luci.util.ubus("network.rrdns", "lookup", {
+			addrs   = lookup,
+			timeout = 250,
+			limit   = 1000
+		}) or { }
+	end
+
 	for _, e in luci.util.kspairs(hosts) do
-		callback(e[1], e[2], e[3], e[4])
+		callback(e[1], e[2], e[3], lookup[e[2]] or lookup[e[3]] or e[4])
 	end
 end
 
@@ -234,17 +223,17 @@ end
 function net.mac_hints(callback)
 	if callback then
 		_nethints(1, function(mac, v4, v6, name)
-			name = name or nixio.getnameinfo(v4 or v6, nil, 100) or v4
+			name = name or v4
 			if name and name ~= mac then
-				callback(mac, name or nixio.getnameinfo(v4 or v6, nil, 100) or v4)
+				callback(mac, name or v4)
 			end
 		end)
 	else
 		local rv = { }
 		_nethints(1, function(mac, v4, v6, name)
-			name = name or nixio.getnameinfo(v4 or v6, nil, 100) or v4
+			name = name or v4
 			if name and name ~= mac then
-				rv[#rv+1] = { mac, name or nixio.getnameinfo(v4 or v6, nil, 100) or v4 }
+				rv[#rv+1] = { mac, name or v4 }
 			end
 		end)
 		return rv
@@ -256,7 +245,7 @@ end
 function net.ipv4_hints(callback)
 	if callback then
 		_nethints(2, function(mac, v4, v6, name)
-			name = name or nixio.getnameinfo(v4, nil, 100) or mac
+			name = name or mac
 			if name and name ~= v4 then
 				callback(v4, name)
 			end
@@ -264,7 +253,7 @@ function net.ipv4_hints(callback)
 	else
 		local rv = { }
 		_nethints(2, function(mac, v4, v6, name)
-			name = name or nixio.getnameinfo(v4, nil, 100) or mac
+			name = name or mac
 			if name and name ~= v4 then
 				rv[#rv+1] = { v4, name }
 			end
@@ -278,7 +267,7 @@ end
 function net.ipv6_hints(callback)
 	if callback then
 		_nethints(3, function(mac, v4, v6, name)
-			name = name or nixio.getnameinfo(v6, nil, 100) or mac
+			name = name or mac
 			if name and name ~= v6 then
 				callback(v6, name)
 			end
@@ -286,7 +275,7 @@ function net.ipv6_hints(callback)
 	else
 		local rv = { }
 		_nethints(3, function(mac, v4, v6, name)
-			name = name or nixio.getnameinfo(v6, nil, 100) or mac
+			name = name or mac
 			if name and name ~= v6 then
 				rv[#rv+1] = { v6, name }
 			end
@@ -369,151 +358,14 @@ end
 
 function net.devices()
 	local devs = {}
+	local seen = {}
 	for k, v in ipairs(nixio.getifaddrs()) do
-		if v.family == "packet" then
+		if v.name and not seen[v.name] then
+			seen[v.name] = true
 			devs[#devs+1] = v.name
 		end
 	end
 	return devs
-end
-
-
-function net.deviceinfo()
-	local devs = {}
-	for k, v in ipairs(nixio.getifaddrs()) do
-		if v.family == "packet" then
-			local d = v.data
-			d[1] = d.rx_bytes
-			d[2] = d.rx_packets
-			d[3] = d.rx_errors
-			d[4] = d.rx_dropped
-			d[5] = 0
-			d[6] = 0
-			d[7] = 0
-			d[8] = d.multicast
-			d[9] = d.tx_bytes
-			d[10] = d.tx_packets
-			d[11] = d.tx_errors
-			d[12] = d.tx_dropped
-			d[13] = 0
-			d[14] = d.collisions
-			d[15] = 0
-			d[16] = 0
-			devs[v.name] = d
-		end
-	end
-	return devs
-end
-
-
---			The following fields are defined for route entry tables:
---			{ "dest", "gateway", "metric", "refcount", "usecount", "irtt",
---			  "flags", "device" }
-function net.routes(callback)
-	local routes = { }
-
-	for line in io.lines("/proc/net/route") do
-
-		local dev, dst_ip, gateway, flags, refcnt, usecnt, metric,
-			  dst_mask, mtu, win, irtt = line:match(
-			"([^%s]+)\t([A-F0-9]+)\t([A-F0-9]+)\t([A-F0-9]+)\t" ..
-			"(%d+)\t(%d+)\t(%d+)\t([A-F0-9]+)\t(%d+)\t(%d+)\t(%d+)"
-		)
-
-		if dev then
-			gateway  = luci.ip.Hex( gateway,  32, luci.ip.FAMILY_INET4 )
-			dst_mask = luci.ip.Hex( dst_mask, 32, luci.ip.FAMILY_INET4 )
-			dst_ip   = luci.ip.Hex(
-				dst_ip, dst_mask:prefix(dst_mask), luci.ip.FAMILY_INET4
-			)
-
-			local rt = {
-				dest     = dst_ip,
-				gateway  = gateway,
-				metric   = tonumber(metric),
-				refcount = tonumber(refcnt),
-				usecount = tonumber(usecnt),
-				mtu      = tonumber(mtu),
-				window   = tonumber(window),
-				irtt     = tonumber(irtt),
-				flags    = tonumber(flags, 16),
-				device   = dev
-			}
-
-			if callback then
-				callback(rt)
-			else
-				routes[#routes+1] = rt
-			end
-		end
-	end
-
-	return routes
-end
-
---			The following fields are defined for route entry tables:
---			{ "source", "dest", "nexthop", "metric", "refcount", "usecount",
---			  "flags", "device" }
-function net.routes6(callback)
-	if fs.access("/proc/net/ipv6_route", "r") then
-		local routes = { }
-
-		for line in io.lines("/proc/net/ipv6_route") do
-
-			local dst_ip, dst_prefix, src_ip, src_prefix, nexthop,
-				  metric, refcnt, usecnt, flags, dev = line:match(
-				"([a-f0-9]+) ([a-f0-9]+) " ..
-				"([a-f0-9]+) ([a-f0-9]+) " ..
-				"([a-f0-9]+) ([a-f0-9]+) " ..
-				"([a-f0-9]+) ([a-f0-9]+) " ..
-				"([a-f0-9]+) +([^%s]+)"
-			)
-
-			if dst_ip and dst_prefix and
-			   src_ip and src_prefix and
-			   nexthop and metric and
-			   refcnt and usecnt and
-			   flags and dev
-			then
-				src_ip = luci.ip.Hex(
-					src_ip, tonumber(src_prefix, 16), luci.ip.FAMILY_INET6, false
-				)
-
-				dst_ip = luci.ip.Hex(
-					dst_ip, tonumber(dst_prefix, 16), luci.ip.FAMILY_INET6, false
-				)
-
-				nexthop = luci.ip.Hex( nexthop, 128, luci.ip.FAMILY_INET6, false )
-
-				local rt = {
-					source   = src_ip,
-					dest     = dst_ip,
-					nexthop  = nexthop,
-					metric   = tonumber(metric, 16),
-					refcount = tonumber(refcnt, 16),
-					usecount = tonumber(usecnt, 16),
-					flags    = tonumber(flags, 16),
-					device   = dev,
-
-					-- lua number is too small for storing the metric
-					-- add a metric_raw field with the original content
-					metric_raw = metric
-				}
-
-				if callback then
-					callback(rt)
-				else
-					routes[#routes+1] = rt
-				end
-			end
-		end
-
-		return routes
-	end
-end
-
-function net.pingtest(host)
-	return os.execute("ping -c1 '"..host:gsub("'", '').."' >/dev/null 2>&1")
 end
 
 
@@ -609,37 +461,19 @@ end
 wifi = {}
 
 function wifi.getiwinfo(ifname)
-	local stat, iwinfo = pcall(require, "iwinfo")
+	ntm.init()
 
-	if ifname then
-		local d, n = ifname:match("^(%w+)%.network(%d+)")
-		local wstate = luci.util.ubus("network.wireless", "status") or { }
-
-		d = d or ifname
-		n = n and tonumber(n) or 1
-
-		if type(wstate[d]) == "table" and
-		   type(wstate[d].interfaces) == "table" and
-		   type(wstate[d].interfaces[n]) == "table" and
-		   type(wstate[d].interfaces[n].ifname) == "string"
-		then
-			ifname = wstate[d].interfaces[n].ifname
-		else
-			ifname = d
-		end
-
-		local t = stat and iwinfo.type(ifname)
-		local x = t and iwinfo[t] or { }
-		return setmetatable({}, {
-			__index = function(t, k)
-				if k == "ifname" then
-					return ifname
-				elseif x[k] then
-					return x[k](ifname)
-				end
-			end
-		})
+	local wnet = ntm:get_wifinet(ifname)
+	if wnet and wnet.iwinfo then
+		return wnet.iwinfo
 	end
+
+	local wdev = ntm:get_wifidev(ifname)
+	if wdev and wdev.iwinfo then
+		return wdev.iwinfo
+	end
+
+	return { ifname = ifname }
 end
 
 

@@ -2,6 +2,7 @@
 -- Licensed to the public under the Apache License 2.0.
 
 local ipc = require "luci.ip"
+local sys = require "luci.sys"
 local o
 require "luci.util"
 
@@ -68,9 +69,10 @@ se = s:taboption("advanced", Flag, "sequential_ip",
 	translate("Allocate IP addresses sequentially, starting from the lowest available address"))
 se.optional = true
 
-s:taboption("advanced", Flag, "boguspriv",
+bp = s:taboption("advanced", Flag, "boguspriv",
 	translate("Filter private"),
 	translate("Do not forward reverse lookups for local networks"))
+bp.default = bp.enabled
 
 s:taboption("advanced", Flag, "filterwin2k",
 	translate("Filter useless"),
@@ -310,10 +312,10 @@ end
 
 hostid = s:option(Value, "hostid", translate("<abbr title=\"Internet Protocol Version 6\">IPv6</abbr>-Suffix (hex)"))
 
-ipc.neighbors({ family = 4 }, function(n)
-	if n.mac and n.dest then
-		ip:value(n.dest:string())
-		mac:value(n.mac, "%s (%s)" %{ n.mac, n.dest:string() })
+sys.net.host_hints(function(m, v4, v6, name)
+	if m and v4 then
+		ip:value(v4)
+		mac:value(m, "%s (%s)" %{ m, name or v4 })
 	end
 end)
 

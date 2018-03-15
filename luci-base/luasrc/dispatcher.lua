@@ -14,8 +14,6 @@ uci = require "luci.model.uci"
 i18n = require "luci.i18n"
 _M.fs = fs
 
-authenticator = {}
-
 -- Index table
 local index = nil
 
@@ -101,24 +99,6 @@ function error500(message)
 	return false
 end
 
-function authenticator.htmlauth(validator, accs, default, template)
-	local user = http.formvalue("luci_username")
-	local pass = http.formvalue("luci_password")
-
-	if user and validator(user, pass) then
-		return user
-	end
-
-	require("luci.i18n")
-	require("luci.template")
-	context.path = {}
-	http.status(403, "Forbidden")
-	luci.template.render(template or "sysauth", {duser=default, fuser=user})
-
-	return false
-
-end
-
 function httpdispatch(request, prefix)
 	http.context.request = request
 
@@ -188,6 +168,53 @@ function test_post_security()
 	return true
 end
 
+local function session_retrieve(sid, allowed_users)
+	local sdat = util.ubus("session", "get", { ubus_rpc_session = sid })
+
+	if type(sdat) == "table" and
+	   type(sdat.values) == "table" and
+	   type(sdat.values.token) == "string" and
+	   (not allowed_users or
+	    util.contains(allowed_users, sdat.values.username))
+	then
+		return sid, sdat.values
+	end
+
+	return nil, nil
+end
+
+local function session_setup(user, pass, allowed_users)
+	if util.contains(allowed_users, user) then
+		local login = util.ubus("session", "login", {
+			username = user,
+			password = pass,
+			timeout  = tonumber(luci.config.sauth.sessiontime)
+		})
+
+		local rp = context.requestpath
+			and table.concat(context.requestpath, "/") or ""
+
+		if type(login) == "table" and
+		   type(login.ubus_rpc_session) == "string"
+		then
+			util.ubus("session", "set", {
+				ubus_rpc_session = login.ubus_rpc_session,
+				values = { token = sys.uniqueid(16) }
+			})
+
+			io.stderr:write("luci: accepted login on /%s for %s from %s\n"
+				%{ rp, user, http.getenv("REMOTE_ADDR") or "?" })
+
+			return session_retrieve(login.ubus_rpc_session)
+		end
+
+		io.stderr:write("luci: failed login on /%s for %s from %s\n"
+			%{ rp, user, http.getenv("REMOTE_ADDR") or "?" })
+	end
+
+	return nil, nil
+end
+
 function dispatch(request)
 	--context._disable_memtrace = require "luci.debug".trap_memtrace("l")
 	local ctx = context
@@ -201,10 +228,19 @@ function dispatch(request)
 	local lang = conf.main.lang or "auto"
 	if lang == "auto" then
 		local aclang = http.getenv("HTTP_ACCEPT_LANGUAGE") or ""
-		for lpat in aclang:gmatch("[%w-]+") do
-			lpat = lpat and lpat:gsub("-", "_")
-			if conf.languages[lpat] then
-				lang = lpat
+		for aclang in aclang:gmatch("[%w_-]+") do
+			local country, culture = aclang:match("^([a-z][a-z])[_-]([a-zA-Z][a-zA-Z])$")
+			if country and culture then
+				local cc = "%s_%s" %{ country, culture:lower() }
+				if conf.languages[cc] then
+					lang = cc
+					break
+				elseif conf.languages[country] then
+					lang = country
+					break
+				end
+			elseif conf.languages[aclang] then
+				lang = aclang
 				break
 			end
 		end
@@ -331,75 +367,66 @@ function dispatch(request)
 		"https://github.com/openwrt/luci/issues"
 	)
 
-	if track.sysauth then
-		local authen = type(track.sysauth_authenticator) == "function"
-		 and track.sysauth_authenticator
-		 or authenticator[track.sysauth_authenticator]
+	if track.sysauth and not ctx.authsession then
+		local authen = track.sysauth_authenticator
+		local _, sid, sdat, default_user, allowed_users
 
-		local def  = (type(track.sysauth) == "string") and track.sysauth
-		local accs = def and {track.sysauth} or track.sysauth
-		local sess = ctx.authsession
-		if not sess then
-			sess = http.getcookie("sysauth")
-			sess = sess and sess:match("^[a-f0-9]*$")
+		if type(authen) == "string" and authen ~= "htmlauth" then
+			error500("Unsupported authenticator %q configured" % authen)
+			return
 		end
 
-		local sdat = (util.ubus("session", "get", { ubus_rpc_session = sess }) or { }).values
-		local user, token
-
-		if sdat then
-			user = sdat.user
-			token = sdat.token
+		if type(track.sysauth) == "table" then
+			default_user, allowed_users = nil, track.sysauth
 		else
-			local eu = http.getenv("HTTP_AUTH_USER")
-			local ep = http.getenv("HTTP_AUTH_PASS")
-			if eu and ep and sys.user.checkpasswd(eu, ep) then
-				authen = function() return eu end
-			end
+			default_user, allowed_users = track.sysauth, { track.sysauth }
 		end
 
-		if not util.contains(accs, user) then
-			if authen then
-				local user, sess = authen(sys.user.checkpasswd, accs, def, track.sysauth_template)
-				local token
-				if not user or not util.contains(accs, user) then
-					return
-				else
-					if not sess then
-						local sdat = util.ubus("session", "create", { timeout = tonumber(luci.config.sauth.sessiontime) })
-						if sdat then
-							token = sys.uniqueid(16)
-							util.ubus("session", "set", {
-								ubus_rpc_session = sdat.ubus_rpc_session,
-								values = {
-									user = user,
-									token = token,
-									section = sys.uniqueid(16)
-								}
-							})
-							sess = sdat.ubus_rpc_session
-						end
-					end
+		if type(authen) == "function" then
+			_, sid = authen(sys.user.checkpasswd, allowed_users)
+		else
+			sid = http.getcookie("sysauth")
+		end
 
-					if sess and token then
-						http.header("Set-Cookie", 'sysauth=%s; path=%s' %{ sess, build_url() })
+		sid, sdat = session_retrieve(sid, allowed_users)
 
-						ctx.authsession = sess
-						ctx.authtoken = token
-						ctx.authuser = user
+		if not (sid and sdat) and authen == "htmlauth" then
+			local user = http.getenv("HTTP_AUTH_USER")
+			local pass = http.getenv("HTTP_AUTH_PASS")
 
-						http.redirect(build_url(unpack(ctx.requestpath)))
-					end
-				end
-			else
+			if user == nil and pass == nil then
+				user = http.formvalue("luci_username")
+				pass = http.formvalue("luci_password")
+			end
+
+			sid, sdat = session_setup(user, pass, allowed_users)
+
+			if not sid then
+				local tmpl = require "luci.template"
+
+				context.path = {}
+
 				http.status(403, "Forbidden")
+				tmpl.render(track.sysauth_template or "sysauth", {
+					duser = default_user,
+					fuser = user
+				})
+
 				return
 			end
-		else
-			ctx.authsession = sess
-			ctx.authtoken = token
-			ctx.authuser = user
+
+			http.header("Set-Cookie", 'sysauth=%s; path=%s' %{ sid, build_url() })
+			http.redirect(build_url(unpack(ctx.requestpath)))
 		end
+
+		if not sid or not sdat then
+			http.status(403, "Forbidden")
+			return
+		end
+
+		ctx.authsession = sid
+		ctx.authtoken = sdat.token
+		ctx.authuser = sdat.username
 	end
 
 	if c and require_post_security(c.target) then
