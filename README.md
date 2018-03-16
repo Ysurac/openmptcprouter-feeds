@@ -20,12 +20,14 @@ A LuCI interface was made to make it easier to use. It's used in OpenMPTCProuter
 *Description:* A secure socks5 proxy
 
 
-MPTCP support is added in LuCI interface and init scripts.
+MPTCP support is added in LuCI interface and init scripts. IPv6 support added.
 
 ## Simple-obfs
 *Source:* [https://github.com/shadowsocks/simple-obfs](https://github.com/shadowsocks/simple-obfs)
 
 *Description:* A simple obfuscating tool, designed as plugin server of shadowsocks.
+
+Support is added in ShadowSocks LuCI interface and init scripts.
 
 ## SpeedTestC
 *Source:* [https://github.com/mobrembski/SpeedTestC](https://github.com/mobrembski/SpeedTestC)
@@ -37,5 +39,5 @@ MPTCP support is added in LuCI interface and init scripts.
 
 *Description:* nginx is an HTTP and reverse proxy server, a mail proxy server, and a generic TCP/UDP proxy server. 
 
-An interface for TCP/UDP stream is added. Used for TCP/UDP failover.
+A LuCI interface for TCP/UDP stream is added. Used for TCP/UDP failover.
 
