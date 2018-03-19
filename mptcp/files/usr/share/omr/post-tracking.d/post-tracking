@@ -6,22 +6,40 @@ set_route() {
 	INTERFACE=$1
 	PREVINTERFACE=$2
 	multipath_config=$(uci -q get "network.$INTERFACE.multipath" || echo "off")
-	multipath_current_config=$(multipath $INTERFACE | grep deactivated)
+	interface_if=$(uci -q get "network.$INTERFACE.ifname")
+	multipath_current_config=$(multipath $interface_if | grep deactivated)
 	if [ "$multipath_config" != "off" ] && [ "$SETROUTE" != true ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$multipath_current_config" = "" ]; then
 	#if [ "$multipath_config" != "off" ] && [ "$SETROUTE" != true ]; then
 	#if [ "$multipath_config" != "off" ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$SETROUTE" != true ]; then
 		interface_gw=$(uci -q get "network.$INTERFACE.gateway")
 		if [ -z $interface_gw ]; then
-			$interface_gw=$(ubus call network.interface.$INTERFACE status | jsonfilter -e '@.route[0].nexthop' | tr -d "\d")
+			$interface_gw=$(ubus call network.interface.$INTERFACE status | jsonfilter -e '@.route[0].nexthop' | tr -d "\n")
 		fi
 		if [ -z $interface_gw ]; then
-			$interface_gw=$(ubus call network.interface.$INTERFACE status | jsonfilter -e '@.inactive.route[0].nexthop' | tr -d "\d")
+			$interface_gw=$(ubus call network.interface.$INTERFACE status | jsonfilter -e '@.inactive.route[0].nexthop' | tr -d "\n")
 		fi
-		interface_if=$(uci -q get "network.$INTERFACE.ifname")
 		if [ "$interface_gw" != "" ]; then
 			_log "Replace default route by $interface_gw dev $interface_if"
 			ip route replace default scope global nexthop via $interface_gw dev $interface_if && SETROUTE=true
 		fi
+	fi
+}
+
+set_ss_route() {
+	local server_ip
+	config_get server_ip $1 server
+	if [ "$(ip route show dev $OMR_TRACKER_DEVICE | grep $server_ip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ]; then
+		_log "Set server route via $OMR_TRACKER_DEVICE"
+		ip route replace $server_ip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
+	fi
+}
+
+del_ss_route() {
+	local server_ip
+	config_get server_ip $1 server
+	if [ "$(ip route show dev $OMR_TRACKER_DEVICE | grep $server_ip | grep $OMR_TRACKER_DEVICE_GATEWAY)" != "" ]; then
+		_log "Remove server route via $OMR_TRACKER_DEVICE"
+		ip route delete $server_ip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
 	fi
 }
 
@@ -45,20 +63,36 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 	multipath "$OMR_TRACKER_DEVICE" off
 	if [ "$default_gw" = "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
 		config_load network
-		config_foreach set_route interface $OMR_TRACKER_DEVICE
+		config_foreach set_route interface $OMR_TRACKER_INTERFACE
+	fi
+	config_load shadowsocks-libev
+	config_foreach del_ss_route server
+	exit 0
+fi
+
+if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ]; then
+	if [ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
+		_log "Tunnel up : Replace default route by $current_interface_gw dev $OMR_TRACKER_DEVICE"
+		ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
 	fi
 	exit 0
 fi
 
 multipath_config=$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath" || echo "off")
-[ "$multipath_config" = "master" ] && [ "$multipath_status" = "on" ] && exit 0
-[ "$multipath_status" = "$multipath_config" ] && exit 0
-_log "$OMR_TRACKER_DEVICE switched to $multipath_config"
 if [ "$multipath_config" = "master" ]; then
 	if [ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
-		_log "Master up : Replace default route by $current_interface_gw dev $OMR_TRACKER_INTERFACE"
-		ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_INTERFACE
+		if [ "$(ip route show default | grep -v metric | awk '/default/ {print $5}' | grep tun)" = "" ]; then
+			_log "Master up : Replace default route by $current_interface_gw dev $OMR_TRACKER_DEVICE"
+			ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
+		else
+			config_load shadowsocks-libev
+			config_foreach set_ss_route server
+		fi
 	fi
 	multipath_config="on"
 fi
+[ "$multipath_config" = "master" ] && [ "$multipath_status" = "on" ] && exit 0
+[ "$multipath_status" = "$multipath_config" ] && exit 0
+_log "Multipath $OMR_TRACKER_DEVICE switched to $multipath_config"
+
 multipath "$OMR_TRACKER_DEVICE" "$multipath_config"
