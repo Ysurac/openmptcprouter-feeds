@@ -2,7 +2,7 @@
 
 This is the OpenWrt OpenMPTCProuter feed containing all modified and necessary packages to build the OpenMPTCProuter image.
 
-For More information, see [https://github.com/ysurac/openmptcprouter](https://github.com/ysurac/openmptcprouter).
+For More information, see [https://github.com/ysurac/openmptcprouter](https://github.com/ysurac/openmptcprouter) and [https://www.openmptcprouter.com](https://www.openmptcprouter.com/).
 
 
 ## Glorytun
@@ -27,6 +27,7 @@ MPTCP support is added in LuCI interface and init scripts. IPv6 support added.
 
 *Description:* A simple obfuscating tool, designed as plugin server of shadowsocks.
 
+
 Support is added in ShadowSocks LuCI interface and init scripts.
 
 ## SpeedTestC
@@ -38,6 +39,7 @@ Support is added in ShadowSocks LuCI interface and init scripts.
 *Source:* [https://www.nginx.org](https://www.nginx.org)
 
 *Description:* nginx is an HTTP and reverse proxy server, a mail proxy server, and a generic TCP/UDP proxy server. 
+
 
 A LuCI interface for TCP/UDP stream is added. Used for TCP/UDP failover.
 
