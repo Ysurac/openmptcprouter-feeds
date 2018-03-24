@@ -11,7 +11,7 @@ For More information, see [https://github.com/ysurac/openmptcprouter](https://gi
 *Description:* A small, simple and secure VPN
 
 
-A LuCI interface was made to make it easier to use. It's used in OpenMPTCProuter to redirect ports from the VPS to the router.
+A LuCI interface was made to make it easier to use. It's used in OpenMPTCProuter to redirect ports from the VPS to the router and for UDP/ICMP traffic from the router.
 
 
 ## Shadowsocks
