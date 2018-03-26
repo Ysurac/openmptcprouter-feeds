@@ -63,7 +63,7 @@ MY_DEPENDS := \
     luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-base \
     luci-app-nginx-ha luci-app-omr-tracker luci-app-qos \
     luci-app-vnstat omr-quota luci-app-omr-quota \
-    luci-app-mptcp \
+    luci-app-mptcp luci-app-openmptcprouter \
     speedtestc \
     ip6tables-mod-nat luci-proto-ipv6 ethtool
 
