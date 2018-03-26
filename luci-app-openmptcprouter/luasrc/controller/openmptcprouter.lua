@@ -48,4 +48,5 @@ function wizard_add()
 	luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
 	luci.http.redirect(luci.dispatcher.build_url("admin/network/network"))
+	return
 end
