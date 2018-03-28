@@ -1,0 +1,284 @@
+<%
+-- Copyright 2015 OVH (OverTheBox@ovh.net)
+-- Simon Lelievre (simon.lelievre@corp.ovh.com)
+-- Sebastien Duponcheel (sebastien.duponcheel@ovh.net)
+--
+-- This file is part of OverTheBox for OpenWrt.
+--
+--    OverTheBox is free software: you can redistribute it and/or modify
+--    it under the terms of the GNU General Public License as published by
+--    the Free Software Foundation, either version 3 of the License, or
+--    (at your option) any later version.
+--
+--    OverTheBox is distributed in the hope that it will be useful,
+--    but WITHOUT ANY WARRANTY; without even the implied warranty of
+--    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+--    GNU General Public License for more details.
+--
+--    You should have received a copy of the GNU General Public License
+--    along with OverTheBox.  If not, see (http://www.gnu.org/licenses/)
+-%>
+<%
+-- Copyright 2018 Ycarus (Yannick Chabanois) ycarus@zugaina.org
+--
+-- Small changes to make this work with OpenMPTCProuter
+-%>
+<%+header%>
+<link rel="stylesheet" type="text/css" href="<%=resource%>/openmptcprouter/css/wanstatus.css"/>
+<script type="text/javascript" src="<%=resource%>/seedrandom.js"></script>
+<script type="text/javascript" src="<%=resource%>/cbi.js"></script>
+<script type="text/javascript">//<![CDATA[
+	XHR.poll(5, '/cgi-bin/luci/admin/system/openmptcprouter/interfaces_status', null,
+		function(x, mArray)
+		{
+			var status = document.getElementById('openmptcprouter_status');
+			var stepbar = false;
+			var temp = '<figure class="tree">';
+			temp += '<ul>';
+			if (mArray.openmptcprouter)
+			{
+				if (mArray.openmptcprouter.remote_from_lease)
+				{
+					if (stepbar)
+						stepbar.securedNetwork.status = "done";
+					temp += '<li class="remote-from-lease">';
+					temp += '<a href="#">';
+
+					var equipmentIcon = '<img src="<%=resource%>/computer.png" />';
+					var title = String.format('<br /><strong>%s (%s)</strong>', mArray.openmptcprouter.remote_hostname ? mArray.openmptcprouter.remote_hostname : 'You', mArray.openmptcprouter.remote_addr)
+					var statusMessageClass = "";
+					var statusIcon = "<%=resource%>/openmptcprouter/images/statusOK.png";
+					var statusMessage = "";
+					var content = "";
+
+					temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
+					temp += '</a>'
+				}
+
+				temp += '<li id="networkRootNode"><table><tr><td><a href="#">';
+
+				var equipmentIcon = '<img src="<%=resource%>/overthebox.png" style:"top: 0px;" />';
+				var title = String.format("openmptcprouter (%s)", mArray.openmptcprouter.wan_addr || mArray.openmptcprouter.local_addr);
+				var statusMessageClass = "";
+				var statusIcon = "<%=resource%>/openmptcprouter/images/statusOK.png";
+				var statusMessage = "";
+				var content = "";
+
+				if (mArray.openmptcprouter.version)
+				{
+					content += "Version " + mArray.openmptcprouter.version;
+					content += "<br />";
+				}
+				if (mArray.openmptcprouter.loadavg)
+				{
+					content += "Load : " + mArray.openmptcprouter.loadavg;
+					content += "<br />";
+				}
+				if (mArray.openmptcprouter.core_temp)
+				{
+					content += "Core temp : " + (mArray.openmptcprouter.core_temp / 1000).toFixed(1) + " &#176;";
+					content += "<br />";
+				}
+				if (mArray.openmptcprouter.uptime)
+				{
+					var date = new Date(null);
+					content += "Uptime : " + String.format('%t', mArray.openmptcprouter.uptime);
+					content += "<br />";
+				}
+				if (mArray.openmptcprouter.dhcpd)
+				{
+					for ( dhcpd in mArray.openmptcprouter.dhcpd )
+					{
+						if (stepbar)
+							stepbar.dhcp.status = "done"
+						var dhcp = mArray.openmptcprouter.dhcpd[dhcpd];
+						content += String.format('<span style="text-transform:capitalize;">%s</span> address: %s<br />', dhcp.interface, dhcp.router)
+						content += String.format('<span style="text-transform:capitalize;">%s</span> range: %s - %s<br />', dhcp.interface, dhcp.range_start, dhcp.range_end)
+					}
+				}
+				else
+				{
+					temp += String.format('lan (%s)', mArray.openmptcprouter.local_addr);
+				}
+
+				if (mArray.openmptcprouter.socks_service == false)
+				{
+					statusMessage += 'Socks service is not running<br/>';
+				}
+				if (mArray.openmptcprouter.tun_service == false)
+				{
+					statusMessage += 'TUN service is not running';
+				}
+
+				if(statusMessage !== "")
+				{
+					statusMessageClass = "error";
+					statusIcon = "<%=resource%>/openmptcprouter/images/statusError.png";
+				}
+
+				temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
+				temp += '</a></td>'
+			}
+			if (mArray.wans)
+			{
+				temp += '<td><ul>';
+				for( var i = 0; i < mArray.wans.length; i++ )
+				{
+					// Get link color
+					mArray.wans[i].color = stringToColour(mArray.wans[i].name)
+					// Mwan status infos and colors
+					var stat = '';
+					var cssc = '';
+					switch (mArray.wans[i].status)
+					{
+						case 'OK':
+							stat = 'Online';
+							cssc = 'rgb(144, 240, 144)';
+							statusIcon = "<%=resource%>/openmptcprouter/images/statusOK.png";
+							statusMessageClass = "";
+							statusMessage = "";
+							break;
+						case 'ERROR':
+							stat = 'Offline';
+							cssc = 'rgb(240, 144, 144)';
+							statusIcon = "<%=resource%>/openmptcprouter/images/statusError.png";
+							statusMessageClass = "error";
+							statusMessage = "";
+							break;
+						default:
+							stat = 'Unknown';
+							cssc = 'rgb(144, 240, 144)';
+							statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
+							statusMessageClass = "warning";
+							statusMessage = "";
+					}
+					// Populate info
+					var wanip   = mArray.wans[i].wanip;
+					var ipaddr   = mArray.wans[i].ipaddr;
+					var whois   = mArray.wans[i].whois;
+					var multipath = mArray.wans[i].multipath;
+					var latency = mArray.wans[i].latency;
+					// Generate template
+					if(mArray.openmptcprouter.remote_from_lease == true && mArray.wans.length == 1)
+					{
+						temp += String.format('<li class="subnode-only-child"><a href="%q">', mArray.wans[i].link);
+					}else{
+						temp += String.format('<li><a href="%q">', mArray.wans[i].link);
+					}
+
+					var equipmentIcon = String.format('<embed id="modem_%s" onload="setColorSVG(\'modem_%s\', \'%s\')" src="<%=resource%>/modem.svg" />', mArray.wans[i].name, mArray.wans[i].name, mArray.wans[i].color);
+					var title = mArray.wans[i].label + " (" + mArray.wans[i].gateway + ")";
+					//var content = String.format('%s<br />wan address: <strong>%s</strong><br />whois: %s<br />latency: %s ms<br />multipath: %s', stat, wanip, whois, latency, multipath);
+					var content = String.format('ip address: <strong>%s</strong><br />multipath: %s', ipaddr,multipath);
+					if(mArray.wans[i].qos && mArray.wans[i].download > 0 && mArray.wans[i].upload > 0)
+					{
+						content += String.format('<br />traffic control: %s/%s kbps (%s)', mArray.wans[i].download, mArray.wans[i].upload, mArray.wans[i].qos)
+					}
+					temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
+
+					temp += '</a></li>';
+				}
+
+				// Check
+				if (mArray.openmptcprouter && mArray.openmptcprouter.remote_from_lease == false)
+				{
+					if (stepbar)
+					{
+						stepbar.securedNetwork.status = "doing";
+					}
+
+					temp += '<li>';
+					temp += '<a href="#">';
+
+					var equipmentIcon = '<img src="<%=resource%>/computer.png" />';
+					var title = String.format("You (%s)", mArray.openmptcprouter.remote_addr);
+					var statusMessageClass = "warning";
+					var statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
+					var statusMessage = "Your IP was not leased by openmptcprouter";
+
+					//var content = "Please unplug and plug your ethernet cable or turn off and on your Wifi";
+					var content = ""
+
+					temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
+					temp += '</a></li>';
+				}
+
+				temp += '</ul></td></tr></table>';
+
+			}
+			temp += '</li>';
+			if (mArray.openmptcprouter && mArray.openmptcprouter.remote_from_lease)
+				temp += '</ul></li>';
+			// Close tree
+			temp += '</ul>';
+			temp += '</figure>';
+			status.innerHTML = temp;
+		}
+	);
+
+	function setColorSVG(embed_id, color)
+	{
+		var embed = document.getElementById(embed_id);
+		try {
+			svg = embed.getSVGDocument ? embed.getSVGDocument() : embed.contentDocument;
+		}
+		catch(e) {
+			svg = document.embeds[embed_id].getSVGDocument();
+		}
+		if(svg)
+		{
+			var back = svg.getElementById('backgound_modem');
+			back.setAttribute('style', 'fill: ' + color + ';fill-opacity:0.6;');
+		}
+	}
+
+	function getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass, statusMessage, content)
+	{
+		return 	String.format(	'<div class="network-node">' +
+									'<div class="equipment-icon">%s</div>' +
+									'<div class="status-icon"><img src="%s" /></div>' +
+									'<div class="info">' +
+										'<div class="title">%s</div>' +
+										'<div class="status-message %s">%s</div>' +
+										'<div class="content">%s</div>' +
+										'<div class="clear"></div>' +
+									'</div>' +
+									'<div class="clear"></div>' +
+								'</div>',
+								equipmentIcon, statusIcon, title, statusMessageClass, statusMessage, content);
+	}
+
+	function stringToColour(str) {
+		if(str == "wan1")
+			return "BlueViolet";
+		if(str == "wan2")
+			return "DeepSkyBlue";
+		if(str == "wan3")
+			return "LightGreen";
+		if(str == "wan4")
+			return "PowderBlue";
+		if(str == "wan5")
+			return "PaleGreen";
+		if(str == "wan6")
+			return "YellowGreen";
+		if(str == "wan7")
+			return "SeaGreen";
+		if(str == "wan8")
+			return "SteelBlue";
+
+		// Generate a color folowing the name
+		Math.seedrandom(str);
+		var rand = Math.random() * Math.pow(255,3);
+		Math.seedrandom(); // don't leave a non-random seed in the generator
+		for (var i = 0, colour = "#"; i < 3; colour += ("00" + ((rand >> i++ * 8) & 0xFF).toString(16)).slice(-2));
+		return colour;
+	}
+
+//]]></script>
+
+<h2><%:Network overview%></h2>
+<fieldset id="interface_field" class="cbi-section">
+	<!--	<legend><%:Network overview%></legen> -->
+	<div id="openmptcprouter_status"></div>
+</fieldset>
+<%+footer%>
