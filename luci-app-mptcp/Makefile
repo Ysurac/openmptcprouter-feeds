@@ -6,7 +6,6 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI Support for MPTCP
-
 PKG_LICENSE:=Apache-2.0
 
 include ../luci/luci.mk

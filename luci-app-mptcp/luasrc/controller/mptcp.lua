@@ -7,8 +7,8 @@ module("luci.controller.mptcp", package.seeall)
 
 function index()
 	entry({"admin", "network", "mptcp"}, alias("admin", "network", "mptcp", "settings"), _("MPTCP"))
-	entry({"admin", "network", "mptcp", "settings"}, cbi("mptcp"), _("Settings"),2)
-	entry({"admin", "network", "mptcp", "bandwidth"}, template("multipath"), _("Bandwidth"), 3).leaf = true
+	entry({"admin", "network", "mptcp", "settings"}, cbi("mptcp"), _("Settings"),2).leaf = true
+	entry({"admin", "network", "mptcp", "bandwidth"}, template("mptcp/multipath"), _("Bandwidth"), 3).leaf = true
 	entry({"admin", "network", "mptcp", "multipath_bandwidth"}, call("multipath_bandwidth")).leaf = true
 	entry({"admin", "network", "mptcp", "interface_bandwidth"}, call("interface_bandwidth")).leaf = true
 end
