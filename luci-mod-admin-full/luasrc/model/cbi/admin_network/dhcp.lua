@@ -294,6 +294,9 @@ mac.rmempty  = true
 ip = s:option(Value, "ip", translate("<abbr title=\"Internet Protocol Version 4\">IPv4</abbr>-Address"))
 ip.datatype = "or(ip4addr,'ignore')"
 
+gw = s:option(Value, "gw", translate("Gateway"))
+gw.datatype = "or(ip4addr,'ignore')"
+
 time = s:option(Value, "leasetime", translate("Lease time"))
 time.rmempty  = true
 
