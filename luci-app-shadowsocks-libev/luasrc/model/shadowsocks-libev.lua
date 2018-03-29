@@ -261,6 +261,7 @@ modes = {
 }
 
 methods = {
+	"none",
 	-- aead
 	"aes-128-gcm",
 	"aes-192-gcm",
