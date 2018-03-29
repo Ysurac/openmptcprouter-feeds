@@ -50,6 +50,7 @@ define Package/mptcp
       CONFIG_TCP_CONG_LIA=y \
       CONFIG_TCP_CONG_OLIA=y \
       CONFIG_TCP_CONG_WVEGAS=y \
+      CONFIG_TCP_CONG_BBR=y \
       CONFIG_DEFAULT_TCP_CONG="olia"
 
   PKGARCH:=all
