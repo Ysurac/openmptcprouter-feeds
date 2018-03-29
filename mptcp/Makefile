@@ -46,6 +46,7 @@ define Package/mptcp
       CONFIG_DEFAULT_WVEGAS=n \
       CONFIG_DEFAULT_CUBIC=n \
       CONFIG_DEFAULT_RENO=n \
+      CONFIG_DEFAULT_BBR=n \
       CONFIG_TCP_CONG_BALIA=y \
       CONFIG_TCP_CONG_LIA=y \
       CONFIG_TCP_CONG_OLIA=y \
