@@ -65,7 +65,8 @@ MY_DEPENDS := \
     luci-app-vnstat omr-quota luci-app-omr-quota \
     luci-app-mptcp luci-app-openmptcprouter \
     speedtestc \
-    ip6tables-mod-nat luci-proto-ipv6 ethtool
+    ip6tables-mod-nat luci-proto-ipv6 ethtool \
+    kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su
 
 define Package/$(PKG_NAME)
 SECTION:=OMR
