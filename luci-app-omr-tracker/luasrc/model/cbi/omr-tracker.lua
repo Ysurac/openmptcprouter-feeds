@@ -8,6 +8,10 @@ m = Map("omr-tracker", translate("OMR-Tracker"), translate("OMR-Tracker detect w
 s = m:section(TypedSection, "defaults", translate("Defaults Settings"))
 s.anonymous   = true
 
+o = s:option(Flag, "enabled", translate("Enable"), translate("When tracker is disabled, connection failover is also disabled"))
+o.default     = true
+o.rmempty     = false
+
 o = s:option(Value, "timeout", translate("Timeout (s)"))
 o.placeholder = "1"
 o.default     = "1"
@@ -47,6 +51,10 @@ for _, iface in ipairs(ifaces) do
 		s.add_select_options[iface] = iface
 	end
 end
+
+o = s:option(Flag, "enabled", translate("Enable"))
+o.default     = true
+o.rmempty     = false
 
 o = s:option(Value, "timeout", translate("Timeout (s)"))
 o.placeholder = "1"
