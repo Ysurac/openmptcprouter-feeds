@@ -9,12 +9,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=glorytun-udp
-PKG_VERSION:=0.0.93-mud
+PKG_VERSION:=0.0.98-mud
 PKG_RELEASE:=1
 PKG_SOURCE:=glorytun-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://github.com/angt/glorytun/releases/download/v$(PKG_VERSION)
 PKG_BUILD_DIR:=$(BUILD_DIR)/glorytun-$(PKG_VERSION)
-PKG_HASH:=76849b1568119cf0834749db56d4882966863d31351c21c1b22f373f0c97a498
+PKG_HASH:=34a02c83efbfa1742d639643eeeeeb35f43611c92e2fd93f2eedba065c2f9417
 include $(INCLUDE_DIR)/package.mk
 
 define Package/$(PKG_NAME)
