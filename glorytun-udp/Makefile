@@ -26,7 +26,7 @@ URL:=https://github.com/angt/glorytun
 SUBMENU:=VPN
 endef
 
-TARGET_CFLAGS += -std=c99 -D_GNU_SOURCE
+TARGET_CFLAGS += -std=c99 -D_GNU_SOURCE -DGT_RUNDIR=\"\\\"/tmp\"\\\"
 
 define Package/$(PKG_NAME)/conffiles
 /etc/config/glorytun
