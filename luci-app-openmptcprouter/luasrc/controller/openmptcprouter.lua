@@ -71,13 +71,12 @@ function interfaces_status()
 	-- Check that requester is in same network
 	mArray.openmptcprouter["service_addr"] = uci:get("shadowsocks", "proxy", "server") or "0.0.0.0"
 	mArray.openmptcprouter["local_addr"] = uci:get("network", "lan", "ipaddr")
-	mArray.openmptcprouter["wan_addr"] = "0.0.0.0"
 
 	-- wanaddr
 	mArray.openmptcprouter["wan_addr"] = sys.exec("wget -4 -qO- -T 1 http://ip.openmptcprouter.com")
 
-	mArray.openmptcprouter["remote_addr"]        = luci.http.getenv("REMOTE_ADDR") or ""
-	mArray.openmptcprouter["remote_from_lease"]        = false
+	mArray.openmptcprouter["remote_addr"] = luci.http.getenv("REMOTE_ADDR") or ""
+	mArray.openmptcprouter["remote_from_lease"] = false
 	local leases=tools.dhcp_leases()
 	for _, value in pairs(leases) do
 		if value["ipaddr"] == mArray.openmptcprouter["remote_addr"] then
