@@ -128,11 +128,8 @@ function updown.write(self, section, value)
 		end
 	else
 		local type = proto.cfgvalue(self,section)
-		if type == 'udp' then
-			luci.sys.call("/etc/init.d/glorytun-udp start %s" % section)
-		else
-			luci.sys.call("/etc/init.d/glorytun start %s" % section)
-		end
+		luci.sys.call("/etc/init.d/glorytun-udp start %s" % section)
+		luci.sys.call("/etc/init.d/glorytun start %s" % section)
 	end
 	luci.http.redirect( self.redirect )
 end
