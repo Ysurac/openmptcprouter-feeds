@@ -104,6 +104,12 @@ uci batch <<-EOF
 	delete $$s
 	commit firewall
 EOF
+s=firewall.ss_rules6
+uci get "$$s" >/dev/null || exit 0
+uci batch <<-EOF
+	delete $$s
+	commit firewall
+EOF
 endef
 
 define Build/Prepare
