@@ -63,10 +63,10 @@ MY_DEPENDS := \
     luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-base \
     luci-app-nginx-ha luci-app-omr-tracker luci-app-qos \
     luci-app-vnstat omr-quota luci-app-omr-quota \
-    luci-app-mptcp luci-app-openmptcprouter \
+    luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass \
     speedtestc \
     ip6tables-mod-nat luci-proto-ipv6 ethtool \
-    kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su
+    kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su comgt kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan usb-modeswitch
 
 define Package/$(PKG_NAME)
 SECTION:=OMR
