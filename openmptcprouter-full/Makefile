@@ -66,7 +66,7 @@ MY_DEPENDS := \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass \
     speedtestc \
     ip6tables-mod-nat luci-proto-ipv6 ethtool \
-    kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su comgt kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan usb-modeswitch
+    kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su comgt kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan usb-modeswitch uqmi adb-enablemodem umbim kmod-mii kmod-usb-net kmod-usb-wdm kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim
 
 define Package/$(PKG_NAME)
 SECTION:=OMR
