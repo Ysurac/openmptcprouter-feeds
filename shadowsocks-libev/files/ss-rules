@@ -154,15 +154,15 @@ ss_rules_ipset_mkadd() {
 }
 
 ss_rules_iptchains_init() {
+	ss_rules_iptchains_init_mark
 	ss_rules_iptchains_init_tcp
 	ss_rules_iptchains_init_udp
-	ss_rules_iptchains_init_mark
 }
 
 ss_rules_iptchains_init_mark() {
 	iptables-restore --noflush <<-EOF
 		*mangle
-		-A OUTPUT -m set --match-set ss_rules_dst_bypass dst -j MARK --set-mark 0x539
+		-A PREROUTING -m set --match-set ss_rules_dst_bypass dst -j MARK --set-mark 0x539
 		COMMIT
 	EOF
 }
@@ -184,8 +184,8 @@ ss_rules_iptchains_init_tcp() {
 		*nat
 		:ss_rules_local_out -
 		-I OUTPUT 1 -p tcp -j ss_rules_local_out
-		-A ss_rules_local_out -m set --match-set ss_rules_dst_bypass_ dst -j RETURN
 		-A ss_rules_local_out -m set --match-set ss_rules_dst_bypass dst -j RETURN
+		-A ss_rules_local_out -m set --match-set ss_rules_dst_bypass_ dst -j RETURN
 		-A ss_rules_local_out -p tcp $o_ipt_extra -j $local_target -m comment --comment "local_default: $o_local_default"
 		COMMIT
 	EOF
@@ -233,6 +233,7 @@ ss_rules_iptchains_init_() {
 		forward) dst_default_target=ss_rules_forward ;;
 		bypass|*) dst_default_target=RETURN ;;
 	esac
+	echo "titi"
 	sed -e '/^\s*$/d' -e 's/^\s\+//' <<-EOF | iptables-restore --noflush
 		*$table
 		:ss_rules_pre_src -
@@ -241,6 +242,7 @@ ss_rules_iptchains_init_() {
 		:ss_rules_forward -
 		$(ss_rules_iptchains_mkprerules "$proto")
 		-A ss_rules_pre_src -m set --match-set ss_rules_dst_bypass_ dst -j RETURN
+		-A ss_rules_pre_src -m set --match-set ss_rules_dst_bypass dst -j RETURN
 		-A ss_rules_dst -m set --match-set ss_rules_dst_bypass dst -j RETURN
 		-A ss_rules_pre_src -p $proto $o_ipt_extra -j ss_rules_src
 		-A ss_rules_src -m set --match-set ss_rules_src_bypass src -j RETURN
@@ -254,6 +256,7 @@ ss_rules_iptchains_init_() {
 		COMMIT
 		$recentrst_mangle_rules
 	EOF
+	echo "toto"
 }
 
 ss_rules_iptchains_mkprerules() {
