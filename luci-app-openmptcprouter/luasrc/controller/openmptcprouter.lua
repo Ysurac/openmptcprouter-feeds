@@ -13,12 +13,15 @@ function index()
 	entry({"admin", "system", "openmptcprouter", "wizard_add"}, post("wizard_add"))
 	entry({"admin", "system", "openmptcprouter", "status"}, template("openmptcprouter/wanstatus"), _("Status"), 2).leaf = true
 	entry({"admin", "system", "openmptcprouter", "interfaces_status"}, call("interfaces_status")).leaf = true
+	entry({"admin", "system", "openmptcprouter", "settings"}, template("openmptcprouter/settings"), _("Advanced Settings"), 3).leaf = true
+	entry({"admin", "system", "openmptcprouter", "settings_add"}, post("settings_add")).leaf = true
 end
 
 function wizard_add()
 	local server_ip = luci.http.formvalue("server_ip")
+
+	-- Set ShadowSocks settings
 	local shadowsocks_key = luci.http.formvalue("shadowsocks_key")
-	local glorytun_key = luci.http.formvalue("glorytun_key")
 	if shadowsocks_key ~= "" then
 		ucic:set("shadowsocks-libev","sss0","server",server_ip)
 		ucic:set("shadowsocks-libev","sss0","key",shadowsocks_key)
@@ -28,6 +31,9 @@ function wizard_add()
 		ucic:save("shadowsocks-libev")
 		ucic:commit("shadowsocks-libev")
 	end
+
+	-- Set Glorytun TCP settings
+	local glorytun_key = luci.http.formvalue("glorytun_key")
 	if glorytun_key ~= "" then
 		ucic:set("glorytun","vpn","host",server_ip)
 		ucic:set("glorytun","vpn","port","65001")
@@ -40,6 +46,7 @@ function wizard_add()
 		ucic:commit("glorytun")
 	end
 
+	-- Set interfaces settings
 	local interfaces = luci.http.formvaluetable("intf")
 	for intf, _ in pairs(interfaces) do
 		local ipaddr = luci.http.formvalue("cbid.network.%s.ipaddr" % intf)
@@ -54,6 +61,25 @@ function wizard_add()
 	luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
 	luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/status"))
+	return
+end
+
+function settings_add()
+	-- Set tcp_keepalive_time
+	local tcp_keepalive_time = luci.http.formvalue("tcp_keepalive_time")
+	luci.sys.exec("sysctl -w net.ipv4.tcp_keepalive_time=%s" % tcp_keepalive_time)
+	luci.sys.exec("sed -i 's:^net.ipv4.tcp_keepalive_time = [0-9]*:net.ipv4.tcp_keepalive_time=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_keepalive_time)
+	
+	-- Disable IPv6
+	local disable_ipv6 = luci.http.formvalue("disable_ipv6") or 0
+	luci.sys.exec("sysctl -w net.ipv6.conf.all.disable_ipv6=%s" % disable_ipv6)
+	luci.sys.exec("sed -i 's:^net.ipv6.conf.all.disable_ipv6 = [0-9]*:net.ipv6.conf.all.disable_ipv6=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % disable_ipv6)
+	ucic:set("firewall",ucic:get_first("firewall","defaults"),"disable_ipv6",disable_ipv6)
+	ucic:save("firewall")
+	ucic:commit("firewall")
+	
+	-- Done, redirect
+	luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/settings"))
 	return
 end
 
