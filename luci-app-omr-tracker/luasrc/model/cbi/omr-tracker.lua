@@ -9,7 +9,6 @@ s = m:section(TypedSection, "defaults", translate("Defaults Settings"))
 s.anonymous   = true
 
 o = s:option(Flag, "enabled", translate("Enable"), translate("When tracker is disabled, connection failover is also disabled"))
-o.default     = true
 o.rmempty     = false
 
 o = s:option(Value, "timeout", translate("Timeout (s)"))
