@@ -53,7 +53,6 @@ for _, iface in ipairs(ifaces) do
 end
 
 o = s:option(Flag, "enabled", translate("Enable"))
-o.default     = true
 o.rmempty     = false
 
 o = s:option(Value, "timeout", translate("Timeout (s)"))
