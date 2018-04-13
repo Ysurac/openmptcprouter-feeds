@@ -11,4 +11,8 @@ PKG_LICENSE:=Apache-2.0
 
 include ../luci/luci.mk
 
+define Package/luci-app-openmptcprouter/conffiles
+/etc/sysctl.d/zzz_openmptcprouter.conf
+endef
+
 # call BuildPackage - OpenWrt buildroot signature
