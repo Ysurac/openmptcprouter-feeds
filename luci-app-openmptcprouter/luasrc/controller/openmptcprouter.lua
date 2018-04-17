@@ -78,6 +78,30 @@ function settings_add()
 	ucic:save("firewall")
 	ucic:commit("firewall")
 	
+	-- Set CPU scaling minimum frequency
+	local scaling_min_freq = luci.http.formvalue("scaling_min_freq") or ""
+	if scaling_min_freq ~= "" then
+		ucic:set("openmptcprouter","settings","scaling_min_freq",scaling_min_freq)
+		ucic:save("openmptcprouter")
+		ucic:commit("openmptcprouter")
+	end
+
+	-- Set CPU scaling maximum frequency
+	local scaling_max_freq = luci.http.formvalue("scaling_max_freq") or ""
+	if scaling_max_freq ~= "" then
+		ucic:set("openmptcprouter","settings","scaling_max_freq",scaling_max_freq)
+		ucic:save("openmptcprouter")
+		ucic:commit("openmptcprouter")
+	end
+
+	-- Set CPU governor
+	local scaling_governor = luci.http.formvalue("scaling_governor") or ""
+	if scaling_governor ~= "" then
+		ucic:set("openmptcprouter","settings","scaling_governor",scaling_governor)
+		ucic:save("openmptcprouter")
+		ucic:commit("openmptcprouter")
+	end
+	
 	-- Done, redirect
 	luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/settings"))
 	return
