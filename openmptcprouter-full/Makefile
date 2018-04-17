@@ -59,7 +59,7 @@ MY_DEPENDS := \
     luci-i18n-base-zh-tw \
     luci-i18n-firewall-en \
     luci-i18n-firewall-fr \
-    ca-bundle ca-certificates libustream-ssl-openssl \
+    ca-bundle ca-certificates libustream-openssl \
     luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-base \
     luci-app-nginx-ha luci-app-omr-tracker luci-app-qos \
     luci-app-vnstat omr-quota luci-app-omr-quota \
