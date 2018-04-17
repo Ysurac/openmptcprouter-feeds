@@ -101,7 +101,9 @@ function settings_add()
 		ucic:save("openmptcprouter")
 		ucic:commit("openmptcprouter")
 	end
-	
+
+	luci.sys.call("/etc/init.d/openmptcprouter restart >/dev/null 2>/dev/null")
+
 	-- Done, redirect
 	luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/settings"))
 	return
