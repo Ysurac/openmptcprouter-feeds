@@ -18,6 +18,44 @@ function index()
 end
 
 function wizard_add()
+	local add_interface = luci.http.formvalue("add_interface") or ""
+	local gostatus = true
+	if add_interface ~= "" then
+		local i = 1
+		ucic:foreach("network", "interface", function(s)
+			local sectionname = s[".name"]
+			if sectionname:match("^wan(%d+)$") then
+				i = i + 1
+			end
+		end)
+		local defif = ucic:get("network","wan1","ifname") or "eth0"
+		ucic:set("network","wan" .. i,"interface")
+		ucic:set("network","wan" .. i,"ifname",defif)
+		ucic:set("network","wan" .. i,"proto","static")
+		ucic:set("network","wan" .. i,"type","macvlan")
+		ucic:set("network","wan" .. i,"ip4table","wan")
+		ucic:set("network","wan" .. i,"multipath","on")
+		ucic:set("network","wan" .. i,"defaultroute","0")
+		ucic:save("network")
+		ucic:commit("network")
+		-- Dirty way to add new interface to firewall...
+		luci.sys.call("uci -q add_list firewall.@zone[1].network=wan" .. i)
+
+		luci.sys.call("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
+		gostatus = false
+	end
+
+	local delete_intf = luci.http.formvaluetable("delete")
+	if delete_intf ~= "" then
+		for intf, _ in pairs(delete_intf) do
+			ucic:delete("network",intf)
+			ucic:delete("network",intf .. "_dev")
+			ucic:save("network")
+			ucic:commit("network")
+		end
+		gostatus = false
+	end
+	
 	local server_ip = luci.http.formvalue("server_ip")
 
 	-- Set ShadowSocks settings
@@ -60,7 +98,11 @@ function wizard_add()
 	ucic:commit("network")
 	luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
-	luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/status"))
+	if gostatus then
+		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/status"))
+	else
+		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/wizard"))
+	end
 	return
 end
 
