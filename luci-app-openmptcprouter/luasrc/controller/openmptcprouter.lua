@@ -243,14 +243,14 @@ function interfaces_status()
 	    -- Don't show if0 in the overview
 	    --if interface == "lo" then return end
 
-	    local ifname = section['ifname']
+	    local ifname = section['ifname'] or ""
 	    if multipath == "off" and not ifname:match("^tun.*") then return end
 
 	    local asn
 
 	    local connectivity
 	    local multipath_state = ut.trim(sys.exec("multipath " .. ifname .. " | grep deactivated"))
-	    if multipath_state == "" then
+	    if multipath_state == "" and ifname ~= "" then
 		    connectivity = 'OK'
 	    else
 		    connectivity = 'ERROR'
