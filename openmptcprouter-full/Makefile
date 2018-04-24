@@ -33,32 +33,6 @@ MY_DEPENDS := \
     iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace iptables-mod-conntrack-extra \
     wireless-tools \
     libiwinfo-lua \
-    luci-i18n-base-en \
-    luci-i18n-base-fr \
-    luci-i18n-base-de \
-    luci-i18n-base-es \
-    luci-i18n-base-ca \
-    luci-i18n-base-cs \
-    luci-i18n-base-el \
-    luci-i18n-base-he \
-    luci-i18n-base-hu \
-    luci-i18n-base-it \
-    luci-i18n-base-ja \
-    luci-i18n-base-ko \
-    luci-i18n-base-ms \
-    luci-i18n-base-no \
-    luci-i18n-base-pl \
-    luci-i18n-base-pt \
-    luci-i18n-base-ro \
-    luci-i18n-base-ru \
-    luci-i18n-base-sk \
-    luci-i18n-base-sv \
-    luci-i18n-base-tr \
-    luci-i18n-base-vi \
-    luci-i18n-base-zh-cn \
-    luci-i18n-base-zh-tw \
-    luci-i18n-firewall-en \
-    luci-i18n-firewall-fr \
     ca-bundle ca-certificates libustream-openssl \
     luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-base \
     luci-app-nginx-ha luci-app-omr-tracker luci-app-qos \
@@ -68,10 +42,12 @@ MY_DEPENDS := \
     ip6tables-mod-nat luci-proto-ipv6 ethtool \
     kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su comgt kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan usb-modeswitch uqmi adb-enablemodem umbim kmod-mii kmod-usb-net kmod-usb-wdm kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim
 
+OMR_SUPPORTED_LANGS := ca zh_cn en fr de el he hu it ja ms no pl pt_br pt ro ru es sv uk vi
+
 define Package/$(PKG_NAME)
 SECTION:=OMR
 CATEGORY:=OpenMPTCProuter
-DEPENDS:=$(foreach p,$(MY_DEPENDS),+$(p))
+DEPENDS:=$(foreach p,$(MY_DEPENDS),+$(p)) $(foreach lang,$(OMR_SUPPORTED_LANGS),+LUCI_LANG_$(lang):luci-i18n-base-$(lang))
 TITLE:=OpenMPTCProuter Full Package
 endef
 
