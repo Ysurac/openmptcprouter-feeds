@@ -119,6 +119,13 @@ function settings_add()
 	ucic:set("firewall",ucic:get_first("firewall","defaults"),"disable_ipv6",disable_ipv6)
 	ucic:save("firewall")
 	ucic:commit("firewall")
+	if disable_ipv6 == 1 then
+		ucic:set("shadowsocks-libev","hi","local_address","0.0.0.0")
+	else
+		ucic:set("shadowsocks-libev","hi","local_address","::")
+	end
+	ucic:save("shadowsocks-libev")
+	ucic:commit("shadowsocks-libev")
 	
 	-- Set CPU scaling minimum frequency
 	local scaling_min_freq = luci.http.formvalue("scaling_min_freq") or ""
