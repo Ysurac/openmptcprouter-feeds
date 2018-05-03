@@ -243,7 +243,7 @@ function interfaces_status()
 	    local interface = section[".name"]
 	    local net = ntm:get_network(interface)
 	    local ipaddr = net:ipaddr()
-	    local gateway = section['gateway']
+	    local gateway = section['gateway'] or ""
 	    local multipath = section['multipath']
 
 	    --if not ipaddr or not gateway then return end
@@ -261,6 +261,16 @@ function interfaces_status()
 		    connectivity = 'OK'
 	    else
 		    connectivity = 'ERROR'
+	    end
+
+	    local gw_ping
+	    if gateway ~= "" then
+		    local gw_ping_test = ut.trim(sys.exec("ping -W 1 -c 1 " .. gateway .. " | grep '100% packet loss'"))
+		    if gw_ping_test == "" then
+			    gw_ping = 'UP'
+		    else
+			    gw_ping = 'DOWN'
+		    end
 	    end
 
 	    local publicIP = "-"
@@ -282,6 +292,7 @@ function interfaces_status()
 		    qos = section['trafficcontrol'],
 		    download = section['download'],
 		    upload = section['upload'],
+		    gw_ping = gw_ping,
 	    }
 
 	    if ifname:match("^tun.*") then
