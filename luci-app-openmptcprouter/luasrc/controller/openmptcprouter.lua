@@ -158,6 +158,18 @@ function settings_add()
 	return
 end
 
+function get_ip(interface)
+	local dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
+	local ip
+	if dump and dump['ipv4-address'] then
+		local _, ipv4address
+		for _, ipv4address in ipairs(dump['ipv4-address']) do
+			ip = dump['ipv4-address'][_].address
+		end
+	end
+	return ip
+end
+
 -- This function come from OverTheBox by OVH with very small changes
 function interfaces_status()
 	local ut      = require "luci.util"
@@ -190,7 +202,16 @@ function interfaces_status()
 	mArray.openmptcprouter["tun_service"] = false
 	if string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?glorytun(-udp)?$'"), "%d+") then
 		mArray.openmptcprouter["tun_service"] = true
+		mArray.openmptcprouter["tun_ip"] = get_ip("glorytun")
+		local tunnel_ping_test = ut.trim(sys.exec("ping -W 1 -c 1 10.0.0.1 | grep '100% packet loss'"))
+		if tunnel_ping_test == "" then
+			mArray.openmptcprouter["tun_state"] = 'UP'
+		else
+			mArray.openmptcprouter["tun_state"] = 'DOWN'
+		end
+
 	end
+	
 	mArray.openmptcprouter["socks_service"] = false
 	if string.find(sys.exec("/usr/bin/pgrep ss-redir"), "%d+") then
 		mArray.openmptcprouter["socks_service"] = true
@@ -251,7 +272,8 @@ function interfaces_status()
 	    --if interface == "lo" then return end
 
 	    local ifname = section['ifname'] or ""
-	    if multipath == "off" and not ifname:match("^tun.*") then return end
+	    --if multipath == "off" and not ifname:match("^tun.*") then return end
+	    if multipath == "off" then return end
 
 	    local asn
 
