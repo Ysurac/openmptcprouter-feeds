@@ -55,3 +55,11 @@ A LuCI interface for TCP/UDP stream is added. Used for TCP/UDP failover.
 *Description:* Luci support for DHCPv6/6in4/6to4/6rd/DS-Lite/aiccu
 
 Added support to gateway set by user for 6in4. Used for IPv6 over the glorytun IPv4 VPN.
+
+
+## omr-bypass
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-bypass](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-bypass)
+
+*Description:* Luci interface to bypass domains with shadowsocks
+
+Domains added are bypassed when shadowsocks is used. This can be used when VPS IP is blacklisted from some sites.
