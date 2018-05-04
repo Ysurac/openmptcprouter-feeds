@@ -80,3 +80,9 @@ This is used for OpenMPTCProuter failover.
 
 Interface to omr-tracker.
 
+
+## luci-app-mptcp
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-mptcp](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-mptcp)
+
+*Description:* Luci interface for all MPTCP settings
+
