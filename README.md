@@ -48,3 +48,10 @@ Used to test speed. No LuCI interface.
 
 A LuCI interface for TCP/UDP stream is added. Used for TCP/UDP failover.
 
+
+## luci-proto-ipv6
+*Source:* [https://github.com/openwrt/luci](https://github.com/openwrt/luci)
+
+*Description:* Luci support for DHCPv6/6in4/6to4/6rd/DS-Lite/aiccu
+
+Added support to gateway set by user for 6in4. Used for IPv6 over the glorytun IPv4 VPN.
