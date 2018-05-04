@@ -57,9 +57,26 @@ A LuCI interface for TCP/UDP stream is added. Used for TCP/UDP failover.
 Added support to gateway set by user for 6in4. Used for IPv6 over the glorytun IPv4 VPN.
 
 
-## omr-bypass
+## luci-omr-bypass
 *Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-bypass](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-bypass)
 
 *Description:* Luci interface to bypass domains with shadowsocks
 
 Domains added are bypassed when shadowsocks is used. This can be used when VPS IP is blacklisted from some sites.
+
+
+## omr-tracker
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-tracker](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-tracker)
+
+*Description:* Track connection status. This check if gateway is up then check if the connection work. If it's not working this execute scripts.
+
+This is used for OpenMPTCProuter failover.
+
+
+## luci-omr-tracker
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-tracker](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-tracker)
+
+*Description:* Luci interface to omr-tracker
+
+Interface to omr-tracker.
+
