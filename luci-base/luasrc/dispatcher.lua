@@ -75,11 +75,16 @@ function error404(message)
 	http.status(404, "Not Found")
 	message = message or "Not Found"
 
-	require("luci.template")
-	if not util.copcall(luci.template.render, "error404") then
+	local function render()
+		local template = require "luci.template"
+		template.render("error404")
+	end
+
+	if not util.copcall(render) then
 		http.prepare_content("text/plain")
 		http.write(message)
 	end
+
 	return false
 end
 
@@ -113,7 +118,8 @@ function httpdispatch(request, prefix)
 		end
 	end
 
-	for node in pathinfo:gmatch("[^/]+") do
+	local node
+	for node in pathinfo:gmatch("[^/%z]+") do
 		r[#r+1] = node
 	end
 
@@ -136,8 +142,7 @@ local function require_post_security(target)
 
 				if (type(required_val) == "string" and
 				    request_val ~= required_val) or
-				   (required_val == true and
-				    (request_val == nil or request_val == ""))
+				   (required_val == true and request_val == nil)
 				then
 					return false
 				end
@@ -346,15 +351,23 @@ function dispatch(request)
 		   ifattr      = function(...) return _ifattr(...) end;
 		   attr        = function(...) return _ifattr(true, ...) end;
 		   url         = build_url;
-		}, {__index=function(table, key)
+		}, {__index=function(tbl, key)
 			if key == "controller" then
 				return build_url()
 			elseif key == "REQUEST_URI" then
 				return build_url(unpack(ctx.requestpath))
+			elseif key == "FULL_REQUEST_URI" then
+				local url = { http.getenv("SCRIPT_NAME"), http.getenv("PATH_INFO") }
+				local query = http.getenv("QUERY_STRING")
+				if query and #query > 0 then
+					url[#url+1] = "?"
+					url[#url+1] = query
+				end
+				return table.concat(url, "")
 			elseif key == "token" then
 				return ctx.authtoken
 			else
-				return rawget(table, key) or _G[key]
+				return rawget(tbl, key) or _G[key]
 			end
 		end})
 	end
@@ -427,6 +440,13 @@ function dispatch(request)
 		ctx.authsession = sid
 		ctx.authtoken = sdat.token
 		ctx.authuser = sdat.username
+	end
+
+	if track.cors and http.getenv("REQUEST_METHOD") == "OPTIONS" then
+		luci.http.status(200, "OK")
+		luci.http.header("Access-Control-Allow-Origin", http.getenv("HTTP_ORIGIN") or "*")
+		luci.http.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		return
 	end
 
 	if c and require_post_security(c.target) then
@@ -650,6 +670,23 @@ function node(...)
 	return c
 end
 
+function lookup(...)
+	local i, path = nil, {}
+	for i = 1, select('#', ...) do
+		local name, arg = nil, tostring(select(i, ...))
+		for name in arg:gmatch("[^/]+") do
+			path[#path+1] = name
+		end
+	end
+
+	for i = #path, 1, -1 do
+		local node = context.treecache[table.concat(path, ".", 1, i)]
+		if node and (i == #path or node.leaf) then
+			return node, build_url(unpack(path))
+		end
+	end
+end
+
 function _create_node(path)
 	if #path == 0 then
 		return context.tree
@@ -791,7 +828,16 @@ local function _cbi(self, ...)
 
 	local state = nil
 
+	local i, res
 	for i, res in ipairs(maps) do
+		if util.instanceof(res, cbi.SimpleForm) then
+			io.stderr:write("Model %s returns SimpleForm but is dispatched via cbi(),\n"
+				% self.model)
+
+			io.stderr:write("please change %s to use the form() action instead.\n"
+				% table.concat(context.request, "/"))
+		end
+
 		res.flow = config
 		local cstate = res:parse()
 		if cstate and (not state or cstate < state) then
@@ -884,7 +930,7 @@ end
 function cbi(model, config)
 	return {
 		type = "cbi",
-		post = { ["cbi.submit"] = "1" },
+		post = { ["cbi.submit"] = true },
 		config = config,
 		model = model,
 		target = _cbi
@@ -912,6 +958,7 @@ local function _form(self, ...)
 	local maps = luci.cbi.load(self.model, ...)
 	local state = nil
 
+	local i, res
 	for i, res in ipairs(maps) do
 		local cstate = res:parse()
 		if cstate and (not state or cstate < state) then
@@ -930,7 +977,7 @@ end
 function form(model)
 	return {
 		type = "cbi",
-		post = { ["cbi.submit"] = "1" },
+		post = { ["cbi.submit"] = true },
 		model = model,
 		target = _form
 	}

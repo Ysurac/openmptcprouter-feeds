@@ -10,6 +10,7 @@ local string = require "string"
 local coroutine = require "coroutine"
 local tparser = require "luci.template.parser"
 local json = require "luci.jsonc"
+local lhttp = require "lucihttp"
 
 local _ubus = require "ubus"
 local _ubus_connection = nil
@@ -160,8 +161,31 @@ function pcdata(value)
 	return value and tparser.pcdata(tostring(value))
 end
 
+function urlencode(value)
+	if value ~= nil then
+		local str = tostring(value)
+		return lhttp.urlencode(str, lhttp.ENCODE_IF_NEEDED + lhttp.ENCODE_FULL)
+			or str
+	end
+	return nil
+end
+
+function urldecode(value, decode_plus)
+	if value ~= nil then
+		local flag = decode_plus and lhttp.DECODE_PLUS or 0
+		local str = tostring(value)
+		return lhttp.urldecode(str, lhttp.DECODE_IF_NEEDED + flag)
+			or str
+	end
+	return nil
+end
+
 function striptags(value)
 	return value and tparser.striptags(tostring(value))
+end
+
+function shellquote(value)
+	return string.format("'%s'", string.gsub(value or "", "'", "'\\''"))
 end
 
 -- for bash, ash and similar shells single-quoted strings are taken
@@ -380,16 +404,6 @@ function clone(object, deep)
 	end
 
 	return setmetatable(copy, getmetatable(object))
-end
-
-
-function dtable()
-        return setmetatable({}, { __index =
-                function(tbl, key)
-                        return rawget(tbl, key)
-                         or rawget(rawset(tbl, key, dtable()), key)
-                end
-        })
 end
 
 
@@ -617,6 +631,20 @@ function execl(command)
 	return data
 end
 
+
+local ubus_codes = {
+	"INVALID_COMMAND",
+	"INVALID_ARGUMENT",
+	"METHOD_NOT_FOUND",
+	"NOT_FOUND",
+	"NO_DATA",
+	"PERMISSION_DENIED",
+	"TIMEOUT",
+	"NOT_SUPPORTED",
+	"UNKNOWN_ERROR",
+	"CONNECTION_FAILED"
+}
+
 function ubus(object, method, data)
 	if not _ubus_connection then
 		_ubus_connection = _ubus.connect()
@@ -627,7 +655,8 @@ function ubus(object, method, data)
 		if type(data) ~= "table" then
 			data = { }
 		end
-		return _ubus_connection:call(object, method, data)
+		local rv, err = _ubus_connection:call(object, method, data)
+		return rv, err, ubus_codes[err]
 	elseif object then
 		return _ubus_connection:signatures(object)
 	else
@@ -652,10 +681,11 @@ end
 function checklib(fullpathexe, wantedlib)
 	local fs = require "nixio.fs"
 	local haveldd = fs.access('/usr/bin/ldd')
-	if not haveldd then
+	local haveexe = fs.access(fullpathexe)
+	if not haveldd or not haveexe then
 		return false
 	end
-	local libs = exec("/usr/bin/ldd " .. fullpathexe)
+	local libs = exec(string.format("/usr/bin/ldd %s", shellquote(fullpathexe)))
 	if not libs then
 		return false
 	end
