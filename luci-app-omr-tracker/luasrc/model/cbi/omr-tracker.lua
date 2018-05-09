@@ -3,9 +3,39 @@ local sys = require "luci.sys"
 local ifaces = sys.net:devices()
 local m, s, o
 
-m = Map("omr-tracker", translate("OMR-Tracker"), translate("OMR-Tracker detect when a connection is down and execute needed scripts"))
+m = Map("omr-tracker", translate("OMR-Tracker"))
 
-s = m:section(TypedSection, "defaults", translate("Defaults Settings"))
+s = m:section(TypedSection, "shadowsocks", translate("ShadowSocks tracker Settings"), translate("Detect if ShadowSocks is down and stop traffic redirection over it"))
+s.anonymous   = true
+
+o = s:option(Flag, "enabled", translate("Enable"), translate("When tracker is disabled, connection failover is also disabled"))
+o.rmempty     = false
+
+o = s:option(Value, "timeout", translate("Timeout (s)"))
+o.placeholder = "1"
+o.default     = "1"
+o.datatype    = "range(1, 100)"
+o.rmempty     = false
+
+o = s:option(Value, "tries", translate("Tries"))
+o.placeholder = "4"
+o.default     = "4"
+o.datatype    = "range(1, 10)"
+o.rmempty     = false
+
+o = s:option(Value, "interval", translate("Retry interval (s)"))
+o.placeholder = "2"
+o.default     = "2"
+o.datatype    = "range(1, 100)"
+o.rmempty     = false
+
+o = s:option(DynamicList, "hosts", translate("Hosts"))
+o.placeholder = "bing.com"
+o.default     = { "bing.com", "google.com" }
+o.rmempty     = false
+
+
+s = m:section(TypedSection, "defaults", translate("Defaults Settings"), translate("OMR-Tracker detect when a connection is down and execute needed scripts"))
 s.anonymous   = true
 
 o = s:option(Flag, "enabled", translate("Enable"), translate("When tracker is disabled, connection failover is also disabled"))
