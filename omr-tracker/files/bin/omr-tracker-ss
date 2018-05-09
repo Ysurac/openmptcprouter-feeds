@@ -1,0 +1,31 @@
+#!/bin/sh
+# vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
+
+name=$0
+basename="$(basename $0)"
+
+log() {
+	logger -p daemon.info -t "${basename}" "$@"
+}
+
+timeout=$OMR_TRACKER_TIMEOUT
+interval=$OMR_TRACKER_INTERVAL
+retry=$OMR_TRACKER_TRIES
+proxy=$OMR_TRACKER_PROXY
+
+last=0
+
+while true; do
+	host=${OMR_TRACKER_HOSTS%% *}
+	if curl -s --socks5 "${proxy}" --max-time "${timeout}" --retry "${retry}" "$host" &>/dev/null ; then
+		[ ${last} = 0 ] && log "Shadowsocks is up"
+		/etc/init.d/shadowsocks-libev rules_up 2> /dev/null
+		last=1
+	else
+		[ ${last} = 1 ] && log "Shadowsocks is down"
+		/etc/init.d/shadowsocks-libev rules_down 2> /dev/null
+		last=0
+	fi
+
+	sleep "${interval}"
+done
