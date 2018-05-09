@@ -68,7 +68,7 @@ Domains added are bypassed when shadowsocks is used. This can be used when VPS I
 ## omr-tracker
 *Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-tracker](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-tracker)
 
-*Description:* Track connection status. This check if gateway is up then check if the connection work. If it's not working this execute scripts.
+*Description:* Track connection status. This check if gateway is up then check if the connection work. If it's not working this execute scripts. This also detect if ShadowSocks is up or not.
 
 This is used for OpenMPTCProuter failover.
 
