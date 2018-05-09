@@ -1,4 +1,4 @@
-local ucic = uci.cursor()
+local ucic = luci.model.uci.cursor()
 module("luci.controller.omr-bypass", package.seeall)
 
 function index()

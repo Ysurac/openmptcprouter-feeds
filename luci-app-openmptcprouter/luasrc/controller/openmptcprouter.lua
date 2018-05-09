@@ -1,7 +1,7 @@
 local tools = require "luci.tools.status"
 local sys   = require "luci.sys"
 local json  = require("luci.json")
-local ucic = uci.cursor()
+local ucic = luci.model.uci.cursor()
 module("luci.controller.openmptcprouter", package.seeall)
 
 function index()
