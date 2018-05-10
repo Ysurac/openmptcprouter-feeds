@@ -29,80 +29,83 @@ _setup_macvlan() {
 	uci -q set "network.$1.type=macvlan"  # legacy
 }
 
+_setup_multipath_off() {
+    uci -q get "network.$1.multipath" >/dev/null && return
+    uci -q set "network.$1.multipath=off"
+}
+
+_setup_wan_interface() {
+	uci -q batch <<-EOF
+	set network.$1=interface
+	set network.$1.ifname=$2
+	set network.$1.proto=static
+	set network.$1.ip4table=wan
+	set network.$1.multipath=$3
+	set network.$1.defaultroute=0
+	commit network
+	add_list firewall.@zone[1].network=$1
+	commit firewall
+	EOF
+	[ -n "$4" ] && uci -q set network.$1.type=$4
+}
+
+[ "$(uci -q get "network.lan.proto")" = static ] || \
+	uci -q batch <<-EOF
+	set network.lan=interface
+	set network.lan.proto=static
+	set network.lan.ipaddr=192.168.100.1
+	set network.lan.netmask=255.255.255.0
+	set network.lan.ifname=eth0
+	EOF
+
+uci -q batch <<EOF
+delete network.none
+delete network.if6rd
+reorder network.loopback=0
+reorder network.globals=1
+reorder network.lan=2
+set network.globals.multipath=enable
+EOF
+
+# Set the ip rule for the lan with a pref of 100
+uci -q show network.lan_rule >/dev/null || \
+	uci -q batch <<-EOF
+	set network.lan_rule=rule
+	set network.lan_rule.lookup=lan
+	set network.lan_rule.priority=100
+	EOF
+
+if [ "$(uci -q get network.vpn0.proto)" = "none" ]; then
+	uci -q delete network.vpn0
+fi
+
+config_load network
+config_foreach _setup_multipath_off interface
+
+# Add the lan as a named routing table
+if ! grep -s -q "lan" /etc/iproute2/rt_tables; then
+    echo "50 lan" >> /etc/iproute2/rt_tables
+fi
+uci -q set network.lan.ip4table='lan'
+
+
 #uci -q set "network.lan.ip6assign=64"
 
+# Create WAN interfaces
 if [ "$(uci -q show network | grep wan)" = "" ]; then
 	if [ -d /sys/class/net/eth1 ]; then
 		if [ -d /sys/class/net/eth2 ]; then
-			uci -q batch <<-EOF
-			set network.wan1=interface
-			set network.wan1.ifname=eth1
-			set network.wan1.proto=static
-			set network.wan1.ip4table=wan
-			set network.wan1.multipath=master
-			set network.wan1.defaultroute=0
-			commit network
-			add_list firewall.@zone[1].network=wan1
-			commit firewall
-			set network.wan2=interface
-			set network.wan2.ifname=eth2
-			set network.wan2.proto=static
-			set network.wan2.ip4table=wan
-			set network.wan2.multipath=on
-			set network.wan2.defaultroute=0
-			commit network
-			add_list firewall.@zone[1].network=wan2
-			commit firewall
-			EOF
+			_setup_wan_interface wan1 eth1 master
+			_setup_wan_interface wan2 eth2 on
 		else
-			uci -q batch <<-EOF
-			set network.wan1=interface
-			set network.wan1.ifname=eth1
-			set network.wan1.proto=static
-			set network.wan1.type=macvlan
-			set network.wan1.ip4table=wan
-			set network.wan1.multipath=master
-			set network.wan1.defaultroute=0
-			commit network
-			add_list firewall.@zone[1].network=wan1
-			commit firewall
-			set network.wan2=interface
-			set network.wan2.ifname=eth1
-			set network.wan2.proto=static
-			set network.wan2.type=macvlan
-			set network.wan2.ip4table=wan
-			set network.wan2.multipath=on
-			set network.wan2.defaultroute=0
-			commit network
-			add_list firewall.@zone[1].network=wan2
-			commit firewall
-			EOF
+			_setup_wan_interface wan1 eth1 master macvlan
+			_setup_wan_interface wan2 eth1 on macvlan
 			_setup_macvlan wan1
 			_setup_macvlan wan2
 		fi
 	else
-		uci -q batch <<-EOF
-		set network.wan1=interface
-		set network.wan1.ifname=eth0
-		set network.wan1.proto=static
-		set network.wan1.type=macvlan
-		set network.wan1.ip4table=wan
-		set network.wan1.multipath=master
-		set network.wan1.defaultroute=0
-		commit network
-		add_list firewall.@zone[1].network=wan1
-		commit firewall
-		set network.wan2=interface
-		set network.wan2.ifname=eth0
-		set network.wan2.proto=static
-		set network.wan2.type=macvlan
-		set network.wan2.ip4table=wan
-		set network.wan2.multipath=on
-		set network.wan2.defaultroute=0
-		commit network
-		add_list firewall.@zone[1].network=wan2
-		commit firewall
-		EOF
+		_setup_wan_interface wan1 eth0 master macvlan
+		_setup_wan_interface wan2 eth0 on macvlan
 		_setup_macvlan wan1
 		_setup_macvlan wan2
 	fi
