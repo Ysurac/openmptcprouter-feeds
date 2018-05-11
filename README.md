@@ -86,3 +86,8 @@ Interface to omr-tracker.
 
 *Description:* Luci interface for all MPTCP settings
 
+
+## luci-app-openmptcprouter
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-openmptcprouter](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-openmptcprouter)
+
+*Description:* Wizard for OpenMPTCProuter settings and status page
