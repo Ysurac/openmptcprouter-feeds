@@ -294,6 +294,9 @@ function interfaces_status()
 			    gw_ping = 'UP'
 		    else
 			    gw_ping = 'DOWN'
+			    if connectivity == "OK" then
+				connectivity = 'WARNING'
+			    end
 		    end
 	    end
 
