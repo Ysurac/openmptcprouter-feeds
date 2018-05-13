@@ -189,6 +189,13 @@ function interfaces_status()
 	mArray.openmptcprouter["ss_addr"] = sys.exec("curl -s -4 --socks5 127.0.0.1:1111 -m 2 http://ip.openmptcprouter.com")
 	-- wanaddr
 	mArray.openmptcprouter["wan_addr"] = sys.exec("wget -4 -qO- -T 1 http://ip.openmptcprouter.com")
+	
+	-- dns
+	mArray.openmptcprouter["dns"] = false
+	local dns_test = sys.exec("dig openmptcprouter.com | grep 'ANWER: 0'")
+	if dns_test == "" then
+		mArray.openmptcprouter["dns"] = true
+	end
 
 	mArray.openmptcprouter["remote_addr"] = luci.http.getenv("REMOTE_ADDR") or ""
 	mArray.openmptcprouter["remote_from_lease"] = false
