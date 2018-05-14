@@ -186,7 +186,7 @@ function interfaces_status()
 	mArray.openmptcprouter["local_addr"] = uci:get("network", "lan", "ipaddr")
 
 	-- shadowsocksaddr
-	mArray.openmptcprouter["ss_addr"] = sys.exec("curl -s -4 --socks5 127.0.0.1:1111 -m 2 http://ip.openmptcprouter.com")
+	mArray.openmptcprouter["ss_addr"] = sys.exec("curl -s -4 --socks5 127.0.0.1:1111 -m 5 http://ip.openmptcprouter.com")
 	-- wanaddr
 	mArray.openmptcprouter["wan_addr"] = sys.exec("wget -4 -qO- -T 1 http://ip.openmptcprouter.com")
 	
