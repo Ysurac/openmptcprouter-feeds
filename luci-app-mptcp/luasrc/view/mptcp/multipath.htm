@@ -25,10 +25,18 @@
 
 	local dev
 	local devices = { "all" }
+	local multipath = ""
+	
 	for _, dev in luci.util.vspairs(luci.sys.net.devices()) do
 		if dev ~= "lo" and not ntm:ignore_interface(dev) then
-			local multipath = uci:get("network", dev, "multipath")
-			if multipath == "on" or multipath == "master" or multipath == "backup" or multipath == "handover" then
+		    if dev == "eth0.2" then
+			    multipath = uci:get("network", "wan", "multipath")
+			elseif dev == "4g-wwan0" then
+			     multipath = uci:get("network", "wwan0", "multipath")
+            else 			
+			     multipath = uci:get("network", dev, "multipath")
+			end		
+			if multipath == "on" or multipath == "master" or multipath == "backup" or multipath== "handover" then
 				devices[#devices+1] = dev
 			end
 		end
@@ -48,6 +56,8 @@
 <script type="text/javascript">//<![CDATA[
 
 	function stringToColour(str) {
+	     if(str == "total")
+	        return "OrangeRed" ;
 		if(str == "free1")
 			return "FireBrick";
 		if(str == "ovh1")
@@ -159,33 +169,15 @@
 				height      = dnsvg.offsetHeight - 2;
 				data_wanted = Math.ceil(width / step);
 
-				/* prefill datasets
-				for (var i = 0; i < data_wanted; i++)
-				{
-					data_tx[i] = 0;
-				}
-				*/
 
 				/* find svg elements */
 				labeldn_25 = Gdn.getElementById('label_25');
 				labeldn_50 = Gdn.getElementById('label_50');
 				labeldn_75 = Gdn.getElementById('label_75');
 
-                                labelup_25 = Gup.getElementById('label_25');
-                                labelup_50 = Gup.getElementById('label_50');
-                                labelup_75 = Gup.getElementById('label_75');
-
-				
-
-				/*
-				label_rx_cur  = document.getElementById('rx_bw_cur');
-				label_rx_avg  = document.getElementById('rx_bw_avg');
-				label_rx_peak = document.getElementById('rx_bw_peak');
-
-				label_tx_cur  = document.getElementById('tx_bw_cur');
-				label_tx_avg  = document.getElementById('tx_bw_avg');
-				label_tx_peak = document.getElementById('tx_bw_peak');
-				*/
+				labelup_25 = Gup.getElementById('label_25');
+				labelup_50 = Gup.getElementById('label_50');
+				labelup_75 = Gup.getElementById('label_75');
 
 				labeldn_scale   = document.getElementById('dnscale');
                                 labelup_scale   = document.getElementById('upscale');
@@ -209,21 +201,21 @@
 					labeldn_25.parentNode.appendChild(linedn);
 					labeldn_25.parentNode.appendChild(textdn);
 
-                                        var lineup = Gup.createElementNS('http://www.w3.org/2000/svg', 'line');
-                                                lineup.setAttribute('x1', i);
-                                                lineup.setAttribute('y1', 0);
-                                                lineup.setAttribute('x2', i);
-                                                lineup.setAttribute('y2', '100%');
-                                                lineup.setAttribute('style', 'stroke:black;stroke-width:0.1');
+					var lineup = Gup.createElementNS('http://www.w3.org/2000/svg', 'line');
+						lineup.setAttribute('x1', i);
+						lineup.setAttribute('y1', 0);
+						lineup.setAttribute('x2', i);
+						lineup.setAttribute('y2', '100%');
+						lineup.setAttribute('style', 'stroke:black;stroke-width:0.1');
 
-                                        var textup = Gup.createElementNS('http://www.w3.org/2000/svg', 'text');
-                                                textup.setAttribute('x', i + 5);
-                                                textup.setAttribute('y', 15);
-                                                textup.setAttribute('style', 'fill:#999999; font-size:9pt');
-                                                textup.appendChild(Gup.createTextNode(Math.round((width - i) / step / 60) + 'm'));
+					var textup = Gup.createElementNS('http://www.w3.org/2000/svg', 'text');
+						textup.setAttribute('x', i + 5);
+						textup.setAttribute('y', 15);
+						textup.setAttribute('style', 'fill:#999999; font-size:9pt');
+						textup.appendChild(Gup.createTextNode(Math.round((width - i) / step / 60) + 'm'));
 
-                                        labelup_25.parentNode.appendChild(lineup);
-                                        labelup_25.parentNode.appendChild(textup);
+					labelup_25.parentNode.appendChild(lineup);
+					labelup_25.parentNode.appendChild(textup);
 
 				}
 
@@ -246,9 +238,10 @@
 						var data_tx_peak = 0;
 
 						var data = {};
-
+                        var pre_itf = "";
+						
 						for(var itf in dataarray)
-						{
+						{						    
 							// convert json string to json object
 							data[itf] = JSON.parse(dataarray[itf]);
 							// Create lines for each interfaces
@@ -258,19 +251,33 @@
 								// Create a new polygon to draw the bandwith
 								var dnline = Gdn.createElementNS('http://www.w3.org/2000/svg', 'polyline');
 								dnline.setAttributeNS(null, 'id', 'rx_' + itf);
-								dnline.setAttributeNS(null, 'style', 'fill:' + color + ';fill-opacity:0.4;stroke:black;stroke-width:0.1');
+								if(itf != "total")
+								{
+									dnline.setAttributeNS(null, 'style', 'fill:' + color + ';fill-opacity:0.4;stroke:black;stroke-width:0.1');
+								}
+								else
+								{
+								    dnline.setAttributeNS(null, 'style', 'fill: none;stroke:OrangeRed;stroke-width:1');									
+								}
 								Gdn.getElementById('rx').parentNode.appendChild(dnline);
 
 								dnPolygons[itf] = Gdn.getElementById('rx_' + itf);
-				                                /* prefill datasets */
+				                /* prefill datasets */
 								dndata[itf] = [ ];
-				                                for (var i = 0; i < data_wanted; i++)
-				                                {
-				                                        dndata[itf][i] = 0;
-				                                }
+								for (var i = 0; i < data_wanted; i++)
+								{
+										dndata[itf][i] = 0;
+								}
 								// Create legend for this connextion
 								var table = document.getElementById('download_stats');
-								var tr = table.insertRow();
+								if(pre_itf == "total") //insert before total
+								{
+								    var tr = table.insertRow(0);
+                                }								
+								else  //insert other interface affer,default value -1
+								{ 
+       								var tr = table.insertRow();
+								}
 								tr.setAttribute('id', itf + '_download');
 								// Create cells of the table
 								var itflabel = tr.insertCell(0);
@@ -295,43 +302,59 @@
 							}
 							if(typeof upPolygons[itf] != "object")
 							{
-                                                                var upline = Gup.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-                                                                upline.setAttributeNS(null, 'id', 'tx_' + itf);
-								upline.setAttributeNS(null, 'style', 'fill:' + color + ';fill-opacity:0.4;stroke:black;stroke-width:0.1');
+								var upline = Gup.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+								upline.setAttributeNS(null, 'id', 'tx_' + itf);
+								if(itf != "total")
+								{
+									upline.setAttributeNS(null, 'style', 'fill:' + color + ';fill-opacity:0.4;stroke:black;stroke-width:0.1');
+								}
+								else
+								{
+								    upline.setAttributeNS(null, 'style', 'fill: none;stroke:OrangeRed;stroke-width:1');									
+								}
+								
 								Gup.getElementById('tx').parentNode.appendChild(upline);
 
-                                                                upPolygons[itf] = Gup.getElementById('tx_' + itf);
-                                                                /* prefill datasets */
+                                upPolygons[itf] = Gup.getElementById('tx_' + itf);
+                                /* prefill datasets */
 								updata[itf] = [ ];
-                                                                for (var i = 0; i < data_wanted; i++)
-                                                                {
-                                                                        updata[itf][i] = 0;
-                                                                }
-                                                                // Create legend for this connextion
-                                                                var table = document.getElementById('upload_stats');
-                                                                var tr = table.insertRow();
-                                                                tr.setAttribute('id', itf + '_upload');
-                                                                // Create cells of the table
-                                                                var itflabel = tr.insertCell(0);
-                                                                // Crete itf legend
-                                                                var strong = document.createElement('strong')
-                                                                strong.appendChild(document.createTextNode(itf));
-                                                                strong.setAttribute('style', 'border-bottom:2px solid ' + color);
-                                                                itflabel.appendChild(strong);
+								for (var i = 0; i < data_wanted; i++)
+								{
+										updata[itf][i] = 0;
+								}
+								// Create legend for this connextion
+								var table = document.getElementById('upload_stats');
+								if(pre_itf == "total") //insert before total
+								{
+								    var tr = table.insertRow(0);
+                                }								
+								else  //insert other interface affer,default value -1
+								{ 
+       								var tr = table.insertRow();
+								}
+								tr.setAttribute('id', itf + '_upload');
+								// Create cells of the table
+								var itflabel = tr.insertCell(0);
+								// Crete itf legend
+								var strong = document.createElement('strong')
+								strong.appendChild(document.createTextNode(itf));
+								strong.setAttribute('style', 'border-bottom:2px solid ' + color);
+								itflabel.appendChild(strong);
 								// Create label for stats
 								tr.insertCell(1).appendChild(document.createTextNode('<%:Current:%>'));
-                                                                var itfcur   = tr.insertCell(2);
-                                                                itfcur.setAttribute('id', itf + '_upload_cur');
-                                                                itfcur.appendChild(document.createTextNode('0 <%:kbit/s%> (0 <%:kB/s%>)'));
+								var itfcur   = tr.insertCell(2);
+								itfcur.setAttribute('id', itf + '_upload_cur');
+								itfcur.appendChild(document.createTextNode('0 <%:kbit/s%> (0 <%:kB/s%>)'));
 								tr.insertCell(3).appendChild(document.createTextNode('<%:Average:%>'));
-                                                                var itfavg   = tr.insertCell(4);
-                                                                itfavg.setAttribute('id', itf + '_upload_avg');
-                                                                itfavg.appendChild(document.createTextNode('0 <%:kbit/s%> (0 <%:kB/s%>)'));
+								var itfavg   = tr.insertCell(4);
+								itfavg.setAttribute('id', itf + '_upload_avg');
+								itfavg.appendChild(document.createTextNode('0 <%:kbit/s%> (0 <%:kB/s%>)'));
 								tr.insertCell(5).appendChild(document.createTextNode('<%:Peak:%>'));
-                                                                var itfpeak  = tr.insertCell(6);
-                                                                itfpeak.setAttribute('id', itf + '_upload_peak');
-                                                                itfpeak.appendChild(document.createTextNode('0 <%:kbit/s%> (0 <%:kB/s%>)'));
+								var itfpeak  = tr.insertCell(6);
+								itfpeak.setAttribute('id', itf + '_upload_peak');
+								itfpeak.appendChild(document.createTextNode('0 <%:kbit/s%> (0 <%:kB/s%>)'));
 							}
+							pre_itf = itf;
 						}
 
 						for (var itf in data)
@@ -367,15 +390,17 @@
 
 						var el = Gdn.getElementById('rx').parentNode;
 
-						// intialize upline datas for download and upload,the downline should be zero.
+						// intialize upline and downline datas for download and upload
 						var uplineDnl 	= { };
-                                                var uplineUpl   = { };
+						var uplineUpl   = { };
+
 						// fetch upline and downline datas
 						var toadditf = [ ];
 						for (var itf in data)
 						{
 							uplineDnl[itf] 	= [ ];
-                                                        uplineUpl[itf]  = [ ];
+							uplineUpl[itf]  = [ ];
+
 							// build point sets
 							var data_tx_avg;
 							var data_rx_avg;
@@ -398,16 +423,17 @@
 								data_tx_peak = Math.max(data_tx_peak, updata[itf][i]);
 								data_max_upl = Math.max(data_max_upl, uplineUpl[itf][i]);
 
-	                                                        if (i > 0)
-	                                                        {
-	                                                                data_rx_avg = (data_rx_avg + dndata[itf][i]) / 2;
-	                                                                data_tx_avg = (data_tx_avg + updata[itf][i]) / 2;
-	                                                        }
-	                                                        else
-	                                                        {
-	                                                                data_rx_avg = dndata[itf][i];
-	                                                                data_tx_avg = updata[itf][i];
-	                                                        }
+								if (i > 0)
+								{
+										data_rx_avg = (data_rx_avg + dndata[itf][i]) / 2;
+										data_tx_avg = (data_tx_avg + updata[itf][i]) / 2;
+								}
+								else
+								{
+										data_rx_avg = dndata[itf][i];
+										data_tx_avg = updata[itf][i];
+								}
+
 							}
 							toadditf.push(itf);
 							// Update stats labels
@@ -416,26 +442,26 @@
 								var label = document.getElementById(itf + '_download_cur');
 								label.innerHTML = bandwidth_label(dndata[itf][dndata[itf].length-1], true);
 							}
-                                                        if(document.getElementById(itf + '_upload_cur'))
-                                                        {
+							if(document.getElementById(itf + '_upload_cur'))
+							{
 								var label = document.getElementById(itf + '_upload_cur');
 								label.innerHTML = bandwidth_label(updata[itf][updata[itf].length-1], true);
 							}
 							if(label = document.getElementById(itf + '_download_avg'))
-                                                        {
+                            {
 								label.innerHTML = bandwidth_label(data_rx_avg, true);
-                                                        }
-                                                        if(label = document.getElementById(itf + '_upload_avg'))
-                                                        {
+                            }
+                            if(label = document.getElementById(itf + '_upload_avg'))
+                            {
 								label.innerHTML = bandwidth_label(data_tx_avg, true);
 							}
 							if(document.getElementById(itf + '_download_peak'))
-                                                        {
+                            {
 								var label = document.getElementById(itf + '_download_peak');
 								label.innerHTML = bandwidth_label(data_rx_peak, true);
-                                                        }
+                            }
 							if(document.getElementById(itf + '_upload_peak'))
-                                                        {
+                            {
 								var label = document.getElementById(itf + '_upload_peak');
 								label.innerHTML = bandwidth_label(data_tx_peak, true);
 							}
@@ -451,7 +477,7 @@
 							/* plot data */
 							var pt_rx = '0,' + height;
 							var pt_tx = '0,' + height;
-
+							
 							// draw polygon	
 							for (var i = 0; i < uplineDnl[itf].length; i++)
 							{
@@ -459,18 +485,18 @@
 
 								y_rx = height - Math.floor((uplineDnl[itf][i]) * data_scale_dnl);
 								y_tx = height - Math.floor((uplineUpl[itf][i]) * data_scale_upl);
-
+							
 								pt_rx += ' ' + x + ',' + y_rx;
 								pt_tx += ' ' + x + ',' + y_tx;
 							}
-                                                        // draw last tangant point in upline graph
-                                                        pt_rx += ' ' + width + ',' + y_rx;
-                                                        pt_rx += ' ' + width + ',' + height;
+							// draw last tangant point in upline graph
+							pt_rx += ' ' + width + ',' + y_rx;
+							pt_rx += ' ' + width + ',' + height;
 
-                                                        pt_tx += ' ' + width + ',' + y_tx;
-                                                        pt_tx += ' ' + width + ',' + height;
+							pt_tx += ' ' + width + ',' + y_tx;
+							pt_tx += ' ' + width + ',' + height;
 
-							// Draw polygon
+							// Draw polygon							
 							dnPolygons[itf].setAttribute('points', pt_rx);
 							upPolygons[itf].setAttribute('points', pt_tx);
 
@@ -478,9 +504,9 @@
 							labeldn_50.firstChild.data = bandwidth_label(1.1 * 0.50 * data_max_dnl);
 							labeldn_75.firstChild.data = bandwidth_label(1.1 * 0.75 * data_max_dnl);
 
-                                                        labelup_25.firstChild.data = bandwidth_label(1.1 * 0.25 * data_max_upl);
-                                                        labelup_50.firstChild.data = bandwidth_label(1.1 * 0.50 * data_max_upl);
-                                                        labelup_75.firstChild.data = bandwidth_label(1.1 * 0.75 * data_max_upl);
+							labelup_25.firstChild.data = bandwidth_label(1.1 * 0.25 * data_max_upl);
+							labelup_50.firstChild.data = bandwidth_label(1.1 * 0.50 * data_max_upl);
+							labelup_75.firstChild.data = bandwidth_label(1.1 * 0.75 * data_max_upl);
 						}
 					}
 				);
