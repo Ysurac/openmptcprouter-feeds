@@ -170,7 +170,11 @@ function get_ip(interface)
 	return ip
 end
 
--- This function come from OverTheBox by OVH with very small changes
+-- This function come from OverTheBox by OVH with some changes
+-- Copyright 2015 OVH <OverTheBox@ovh.net>
+-- Simon Lelievre (simon.lelievre@corp.ovh.com)
+-- Sebastien Duponcheel <sebastien.duponcheel@ovh.net>
+-- Under GPL3+
 function interfaces_status()
 	local ut      = require "luci.util"
 	local ntm     = require "luci.model.network".init()
@@ -192,7 +196,7 @@ function interfaces_status()
 	
 	-- dns
 	mArray.openmptcprouter["dns"] = false
-	local dns_test = sys.exec("dig openmptcprouter.com | grep 'ANWER: 0'")
+	local dns_test = sys.exec("dig openmptcprouter.com | grep 'ANSWER: 0'")
 	if dns_test == "" then
 		mArray.openmptcprouter["dns"] = true
 	end
@@ -289,20 +293,43 @@ function interfaces_status()
 	    local connectivity
 	    local multipath_state = ut.trim(sys.exec("multipath " .. ifname .. " | grep deactivated"))
 	    if multipath_state == "" and ifname ~= "" then
-		    connectivity = 'OK'
+		connectivity = 'OK'
 	    else
+		connectivity = 'ERROR'
+	    end
+
+	    if ipaddr == "" then
 		    connectivity = 'ERROR'
 	    end
 
-	    local gw_ping
+	    -- Detect WAN gateway status
+	    local gw_ping = 'UP'
 	    if gateway ~= "" then
 		    local gw_ping_test = ut.trim(sys.exec("ping -W 1 -c 1 " .. gateway .. " | grep '100% packet loss'"))
-		    if gw_ping_test == "" then
-			    gw_ping = 'UP'
-		    else
+		    if gw_ping_test ~= "" then
 			    gw_ping = 'DOWN'
 			    if connectivity == "OK" then
-				connectivity = 'WARNING'
+				    connectivity = 'WARNING'
+			    end
+		    end
+	    end
+	    
+	    -- Detect if WAN get an IPv6
+	    local ipv6_discover = 'NONE'
+	    if tonumber((sys.exec("sysctl net.ipv6.conf.all.disable_ipv6")):match(" %d+")) == 0 then
+		    local ipv6_result = _ipv6_discover(ifname)
+		    if type(ipv6_result) == "table" and #ipv6_result > 0 then
+			    local ipv6_addr_test
+			    for k,v in ipairs(ipv6_result) do
+				    if v.RecursiveDnsServer then
+					    ipv6_addr_test = sys.exec('ip -6 addr | grep ' .. v.RecursiveDnsServer)
+				    end
+			    end
+			    if ipv6_addr_test == "" then
+				    ipv6_discover = 'DETECTED'
+				    if connectivity == "OK" then
+					    connectivity = 'WARNING'
+				    end
 			    end
 		    end
 	    end
@@ -313,20 +340,21 @@ function interfaces_status()
 
 	    local data = {
 		label = section['label'] or interface,
-		    name = interface,
-		    link = net:adminlink(),
-		    ifname = ifname,
-		    ipaddr = ipaddr,
-		    gateway = gateway,
-		    multipath = section['multipath'],
-		    status = connectivity,
-		    wanip = publicIP,
-		    latency = latency,
-		    whois = asn and asn.as_description or "unknown",
-		    qos = section['trafficcontrol'],
-		    download = section['download'],
-		    upload = section['upload'],
-		    gw_ping = gw_ping,
+		name = interface,
+		link = net:adminlink(),
+		ifname = ifname,
+		ipaddr = ipaddr,
+		gateway = gateway,
+		multipath = section['multipath'],
+		status = connectivity,
+		wanip = publicIP,
+		latency = latency,
+		whois = asn and asn.as_description or "unknown",
+		qos = section['trafficcontrol'],
+		download = section['download'],
+		upload = section['upload'],
+		gw_ping = gw_ping,
+		ipv6_discover = ipv6_discover,
 	    }
 
 	    if ifname:match("^tun.*") then
@@ -338,4 +366,65 @@ function interfaces_status()
 
 	luci.http.prepare_content("application/json")
 	luci.http.write_json(mArray)
+end
+
+-- This come from OverTheBox by OVH
+-- Copyright 2015 OVH <OverTheBox@ovh.net>
+-- Simon Lelievre (simon.lelievre@corp.ovh.com)
+-- Sebastien Duponcheel <sebastien.duponcheel@ovh.net>
+-- Under GPL3+
+function _ipv6_discover(interface)
+	local result = {}
+
+	--local ra6_list = (sys.exec("rdisc6 -nm " .. interface))
+	local ra6_list = (sys.exec("rdisc6 -n1 " .. interface))
+	-- dissect results
+	local lines = {}
+	local index = {}
+	ra6_list:gsub('[^\r\n]+', function(c)
+	    table.insert(lines, c)
+	    if c:match("Hop limit") then
+		    table.insert(index, #lines)
+	    end
+	end)
+	local ra6_result = {}
+	for k,v in ipairs(index) do
+		local istart = v
+		local iend = index[k+1] or #lines
+
+		local entry = {}
+		for i=istart,iend - 1 do
+			local level = lines[i]:find('%w')
+			local line = lines[i]:sub(level)
+
+			local param, value
+			if line:match('^from') then
+				param, value = line:match('(from)%s+(.*)$')
+			else
+				param, value = line:match('([^:]+):(.*)$')
+				-- Capitalize param name and remove spaces
+				param = param:gsub("(%a)([%w_']*)", function(first, rest) return first:upper()..rest:lower() end):gsub("[%s-]",'')
+				param = param:gsub("%.$", '')
+				-- Remove text between brackets, seconds and spaces
+				value = value:lower()
+				value = value:gsub("%(.*%)", '')
+				value = value:gsub("%s-seconds%s-", '')
+				value = value:gsub("^%s+", '')
+				value = value:gsub("%s+$", '')
+			end
+
+			if entry[param] == nil then
+				entry[param] = value
+			elseif type(entry[param]) == "table" then
+				table.insert(entry[param], value)
+			else
+				old = entry[param]
+				entry[param] = {}
+				table.insert(entry[param], old)
+				table.insert(entry[param], value)
+			end
+		end
+		table.insert(ra6_result, entry)
+	end
+	return ra6_result
 end
