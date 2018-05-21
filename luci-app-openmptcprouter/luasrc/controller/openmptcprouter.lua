@@ -377,7 +377,7 @@ function _ipv6_discover(interface)
 	local result = {}
 
 	--local ra6_list = (sys.exec("rdisc6 -nm " .. interface))
-	local ra6_list = (sys.exec("rdisc6 -n1 " .. interface))
+	local ra6_list = (sys.exec("rdisc6 -n1 -r1 " .. interface))
 	-- dissect results
 	local lines = {}
 	local index = {}
