@@ -32,14 +32,15 @@ function multipath_bandwidth()
 	local result = { };
 	local uci = luci.model.uci.cursor()
 
-	for _, dev in luci.util.vspairs(luci.sys.net.devices()) do
-		if dev ~= "lo" then
-			local multipath = uci:get("network", dev, "multipath")
+	uci:foreach("network", "interface", function(s)
+		local dev = s["ifname"]
+		if dev ~= "lo" and dev ~= "" then
+			local multipath = s["multipath"] or "off"
 			if multipath == "on" or multipath == "master" or multipath == "backup" or multipath == "handover" then
 				result[dev] = "[" .. string.gsub((luci.sys.exec("luci-bwc -i %q 2>/dev/null" % dev)), '[\r\n]', '') .. "]"
 			end
 		end
-	end
+	end)
 
 	luci.http.prepare_content("application/json")
 	luci.http.write_json(result)
