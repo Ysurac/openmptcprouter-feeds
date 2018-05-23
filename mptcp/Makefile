@@ -9,8 +9,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mptcp
-PKG_VERSION:=4.0
-PKG_RELEASE:=2
+PKG_VERSION:=5.0
+PKG_RELEASE:=1
 
 PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 PKG_BUILD_DIR := $(BUILD_DIR)/$(PKG_NAME)

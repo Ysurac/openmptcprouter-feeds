@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=openmptcprouter
-PKG_VERSION:=0.70
+PKG_VERSION:=0.80
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk

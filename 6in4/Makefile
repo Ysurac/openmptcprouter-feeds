@@ -1,5 +1,7 @@
 #
 # Copyright (C) 2010-2015 OpenWrt.org
+# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# - Added gateway setting
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -8,7 +10,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=6in4
-PKG_VERSION:=26
+PKG_VERSION:=27
 PKG_RELEASE:=1
 PKG_LICENSE:=GPL-2.0
 

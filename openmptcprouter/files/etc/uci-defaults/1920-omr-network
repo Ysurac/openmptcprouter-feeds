@@ -49,14 +49,13 @@ _setup_wan_interface() {
 	[ -n "$4" ] && uci -q set network.$1.type=$4
 }
 
-[ "$(uci -q get "network.lan.proto")" = static ] || \
-	uci -q batch <<-EOF
-	set network.lan=interface
-	set network.lan.proto=static
-	set network.lan.ipaddr=192.168.100.1
-	set network.lan.netmask=255.255.255.0
-	set network.lan.ifname=eth0
-	EOF
+uci -q batch <<EOF
+set network.lan=interface
+set network.lan.proto=static
+set network.lan.ipaddr=192.168.100.1
+set network.lan.netmask=255.255.255.0
+set network.lan.ifname=eth0
+EOF
 
 uci -q batch <<EOF
 delete network.none
@@ -92,8 +91,16 @@ uci -q set network.lan.ip4table='lan'
 #uci -q set "network.lan.ip6assign=64"
 
 # Create WAN interfaces
-if [ "$(uci -q show network | grep wan)" = "" ]; then
-	if [ -d /sys/class/net/eth1 ]; then
+if [ "$(uci -q show network | grep wan1)" = "" ]; then
+	if [ -d /sys/class/net/wan ]; then
+		uci -q batch <<-EOF
+		delete network.wan
+		EOF
+		_setup_wan_interface wan1 wan master macvlan
+		_setup_wan_interface wan2 wan on macvlan
+		_setup_macvlan wan1
+		_setup_macvlan wan2
+	elif [ -d /sys/class/net/eth1 ]; then
 		if [ -d /sys/class/net/eth2 ]; then
 			_setup_wan_interface wan1 eth1 master
 			_setup_wan_interface wan2 eth2 on
