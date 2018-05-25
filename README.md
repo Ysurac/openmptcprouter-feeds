@@ -97,3 +97,11 @@ Interface to omr-tracker.
 *Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/mptcp](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/mptcp)
 
 *Description:* This package set all MPTCP settings
+
+
+## ndisc6
+*Source:* [http://www.remlab.net/files/ndisc6](http://www.remlab.net/files/ndisc6)
+
+*Description:* An ICMPv6 neighbour discovery tool
+
+This is used to check if there is no other IPv6 route announced on the network
