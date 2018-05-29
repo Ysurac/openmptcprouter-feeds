@@ -1,0 +1,27 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2010-2014 OpenWrt.org
+
+START=99
+USE_PROCD=1
+
+service_triggers() {
+	procd_add_network_trigger "glorytun"
+}
+
+reload_service() {
+	addr=$(ifstatus glorytun | jsonfilter -e '@["ipv4-address"][0].address')
+	peer=$(ifstatus glorytun | jsonfilter -e '@["route"][0].nexthop')
+	if [ "$addr" != "$(uci -q get network.omr6in4.ipaddr)" ] || [ "$peer" != "$(uci -q get network.omr6in4.peeraddr)" ]; then
+		uci -q batch <<-EOF
+			set network.omr6in4.ipaddr=$addr
+			set network.omr6in4.peeraddr=$peer
+		EOF
+		if [ "$(uci -q get glorytun.vpn.proto)" = "udp" ]; then
+			uci -q set network.omr6in4.gateway=fe80::a00:101
+		elif [ "$(uci -q get glorytun.vpn.proto)" = "tcp" ]; then
+			uci -q set network.omr6in4.gateway=fe80::a00:1
+		fi
+		uci -q commit network
+		ifup omr6in4
+	fi
+}

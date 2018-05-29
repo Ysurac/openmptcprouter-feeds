@@ -26,10 +26,7 @@ MY_DEPENDS := \
     iperf3 \
     arptables \
     bind-dig \
-    conntrack conntrackd \
-    ebtables ebtables-utils \
-    ip-full \
-    iputils-traceroute6 \
+    conntrack conntrackd ebtables ebtables-utils ip-full \
     iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace iptables-mod-conntrack-extra \
     wireless-tools \
     libiwinfo-lua \
@@ -38,11 +35,11 @@ MY_DEPENDS := \
     luci-app-nginx-ha luci-app-omr-tracker luci-app-qos \
     luci-app-vnstat omr-quota luci-app-omr-quota \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass \
-    speedtestc \
-    ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd ethtool \
+    omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd  iputils-traceroute6 \
+    speedtestc ethtool \
     kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su comgt kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan usb-modeswitch uqmi adb-enablemodem umbim kmod-mii kmod-usb-net kmod-usb-wdm kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim
 
-OMR_SUPPORTED_LANGS := ca zh_cn en fr de el he hu it ja ms no pl pt_br pt ro ru es sv uk vi
+OMR_SUPPORTED_LANGS := ca zh-cn en fr de el he hu it ja ms no pl pt-br pt ro ru es sv uk vi
 
 define Package/$(PKG_NAME)
 SECTION:=OMR
