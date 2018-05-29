@@ -5,18 +5,18 @@ set_route() {
 	local multipath_config interface_gw interface_if
 	INTERFACE=$1
 	PREVINTERFACE=$2
-	multipath_config=$(uci -q get "network.$INTERFACE.multipath" || echo "off")
-	interface_if=$(uci -q get "network.$INTERFACE.ifname")
+	multipath_config=$(uci -q get network.$INTERFACE.multipath || echo "off")
+	interface_if=$(uci -q get network.$INTERFACE.ifname)
 	multipath_current_config=$(multipath $interface_if | grep deactivated)
 	if [ "$multipath_config" != "off" ] && [ "$SETROUTE" != true ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$multipath_current_config" = "" ]; then
 	#if [ "$multipath_config" != "off" ] && [ "$SETROUTE" != true ]; then
 	#if [ "$multipath_config" != "off" ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$SETROUTE" != true ]; then
-		interface_gw=$(uci -q get "network.$INTERFACE.gateway")
-		if [ -z $interface_gw ]; then
-			$interface_gw=$(ubus call network.interface.$INTERFACE status | jsonfilter -e '@.route[0].nexthop' | tr -d "\n")
+		interface_gw="$(uci -q get network.$INTERFACE.gateway)"
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status | jsonfilter -e '@.route[0].nexthop' | tr -d "\n")
 		fi
-		if [ -z $interface_gw ]; then
-			$interface_gw=$(ubus call network.interface.$INTERFACE status | jsonfilter -e '@.inactive.route[0].nexthop' | tr -d "\n")
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status | jsonfilter -e '@.inactive.route[0].nexthop' | tr -d "\n")
 		fi
 		if [ "$interface_gw" != "" ]; then
 			_log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
@@ -65,6 +65,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		[ "$multipath_status" = "off" ] || {
 			_log "$OMR_TRACKER_DEVICE switched off"
 			multipath "$OMR_TRACKER_DEVICE" off
+			glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 down > /dev/null 2>&1
 			config_load shadowsocks-libev
 			config_foreach del_ss_route server
 		}
@@ -73,6 +74,13 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		config_load network
 		config_foreach set_route interface $OMR_TRACKER_INTERFACE
 	fi
+	if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ]; then
+		if [ "$(uci -q show shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q show shadowsocks-libev.hi2.mode)" = "tcp_and_udp" ]; then
+			uci -q set shadowsocks-libev.ss_rules.redir_udp='hi2'
+			/etc/init.d/shadowsocks-libev rules_down
+			/etc/init.d/shadowsocks-libev rules_up
+		fi
+	fi
 	exit 0
 fi
 
@@ -80,6 +88,13 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ]; then
 	if [ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
 		_log "Tunnel up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
 		ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
+		if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ]; then
+			if [ "$(uci -q show shadowsocks-libev.ss_rules.redir_udp)" = "hi2" ]; then
+				uci -q delete shadowsocks-libev.ss_rules.redir_udp
+				/etc/init.d/shadowsocks-libev rules_down
+				/etc/init.d/shadowsocks-libev rules_up
+			fi
+		fi
 	fi
 	exit 0
 fi
@@ -98,8 +113,7 @@ if [ "$multipath_config" = "master" ]; then
 	fi
 	multipath_config="on"
 fi
-[ "$multipath_config" = "master" ] && [ "$multipath_status" = "on" ] && exit 0
 [ "$multipath_status" = "$multipath_config" ] && exit 0
 _log "Multipath $OMR_TRACKER_DEVICE switched to $multipath_config"
-
 multipath "$OMR_TRACKER_DEVICE" "$multipath_config"
+glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 up > /dev/null 2>&1
