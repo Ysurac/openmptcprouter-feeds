@@ -35,7 +35,7 @@ MY_DEPENDS := \
     luci-app-nginx-ha luci-app-omr-tracker luci-app-qos \
     luci-app-vnstat omr-quota luci-app-omr-quota \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass \
-    omr-ipv6 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd iputils-traceroute6 \
+    omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd iputils-traceroute6 \
     speedtestc ethtool \
     kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su comgt kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan usb-modeswitch uqmi adb-enablemodem umbim kmod-mii kmod-usb-net kmod-usb-wdm kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim
 
