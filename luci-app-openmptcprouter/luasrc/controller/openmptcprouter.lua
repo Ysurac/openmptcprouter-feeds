@@ -314,6 +314,10 @@ function interfaces_status()
 		    end
 	    end
 	    
+	    if gateway == "" then
+		    connectivity = 'ERROR'
+	    end
+	    
 	    -- Detect if WAN get an IPv6
 	    local ipv6_discover = 'NONE'
 	    if tonumber((sys.exec("sysctl net.ipv6.conf.all.disable_ipv6")):match(" %d+")) == 0 then
