@@ -7,10 +7,10 @@ require("luci.model.uci")
 
 
 local basicParams = {
-	--								
+	--
 	-- Widget, Name, Default(s), Description
 	--
-					
+
 	{ Flag,"enable",0, translate("Enable") },
 	{ Value,"port",65001, translate("TCP port # for both local and remote") },
 	{ Value,"dev","tun0", translate("Interface name") },
