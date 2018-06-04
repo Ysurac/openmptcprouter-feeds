@@ -1244,44 +1244,44 @@ function cbi_validate_field(cbid, optional, type)
 function cbi_row_swap(elem, up, store)
 {
 	var tr = elem.parentNode;
-	while (tr && tr.nodeName.toLowerCase() != 'tr')
+
+	while (tr && !tr.classList.contains('cbi-section-table-row'))
 		tr = tr.parentNode;
 
 	if (!tr)
 		return false;
 
-	var table = tr.parentNode;
-	while (table && table.nodeName.toLowerCase() != 'table')
-		table = table.parentNode;
+	if (up) {
+		var prev = tr.previousElementSibling;
 
-	if (!table)
-		return false;
+		if (prev && prev.classList.contains('cbi-section-table-row'))
+			tr.parentNode.insertBefore(tr, prev);
+		else
+			return;
+	}
+	else {
+		var next = tr.nextElementSibling ? tr.nextElementSibling.nextElementSibling : null;
 
-	var s = up ? 3 : 2;
-	var e = up ? table.rows.length : table.rows.length - 1;
-
-	for (var idx = s; idx < e; idx++)
-	{
-		if (table.rows[idx] == tr)
-		{
-			if (up)
-				tr.parentNode.insertBefore(table.rows[idx], table.rows[idx-1]);
-			else
-				tr.parentNode.insertBefore(table.rows[idx+1], table.rows[idx]);
-
-			break;
-		}
+		if (next && next.classList.contains('cbi-section-table-row'))
+			tr.parentNode.insertBefore(tr, next);
+		else if (!next)
+			tr.parentNode.appendChild(tr);
+		else
+			return;
 	}
 
 	var ids = [ ];
-	for (idx = 2; idx < table.rows.length; idx++)
-	{
-		table.rows[idx].className = table.rows[idx].className.replace(
-			/cbi-rowstyle-[12]/, 'cbi-rowstyle-' + (1 + (idx % 2))
-		);
 
-		if (table.rows[idx].id && table.rows[idx].id.match(/-([^\-]+)$/) )
-			ids.push(RegExp.$1);
+	for (var i = 0, n = 0; i < tr.parentNode.childNodes.length; i++) {
+		var node = tr.parentNode.childNodes[i];
+		if (node.classList && node.classList.contains('cbi-section-table-row')) {
+			node.classList.remove('cbi-rowstyle-1');
+			node.classList.remove('cbi-rowstyle-2');
+			node.classList.add((n++ % 2) ? 'cbi-rowstyle-2' : 'cbi-rowstyle-1');
+
+			if (/-([^\-]+)$/.test(node.id))
+				ids.push(RegExp.$1);
+		}
 	}
 
 	var input = document.getElementById(store);
@@ -1308,58 +1308,6 @@ function cbi_tag_last(container)
 	if (last)
 	{
 		last.className += ' cbi-value-last';
-	}
-}
-
-String.prototype.serialize = function()
-{
-	var o = this;
-	switch(typeof(o))
-	{
-		case 'object':
-			// null
-			if( o == null )
-			{
-				return 'null';
-			}
-
-			// array
-			else if( o.length )
-			{
-				var i, s = '';
-
-				for( var i = 0; i < o.length; i++ )
-					s += (s ? ', ' : '') + String.serialize(o[i]);
-
-				return '[ ' + s + ' ]';
-			}
-
-			// object
-			else
-			{
-				var k, s = '';
-
-				for( k in o )
-					s += (s ? ', ' : '') + k + ': ' + String.serialize(o[k]);
-
-				return '{ ' + s + ' }';
-			}
-
-			break;
-
-		case 'string':
-			// complex string
-			if( o.match(/[^a-zA-Z0-9_,.: -]/) )
-				return 'decodeURIComponent("' + encodeURIComponent(o) + '")';
-
-			// simple string
-			else
-				return '"' + o + '"';
-
-			break;
-
-		default:
-			return o.toString();
 	}
 }
 
@@ -1473,10 +1421,6 @@ String.prototype.format = function()
 						subst = esc(param, quot_esc);
 						break;
 
-					case 'j':
-						subst = String.serialize(param);
-						break;
-
 					case 't':
 						var td = 0;
 						var th = 0;
@@ -1543,14 +1487,6 @@ String.prototype.nobr = function()
 	return this.replace(/[\s\n]+/g, '&#160;');
 }
 
-String.serialize = function()
-{
-	var a = [ ];
-	for (var i = 1; i < arguments.length; i++)
-		a.push(arguments[i]);
-	return ''.serialize.apply(arguments[0], a);
-}
-
 String.format = function()
 {
 	var a = [ ];
@@ -1565,4 +1501,76 @@ String.nobr = function()
 	for (var i = 1; i < arguments.length; i++)
 		a.push(arguments[i]);
 	return ''.nobr.apply(arguments[0], a);
+}
+
+
+var dummyElem, domParser;
+
+function isElem(e)
+{
+	return (typeof(e) === 'object' && e !== null && 'nodeType' in e);
+}
+
+function toElem(s)
+{
+	var elem;
+
+	try {
+		domParser = domParser || new DOMParser();
+		elem = domParser.parseFromString(s, 'text/html').body.firstChild;
+	}
+	catch(e) {}
+
+	if (!elem) {
+		try {
+			dummyElem = dummyElem || document.createElement('div');
+			dummyElem.innerHTML = s;
+			elem = dummyElem.firstChild;
+		}
+		catch (e) {}
+	}
+
+	return elem || null;
+}
+
+function E()
+{
+	var html = arguments[0],
+	    attr = (arguments[1] instanceof Object && !Array.isArray(arguments[1])) ? arguments[1] : null,
+	    data = attr ? arguments[2] : arguments[1],
+	    elem;
+
+	if (isElem(html))
+		elem = html;
+	else if (html.charCodeAt(0) === 60)
+		elem = toElem(html);
+	else
+		elem = document.createElement(html);
+
+	if (!elem)
+		return null;
+
+	if (attr)
+		for (var key in attr)
+			if (attr.hasOwnProperty(key))
+				elem.setAttribute(key, attr[key]);
+
+	if (typeof(data) === 'function')
+		data = data(elem);
+
+	if (isElem(data)) {
+		elem.appendChild(data);
+	}
+	else if (Array.isArray(data)) {
+		for (var i = 0; i < data.length; i++)
+			if (isElem(data[i]))
+				elem.appendChild(data[i]);
+			else
+				elem.appendChild(document.createTextNode('' + data[i]));
+	}
+	else if (data !== null && data !== undefined) {
+		elem.innerHTML = '' + data;
+	}
+
+	return elem;
 }
