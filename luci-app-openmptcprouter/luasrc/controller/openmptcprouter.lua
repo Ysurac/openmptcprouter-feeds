@@ -215,16 +215,24 @@ function interfaces_status()
 	mArray.openmptcprouter["tun_service"] = false
 	if string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?glorytun(-udp)?$'"), "%d+") then
 		mArray.openmptcprouter["tun_service"] = true
-		mArray.openmptcprouter["tun_ip"] = get_ip("glorytun")
-		local tunnel_ping_test = ut.trim(sys.exec("ping -W 1 -c 1 10.0.0.1 | grep '100% packet loss'"))
-		if tunnel_ping_test == "" then
-			mArray.openmptcprouter["tun_state"] = 'UP'
-		else
-			mArray.openmptcprouter["tun_state"] = 'DOWN'
+		mArray.openmptcprouter["tun_ip"] = get_ip("omrvpn")
+		local tun_dev = uci:get("network","omrvpn","ifname")
+		if tundev ~= "" then
+			local peer = ut.trim(sys.exec("ip -4 r list dev " .. tun_dev .. " | grep kernel | awk '/proto kernel/ {print $1}' | tr -d '\n'"))
+			if peer ~= "" then
+				local tunnel_ping_test = ut.trim(sys.exec("ping -W 1 -c 1 " .. peer .. " | grep '100% packet loss'"))
+				if tunnel_ping_test == "" then
+					mArray.openmptcprouter["tun_state"] = 'UP'
+				else
+					mArray.openmptcprouter["tun_state"] = 'DOWN'
+				end
+			else
+				mArray.openmptcprouter["tun_state"] = 'DOWN'
+			end
 		end
-
 	end
 	
+	-- check Shadowsocks is running
 	mArray.openmptcprouter["socks_service"] = false
 	if string.find(sys.exec("/usr/bin/pgrep ss-redir"), "%d+") then
 		mArray.openmptcprouter["socks_service"] = true
@@ -253,6 +261,7 @@ function interfaces_status()
 			end
 		end
 	end
+
 	-- Parse mptcp kernel info
 	local mptcp = {}
 	local fullmesh = ut.trim(sys.exec("cat /proc/net/mptcp_fullmesh"))
