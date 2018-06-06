@@ -1,0 +1,33 @@
+#!/bin/sh
+
+if [ "$(uci -q get network.omrvpn)" = "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		delete network.glorytun
+		delete network.omrvpn
+		set network.omrvpn=interface
+		set network.omrvpn.ifname=tun0
+		set network.omrvpn.proto=dhcp
+		set network.omrvpn.ip4table=vpn
+		set network.omrvpn.multipath=off
+		set network.omrvpn.leasetime=12h
+		set network.omrvpn.mtu=1400
+		commit network
+	EOF
+fi
+
+if [ "$(uci -q show firewall | grep omrvpn)" = "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		add_list firewall.@zone[2].network=omrvpn
+		delete firewall.allow_dhcp_request_vpn
+		set firewall.allow_dhcp_request_vpn=rule
+		set firewall.allow_dhcp_request_vpn.name=Allow-DHCP-Request-VPN
+		set firewall.allow_dhcp_request_vpn.src=vpn
+		set firewall.allow_dhcp_request_vpn.proto=udp
+		set firewall.allow_dhcp_request_vpn.dest_port=67
+		set firewall.allow_dhcp_request_vpn.target=ACCEPT
+		set firewall.allow_dhcp_request_vpn.family=ipv4
+		commit firewall
+	EOF
+fi
+rm -f /tmp/luci-indexcache
+exit 0
