@@ -58,10 +58,16 @@ function wizard_add()
 	
 	local server_ip = luci.http.formvalue("server_ip")
 
+	-- We have an IP, so set it everywhere
+	if server_ip ~= "" then
+		ucic:set("shadowsocks-libev","sss0","server",server_ip)
+		ucic:set("glorytun","vpn","host",server_ip)
+		ucic:set("mlvpn","general","host",server_ip)
+	end
+
 	-- Set ShadowSocks settings
 	local shadowsocks_key = luci.http.formvalue("shadowsocks_key")
 	if shadowsocks_key ~= "" then
-		ucic:set("shadowsocks-libev","sss0","server",server_ip)
 		ucic:set("shadowsocks-libev","sss0","key",shadowsocks_key)
 		ucic:set("shadowsocks-libev","sss0","method","aes-256-cfb")
 		ucic:set("shadowsocks-libev","sss0","server_port","65101")
@@ -73,7 +79,6 @@ function wizard_add()
 	-- Set Glorytun TCP settings
 	local glorytun_key = luci.http.formvalue("glorytun_key")
 	if glorytun_key ~= "" then
-		ucic:set("glorytun","vpn","host",server_ip)
 		ucic:set("glorytun","vpn","port","65001")
 		ucic:set("glorytun","vpn","key",glorytun_key)
 		ucic:set("glorytun","vpn","enable",1)
@@ -82,6 +87,21 @@ function wizard_add()
 		ucic:set("glorytun","vpn","proto","tcp")
 		ucic:save("glorytun")
 		ucic:commit("glorytun")
+	end
+
+	-- Set MLVPN settings
+	local mlvpn_password = luci.http.formvalue("mlvpn_password")
+	if mlvpn_password ~= "" then
+		if glorytun_key ~= "" then
+			ucic:set("mlvpn","general","enable",1)
+		else
+			ucic:set("mlvpn","general","enable",0)
+		end
+		ucic:set("mlvpn","general","password",mlvpn_password)
+		ucic:set("mlvpn","general","firstport","65201")
+		ucic:set("mlvpn","general","interface_name","mlvpn0")
+		ucic:save("mlvpn")
+		ucic:commit("mlvpn")
 	end
 
 	-- Set interfaces settings
@@ -98,7 +118,7 @@ function wizard_add()
 	ucic:commit("network")
 	luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
-	if gostatus then
+	if gostatus == true then
 		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/status"))
 	else
 		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/wizard"))
