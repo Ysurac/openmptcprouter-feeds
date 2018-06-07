@@ -55,6 +55,19 @@ function wizard_add()
 		end
 		gostatus = false
 	end
+
+	-- Set interfaces settings
+	local interfaces = luci.http.formvaluetable("intf")
+	for intf, _ in pairs(interfaces) do
+		local ipaddr = luci.http.formvalue("cbid.network.%s.ipaddr" % intf)
+		local netmask = luci.http.formvalue("cbid.network.%s.netmask" % intf)
+		local gateway = luci.http.formvalue("cbid.network.%s.gateway" % intf)
+		ucic:set("network",intf,"ipaddr",ipaddr)
+		ucic:set("network",intf,"netmask",netmask)
+		ucic:set("network",intf,"gateway",gateway)
+	end
+	ucic:save("network")
+	ucic:commit("network")
 	
 	local server_ip = luci.http.formvalue("server_ip")
 
@@ -93,9 +106,9 @@ function wizard_add()
 	local mlvpn_password = luci.http.formvalue("mlvpn_password")
 	if mlvpn_password ~= "" then
 		if glorytun_key ~= "" then
-			ucic:set("mlvpn","general","enable",1)
-		else
 			ucic:set("mlvpn","general","enable",0)
+		else
+			ucic:set("mlvpn","general","enable",1)
 		end
 		ucic:set("mlvpn","general","password",mlvpn_password)
 		ucic:set("mlvpn","general","firstport","65201")
@@ -104,20 +117,9 @@ function wizard_add()
 		ucic:commit("mlvpn")
 	end
 
-	-- Set interfaces settings
-	local interfaces = luci.http.formvaluetable("intf")
-	for intf, _ in pairs(interfaces) do
-		local ipaddr = luci.http.formvalue("cbid.network.%s.ipaddr" % intf)
-		local netmask = luci.http.formvalue("cbid.network.%s.netmask" % intf)
-		local gateway = luci.http.formvalue("cbid.network.%s.gateway" % intf)
-		ucic:set("network",intf,"ipaddr",ipaddr)
-		ucic:set("network",intf,"netmask",netmask)
-		ucic:set("network",intf,"gateway",gateway)
-	end
-	ucic:save("network")
-	ucic:commit("network")
 	luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
+	luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
 	if gostatus == true then
 		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/status"))
 	else
