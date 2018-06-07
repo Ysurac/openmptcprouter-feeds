@@ -1,28 +1,26 @@
 #!/bin/sh /etc/rc.common
-# Copyright (C) 2010-2014 OpenWrt.org
+# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 
 START=99
 USE_PROCD=1
 
 service_triggers() {
-	procd_add_interface_trigger "glorytun" "omrvpn"
+	procd_add_interface_trigger "omrvpn"
 }
 
 reload_service() {
 	iface=$(uci -q get glorytun.vpn.dev)
-	[ -z "$iface" ] && exit 0
-	addr=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
-	peer=$(ip -4 r list dev $iface | grep kernel | awk '/proto kernel/ {print $1}' | tr -d "\n")
+	addr=$(ubus call network.interface.omrvpn status | jsonfilter -e '@["ipv4-address"][0].address | tr -d "\n")
+	[ -z "$addr" ] && [ -n "$iface" ] && addr=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
+	peer=$(ubus call network.interface.omrvpn status | jsonfilter -e '@.route[0].nexthop' | tr -d "\n")
+	[ -z "$peer" ] && [ -n "$iface" ] && peer=$(ip -4 r list dev $iface | grep kernel | awk '/proto kernel/ {print $1}' | tr -d "\n")
+	[ -z "$addr" ] && exit 0
+	[ -z "$peer" ] && exit 0
 	if [ "$addr" != "$(uci -q get network.omr6in4.ipaddr)" ] || [ "$peer" != "$(uci -q get network.omr6in4.peeraddr)" ]; then
 		uci -q batch <<-EOF
 			set network.omr6in4.ipaddr=$addr
 			set network.omr6in4.peeraddr=$peer
 		EOF
-		#if [ "$(uci -q get glorytun.vpn.proto)" = "udp" ]; then
-		#	uci -q set network.omr6in4.gateway=fe80::a00:101
-		#elif [ "$(uci -q get glorytun.vpn.proto)" = "tcp" ]; then
-		#	uci -q set network.omr6in4.gateway=fe80::a00:1
-		#fi
 		uci -q commit network
 		ifup omr6in4
 	fi
