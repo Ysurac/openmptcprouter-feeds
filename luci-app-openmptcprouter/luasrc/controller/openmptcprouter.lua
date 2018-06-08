@@ -87,6 +87,11 @@ function wizard_add()
 		ucic:set("shadowsocks-libev","sss0","disabled",0)
 		ucic:save("shadowsocks-libev")
 		ucic:commit("shadowsocks-libev")
+	else
+		ucic:set("shadowsocks-libev","sss0","key","")
+		ucic:set("shadowsocks-libev","sss0","disabled",1)
+		ucic:save("shadowsocks-libev")
+		ucic:commit("shadowsocks-libev")
 	end
 
 	-- Set Glorytun TCP settings
@@ -97,6 +102,12 @@ function wizard_add()
 		ucic:set("glorytun","vpn","enable",1)
 		ucic:set("glorytun","vpn","mptcp",1)
 		ucic:set("glorytun","vpn","chacha20",1)
+		ucic:set("glorytun","vpn","proto","tcp")
+		ucic:save("glorytun")
+		ucic:commit("glorytun")
+	else
+		ucic:set("glorytun","vpn","key","")
+		ucic:set("glorytun","vpn","enable",0)
 		ucic:set("glorytun","vpn","proto","tcp")
 		ucic:save("glorytun")
 		ucic:commit("glorytun")
@@ -113,6 +124,11 @@ function wizard_add()
 		ucic:set("mlvpn","general","password",mlvpn_password)
 		ucic:set("mlvpn","general","firstport","65201")
 		ucic:set("mlvpn","general","interface_name","mlvpn0")
+		ucic:save("mlvpn")
+		ucic:commit("mlvpn")
+	else
+		ucic:set("mlvpn","general","enable",0)
+		ucic:set("mlvpn","general","password","")
 		ucic:save("mlvpn")
 		ucic:commit("mlvpn")
 	end
