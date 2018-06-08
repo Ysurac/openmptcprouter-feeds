@@ -275,7 +275,7 @@ function interfaces_status()
 		if tun_dev ~= "" then
 			local peer = get_gateway("omrvpn")
 			if peer ~= "" then
-				ut.trim(sys.exec("ip -4 r list dev " .. tun_dev .. " | grep kernel | awk '/proto kernel/ {print $1}' | tr -d '\n'"))
+				peer = ut.trim(sys.exec("ip -4 r list dev " .. tun_dev .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
 			end
 			if peer ~= "" then
 				local tunnel_ping_test = ut.trim(sys.exec("ping -W 1 -c 1 " .. peer .. " | grep '100% packet loss'"))
@@ -371,6 +371,12 @@ function interfaces_status()
 
 	    -- Detect WAN gateway status
 	    local gw_ping = 'UP'
+	    if gateway == "" then
+		    gateway = get_gateway(interface)
+	    end
+	    if gateway ~= "" then
+		    gateway = ut.trim(sys.exec("ip -4 r list dev " .. ifname .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
+	    end
 	    if gateway ~= "" then
 		    local gw_ping_test = ut.trim(sys.exec("ping -W 1 -c 1 " .. gateway .. " | grep '100% packet loss'"))
 		    if gw_ping_test ~= "" then
