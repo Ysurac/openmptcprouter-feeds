@@ -11,6 +11,7 @@ LUCI_TITLE:=LuCI Administration - full-featured for full control
 LUCI_DEPENDS:=+luci-base +luci-app-firewall
 
 PKG_BUILD_DEPENDS:=iwinfo
+PKG_LICENSE:=Apache-2.0
 
 include ../luci/luci.mk
 
