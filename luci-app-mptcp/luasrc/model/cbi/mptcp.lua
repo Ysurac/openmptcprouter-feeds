@@ -10,8 +10,8 @@ local mtcpg = s:option(ListValue, "multipath", translate("Multipath TCP"))
 mtcpg:value("enable", translate("enable"))
 mtcpg:value("disable", translate("disable"))
 local mtcpck = s:option(ListValue, "mptcp_checksum", translate("Multipath TCP checksum"))
-mtcpck:value("enable", translate("enable"))
-mtcpck:value("disable", translate("disable"))
+mtcpck:value(1, translate("enable"))
+mtcpck:value(0, translate("disable"))
 local mtcppm = s:option(ListValue, "mptcp_path_manager", translate("Multipath TCP path-manager"))
 mtcppm:value("default", translate("default"))
 mtcppm:value("fullmesh", translate("fullmesh"))
@@ -29,6 +29,16 @@ local availablecong = sys.exec("sysctl net.ipv4.tcp_available_congestion_control
 for cong in string.gmatch(availablecong, "[^%s]+") do
 	congestion:value(cong, translate(cong))
 end
+local mtcpfm_subflows = s:option(Value, "mptcp_fullmesh_num_subflows", translate("Fullmesh subflows for each pair of IP addresses"))
+mtcpfm_subflows.datatype = "uinteger"
+mtcpfm_subflows.rmempty = false
+local mtcpfm_createonerr = s:option(Value, "mptcp_fullmesh_create_on_err", translate("Re-create fullmesh subflows after a timeout"))
+mtcpfm_createonerr:value(1, translate("enable"))
+mtcpfm_createonerr:value(0, translate("disable"))
+
+local mtcpnd_subflows = s:option(Value, "mptcp_ndiffports_num_subflows", translate("ndiffports subflows number"))
+mtcpnd_subflows.datatype = "uinteger"
+mtcpnd_subflows.rmempty = false
 
 s = m:section(TypedSection, "interface", translate("Interfaces Settings"))
 mptcp = s:option(ListValue, "multipath", translate("Multipath TCP"), translate("One interface must be set as master"))
