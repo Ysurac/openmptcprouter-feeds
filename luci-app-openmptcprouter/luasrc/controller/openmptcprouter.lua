@@ -192,6 +192,23 @@ function get_ip(interface)
 	return ip
 end
 
+function get_gateway(interface)
+	local gateway = nil
+	local dump = nil
+
+	dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
+
+	if dump and dump.route then
+		local _, route
+		for _, route in ipairs(dump.route) do
+			if dump.route[_].target == "0.0.0.0" then
+				gateway = dump.route[_].nexthop
+			end
+		end
+	end
+	return gateway
+end
+
 -- This function come from OverTheBox by OVH with some changes
 -- Copyright 2015 OVH <OverTheBox@ovh.net>
 -- Simon Lelievre (simon.lelievre@corp.ovh.com)
@@ -239,8 +256,11 @@ function interfaces_status()
 		mArray.openmptcprouter["tun_service"] = true
 		mArray.openmptcprouter["tun_ip"] = get_ip("omrvpn")
 		local tun_dev = uci:get("network","omrvpn","ifname")
-		if tundev ~= "" then
-			local peer = ut.trim(sys.exec("ip -4 r list dev " .. tun_dev .. " | grep kernel | awk '/proto kernel/ {print $1}' | tr -d '\n'"))
+		if tun_dev ~= "" then
+			local peer = get_gateway("omrvpn")
+			if peer ~= "" then
+				ut.trim(sys.exec("ip -4 r list dev " .. tun_dev .. " | grep kernel | awk '/proto kernel/ {print $1}' | tr -d '\n'"))
+			end
 			if peer ~= "" then
 				local tunnel_ping_test = ut.trim(sys.exec("ping -W 1 -c 1 " .. peer .. " | grep '100% packet loss'"))
 				if tunnel_ping_test == "" then
