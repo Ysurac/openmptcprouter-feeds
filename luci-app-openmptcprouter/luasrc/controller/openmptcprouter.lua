@@ -274,7 +274,7 @@ function interfaces_status()
 		local tun_dev = uci:get("network","omrvpn","ifname")
 		if tun_dev ~= "" then
 			local peer = get_gateway("omrvpn")
-			if peer ~= "" then
+			if peer == "" then
 				peer = ut.trim(sys.exec("ip -4 r list dev " .. tun_dev .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
 			end
 			if peer ~= "" then
@@ -374,7 +374,7 @@ function interfaces_status()
 	    if gateway == "" then
 		    gateway = get_gateway(interface)
 	    end
-	    if gateway ~= "" then
+	    if gateway == "" then
 		    gateway = ut.trim(sys.exec("ip -4 r list dev " .. ifname .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
 	    end
 	    if gateway ~= "" then
