@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=openmptcprouter-full
-PKG_VERSION:=0.6
+PKG_VERSION:=0.7
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
@@ -40,7 +40,7 @@ MY_DEPENDS := \
     luci-proto-3g \
     luci-app-mlvpn mlvpn \
     omr-update \
-    kmod-rt2800-usb \
+    kmod-rt2800-usb libimobiledevice \
     kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su comgt kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan usb-modeswitch uqmi adb-enablemodem umbim kmod-mii kmod-usb-net kmod-usb-wdm kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim
 
 OMR_SUPPORTED_LANGS := ca zh-cn en fr de el he hu it ja ms no pl pt-br pt ro ru es sv uk vi
