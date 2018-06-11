@@ -94,15 +94,26 @@ function wizard_add()
 		ucic:commit("shadowsocks-libev")
 	end
 
+	-- Get VPN set by default
+	local default_vpn = luci.http.formvalue("default") or "glorytun_tcp"
+
 	-- Set Glorytun TCP settings
 	local glorytun_key = luci.http.formvalue("glorytun_key")
 	if glorytun_key ~= "" then
 		ucic:set("glorytun","vpn","port","65001")
 		ucic:set("glorytun","vpn","key",glorytun_key)
-		ucic:set("glorytun","vpn","enable",1)
+		if default_vpn:match("^glorytun.*") then
+			ucic:set("glorytun","vpn","enable",1)
+		else
+			ucic:set("glorytun","vpn","enable",0)
+		end
 		ucic:set("glorytun","vpn","mptcp",1)
 		ucic:set("glorytun","vpn","chacha20",1)
-		ucic:set("glorytun","vpn","proto","tcp")
+		if default_vpn == "glorytun_udp" then
+			ucic:set("glorytun","vpn","proto","udp")
+		else
+			ucic:set("glorytun","vpn","proto","tcp")
+		end
 		ucic:save("glorytun")
 		ucic:commit("glorytun")
 	else
@@ -116,10 +127,10 @@ function wizard_add()
 	-- Set MLVPN settings
 	local mlvpn_password = luci.http.formvalue("mlvpn_password")
 	if mlvpn_password ~= "" then
-		if glorytun_key ~= "" then
-			ucic:set("mlvpn","general","enable",0)
-		else
+		if default_vpn == "mlvpn" then
 			ucic:set("mlvpn","general","enable",1)
+		else
+			ucic:set("mlvpn","general","enable",0)
 		end
 		ucic:set("mlvpn","general","password",mlvpn_password)
 		ucic:set("mlvpn","general","firstport","65201")
