@@ -1,6 +1,7 @@
 local tools = require "luci.tools.status"
 local sys   = require "luci.sys"
 local json  = require("luci.json")
+local fs    = require("nixio.fs")
 local ucic = luci.model.uci.cursor()
 module("luci.controller.openmptcprouter", package.seeall)
 
@@ -76,6 +77,8 @@ function wizard_add()
 		ucic:set("shadowsocks-libev","sss0","server",server_ip)
 		ucic:set("glorytun","vpn","host",server_ip)
 		ucic:set("mlvpn","general","host",server_ip)
+		luci.sys.call("uci -q del openvpn.omr.remote")
+		luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
 	end
 
 	-- Set ShadowSocks settings
@@ -95,7 +98,7 @@ function wizard_add()
 	end
 
 	-- Get VPN set by default
-	local default_vpn = luci.http.formvalue("default") or "glorytun_tcp"
+	local default_vpn = luci.http.formvalue("default_vpn") or "glorytun_tcp"
 
 	-- Set Glorytun TCP settings
 	local glorytun_key = luci.http.formvalue("glorytun_key")
@@ -142,6 +145,31 @@ function wizard_add()
 		ucic:set("mlvpn","general","password","")
 		ucic:save("mlvpn")
 		ucic:commit("mlvpn")
+	end
+
+	local openvpn_key = luci.http.formvalue("openvpn_key")
+	if openvpn_key ~= "" then
+		local openvpn_key_path = "/etc/luci-uploads/openvpn.key"
+		local fp
+		luci.http.setfilehandler(
+			function(meta, chunk, eof)
+				if not fp and meta and meta.name == "openvpn_key" then
+					fp = io.open(openvpn_key_path, "w")
+				end
+				if fp and chunk then
+					fp:write(chunk)
+				end
+				if fp and eof then
+					fp:close()
+				end
+			end)
+		ucic:set("openvpn","omr","secret",openvpn_key_path)
+		ucic:commit("openvpn")
+	end
+
+	if default_vpn == "openvpn" then
+		ucic:set("openvpn","omr","enabled",1)
+		ucic:commit("openvpn")
 	end
 
 	luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
@@ -279,7 +307,7 @@ function interfaces_status()
 
 	-- Check openmptcprouter service are running
 	mArray.openmptcprouter["tun_service"] = false
-	if string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?glorytun(-udp)?$'"), "%d+") then
+	if string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?glorytun(-udp)?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?mlvpn?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?openvpn?$'"), "%d+") then
 		mArray.openmptcprouter["tun_service"] = true
 		mArray.openmptcprouter["tun_ip"] = get_ip("omrvpn")
 		local tun_dev = uci:get("network","omrvpn","ifname")
