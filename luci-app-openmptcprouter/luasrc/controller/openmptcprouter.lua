@@ -100,16 +100,21 @@ function wizard_add()
 	-- Get VPN set by default
 	local default_vpn = luci.http.formvalue("default_vpn") or "glorytun_tcp"
 
-	-- Set Glorytun TCP settings
+	-- Set Glorytun settings
+	if default_vpn:match("^glorytun.*") then
+		ucic:set("glorytun","vpn","enable",1)
+		ucic:save("glorytun")
+		ucic:commit("glorytun")
+	else
+		ucic:set("glorytun","vpn","enable",0)
+		ucic:save("glorytun")
+		ucic:commit("glorytun")
+	end
+
 	local glorytun_key = luci.http.formvalue("glorytun_key")
 	if glorytun_key ~= "" then
 		ucic:set("glorytun","vpn","port","65001")
 		ucic:set("glorytun","vpn","key",glorytun_key)
-		if default_vpn:match("^glorytun.*") then
-			ucic:set("glorytun","vpn","enable",1)
-		else
-			ucic:set("glorytun","vpn","enable",0)
-		end
 		ucic:set("glorytun","vpn","mptcp",1)
 		ucic:set("glorytun","vpn","chacha20",1)
 		if default_vpn == "glorytun_udp" then
@@ -128,13 +133,18 @@ function wizard_add()
 	end
 
 	-- Set MLVPN settings
+	if default_vpn == "mlvpn" then
+		ucic:set("mlvpn","general","enable",1)
+		ucic:save("mlvpn")
+		ucic:commit("mlvpn")
+	else
+		ucic:set("mlvpn","general","enable",0)
+		ucic:save("mlvpn")
+		ucic:commit("mlvpn")
+	end
+
 	local mlvpn_password = luci.http.formvalue("mlvpn_password")
 	if mlvpn_password ~= "" then
-		if default_vpn == "mlvpn" then
-			ucic:set("mlvpn","general","enable",1)
-		else
-			ucic:set("mlvpn","general","enable",0)
-		end
 		ucic:set("mlvpn","general","password",mlvpn_password)
 		ucic:set("mlvpn","general","firstport","65201")
 		ucic:set("mlvpn","general","interface_name","mlvpn0")
@@ -169,6 +179,11 @@ function wizard_add()
 
 	if default_vpn == "openvpn" then
 		ucic:set("openvpn","omr","enabled",1)
+		ucic:save("openvpn")
+		ucic:commit("openvpn")
+	else
+		ucic:set("openvpn","omr","enabled",0)
+		ucic:save("openvpn")
 		ucic:commit("openvpn")
 	end
 
