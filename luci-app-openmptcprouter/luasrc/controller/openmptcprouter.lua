@@ -263,7 +263,7 @@ function get_ip(interface)
 end
 
 function get_gateway(interface)
-	local gateway = nil
+	local gateway = ""
 	local dump = nil
 
 	dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
@@ -348,6 +348,12 @@ function interfaces_status()
 	mArray.openmptcprouter["socks_service"] = false
 	if string.find(sys.exec("/usr/bin/pgrep ss-redir"), "%d+") then
 		mArray.openmptcprouter["socks_service"] = true
+	end
+
+	mArray.openmptcprouter["socks_service_enabled"] = true
+	local ss_server = uci:get("shadowsocks-libev","sss0","disabled") or "0"
+	if ss_server == "1" then
+		mArray.openmptcprouter["socks_service_enabled"] = false
 	end
 
 	-- Add DHCP infos by parsing dnsmasq config file
