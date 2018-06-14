@@ -211,6 +211,9 @@ function settings_add()
 	ucic:set("firewall",ucic:get_first("firewall","defaults"),"disable_ipv6",disable_ipv6)
 	ucic:save("firewall")
 	ucic:commit("firewall")
+	ucic:set("dhcp","lan","ra_default",disable_ipv6)
+	ucic:save("dhcp")
+	ucic:commit("dhcp")
 	if disable_ipv6 == 1 then
 		ucic:set("shadowsocks-libev","hi","local_address","0.0.0.0")
 	else
