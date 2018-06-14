@@ -1,13 +1,9 @@
 #!/bin/sh /etc/rc.common
-# shellcheck disable=SC2039
-# vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
+# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 
-# shellcheck disable=SC2034
-{
-	START=90
-	STOP=10
-	USE_PROCD=1
-}
+START=90
+STOP=10
+USE_PROCD=1
 
 _bypass_ip() {
 	local ip="$1"
@@ -15,8 +11,22 @@ _bypass_ip() {
 }
 
 start_service() {
+	ipset -q --exist restore <<-EOF
+	flush ss_rules_dst_bypass
+	create ss_rules_dst_bypass hash:net hashsize 64
+	EOF
+
 	config_load omr-bypass
 	config_list_foreach ips "ip" _bypass_ip
+
+	ip rule add prio 1 fwmark 0x539 lookup 991337 > /dev/null 2>&1
+	if [ "$(iptables -t mangle -L | grep 'mark 0x539')" = "" ]; then
+		iptables-restore --noflush <<-EOF
+		*mangle
+		-A PREROUTING -m set --match-set ss_rules_dst_bypass dst -j MARK --set-mark 0x539
+		COMMIT
+		EOF
+	fi
 }
 
 service_triggers() {
@@ -24,6 +34,5 @@ service_triggers() {
 }
 
 reload_service() {
-	stop
 	start
 }
