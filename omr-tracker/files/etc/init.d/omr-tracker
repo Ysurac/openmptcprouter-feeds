@@ -71,6 +71,7 @@ _initialize_shadowsocks_tracker() {
 	config_get redir_tcp ss_rules redir_tcp
 	config_get server $redir_tcp server
 	config_get tracker_server "tracker" server
+	config_get ss_disabled $server disabled 0
 	[ "$server" = "$tracker_server" ] || {
 		[ -z "$tracker_server" ] && {
 			uci -q batch <<-EOF >/dev/null
@@ -122,18 +123,21 @@ _launch_shadowsocks_tracker() {
 }
 
 start_service() {
+	local ss_disabled
 	config_load shadowsocks-libev
 	_initialize_shadowsocks_tracker
 
 	config_load network
 	config_foreach _launch_tracker interface
 
-	config_load shadowsocks-libev
-	config_foreach _launch_shadowsocks_tracker ss_local
+	if [ "$ss_disabled" != "1" ]; then
+		config_load shadowsocks-libev
+		config_foreach _launch_shadowsocks_tracker ss_local
+	fi
 }
 
 service_triggers() {
-	procd_add_reload_trigger omr-tracker network
+	procd_add_reload_trigger omr-tracker network shadowsocks-libev
 }
 
 reload_service() {
