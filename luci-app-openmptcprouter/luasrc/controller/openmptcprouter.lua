@@ -46,7 +46,7 @@ function wizard_add()
 		gostatus = false
 	end
 
-	local delete_intf = luci.http.formvaluetable("delete")
+	local delete_intf = luci.http.formvaluetable("delete") or ""
 	if delete_intf ~= "" then
 		for intf, _ in pairs(delete_intf) do
 			ucic:delete("network",intf)
