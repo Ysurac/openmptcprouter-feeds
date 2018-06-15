@@ -268,6 +268,11 @@ function get_ip(interface)
 	return ip
 end
 
+function get_device(interface)
+	local dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
+	return dump['l3_device']
+end
+
 function get_gateway(interface)
 	local gateway = ""
 	local dump = nil
@@ -332,6 +337,9 @@ function interfaces_status()
 		mArray.openmptcprouter["tun_service"] = true
 		mArray.openmptcprouter["tun_ip"] = get_ip("omrvpn")
 		local tun_dev = uci:get("network","omrvpn","ifname")
+		if tun_dev == "" then
+			tun_dev = get_device("omrvpn")
+		end
 		if tun_dev ~= "" then
 			local peer = get_gateway("omrvpn")
 			if peer == "" then
@@ -418,6 +426,9 @@ function interfaces_status()
 	    --if interface == "lo" then return end
 
 	    local ifname = section['ifname'] or ""
+	    if ifname == "" then
+		ifname = get_device(interface)
+	    end
 	    --if multipath == "off" and not ifname:match("^tun.*") then return end
 	    if multipath == "off" then return end
 
