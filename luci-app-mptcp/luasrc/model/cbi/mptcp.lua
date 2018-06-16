@@ -32,7 +32,7 @@ end
 local mtcpfm_subflows = s:option(Value, "mptcp_fullmesh_num_subflows", translate("Fullmesh subflows for each pair of IP addresses"))
 mtcpfm_subflows.datatype = "uinteger"
 mtcpfm_subflows.rmempty = false
-local mtcpfm_createonerr = s:option(Value, "mptcp_fullmesh_create_on_err", translate("Re-create fullmesh subflows after a timeout"))
+local mtcpfm_createonerr = s:option(ListValue, "mptcp_fullmesh_create_on_err", translate("Re-create fullmesh subflows after a timeout"))
 mtcpfm_createonerr:value(1, translate("enable"))
 mtcpfm_createonerr:value(0, translate("disable"))
 
