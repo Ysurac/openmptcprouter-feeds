@@ -309,22 +309,27 @@ function interfaces_status()
 	mArray.openmptcprouter["service_addr"] = uci:get("shadowsocks-libev", "proxy", "server") or "0.0.0.0"
 	mArray.openmptcprouter["local_addr"] = uci:get("network", "lan", "ipaddr")
 
-	-- shadowsocksaddr
-	local tracker_ip = uci:get("shadowsocks-libev","tracker","local_address") or ""
-	local tracker_port = uci:get("shadowsocks-libev","tracker","local_port")
-	if tracker_ip ~= "" then
-		mArray.openmptcprouter["ss_addr"] = sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 5 http://ip.openmptcprouter.com")
-	else
-		mArray.openmptcprouter["ss_addr"] = ""
-	end
-	-- wanaddr
-	mArray.openmptcprouter["wan_addr"] = sys.exec("wget -4 -qO- -T 1 http://ip.openmptcprouter.com")
-	
 	-- dns
 	mArray.openmptcprouter["dns"] = false
 	local dns_test = sys.exec("dig openmptcprouter.com | grep 'ANSWER: 0'")
 	if dns_test == "" then
 		mArray.openmptcprouter["dns"] = true
+	end
+
+	if mArray.openmptcprouter["dns"] == true then
+		-- shadowsocksaddr
+		local tracker_ip = uci:get("shadowsocks-libev","tracker","local_address") or ""
+		local tracker_port = uci:get("shadowsocks-libev","tracker","local_port")
+		if tracker_ip ~= "" then
+			mArray.openmptcprouter["ss_addr"] = sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 5 http://ip.openmptcprouter.com")
+		else
+			mArray.openmptcprouter["ss_addr"] = ""
+		end
+		-- wanaddr
+		mArray.openmptcprouter["wan_addr"] = sys.exec("wget -4 -qO- -T 1 http://ip.openmptcprouter.com")
+	else
+		mArray.openmptcprouter["ss_addr"] = ""
+		mArray.openmptcprouter["wan_addr"] = ""
 	end
 
 	mArray.openmptcprouter["remote_addr"] = luci.http.getenv("REMOTE_ADDR") or ""
@@ -452,13 +457,17 @@ function interfaces_status()
 		    connectivity = 'ERROR'
 	    end
 
-	    -- Test if multipath can work on the connection
-	    local multipath_available
-	    local multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
-	    if multipath_available_state == "" then
-		multipath_available = 'OK'
+	    if mArray.openmptcprouter["dns"] == true then
+		    -- Test if multipath can work on the connection
+		    local multipath_available
+		    local multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
+		    if multipath_available_state == "" then
+			multipath_available = 'OK'
+		    else
+			multipath_available = 'ERROR'
+		    end
 	    else
-		multipath_available = 'ERROR'
+		multipath_available = 'NO CHECK'
 	    end
 	    
 
