@@ -306,11 +306,17 @@ function interfaces_status()
 	mArray.openmptcprouter = {}
 	mArray.openmptcprouter["version"] = ut.trim(sys.exec("cat /etc/os-release | grep VERSION= | sed -e 's:VERSION=::'"))
 	-- Check that requester is in same network
-	mArray.openmptcprouter["service_addr"] = uci:get("shadowsocks", "proxy", "server") or "0.0.0.0"
+	mArray.openmptcprouter["service_addr"] = uci:get("shadowsocks-libev", "proxy", "server") or "0.0.0.0"
 	mArray.openmptcprouter["local_addr"] = uci:get("network", "lan", "ipaddr")
 
 	-- shadowsocksaddr
-	mArray.openmptcprouter["ss_addr"] = sys.exec("curl -s -4 --socks5 127.0.0.1:1111 -m 5 http://ip.openmptcprouter.com")
+	local tracker_ip = uci:get("shadowsocks-libev","tracker","local_address") or ""
+	local tracker_port = uci:get("shadowsocks-libev","tracker","local_port")
+	if tracker_ip ~= "" then
+		mArray.openmptcprouter["ss_addr"] = sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 5 http://ip.openmptcprouter.com")
+	else
+		mArray.openmptcprouter["ss_addr"] = ""
+	end
 	-- wanaddr
 	mArray.openmptcprouter["wan_addr"] = sys.exec("wget -4 -qO- -T 1 http://ip.openmptcprouter.com")
 	
@@ -446,6 +452,16 @@ function interfaces_status()
 		    connectivity = 'ERROR'
 	    end
 
+	    -- Test if multipath can work on the connection
+	    local multipath_available
+	    local multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
+	    if multipath_available_state == "" then
+		multipath_available = 'OK'
+	    else
+		multipath_available = 'ERROR'
+	    end
+	    
+
 	    -- Detect WAN gateway status
 	    local gw_ping = 'UP'
 	    if gateway == "" then
@@ -509,6 +525,7 @@ function interfaces_status()
 		upload = section['upload'],
 		gw_ping = gw_ping,
 		ipv6_discover = ipv6_discover,
+		multipath_available = multipath_available,
 	    }
 
 	    if ifname:match("^tun.*") then

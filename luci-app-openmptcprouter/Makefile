@@ -6,7 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI Support for OpenMPTCProuter
-LUCI_DEPENDS:=+luci-lib-json +rdisc6
+LUCI_DEPENDS:=+luci-lib-json +rdisc6 +curl
 PKG_LICENSE:=GPLv3
 
 include ../luci/luci.mk
