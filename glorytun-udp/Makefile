@@ -8,13 +8,16 @@
 
 include $(TOPDIR)/rules.mk
 
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_URL:=https://github.com/angt/glorytun.git
+PKG_SOURCE_VERSION:=c15343f8f6fb275fe9bed56ca251bb801ea5d67b
+
 PKG_NAME:=glorytun-udp
 PKG_VERSION:=0.0.99-mud
-PKG_RELEASE:=2
-PKG_SOURCE:=glorytun-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://github.com/angt/glorytun/releases/download/v$(PKG_VERSION)
-PKG_BUILD_DIR:=$(BUILD_DIR)/glorytun-$(PKG_VERSION)
-PKG_HASH:=5e23afad4592d6af27ffd2cb3c826cf0ea1b5166a05ef1ae5c77fb4e465bb735
+PKG_RELEASE:=17
+
+PKG_FIXUP:=autoreconf
+
 include $(INCLUDE_DIR)/package.mk
 
 define Package/$(PKG_NAME)
