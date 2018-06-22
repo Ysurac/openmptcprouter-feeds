@@ -1,13 +1,25 @@
 #!/bin/sh /etc/rc.common
 # Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 
-START=90
+START=99
 STOP=10
 USE_PROCD=1
 
 _bypass_ip() {
 	local ip="$1"
-	ipset add ss_rules_dst_bypass $ip
+	valid_ip4=$( valid_subnet4 $ip)
+	valid_ip6=$( valid_subnet6 $ip)
+	if [ "$valid_ip4" = "ok" ]; then
+		ipset add ss_rules_dst_bypass $ip
+	elif [ "$valid_ip6" = "ok" ]; then
+		ipset add ss_rules6_dst_bypass $ip
+	fi
+}
+
+_bypass_proto() {
+	local proto="$1"
+	ndpi_rules="-A omr-bypass-dpi -m ndpi --$proto -j MARK --set-mark 0x539
+		$ndpi_rules"
 }
 
 start_service() {
@@ -20,10 +32,25 @@ start_service() {
 	config_list_foreach ips "ip" _bypass_ip
 
 	ip rule add prio 1 fwmark 0x539 lookup 991337 > /dev/null 2>&1
-	if [ "$(iptables -t mangle -L | grep 'mark 0x539')" = "" ]; then
+
+	if [ "$(iptables -t mangle -L | grep 'MARK set 0x539')" = "" ]; then
 		iptables-restore --noflush <<-EOF
 		*mangle
 		-A PREROUTING -m set --match-set ss_rules_dst_bypass dst -j MARK --set-mark 0x539
+		COMMIT
+		EOF
+	fi
+	
+	iptables-save --counters | grep -v omr-bypass-dpi | iptables-restore --counters
+	local ndpi_rules=""
+	config_list_foreach dpi "proto" _bypass_proto
+	ndpi_rules=$(echo $ndpi_rules | awk 'NF')
+	if [ "$ndpi_rules" != "" ]; then
+		iptables-restore --noflush <<-EOF
+		*mangle
+		:omr-bypass-dpi -
+		-A PREROUTING -m addrtype ! --dst-type LOCAL -j omr-bypass-dpi
+		$ndpi_rules
 		COMMIT
 		EOF
 	fi

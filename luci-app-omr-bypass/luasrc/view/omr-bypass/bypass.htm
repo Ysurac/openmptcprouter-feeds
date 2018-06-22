@@ -1,11 +1,14 @@
 <%+header%>
 
-<script type="text/javascript" src="<%=resource%>/cbi.js" data-strings="{&#34;path&#34;:{&#34;resource&#34;:&#34;\/luci-static\/resources&#34;,&#34;browser&#34;:&#34;\/cgi-bin\/luci\/admin\/filebrowser&#34;},&#34;label&#34;:{&#34;choose&#34;:&#34;-- Choisir --&#34;,&#34;custom&#34;:&#34;-- autre --&#34;}}"></script>
+<script type="text/javascript" src="<%=resource%>/cbi.js?v=git-18.170.32705-0f524f1" data-strings="{&#34;path&#34;:{&#34;resource&#34;:&#34;\/luci-static\/resources&#34;,&#34;browser&#34;:&#34;\/cgi-bin\/luci\/admin\/filebrowser&#34;},&#34;label&#34;:{&#34;choose&#34;:&#34;-- Choisir --&#34;,&#34;custom&#34;:&#34;-- autre --&#34;}}"></script>
 
 <%
 	local uci = require("luci.model.uci").cursor()
 	local hosts = uci:get_list("dhcp", uci:get_first("dhcp","dnsmasq"), "ipset")
 	local ips = uci:get_list("omr-bypass", "ips", "ip")
+	local dpi = uci:get_list("omr-bypass", "dpi", "proto")
+	local tmpfile = os.tmpname()
+	local dpi_available_proto = luci.util.execi("cat /proc/net/xt_ndpi/proto | awk '{print $3}' | sort -u | head -n -1")
 %>
 
 <% if stderr and #stderr > 0 then %><pre class="error"><%=pcdata(stderr)%></pre><% end %>
@@ -25,7 +28,12 @@
 	    for hst in string.gmatch(host,"([^/]*)/") do
 		if hst ~= "" then
 %>
-			<input class="cbi-input-text" value="<%=hst%>" data-update="change" type="text" id="cbid.omr-bypass.hosts.<%=j%>" name="cbid.omr-bypass.hosts" placeholder="google.com" /><br />
+			<input class="cbi-input-text" value="<%=hst%>" data-update="change" type="text" id="cbid.omr-bypass.hosts.<%=j%>" name="cbid.omr-bypass.hosts" placeholder="google.com" />
+			<br />
+			<div class="cbi-value-description">
+				<span class="cbi-value-helpicon"><img src="/luci-static/resources/cbi/help.gif" alt="help" /></span>
+				<%:You need to use OpenMPTCProuter as DNS server when you want to bypass a domain%>
+			</div>
 <%
 	        end
 	    end
@@ -38,7 +46,12 @@
 	end
 	if j == 1 then
 %>
-			<input class="cbi-input-text" value="" data-update="change" type="text" id="cbid.omr-bypass.hosts.1" name="cbid.omr-bypass.hosts" placeholder="google.com" /><br />
+			<input class="cbi-input-text" value="" data-update="change" type="text" id="cbid.omr-bypass.hosts.1" name="cbid.omr-bypass.hosts" placeholder="google.com" />
+			<br />
+			<div class="cbi-value-description">
+				<span class="cbi-value-helpicon"><img src="/luci-static/resources/cbi/help.gif" alt="help" /></span>
+				<%:You need to use OpenMPTCProuter as DNS server when you want to bypass a domain%>
+			</div>
 <%
 	end
 %>
@@ -46,6 +59,38 @@
 		</div>
 	    </div>
 	</fieldset>
+	<fieldset class="cbi-section" id="dpi">
+	    <div class="cbi-section-descr"><%:Set protocols you want to bypass.%></div>
+	    <div class="cbi-value cbi-value-last" id="cbi-omr-tracker-dpi" data-depends="[]" data-index="<%=table.getn(dpi)%>">
+		<label class="cbi-value-title" for="cbid.omr-tracker.dpi"><%:Protocol%></label>
+		<div class="cbi-value-field">
+				<%
+				    local allprt="&#34;&#34;"
+				    for prt in dpi_available_proto do
+					    allprt=allprt .. ",&#34;" .. prt .. "&#34;"
+				    end
+				%>
+
+		    <div data-prefix="cbid.omr-bypass.dpi" data-browser-path="" data-dynlist="[[<%=allprt%>],[<%=allprt%>],null,false]">
+<%
+	local k = 1
+	for _ , proto in pairs(dpi) do
+	    k = k+1
+%>
+			<input class="cbi-input-text" id="cbid.omr-bypass.dpi.<%=k%>" name="cbid.omr-bypass.dpi" data-update="change" value="<%=proto%>" /><br />
+<%
+	end
+	if k == 1 then
+%>
+			<input class="cbi-input-text" id="cbid.omr-bypass.dpi.<%=k%>" name="cbid.omr-bypass.dpi" data-update="change" /><br />
+<%
+	end
+%>
+		</div>
+		</div>
+	    </div>
+	</fieldset>
+
     </div>
     <div class="cbi-page-actions">
 	<input type="hidden" name="token" value="<%=token%>" />

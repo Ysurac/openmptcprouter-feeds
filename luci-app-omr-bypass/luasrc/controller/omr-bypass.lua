@@ -24,18 +24,21 @@ function bypass_add()
 			end
 		end
 	end
-	ucic:delete("omr-bypass","ips","ip")
-	if table.getn(ip_ipset) > 0 then
-		for _, i in pairs(ip_ipset) do
-			ucic:set_list("omr-bypass","ips","ip",ip_ipset)
-		end
+	ucic:set_list("omr-bypass","ips","ip",ip_ipset)
+
+	local dpi = luci.http.formvalue("cbid.omr-bypass.dpi")
+	if (type(dpi) ~= "table") then
+		dpi = {dpi}
 	end
+	ucic:set_list("omr-bypass","dpi","proto",dpi)
+	
 	ucic:save("omr-bypass")
 	ucic:commit("omr-bypass")
 	ucic:set_list("dhcp",ucic:get_first("dhcp","dnsmasq"),"ipset",domains_ipset .. "/ss_rules_dst_bypass")
 	ucic:save("dhcp")
 	ucic:commit("dhcp")
 	--luci.sys.exec("/etc/init.d/dnsmasq restart")
+	luci.sys.exec("/etc/init.d/omr-bypass restart")
 	luci.http.redirect(luci.dispatcher.build_url("admin/services/omr-bypass"))
 	return
 end
