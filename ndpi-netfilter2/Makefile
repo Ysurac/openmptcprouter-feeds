@@ -45,13 +45,15 @@ MAKE_PATH := ndpi-netfilter
 MAKE_FLAGS += \
     KERNEL_DIR="$(LINUX_DIR)" \
     MODULES_DIR="$(TARGET_MODULES_DIR)" \
+    ARCH="$(LINUX_KARCH)" \
+    CROSS_COMPILE="$(TARGET_CROSS)" \
     NDPI_PATH=$(PKG_BUILD_DIR)/ndpi-netfilter
 
 define Build/Compile
 	(cd $(PKG_BUILD_DIR)/src/lib &&\
 	    gcc -I../../src/include/ -I../../src/lib/third_party/include/ ndpi_network_list_compile.c -o ndpi_network_list_compile &&\
 	    ./ndpi_network_list_compile -o ndpi_network_list.c.inc ndpi_network_list_std.yaml ndpi_network_list_tor.yaml)
-	make $(MAKE_FLAGS) -C $(PKG_BUILD_DIR)/ndpi-netfilter
+	$(MAKE) $(MAKE_FLAGS) -C $(PKG_BUILD_DIR)/ndpi-netfilter
 endef
 
 define Package/iptables-mod-ndpi/install
