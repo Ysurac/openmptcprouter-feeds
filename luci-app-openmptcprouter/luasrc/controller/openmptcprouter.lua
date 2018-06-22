@@ -23,10 +23,14 @@ function wizard_add()
 	local gostatus = true
 	if add_interface ~= "" then
 		local i = 1
+		local multipath_master = false
 		ucic:foreach("network", "interface", function(s)
 			local sectionname = s[".name"]
 			if sectionname:match("^wan(%d+)$") then
 				i = i + 1
+			end
+			if uci:get("network",sectionname,"multipath") == "master" then
+				multipath_master = true
 			end
 		end)
 		local defif = ucic:get("network","wan1","ifname") or "eth0"
@@ -35,7 +39,11 @@ function wizard_add()
 		ucic:set("network","wan" .. i,"proto","static")
 		ucic:set("network","wan" .. i,"type","macvlan")
 		ucic:set("network","wan" .. i,"ip4table","wan")
-		ucic:set("network","wan" .. i,"multipath","on")
+		if multipath_master then
+			ucic:set("network","wan" .. i,"multipath","on")
+		else
+			ucic:set("network","wan" .. i,"multipath","master")
+		end
 		ucic:set("network","wan" .. i,"defaultroute","0")
 		ucic:save("network")
 		ucic:commit("network")
