@@ -77,16 +77,73 @@ function wizard_add()
 	end
 	ucic:save("network")
 	ucic:commit("network")
-	
-	local server_ip = luci.http.formvalue("server_ip")
 
+	-- Get VPN set by default
+	local default_vpn = luci.http.formvalue("default_vpn") or "glorytun_tcp"
+	local vpn_port
+	if default_vpn:match("^glorytun.*") then
+		vpn_port = 65001
+	elseif default_vpn == "mlvpn" then
+		vpn_port = 65201
+	elseif default_vpn == "openvpn" then
+		vpn_port = 65301
+	end
+
+	-- Get all servers ips
+	local server_ip = luci.http.formvalue("server_ip")
 	-- We have an IP, so set it everywhere
 	if server_ip ~= "" then
+		-- Check if we have more than one IP, in this case use Nginx HA
+		if (type(server_ip) == "table") then
+			local ss_servers = {}
+			local vpn_servers = {}
+			local k = 0
+			for _, ip in pairs(server_ip) do
+				if k == 0 then
+					table.insert(ss_servers,ip .. ":65101 max_fails=3 fail_timeout=30s")
+					table.insert(vpn_servers,ip .. ":65001 max_fails=3 fail_timeout=30s")
+					ucic:set("qos","serverin","srchost",ip)
+					ucic:set("qos","serverout","dsthost",ip)
+					ucic:save("qos")
+					ucic:commit("qos")
+				else
+					table.insert(ss_servers,ip .. ":65101 backup")
+					table.insert(vpn_servers,ip .. ":65001 backup")
+				end
+				k = k + 1
+			end
+			ucic:set("nginx-ha","ShadowSocks","enable","1")
+			ucic:set("nginx-ha","VPN","enable","1")
+			ucic:set("nginx-ha","ShadowSocks","upstreams",ss_servers)
+			ucic:set("nginx-ha","VPN","upstreams",vpn_servers)
+			ucic:save("nginx-ha")
+			ucic:commit("nginx-ha")
+			server_ip = "127.0.0.1"
+		else
+			ucic:set("nginx-ha","ShadowSocks","enable","0")
+			ucic:set("nginx-ha","VPN","enable","0")
+			ucic:set("qos","serverin","srchost",server_ip)
+			ucic:set("qos","serverout","dsthost",server_ip)
+			ucic:save("qos")
+			ucic:commit("qos")
+		end
 		ucic:set("shadowsocks-libev","sss0","server",server_ip)
+		ucic:save("shadowsocks-libev")
+		ucic:commit("shadowsocks-libev")
 		ucic:set("glorytun","vpn","host",server_ip)
+		ucic:save("glorytun")
+		ucic:commit("glorytun")
 		ucic:set("mlvpn","general","host",server_ip)
+		ucic:save("mlvpn")
+		ucic:commit("mlvpn")
 		luci.sys.call("uci -q del openvpn.omr.remote")
 		luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
+		ucic:save("openvpn")
+		ucic:commit("openvpn")
+		ucic:set("qos","serverin","srchost",server_ip)
+		ucic:set("qos","serverout","dsthost",server_ip)
+		ucic:save("qos")
+		ucic:commit("qos")
 	end
 
 	-- Set ShadowSocks settings
@@ -104,9 +161,6 @@ function wizard_add()
 		ucic:save("shadowsocks-libev")
 		ucic:commit("shadowsocks-libev")
 	end
-
-	-- Get VPN set by default
-	local default_vpn = luci.http.formvalue("default_vpn") or "glorytun_tcp"
 
 	-- Set Glorytun settings
 	if default_vpn:match("^glorytun.*") then

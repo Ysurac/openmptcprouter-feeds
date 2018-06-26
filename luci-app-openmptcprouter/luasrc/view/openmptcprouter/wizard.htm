@@ -4,8 +4,19 @@
 	local uci = require("luci.model.uci").cursor()
 	local net = require "luci.model.network".init()
 	local ifaces = net:get_interfaces()
+	local servers_ip = {}
+	local server_ip = uci:get("shadowsocks-libev","sss0","server")
+	if server_ip == '127.0.0.1' then
+		local upstreams = uci:get("nginx-ha","ShadowSocks","upstreams")
+		for _, up in pairs(upstreams) do
+			local a = up:match("^([^:]+):")
+			table.insert(servers_ip,a)
+		end
+	else
+		table.insert(servers_ip,server_ip)
+	end
 %>
-<script type="text/javascript" src="<%=resource%>/cbi.js"></script>
+<script type="text/javascript" src="<%=resource%>/cbi.js" data-strings="{&#34;path&#34;:{&#34;resource&#34;:&#34;\/luci-static\/resources&#34;,&#34;browser&#34;:&#34;\/cgi-bin\/luci\/admin\/filebrowser&#34;}}"></script>
 
 <% if stderr and #stderr > 0 then %><pre class="error"><%=pcdata(stderr)%></pre><% end %>
 <form class="inline" method="post" action="<%=url('admin/system/openmptcprouter/wizard_add')%>" enctype="multipart/form-data">
@@ -14,17 +25,27 @@
 	<fieldset class="cbi-section" id="server">
 	<legend><%:Server settings%></legend>
 	    <div class="cbi-section-descr"><%:Put the values given by OpenMPTCProuter VPS script.%></div>
-	    <div class="cbi-value">
-	        <label class="cbi-value-title"><%:Server IP%></label>
+	    <div class="cbi-value cbi-value-last" id="server_ip" data-depends="[]" data-index="0">
+	        <label class="cbi-value-title" for="server_ip"><%:Server IP%></label>
 	        <div class="cbi-value-field">
-		    <input type="text" name="server_ip" placeholder="Server IP" class="cbi-input-text" value="<%=uci:get("shadowsocks-libev","sss0","server")%>" data-type="ip4addr">
+		    <div data-prefix="server_ip" data-browser-path="" data-dynlist="[[],[],null,false]" data-placeholder="123.123.123.123">
+		    <%
+			local k = 0
+			for _,server in ipairs(servers_ip) do
+			    k = k+1
+		    %>
+		    <input name="server_ip" id="server_ip.<%=k%>" placeholder="Server IP" class="cbi-input-text" value="<%=server%>" data-type="ip4addr">
 		    <br />
-		    <div class="cbi-value-description">
-		        <span class="cbi-value-helpicon"><img src="/luci-static/resources/cbi/help.gif" alt="help" /></span>
-		        <%:Server IP will be set for ShadowSocks, Glorytun, OpenVPN and MLVPN%>
-		    </div>
+		    <%
+			end
+		    %>
+		</div>
+		<div class="cbi-value-description">
+		    <span class="cbi-value-helpicon"><img src="/luci-static/resources/cbi/help.gif" alt="help" /></span>
+		    <%:Server IP will be set for ShadowSocks, Glorytun, OpenVPN and MLVPN%>
 		</div>
 	    </div>
+	    <br />
 	    <div class="cbi-value">
 		<label class="cbi-value-title"><%:ShadowSocks key%></label>
 		<div class="cbi-value-field">
@@ -152,5 +173,5 @@
 	<button class="btn" type="submit">Submit</button>
     </div>
 </form>
-
+<script type="text/javascript">cbi_init();</script>
 <%+footer%>
