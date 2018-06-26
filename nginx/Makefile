@@ -247,7 +247,7 @@ define Package/nginx-mod-luci-ssl/description
  Support file for LuCI in nginx (include custom nginx configuration, autostart script for uwsgi, redirect from http to https)
 endef
 
-TARGET_CFLAGS += -fvisibility=hidden -ffunction-sections -fdata-sections -DNGX_LUA_NO_BY_LUA_BLOCK
+TARGET_CFLAGS += -fvisibility=hidden -ffunction-sections -fdata-sections -DNGX_LUA_NO_BY_LUA_BLOCK -DNGX_HAVE_GCC_ATOMIC
 TARGET_LDFLAGS += -Wl,--gc-sections
 
 define Build/Configure
