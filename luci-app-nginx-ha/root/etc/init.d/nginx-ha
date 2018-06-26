@@ -49,6 +49,31 @@ start_instance() {
 
 	[ "$enable" = 1 ] || return 1
 
+	stream="${stream}
+		upstream ${1} {
+			zone dynamic 64k;
+			$(config_list_foreach "${1}" "upstreams" genline_srv)
+		}
+	
+		server {
+			listen ${listen:-0.0.0.0:6666} udp;
+			proxy_pass ${1};
+		}
+		server {
+			listen ${listen:-0.0.0.0:6666};
+			proxy_pass ${1};
+		}
+	"
+}
+
+start_service() {
+	local stream=""
+	config_load nginx-ha
+	config_foreach start_instance general
+
+	[ -z "$stream" ] && return
+	
+	mkdir -p /var/log/nginx
 	mkdir -p /var/etc
 	cat <<-EOF > /var/etc/$PROG_NAME.cfg
 	user nobody nogroup;
@@ -62,19 +87,7 @@ start_instance() {
 	}
 	
 	stream {
-		upstream allservers {
-			zone dynamic 64k;
-			$(config_list_foreach "${1}" "upstreams" genline_srv)
-		}
-	
-		server {
-			listen ${listen:-0.0.0.0:6666} udp;
-			proxy_pass allservers;
-		}
-		server {
-			listen ${listen:-0.0.0.0:6666};
-			proxy_pass allservers;
-		}
+		${stream}
 	}
 	EOF
 
@@ -83,11 +96,8 @@ start_instance() {
 	procd_set_param file /var/etc/$PROG_NAME.cfg
 	procd_set_param respawn
 	procd_close_instance
-}
 
-start_service() {
-	config_load nginx-ha
-	config_foreach start_instance general
+
 }
 
 reload_service() {

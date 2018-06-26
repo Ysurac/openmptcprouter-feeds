@@ -9,6 +9,7 @@ include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI Support for nginx load balancing
 LUCI_DEPENDS:=+nginx
+KCONFIG:=CONFIG_NGINX_STREAM
 
 PKG_LICENSE:=MIT
 

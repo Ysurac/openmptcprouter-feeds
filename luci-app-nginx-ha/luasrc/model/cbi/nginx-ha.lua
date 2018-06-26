@@ -7,7 +7,7 @@ else
 end
 
 s = m:section(TypedSection, "general", translate("General Setting"))
-s.anonymous   = true
+s.addremove = true
 
 o = s:option(Flag, "enable", translate("Enable"))
 o.rmempty     = false
