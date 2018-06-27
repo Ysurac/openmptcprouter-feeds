@@ -9,6 +9,8 @@
 	local dpi = uci:get_list("omr-bypass", "dpi", "proto")
 	local tmpfile = os.tmpname()
 	local dpi_available_proto = luci.util.execi("cat /proc/net/xt_ndpi/proto | awk '{print $3}' | sort -u | head -n -1")
+	local ifaces = sys.net:devices()
+	local bypassif = uci:get("omr-bypass","defaults","ifname") or ""
 %>
 <% if stderr and #stderr > 0 then %><pre class="error"><%=pcdata(stderr)%></pre><% end %>
 <form class="inline" method="post" action="<%=url('admin/services/omr-bypass/add')%>">
@@ -99,7 +101,32 @@
 		</div>
 	    </div>
 	</fieldset>
-
+	
+	<fieldset>
+	    <div class="cbi-section-descr"><%:Set interface you want to use for bypassed traffic.%></div>
+	    <div class="cbi-value">
+		<label class="cbi-value-title">Interface</label>
+		<div class="cbi-value-field">
+		    <select class="cbi-input-select" name="interface" size="1">
+			<option value="" <% if iface == bypassif then %>selected="selected"<% end %>><%=iface%></option>
+	    <%
+	    for _, iface in ipairs(ifaces) do
+		if not (iface == "lo" or iface:match("^ifb.*")) then
+	    %>
+			<option value="<%=iface%>" <% if iface == bypassif then %>selected="selected"<% end %>><%=iface%></option>
+	    <%
+		end
+	    end
+	    %>
+		    </select>
+		    <br />
+		    <div class="cbi-value-description">
+			<span class="cbi-value-helpicon"><img src="/luci-static/resources/cbi/help.gif" alt="help" /></span>
+			<%:If empty, multipath master interface is used if up else any other up interface.%>
+		    </div>
+		</div>
+	    </div>
+	</fieldset>
     </div>
     <div class="cbi-page-actions">
 	<input type="hidden" name="token" value="<%=token%>" />
