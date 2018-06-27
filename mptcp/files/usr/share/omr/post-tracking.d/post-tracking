@@ -22,26 +22,52 @@ set_route() {
 		if [ "$interface_gw" != "" ]; then
 			_log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
 			ip route replace default scope global nexthop via $interface_gw dev $interface_if && SETROUTE=true
-			ip route replace default via $interface_gw dev $interface_if table 991337
+			if [ "$(uci -q get omr-bypass.defaults.ifname)" = "" ]; then
+				ip route replace default via $interface_gw dev $interface_if table 991337
+			fi
 		fi
 	fi
 }
 
 set_ss_route() {
-	local server_ip
+	local server_ip upstreams nginxip
 	config_get server_ip $1 server
-	if [ "$server_ip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE | grep $server_ip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ]; then
-		_log "Set server $server_ip route via $OMR_TRACKER_DEVICE"
-		ip route replace $server_ip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
+	if [ "$server_ip" = "127.0.0.1" ]; then
+		upstreams=$(uci -q get nginx-ha.ShadowSocks.upstreams | sed -e "s/' '/%/" -e 's/ /_/g' -e "s/'//g" -e 's/%/ /')
+		for up in $upstreams; do
+			_log "up : $up"
+			nginxip=$(echo $up | cut -d: -f1)
+			if [ "$nginxip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE | grep $nginxip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ]; then
+				_log "Set server $nginxip route via $OMR_TRACKER_DEVICE"
+				ip route replace $nginxip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
+			fi
+		done
+	else
+		if [ "$server_ip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE | grep $server_ip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ]; then
+			_log "Set server $server_ip route via $OMR_TRACKER_DEVICE"
+			ip route replace $server_ip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
+		fi
 	fi
 }
 
 del_ss_route() {
-	local server_ip
+	local server_ip upstreams nginxip
 	config_get server_ip $1 server
-	if [ "$server_ip" != "" ] &&  [ "$(ip route show dev $OMR_TRACKER_DEVICE | grep $server_ip)" != "" ]; then
-		_log "Remove server $server_ip route via $OMR_TRACKER_DEVICE"
-		ip route delete $server_ip dev $OMR_TRACKER_DEVICE
+	if [ "$server_ip" = "127.0.0.1" ]; then
+		upstreams=$(uci -q get nginx-ha.ShadowSocks.upstreams | sed -e "s/' '/%/" -e 's/ /_/g' -e "s/'//g" -e 's/%/ /')
+		for up in $upstreams; do
+			_log "down : $up"
+			nginxip=$(echo $up | cut -d: -f1)
+			if [ "$nginxip" != "" ] &&  [ "$(ip route show dev $OMR_TRACKER_DEVICE | grep $nginxip)" != "" ]; then
+				_log "Remove server $nginxip route via $OMR_TRACKER_DEVICE"
+				ip route delete $nginxip dev $OMR_TRACKER_DEVICE
+			fi
+		done
+	else
+		if [ "$server_ip" != "" ] &&  [ "$(ip route show dev $OMR_TRACKER_DEVICE | grep $server_ip)" != "" ]; then
+			_log "Remove server $server_ip route via $OMR_TRACKER_DEVICE"
+			ip route delete $server_ip dev $OMR_TRACKER_DEVICE
+		fi
 	fi
 }
 
@@ -89,12 +115,10 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 	if [ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
 		_log "Tunnel up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
 		ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
-		if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
-			if [ "$(uci -q show shadowsocks-libev.ss_rules.redir_udp)" = "hi2" ]; then
-				uci -q delete shadowsocks-libev.ss_rules.redir_udp
-				/etc/init.d/shadowsocks-libev rules_down
-				/etc/init.d/shadowsocks-libev rules_up
-			fi
+		if [ "$(uci -q show shadowsocks-libev.ss_rules.redir_udp)" = "hi2" ]; then
+			uci -q delete shadowsocks-libev.ss_rules.redir_udp
+			/etc/init.d/shadowsocks-libev rules_down
+			/etc/init.d/shadowsocks-libev rules_up
 		fi
 	fi
 	exit 0
@@ -111,10 +135,16 @@ if [ "$multipath_config" = "master" ]; then
 			config_load shadowsocks-libev
 			config_foreach set_ss_route server
 		fi
-		ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
+		if [ "$(uci -q get omr-bypass.defaults.ifname)" = "" ]; then
+			ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
+		fi
 	fi
 	multipath_config="on"
 fi
+if [ "$(uci -q get omr-bypass.defaults.ifname)" = "$OMR_TRACKER_DEVICE" ]; then
+	ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
+fi
+
 [ "$multipath_config" = "on" ] && glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 up > /dev/null 2>&1
 [ "$multipath_config" = "backup" ] && glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 backup > /dev/null 2>&1
 [ "$multipath_status" = "$multipath_config" ] && exit 0
