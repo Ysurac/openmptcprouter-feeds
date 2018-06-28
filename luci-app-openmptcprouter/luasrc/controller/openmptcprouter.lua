@@ -383,7 +383,7 @@ function interfaces_status()
 		local tracker_ip = uci:get("shadowsocks-libev","tracker","local_address") or ""
 		local tracker_port = uci:get("shadowsocks-libev","tracker","local_port")
 		if tracker_ip ~= "" then
-			mArray.openmptcprouter["ss_addr"] = sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 5 http://ip.openmptcprouter.com")
+			mArray.openmptcprouter["ss_addr"] = sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ip.openmptcprouter.com")
 		else
 			mArray.openmptcprouter["ss_addr"] = ""
 		end
@@ -519,20 +519,6 @@ function interfaces_status()
 		    connectivity = 'ERROR'
 	    end
 
-	    if mArray.openmptcprouter["dns"] == true then
-		    -- Test if multipath can work on the connection
-		    local multipath_available
-		    local multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
-		    if multipath_available_state == "" then
-			multipath_available = 'OK'
-		    else
-			multipath_available = 'ERROR'
-		    end
-	    else
-		multipath_available = 'NO CHECK'
-	    end
-	    
-
 	    -- Detect WAN gateway status
 	    local gw_ping = 'UP'
 	    if gateway == "" then
@@ -554,6 +540,20 @@ function interfaces_status()
 	    if gateway == "" then
 		    connectivity = 'ERROR'
 	    end
+
+	    if mArray.openmptcprouter["dns"] == true and ifname ~= "" and gateway ~= "" and gw_ping == "UP" then
+		    -- Test if multipath can work on the connection
+		    local multipath_available
+		    local multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
+		    if multipath_available_state == "" then
+			multipath_available = 'OK'
+		    else
+			multipath_available = 'ERROR'
+		    end
+	    else
+		multipath_available = 'NO CHECK'
+	    end
+
 	    
 	    -- Detect if WAN get an IPv6
 	    local ipv6_discover = 'NONE'
