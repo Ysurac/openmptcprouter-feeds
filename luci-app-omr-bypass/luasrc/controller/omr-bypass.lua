@@ -31,6 +31,9 @@ function bypass_add()
 		dpi = {dpi}
 	end
 	ucic:set_list("omr-bypass","dpi","proto",dpi)
+
+	local interface = luci.http.formvalue("cbid.omr-bypass.interface") or ""
+	ucic:set("omr-bypass","defaults","ifname",interface)
 	
 	ucic:save("omr-bypass")
 	ucic:commit("omr-bypass")
