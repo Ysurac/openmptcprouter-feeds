@@ -88,11 +88,15 @@ function wizard_add()
 	elseif default_vpn == "openvpn" then
 		vpn_port = 65301
 	end
+	ucic:set("openmptcprouter","settings","vpn",default_vpn)
+	ucic:save("openmptcprouter")
+	ucic:commit("openmptcprouter")
 
 	-- Get all servers ips
 	local server_ip = luci.http.formvalue("server_ip")
 	-- We have an IP, so set it everywhere
 	if server_ip ~= "" then
+		local ss_ip
 		-- Check if we have more than one IP, in this case use Nginx HA
 		if (type(server_ip) == "table") then
 			local ss_servers = {}
@@ -100,6 +104,7 @@ function wizard_add()
 			local k = 0
 			for _, ip in pairs(server_ip) do
 				if k == 0 then
+					ss_ip=ip
 					table.insert(ss_servers,ip .. ":65101 max_fails=3 fail_timeout=30s")
 					table.insert(vpn_servers,ip .. ":65001 max_fails=3 fail_timeout=30s")
 					ucic:set("qos","serverin","srchost",ip)
@@ -119,6 +124,9 @@ function wizard_add()
 			ucic:save("nginx-ha")
 			ucic:commit("nginx-ha")
 			server_ip = "127.0.0.1"
+			ucic:set("shadowsocks-libev","sss0","server",ss_ip)
+			ucic:save("shadowsocks-libev")
+			ucic:commit("shadowsocks-libev")
 		else
 			ucic:set("nginx-ha","ShadowSocks","enable","0")
 			ucic:set("nginx-ha","VPN","enable","0")
@@ -126,10 +134,10 @@ function wizard_add()
 			ucic:set("qos","serverout","dsthost",server_ip)
 			ucic:save("qos")
 			ucic:commit("qos")
+			ucic:set("shadowsocks-libev","sss0","server",server_ip)
+			ucic:save("shadowsocks-libev")
+			ucic:commit("shadowsocks-libev")
 		end
-		ucic:set("shadowsocks-libev","sss0","server",server_ip)
-		ucic:save("shadowsocks-libev")
-		ucic:commit("shadowsocks-libev")
 		ucic:set("glorytun","vpn","host",server_ip)
 		ucic:save("glorytun")
 		ucic:commit("glorytun")
