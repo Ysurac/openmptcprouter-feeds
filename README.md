@@ -62,7 +62,7 @@ Added support to gateway set by user for 6in4. Used for IPv6 over the glorytun I
 
 *Description:* Luci interface to bypass domains, IPs and networks with shadowsocks
 
-Domains, IPs and networks added are bypassed when shadowsocks is used. This can be used when VPS IP is blacklisted from some sites.
+Domains, IPs, networks and protocol (using DPI) added are bypassed when shadowsocks is used. This can be used when VPS IP is blacklisted from some sites.
 
 
 ## omr-tracker
