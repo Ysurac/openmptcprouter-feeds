@@ -29,7 +29,7 @@ function wizard_add()
 			if sectionname:match("^wan(%d+)$") then
 				i = i + 1
 			end
-			if uci:get("network",sectionname,"multipath") == "master" then
+			if ucic:get("network",sectionname,"multipath") == "master" then
 				multipath_master = true
 			end
 		end)
