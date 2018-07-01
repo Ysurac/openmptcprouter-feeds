@@ -16,7 +16,7 @@ local mtcppm = s:option(ListValue, "mptcp_path_manager", translate("Multipath TC
 mtcppm:value("default", translate("default"))
 mtcppm:value("fullmesh", translate("fullmesh"))
 mtcppm:value("ndiffports", translate("ndiffports"))
-mtcppm:value("blinder", translate("blinder"))
+mtcppm:value("binder", translate("binder"))
 local mtcpsch = s:option(ListValue, "mptcp_scheduler", translate("Multipath TCP scheduler"))
 mtcpsch:value("default", translate("default"))
 mtcpsch:value("roundrobin", translate("round-robin"))
