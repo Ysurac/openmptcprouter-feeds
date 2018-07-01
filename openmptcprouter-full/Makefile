@@ -41,6 +41,7 @@ MY_DEPENDS := \
     luci-proto-3g \
     luci-app-mlvpn mlvpn \
     omr-update \
+    rng-tools \
     openvpn-openssl \
     kmod-rt2800-usb libimobiledevice \
     kmod-mt7601u \
