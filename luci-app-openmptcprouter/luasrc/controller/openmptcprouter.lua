@@ -298,13 +298,17 @@ function settings_add()
 	ucic:save("firewall")
 	ucic:commit("firewall")
 	ucic:set("dhcp","lan","ra_default",disable_ipv6)
-	ucic:save("dhcp")
-	ucic:commit("dhcp")
 	if disable_ipv6 == 1 then
+		luci.sys.call("uci -q del dhcp.lan.dhcpv6")
+		luci.sys.call("uci -q del dhcp.lan.ra")
 		ucic:set("shadowsocks-libev","hi","local_address","0.0.0.0")
 	else
+		ucic:set("dhcp","lan","dhcpv6","server")
+		ucic:set("dhcp","lan","ra","server")
 		ucic:set("shadowsocks-libev","hi","local_address","::")
 	end
+	ucic:save("dhcp")
+	ucic:commit("dhcp")
 	ucic:save("shadowsocks-libev")
 	ucic:commit("shadowsocks-libev")
 	
