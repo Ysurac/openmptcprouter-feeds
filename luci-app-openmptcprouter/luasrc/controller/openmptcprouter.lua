@@ -80,20 +80,29 @@ function wizard_add()
 
 	-- Get VPN set by default
 	local default_vpn = luci.http.formvalue("default_vpn") or "glorytun_tcp"
-	local vpn_port
+	local vpn_port = ""
+	local vpn_intf = ""
 	if default_vpn:match("^glorytun.*") then
 		vpn_port = 65001
+		vpn_intf = "tun0"
 	elseif default_vpn == "mlvpn" then
 		vpn_port = 65201
+		vpn_intf = "mlvpn0"
 	elseif default_vpn == "openvpn" then
 		vpn_port = 65301
+		vpn_intf = "tun0"
+	end
+	if vpn_intf ~= "" then
+		ucic:set("network","omrvpn","ifname",vpn_intf)
+		ucic:save("network")
+		ucic:commit("network")
 	end
 	ucic:set("openmptcprouter","settings","vpn",default_vpn)
 	ucic:save("openmptcprouter")
 	ucic:commit("openmptcprouter")
 
 	-- Get all servers ips
-	local server_ip = luci.http.formvalue("server_ip")
+	local server_ip = luci.http.formvalue("server_ip") or ""
 	-- We have an IP, so set it everywhere
 	if server_ip ~= "" then
 		local ss_ip
@@ -106,14 +115,18 @@ function wizard_add()
 				if k == 0 then
 					ss_ip=ip
 					table.insert(ss_servers,ip .. ":65101 max_fails=3 fail_timeout=30s")
-					table.insert(vpn_servers,ip .. ":65001 max_fails=3 fail_timeout=30s")
+					if vpn_port ~= "" then
+						table.insert(vpn_servers,ip .. ":" .. vpn_port .. " max_fails=3 fail_timeout=30s")
+					end
 					ucic:set("qos","serverin","srchost",ip)
 					ucic:set("qos","serverout","dsthost",ip)
 					ucic:save("qos")
 					ucic:commit("qos")
 				else
 					table.insert(ss_servers,ip .. ":65101 backup")
-					table.insert(vpn_servers,ip .. ":65001 backup")
+					if vpn_port ~= "" then
+						table.insert(vpn_servers,ip .. ":" .. vpn_port .. " backup")
+					end
 				end
 				k = k + 1
 			end
