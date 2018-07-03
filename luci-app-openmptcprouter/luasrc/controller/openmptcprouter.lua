@@ -527,17 +527,20 @@ function interfaces_status()
 	    if ifname == "" then
 		ifname = get_device(interface)
 	    end
+	    
 	    --if multipath == "off" and not ifname:match("^tun.*") then return end
 	    if multipath == "off" then return end
 
 	    local asn
-
 	    local connectivity
-	    local multipath_state = ut.trim(sys.exec("multipath " .. ifname .. " | grep deactivated"))
-	    if multipath_state == "" and ifname ~= "" then
-		connectivity = 'OK'
-	    else
-		connectivity = 'ERROR'
+
+	    if ifname ~= "" and ifname ~= nil then
+		    local multipath_state = ut.trim(sys.exec("multipath " .. ifname .. " | grep deactivated"))
+		    if multipath_state == "" then
+			connectivity = 'OK'
+		    else
+			connectivity = 'ERROR'
+		    end
 	    end
 
 	    if ipaddr == "" then
@@ -549,7 +552,7 @@ function interfaces_status()
 	    if gateway == "" then
 		    gateway = get_gateway(interface)
 	    end
-	    if gateway == "" then
+	    if gateway == "" and ifname ~= nil then
 		    gateway = ut.trim(sys.exec("ip -4 r list dev " .. ifname .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
 	    end
 	    if gateway ~= "" then
@@ -566,7 +569,7 @@ function interfaces_status()
 		    connectivity = 'ERROR'
 	    end
 
-	    if mArray.openmptcprouter["dns"] == true and ifname ~= "" and gateway ~= "" and gw_ping == "UP" then
+	    if mArray.openmptcprouter["dns"] == true and ifname ~= nil and gateway ~= "" and gw_ping == "UP" then
 		    -- Test if multipath can work on the connection
 		    local multipath_available
 		    local multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
@@ -582,7 +585,8 @@ function interfaces_status()
 	    
 	    -- Detect if WAN get an IPv6
 	    local ipv6_discover = 'NONE'
-	    if tonumber((sys.exec("sysctl net.ipv6.conf.all.disable_ipv6")):match(" %d+")) == 0 then
+	    if ifname ~= nil then
+		if tonumber((sys.exec("sysctl net.ipv6.conf.all.disable_ipv6")):match(" %d+")) == 0 then
 		    local ipv6_result = _ipv6_discover(ifname)
 		    if type(ipv6_result) == "table" and #ipv6_result > 0 then
 			    local ipv6_addr_test
@@ -598,6 +602,7 @@ function interfaces_status()
 				    end
 			    end
 		    end
+		end
 	    end
 
 	    local publicIP = "-"
