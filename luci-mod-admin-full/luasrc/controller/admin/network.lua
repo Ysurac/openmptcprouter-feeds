@@ -416,7 +416,7 @@ function diag_command(cmd, addr)
 	if addr and addr:match("^[a-zA-Z0-9%-%.:_]+$") then
 		luci.http.prepare_content("text/plain")
 
-		local util = io.popen(cmd % luci.util.shellquote(addr))
+		local util = io.popen(cmd % addr)
 		if util then
 			while true do
 				local ln = util:read("*l")
