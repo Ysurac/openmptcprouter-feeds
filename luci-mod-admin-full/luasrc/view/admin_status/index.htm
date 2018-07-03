@@ -54,8 +54,6 @@
 			swap       = swapinfo,
 			connmax    = conn_max,
 			conncount  = conn_count,
-			leases     = stat.dhcp_leases(),
-			leases6    = stat.dhcp6_leases(),
 			wifinets   = stat.wifi_networks()
 		}
 
@@ -112,11 +110,6 @@
 		luci.http.write_json(rv)
 
 		return
-	elseif luci.http.formvalue("hosts") == "1" then
-		luci.http.prepare_content("application/json")
-		luci.http.write_json(luci.sys.net.host_hints())
-
-		return
 	end
 -%>
 
@@ -131,7 +124,7 @@
 		var pc = Math.floor((100 / mn) * vn);
 
 		return String.format(
-			'<div style="width:200px; position:relative; border:1px solid #999999">' +
+			'<div style="width:100%%; max-width:200px; position:relative; border:1px solid #999999">' +
 				'<div style="background-color:#CCCCCC; width:%d%%; height:15px">' +
 					'<div style="position:absolute; left:0; top:0; text-align:center; width:100%%; color:#000000">' +
 						'<small>%s / %s (%d%%)</small>' +
@@ -139,45 +132,6 @@
 				'</div>' +
 			'</div>', pc, v, m, pc
 		);
-	}
-
-	function wifirate(bss, rx) {
-		var p = rx ? 'rx_' : 'tx_',
-		    s = '%.1f <%:Mbit/s%>, %d<%:MHz%>'
-					.format(bss[p+'rate'] / 1000, bss[p+'mhz']),
-		    ht = bss[p+'ht'], vht = bss[p+'vht'],
-			mhz = bss[p+'mhz'], nss = bss[p+'nss'],
-			mcs = bss[p+'mcs'], sgi = bss[p+'short_gi'];
-
-		if (ht || vht) {
-			if (vht) s += ', VHT-MCS %d'.format(mcs);
-			if (nss) s += ', VHT-NSS %d'.format(nss);
-			if (ht)  s += ', MCS %s'.format(mcs);
-			if (sgi) s += ', <%:Short GI%>';
-		}
-
-		return s;
-	}
-
-	function duid2mac(duid) {
-		// DUID-LLT / Ethernet
-		if (duid.length === 28 && duid.substr(0, 8) === '00010001')
-			return duid.substr(16).replace(/(..)(?=..)/g, '$1:').toUpperCase();
-
-		// DUID-LL / Ethernet
-		if (duid.length === 20 && duid.substr(0, 8) === '00030001')
-			return duid.substr(8).replace(/(..)(?=..)/g, '$1:').toUpperCase();
-
-		return null;
-	}
-
-	var npoll = 1;
-	var hosts = <%=luci.http.write_json(luci.sys.net.host_hints())%>;
-
-	function updateHosts() {
-		XHR.get('<%=REQUEST_URI%>', { hosts: 1 }, function(x, data) {
-			hosts = data;
-		});
 	}
 
 	function labelList(items, offset) {
@@ -206,7 +160,7 @@
 		return E('div', { class: 'ifacebox' }, [
 			E('div', { class: 'ifacebox-head center ' + (active ? 'active' : '') },
 				E('strong', title)),
-			E('div', { class: 'ifacebox-body' }, childs)
+			E('div', { class: 'ifacebox-body left' }, childs)
 		]);
 	}
 
@@ -220,9 +174,6 @@
 	XHR.poll(5, '<%=REQUEST_URI%>', { status: 1 },
 		function(x, info)
 		{
-			if (!(npoll++ % 5))
-				updateHosts();
-
 			<% if has_mptcp == 0 then %>
 			var us = document.getElementById('upstream_status_table');
 
@@ -333,86 +284,7 @@
 				);
 			<% end %>
 
-			<% if has_dhcp then %>
-			var ls = document.getElementById('lease_status_table');
-			if (ls)
-			{
-				/* clear all rows */
-				while (ls.firstElementChild !== ls.lastElementChild)
-					ls.removeChild(ls.lastElementChild);
-
-				for (var i = 0; i < info.leases.length; i++)
-				{
-					var timestr;
-
-					if (info.leases[i].expires === false)
-						timestr = '<em><%:unlimited%></em>';
-					else if (info.leases[i].expires <= 0)
-						timestr = '<em><%:expired%></em>';
-					else
-						timestr = String.format('%t', info.leases[i].expires);
-
-					ls.appendChild(E('<div class="tr cbi-section-table-row cbi-rowstyle-%d">'.format((i % 2) + 1), [
-						E('<div class="td">', info.leases[i].hostname ? info.leases[i].hostname : '?'),
-						E('<div class="td">', info.leases[i].ipaddr),
-						E('<div class="td">', info.leases[i].macaddr),
-						E('<div class="td">', timestr)
-					]));
-				}
-
-				if (ls.firstElementChild === ls.lastElementChild)
-					ls.appendChild(E('<div class="tr cbi-section-table-row"><div class="td"><em><br /><%:There are no active leases.%></em></div></div>'));
-			}
-
-			var ls6 = document.getElementById('lease6_status_table');
-			if (ls6 && info.leases6)
-			{
-				ls6.parentNode.style.display = 'block';
-
-				/* clear all rows */
-				while (ls6.firstElementChild !== ls6.lastElementChild)
-					ls6.removeChild(ls6.lastElementChild);
-
-				for (var i = 0; i < info.leases6.length; i++)
-				{
-					var timestr;
-
-					if (info.leases6[i].expires === false)
-						timestr = '<em><%:unlimited%></em>';
-					else if (info.leases6[i].expires <= 0)
-						timestr = '<em><%:expired%></em>';
-					else
-						timestr = String.format('%t', info.leases6[i].expires);
-
-					var host = hosts[duid2mac(info.leases6[i].duid)],
-					    name = info.leases6[i].hostname,
-					    hint = null;
-
-					if (!name) {
-						if (host)
-							hint = host.name || host.ipv4 || host.ipv6;
-					}
-					else {
-						if (host && host.name && info.leases6[i].hostname != host.name)
-							hint = host.name;
-					}
-
-					ls6.appendChild(E('<div class="tr cbi-section-table-row cbi-rowstyle-%d">'.format((i % 2) + 1), [
-						E('<div class="td nowrap">', hint ? '<div>%h (%h)</div>'.format(name || '?', hint) : (name || '?')),
-						E('<div class="td nowrap">', info.leases6[i].ip6addr),
-						E('<div class="td nowrap">', info.leases6[i].duid),
-						E('<div class="td nowrap">', timestr)
-					]));
-				}
-
-				if (ls6.firstElementChild === ls6.lastElementChild)
-					ls6.appendChild(E('<div class="tr cbi-section-table-row"><div class="td"><em><br /><%:There are no active leases.%></em></div></div>'));
-			}
-			<% end %>
-
 			<% if has_wifi then %>
-			var assoclist = [ ];
-
 			var ws = document.getElementById('wifi_status_table');
 			if (ws)
 			{
@@ -429,21 +301,6 @@
 					{
 						var net = dev.networks[nidx];
 						var is_assoc = (net.bssid != '00:00:00:00:00:00' && net.channel && !net.disabled);
-						var num_assoc = 0;
-
-						for (var bssid in net.assoclist)
-						{
-							var bss = net.assoclist[bssid];
-
-							bss.bssid  = bssid;
-							bss.link   = net.link;
-							bss.name   = net.name;
-							bss.ifname = net.ifname;
-							bss.radio  = dev.name;
-
-							assoclist.push(bss);
-							num_assoc++;
-						}
 
 						var icon;
 						if (!is_assoc)
@@ -466,7 +323,7 @@
 							'<%:Mode%>', net.mode,
 							'<%:BSSID%>', is_assoc ? (net.bssid || '-') : null,
 							'<%:Encryption%>', is_assoc ? net.encryption : null,
-							'<%:Associations%>', is_assoc ? (num_assoc || '-') : null,
+							'<%:Associations%>', is_assoc ? (net.num_assoc || '-') : null,
 							null, is_assoc ? null : E('em', '<%:Wireless is disabled or not associated%>')));
 					}
 
@@ -480,62 +337,6 @@
 
 				if (!ws.lastElementChild)
 					ws.appendChild(E('<em><%:No information available%></em>'));
-			}
-
-			var ac = document.getElementById('wifi_assoc_table');
-			if (ac)
-			{
-				/* clear all rows */
-				while (ac.firstElementChild !== ac.lastElementChild)
-					ac.removeChild(ac.lastElementChild);
-
-				assoclist.sort(function(a, b) {
-					return (a.name == b.name)
-						? (a.bssid < b.bssid)
-						: (a.name  > b.name )
-					;
-				});
-
-				for (var i = 0; i < assoclist.length; i++)
-				{
-					var icon;
-					var q = (-1 * (assoclist[i].noise - assoclist[i].signal)) / 5;
-					if (q < 1)
-						icon = "<%=resource%>/icons/signal-0.png";
-					else if (q < 2)
-						icon = "<%=resource%>/icons/signal-0-25.png";
-					else if (q < 3)
-						icon = "<%=resource%>/icons/signal-25-50.png";
-					else if (q < 4)
-						icon = "<%=resource%>/icons/signal-50-75.png";
-					else
-						icon = "<%=resource%>/icons/signal-75-100.png";
-
-					var host = hosts[assoclist[i].bssid],
-					    name = host ? (host.name || host.ipv4 || host.ipv6) : null,
-					    hint = (host && host.name && (host.ipv4 || host.ipv6)) ? (host.ipv4 || host.ipv6) : null;
-
-					ac.appendChild(E('<div class="tr cbi-section-table-row cbi-rowstyle-%d">'.format(1 + (i % 2)), [
-						E('<div class="td"><span class="ifacebadge" title="%q"><img src="<%=resource%>/icons/wifi.png" /> %h</span></div>'
-							.format(assoclist[i].radio, assoclist[i].ifname)),
-						E('<div class="td"><a href="%s" style="white-space:nowrap">%h</a></div>'
-							.format(assoclist[i].link, assoclist[i].name)),
-						E('<div class="td">',
-							assoclist[i].bssid),
-						E('<div class="td nowrap">',
-							hint ? '<div>%h (%h)</div>'.format(name || '?', hint) : (name || '?')),
-						E('<div class="td"><span class="ifacebadge" title="<%:Signal%>: %d <%:dBm%> / <%:Noise%>: %d <%:dBm%> / <%:SNR%>: %d"><img src="%s" /> %d / %d <%:dBm%></span></div>'
-							.format(assoclist[i].signal, assoclist[i].noise, assoclist[i].signal - assoclist[i].noise, icon, assoclist[i].signal, assoclist[i].noise)),
-						E('<div class="td nowrap">', [
-							E('<span style="white-space:nowrap">', wifirate(assoclist[i], true)),
-							E('<br />'),
-							E('<span style="white-space:nowrap">', wifirate(assoclist[i], false))
-						])
-					]));
-				}
-
-				if (ac.firstElementChild === ac.lastElementChild)
-					ac.appendChild(E('<div class="tr cbi-section-table-row"><div class="td"><em><br /><%:No information available%></em></div></div>'));
 			}
 			<% end %>
 
@@ -594,8 +395,8 @@
 
 <h2 name="content"><%:Status%></h2>
 
-<fieldset class="cbi-section">
-	<legend><%:System%></legend>
+<div class="cbi-section">
+	<h3><%:System%></h3>
 
 	<div class="table" width="100%">
 		<div class="tr"><div class="td left" width="33%"><%:Hostname%></div><div class="td left"><%=luci.sys.hostname() or "?"%></div></div>
@@ -610,79 +411,51 @@
 		<div class="tr"><div class="td left" width="33%"><%:Uptime%></div><div class="td left" id="uptime">-</div></div>
 		<div class="tr"><div class="td left" width="33%"><%:Load Average%></div><div class="td left" id="loadavg">-</div></div>
 	</div>
-</fieldset>
+</div>
 
-<fieldset class="cbi-section">
-	<legend><%:Memory%></legend>
+<div class="cbi-section">
+	<h3><%:Memory%></h3>
 
 	<div class="table" width="100%">
 		<div class="tr"><div class="td left" width="33%"><%:Total Available%></div><div class="td left" id="memtotal">-</div></div>
 		<div class="tr"><div class="td left" width="33%"><%:Free%></div><div class="td left" id="memfree">-</div></div>
 		<div class="tr"><div class="td left" width="33%"><%:Buffered%></div><div class="td left" id="membuff">-</div></div>
 	</div>
-</fieldset>
+</div>
 
 <% if swapinfo.total > 0 then %>
-<fieldset class="cbi-section">
-	<legend><%:Swap%></legend>
+<div class="cbi-section">
+	<h3><%:Swap%></h3>
 
 	<div class="table" width="100%">
 		<div class="tr"><div class="td left" width="33%"><%:Total Available%></div><div class="td left" id="swaptotal">-</div></div>
 		<div class="tr"><div class="td left" width="33%"><%:Free%></div><div class="td left" id="swapfree">-</div></div>
 	</div>
-</fieldset>
+</div>
 <% end %>
 
-<fieldset class="cbi-section">
-	<legend><%:Network%></legend>
-	<% if has_mptcp == "0" then %>
+<div class="cbi-section">
+	<h3><%:Network%></h3>
+
 	<div id="upstream_status_table" class="network-status-table">
 		<em><%:Collecting data...%></em>
 	</div>
-	<% end %>
 
 	<div class="table" width="100%">
 		<div class="tr"><div class="td left" width="33%"><%:Active Connections%></div><div class="td left" id="conns">-</div></div>
 	</div>
-</fieldset>
+</div>
 
-<% if has_dhcp then %>
-<fieldset class="cbi-section">
-	<legend><%:DHCP Leases%></legend>
-
-	<div class="table cbi-section-table" id="lease_status_table">
-		<div class="tr cbi-section-table-titles">
-			<div class="th"><%:Hostname%></div>
-			<div class="th"><%:IPv4-Address%></div>
-			<div class="th"><%:MAC-Address%></div>
-			<div class="th"><%:Leasetime remaining%></div>
-		</div>
-		<div class="tr cbi-section-table-row">
-			<div class="td" colspan="4"><em><br /><%:Collecting data...%></em></div>
-		</div>
-	</div>
-</fieldset>
-
-<fieldset class="cbi-section" style="display:none">
-	<legend><%:DHCPv6 Leases%></legend>
-
-	<div class="table cbi-section-table" id="lease6_status_table">
-		<div class="tr cbi-section-table-titles">
-			<div class="th"><%:Host%></div>
-			<div class="th"><%:IPv6-Address%></div>
-			<div class="th"><%:DUID%></div>
-			<div class="th"><%:Leasetime remaining%></div>
-		</div>
-		<div class="tr cbi-section-table-row">
-			<div class="td" colspan="4"><em><br /><%:Collecting data...%></em></div>
-		</div>
-	</div>
-</fieldset>
-<% end %>
+<%
+	if has_dhcp then
+		include("admin_network/lease_status")
+	end
+%>
 
 <% if has_dsl then %>
-<fieldset class="cbi-section">
-	<legend><%:DSL%></legend>
+<div class="cbi-section">
+	<h3><%:DSL%></h3>
+
 	<div class="table" width="100%">
 		<div class="tr">
 			<div class="td left" width="33%" style="vertical-align:top"><%:DSL Status%></div>
@@ -696,35 +469,23 @@
 			</div>
 		</div>
 	</div>
-</fieldset>
+</div>
 <% end %>
 
 <% if has_wifi then %>
-<fieldset class="cbi-section">
-	<legend><%:Wireless%></legend>
+<div class="cbi-section">
+	<h3><%:Wireless%></h3>
 
 	<div id="wifi_status_table" class="network-status-table">
 		<em><%:Collecting data...%></em>
 	</div>
-</fieldset>
+</div>
 
-<fieldset class="cbi-section">
-	<legend><%:Associated Stations%></legend>
+<div class="cbi-section">
+	<h3><%:Associated Stations%></h3>
 
-	<div class="table cbi-section-table valign-middle" id="wifi_assoc_table">
-		<div class="tr cbi-section-table-titles">
-			<div class="th">&#160;</div>
-			<div class="th"><%:Network%></div>
-			<div class="th"><%:MAC-Address%></div>
-			<div class="th"><%:Host%></div>
-			<div class="th"><%:Signal%> / <%:Noise%></div>
-			<div class="th"><%:RX Rate%> / <%:TX Rate%></div>
-		</div>
-		<div class="tr cbi-section-table-row">
-			<div class="td" colspan="6"><em><br /><%:Collecting data...%></em></div>
-		</div>
-	</div>
-</fieldset>
+	<%+admin_network/wifi_assoclist%>
+</div>
 <% end %>
 
 <%-
