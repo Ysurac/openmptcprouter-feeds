@@ -33,7 +33,7 @@ function wizard_add()
 				multipath_master = true
 			end
 		end)
-		local defif = ucic:get("network","wan1","ifname") or "eth0"
+		local defif = ucic:get("network","wan1_dev","ifname") or "eth0"
 		ucic:set("network","wan" .. i,"interface")
 		ucic:set("network","wan" .. i,"ifname",defif)
 		ucic:set("network","wan" .. i,"proto","static")
@@ -49,6 +49,7 @@ function wizard_add()
 		ucic:commit("network")
 		-- Dirty way to add new interface to firewall...
 		luci.sys.call("uci -q add_list firewall.@zone[1].network=wan" .. i)
+		luci.sys.call("uci -q commit firewall")
 
 		luci.sys.call("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
 		gostatus = false
