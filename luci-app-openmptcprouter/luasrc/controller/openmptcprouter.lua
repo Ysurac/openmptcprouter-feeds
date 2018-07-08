@@ -410,14 +410,19 @@ function interfaces_status()
 		local tracker_port = uci:get("shadowsocks-libev","tracker","local_port")
 		if tracker_ip ~= "" then
 			mArray.openmptcprouter["ss_addr"] = sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ip.openmptcprouter.com")
+			--mArray.openmptcprouter["ss_addr6"] = sys.exec("curl -s -6 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ipv6.openmptcprouter.com")
 		else
 			mArray.openmptcprouter["ss_addr"] = ""
+			--mArray.openmptcprouter["ss_addr6"] = ""
 		end
 		-- wanaddr
 		mArray.openmptcprouter["wan_addr"] = sys.exec("wget -4 -qO- -T 1 http://ip.openmptcprouter.com")
+		mArray.openmptcprouter["wan_addr6"] = sys.exec("wget -6 -qO- -T 1 http://ipv6.openmptcprouter.com")
 	else
 		mArray.openmptcprouter["ss_addr"] = ""
+		--mArray.openmptcprouter["ss_addr6"] = ""
 		mArray.openmptcprouter["wan_addr"] = ""
+		mArray.openmptcprouter["wan_addr6"] = ""
 	end
 
 	mArray.openmptcprouter["remote_addr"] = luci.http.getenv("REMOTE_ADDR") or ""
