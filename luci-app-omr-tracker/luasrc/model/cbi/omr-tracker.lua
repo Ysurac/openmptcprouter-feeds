@@ -5,7 +5,7 @@ local m, s, o
 
 m = Map("omr-tracker", translate("OMR-Tracker"))
 
-s = m:section(TypedSection, "shadowsocks", translate("ShadowSocks tracker Settings"), translate("Detect if ShadowSocks is down and stop traffic redirection over it"))
+s = m:section(TypedSection, "shadowsocks", translate("ShadowSocks tracker Settings"), translate("Detect if ShadowSocks is down and stop traffic redirection over it."))
 s.anonymous   = true
 s.addremove = false
 
@@ -36,7 +36,7 @@ o.default     = "2"
 o.datatype    = "range(1, 100)"
 o.rmempty     = false
 
-o = s:option(DynamicList, "hosts", translate("Hosts"))
+o = s:option(DynamicList, "hosts", translate("Hosts"), translate("IPs or domains must be available over http"))
 o.placeholder = "bing.com"
 o.default     = { "bing.com", "google.com" }
 o.rmempty     = false
