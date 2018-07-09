@@ -310,6 +310,13 @@ function settings_add()
 	end
 	ucic:save("dhcp")
 	ucic:commit("dhcp")
+
+	local obfs = luci.http.formvalue("obfs") or 0
+	ucic:foreach("shadowsocks-libev", "ss_redir", function (section)
+		ucic:set("shadowsocks-libev",section[".name"],"obfs",obfs)
+	end)
+	ucic:set("shadowsocks-libev","tracker","obfs",obfs)
+
 	ucic:save("shadowsocks-libev")
 	ucic:commit("shadowsocks-libev")
 	
