@@ -3,7 +3,7 @@ local sys = require "luci.sys"
 local ifaces = sys.net:devices()
 local m, s, o
 
-m = Map("network", translate("MPTCP"), translate("Networks MPTCP settings"), translate("Visit <a href='http://multipath-tcp.org/pmwiki.php/Users/ConfigureMPTCP'>http://multipath-tcp.org/pmwiki.php/Users/ConfigureMPTCP</a> for help."))
+m = Map("network", translate("MPTCP"), translate("Networks MPTCP settings. Visit <a href='http://multipath-tcp.org/pmwiki.php/Users/ConfigureMPTCP'>http://multipath-tcp.org/pmwiki.php/Users/ConfigureMPTCP</a> for help."))
 
 s = m:section(TypedSection, "globals")
 local mtcpg = s:option(ListValue, "multipath", translate("Multipath TCP"))
