@@ -457,14 +457,21 @@ function interfaces_status()
 				peer = ut.trim(sys.exec("ip -4 r list dev " .. tun_dev .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
 			end
 			if peer ~= "" then
-				local tunnel_ping_test = ut.trim(sys.exec("ping -W 1 -c 1 " .. peer .. " | grep '100% packet loss'"))
+				local tunnel_ping_test = ut.trim(sys.exec("ping -W 1 -c 1 " .. peer .. " -I " .. tun_dev .. " | grep '100% packet loss'"))
 				if tunnel_ping_test == "" then
 					mArray.openmptcprouter["tun_state"] = 'UP'
 				else
 					mArray.openmptcprouter["tun_state"] = 'DOWN'
 				end
+				local tunnel_ping6_test = ut.trim(sys.exec("ping6 -W 1 -c 1 fe80::a00:1 -I 6in4-omr6in4 | grep '100% packet loss'"))
+				if tunnel_ping6_test == "" then
+					mArray.openmptcprouter["tun6_state"] = 'UP'
+				else
+					mArray.openmptcprouter["tun6_state"] = 'DOWN'
+				end
 			else
 				mArray.openmptcprouter["tun_state"] = 'DOWN'
+				mArray.openmptcprouter["tun6_state"] = 'DOWN'
 			end
 		end
 	end
