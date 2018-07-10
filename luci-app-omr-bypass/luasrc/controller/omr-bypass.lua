@@ -27,10 +27,14 @@ function bypass_add()
 	ucic:set_list("omr-bypass","ips","ip",ip_ipset)
 
 	local dpi = luci.http.formvalue("cbid.omr-bypass.dpi")
-	if (type(dpi) ~= "table") then
-		dpi = {dpi}
+	if dpi ~= "" then
+		if (type(dpi) ~= "table") then
+			dpi = {dpi}
+		end
+		ucic:set_list("omr-bypass","dpi","proto",dpi)
+	else
+		ucic:delete("omr-bypass","dpi","proto")
 	end
-	ucic:set_list("omr-bypass","dpi","proto",dpi)
 
 	local interface = luci.http.formvalue("cbid.omr-bypass.interface") or ""
 	ucic:set("omr-bypass","defaults","ifname",interface)
