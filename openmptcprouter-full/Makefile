@@ -23,7 +23,7 @@ MY_DEPENDS := \
     uhttpd \
     uhttpd-mod-ubus \
     curl \
-    iperf3 \
+    iperf3-ssl \
     arptables \
     bind-dig \
     conntrack conntrackd ebtables ebtables-utils ip-full \
