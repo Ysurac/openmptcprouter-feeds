@@ -1,0 +1,106 @@
+<%+header%>
+
+<%
+	local uci = require("luci.model.uci").cursor()
+%>
+
+<script type="text/javascript" src="<%=resource%>/cbi.js?v=git-18.193.28471-ee087a1"></script>
+<script type="text/javascript">//<![CDATA[
+    var stxhr = new XHR();
+
+    function update_status(field, proto, mode)
+    {
+	var tool = field.name;
+	var addr = field.value;
+
+	var legend = document.getElementById('diag-rc-legend');
+	var output = document.getElementById('diag-rc-output');
+
+	if (legend && output)
+	{
+	    output.innerHTML =
+		'<img src="<%=resource%>/icons/loading.gif" alt="<%:Loading%>" style="vertical-align:middle" /> ' +
+		'<%:Waiting for command to complete...%>'
+	    ;
+
+	    legend.parentNode.style.display = 'block';
+	    legend.style.display = 'inline';
+
+	    stxhr.post('<%=url('admin/services/iperf')%>/run_test' + '/' + addr + '/' + proto + '/' + mode, { token: '<%=token%>' },
+		function(x)
+		{
+		    if (x.responseText)
+		    {
+			legend.style.display = 'none';
+			var response = JSON.parse(x.responseText);
+			if (response.error)
+			{
+				output.innerHTML = String.format('<pre>%s</pre>', response.error );
+			} else {
+				var sent_speed = (response.end.sum_sent.bits_per_second/1000000);
+				var received_speed = (response.end.sum_received.bits_per_second/1000000);
+				var server = response.start.connecting_to.host;
+				output.innerHTML = String.format('<pre>Server: %s - Sent: %sMb/s - Received: %sMb/s</pre>', server, sent_speed.toFixed(2), received_speed.toFixed(2) );
+			}
+		    }
+		    else
+		    {
+			legend.style.display = 'none';
+			output.innerHTML = '<span class="error"><%:Bad address specified!%></span>';
+		    }
+		}
+	    );
+	}
+    }
+//]]></script>
+
+<% if stderr and #stderr > 0 then %><pre class="error"><%=pcdata(stderr)%></pre><% end %>
+<form class="inline" method="post" action="<%=url('admin/services/iperf/run_test')%>">
+    <div class="cbi-map">
+	<h2 name="content"><%:iperf Speed tests%></h2>
+	<fieldset class="cbi-section" id="networks">
+	    <legend><%:Settings%></legend>
+	    <div class="cbi-section-descr"></div>
+	    <div class="cbi-value">
+		<label class="cbi-value-title"><%:Mode of operation%></label>
+		<div class="cbi-value-field">
+		    <select class="cbi-input-select" name="mode">
+			<option value="tcp">TCP</option>
+			<!-- <option value="udp">UDP</option> -->
+		    </select>
+		</div>
+	    </div>
+	    <div class="cbi-value">
+		<label class="cbi-value-title"><%:Internet protocol%></label>
+		<div class="cbi-value-field">
+		    <select class="cbi-input-select" name="proto">
+			<option value="ipv4">IPv4</option>
+			<option value="ipv6">IPv6</option>
+		    </select>
+		</div>
+	    </div>
+	    <div class="cbi-value">
+		<label class="cbi-value-title"><%:Server%></label>
+		<div class="cbi-value-field">
+		    <select class="cbi-input-select" name="addr">
+		    <%
+			uci:foreach("iperf","server", function(s)
+			    local server = s[".name"]
+		    %>
+			<option value="<%=server%>"><%=string.gsub(server,"_","-")%></option>
+		    <%
+			end)
+		    %>
+		    </select>
+		</div>
+	    </div>
+	    <input type="button" value="<%:Test%>" class="cbi-button cbi-button-apply" onclick="update_status(this.form.addr,this.form.proto.value,this.form.mode.value)" />
+	</fieldset>
+    </div>
+</form>
+    
+<div class="cbi-section" style="display:none">
+    <strong id="diag-rc-legend"></strong>
+    <span id="diag-rc-output"></span>
+</div>
+<%+footer%>
