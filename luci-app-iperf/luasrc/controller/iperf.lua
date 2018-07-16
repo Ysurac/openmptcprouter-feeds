@@ -10,7 +10,7 @@ function index()
 	entry({"admin", "services", "iperf", "run_test"}, post("run_test")).leaf = true
 end
 
-function run_test(server,proto,mode)
+function run_test(server,proto,mode,updown)
 	luci.http.prepare_content("text/plain")
 	local iperf
 	local addr = uci:get("iperf",server,"host")
@@ -21,10 +21,18 @@ function run_test(server,proto,mode)
 	end
 	local port = t[ math.random( #t ) ]
 	if proto == "ipv4" then
-		iperf = io.popen("iperf3 -c %s -P 10 -4 -p %s -J" % {ut.shellquote(addr),port})
+		if updown == "upload" then
+			iperf = io.popen("iperf3 -c %s -P 10 -4 -p %s -O 3 -J" % {ut.shellquote(addr),port})
+		else
+			iperf = io.popen("iperf3 -c %s -P 10 -4 -p %s -O 3 -R -J" % {ut.shellquote(addr),port})
+		end
 		--iperf = io.popen("iperf3 -c bouygues.iperf.fr -P 10 -4 -J")
 	else
-		iperf = io.popen("iperf3 -c %s -P 10 -6 -p %s -J" % {ut.shellquote(addr),port})
+		if updown == "upload" then
+			iperf = io.popen("iperf3 -c %s -P 10 -6 -p %s -O 3 -J" % {ut.shellquote(addr),port})
+		else
+			iperf = io.popen("iperf3 -c %s -P 10 -6 -p %s -O 3 -R -J" % {ut.shellquote(addr),port})
+		end
 	end
 	if iperf then
 		while true do

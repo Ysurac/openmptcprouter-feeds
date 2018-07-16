@@ -8,45 +8,84 @@
 <script type="text/javascript">//<![CDATA[
     var stxhr = new XHR();
 
-    function update_status(field, proto, mode)
+    function update_speed(field, proto, mode)
+    {
+	update_upload(field,proto,mode);
+    }
+    
+    function update_upload(field, proto, mode)
     {
 	var tool = field.name;
 	var addr = field.value;
 
-	var legend = document.getElementById('diag-rc-legend');
-	var output = document.getElementById('diag-rc-output');
+	var upload = document.getElementById('iperf-upload');
 
-	if (legend && output)
+	if (upload)
 	{
-	    output.innerHTML =
-		'<img src="<%=resource%>/icons/loading.gif" alt="<%:Loading%>" style="vertical-align:middle" /> ' +
+	    upload.innerHTML =
+		'<img src="<%=resource%>/icons/loading.gif" alt="<%:Loading%>" style="vertical-align:middle" /> ' + '<%:Upload%> - ' +
 		'<%:Waiting for command to complete...%>'
 	    ;
 
-	    legend.parentNode.style.display = 'block';
-	    legend.style.display = 'inline';
-
-	    stxhr.post('<%=url('admin/services/iperf')%>/run_test' + '/' + addr + '/' + proto + '/' + mode, { token: '<%=token%>' },
+	    stxhr.post('<%=url('admin/services/iperf')%>/run_test' + '/' + addr + '/' + proto + '/' + mode + '/upload', { token: '<%=token%>' },
 		function(x)
 		{
 		    if (x.responseText)
 		    {
-			legend.style.display = 'none';
 			var response = JSON.parse(x.responseText);
 			if (response.error)
 			{
-				output.innerHTML = String.format('<pre>%s</pre>', response.error );
+				upload.innerHTML = String.format('<%:Upload%> - <pre>%s</pre>', response.error );
 			} else {
 				var sent_speed = (response.end.sum_sent.bits_per_second/1000000);
 				var received_speed = (response.end.sum_received.bits_per_second/1000000);
 				var server = response.start.connecting_to.host;
-				output.innerHTML = String.format('<pre>Server: %s - Sent: %sMb/s - Received: %sMb/s</pre>', server, sent_speed.toFixed(2), received_speed.toFixed(2) );
+				upload.innerHTML = String.format('<pre><%:Upload%> - Server: %s - Sender: %sMb/s - Receiver: %sMb/s</pre>', server, sent_speed.toFixed(2), received_speed.toFixed(2) );
 			}
 		    }
 		    else
 		    {
-			legend.style.display = 'none';
-			output.innerHTML = '<span class="error"><%:Bad address specified!%></span>';
+			upload.innerHTML = '<%:Upload%> - <span class="error"><%:Bad address specified!%></span>';
+		    }
+		    update_download(field,proto,mode);
+		}
+	    );
+	}
+    }
+    
+    function update_download(field, proto, mode)
+    {
+	var tool = field.name;
+	var addr = field.value;
+
+	var download = document.getElementById('iperf-download');
+
+	if (download)
+	{
+	    download.innerHTML =
+		'<img src="<%=resource%>/icons/loading.gif" alt="<%:Loading%>" style="vertical-align:middle" /> ' + '<%:Download%> - ' +
+		'<%:Waiting for command to complete...%>'
+	    ;
+
+	    stxhr.post('<%=url('admin/services/iperf')%>/run_test' + '/' + addr + '/' + proto + '/' + mode + '/download', { token: '<%=token%>' },
+		function(x)
+		{
+		    if (x.responseText)
+		    {
+			var response = JSON.parse(x.responseText);
+			if (response.error)
+			{
+				download.innerHTML = String.format('<%:Download%> - <pre>%s</pre>', response.error );
+			} else {
+				var sent_speed = (response.end.sum_sent.bits_per_second/1000000);
+				var received_speed = (response.end.sum_received.bits_per_second/1000000);
+				var server = response.start.connecting_to.host;
+				download.innerHTML = String.format('<pre><%:Download%> - Server: %s - Sender: %sMb/s - Receiver: %sMb/s</pre>', server, sent_speed.toFixed(2), received_speed.toFixed(2) );
+			}
+		    }
+		    else
+		    {
+			download.innerHTML = '<%:Download%> - <span class="error"><%:Bad address specified!%></span>';
 		    }
 		}
 	    );
@@ -94,13 +133,13 @@
 		    </select>
 		</div>
 	    </div>
-	    <input type="button" value="<%:Test%>" class="cbi-button cbi-button-apply" onclick="update_status(this.form.addr,this.form.proto.value,this.form.mode.value)" />
+	    <input type="button" value="<%:Test%>" class="cbi-button cbi-button-apply" onclick="update_speed(this.form.addr,this.form.proto.value,this.form.mode.value)" />
 	</fieldset>
     </div>
 </form>
     
-<div class="cbi-section" style="display:none">
-    <strong id="diag-rc-legend"></strong>
-    <span id="diag-rc-output"></span>
+<div class="cbi-section">
+    <span id="iperf-upload"></span>
+    <span id="iperf-download"></span>
 </div>
 <%+footer%>
