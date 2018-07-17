@@ -91,7 +91,9 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 	if [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
 		[ "$multipath_status" = "off" ] || {
 			_log "$OMR_TRACKER_DEVICE switched off"
-			multipath "$OMR_TRACKER_DEVICE" off
+			if [ "$(sysctl -n net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ]; then
+				multipath "$OMR_TRACKER_DEVICE" off
+			fi
 			glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 down > /dev/null 2>&1
 			config_load shadowsocks-libev
 			config_foreach del_ss_route server
@@ -145,8 +147,11 @@ if [ "$(uci -q get omr-bypass.defaults.ifname)" = "$OMR_TRACKER_DEVICE" ] && [ "
 	ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
 fi
 
+
 [ "$multipath_config" = "on" ] && glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 up > /dev/null 2>&1
 [ "$multipath_config" = "backup" ] && glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 backup > /dev/null 2>&1
 [ "$multipath_status" = "$multipath_config" ] && exit 0
-_log "Multipath $OMR_TRACKER_DEVICE switched to $multipath_config"
-multipath "$OMR_TRACKER_DEVICE" "$multipath_config"
+if [ "$(sysctl -n net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ]; then
+	_log "Multipath $OMR_TRACKER_DEVICE switched to $multipath_config"
+	multipath "$OMR_TRACKER_DEVICE" "$multipath_config"
+fi
