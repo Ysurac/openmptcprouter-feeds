@@ -23,7 +23,7 @@ MY_DEPENDS := \
     uhttpd \
     uhttpd-mod-ubus \
     curl \
-    iperf3-ssl \
+    iperf3-ssl luci-app-iperf \
     arptables \
     bind-dig \
     conntrack conntrackd ebtables ebtables-utils ip-full \
@@ -37,7 +37,7 @@ MY_DEPENDS := \
     luci-app-vnstat omr-quota luci-app-omr-quota \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd iputils-traceroute6 \
-    speedtestc ethtool \
+    ethtool \
     luci-proto-3g \
     luci-app-mlvpn mlvpn \
     omr-update \
