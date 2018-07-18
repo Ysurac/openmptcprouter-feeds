@@ -26,7 +26,6 @@ function run_test(server,proto,mode,updown)
 		else
 			iperf = io.popen("iperf3 -c %s -P 10 -4 -p %s -O 3 -R -t 6 -J" % {ut.shellquote(addr),port})
 		end
-		--iperf = io.popen("iperf3 -c bouygues.iperf.fr -P 10 -4 -J")
 	else
 		if updown == "upload" then
 			iperf = io.popen("iperf3 -c %s -P 10 -6 -p %s -O 3 -t 6 -J" % {ut.shellquote(addr),port})
