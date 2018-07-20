@@ -649,7 +649,7 @@ function interfaces_status()
 		multipath_available = multipath_available,
 	    }
 
-	    if ifname:match("^tun.*") then
+	    if ifname ~= nil and ifname:match("^tun.*") then
 		    table.insert(mArray.tunnels, data);
 	    else
 		    table.insert(mArray.wans, data);
