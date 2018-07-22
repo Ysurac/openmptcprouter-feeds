@@ -42,6 +42,7 @@ MY_DEPENDS := \
     tcpdump \
     ethtool \
     luci-proto-3g \
+    comgt-ncm luci-proto-ncm \
     luci-app-mlvpn mlvpn \
     omr-update \
     rng-tools \
