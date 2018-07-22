@@ -290,6 +290,11 @@ function settings_add()
 	local tcp_keepalive_time = luci.http.formvalue("tcp_keepalive_time")
 	luci.sys.exec("sysctl -w net.ipv4.tcp_keepalive_time=%s" % tcp_keepalive_time)
 	luci.sys.exec("sed -i 's:^net.ipv4.tcp_keepalive_time=[0-9]*:net.ipv4.tcp_keepalive_time=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_keepalive_time)
+
+	-- Set tcp_fin_timeout
+	local tcp_fin_timeout = luci.http.formvalue("tcp_fin_timeout")
+	luci.sys.exec("sysctl -w net.ipv4.tcp_fin_timeoute=%s" % tcp_fin_timeout)
+	luci.sys.exec("sed -i 's:^net.ipv4.tcp_fin_timeout=[0-9]*:net.ipv4.tcp_fin_timeout=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_fin_timeout)
 	
 	-- Disable IPv6
 	local disable_ipv6 = luci.http.formvalue("disable_ipv6") or 0
