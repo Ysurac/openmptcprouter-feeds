@@ -1,7 +1,20 @@
 #!/bin/sh
 # vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
 
+INTERFACE="$1"
 HOST="proof.ovh.net"
 
 trap : HUP INT TERM
-curl http://$HOST/files/10Gio.dat >/dev/null || echo
+if [ -z "$INTERFACE" ]; then
+	curl http://$HOST/files/10Gio.dat >/dev/null || echo
+else
+	uci -q batch <<-EOF >/dev/null
+	    add_list dhcp.@dnsmasq[-1].ipset='/$HOST/ss_rules_dst_bypass'
+	    commit dhcp
+	EOF
+	curl --interface $INTERFACE http://$HOST/files/10Gio.dat >/dev/null || echo
+	uci -q batch <<-EOF >/dev/null
+	    del_list dhcp.@dnsmasq[-1].ipset='/$HOST/ss_rules_dst_bypass'
+	    commit dhcp
+	EOF
+fi
