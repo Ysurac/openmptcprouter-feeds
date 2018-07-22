@@ -38,6 +38,8 @@ MY_DEPENDS := \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd iputils-traceroute6 \
     speedtestc \
+    iftop \
+    tcpdump \
     ethtool \
     luci-proto-3g \
     luci-app-mlvpn mlvpn \
