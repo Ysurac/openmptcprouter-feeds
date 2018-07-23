@@ -1306,6 +1306,28 @@ function cbi_tag_last(container)
 	}
 }
 
+function cbi_submit(elem, name, value, action)
+{
+	var form = elem.form || findParent(elem, 'form');
+
+	if (!form)
+		return false;
+
+	if (action)
+		form.action = action;
+
+	if (name) {
+		var hidden = form.querySelector('input[type="hidden"][name="%s"]'.format(name)) ||
+			E('input', { type: 'hidden', name: name });
+
+		hidden.value = value || '1';
+		form.appendChild(hidden);
+	}
+
+	form.submit();
+	return true;
+}
+
 String.prototype.format = function()
 {
 	if (!RegExp)
@@ -1496,6 +1518,15 @@ String.nobr = function()
 	for (var i = 1; i < arguments.length; i++)
 		a.push(arguments[i]);
 	return ''.nobr.apply(arguments[0], a);
+}
+
+if (window.NodeList && !NodeList.prototype.forEach) {
+	NodeList.prototype.forEach = function (callback, thisArg) {
+		thisArg = thisArg || window;
+		for (var i = 0; i < this.length; i++) {
+			callback.call(thisArg, this[i], i, this);
+		}
+	};
 }
 
 
@@ -2072,10 +2103,10 @@ function cbi_update_table(table, data, placeholder) {
 				var trow = E('div', { 'class': 'tr' });
 
 				for (var i = 0; i < titles.length; i++) {
-					var text = titles[i].innerText;
+					var text = (titles[i].innerText || '').trim();
 					var td = trow.appendChild(E('div', {
 						'class': titles[i].className,
-						'data-title': text ? text.trim() : null
+						'data-title': (text !== '') ? text : null
 					}, row[i] || ''));
 
 					td.classList.remove('th');
