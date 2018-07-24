@@ -358,11 +358,20 @@ end
 
 function get_ip(interface)
 	local dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
-	local ip
+	local ip = ""
 	if dump and dump['ipv4-address'] then
 		local _, ipv4address
 		for _, ipv4address in ipairs(dump['ipv4-address']) do
 			ip = dump['ipv4-address'][_].address
+		end
+	end
+	if ip == "" then
+		local dump = require("luci.util").ubus("network.interface.%s_4" % interface, "status", {})
+		if dump and dump['ipv4-address'] then
+			local _, ipv4address
+			for _, ipv4address in ipairs(dump['ipv4-address']) do
+				ip = dump['ipv4-address'][_].address
+			end
 		end
 	end
 	return ip
@@ -387,6 +396,19 @@ function get_gateway(interface)
 			end
 		end
 	end
+	
+	if gateway == "" then
+		dump = require("luci.util").ubus("network.interface.%s_4" % interface, "status", {})
+
+		if dump and dump.route then
+			local _, route
+			for _, route in ipairs(dump.route) do
+				if dump.route[_].target == "0.0.0.0" then
+					gateway = dump.route[_].nexthop
+				end
+			end
+		end
+	end
 	return gateway
 end
 
@@ -405,7 +427,7 @@ function interfaces_status()
 	-- OpenMPTCProuter info
 	mArray.openmptcprouter = {}
 	mArray.openmptcprouter["version"] = ut.trim(sys.exec("cat /etc/os-release | grep VERSION= | sed -e 's:VERSION=::'"))
-	-- Check that requester is in same network
+
 	mArray.openmptcprouter["service_addr"] = uci:get("shadowsocks-libev", "proxy", "server") or "0.0.0.0"
 	mArray.openmptcprouter["local_addr"] = uci:get("network", "lan", "ipaddr")
 
@@ -543,6 +565,7 @@ function interfaces_status()
 	    local ipaddr = net:ipaddr()
 	    local gateway = section['gateway'] or ""
 	    local multipath = section['multipath']
+	    local enabled = section['auto']
 
 	    --if not ipaddr or not gateway then return end
 	    -- Don't show if0 in the overview
@@ -555,8 +578,9 @@ function interfaces_status()
 	    
 	    --if multipath == "off" and not ifname:match("^tun.*") then return end
 	    if multipath == "off" then return end
+	    
+	    if enabled == "0" then return end
 
-	    local asn
 	    local connectivity
 
 	    if ifname ~= "" and ifname ~= nil then
@@ -588,11 +612,21 @@ function interfaces_status()
 				    connectivity = 'WARNING'
 			    end
 		    end
-	    end
-	    
-	    if gateway == "" then
+	    else
 		    connectivity = 'ERROR'
 	    end
+	    
+	    local latency = "-"
+	    local server_ping = 'UP'
+	    local server_ping_test = sys.exec("ping -W 1 -c 1 -I " .. ifname .. " " .. mArray.openmptcprouter["wan_addr"])
+	    local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
+	    if server_ping_result ~= "" then
+		server_ping = 'DOWN'
+		if connectivity == "OK" then
+		    connectivity = 'WARNING'
+		end
+	    end
+	    local latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f4 | cut -d '.' -f1"))
 
 	    if mArray.openmptcprouter["dns"] == true and ifname ~= nil and gateway ~= "" and gw_ping == "UP" then
 		    -- Test if multipath can work on the connection
@@ -630,9 +664,8 @@ function interfaces_status()
 		end
 	    end
 
-	    local publicIP = "-"
-
-	    local latency = "-"
+	    local publicIP = ut.trim(sys.exec("omr-ip-intf " .. ifname))
+	    local whois = ut.trim(sys.exec("whois " .. publicIP .. " | grep -i 'netname' | awk '{print $2}'"))
 
 	    local data = {
 		label = section['label'] or interface,
@@ -645,11 +678,12 @@ function interfaces_status()
 		status = connectivity,
 		wanip = publicIP,
 		latency = latency,
-		whois = asn and asn.as_description or "unknown",
+		whois = whois or "unknown",
 		qos = section['trafficcontrol'],
 		download = section['download'],
 		upload = section['upload'],
 		gw_ping = gw_ping,
+		server_ping = server_ping,
 		ipv6_discover = ipv6_discover,
 		multipath_available = multipath_available,
 	    }
