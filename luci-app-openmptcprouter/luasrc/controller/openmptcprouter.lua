@@ -665,7 +665,10 @@ function interfaces_status()
 	    end
 
 	    local publicIP = ut.trim(sys.exec("omr-ip-intf " .. ifname))
-	    local whois = ut.trim(sys.exec("whois " .. publicIP .. " | grep -i 'netname' | awk '{print $2}'"))
+	    local whois = ""
+	    if publicIP ~= "" then
+		whois = ut.trim(sys.exec("whois " .. publicIP .. " | grep -i 'netname' | awk '{print $2}'"))
+	    end
 
 	    local data = {
 		label = section['label'] or interface,
