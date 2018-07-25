@@ -15,10 +15,9 @@ function run_test(server,proto,mode,updown,omit,parallel,transmit,bitrate)
 	local iperf
 	local addr = uci:get("iperf",server,"host")
 	local ports = uci:get("iperf",server,"ports")
-	if proto == "ipv4" then
-		local ipv = 4
-	else
-		local ipv = 6
+	local ipv = "4"
+	if proto == "ipv6" then
+		local ipv = "6"
 	end
 	
 	local t={}
@@ -28,15 +27,15 @@ function run_test(server,proto,mode,updown,omit,parallel,transmit,bitrate)
 	local port = t[ math.random( #t ) ]
 	if mode == "tcp" then
 		if updown == "upload" then
-			iperf = io.popen("iperf3 -c %s -P %s -%i -p %s -O %s -t %i -J" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit})
+			iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -t %s -J" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit})
 		else
-			iperf = io.popen("iperf3 -c %s -P %s -%i -p %s -O %s -R -t %s -J" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit})
+			iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -R -t %s -J" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit})
 		end
 	else
 		if updown == "upload" then
-			iperf = io.popen("iperf3 -c %s -P %s -%i -p %s -O %s -t %s -u -b %s -J" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit,bitrate})
+			iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -t %s -u -b %s -J" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit,bitrate})
 		else
-			iperf = io.popen("iperf3 -c %s -P %s -%i -p %s -O %s -R -t %s -u -b %s -J" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit,bitrate})
+			iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -R -t %s -u -b %s -J" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit,bitrate})
 		end
 	end
 	if iperf then
