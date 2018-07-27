@@ -36,7 +36,6 @@ set_route() {
 set_ss_route() {
 	local server_ip upstreams nginxip
 	local metric=$2
-	[ -z "$metric" ] && metric=1
 	config_get server_ip $1 server
 	if [ "$server_ip" = "127.0.0.1" ]; then
 		upstreams=$(uci -q get nginx-ha.ShadowSocks.upstreams | sed -e "s/' '/%/" -e 's/ /_/g' -e "s/'//g" -e 's/%/ /')
@@ -49,7 +48,7 @@ set_ss_route() {
 			fi
 		done
 	else
-		if [ "$server_ip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $server_ip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ]; then
+		if [ "$metric" != "off" ] && [ "$server_ip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $server_ip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ]; then
 			_log "Set server $server_ip route via $OMR_TRACKER_DEVICE metric $metric"
 			ip route replace $server_ip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
 		fi
@@ -59,22 +58,40 @@ set_ss_route() {
 del_ss_route() {
 	local server_ip upstreams nginxip
 	local metric=$2
-	[ -z "$metric" ] && metric=1
 	config_get server_ip $1 server
 	if [ "$server_ip" = "127.0.0.1" ]; then
 		upstreams=$(uci -q get nginx-ha.ShadowSocks.upstreams | sed -e "s/' '/%/" -e 's/ /_/g' -e "s/'//g" -e 's/%/ /')
 		for up in $upstreams; do
 			_log "down : $up"
 			nginxip=$(echo $up | cut -d: -f1)
-			if [ "$nginxip" != "" ] &&  [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $nginxip)" != "" ]; then
-				_log "Remove server $nginxip route via $OMR_TRACKER_DEVICE"
-				ip route delete $nginxip dev $OMR_TRACKER_DEVICE metric $metric
+			if [ "$metric" = "all" ]; then
+				if [ "$nginxip" != "" ] &&  [ "$(ip route show | grep $nginxip)" != "" ]; then
+					_log "Remove all server $nginxip route"
+					ip route delete $nginxip
+				fi
+			else
+				if [ "$nginxip" != "" ] &&  [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $nginxip)" != "" ]; then
+					_log "Remove server $nginxip route via $OMR_TRACKER_DEVICE"
+					ip route delete $nginxip dev $OMR_TRACKER_DEVICE metric $metric
+				fi
 			fi
 		done
 	else
-		if [ "$server_ip" != "" ] &&  [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $server_ip)" != "" ]; then
-			_log "Remove server $server_ip route via $OMR_TRACKER_DEVICE"
-			ip route delete $server_ip dev $OMR_TRACKER_DEVICE metric $metric
+		if [ "$metric" = "all" ]; then
+			if [ "$server_ip" != "" ] &&  [ "$(ip route show | grep $server_ip)" != "" ]; then
+				_log "Remove all server $server_ip route"
+				ip route delete $server_ip
+			fi
+		elif [ "$metric" = "off" ]; then
+			if [ "$server_ip" != "" ] &&  [ "$(ip route show dev $OMR_TRACKER_DEVICE | grep $server_ip)" != "" ]; then
+				_log "Remove all server $server_ip route via $OMR_TRACKER_DEVICE"
+				ip route delete $server_ip dev $OMR_TRACKER_DEVICE
+			fi
+		else
+			if [ "$server_ip" != "" ] &&  [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $server_ip)" != "" ]; then
+				_log "Remove server $server_ip route via $OMR_TRACKER_DEVICE"
+				ip route delete $server_ip dev $OMR_TRACKER_DEVICE metric $metric
+			fi
 		fi
 	fi
 }
@@ -104,7 +121,12 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 			fi
 			glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 down > /dev/null 2>&1
 			config_load shadowsocks-libev
-			config_foreach del_ss_route server
+			if [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
+				local metric=$(ip rule show | grep "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
+				config_foreach del_ss_route server $metric
+			else
+				config_foreach del_ss_route server none
+			fi
 		}
 	fi
 	if [ "$default_gw" = "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
@@ -112,8 +134,9 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		config_foreach set_route interface $OMR_TRACKER_INTERFACE
 	fi
 	if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
+		_log "Tunnel down"
 		config_load shadowsocks-libev
-		config_foreach del_ss_route server
+		config_foreach del_ss_route server all
 		if [ "$(uci -q show shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q show shadowsocks-libev.hi2.mode)" = "tcp_and_udp" ]; then
 			uci -q set shadowsocks-libev.ss_rules.redir_udp='hi2'
 			/etc/init.d/shadowsocks-libev rules_down
@@ -145,7 +168,7 @@ if [ "$multipath_config" = "master" ]; then
 			ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
 		else
 			config_load shadowsocks-libev
-			config_foreach set_ss_route server
+			config_foreach set_ss_route server 1
 		fi
 		if [ "$(uci -q get omr-bypass.defaults.ifname)" = "" ]; then
 			ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
@@ -153,11 +176,13 @@ if [ "$multipath_config" = "master" ]; then
 	fi
 	multipath_config="on"
 else
-	local metric=$(ip rule show | grep "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
-	[ -n "$metric" ] && {
-		config_load shadowsocks-libev
-		config_foreach set_ss_route server $metric
-	}
+	if [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
+		local metric=$(ip rule show | grep "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
+		[ -n "$metric" ] && {
+			config_load shadowsocks-libev
+			config_foreach set_ss_route server $metric
+		}
+	fi
 fi
 if [ "$(uci -q get omr-bypass.defaults.ifname)" = "$OMR_TRACKER_DEVICE" ] && [ "$(ip route show table 991337 | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ]; then
 	ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
