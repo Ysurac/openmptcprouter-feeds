@@ -616,17 +616,21 @@ function interfaces_status()
 		    connectivity = 'ERROR'
 	    end
 	    
-	    local latency = "-"
-	    local server_ping = 'UP'
-	    local server_ping_test = sys.exec("ping -W 1 -c 1 -I " .. ifname .. " " .. mArray.openmptcprouter["wan_addr"])
-	    local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
-	    if server_ping_result ~= "" then
-		server_ping = 'DOWN'
-		if connectivity == "OK" then
-		    connectivity = 'WARNING'
-		end
+	    local latency = ""
+	    local server_ping = ''
+	    if connectivity ~= "ERROR" then
+		    local server_ping_test = sys.exec("ping -W 1 -c 1 -I " .. ifname .. " " .. mArray.openmptcprouter["wan_addr"])
+		    local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
+		    if server_ping_result ~= "" then
+			    server_ping = 'DOWN'
+			    if connectivity == "OK" then
+				connectivity = 'WARNING'
+			    end
+		    else
+			    server_ping = 'UP'
+			    latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f4 | cut -d '.' -f1"))
+		    end
 	    end
-	    local latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f4 | cut -d '.' -f1"))
 
 	    if mArray.openmptcprouter["dns"] == true and ifname ~= nil and gateway ~= "" and gw_ping == "UP" then
 		    -- Test if multipath can work on the connection
