@@ -618,7 +618,7 @@ function interfaces_status()
 	    
 	    local latency = ""
 	    local server_ping = ''
-	    if connectivity ~= "ERROR" then
+	    if connectivity ~= "ERROR" and ifname ~= "" and ifname ~= nil and mArray.openmptcprouter["wan_addr"] ~= "" then
 		    local server_ping_test = sys.exec("ping -W 1 -c 1 -I " .. ifname .. " " .. mArray.openmptcprouter["wan_addr"])
 		    local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
 		    if server_ping_result ~= "" then
@@ -632,17 +632,17 @@ function interfaces_status()
 		    end
 	    end
 
-	    if mArray.openmptcprouter["dns"] == true and ifname ~= nil and gateway ~= "" and gw_ping == "UP" then
+	    local multipath_available
+	    if mArray.openmptcprouter["dns"] == true and ifname ~= nil and ifname ~= "" and gateway ~= "" and gw_ping == "UP" then
 		    -- Test if multipath can work on the connection
-		    local multipath_available
 		    local multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
 		    if multipath_available_state == "" then
-			multipath_available = 'OK'
+			    multipath_available = 'OK'
 		    else
-			multipath_available = 'ERROR'
+			    multipath_available = 'ERROR'
 		    end
 	    else
-		multipath_available = 'NO CHECK'
+		    multipath_available = 'NO CHECK'
 	    end
 
 	    
