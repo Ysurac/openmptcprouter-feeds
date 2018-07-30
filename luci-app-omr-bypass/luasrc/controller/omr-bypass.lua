@@ -17,7 +17,7 @@ function bypass_add()
 	local ip_ipset = {}
 	for _, k in pairs(hosts) do
 		if k ~= "" then
-			if dt.ipaddr(k) then
+			if dt.ipmask(k) then
 				table.insert(ip_ipset, k)
 			else
 				domains_ipset = domains_ipset .. '/' .. k
