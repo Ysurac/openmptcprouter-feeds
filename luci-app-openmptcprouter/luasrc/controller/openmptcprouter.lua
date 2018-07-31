@@ -438,25 +438,22 @@ function interfaces_status()
 		mArray.openmptcprouter["dns"] = true
 	end
 
+	mArray.openmptcprouter["ss_addr"] = ""
+	--mArray.openmptcprouter["ss_addr6"] = ""
+	mArray.openmptcprouter["wan_addr"] = ""
+	mArray.openmptcprouter["wan_addr6"] = ""
+	local tracker_ip = ""
 	if mArray.openmptcprouter["dns"] == true then
 		-- shadowsocksaddr
-		local tracker_ip = uci:get("shadowsocks-libev","tracker","local_address") or ""
+		tracker_ip = uci:get("shadowsocks-libev","tracker","local_address") or ""
 		local tracker_port = uci:get("shadowsocks-libev","tracker","local_port")
 		if tracker_ip ~= "" then
 			mArray.openmptcprouter["ss_addr"] = sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ip.openmptcprouter.com")
 			--mArray.openmptcprouter["ss_addr6"] = sys.exec("curl -s -6 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ipv6.openmptcprouter.com")
-		else
-			mArray.openmptcprouter["ss_addr"] = ""
-			--mArray.openmptcprouter["ss_addr6"] = ""
 		end
 		-- wanaddr
 		mArray.openmptcprouter["wan_addr"] = sys.exec("wget -4 -qO- -T 1 http://ip.openmptcprouter.com")
 		mArray.openmptcprouter["wan_addr6"] = sys.exec("wget -6 -qO- -T 1 http://ipv6.openmptcprouter.com")
-	else
-		mArray.openmptcprouter["ss_addr"] = ""
-		--mArray.openmptcprouter["ss_addr6"] = ""
-		mArray.openmptcprouter["wan_addr"] = ""
-		mArray.openmptcprouter["wan_addr6"] = ""
 	end
 
 	mArray.openmptcprouter["remote_addr"] = luci.http.getenv("REMOTE_ADDR") or ""
@@ -618,7 +615,7 @@ function interfaces_status()
 	    
 	    local latency = ""
 	    local server_ping = ''
-	    if connectivity ~= "ERROR" and ifname ~= "" and ifname ~= nil and mArray.openmptcprouter["wan_addr"] ~= "" then
+	    if connectivity ~= "ERROR" and ifname ~= "" and gateway ~= "" and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["wan_addr"] ~= "" then
 		    local server_ping_test = sys.exec("ping -W 1 -c 1 -I " .. ifname .. " " .. mArray.openmptcprouter["wan_addr"])
 		    local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
 		    if server_ping_result ~= "" then
@@ -640,6 +637,9 @@ function interfaces_status()
 			    multipath_available = 'OK'
 		    else
 			    multipath_available = 'ERROR'
+			    if mArray.openmptcprouter["socks_service"] == true and connectivity == "OK" then
+				    connectivity = 'ERROR'
+			    end
 		    end
 	    else
 		    multipath_available = 'NO CHECK'
@@ -696,6 +696,8 @@ function interfaces_status()
 	    }
 
 	    if ifname ~= nil and ifname:match("^tun.*") then
+		    table.insert(mArray.tunnels, data);
+	    elseif ifname ~= nil and ifname:match("^mlvpn.*") then
 		    table.insert(mArray.tunnels, data);
 	    else
 		    table.insert(mArray.wans, data);
