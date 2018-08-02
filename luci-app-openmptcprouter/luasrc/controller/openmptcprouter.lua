@@ -75,7 +75,19 @@ function wizard_add()
 		ucic:set("network",intf,"ipaddr",ipaddr)
 		ucic:set("network",intf,"netmask",netmask)
 		ucic:set("network",intf,"gateway",gateway)
+
+		local downloadspeed = luci.http.formvalue("cbid.sqm.%s.download" % intf) or ""
+		local uploadspeed = luci.http.formvalue("cbid.sqm.%s.upload" % intf) or ""
+		if downloadspeed ~= "" and uploadspeed ~= "" then
+			ucic:set("sqm",intf,"download",downloadspeed)
+			ucic:set("sqm",intf,"upload",uploadspeed)
+			ucic:set("sqm",intf,"enabled","1")
+		else
+			ucic:set("sqm",intf,"enabled","0")
+		end
 	end
+	ucic:save("sqm")
+	ucic:commit("sqm")
 	ucic:save("network")
 	ucic:commit("network")
 
@@ -172,7 +184,7 @@ function wizard_add()
 	local shadowsocks_key = luci.http.formvalue("shadowsocks_key")
 	if shadowsocks_key ~= "" then
 		ucic:set("shadowsocks-libev","sss0","key",shadowsocks_key)
-		ucic:set("shadowsocks-libev","sss0","method","aes-256-cfb")
+		ucic:set("shadowsocks-libev","sss0","method","chacha20")
 		ucic:set("shadowsocks-libev","sss0","server_port","65101")
 		ucic:set("shadowsocks-libev","sss0","disabled",0)
 		ucic:save("shadowsocks-libev")
@@ -581,11 +593,15 @@ function interfaces_status()
 	    local connectivity
 
 	    if ifname ~= "" and ifname ~= nil then
-		    local multipath_state = ut.trim(sys.exec("multipath " .. ifname .. " | grep deactivated"))
-		    if multipath_state == "" then
-			connectivity = 'OK'
+		    if fs.access("/sys/class/net/" .. ifname) then
+			    local multipath_state = ut.trim(sys.exec("multipath " .. ifname .. " | grep deactivated"))
+			    if multipath_state == "" then
+				connectivity = 'OK'
+			    else
+				connectivity = 'ERROR'
+			    end
 		    else
-			connectivity = 'ERROR'
+			    connectivity = 'ERROR'
 		    end
 	    end
 
@@ -639,6 +655,8 @@ function interfaces_status()
 			    multipath_available = 'ERROR'
 			    if mArray.openmptcprouter["socks_service"] == true and connectivity == "OK" then
 				    connectivity = 'ERROR'
+			    elseif connectivity == "OK" then
+				    connectivity = 'WARNING'
 			    end
 		    end
 	    else
