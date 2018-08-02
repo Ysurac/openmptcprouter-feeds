@@ -37,12 +37,18 @@ interface_multipath_settings() {
 	local config="$1"
 	local intf="$2"
 	local enabled
-	
-	config_get enabled "$config" auto "1"
-	[ "$enabled" = "0" ] && return 0
 
+	config_get enabled "$config" auto "1"
 	config_get iface "$config" ifname
 	[ -z "$iface" ] && iface=$(ifstatus "$config" | jsonfilter -q -e '@["l3_device"]')
+
+	# Force scaling freq for RPI if USB is connected
+	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && [ -n "$(echo $iface | grep usb)" ] {
+		uci -q set openmptcprouter.settings.scaling_min_freq=$(uci -q get openmptcprouter.settings.scaling_max_freq)
+	}
+
+	[ "$enabled" = "0" ] && return 0
+
 	count=$(($count+1))
 	id=$count
 	[ -n "$intf" ] && [ "$iface" != "$intf" ] && return 0
