@@ -73,6 +73,12 @@ Domains, IPs, networks and protocol (using DPI) added are bypassed when shadowso
 This is used for OpenMPTCProuter failover.
 
 
+## omr-6in4
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-6in4](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-6in4)
+
+*Description:* Set tunnel configuration by tracking tunnel configuration.
+
+
 ## luci-omr-tracker
 *Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-tracker](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-tracker)
 
