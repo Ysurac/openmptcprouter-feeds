@@ -16,12 +16,17 @@ while true; do
 	[ -z "$addr" ] && exit 0
 	[ -z "$peer" ] && exit 0
 	if [ "$addr" != "$(uci -q get network.omr6in4.ipaddr)" ] || [ "$peer" != "$(uci -q get network.omr6in4.peeraddr)" ]; then
+		logger -t "omr6in4" "Set network for OMR 6in4 to local $addr peer $peer"
 		uci -q batch <<-EOF
 			set network.omr6in4.ipaddr=$addr
 			set network.omr6in4.peeraddr=$peer
 		EOF
 		uci -q commit network
-		ifup omr6in4
+		if [ -n "$(ip tunnel | grep omr6in4)" ]; then
+			ip tunnel change "6in4-omr6in4" mode sit local ${addr} remote ${peer}
+		else
+			ifup omr6in4
+		fi
 	fi
 	sleep 10
 done
