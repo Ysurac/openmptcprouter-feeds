@@ -79,6 +79,12 @@ This is used for OpenMPTCProuter failover.
 *Description:* Set tunnel configuration by tracking tunnel configuration.
 
 
+## omr-update
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-update](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-update)
+
+*Description:* Update old config with new settings.
+
+
 ## luci-omr-tracker
 *Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-tracker](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-tracker)
 
