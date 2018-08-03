@@ -603,6 +603,8 @@ function interfaces_status()
 		    else
 			    connectivity = 'ERROR'
 		    end
+	    else
+		    connectivity = 'ERROR'
 	    end
 
 	    if ipaddr == "" then
@@ -614,10 +616,12 @@ function interfaces_status()
 	    if gateway == "" then
 		    gateway = get_gateway(interface)
 	    end
-	    if gateway == "" and ifname ~= nil then
-		    gateway = ut.trim(sys.exec("ip -4 r list dev " .. ifname .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
+	    if connectivity ~= "ERROR" and gateway == "" and ifname ~= nil then
+		    if fs.access("/sys/class/net/" .. ifname) then
+			    gateway = ut.trim(sys.exec("ip -4 r list dev " .. ifname .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
+		    end
 	    end
-	    if gateway ~= "" then
+	    if connectivity ~= "ERROR" and gateway ~= "" then
 		    local gw_ping_test = ut.trim(sys.exec("ping -W 1 -c 1 " .. gateway .. " | grep '100% packet loss'"))
 		    if gw_ping_test ~= "" then
 			    gw_ping = 'DOWN'
@@ -626,6 +630,7 @@ function interfaces_status()
 			    end
 		    end
 	    else
+		    gw_ping = 'DOWN'
 		    connectivity = 'ERROR'
 	    end
 	    
@@ -646,7 +651,7 @@ function interfaces_status()
 	    end
 
 	    local multipath_available
-	    if mArray.openmptcprouter["dns"] == true and ifname ~= nil and ifname ~= "" and gateway ~= "" and gw_ping == "UP" then
+	    if connectivity ~= "ERROR" and mArray.openmptcprouter["dns"] == true and ifname ~= nil and ifname ~= "" and gateway ~= "" and gw_ping == "UP" then
 		    -- Test if multipath can work on the connection
 		    local multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
 		    if multipath_available_state == "" then
