@@ -672,14 +672,26 @@ function interfaces_status()
 		    if type(ipv6_result) == "table" and #ipv6_result > 0 then
 			    local ipv6_addr_test
 			    for k,v in ipairs(ipv6_result) do
-				    if v.RecursiveDnsServer and type(v.RecursiveDnsServer) ~= "table" then
-					    ipv6_addr_test = sys.exec('ip -6 addr | grep ' .. v.RecursiveDnsServer)
-				    end
-			    end
-			    if ipv6_addr_test == "" then
-				    ipv6_discover = 'DETECTED'
-				    if connectivity == "OK" then
-					    connectivity = 'WARNING'
+				    if v.RecursiveDnsServer then
+					    if type(v.RecursiveDnsServer) ~= "table" then
+						    ipv6_addr_test = sys.exec('ip -6 addr | grep ' .. v.RecursiveDnsServer)
+						    if ipv6_addr_test == "" then
+							    ipv6_discover = 'DETECTED'
+							    if connectivity == "OK" then
+								    connectivity = 'WARNING'
+							    end
+						    end
+					    else
+						    for i,j in ipairs(ipv6_result) do
+							    ipv6_addr_test = sys.exec('ip -6 addr | grep ' .. j)
+							    if ipv6_addr_test == "" then
+								    ipv6_discover = 'DETECTED'
+								    if connectivity == "OK" then
+									    connectivity = 'WARNING'
+								    end
+							    end
+						    end
+					    end
 				    end
 			    end
 		    end
