@@ -41,6 +41,7 @@ MY_DEPENDS := \
     iftop \
     tcpdump \
     ethtool \
+    tracebox \
     luci-proto-3g \
     comgt-ncm luci-proto-ncm \
     luci-app-mlvpn mlvpn \
