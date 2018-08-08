@@ -1,11 +1,11 @@
 #!/bin/sh /etc/rc.common
 
-START=18
+START=90
 
 USE_PROCD=1
 
 global_multipath_settings() {
-	local multipath mptcp_path_manager mptcp_schdeduler congestion mptcp_checksum mptcp_syn_retries
+	local multipath mptcp_path_manager mptcp_schdeduler congestion mptcp_checksum mptcp_syn_retries mptcp_fullmesh_num_subflows mptcp_fullmesh_create_on_err mptcp_ndiffports_num_subflows
 	local multipath_status=0
 	config_load network
 	config_get multipath globals multipath
@@ -14,6 +14,10 @@ global_multipath_settings() {
 	config_get congestion globals congestion
 	config_get mptcp_checksum globals mptcp_checksum
 	config_get mptcp_syn_retries globals mptcp_syn_retries
+	config_get mptcp_fullmesh_num_subflows globals mptcp_fullmesh_num_subflows
+	config_get mptcp_fullmesh_create_on_err globals mptcp_fullmesh_create_on_err
+	config_get mptcp_ndiffports_num_subflows globals mptcp_ndiffports_num_subflows
+	
 	[ "$multipath" = "enable" ] && multipath_status=1
 
 	# Global MPTCP configuration
@@ -23,14 +27,28 @@ global_multipath_settings() {
 	[ -z "$congestion" ] || sysctl -qw net.ipv4.tcp_congestion_control="$congestion"
 	[ -z "$mptcp_checksum" ] || sysctl -qw net.mptcp.mptcp_checksum="$mptcp_checksum"
 	[ -z "$mptcp_syn_retries" ] || sysctl -qw net.mptcp.mptcp_syn_retries="$mptcp_syn_retries"
+	[ -z "$mptcp_fullmesh_num_subflows" ] || sysctl -qw /sys/module/mptcp_fullmesh/parameters/num_subflows="$mptcp_fullmesh_num_subflows"
+	[ -z "$mptcp_fullmesh_create_on_err" ] || sysctl -qw /sys/module/mptcp_fullmesh/parameters/create_on_err="$mptcp_fullmesh_create_on_err"
+	[ -z "$mptcp_ndiffports_num_subflows" ] || sysctl -qw /sys/module/mptcp_ndiffports/parameters/num_subflows="$mptcp_ndiffports_num_subflows"
 }
 
 interface_multipath_settings() {
-	local mode iface
+	local mode iface proto
 	local config="$1"
 	local intf="$2"
+	local enabled
 
+	config_get enabled "$config" auto "1"
 	config_get iface "$config" ifname
+	[ -z "$iface" ] && iface=$(ifstatus "$config" | jsonfilter -q -e '@["l3_device"]')
+
+	# Force scaling freq for RPI if USB is connected
+	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && [ -n "$(echo $iface | grep usb)" ] && {
+		uci -q set openmptcprouter.settings.scaling_min_freq=$(uci -q get openmptcprouter.settings.scaling_max_freq)
+	}
+
+	[ "$enabled" = "0" ] && return 0
+
 	count=$(($count+1))
 	id=$count
 	[ -n "$intf" ] && [ "$iface" != "$intf" ] && return 0
@@ -63,20 +81,24 @@ interface_multipath_settings() {
 		ipaddr=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
 		gateway=$(ip -4 r list dev $iface | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
 		[ -z "$gateway" ] && gateway=$(uci -q get "network.$config.gateway")
-		[ -z "$gateway" ] && gateway=$(ubus call network.interface.$config status | jsonfilter -e '@.route[0].nexthop' | tr -d "\n")
-		[ -z "$gateway" ] && gateway=$(ubus call network.interface.$config status | jsonfilter -e '@.inactive.route[0].nexthop' | tr -d "\n")
+		[ -z "$gateway" ] && gateway=$(ubus call network.interface.$config status | jsonfilter -q -e '@.route[0].nexthop' | tr -d "\n")
+		[ -z "$gateway" ] && gateway=$(ubus call network.interface.$config status | jsonfilter -q -e '@.inactive.route[0].nexthop' | tr -d "\n")
+		[ -z "$gateway" ] && gateway=$(ubus call network.interface.${config}_4 status 2>/dev/null | jsonfilter -q -e '@.inactive.route[0].nexthop' | tr -d "\n")
 		netmask=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f2 | tr -d "\n")
 		network=`ipcalc.sh $ipaddr $netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 	fi
 	ip rule del table $id > /dev/null 2>&1
 	ip route flush $id > /dev/null 2>&1
 	[ -n "$gateway" ] || return 1
+	[ -n "$network" ] || return 1
 	ip rule add from $ipaddr table $id
 	ip route replace $network/$netmask dev $iface scope link table $id
 	ip route replace default via $gateway dev $iface table $id
 	ip route flush $id
 
 	config_get mode "$config" multipath "off"
+	local enabled
+	config_get enabled "$config" auto "1"
 	[ "$mode" = "master" ] && {
 		ip route replace default via $gateway dev $iface
 	}
@@ -85,7 +107,7 @@ interface_multipath_settings() {
 load_interfaces() {
 	config_get ifname "$1" ifname
 	config_get multipath "$1" multipath "off"
-	[ "$multipath" != "off" ] && interface=" ${ifname} ${interfaces}"
+	[ "$multipath" != "off" ] && interfaces=" ${ifname} ${interfaces}"
 }
 
 start_service() {

@@ -27,7 +27,8 @@ function index()
 		entry({"admin", "system", "fstab", "swap"},  cbi("admin_system/fstab/swap"),  nil).leaf = true
 	end
 
-	if fs.access("/sys/class/leds") then
+	local nodes, number = fs.glob("/sys/class/leds/*")
+	if number > 0 then
 		entry({"admin", "system", "leds"}, cbi("admin_system/leds"), _("<abbr title=\"Light Emitting Diode\">LED</abbr> Configuration"), 60)
 	end
 
@@ -73,7 +74,7 @@ function action_packages()
 	local out, err
 
 	-- Display
-	local display = luci.http.formvalue("display") or "installed"
+	local display = luci.http.formvalue("display") or "available"
 
 	-- Letter
 	local letter = string.byte(luci.http.formvalue("letter") or "A", 1)
@@ -195,7 +196,7 @@ local function supports_sysupgrade()
 end
 
 local function supports_reset()
-	return (os.execute([[grep -sqE '"rootfs_data"|"ubi"' /proc/mtd]]) == 0)
+	return (os.execute([[grep -sq "^overlayfs:/overlay / overlay " /proc/mounts]]) == 0)
 end
 
 local function storage_size()
@@ -340,9 +341,17 @@ function action_restore()
 
 	local upload = http.formvalue("archive")
 	if upload and #upload > 0 then
-		luci.template.render("admin_system/applyreboot")
-		os.execute("tar -C / -xzf %q >/dev/null 2>&1" % archive_tmp)
-		luci.sys.reboot()
+		if os.execute("gunzip -t %q >/dev/null 2>&1" % archive_tmp) == 0 then
+			luci.template.render("admin_system/applyreboot")
+			os.execute("tar -C / -xzf %q >/dev/null 2>&1" % archive_tmp)
+			luci.sys.reboot()
+		else
+			luci.template.render("admin_system/flashops", {
+				reset_avail   = supports_reset(),
+				upgrade_avail = supports_sysupgrade(),
+				backup_invalid = true
+			})
+		end
 		return
 	end
 

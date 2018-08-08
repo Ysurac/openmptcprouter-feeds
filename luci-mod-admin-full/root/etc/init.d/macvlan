@@ -17,6 +17,17 @@ _setup_interface() {
 		eth*.*) return ;;
 	esac
 	
+	[ "$(echo $1 | grep _dev)" != "" ] && {
+		local _intfdev=$(sed 's/_dev//' $1)
+		uci -q get "network.$_intfdev.ifname" >/dev/null && {
+			uci -q batch <<-EOF
+			delete network.$1
+			commit network
+			EOF
+		}
+		return
+	}
+	
 	local _type
 	config_get _type "$1" type
 
@@ -26,6 +37,17 @@ _setup_interface() {
 			delete network.$1_dev
 			commit network
 			EOF
+		}
+		[ "$_type" = "macvlan" ] && {
+			local _interface
+			config_get _interface "$1" interface
+			[ -n "$_interface" ] && {
+				uci -q batch <<-EOF
+				delete network.$1.interface
+				set network.$1_dev.ifname=$_interface
+				commit network
+				EOF
+			}
 		}
 		return 0
 	}

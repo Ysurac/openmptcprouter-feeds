@@ -42,12 +42,17 @@ start_instance() {
 	[ "${enable}" = "1" ] || return 1
 	[ "${proto}" = "tcp" ] || return 1
 	[ -n "${key}" ] || return 1
+	[ "${key}" != "secretkey" ] || return 1
 	[ -n "${port}" ] || return 1
 	[ -n "${dev}" ] || return 1
 
 	echo "${key}" > /tmp/${PROG_NAME}-${1}.key
 	key=""
 
+	if [ "$(uci -q get network.omrvpn)" != "" ]; then
+		uci -q set network.omrvpn.ifname=${dev}
+		uci -q commit network
+	fi
 	_log "starting ${PROG_NAME} ${1} instance $*"
 
 	procd_open_instance
@@ -64,7 +69,7 @@ start_instance() {
 
 	procd_append_param command \
 		retry count -1 const 5000000 \
-		timeout 9000 \
+		timeout 40000 \
 		keepalive count 5 idle 60 interval 2
 
 	procd_set_param respawn 0 30 0

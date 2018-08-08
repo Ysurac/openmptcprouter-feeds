@@ -64,7 +64,7 @@ function multipath_bandwidth()
 				result[dev] = "[" .. string.gsub((luci.sys.exec("luci-bwc -i %q 2>/dev/null" % dev)), '[\r\n]', '') .. "]"			
 			end
 		end
-	end
+	end)
 	---先初始化求和数组	
 	res["total"]={ };
 	for i=1,60 do

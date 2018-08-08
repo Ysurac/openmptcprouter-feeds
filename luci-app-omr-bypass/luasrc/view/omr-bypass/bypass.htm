@@ -1,13 +1,18 @@
 <%+header%>
 
-<script type="text/javascript" src="<%=resource%>/cbi.js" data-strings="{&#34;path&#34;:{&#34;resource&#34;:&#34;\/luci-static\/resources&#34;,&#34;browser&#34;:&#34;\/cgi-bin\/luci\/admin\/filebrowser&#34;},&#34;label&#34;:{&#34;choose&#34;:&#34;-- Choisir --&#34;,&#34;custom&#34;:&#34;-- autre --&#34;}}"></script>
+<script type="text/javascript" src="<%=resource%>/cbi.js" data-strings="{&#34;path&#34;:{&#34;resource&#34;:&#34;\/luci-static\/resources&#34;,&#34;browser&#34;:&#34;\/cgi-bin\/luci\/admin\/filebrowser&#34;}}"></script>
 
 <%
 	local uci = require("luci.model.uci").cursor()
 	local hosts = uci:get_list("dhcp", uci:get_first("dhcp","dnsmasq"), "ipset")
 	local ips = uci:get_list("omr-bypass", "ips", "ip")
+	local dpi = uci:get_list("omr-bypass", "dpi", "proto")
+	local tmpfile = os.tmpname()
+	local dpi_available_proto = luci.util.execi("cat /proc/net/xt_ndpi/proto | awk '{print $3}' | sort -u | head -n -1")
+	local sys = require "luci.sys"
+	local ifaces = sys.net:devices()
+	local bypassif = uci:get("omr-bypass","defaults","ifname") or ""
 %>
-
 <% if stderr and #stderr > 0 then %><pre class="error"><%=pcdata(stderr)%></pre><% end %>
 <form class="inline" method="post" action="<%=url('admin/services/omr-bypass/add')%>">
     <div class="cbi-map">
@@ -25,7 +30,8 @@
 	    for hst in string.gmatch(host,"([^/]*)/") do
 		if hst ~= "" then
 %>
-			<input class="cbi-input-text" value="<%=hst%>" data-update="change" type="text" id="cbid.omr-bypass.hosts.<%=j%>" name="cbid.omr-bypass.hosts" placeholder="google.com" /><br />
+			<input class="cbi-input-text" value="<%=hst%>" data-update="change" type="text" id="cbid.omr-bypass.hosts.<%=j%>" name="cbid.omr-bypass.hosts" placeholder="google.com" />
+			<br />
 <%
 	        end
 	    end
@@ -34,14 +40,87 @@
 	    j = j+1
 %>
 			<input class="cbi-input-text" value="<%=ip%>" data-update="change" type="text" id="cbid.omr-bypass.hosts.<%=j%>" name="cbid.omr-bypass.hosts" placeholder="google.com" /><br />
+		    </div>
+		    <div class="cbi-value-description">
+			<%:You need to use OpenMPTCProuter as DNS server when you want to bypass a domain%>
+		    </div>
 <%
 	end
 	if j == 1 then
 %>
-			<input class="cbi-input-text" value="" data-update="change" type="text" id="cbid.omr-bypass.hosts.1" name="cbid.omr-bypass.hosts" placeholder="google.com" /><br />
+			<input class="cbi-input-text" value="" data-update="change" type="text" id="cbid.omr-bypass.hosts.1" name="cbid.omr-bypass.hosts" placeholder="google.com" />
+			<br />
+		    </div>
+		    <div class="cbi-value-description">
+			<%:You need to use OpenMPTCProuter as DNS server when you want to bypass a domain%>
+		    </div>
 <%
 	end
 %>
+		</div>
+	    </div>
+	</fieldset>
+	<fieldset class="cbi-section" id="dpi">
+	    <div class="cbi-section-descr"><%:Set protocols you want to bypass.%></div>
+	    <div class="cbi-value cbi-value-last" id="cbi-omr-tracker-dpi" data-depends="[]" data-index="<%=table.getn(dpi)%>">
+		<label class="cbi-value-title" for="cbid.omr-tracker.dpi"><%:Protocol%></label>
+		<div class="cbi-value-field">
+<%
+				    local allprt="&#34;&#34;"
+				    local protos = {}
+				    for l in io.lines("/proc/net/xt_ndpi/proto") do
+					    local a,b,c,d = l:match('(%w+) (%w+)')
+					    if b ~= "2" and not string.match(b,"custom") then
+						table.insert(protos,b)
+					    end
+				    end
+				    table.sort(protos)
+				    for _,b in ipairs(protos) do
+					    allprt=allprt .. ",&#34;" .. b .. "&#34;"
+				    end
+%>
+
+
+		    <div data-prefix="cbid.omr-bypass.dpi" data-browser-path="" data-dynlist="[[<%=allprt%>],[<%=allprt%>],null,false]">
+<%
+	local k = 1
+	for _ , proto in pairs(dpi) do
+	    k = k+1
+%>
+			<input class="cbi-input-text" id="cbid.omr-bypass.dpi.<%=k%>" name="cbid.omr-bypass.dpi" data-update="change" value="<%=proto%>" /><br />
+<%
+	end
+	if k == 1 then
+%>
+			<input class="cbi-input-text" id="cbid.omr-bypass.dpi.<%=k%>" name="cbid.omr-bypass.dpi" data-update="change" /><br />
+<%
+	end
+%>
+		</div>
+		</div>
+	    </div>
+	</fieldset>
+	
+	<fieldset>
+	    <div class="cbi-section-descr"><%:Set interface you want to use for bypassed traffic.%></div>
+	    <div class="cbi-value">
+		<label class="cbi-value-title">Interface</label>
+		<div class="cbi-value-field">
+		    <select class="cbi-input-select" name="cbid.omr-bypass.interface" size="1">
+			<option value="" <% if iface == bypassif then %>selected="selected"<% end %>><%=iface%></option>
+	    <%
+	    for _, iface in ipairs(ifaces) do
+		if not (iface == "lo" or iface:match("^ifb.*")) then
+	    %>
+			<option value="<%=iface%>" <% if iface == bypassif then %>selected="selected"<% end %>><%=iface%></option>
+	    <%
+		end
+	    end
+	    %>
+		    </select>
+		    <br />
+		    <div class="cbi-value-description">
+			<%:If empty, multipath master interface is used if up else any other up interface.%>
 		    </div>
 		</div>
 	    </div>

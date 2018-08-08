@@ -1,4 +1,6 @@
 -- Copyright 2011 Jo-Philipp Wich <jow@openwrt.org>
+-- Copyright 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+-- - Add gateway setting
 -- Licensed to the public under the Apache License 2.0.
 
 local map, section, net = ...

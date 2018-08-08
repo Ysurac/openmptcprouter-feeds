@@ -22,13 +22,14 @@
 -- Copyright 2018 Ycarus (Yannick Chabanois) ycarus@zugaina.org
 --
 -- Small changes to make this work with OpenMPTCProuter
+-- New features: DNS detection, IPv6 route received,...
 -%>
 <%+header%>
 <link rel="stylesheet" type="text/css" href="<%=resource%>/openmptcprouter/css/wanstatus.css?v=git-18.120.38690-2678b12"/>
 <script type="text/javascript" src="<%=resource%>/seedrandom.js?v=git-18.120.38690-2678b12"></script>
 <script type="text/javascript" src="<%=resource%>/cbi.js?v=git-18.120.38690-2678b12"></script>
 <script type="text/javascript">//<![CDATA[
-	XHR.poll(15, '/cgi-bin/luci/admin/system/openmptcprouter/interfaces_status', null,
+	XHR.poll(20, '/cgi-bin/luci/admin/system/openmptcprouter/interfaces_status', null,
 		function(x, mArray)
 		{
 			var status = document.getElementById('openmptcprouter_status');
@@ -71,18 +72,18 @@
 				}
 				if (mArray.openmptcprouter.loadavg)
 				{
-					content += "Load : " + mArray.openmptcprouter.loadavg;
+					content += "Load: " + mArray.openmptcprouter.loadavg;
 					content += "<br />";
 				}
 				if (mArray.openmptcprouter.core_temp)
 				{
-					content += "Core temp : " + (mArray.openmptcprouter.core_temp / 1000).toFixed(1) + " &#176;";
+					content += "Core temp: " + (mArray.openmptcprouter.core_temp / 1000).toFixed(1) + " &#176;";
 					content += "<br />";
 				}
 				if (mArray.openmptcprouter.uptime)
 				{
 					var date = new Date(null);
-					content += "Uptime : " + String.format('%t', mArray.openmptcprouter.uptime);
+					content += "Uptime: " + String.format('%t', mArray.openmptcprouter.uptime);
 					content += "<br />";
 				}
 				if (mArray.openmptcprouter.dhcpd)
@@ -101,9 +102,14 @@
 					temp += String.format('lan (%s)', mArray.openmptcprouter.local_addr);
 				}
 
-				if (mArray.openmptcprouter.socks_service == false)
-				{
-					statusMessage += 'ShadowSocks is not running<br/>';
+				if (mArray.openmptcprouter.socks_service_enabled == true) {
+					if (mArray.openmptcprouter.socks_service == false)
+					{
+						statusMessage += 'ShadowSocks is not running<br/>';
+					} else if (mArray.openmptcprouter.ss_addr == "")
+					{
+						statusMessage += 'ShadowSocks not working<br/>';
+					}
 				}
 				if (mArray.openmptcprouter.tun_service == false)
 				{
@@ -117,20 +123,37 @@
 				{
 					statusMessage += 'DNS issue: can\'t resolve hostname<br/>';
 				}
-				if (mArray.openmptcprouter.ss_addr == "")
+				if (mArray.openmptcprouter.wan_addr6)
 				{
-					statusMessage += 'ShadowSocks not working<br/>';
+					content += "IPv6: " + mArray.openmptcprouter.wan_addr6;
+					content += "<br />";
 				}
 
 				if(statusMessage !== "")
 				{
 					statusMessageClass = "error";
 					statusIcon = "<%=resource%>/openmptcprouter/images/statusError.png";
-				} else if (mArray.openmptcprouter.tun_state == "DOWN")
-				{
-					statusMessageClass = "warning";
-					statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
-					statusMessage += 'Glorytun VPN tunnel DOWN';
+				} else {
+					if (mArray.openmptcprouter.socks_service_enabled == false)
+					{
+						statusMessage += 'ShadowSocks is DISABLED<br/>';
+					}
+					if (mArray.openmptcprouter.tun_state == "DOWN")
+					{
+						statusMessage += 'VPN tunnel DOWN<br/>';
+					}
+					if (mArray.openmptcprouter.tun6_state == "DOWN")
+					{
+						statusMessage += 'VPN IPv6 tunnel DOWN<br/>';
+					} else if (mArray.openmptcprouter.wan_addr6 == '')
+					{
+						statusMessage += 'No IPv6 access<br/>';
+					}
+					if (statusMessage !== "")
+					{
+						statusMessageClass = "warning";
+						statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
+					}
 				}
 				temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
 				temp += '</a></td>'
@@ -138,6 +161,7 @@
 			if (mArray.wans)
 			{
 				temp += '<td><ul>';
+				var master = 0;
 				for( var i = 0; i < mArray.wans.length; i++ )
 				{
 					// Get link color
@@ -173,9 +197,16 @@
 					var ipaddr   = mArray.wans[i].ipaddr;
 					var whois   = mArray.wans[i].whois;
 					var multipath = mArray.wans[i].multipath;
+					if(multipath == 'master')
+					{
+						master++;
+					}
 					var latency = mArray.wans[i].latency;
 					var gateway = mArray.wans[i].gateway;
 					var gw_ping = mArray.wans[i].gw_ping;
+					var server_ping = mArray.wans[i].server_ping;
+					var ipv6_discover = mArray.wans[i].ipv6_discover;
+					var multipath_available = mArray.wans[i].multipath_available;
 					// Generate template
 					if(mArray.openmptcprouter.remote_from_lease == true && mArray.wans.length == 1)
 					{
@@ -188,14 +219,53 @@
 					var title = mArray.wans[i].label + " (" + mArray.wans[i].gateway + ")";
 					//var content = String.format('%s<br />wan address: <strong>%s</strong><br />whois: %s<br />latency: %s ms<br />multipath: %s', stat, wanip, whois, latency, multipath);
 					var content = "";
-					if(gw_ping == 'DOWN')
+					if(wanip !== '')
+					{
+						content += String.format('wan address: <strong>%s</strong><br />', wanip);
+					}
+					if(whois !== '')
+					{
+						content += String.format('whois: %s<br />', whois);
+					}
+					if(latency !== '')
+					{
+						content += String.format('latency: %s ms<br />', latency);
+					}
+					if(ipaddr == '')
+					{
+						statusMessage += 'No IP defined<br />'
+					}
+					if(gateway == '')
+					{
+						statusMessage += 'No gateway defined<br />'
+					} else if(gw_ping == 'DOWN')
 					{
 						statusMessage += 'Gateway DOWN<br />'
+					} else if(multipath_available == 'ERROR')
+					{
+						statusMessage += 'Multipath blocked on the connection<br />'
 					}
-					content += String.format('ip address: <strong>%s</strong><br />multipath: %s', ipaddr,multipath);
+					if(server_ping == 'DOWN')
+					{
+						statusMessage += 'No Server ping response after 1 second<br />'
+					}
+					if(multipath == 'master' && master > 1)
+					{
+						statusMessage += 'Multipath master already defined<br />';
+						statusMessageClass = "error";
+					}
+					if(ipv6_discover == 'DETECTED')
+					{
+						statusMessage += 'IPv6 route received<br />'
+					}
+					if(ipaddr != '')
+					{
+						content += String.format('ip address: <strong>%s</strong><br />', ipaddr);
+					}
+					content += String.format('multipath: %s<br />',multipath);
 					if(mArray.wans[i].qos && mArray.wans[i].download > 0 && mArray.wans[i].upload > 0)
 					{
-						content += String.format('<br />traffic control: %s/%s kbps (%s)', mArray.wans[i].download, mArray.wans[i].upload, mArray.wans[i].qos)
+						content += String.format('traffic control: %s/%s kbps (%s)', mArray.wans[i].download, mArray.wans[i].upload, mArray.wans[i].qos)
 					}
 					temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
 
@@ -302,6 +372,6 @@
 <h2><%:Network overview%></h2>
 <fieldset id="interface_field" class="cbi-section">
 	<!--	<legend><%:Network overview%></legen> -->
-	<div id="openmptcprouter_status"></div>
+	<div id="openmptcprouter_status"><img src="<%=resource%>/spinner.gif" /></div>
 </fieldset>
 <%+footer%>

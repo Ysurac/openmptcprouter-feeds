@@ -115,13 +115,16 @@ s:taboption("advanced", Flag, "nonegcache",
 s:taboption("advanced", Value, "serversfile",
 	translate("Additional servers file"),
 	translate("This file may contain lines like 'server=/domain/1.2.3.4' or 'server=1.2.3.4' for"..
-	        "domain-specific or full upstream <abbr title=\"Domain Name System\">DNS</abbr> servers."))
+		"domain-specific or full upstream <abbr title=\"Domain Name System\">DNS</abbr> servers."))
 
 s:taboption("advanced", Flag, "strictorder",
 	translate("Strict order"),
 	translate("<abbr title=\"Domain Name System\">DNS</abbr> servers will be queried in the " ..
 		"order of the resolvfile")).optional = true
 
+s:taboption("advanced", Flag, "allservers",
+	translate("All Servers"),
+	translate("Query all available upstream <abbr title=\"Domain Name System\">DNS</abbr> servers")).optional = true
 
 bn = s:taboption("advanced", DynamicList, "bogusnxdomain", translate("Bogus NX Domain Override"),
 	translate("List of hosts that supply bogus NX domain results"))
@@ -212,6 +215,12 @@ cq.optional = true
 cq.datatype = "uinteger"
 cq.placeholder = 150
 
+cs = s:taboption("advanced", Value, "cachesize",
+	translate("Size of DNS query cache"),
+	translate("Number of cached DNS entries (max is 10000, 0 is no caching)"))
+cs.optional = true
+cs.datatype = "range(0,10000)"
+cs.placeholder = 150
 
 s:taboption("tftp", Flag, "enable_tftp",
 	translate("Enable TFTP server")).optional = true
@@ -264,7 +273,7 @@ s = m:section(TypedSection, "host", translate("Static Leases"),
 		"DHCP clients. They are also required for non-dynamic interface configurations where " ..
 		"only hosts with a corresponding lease are served.") .. "<br />" ..
 	translate("Use the <em>Add</em> Button to add a new lease entry. The <em>MAC-Address</em> " ..
-		"indentifies the host, the <em>IPv4-Address</em> specifies the fixed address to " ..
+		"identifies the host, the <em>IPv4-Address</em> specifies the fixed address to " ..
 		"use, and the <em>Hostname</em> is assigned as a symbolic name to the requesting host. " ..
 		"The optional <em>Lease time</em> can be used to set non-standard host-specific " ..
 		"lease time, e.g. 12h, 3d or infinite."))
@@ -274,7 +283,7 @@ s.anonymous = true
 s.template = "cbi/tblsection"
 
 name = s:option(Value, "name", translate("Hostname"))
-name.datatype = "hostname"
+name.datatype = "hostname('strict')"
 name.rmempty  = true
 
 function name.write(self, section, value)
@@ -291,6 +300,11 @@ mac = s:option(Value, "mac", translate("<abbr title=\"Media Access Control\">MAC
 mac.datatype = "list(macaddr)"
 mac.rmempty  = true
 
+function mac.cfgvalue(self, section)
+	local val = Value.cfgvalue(self, section)
+	return ipc.checkmac(val) or val
+end
+
 ip = s:option(Value, "ip", translate("<abbr title=\"Internet Protocol Version 4\">IPv4</abbr>-Address"))
 ip.datatype = "or(ip4addr,'ignore')"
 
@@ -298,7 +312,7 @@ gw = s:option(Value, "gw", translate("Gateway"))
 gw.datatype = "or(ip4addr,'ignore')"
 
 time = s:option(Value, "leasetime", translate("Lease time"))
-time.rmempty  = true
+time.rmempty = true
 
 duid = s:option(Value, "duid", translate("<abbr title=\"The DHCP Unique Identifier\">DUID</abbr>"))
 duid.datatype = "and(rangelength(20,36),hexstring)"

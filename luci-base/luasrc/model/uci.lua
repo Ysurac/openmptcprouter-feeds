@@ -8,7 +8,7 @@ local table = require "table"
 
 local setmetatable, rawget, rawset = setmetatable, rawget, rawset
 local require, getmetatable, assert = require, getmetatable, assert
-local error, pairs, ipairs = error, pairs, ipairs
+local error, pairs, ipairs, select = error, pairs, ipairs, select
 local type, tostring, tonumber, unpack = type, tostring, tonumber, unpack
 
 -- The typical workflow for UCI is:  Get a cursor instance from the
@@ -106,7 +106,7 @@ function changes(self, config)
 			local _, change
 			for _, change in ipairs(changes) do
 				local operation, section, option, value = unpack(change)
-				if option and value and operation ~= "add" then
+				if option and operation ~= "add" then
 					res[package][section] = res[package][section] or { }
 
 					if operation == "list-add" then
@@ -143,22 +143,129 @@ function commit(self, config)
 	return (err == nil), ERRSTR[err]
 end
 
---[[
-function apply(self, configs, command)
-	local _, config
+function apply(self, rollback)
+	local _, err
 
-	assert(not command, "Apply command not supported anymore")
+	if rollback then
+		local sys = require "luci.sys"
+		local conf = require "luci.config"
+		local timeout = tonumber(conf and conf.apply and conf.apply.rollback or 30) or 0
 
-	if type(configs) == "table" then
-		for _, config in ipairs(configs) do
-			call("service", "event", {
-				type = "config.change",
-				data = { package = config }
+		_, err = call("apply", {
+			timeout = (timeout > 30) and timeout or 30,
+			rollback = true
+		})
+
+		if not err then
+			local now = os.time()
+			local token = sys.uniqueid(16)
+
+			util.ubus("session", "set", {
+				ubus_rpc_session = "00000000000000000000000000000000",
+				values = {
+					rollback = {
+						token   = token,
+						session = session_id,
+						timeout = now + timeout
+					}
+				}
 			})
+
+			return token
+		end
+	else
+		_, err = call("changes", {})
+
+		if not err then
+			if type(_) == "table" and type(_.changes) == "table" then
+				local k, v
+				for k, v in pairs(_.changes) do
+					_, err = call("commit", { config = k })
+					if err then
+						break
+					end
+				end
+			end
+		end
+
+		if not err then
+			_, err = call("apply", { rollback = false })
 		end
 	end
+
+	return (err == nil), ERRSTR[err]
 end
-]]
+
+function confirm(self, token)
+	local is_pending, time_remaining, rollback_sid, rollback_token = self:rollback_pending()
+
+	if is_pending then
+		if token ~= rollback_token then
+			return false, "Permission denied"
+		end
+
+		local _, err = util.ubus("uci", "confirm", {
+			ubus_rpc_session = rollback_sid
+		})
+
+		if not err then
+			util.ubus("session", "set", {
+				ubus_rpc_session = "00000000000000000000000000000000",
+				values = { rollback = {} }
+			})
+		end
+
+		return (err == nil), ERRSTR[err]
+	end
+
+	return false, "No data"
+end
+
+function rollback(self)
+	local is_pending, time_remaining, rollback_sid = self:rollback_pending()
+
+	if is_pending then
+		local _, err = util.ubus("uci", "rollback", {
+			ubus_rpc_session = rollback_sid
+		})
+
+		if not err then
+			util.ubus("session", "set", {
+				ubus_rpc_session = "00000000000000000000000000000000",
+				values = { rollback = {} }
+			})
+		end
+
+		return (err == nil), ERRSTR[err]
+	end
+
+	return false, "No data"
+end
+
+function rollback_pending(self)
+	local rv, err = util.ubus("session", "get", {
+		ubus_rpc_session = "00000000000000000000000000000000",
+		keys = { "rollback" }
+	})
+
+	local now = os.time()
+
+	if type(rv) == "table" and
+	   type(rv.values) == "table" and
+	   type(rv.values.rollback) == "table" and
+	   type(rv.values.rollback.token) == "string" and
+	   type(rv.values.rollback.session) == "string" and
+	   type(rv.values.rollback.timeout) == "number" and
+	   rv.values.rollback.timeout > now
+	then
+		return true,
+			rv.values.rollback.timeout - now,
+			rv.values.rollback.session,
+			rv.values.rollback.token
+	end
+
+	return false, ERRSTR[err]
+end
 
 
 function foreach(self, config, stype, callback)
@@ -310,15 +417,15 @@ function add(self, config, stype)
 	return self:section(config, stype)
 end
 
-function set(self, config, section, option, value)
-	if value == nil then
+function set(self, config, section, option, ...)
+	if select('#', ...) == 0 then
 		local sname, err = self:section(config, option, section)
 		return (not not sname), err
 	else
 		local _, err = call("set", {
 			config  = config,
 			section = section,
-			values  = { [option] = value }
+			values  = { [option] = select(1, ...) }
 		})
 		return (err == nil), ERRSTR[err]
 	end
@@ -424,60 +531,4 @@ function delete_all(self, config, stype, comparator)
 	end
 
 	return (err == nil), ERRSTR[err]
-end
-
-
-function apply(self, configlist, command)
-	configlist = self:_affected(configlist)
-	if command then
-		return { "/sbin/luci-reload", unpack(configlist) }
-	else
-		return os.execute("/sbin/luci-reload %s >/dev/null 2>&1"
-			% util.shellquote(table.concat(configlist, " ")))
-	end
-end
-
--- Return a list of initscripts affected by configuration changes.
-function _affected(self, configlist)
-	configlist = type(configlist) == "table" and configlist or { configlist }
-
-	-- Resolve dependencies
-	local reloadlist = { }
-
-	local function _resolve_deps(name)
-		local reload = { name }
-		local deps = { }
-
-		self:foreach("ucitrack", name,
-			function(section)
-				if section.affects then
-					for i, aff in ipairs(section.affects) do
-						deps[#deps+1] = aff
-					end
-				end
-			end)
-
-		local i, dep
-		for i, dep in ipairs(deps) do
-			local j, add
-			for j, add in ipairs(_resolve_deps(dep)) do
-				reload[#reload+1] = add
-			end
-		end
-
-		return reload
-	end
-
-	-- Collect initscripts
-	local j, config
-	for j, config in ipairs(configlist) do
-		local i, e
-		for i, e in ipairs(_resolve_deps(config)) do
-			if not util.contains(reloadlist, e) then
-				reloadlist[#reloadlist+1] = e
-			end
-		end
-	end
-
-	return reloadlist
 end

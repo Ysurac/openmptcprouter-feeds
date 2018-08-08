@@ -49,16 +49,20 @@ _setup_wan_interface() {
 	[ -n "$4" ] && uci -q set network.$1.type=$4
 }
 
-[ "$(uci -q get "network.lan.proto")" = static ] || \
-	uci -q batch <<-EOF
-	set network.lan=interface
-	set network.lan.proto=static
-	set network.lan.ipaddr=192.168.100.1
-	set network.lan.netmask=255.255.255.0
-	set network.lan.ifname=eth0
-	EOF
+if [ "$(uci -q get network.lan.multipath)" != "" ]; then
+	exit 0
+fi
 
-uci -q batch <<EOF
+uci -q batch <<-EOF
+set network.lan=interface
+set network.lan.proto=static
+set network.lan.ipaddr=192.168.100.1
+set network.lan.netmask=255.255.255.0
+set network.lan.ifname=eth0
+set network.lan.metric=2048
+EOF
+
+uci -q batch <<-EOF
 delete network.none
 delete network.if6rd
 reorder network.loopback=0
@@ -84,7 +88,7 @@ config_foreach _setup_multipath_off interface
 
 # Add the lan as a named routing table
 if ! grep -s -q "lan" /etc/iproute2/rt_tables; then
-    echo "50 lan" >> /etc/iproute2/rt_tables
+	echo "50 lan" >> /etc/iproute2/rt_tables
 fi
 uci -q set network.lan.ip4table='lan'
 
@@ -92,8 +96,16 @@ uci -q set network.lan.ip4table='lan'
 #uci -q set "network.lan.ip6assign=64"
 
 # Create WAN interfaces
-if [ "$(uci -q show network | grep wan)" = "" ]; then
-	if [ -d /sys/class/net/eth1 ]; then
+if [ "$(uci -q show network | grep wan1)" = "" ]; then
+	if [ -d /sys/class/net/wan ]; then
+		uci -q batch <<-EOF
+		delete network.wan
+		EOF
+		_setup_wan_interface wan1 wan master macvlan
+		_setup_wan_interface wan2 wan on macvlan
+		_setup_macvlan wan1
+		_setup_macvlan wan2
+	elif [ -d /sys/class/net/eth1 ]; then
 		if [ -d /sys/class/net/eth2 ]; then
 			_setup_wan_interface wan1 eth1 master
 			_setup_wan_interface wan2 eth2 on

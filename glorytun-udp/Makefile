@@ -1,6 +1,6 @@
 #
 # Copyright (C) 2015 OVH
-# Copyright (C) 2017 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -8,13 +8,16 @@
 
 include $(TOPDIR)/rules.mk
 
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_URL:=https://github.com/angt/glorytun.git
+PKG_SOURCE_VERSION:=c15343f8f6fb275fe9bed56ca251bb801ea5d67b
+
 PKG_NAME:=glorytun-udp
-PKG_VERSION:=0.0.98-mud
-PKG_RELEASE:=1
-PKG_SOURCE:=glorytun-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://github.com/angt/glorytun/releases/download/v$(PKG_VERSION)
-PKG_BUILD_DIR:=$(BUILD_DIR)/glorytun-$(PKG_VERSION)
-PKG_HASH:=34a02c83efbfa1742d639643eeeeeb35f43611c92e2fd93f2eedba065c2f9417
+PKG_VERSION:=0.0.99-mud
+PKG_RELEASE:=17
+
+PKG_FIXUP:=autoreconf
+
 include $(INCLUDE_DIR)/package.mk
 
 define Package/$(PKG_NAME)
@@ -42,3 +45,4 @@ define Package/$(PKG_NAME)/install
 endef
 
 $(eval $(call BuildPackage,$(PKG_NAME)))
+

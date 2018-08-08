@@ -2,22 +2,42 @@
 
 NBCPU=$(grep -c '^processor' /proc/cpuinfo | tr -d "\n")
 if [ "$NBCPU" -gt 2 ]; then
-	for c in $(seq 3 $NBCPU); do
-		uci -q batch <<-EOF >/dev/null
-			set shadowsocks-libev.hi$c=ss_redir
-			set shadowsocks-libev.hi$c.server=sss0
-			set shadowsocks-libev.hi$c.local_address="0.0.0.0"
-			set shadowsocks-libev.hi$c.local_port=1100
-			set shadowsocks-libev.hi$c.mode=tcp_and_udp
-			set shadowsocks-libev.hi$c.timeout=60
-			set shadowsocks-libev.hi$c.fast_open=1
-			set shadowsocks-libev.hi$c.reuse_port=1
-			set shadowsocks-libev.hi$c.mptcp=1
-			set shadowsocks-libev.hi$c.verbose=0
-			commit shadowsocks-libev
-		EOF
-		rm -f /tmp/luci-indexcache
-	done
+	if [ "$(uci -q get shadowsocks-libev.hi3)" = "" ]; then
+		for c in $(seq 3 $NBCPU); do
+			uci -q batch <<-EOF >/dev/null
+				set shadowsocks-libev.hi$c=ss_redir
+				set shadowsocks-libev.hi$c.server=sss0
+				set shadowsocks-libev.hi$c.local_address="0.0.0.0"
+				set shadowsocks-libev.hi$c.local_port=1100
+				set shadowsocks-libev.hi$c.mode=tcp_and_udp
+				set shadowsocks-libev.hi$c.timeout=600
+				set shadowsocks-libev.hi$c.fast_open=1
+				set shadowsocks-libev.hi$c.reuse_port=1
+				set shadowsocks-libev.hi$c.mptcp=1
+				set shadowsocks-libev.hi$c.verbose=0
+				commit shadowsocks-libev
+			EOF
+		done
+	fi
 fi
 
+if [ "$(uci -q get shadowsocks-libev.hi.timeout)" != "600" ]; then
+	uci -q batch <<-EOF > /dev/null
+		set shadowsocks-libev.hi.timeout=600
+		commit shadowsocks-libev
+	EOF
+	for c in $(seq 2 $NBCPU); do
+		uci -q batch <<-EOF > /dev/null
+			set shadowsocks-libev.hi$c.timeout=600
+			commit shadowsocks-libev
+		EOF
+	done
+fi
+if [ "$(uci -q get shadowsocks-libev.sss0.method)" != "chacha20" ]; then
+	uci -q batch <<-EOF > /dev/null
+		set shadowsocks-libev.sss0.method=chacha20
+		commit shadowsocks-libev
+	EOF
+fi
+rm -f /tmp/luci-indexcache
 exit 0

@@ -60,9 +60,9 @@ Added support to gateway set by user for 6in4. Used for IPv6 over the glorytun I
 ## luci-omr-bypass
 *Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-bypass](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-bypass)
 
-*Description:* Luci interface to bypass domains with shadowsocks
+*Description:* Luci interface to bypass domains, IPs and networks with shadowsocks
 
-Domains added are bypassed when shadowsocks is used. This can be used when VPS IP is blacklisted from some sites.
+Domains, IPs, networks and protocol (using DPI) added are bypassed when shadowsocks is used. This can be used when VPS IP is blacklisted from some sites.
 
 
 ## omr-tracker
@@ -71,6 +71,18 @@ Domains added are bypassed when shadowsocks is used. This can be used when VPS I
 *Description:* Track connection status. This check if gateway is up then check if the connection work. If it's not working this execute scripts. This also detect if ShadowSocks is up or not.
 
 This is used for OpenMPTCProuter failover.
+
+
+## omr-6in4
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-6in4](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-6in4)
+
+*Description:* Set tunnel configuration by tracking tunnel configuration.
+
+
+## omr-update
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-update](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-update)
+
+*Description:* Update old config with new settings.
 
 
 ## luci-omr-tracker
@@ -97,3 +109,34 @@ Interface to omr-tracker.
 *Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/mptcp](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/mptcp)
 
 *Description:* This package set all MPTCP settings
+
+
+## ndisc6
+*Source:* [http://www.remlab.net/files/ndisc6](http://www.remlab.net/files/ndisc6)
+
+*Description:* An ICMPv6 neighbour discovery tool
+
+This is used to check if there is no other IPv6 route announced on the network
+
+
+## mlvpn
+*Source:* [https://github.com/markfoodyburton/MLVPN/tree/new-reorder](https://github.com/markfoodyburton/MLVPN/tree/new-reorder)
+
+*Description:* Multi-link VPN
+
+This is an other way to aggregate same latency connections
+
+
+## ndpi-filter
+*Source:* [https://github.com/vel21ripn/nDPI](https://github.com/vel21ripn/nDPI)
+
+*Description:* Open Source Deep Packet Inspection Software Toolkit
+
+This is used to bypass a protocol
+
+
+## tracebox
+*Source:* [https://github.com/tracebox/tracebox](https://github.com/tracebox/tracebox)
+
+*Description:* A middlebox detection tool
+

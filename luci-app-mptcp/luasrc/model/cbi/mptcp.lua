@@ -3,20 +3,20 @@ local sys = require "luci.sys"
 local ifaces = sys.net:devices()
 local m, s, o
 
-m = Map("network", translate("MPTCP"), translate("Networks MPTCP settings"))
+m = Map("network", translate("MPTCP"), translate("Networks MPTCP settings. Visit <a href='http://multipath-tcp.org/pmwiki.php/Users/ConfigureMPTCP'>http://multipath-tcp.org/pmwiki.php/Users/ConfigureMPTCP</a> for help."))
 
 s = m:section(TypedSection, "globals")
 local mtcpg = s:option(ListValue, "multipath", translate("Multipath TCP"))
 mtcpg:value("enable", translate("enable"))
 mtcpg:value("disable", translate("disable"))
 local mtcpck = s:option(ListValue, "mptcp_checksum", translate("Multipath TCP checksum"))
-mtcpck:value("enable", translate("enable"))
-mtcpck:value("disable", translate("disable"))
+mtcpck:value(1, translate("enable"))
+mtcpck:value(0, translate("disable"))
 local mtcppm = s:option(ListValue, "mptcp_path_manager", translate("Multipath TCP path-manager"))
 mtcppm:value("default", translate("default"))
 mtcppm:value("fullmesh", translate("fullmesh"))
 mtcppm:value("ndiffports", translate("ndiffports"))
-mtcppm:value("blinder", translate("blinder"))
+mtcppm:value("binder", translate("binder"))
 local mtcpsch = s:option(ListValue, "mptcp_scheduler", translate("Multipath TCP scheduler"))
 mtcpsch:value("default", translate("default"))
 mtcpsch:value("roundrobin", translate("round-robin"))
@@ -29,6 +29,16 @@ local availablecong = sys.exec("sysctl net.ipv4.tcp_available_congestion_control
 for cong in string.gmatch(availablecong, "[^%s]+") do
 	congestion:value(cong, translate(cong))
 end
+local mtcpfm_subflows = s:option(Value, "mptcp_fullmesh_num_subflows", translate("Fullmesh subflows for each pair of IP addresses"))
+mtcpfm_subflows.datatype = "uinteger"
+mtcpfm_subflows.rmempty = false
+local mtcpfm_createonerr = s:option(ListValue, "mptcp_fullmesh_create_on_err", translate("Re-create fullmesh subflows after a timeout"))
+mtcpfm_createonerr:value(1, translate("enable"))
+mtcpfm_createonerr:value(0, translate("disable"))
+
+local mtcpnd_subflows = s:option(Value, "mptcp_ndiffports_num_subflows", translate("ndiffports subflows number"))
+mtcpnd_subflows.datatype = "uinteger"
+mtcpnd_subflows.rmempty = false
 
 s = m:section(TypedSection, "interface", translate("Interfaces Settings"))
 mptcp = s:option(ListValue, "multipath", translate("Multipath TCP"), translate("One interface must be set as master"))

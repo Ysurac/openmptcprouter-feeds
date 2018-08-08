@@ -33,7 +33,7 @@ _validate_section() {
 
 _launch_tracker() {
 	case "$1" in
-		loopback|lan*|if0*|tun*) return;;
+		loopback|lan*|if0*) return;;
 	esac
 
 	local hosts timeout tries interval options type enabled
@@ -42,11 +42,15 @@ _launch_tracker() {
 
 	local ifname ip4table
 	config_get ifname "$1" ifname
+	[ -z "$ifname" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
+
 	config_get multipath "$1" multipath
+	config_get ifenabled "$1" auto
 	config_get gateway "$1" gateway
 
-	[ -z "$ifname" ] || [ -z "$multipath" ] || [ "$multipath" = "off" ] && [ "$1" != "glorytun" ] && return
-	[ $enabled = 0 ] && return
+	[ -z "$ifname" ] || [ -z "$multipath" ] || [ "$multipath" = "off" ] && [ "$1" != "glorytun" ] && [ "$1" != "omrvpn" ] && return
+	[ "${ifenabled}" = "0" ] && return
+	[ "${enabled}" = "0" ] && return
 
 	procd_open_instance
 	# shellcheck disable=SC2086
@@ -70,6 +74,7 @@ _initialize_shadowsocks_tracker() {
 	config_get redir_tcp ss_rules redir_tcp
 	config_get server $redir_tcp server
 	config_get tracker_server "tracker" server
+	config_get ss_disabled $server disabled 0
 	[ "$server" = "$tracker_server" ] || {
 		[ -z "$tracker_server" ] && {
 			uci -q batch <<-EOF >/dev/null
@@ -78,7 +83,7 @@ _initialize_shadowsocks_tracker() {
 			    set shadowsocks-libev.tracker.local_address="127.0.0.1"
 			    set shadowsocks-libev.tracker.local_port=1111
 			    set shadowsocks-libev.tracker.mode=tcp_and_udp
-			    set shadowsocks-libev.tracker.timeout=60
+			    set shadowsocks-libev.tracker.timeout=600
 			    set shadowsocks-libev.tracker.fast_open=1
 			    set shadowsocks-libev.tracker.reuse_port=1
 			    set shadowsocks-libev.tracker.mptcp=1
@@ -103,8 +108,8 @@ _launch_shadowsocks_tracker() {
 	local disabled
 	config_get disabled "$1" disabled 0
 
-	[ $enabled = 0 ] && return
-	[ $disabled = 1 ] && return
+	[ "$enabled" = "0" ] && return
+	[ "$disabled" = "1" ] && return
 
 	procd_open_instance
 	# shellcheck disable=SC2086
@@ -121,18 +126,21 @@ _launch_shadowsocks_tracker() {
 }
 
 start_service() {
+	local ss_disabled
 	config_load shadowsocks-libev
 	_initialize_shadowsocks_tracker
 
 	config_load network
 	config_foreach _launch_tracker interface
 
-	config_load shadowsocks-libev
-	config_foreach _launch_shadowsocks_tracker ss_local
+	if [ "$ss_disabled" != "1" ]; then
+		config_load shadowsocks-libev
+		config_foreach _launch_shadowsocks_tracker ss_local
+	fi
 }
 
 service_triggers() {
-	procd_add_reload_trigger omr-tracker network
+	procd_add_reload_trigger omr-tracker network shadowsocks-libev
 }
 
 reload_service() {

@@ -3,6 +3,7 @@
 -- Copyright 2015 OVH (OverTheBox@ovh.net)
 -- Simon Lelievre (simon.lelievre@corp.ovh.com)
 -- Sebastien Duponcheel (sebastien.duponcheel@ovh.net)
+-- Copyright 2018 Ycarus - Yannick Chabanois (ycarus@zugaina.org)
 --
 -- This file is part of OverTheBox for OpenWrt.
 --
@@ -42,11 +43,7 @@
 		end
 	end
 
-	local curdev = luci.dispatcher.context.requestpath
-	curdev = curdev[#curdev] ~= "bandwidth" and curdev[#curdev] or devices[1]
-	if curdev == "" then
-		curdev = "all"
-	end
+	local curdev = luci.http.formvalue("dev") or "all"
 -%>
 
 <%+header%>
@@ -60,26 +57,26 @@
 	        return "OrangeRed" ;
 		if(str == "free1")
 			return "FireBrick";
-		if(str == "ovh1")
+		if(str == "wan1")
 			return "DeepSkyBlue";
-		if(str == "ovh2")
+		if(str == "wan2")
 			return "LightGreen";
-        if(str == "if1")
-            return "PaleGreen";
-        if(str == "if2")
-            return "PowderBlue";
-        if(str == "if3")
-            return "Salmon";
-        if(str == "if4")
-            return "SeaGreen";
-        if(str == "if5")
-            return "PaleTurquoise";
-        // Generate a color folowing the name
-        Math.seedrandom(str);
-        var rand = Math.random() * Math.pow(255,3);
-        Math.seedrandom(); // don't leave a non-random seed in the generator
-        for (var i = 0, colour = "#"; i < 3; colour += ("00" + ((rand >> i++ * 8) & 0xFF).toString(16)).slice(-2));
-        return colour;
+		if(str == "wan3")
+			return "PaleGreen";
+		if(str == "wan4")
+			return "PowderBlue";
+		if(str == "wan5")
+			return "Salmon";
+		if(str == "wan6")
+			return "SeaGreen";
+		if(str == "wan7")
+			return "PaleTurquoise";
+		// Generate a color folowing the name
+		Math.seedrandom(str);
+		var rand = Math.random() * Math.pow(255,3);
+		Math.seedrandom(); // don't leave a non-random seed in the generator
+		for (var i = 0, colour = "#"; i < 3; colour += ("00" + ((rand >> i++ * 8) & 0xFF).toString(16)).slice(-2));
+		return colour;
 	}
 
 	function bandwidth_label(bytes, br)
@@ -510,6 +507,7 @@
 						}
 					}
 				);
+				XHR.run();
 		            }
 	                }, 1000
 <% else %>
@@ -693,21 +691,22 @@
 							data_rx_peak = Math.max(data_rx_peak, data_rx[i]);
 							data_tx_peak = Math.max(data_tx_peak, data_tx[i]);
 
-							if (i > 0)
-							{
-								data_rx_avg = (data_rx_avg + data_rx[i]) / 2;
-								data_tx_avg = (data_tx_avg + data_tx[i]) / 2;
-							}
-							else
-							{
-								data_rx_avg = data_rx[i];
-								data_tx_avg = data_tx[i];
-							}
+							data_rx_avg += data_rx[i];
+							data_tx_avg += data_tx[i];
 						}
+						data_rx_avg = (data_rx_avg / Math.max(data_rx.length, 1));
+						data_tx_avg = (data_tx_avg / Math.max(data_tx.length, 1));
+
+						var size = Math.floor(Math.log2(data_max)),
+						    div = Math.pow(2, size - (size % 10)),
+						    mult = data_max / div,
+						    mult = (mult < 5) ? 2 : ((mult < 50) ? 10 : ((mult < 500) ? 100 : 1000));
+
+						data_max = data_max + (mult * div) - (data_max % (mult * div));
 
 						/* remember current timestamp, calculate horizontal scale */
 						data_stamp = data[data.length-1][TIME];
-						data_scale = height / (data_max * 1.1);
+						data_scale = height / data_max;
 
 
 						/* plot data */
@@ -735,9 +734,9 @@
 						line_rx.setAttribute('points', pt_rx);
 						line_tx.setAttribute('points', pt_tx);
 
-						label_25.firstChild.data = bandwidth_label(1.1 * 0.25 * data_max);
-						label_50.firstChild.data = bandwidth_label(1.1 * 0.50 * data_max);
-						label_75.firstChild.data = bandwidth_label(1.1 * 0.75 * data_max);
+						label_25.firstChild.data = bandwidth_label(0.25 * data_max);
+						label_50.firstChild.data = bandwidth_label(0.50 * data_max);
+						label_75.firstChild.data = bandwidth_label(0.75 * data_max);
 
 						label_rx_cur.innerHTML = bandwidth_label(data_rx[data_rx.length-1], true);
 						label_tx_cur.innerHTML = bandwidth_label(data_tx[data_tx.length-1], true);
@@ -749,6 +748,7 @@
 						label_tx_peak.innerHTML = bandwidth_label(data_tx_peak, true);
 					}
 				);
+				XHR.run();
 			}
 		}, 1000
 <% end %>
@@ -759,7 +759,7 @@
 
 <ul class="cbi-tabmenu">
 	<% for _, dev in ipairs(devices) do %>
-		<li class="cbi-tab<%= dev == curdev and "" or "-disabled" %>"><a href="<%=pcdata(dev)%>"><%=pcdata(dev)%></a></li>
+		<li class="cbi-tab<%= dev == curdev and "" or "-disabled" %>"><a href="?dev=<%=pcdata(dev)%>"><%=pcdata(dev)%></a></li>
 	<% end %>
 </ul>
 
