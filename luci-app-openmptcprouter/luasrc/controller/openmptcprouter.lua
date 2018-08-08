@@ -69,9 +69,9 @@ function wizard_add()
 	-- Set interfaces settings
 	local interfaces = luci.http.formvaluetable("intf")
 	for intf, _ in pairs(interfaces) do
-		local ipaddr = luci.http.formvalue("cbid.network.%s.ipaddr" % intf)
-		local netmask = luci.http.formvalue("cbid.network.%s.netmask" % intf)
-		local gateway = luci.http.formvalue("cbid.network.%s.gateway" % intf)
+		local ipaddr = luci.http.formvalue("cbid.network.%s.ipaddr" % intf) or ""
+		local netmask = luci.http.formvalue("cbid.network.%s.netmask" % intf) or ""
+		local gateway = luci.http.formvalue("cbid.network.%s.gateway" % intf) or ""
 		ucic:set("network",intf,"ipaddr",ipaddr)
 		ucic:set("network",intf,"netmask",netmask)
 		ucic:set("network",intf,"gateway",gateway)
@@ -450,6 +450,11 @@ function interfaces_status()
 		mArray.openmptcprouter["dns"] = true
 	end
 
+	mArray.openmptcprouter["ipv6"] = "disabled"
+	if tonumber((sys.exec("sysctl net.ipv6.conf.all.disable_ipv6")):match(" %d+")) == 0 then
+		mArray.openmptcprouter["ipv6"] = "enabled"
+	end
+
 	mArray.openmptcprouter["ss_addr"] = ""
 	--mArray.openmptcprouter["ss_addr6"] = ""
 	mArray.openmptcprouter["wan_addr"] = ""
@@ -465,7 +470,9 @@ function interfaces_status()
 		end
 		-- wanaddr
 		mArray.openmptcprouter["wan_addr"] = sys.exec("wget -4 -qO- -T 1 http://ip.openmptcprouter.com")
-		mArray.openmptcprouter["wan_addr6"] = sys.exec("wget -6 -qO- -T 1 http://ipv6.openmptcprouter.com")
+		if mArray.openmptcprouter["ipv6"] == 'enabled' then
+			mArray.openmptcprouter["wan_addr6"] = sys.exec("wget -6 -qO- -T 1 http://ipv6.openmptcprouter.com")
+		end
 	end
 
 	mArray.openmptcprouter["remote_addr"] = luci.http.getenv("REMOTE_ADDR") or ""
@@ -480,6 +487,8 @@ function interfaces_status()
 
 	-- Check openmptcprouter service are running
 	mArray.openmptcprouter["tun_service"] = false
+	mArray.openmptcprouter["tun_state"] = ''
+	mArray.openmptcprouter["tun6_state"] = ''
 	if string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?glorytun(-udp)?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?mlvpn?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?openvpn?$'"), "%d+") then
 		mArray.openmptcprouter["tun_service"] = true
 		mArray.openmptcprouter["tun_ip"] = get_ip("omrvpn")
@@ -499,11 +508,13 @@ function interfaces_status()
 				else
 					mArray.openmptcprouter["tun_state"] = 'DOWN'
 				end
-				local tunnel_ping6_test = ut.trim(sys.exec("ping6 -W 1 -c 1 fe80::a00:1 -I 6in4-omr6in4 | grep '100% packet loss'"))
-				if tunnel_ping6_test == "" then
-					mArray.openmptcprouter["tun6_state"] = 'UP'
-				else
-					mArray.openmptcprouter["tun6_state"] = 'DOWN'
+				if mArray.openmptcprouter["ipv6"] == 'enabled' then
+					local tunnel_ping6_test = ut.trim(sys.exec("ping6 -W 1 -c 1 fe80::a00:1 -I 6in4-omr6in4 | grep '100% packet loss'"))
+					if tunnel_ping6_test == "" then
+						mArray.openmptcprouter["tun6_state"] = 'UP'
+					else
+						mArray.openmptcprouter["tun6_state"] = 'DOWN'
+					end
 				end
 			else
 				mArray.openmptcprouter["tun_state"] = 'DOWN'
@@ -672,7 +683,7 @@ function interfaces_status()
 	    -- Detect if WAN get an IPv6
 	    local ipv6_discover = 'NONE'
 	    if ifname ~= nil then
-		if tonumber((sys.exec("sysctl net.ipv6.conf.all.disable_ipv6")):match(" %d+")) == 0 then
+		if mArray.openmptcprouter["ipv6"] == 'enabled' then
 		    local ipv6_result = _ipv6_discover(ifname)
 		    if type(ipv6_result) == "table" and #ipv6_result > 0 then
 			    local ipv6_addr_test
