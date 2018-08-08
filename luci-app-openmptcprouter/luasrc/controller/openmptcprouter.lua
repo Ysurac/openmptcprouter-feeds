@@ -440,7 +440,7 @@ function interfaces_status()
 	mArray.openmptcprouter = {}
 	mArray.openmptcprouter["version"] = ut.trim(sys.exec("cat /etc/os-release | grep VERSION= | sed -e 's:VERSION=::'"))
 
-	mArray.openmptcprouter["service_addr"] = uci:get("shadowsocks-libev", "proxy", "server") or "0.0.0.0"
+	mArray.openmptcprouter["service_addr"] = uci:get("shadowsocks-libev", "sss0", "server") or ""
 	mArray.openmptcprouter["local_addr"] = uci:get("network", "lan", "ipaddr")
 
 	-- dns
@@ -647,8 +647,8 @@ function interfaces_status()
 	    
 	    local latency = ""
 	    local server_ping = ''
-	    if connectivity ~= "ERROR" and ifname ~= "" and gateway ~= "" and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["wan_addr"] ~= "" then
-		    local server_ping_test = sys.exec("ping -W 1 -c 1 -I " .. ifname .. " " .. mArray.openmptcprouter["wan_addr"])
+	    if connectivity ~= "ERROR" and ifname ~= "" and gateway ~= "" and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" then
+		    local server_ping_test = sys.exec("ping -W 1 -c 1 -I " .. ifname .. " " .. mArray.openmptcprouter["service_addr"])
 		    local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
 		    if server_ping_result ~= "" then
 			    server_ping = 'DOWN'
