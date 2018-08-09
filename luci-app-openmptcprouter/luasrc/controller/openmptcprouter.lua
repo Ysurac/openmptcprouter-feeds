@@ -442,7 +442,7 @@ function interfaces_status()
 
 	mArray.openmptcprouter["service_addr"] = uci:get("shadowsocks-libev", "sss0", "server") or ""
 	mArray.openmptcprouter["local_addr"] = uci:get("network", "lan", "ipaddr")
-
+	mArray.openmptcprouter["server_mptcp"] = ""
 	-- dns
 	mArray.openmptcprouter["dns"] = false
 	local dns_test = sys.exec("dig openmptcprouter.com | grep 'ANSWER: 0'")
@@ -664,15 +664,26 @@ function interfaces_status()
 	    local multipath_available
 	    if connectivity ~= "ERROR" and mArray.openmptcprouter["dns"] == true and ifname ~= nil and ifname ~= "" and gateway ~= "" and gw_ping == "UP" then
 		    -- Test if multipath can work on the connection
-		    local multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
-		    if multipath_available_state == "" then
+		    local multipath_available_state = ""
+		    if mArray.openmptcprouter["service_addr"] ~= "" then
+			    multipath_available_state = ut.trim(sys.exec("omr-tracebox-mptcp " .. mArray.openmptcprouter["service_addr"] .. " " .. ifname .. " | grep 'MPTCP enabled'"))
+		    else
+			    multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'you are MPTCP-capable'"))
+		    end
+		    if multipath_available_state ~= "" then
 			    multipath_available = 'OK'
 		    else
-			    multipath_available = 'ERROR'
-			    if mArray.openmptcprouter["socks_service"] == true and connectivity == "OK" then
-				    connectivity = 'ERROR'
-			    elseif connectivity == "OK" then
-				    connectivity = 'WARNING'
+			    multipath_available_state_wan = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
+			    if multipath_available_state_wan == "" then
+				    multipath_available = 'OK'
+				    mArray.openmptcprouter["server_mptcp"] = false
+			    else
+				    multipath_available = 'ERROR'
+				    if mArray.openmptcprouter["socks_service"] == true and connectivity == "OK" then
+					    connectivity = 'ERROR'
+				    elseif connectivity == "OK" then
+					    connectivity = 'WARNING'
+				    end
 			    end
 		    end
 	    else
