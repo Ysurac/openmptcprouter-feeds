@@ -673,10 +673,14 @@ function interfaces_status()
 		    if multipath_available_state ~= "" then
 			    multipath_available = 'OK'
 		    else
-			    multipath_available_state_wan = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
+			    if mArray.openmptcprouter["service_addr"] ~= "" then
+				    multipath_available_state_wan = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
+			    else
+				    multipath_available_state_wan = "none"
+			    end
 			    if multipath_available_state_wan == "" then
 				    multipath_available = 'OK'
-				    mArray.openmptcprouter["server_mptcp"] = false
+				    mArray.openmptcprouter["server_mptcp"] = "disabled"
 			    else
 				    multipath_available = 'ERROR'
 				    if mArray.openmptcprouter["socks_service"] == true and connectivity == "OK" then
