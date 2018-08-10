@@ -16,6 +16,8 @@ function index()
 	entry({"admin", "system", "openmptcprouter", "interfaces_status"}, call("interfaces_status")).leaf = true
 	entry({"admin", "system", "openmptcprouter", "settings"}, template("openmptcprouter/settings"), _("Advanced Settings"), 3).leaf = true
 	entry({"admin", "system", "openmptcprouter", "settings_add"}, post("settings_add")).leaf = true
+	entry({"admin", "system", "openmptcprouter", "mptcp_check"}, template("openmptcprouter/mptcp_check"), _("MPTCP Support Check"), 3).leaf = true
+	entry({"admin", "system", "openmptcprouter", "mptcp_check_trace"}, post("mptcp_check_trace")).leaf = true
 end
 
 function wizard_add()
@@ -828,4 +830,26 @@ function _ipv6_discover(interface)
 		table.insert(ra6_result, entry)
 	end
 	return ra6_result
+end
+
+function mptcp_check_trace(interface)
+	luci.http.prepare_content("text/plain")
+	local tracebox
+	local uci    = require "luci.model.uci".cursor()
+	local server = uci:get("shadowsocks-libev", "sss0", "server") or ""
+	if server == "" then return end
+	if interface == "" then
+		tracebox = io.popen("tracebox -s /usr/share/tracebox/omr-mptcp-trace.lua " .. server)
+	else
+		tracebox = io.popen("tracebox -s /usr/share/tracebox/omr-mptcp-trace.lua -i " .. interface .. " " .. server)
+	end
+	if tracebox then
+		while true do
+			local ln = tracebox:read("*l")
+			if not ln then break end
+			luci.http.write(ln)
+			luci.http.write("\n")
+		end
+	end
+	return
 end
