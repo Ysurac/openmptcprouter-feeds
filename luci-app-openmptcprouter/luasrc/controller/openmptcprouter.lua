@@ -470,7 +470,7 @@ function interfaces_status()
 		end
 		-- wanaddr
 		mArray.openmptcprouter["wan_addr"] = sys.exec("wget -4 -qO- -T 1 http://ip.openmptcprouter.com")
-		if mArray.openmptcprouter["ipv6"] == 'enabled' then
+		if mArray.openmptcprouter["ipv6"] == "enabled" then
 			mArray.openmptcprouter["wan_addr6"] = sys.exec("wget -6 -qO- -T 1 http://ipv6.openmptcprouter.com")
 		end
 	end
@@ -487,8 +487,8 @@ function interfaces_status()
 
 	-- Check openmptcprouter service are running
 	mArray.openmptcprouter["tun_service"] = false
-	mArray.openmptcprouter["tun_state"] = ''
-	mArray.openmptcprouter["tun6_state"] = ''
+	mArray.openmptcprouter["tun_state"] = ""
+	mArray.openmptcprouter["tun6_state"] = ""
 	if string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?glorytun(-udp)?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?mlvpn?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?openvpn?$'"), "%d+") then
 		mArray.openmptcprouter["tun_service"] = true
 		mArray.openmptcprouter["tun_ip"] = get_ip("omrvpn")
@@ -504,21 +504,21 @@ function interfaces_status()
 			if peer ~= "" then
 				local tunnel_ping_test = ut.trim(sys.exec("ping -W 1 -c 1 " .. peer .. " -I " .. tun_dev .. " | grep '100% packet loss'"))
 				if tunnel_ping_test == "" then
-					mArray.openmptcprouter["tun_state"] = 'UP'
+					mArray.openmptcprouter["tun_state"] = "UP"
 				else
-					mArray.openmptcprouter["tun_state"] = 'DOWN'
+					mArray.openmptcprouter["tun_state"] = "DOWN"
 				end
-				if mArray.openmptcprouter["ipv6"] == 'enabled' then
+				if mArray.openmptcprouter["ipv6"] == "enabled" then
 					local tunnel_ping6_test = ut.trim(sys.exec("ping6 -W 1 -c 1 fe80::a00:1 -I 6in4-omr6in4 | grep '100% packet loss'"))
 					if tunnel_ping6_test == "" then
-						mArray.openmptcprouter["tun6_state"] = 'UP'
+						mArray.openmptcprouter["tun6_state"] = "UP"
 					else
-						mArray.openmptcprouter["tun6_state"] = 'DOWN'
+						mArray.openmptcprouter["tun6_state"] = "DOWN"
 					end
 				end
 			else
-				mArray.openmptcprouter["tun_state"] = 'DOWN'
-				mArray.openmptcprouter["tun6_state"] = 'DOWN'
+				mArray.openmptcprouter["tun_state"] = "DOWN"
+				mArray.openmptcprouter["tun6_state"] = "DOWN"
 			end
 		end
 	end
@@ -583,15 +583,15 @@ function interfaces_status()
 	    local interface = section[".name"]
 	    local net = ntm:get_network(interface)
 	    local ipaddr = net:ipaddr()
-	    local gateway = section['gateway'] or ""
-	    local multipath = section['multipath']
-	    local enabled = section['auto']
+	    local gateway = section["gateway"] or ""
+	    local multipath = section["multipath"]
+	    local enabled = section["auto"]
 
 	    --if not ipaddr or not gateway then return end
 	    -- Don't show if0 in the overview
 	    --if interface == "lo" then return end
 
-	    local ifname = section['ifname'] or ""
+	    local ifname = section["ifname"] or ""
 	    if ifname == "" then
 		ifname = get_device(interface)
 	    end
@@ -607,23 +607,23 @@ function interfaces_status()
 		    if fs.access("/sys/class/net/" .. ifname) then
 			    local multipath_state = ut.trim(sys.exec("multipath " .. ifname .. " | grep deactivated"))
 			    if multipath_state == "" then
-				connectivity = 'OK'
+				connectivity = "OK"
 			    else
-				connectivity = 'ERROR'
+				connectivity = "ERROR"
 			    end
 		    else
-			    connectivity = 'ERROR'
+			    connectivity = "ERROR"
 		    end
 	    else
-		    connectivity = 'ERROR'
+		    connectivity = "ERROR"
 	    end
 
 	    if ipaddr == "" then
-		    connectivity = 'ERROR'
+		    connectivity = "ERROR"
 	    end
 
 	    -- Detect WAN gateway status
-	    local gw_ping = 'UP'
+	    local gw_ping = "UP"
 	    if gateway == "" then
 		    gateway = get_gateway(interface)
 	    end
@@ -635,28 +635,28 @@ function interfaces_status()
 	    if connectivity ~= "ERROR" and gateway ~= "" then
 		    local gw_ping_test = ut.trim(sys.exec("ping -W 1 -c 1 " .. gateway .. " | grep '100% packet loss'"))
 		    if gw_ping_test ~= "" then
-			    gw_ping = 'DOWN'
+			    gw_ping = "DOWN"
 			    if connectivity == "OK" then
-				    connectivity = 'WARNING'
+				    connectivity = "WARNING"
 			    end
 		    end
 	    else
-		    gw_ping = 'DOWN'
-		    connectivity = 'ERROR'
+		    gw_ping = "DOWN"
+		    connectivity = "ERROR"
 	    end
 	    
 	    local latency = ""
-	    local server_ping = ''
+	    local server_ping = ""
 	    if connectivity ~= "ERROR" and ifname ~= "" and gateway ~= "" and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" then
 		    local server_ping_test = sys.exec("ping -W 1 -c 1 -I " .. ifname .. " " .. mArray.openmptcprouter["service_addr"])
 		    local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
 		    if server_ping_result ~= "" then
-			    server_ping = 'DOWN'
+			    server_ping = "DOWN"
 			    if connectivity == "OK" then
-				connectivity = 'WARNING'
+				connectivity = "WARNING"
 			    end
 		    else
-			    server_ping = 'UP'
+			    server_ping = "UP"
 			    latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f4 | cut -d '.' -f1"))
 		    end
 	    end
@@ -671,7 +671,7 @@ function interfaces_status()
 			    multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'you are MPTCP-capable'"))
 		    end
 		    if multipath_available_state ~= "" then
-			    multipath_available = 'OK'
+			    multipath_available = "OK"
 		    else
 			    if mArray.openmptcprouter["service_addr"] ~= "" then
 				    multipath_available_state_wan = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
@@ -679,46 +679,46 @@ function interfaces_status()
 				    multipath_available_state_wan = "none"
 			    end
 			    if multipath_available_state_wan == "" then
-				    multipath_available = 'OK'
+				    multipath_available = "OK"
 				    mArray.openmptcprouter["server_mptcp"] = "disabled"
 			    else
-				    multipath_available = 'ERROR'
+				    multipath_available = "ERROR"
 				    if mArray.openmptcprouter["socks_service"] == true and connectivity == "OK" then
-					    connectivity = 'ERROR'
+					    connectivity = "ERROR"
 				    elseif connectivity == "OK" then
-					    connectivity = 'WARNING'
+					    connectivity = "WARNING"
 				    end
 			    end
 		    end
 	    else
-		    multipath_available = 'NO CHECK'
+		    multipath_available = "NO CHECK"
 	    end
 
 	    
 	    -- Detect if WAN get an IPv6
-	    local ipv6_discover = 'NONE'
+	    local ipv6_discover = "NONE"
 	    if ifname ~= nil then
-		if mArray.openmptcprouter["ipv6"] == 'enabled' then
+		if mArray.openmptcprouter["ipv6"] == "enabled" then
 		    local ipv6_result = _ipv6_discover(ifname)
 		    if type(ipv6_result) == "table" and #ipv6_result > 0 then
 			    local ipv6_addr_test
 			    for k,v in ipairs(ipv6_result) do
 				    if v.RecursiveDnsServer then
 					    if type(v.RecursiveDnsServer) ~= "table" then
-						    ipv6_addr_test = sys.exec('ip -6 addr | grep ' .. v.RecursiveDnsServer)
+						    ipv6_addr_test = sys.exec("ip -6 addr | grep " .. v.RecursiveDnsServer)
 						    if ipv6_addr_test == "" then
-							    ipv6_discover = 'DETECTED'
+							    ipv6_discover = "DETECTED"
 							    if connectivity == "OK" then
-								    connectivity = 'WARNING'
+								    connectivity = "WARNING"
 							    end
 						    end
 					    else
 						    for i,j in ipairs(ipv6_result) do
-							    ipv6_addr_test = sys.exec('ip -6 addr | grep ' .. j)
+							    ipv6_addr_test = sys.exec("ip -6 addr | grep " .. j)
 							    if ipv6_addr_test == "" then
-								    ipv6_discover = 'DETECTED'
+								    ipv6_discover = "DETECTED"
 								    if connectivity == "OK" then
-									    connectivity = 'WARNING'
+									    connectivity = "WARNING"
 								    end
 							    end
 						    end
@@ -736,20 +736,20 @@ function interfaces_status()
 	    end
 
 	    local data = {
-		label = section['label'] or interface,
+		label = section["label"] or interface,
 		name = interface,
 		link = net:adminlink(),
 		ifname = ifname,
 		ipaddr = ipaddr,
 		gateway = gateway,
-		multipath = section['multipath'],
+		multipath = section["multipath"],
 		status = connectivity,
 		wanip = publicIP,
 		latency = latency,
 		whois = whois or "unknown",
-		qos = section['trafficcontrol'],
-		download = section['download'],
-		upload = section['upload'],
+		qos = section["trafficcontrol"],
+		download = section["download"],
+		upload = section["upload"],
 		gw_ping = gw_ping,
 		server_ping = server_ping,
 		ipv6_discover = ipv6_discover,
