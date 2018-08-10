@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=tracebox
 PKG_VERSION:=0.4.4
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.bz2
 PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
@@ -14,9 +14,7 @@ PKG_SOURCE_VERSION:=v0.4.4
 
 PKG_FIXUP:=autoreconf
 
-#include $(INCLUDE_DIR)/uclibc++.mk
 include $(INCLUDE_DIR)/package.mk
-#include $(INCLUDE_DIR)/autotools.mk
 
 define Package/tracebox
   SECTION:=net
@@ -36,8 +34,6 @@ CONFIGURE_VARS += \
 	ax_header_version_match=yes
 
 CONFIGURE_ARGS += --enable-sniffer --enable-curl --with-libpcap="$(STAGING_DIR)/usr/include/"
-#CONFIGURE_ARGS += --enable-sniffer --enable-curl
-#CONFIGURE_ARGS += --disable-shared --enable-static
 
 EXTRA_CPPFLAGS += -fpermissive -Wno-variadic-macros
 
@@ -46,6 +42,7 @@ TARGET_CFLAGS += -D_GNU_SOURCE
 define Package/tracebox/install
 	$(INSTALL_DIR) $(1)/usr/sbin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/src/tracebox/tracebox $(1)/usr/sbin/tracebox
+	$(CP) ./files/* $(1)/
 endef
 
 $(eval $(call BuildPackage,tracebox))
