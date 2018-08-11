@@ -17,6 +17,7 @@ PKG_SOURCE:=$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://github.com/vmware/open-vm-tools/archive/
 PKG_LICENSE:=LGPLv2.1
 PKG_LICENSE_FILE:=COPYING
+PKG_HASH:=b3d0b5fd272a8dc35cab1ddd732f9d436f72682925212a6cdeccdab283e2f5ec
 
 PKG_FIXUP:=autoreconf
 
@@ -66,7 +67,6 @@ CONFIGURE_ARGS+= \
 CONFIGURE_VARS += \
 	CUSTOM_DNET_CPPFLAGS=" "
 
-define Package/$(PKG_NAME)/install
-endef
+MAKE_PATH := open-vm-tools
 
 $(eval $(call BuildPackage,$(PKG_NAME)))
