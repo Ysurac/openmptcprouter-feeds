@@ -714,16 +714,6 @@ function interfaces_status()
 								    connectivity = "WARNING"
 							    end
 						    end
-					    else
-						    for i,j in ipairs(ipv6_result) do
-							    ipv6_addr_test = sys.exec("ip -6 addr | grep " .. j)
-							    if ipv6_addr_test == "" then
-								    ipv6_discover = "DETECTED"
-								    if connectivity == "OK" then
-									    connectivity = "WARNING"
-								    end
-							    end
-						    end
 					    end
 				    end
 			    end
