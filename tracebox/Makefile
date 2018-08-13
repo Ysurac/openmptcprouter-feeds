@@ -6,7 +6,7 @@ PKG_RELEASE:=2
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.bz2
 PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
-PKG_SOURCE_URL:=git@github.com:tracebox/tracebox.git
+PKG_SOURCE_URL:=https://github.com/tracebox/tracebox.git
 PKG_MAINTAINER:=Gregory Detal <gregory.detal@uclouvain.be>
 
 PKG_SOURCE_PROTO:=git
