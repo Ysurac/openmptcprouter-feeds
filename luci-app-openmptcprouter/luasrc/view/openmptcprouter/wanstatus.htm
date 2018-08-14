@@ -29,9 +29,15 @@
 <script type="text/javascript" src="<%=resource%>/seedrandom.js?v=git-18.120.38690-2678b12"></script>
 <script type="text/javascript" src="<%=resource%>/cbi.js?v=git-18.120.38690-2678b12"></script>
 <script type="text/javascript">//<![CDATA[
+	var anonymize = false;
 	XHR.poll(20, '/cgi-bin/luci/admin/system/openmptcprouter/interfaces_status', null,
 		function(x, mArray)
 		{
+			if (anonymize)
+			{
+				mArray.openmptcprouter.wan_addr=replaceLastNChars(mArray.openmptcprouter.wan_addr,"x",6);
+				mArray.openmptcprouter.wan_addr6=replaceLastNChars(mArray.openmptcprouter.wan_addr6,"x",10);
+			}
 			var status = document.getElementById('openmptcprouter_status');
 			var stepbar = false;
 			var temp = '<figure class="tree">';
@@ -106,9 +112,6 @@
 					if (mArray.openmptcprouter.socks_service == false)
 					{
 						statusMessage += 'ShadowSocks is not running<br/>';
-					} else if (mArray.openmptcprouter.ss_addr == "")
-					{
-						statusMessage += 'ShadowSocks not working<br/>';
 					}
 					if (mArray.openmptcprouter.server_mptcp == "disabled")
 					{
@@ -141,6 +144,9 @@
 					if (mArray.openmptcprouter.socks_service_enabled == false)
 					{
 						statusMessage += 'ShadowSocks is DISABLED<br/>';
+					} else if (mArray.openmptcprouter.ss_addr == "")
+					{
+						statusMessage += 'Can\'t get public IP address from ShadowSocks<br/>';
 					}
 					if (mArray.openmptcprouter.tun_state == "DOWN")
 					{
@@ -201,6 +207,11 @@
 					}
 					// Populate info
 					var wanip   = mArray.wans[i].wanip;
+					if (anonymize)
+					{
+						wanip=replaceLastNChars(wanip,"x",6);
+					}
+
 					var ipaddr   = mArray.wans[i].ipaddr;
 					var whois   = mArray.wans[i].whois;
 					var multipath = mArray.wans[i].multipath;
@@ -374,6 +385,15 @@
 		return colour;
 	}
 
+	function setAnonymize()
+	{
+		anonymize=true;
+	}
+
+	var replaceLastNChars = function(str, replace, num) {
+		if (str == "") return str;
+		return str.slice(0, -num) + Array(num + 1).join(replace);
+	};
 //]]></script>
 
 <h2><%:Network overview%></h2>
@@ -381,4 +401,17 @@
 	<!--	<legend><%:Network overview%></legen> -->
 	<div id="openmptcprouter_status"><img src="<%=resource%>/spinner.gif" /></div>
 </fieldset>
+<form class="inline">
+	<div class="cbi-map">
+		<h3>Settings</h3>
+		<fieldset class="cbi-section">
+			<div class="cbi-value">
+				<label class="cbi-value-title">Anonymize public IPs</label>
+				<div class="cbi-value-field">
+					<input type="checkbox" name="anon" class="cbi-input-checkbox" value="1" onclick="setAnonymize()" \>
+				</div>
+			</div>
+		</fieldset>
+	</div>
+</form>
 <%+footer%>
