@@ -138,6 +138,7 @@ while true; do
 	# setup tracker variables
 	OMR_TRACKER_DEVICE_IP=
 	OMR_TRACKER_STATUS="ERROR"
+	OMR_TRACKER_STATUS_MSG=""
 	OMR_TRACKER_LATENCY=
 	OMR_TRACKER_TIMEOUT=$((rto / 1000 + (rto % 1000 ? 1 : 0)))
 
@@ -169,16 +170,16 @@ while true; do
 				if [ "$OMR_TRACKER_TYPE" = "none" ]; then
 					OMR_TRACKER_STATUS="OK"
 				else
-					# Check if route is not used
-					while ! ip route add $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP > /dev/null 2&>1
-					do
-						sleep 1
-						_restart
-					done
 					# setup loop variable
 					tries="$OMR_TRACKER_TRIES"
 					# loop until tries attempts have been reached
 					while [ "$tries" -gt 0 ]; do
+						# Check if route is not used
+						while ! ip route add $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP > /dev/null 2&>1
+						do
+							sleep 1
+							_restart
+						done
 						if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
 							_ping "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE_IP" "yes"
 							status=$?
@@ -189,15 +190,22 @@ while true; do
 							_dns "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE_IP" "yes"
 							status=$?
 						fi
+						ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2&>1
 						if $(exit $status); then
+							OMR_TRACKER_STATUS_MSG=""
 							OMR_TRACKER_STATUS="OK"
 							break
+						else
+							OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_TYPE to $OMR_TRACKER_HOST from $OMR_TRACKER_DEVICE_IP error"
 						fi
 						tries=$((tries - 1))
 						OMR_TRACKER_TIMEOUT=$((OMR_TRACKER_TIMEOUT * 2))
+						sleep 1
+						_restart
 					done
-					ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2&>1
 				fi
+			else
+				OMR_TRACKER_STATUS_MSG="gateway down"
 			fi
 		fi
 	fi
