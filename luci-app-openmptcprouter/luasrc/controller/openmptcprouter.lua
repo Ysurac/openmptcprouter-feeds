@@ -93,6 +93,14 @@ function wizard_add()
 	ucic:save("network")
 	ucic:commit("network")
 
+	-- Enable/disable IPv6
+	local disable_ipv6 = "0"
+	local enable_ipv6 = luci.http.formvalue("enable_ipv6") or "1"
+	if enable_ipv6 == "0" then 
+		disable_pv6 = "1"
+	end
+	set_ipv6_state(disable_ipv6)
+	
 	-- Get VPN set by default
 	local default_vpn = luci.http.formvalue("default_vpn") or "glorytun_tcp"
 	local vpn_port = ""
@@ -312,23 +320,7 @@ function settings_add()
 	
 	-- Disable IPv6
 	local disable_ipv6 = luci.http.formvalue("disable_ipv6") or 0
-	luci.sys.exec("sysctl -w net.ipv6.conf.all.disable_ipv6=%s" % disable_ipv6)
-	luci.sys.exec("sed -i 's:^net.ipv6.conf.all.disable_ipv6=[0-9]*:net.ipv6.conf.all.disable_ipv6=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % disable_ipv6)
-	ucic:set("firewall",ucic:get_first("firewall","defaults"),"disable_ipv6",disable_ipv6)
-	ucic:save("firewall")
-	ucic:commit("firewall")
-	ucic:set("dhcp","lan","ra_default",disable_ipv6)
-	if disable_ipv6 == 1 then
-		luci.sys.call("uci -q del dhcp.lan.dhcpv6")
-		luci.sys.call("uci -q del dhcp.lan.ra")
-		ucic:set("shadowsocks-libev","hi","local_address","0.0.0.0")
-	else
-		ucic:set("dhcp","lan","dhcpv6","server")
-		ucic:set("dhcp","lan","ra","server")
-		ucic:set("shadowsocks-libev","hi","local_address","::")
-	end
-	ucic:save("dhcp")
-	ucic:commit("dhcp")
+	set_ipv6_state(disable_ipv6)
 
 	local obfs = luci.http.formvalue("obfs") or 0
 	ucic:foreach("shadowsocks-libev", "ss_redir", function (section)
@@ -699,8 +691,7 @@ function interfaces_status()
 	    
 	    -- Detect if WAN get an IPv6
 	    local ipv6_discover = "NONE"
-	    if ifname ~= nil then
-		if mArray.openmptcprouter["ipv6"] == "enabled" then
+	    if ifname ~= nil and mArray.openmptcprouter["ipv6"] == "enabled" then
 		    local ipv6_result = _ipv6_discover(ifname)
 		    if type(ipv6_result) == "table" and #ipv6_result > 0 then
 			    local ipv6_addr_test
@@ -718,7 +709,6 @@ function interfaces_status()
 				    end
 			    end
 		    end
-		end
 	    end
 
 	    local publicIP = ut.trim(sys.exec("omr-ip-intf " .. ifname))
@@ -842,4 +832,24 @@ function mptcp_check_trace(interface)
 		end
 	end
 	return
+end
+
+function set_ipv6_state(disable_ipv6)
+	luci.sys.exec("sysctl -w net.ipv6.conf.all.disable_ipv6=%s" % disable_ipv6)
+	luci.sys.exec("sed -i 's:^net.ipv6.conf.all.disable_ipv6=[0-9]*:net.ipv6.conf.all.disable_ipv6=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % disable_ipv6)
+	ucic:set("firewall",ucic:get_first("firewall","defaults"),"disable_ipv6",disable_ipv6)
+	ucic:save("firewall")
+	ucic:commit("firewall")
+	ucic:set("dhcp","lan","ra_default",disable_ipv6)
+	if disable_ipv6 == 1 then
+		luci.sys.call("uci -q del dhcp.lan.dhcpv6")
+		luci.sys.call("uci -q del dhcp.lan.ra")
+		ucic:set("shadowsocks-libev","hi","local_address","0.0.0.0")
+	else
+		ucic:set("dhcp","lan","dhcpv6","server")
+		ucic:set("dhcp","lan","ra","server")
+		ucic:set("shadowsocks-libev","hi","local_address","::")
+	end
+	ucic:save("dhcp")
+	ucic:commit("dhcp")
 end
