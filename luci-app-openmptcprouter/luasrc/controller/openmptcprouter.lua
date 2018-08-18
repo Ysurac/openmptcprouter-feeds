@@ -841,7 +841,11 @@ function set_ipv6_state(disable_ipv6)
 	ucic:set("firewall",ucic:get_first("firewall","defaults"),"disable_ipv6",disable_ipv6)
 	ucic:save("firewall")
 	ucic:commit("firewall")
-	ucic:set("dhcp","lan","ra_default",disable_ipv6)
+	if disable_ipv6 == 1 then
+		ucic:set("dhcp","lan","ra_default","0")
+	else
+		ucic:set("dhcp","lan","ra_default","1")
+	end
 	if disable_ipv6 == 1 then
 		luci.sys.call("uci -q del dhcp.lan.dhcpv6")
 		luci.sys.call("uci -q del dhcp.lan.ra")
