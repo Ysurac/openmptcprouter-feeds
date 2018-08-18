@@ -812,10 +812,11 @@ function _ipv6_discover(interface)
 	return ra6_result
 end
 
-function mptcp_check_trace(interface)
+function mptcp_check_trace(iface)
 	luci.http.prepare_content("text/plain")
 	local tracebox
 	local uci    = require "luci.model.uci".cursor()
+	local interface = get_device(iface)
 	local server = uci:get("shadowsocks-libev", "sss0", "server") or ""
 	if server == "" then return end
 	if interface == "" then
