@@ -95,7 +95,7 @@ function wizard_add()
 
 	-- Enable/disable IPv6
 	local disable_ipv6 = "0"
-	local enable_ipv6 = luci.http.formvalue("enable_ipv6") or "1"
+	local enable_ipv6 = luci.http.formvalue("enableipv6") or "1"
 	if enable_ipv6 == "0" then 
 		disable_pv6 = "1"
 	end
