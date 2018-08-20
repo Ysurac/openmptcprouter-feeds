@@ -84,12 +84,18 @@ function wizard_add()
 			ucic:set("sqm",intf,"download",downloadspeed)
 			ucic:set("sqm",intf,"upload",uploadspeed)
 			ucic:set("sqm",intf,"enabled","1")
+			ucic:set("qos",intf,"download",downloadspeed)
+			ucic:set("qos",intf,"upload",uploadspeed)
+			ucic:set("qos",intf,"enabled","1")
 		else
 			ucic:set("sqm",intf,"enabled","0")
+			ucic:set("qos",intf,"enabled","0")
 		end
 	end
 	ucic:save("sqm")
 	ucic:commit("sqm")
+	ucic:save("qos")
+	ucic:commit("qos")
 	ucic:save("network")
 	ucic:commit("network")
 
@@ -97,7 +103,7 @@ function wizard_add()
 	local disable_ipv6 = "0"
 	local enable_ipv6 = luci.http.formvalue("enableipv6") or "1"
 	if enable_ipv6 == "0" then 
-		disable_pv6 = "1"
+		disable_ipv6 = "1"
 	end
 	set_ipv6_state(disable_ipv6)
 	
@@ -576,7 +582,7 @@ function interfaces_status()
 	uci:foreach("network", "interface", function (section)
 	    local interface = section[".name"]
 	    local net = ntm:get_network(interface)
-	    local ipaddr = net:ipaddr()
+	    local ipaddr = net:ipaddr() or ""
 	    local gateway = section["gateway"] or ""
 	    local multipath = section["multipath"]
 	    local enabled = section["auto"]
