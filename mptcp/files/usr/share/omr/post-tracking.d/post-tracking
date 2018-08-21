@@ -113,6 +113,9 @@ default_gw=$(ip route show default | grep -v metric | awk '/default/ {print $3}'
 
 # An interface in error will never be used in MPTCP
 if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
+	if [ "$OMR_TRACKER_PREV_STATUS" = "$OMR_TRACKER_STATUS" ]; then
+		exit 0
+	fi
 	if [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
 		[ "$multipath_status" = "off" ] || {
 			if [ "$OMR_TRACKER_STATUS_MSG" = "" ]; then
@@ -149,7 +152,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		config_foreach set_route interface $OMR_TRACKER_INTERFACE
 		#config_load shadowsocks-libev
 		#config_foreach del_ss_route server all
-		if [ "$(uci -q show shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q show shadowsocks-libev.hi2.mode)" = "tcp_and_udp" ]; then
+		if [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q get shadowsocks-libev.hi2.mode)" = "tcp_and_udp" ]; then
 			_log "Tunnel down use ShadowSocks for UDP"
 			uci -q set shadowsocks-libev.ss_rules.redir_udp='hi2'
 			/etc/init.d/shadowsocks-libev rules_down
@@ -163,11 +166,11 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 	if [ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
 		_log "Tunnel up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
 		ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
-		if [ "$(uci -q show shadowsocks-libev.ss_rules.redir_udp)" = "hi2" ]; then
-			uci -q delete shadowsocks-libev.ss_rules.redir_udp
-			/etc/init.d/shadowsocks-libev rules_down
-			/etc/init.d/shadowsocks-libev rules_up
-		fi
+	fi
+	if [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "hi2" ]; then
+		uci -q delete shadowsocks-libev.ss_rules.redir_udp
+		/etc/init.d/shadowsocks-libev rules_down
+		/etc/init.d/shadowsocks-libev rules_up
 	fi
 	exit 0
 fi
