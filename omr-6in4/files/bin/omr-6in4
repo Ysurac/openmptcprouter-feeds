@@ -10,23 +10,25 @@ while true; do
 		iface=$(uci -q get openvpn.omr.dev)
 	fi
 	addr=$(ubus call network.interface.omrvpn status | jsonfilter -q -e '@["ipv4-address"][0].address' | tr -d "\n")
-	[ -z "$addr" ] && [ -n "$iface" ] && addr=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
-	peer=$(ubus call network.interface.omrvpn status | jsonfilter -q -e '@.route[0].nexthop' | tr -d "\n")
-	[ -z "$peer" ] && [ -n "$iface" ] && peer=$(ip -4 r list dev $iface | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d "\n")
-	[ -z "$addr" ] && exit 0
-	[ -z "$peer" ] && exit 0
-	if [ "$addr" != "$(uci -q get network.omr6in4.ipaddr)" ] || [ "$peer" != "$(uci -q get network.omr6in4.peeraddr)" ]; then
-		logger -t "omr6in4" "Set network for OMR 6in4 to local $addr peer $peer"
-		uci -q batch <<-EOF
-			set network.omr6in4.ipaddr=$addr
-			set network.omr6in4.peeraddr=$peer
-		EOF
-		uci -q commit network
-		if [ -n "$(ip tunnel | grep omr6in4)" ]; then
-			ip tunnel change "6in4-omr6in4" mode sit local ${addr} remote ${peer}
-		else
-			ifup omr6in4
-		fi
+	if [ -d "/sys/class/net/$iface" ]; then
+		[ -z "$addr" ] && [ -n "$iface" ] && addr=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
+		peer=$(ubus call network.interface.omrvpn status | jsonfilter -q -e '@.route[0].nexthop' | tr -d "\n")
+		[ -z "$peer" ] && [ -n "$iface" ] && peer=$(ip -4 r list dev $iface | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d "\n")
+		[ -n "$addr" ] && [ -n "$peer" ] && {
+			if [ "$addr" != "$(uci -q get network.omr6in4.ipaddr)" ] || [ "$peer" != "$(uci -q get network.omr6in4.peeraddr)" ]; then
+				logger -t "omr6in4" "Set network for OMR 6in4 to local $addr peer $peer"
+				uci -q batch <<-EOF
+					set network.omr6in4.ipaddr=$addr
+					set network.omr6in4.peeraddr=$peer
+				EOF
+				uci -q commit network
+				if [ -n "$(ip tunnel | grep omr6in4)" ]; then
+					ip tunnel change "6in4-omr6in4" mode sit local ${addr} remote ${peer}
+				else
+					ifup omr6in4
+				fi
+			fi
+		}
 	fi
 	sleep 10
 done
