@@ -101,7 +101,7 @@ function wizard_add()
 
 	-- Enable/disable IPv6
 	local disable_ipv6 = "0"
-	local enable_ipv6 = luci.http.formvalue("enableipv6") or "1"
+	local enable_ipv6 = luci.http.formvalue("enableipv6") or "0"
 	if enable_ipv6 == "0" then 
 		disable_ipv6 = "1"
 	end
@@ -844,6 +844,8 @@ end
 function set_ipv6_state(disable_ipv6)
 	luci.sys.exec("sysctl -w net.ipv6.conf.all.disable_ipv6=%s" % disable_ipv6)
 	luci.sys.exec("sed -i 's:^net.ipv6.conf.all.disable_ipv6=[0-9]*:net.ipv6.conf.all.disable_ipv6=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % disable_ipv6)
+	luci.sys.exec("/etc/init.d/odhcpd stop >/dev/null 2>&1")
+	luci.sys.exec("/etc/init.d/odhcpd disable >/dev/null 2>&1")
 	ucic:set("firewall",ucic:get_first("firewall","defaults"),"disable_ipv6",disable_ipv6)
 	ucic:save("firewall")
 	ucic:commit("firewall")
