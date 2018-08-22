@@ -640,7 +640,7 @@ function interfaces_status()
 				    connectivity = "WARNING"
 			    end
 		    end
-	    else
+	    elseif gateway == "" then
 		    gw_ping = "DOWN"
 		    connectivity = "ERROR"
 	    end
