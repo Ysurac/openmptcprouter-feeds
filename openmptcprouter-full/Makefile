@@ -41,6 +41,7 @@ MY_DEPENDS := \
     iftop \
     tcpdump \
     ethtool \
+    iputils-ping \
     tracebox \
     luci-proto-3g \
     comgt-ncm luci-proto-ncm \
