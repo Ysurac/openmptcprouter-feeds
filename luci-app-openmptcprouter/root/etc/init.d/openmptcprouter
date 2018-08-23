@@ -4,6 +4,15 @@ START=5
 
 USE_PROCD=1
 
+omr_intf_del() {
+	uci -q delete openmptcprouter.$1
+}
+omr_intf_set() {
+	config_get multipath "$1" multipath
+	[ -z "$multipath" ] || [ "$multipath" = "off" ] && return
+	uci -q set openmptcprouter.$1=interface
+}
+
 start_service() {
 	local scaling_min_freq scaling_max_freq
 	config_load openmptcprouter
@@ -28,6 +37,10 @@ start_service() {
 	# remove sysctl already defined in /etc/sysctl.d/
 	sed -i -e '/tcp_fin_timeout/d' -e '/tcp_keepalive_time/d' -e '/nf_conntrack_max/d' /etc/sysctl.conf
 	sed -i -e '/tcp_fin_timeout/d' -e '/tcp_keepalive_time/d' -e '/nf_conntrack_max/d' /etc/sysctl.d/10-default.conf
+
+	config_foreach omr_intf_del interface
+	config_load network
+	config_foreach omr_intf_set interface
 }
 
 reload_service() {

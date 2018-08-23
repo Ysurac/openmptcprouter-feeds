@@ -502,14 +502,14 @@ function interfaces_status()
 				peer = ut.trim(sys.exec("ip -4 r list dev " .. tun_dev .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
 			end
 			if peer ~= "" then
-				local tunnel_ping_test = ut.trim(sys.exec("ping -W 1 -c 1 " .. peer .. " -I " .. tun_dev .. " | grep '100% packet loss'"))
+				local tunnel_ping_test = ut.trim(sys.exec("ping -w 1 -c 1 -I " .. tun_dev .. " " .. peer .. " | grep '100% packet loss'"))
 				if tunnel_ping_test == "" then
 					mArray.openmptcprouter["tun_state"] = "UP"
 				else
 					mArray.openmptcprouter["tun_state"] = "DOWN"
 				end
 				if mArray.openmptcprouter["ipv6"] == "enabled" then
-					local tunnel_ping6_test = ut.trim(sys.exec("ping6 -W 1 -c 1 fe80::a00:1 -I 6in4-omr6in4 | grep '100% packet loss'"))
+					local tunnel_ping6_test = ut.trim(sys.exec("ping6 -w 1 -c 1 -I 6in4-omr6in4 fe80::a00:1 | grep '100% packet loss'"))
 					if tunnel_ping6_test == "" then
 						mArray.openmptcprouter["tun6_state"] = "UP"
 					else
@@ -633,7 +633,7 @@ function interfaces_status()
 		    end
 	    end
 	    if connectivity ~= "ERROR" and gateway ~= "" then
-		    local gw_ping_test = ut.trim(sys.exec("ping -W 1 -c 1 " .. gateway .. " | grep '100% packet loss'"))
+		    local gw_ping_test = ut.trim(sys.exec("ping -w 1 -c 1 " .. gateway .. " | grep '100% packet loss'"))
 		    if gw_ping_test ~= "" then
 			    gw_ping = "DOWN"
 			    if connectivity == "OK" then
@@ -648,7 +648,7 @@ function interfaces_status()
 	    local latency = ""
 	    local server_ping = ""
 	    if connectivity ~= "ERROR" and ifname ~= "" and gateway ~= "" and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" then
-		    local server_ping_test = sys.exec("ping -W 1 -c 1 -I " .. ifname .. " " .. mArray.openmptcprouter["service_addr"])
+		    local server_ping_test = sys.exec("ping -w 1 -c 1 -I " .. ifname .. " " .. mArray.openmptcprouter["service_addr"])
 		    local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
 		    if server_ping_result ~= "" then
 			    server_ping = "DOWN"
@@ -664,13 +664,17 @@ function interfaces_status()
 	    local multipath_available
 	    if connectivity ~= "ERROR" and mArray.openmptcprouter["dns"] == true and ifname ~= nil and ifname ~= "" and gateway ~= "" and gw_ping == "UP" then
 		    -- Test if multipath can work on the connection
-		    local multipath_available_state = ""
-		    if mArray.openmptcprouter["service_addr"] ~= "" then
-			    multipath_available_state = ut.trim(sys.exec("omr-tracebox-mptcp " .. mArray.openmptcprouter["service_addr"] .. " " .. ifname .. " | grep 'MPTCP enabled'"))
+		    local multipath_available_state = uci:get("openmptcprouter",interface,"publicip") or ""
+		    if multipath_available_state == "" then
+			    --if mArray.openmptcprouter["service_addr"] ~= "" then
+				    multipath_available_state = ut.trim(sys.exec("omr-tracebox-mptcp " .. mArray.openmptcprouter["service_addr"] .. " " .. ifname .. " | grep 'MPTCP disabled'"))
+			    --else
+				    multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
+			    --end
 		    else
-			    multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'you are MPTCP-capable'"))
+			    multipath_available_state = ut.trim(sys.exec("echo " .. multipath_available_state .. " | grep 'MPTCP disabled'"))
 		    end
-		    if multipath_available_state ~= "" then
+		    if multipath_available_state == "" then
 			    multipath_available = "OK"
 		    else
 			    if mArray.openmptcprouter["service_addr"] ~= "" then
@@ -717,10 +721,17 @@ function interfaces_status()
 		    end
 	    end
 
-	    local publicIP = ut.trim(sys.exec("omr-ip-intf " .. ifname))
+	    local publicIP = uci:get("openmptcprouter",interface,"publicip") or ""
+	    if publicIP == "" then
+		    publicIP = ut.trim(sys.exec("omr-ip-intf " .. ifname))
+	    end
 	    local whois = ""
 	    if publicIP ~= "" then
-		whois = ut.trim(sys.exec("whois " .. publicIP .. " | grep -i 'netname' | awk '{print $2}'"))
+		    whois = uci:get("openmptcprouter",interface,"asn") or ""
+		    if whois == "" then
+			    --whois = ut.trim(sys.exec("whois " .. publicIP .. " | grep -i 'netname' | awk '{print $2}'"))
+			    whois = ut.trim(sys.exec("wget -4 -qO- -T 1 'http://api.iptoasn.com/v1/as/ip/" .. publicIP .. "' | jsonfilter -e '@.as_description'"))
+		    end
 	    end
 
 	    local data = {

@@ -214,11 +214,33 @@ if [ "$(uci -q get omr-bypass.defaults.ifname)" = "$OMR_TRACKER_DEVICE" ] && [ "
 	ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
 fi
 
-
 [ "$multipath_config" = "on" ] && glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 up > /dev/null 2>&1
 [ "$multipath_config" = "backup" ] && glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 backup > /dev/null 2>&1
-[ "$multipath_status" = "$multipath_config" ] && exit 0
-if [ "$(sysctl -n net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ]; then
-	_log "Multipath $OMR_TRACKER_DEVICE switched to $multipath_config"
-	multipath "$OMR_TRACKER_DEVICE" "$multipath_config"
+[ "$multipath_status" = "$multipath_config" ] || {
+	if [ "$(sysctl -n net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ]; then
+		_log "Multipath $OMR_TRACKER_DEVICE switched to $multipath_config"
+		multipath "$OMR_TRACKER_DEVICE" "$multipath_config"
+	fi
+}
+
+# Save wan settings for status page
+if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.omr_lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.omr_lc))) -gt 3600 ]; then
+	local ipaddr="$(omr-ip-intf $OMR_TRACKER_DEVICE)"
+	[ -n "$ipaddr" ] && {
+		local asn="$(wget -4 -qO- -T 5 http://api.iptoasn.com/v1/as/ip/$ipaddr | jsonfilter -e '@.as_description')"
+		local serverip=$(uci -q get shadowsocks-libev.sss0.server)
+		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$(omr-tracebox-mptcp $serverip $OMR_TRACKER_DEVICE)"
+		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.publicip="$ipaddr"
+		[ -n "$asn" ] && {
+			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.asn="$asn"
+		}
+		local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP $serverip)
+		[ -n "$mtu" ] && {
+			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
+			ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
+		}
+		[ -n "$mtu" ] && [ -n "$asn" ] && {
+			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+		}
+	}
 fi
