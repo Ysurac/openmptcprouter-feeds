@@ -8,6 +8,13 @@ log() {
 	logger -p daemon.info -t "${basename}" "$@"
 }
 
+get_ip() {
+	uci -q set openmptcprouter.vps.ipv4=$(wget -4 -qO- -T 3 http://ip.openmptcprouter.com)
+	if [ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 | tr -d '\n')" = "0" ]; then
+		uci -q set openmptcprouter.vps.ipv6=$(wget -6 -qO- -T 3 http://ip.openmptcprouter.com)
+	fi
+}
+
 timeout=${OMR_TRACKER_TIMEOUT:-5}
 interval=${OMR_TRACKER_INTERVAL:-10}
 retry=${OMR_TRACKER_TRIES:-4}
@@ -18,19 +25,28 @@ nodns=0
 
 last=0
 
+uci -q set openmptcprouter.vps.shadowsocks="up"
+get_ip
+
 while true; do
 	host="${hosts%% *}"
 	[ "$host" = "$hosts" ] || {
 		hosts="${hosts#* } $host"
 	}
 	if curl -s --socks5 "${proxy}" --max-time "${timeout}" "$host" &>/dev/null ; then
-		[ "${last}" -ge "${retry}" ] && log "Shadowsocks is up (can contact ${host})"
+		[ "${last}" -ge "${retry}" ] && {
+			log "Shadowsocks is up (can contact ${host})"
+			uci -q set openmptcprouter.vps.shadowsocks="up"
+			get_ip
+		}
+		[ "$(uci -q get openmptcprouter.vps.ipv4)" = "" ] || ([ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 | tr -d '\n')" = "0" ] && [ "$(uci -q get openmptcprouter.vps.ipv6)" = "" ]) && get_ip
 		/etc/init.d/shadowsocks-libev rules_up 2> /dev/null
 		last=0
 	else
 		last=$((last + 1 ))
 		[ "${last}" -eq "${retry}" ] && {
 			log "Shadowsocks is down (can't contact ${host})"
+			uci -q set openmptcprouter.vps.shadowsocks="down"
 			/etc/init.d/shadowsocks-libev rules_down 2> /dev/null
 		}
 	fi
