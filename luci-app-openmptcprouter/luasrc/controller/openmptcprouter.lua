@@ -462,16 +462,22 @@ function interfaces_status()
 	local tracker_ip = ""
 	if mArray.openmptcprouter["dns"] == true then
 		-- shadowsocksaddr
-		tracker_ip = uci:get("shadowsocks-libev","tracker","local_address") or ""
-		local tracker_port = uci:get("shadowsocks-libev","tracker","local_port")
-		if tracker_ip ~= "" then
-			mArray.openmptcprouter["ss_addr"] = sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ip.openmptcprouter.com")
-			--mArray.openmptcprouter["ss_addr6"] = sys.exec("curl -s -6 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ipv6.openmptcprouter.com")
+		mArray.openmptcprouter["ss_addr"] = uci:get("openmptcprouter","vps","ipv4") or ""
+		if mArray.openmptcprouter["ss_addr"] == "" then
+			tracker_ip = uci:get("shadowsocks-libev","tracker","local_address") or ""
+			if tracker_ip ~= "" then
+				local tracker_port = uci:get("shadowsocks-libev","tracker","local_port")
+				mArray.openmptcprouter["ss_addr"] = sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ip.openmptcprouter.com")
+				--mArray.openmptcprouter["ss_addr6"] = sys.exec("curl -s -6 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ipv6.openmptcprouter.com")
+			end
 		end
 		-- wanaddr
 		mArray.openmptcprouter["wan_addr"] = sys.exec("wget -4 -qO- -T 1 http://ip.openmptcprouter.com")
 		if mArray.openmptcprouter["ipv6"] == "enabled" then
-			mArray.openmptcprouter["wan_addr6"] = sys.exec("wget -6 -qO- -T 1 http://ipv6.openmptcprouter.com")
+			mArray.openmptcprouter["wan_addr6"] = uci:get("openmptcprouter","vps","ipv6") or ""
+			if mArray.openmptcprouter["wan_addr6"] == "" then
+				mArray.openmptcprouter["wan_addr6"] = sys.exec("wget -6 -qO- -T 1 http://ipv6.openmptcprouter.com")
+			end
 		end
 	end
 
@@ -657,22 +663,22 @@ function interfaces_status()
 			    end
 		    else
 			    server_ping = "UP"
-			    latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f4 | cut -d '.' -f1"))
+			    latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f5 | cut -d '.' -f1"))
 		    end
 	    end
 
 	    local multipath_available
 	    if connectivity ~= "ERROR" and mArray.openmptcprouter["dns"] == true and ifname ~= nil and ifname ~= "" and gateway ~= "" and gw_ping == "UP" then
 		    -- Test if multipath can work on the connection
-		    local multipath_available_state = uci:get("openmptcprouter",interface,"publicip") or ""
+		    local multipath_available_state = uci:get("openmptcprouter",interface,"mptcp_status") or ""
 		    if multipath_available_state == "" then
 			    --if mArray.openmptcprouter["service_addr"] ~= "" then
-				    multipath_available_state = ut.trim(sys.exec("omr-tracebox-mptcp " .. mArray.openmptcprouter["service_addr"] .. " " .. ifname .. " | grep 'MPTCP disabled'"))
+			    --    multipath_available_state = ut.trim(sys.exec("omr-tracebox-mptcp " .. mArray.openmptcprouter["service_addr"] .. " " .. ifname .. " | grep 'MPTCP disabled'"))
 			    --else
 				    multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
 			    --end
 		    else
-			    multipath_available_state = ut.trim(sys.exec("echo " .. multipath_available_state .. " | grep 'MPTCP disabled'"))
+			    multipath_available_state = ut.trim(sys.exec("echo '" .. multipath_available_state .. "' | grep 'MPTCP disabled'"))
 		    end
 		    if multipath_available_state == "" then
 			    multipath_available = "OK"
@@ -733,6 +739,8 @@ function interfaces_status()
 			    whois = ut.trim(sys.exec("wget -4 -qO- -T 1 'http://api.iptoasn.com/v1/as/ip/" .. publicIP .. "' | jsonfilter -e '@.as_description'"))
 		    end
 	    end
+	    
+	    local mtu = uci:get("openmptcprouter",interface,"mtu") or ""
 
 	    local data = {
 		label = section["label"] or interface,
@@ -745,6 +753,7 @@ function interfaces_status()
 		status = connectivity,
 		wanip = publicIP,
 		latency = latency,
+		mtu = mtu,
 		whois = whois or "unknown",
 		qos = section["trafficcontrol"],
 		download = section["download"],
