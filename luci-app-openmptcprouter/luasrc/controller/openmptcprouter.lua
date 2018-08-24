@@ -693,11 +693,7 @@ function interfaces_status()
 				    mArray.openmptcprouter["server_mptcp"] = "disabled"
 			    else
 				    multipath_available = "ERROR"
-				    if mArray.openmptcprouter["socks_service"] == true and connectivity == "OK" then
-					    connectivity = "ERROR"
-				    elseif connectivity == "OK" then
-					    connectivity = "WARNING"
-				    end
+				    connectivity = "WARNING"
 			    end
 		    end
 	    else
