@@ -129,15 +129,19 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 			if [ "$(sysctl -n net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ]; then
 				multipath "$OMR_TRACKER_DEVICE" off
 			fi
-			glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 down > /dev/null 2>&1
-			config_load shadowsocks-libev
 			if [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
+				glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 down > /dev/null 2>&1
+			fi
+			config_load shadowsocks-libev
+			if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
 				local metric=$(ip rule show | grep "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
 				ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
 				config_foreach del_ss_route server $metric
 			else
-				ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
-				config_foreach del_ss_route server none
+				if [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
+					ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
+				fi
+				config_foreach del_ss_route server off
 			fi
 		}
 	fi
@@ -193,7 +197,7 @@ if [ "$multipath_config" = "master" ]; then
 			ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
 		fi
 	fi
-	if [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
+	if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
 		local metric=$(ip rule show | grep "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
 		[ -n "$metric" ] && {
 			ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
@@ -201,7 +205,7 @@ if [ "$multipath_config" = "master" ]; then
 	fi
 	multipath_config="on"
 else
-	if [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
+	if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
 		local metric=$(ip rule show | grep "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
 		[ -n "$metric" ] && {
 			ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
