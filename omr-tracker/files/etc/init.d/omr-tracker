@@ -11,13 +11,14 @@
 
 _validate_section() {
 	local tmp_hosts=$hosts tmp_timeout=$timeout tmp_tries=$tries
-	local tmp_interval=$interval tmp_options=$options tmp_type=$type tmp_enabled=$enabled
+	local tmp_interval=$interval tmp_interval_tries=$interval_tries tmp_options=$options tmp_type=$type tmp_enabled=$enabled
 
 	uci_validate_section omr-tracker "$1" "$2" \
 		'hosts:list(host)'  \
 		'timeout:uinteger'  \
 		'tries:uinteger'    \
 		'interval:uinteger' \
+		'interval_tries:uinteger' \
 		'type:string:ping'  \
 		'enabled:bool:1'    \
 		'options:string'
@@ -26,6 +27,7 @@ _validate_section() {
 	[ -z "$timeout"  ] && timeout=$tmp_timeout
 	[ -z "$tries"    ] && tries=$tmp_tries
 	[ -z "$interval" ] && interval=$tmp_interval
+	[ -z "$interval_tries" ] && interval_tries=$tmp_interval_tries
 	[ -z "$options"  ] && options=$tmp_options
 	[ -z "$type"  ] && type=$tmp_type
 	[ -z "$enabled"  ] && enabled=$tmp_enabled
@@ -36,7 +38,7 @@ _launch_tracker() {
 		loopback|lan*|if0*) return;;
 	esac
 
-	local hosts timeout tries interval options type enabled
+	local hosts timeout tries interval interval_tries options type enabled
 	_validate_section "defaults" "defaults"
 	_validate_section "interface" "$1"
 
@@ -51,6 +53,7 @@ _launch_tracker() {
 	[ -z "$ifname" ] || [ -z "$multipath" ] || [ "$multipath" = "off" ] && [ "$1" != "glorytun" ] && [ "$1" != "omrvpn" ] && return
 	[ "${ifenabled}" = "0" ] && return
 	[ "${enabled}" = "0" ] && return
+	[ -z "${interval_tries}" ] && interval_tries=1
 
 	procd_open_instance
 	# shellcheck disable=SC2086
@@ -59,6 +62,7 @@ _launch_tracker() {
 	procd_append_param env "OMR_TRACKER_TIMEOUT=$timeout"
 	procd_append_param env "OMR_TRACKER_TRIES=$tries"
 	procd_append_param env "OMR_TRACKER_INTERVAL=$interval"
+	procd_append_param env "OMR_TRACKER_INTERVAL_TRIES=$interval_tries"
 	procd_append_param env "OMR_TRACKER_TABLE=$ip4table"
 	procd_append_param env "OMR_TRACKER_DEVICE=$ifname"
 	procd_append_param env "OMR_TRACKER_DEVICE_GATEWAY=$gateway"
