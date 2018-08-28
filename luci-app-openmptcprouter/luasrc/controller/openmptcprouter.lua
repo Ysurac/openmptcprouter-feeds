@@ -737,6 +737,9 @@ function interfaces_status()
 	    end
 	    
 	    local mtu = uci:get("openmptcprouter",interface,"mtu") or ""
+	    if mtu == "" then
+		    mtu = ut.trim(sys.exec("cat /sys/class/net/" .. ifname .. "/mtu | tr -d '\n'"))
+	    end
 
 	    local data = {
 		label = section["label"] or interface,
