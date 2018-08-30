@@ -876,10 +876,12 @@ function set_ipv6_state(disable_ipv6)
 	if disable_ipv6 == "1" then
 		luci.sys.call("uci -q del dhcp.lan.dhcpv6")
 		luci.sys.call("uci -q del dhcp.lan.ra")
+		luci.sys.call("uci -q del dhcp.lan.ra_default")
 		ucic:set("shadowsocks-libev","hi","local_address","0.0.0.0")
 	else
 		ucic:set("dhcp","lan","dhcpv6","server")
 		ucic:set("dhcp","lan","ra","server")
+		ucic:set("dhcp","lan","ra_default","0")
 		ucic:set("shadowsocks-libev","hi","local_address","::")
 	end
 	ucic:save("dhcp")
