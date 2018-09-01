@@ -306,7 +306,7 @@ if not net:is_virtual() then
 --    macsource.rmempty = true
 end
 
-macvlanmaster = s:taboption("physical", Value, "interface", translate("Master interface"))
+macvlanmaster = s:taboption("physical", Value, "masterintf", translate("Master interface"))
 macvlanmaster.default = "eth0"
 macvlanmaster:depends("type", "macvlan")
 

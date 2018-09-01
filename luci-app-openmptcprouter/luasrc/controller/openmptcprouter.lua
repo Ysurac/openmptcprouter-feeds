@@ -2,6 +2,7 @@ local tools = require "luci.tools.status"
 local sys   = require "luci.sys"
 local json  = require("luci.json")
 local fs    = require("nixio.fs")
+local net   = require "luci.model.network".init()
 local ucic = luci.model.uci.cursor()
 module("luci.controller.openmptcprouter", package.seeall)
 
@@ -20,8 +21,21 @@ function index()
 	entry({"admin", "system", "openmptcprouter", "mptcp_check_trace"}, post("mptcp_check_trace")).leaf = true
 end
 
+function interface_from_device(dev)
+	for _, iface in ipairs(net:get_networks()) do
+		local ifacen = iface:name()
+		local ifacename = ucic:get("network",ifacen,"ifname")
+		if ifacename == dev then
+			return ifacen
+		end
+	end
+	return ""
+end
+
+
 function wizard_add()
 	local add_interface = luci.http.formvalue("add_interface") or ""
+	local add_interface_ifname = luci.http.formvalue("add_interface_ifname") or ""
 	local gostatus = true
 	if add_interface ~= "" then
 		local i = 1
@@ -35,11 +49,29 @@ function wizard_add()
 				multipath_master = true
 			end
 		end)
-		local defif = ucic:get("network","wan1_dev","ifname") or "eth0"
+		local defif = "eth0"
+		if add_interface_ifname == "" then
+			local defif1 = ucic:get("network","wan1_dev","ifname") or ""
+			if defif1 ~= "" then
+				defif = defif1
+			end
+		else
+			defif = add_interface_ifname
+		end
+		
+		local ointf = interface_from_device(defif) or ""
+		if ointf ~= "" then
+			if ucic:get("network",ointf,"type") == "" then
+				ucic:set("network",ointf,"type","macvlan")
+			end
+		end
+		
 		ucic:set("network","wan" .. i,"interface")
 		ucic:set("network","wan" .. i,"ifname",defif)
 		ucic:set("network","wan" .. i,"proto","static")
-		ucic:set("network","wan" .. i,"type","macvlan")
+		if ointf ~= "" then
+			ucic:set("network","wan" .. i,"type","macvlan")
+		end
 		ucic:set("network","wan" .. i,"ip4table","wan")
 		if multipath_master then
 			ucic:set("network","wan" .. i,"multipath","on")

@@ -4,7 +4,8 @@
 	local uci = require("luci.model.uci").cursor()
 	local net = require "luci.model.network".init()
 	local fs = require "nixio.fs"
-	local ifaces = net:get_interfaces()
+	local sys = require "luci.sys"
+	local ifaces = sys.net:devices()
 	local servers_ip = {}
 	local server_ip = uci:get("shadowsocks-libev","sss0","server")
 	if server_ip == '127.0.0.1' then
@@ -16,8 +17,22 @@
 	else
 		table.insert(servers_ip,server_ip)
 	end
+
+function device_notvirtual(dev)
+	for _, iface in ipairs(net:get_networks()) do
+		local ifacen = iface:name()
+		local ifacename = uci:get("network",ifacen,"ifname")
+		local ifacetype = uci:get("network",ifacen,"type") or ""
+		local ifaceproto = uci:get("network",ifacen,"proto") or ""
+		if ifacename == dev and (ifacetype == "macvlan" or ifacetype == "bridge" or ifaceproto == "6in4") then
+			return false
+		end
+	end
+	return true
+end
+
 %>
-<script type="text/javascript" src="<%=resource%>/cbi.js" data-strings="{&#34;path&#34;:{&#34;resource&#34;:&#34;\/luci-static\/resources&#34;,&#34;browser&#34;:&#34;\/cgi-bin\/luci\/admin\/filebrowser&#34;}}"></script>
+<script type="text/javascript" src="<%=resource%>/cbi.js?v=git-18.243.49640-2f13420" data-strings="{&#34;path&#34;:{&#34;resource&#34;:&#34;\/luci-static\/resources&#34;,&#34;browser&#34;:&#34;\/cgi-bin\/luci\/admin\/filebrowser&#34;}}"></script>
 
 <% if stderr and #stderr > 0 then %><pre class="error"><%=pcdata(stderr)%></pre><% end %>
 <form class="inline" method="post" action="<%=url('admin/system/openmptcprouter/wizard_add')%>" enctype="multipart/form-data">
@@ -204,6 +219,17 @@
 %>
 
 	    <div class="cbi-section-create">
+		<select class="cbi-section-create-name" name="add_interface_ifname">
+			<%
+			    for _, ifacea in ipairs(ifaces) do
+				if not (ifacea == "lo" or ifacea == "6in4-omr6in4" or ifacea:match("^ifb.*") or ifacea:match("^sit.*")) and device_notvirtual(ifacea) then
+			%>
+			<option value="<%=ifacea%>"><%=ifacea%></option>
+			<%
+				end
+			    end
+			%>
+		</select>
 		<input class="cbi-button cbi-button-add" type="submit" name="add_interface" value="<%:Add an interface%>" title="<%:Add an interface%>" />
 	    </div>
 	</fieldset>

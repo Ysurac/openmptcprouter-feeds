@@ -33,11 +33,11 @@ _setup_interface() {
 
 	uci -q get "network.$1_dev.ifname" >/dev/null && {
 		uci -q set network.$1_dev.mtu=$(uci -q get network.$1.mtu)
-		uci -q commit network
+		[ -n "$(uci -q get network.$1.masterintf)" ] && uci -q set network.$1_dev.ifname=$(uci -q get network.$1.masterintf)
+		[ -z "$(uci -q get network.$1.masterintf)" ] && uci -q set network.$1.masterintf=$(uci -q get network.$1_dev.ifname)
 		[ "$_type" = "macvlan" ] || {
 			uci -q batch <<-EOF
 			delete network.$1_dev
-			commit network
 			EOF
 		}
 		[ "$_type" = "macvlan" ] && {
@@ -47,10 +47,10 @@ _setup_interface() {
 				uci -q batch <<-EOF
 				delete network.$1.interface
 				set network.$1_dev.ifname=$_interface
-				commit network
 				EOF
 			}
 		}
+		uci -q commit network
 		return 0
 	}
 	
@@ -62,12 +62,13 @@ _setup_interface() {
 	set network.$1_dev.type=macvlan
 	set network.$1_dev.ifname=$_ifname
 	set network.$1.ifname=$1
+	set network.$1.masterintf=$_ifname
+	set network.$1.type=macvlan
 	set network.$1.defaultroute=0
 	EOF
 	
 	_macaddr=$(uci -q get "network.$1.macaddr")
 	_setup_macaddr "$1" "${_macaddr:-auto$(date +%s)}"
-	uci -q set "network.$1.type=macvlan"  # legacy
 	uci -q set network.$1_dev.mtu=$(uci -q get network.$1.mtu)
 	uci -q commit network
 }
