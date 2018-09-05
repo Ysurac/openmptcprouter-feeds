@@ -1,11 +1,21 @@
 #!/bin/sh /etc/rc.common
 
-START=15
+START=4
 USE_PROCD=1
 
 _setup_macaddr() {
 	uci -q get "network.$1_dev.macaddr" >/dev/null && return
 	uci -q set "network.$1_dev.macaddr=$2"
+}
+
+_save_macaddr() {
+	local _ifname
+	loval _macaddr
+	uci -q get "network.$1_dev.ifname" >/dev/null && {
+		_ifname=$(uci -q get "network.$1.ifname")
+		_macaddr=$(ip link show dev $_ifname | grep link | awk '{print $2}')
+		[ -n "$_macaddr" ] && uci -q set network.$1_dev.macaddr=$_macaddr
+	}
 }
 
 # Configuration by interface
@@ -35,6 +45,7 @@ _setup_interface() {
 		uci -q set network.$1_dev.mtu=$(uci -q get network.$1.mtu)
 		[ -n "$(uci -q get network.$1.masterintf)" ] && uci -q set network.$1_dev.ifname=$(uci -q get network.$1.masterintf)
 		[ -z "$(uci -q get network.$1.masterintf)" ] && uci -q set network.$1.masterintf=$(uci -q get network.$1_dev.ifname)
+		[ -z "$(uci -q get network.$1.macaddr)" ] && uci -q set network.$1_dev.macaddr=$(uci -q get network.$1.macaddr)
 		[ "$_type" = "macvlan" ] || {
 			uci -q batch <<-EOF
 			delete network.$1_dev
@@ -77,6 +88,8 @@ start_service() {
 	. /lib/functions.sh
 	config_load network
 	config_foreach _setup_interface interface
+	config_foreach _save_macaddr interface
+	uci -q commit network
 }
 
 reload_service() {
