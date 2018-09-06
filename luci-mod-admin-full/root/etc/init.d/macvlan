@@ -10,11 +10,23 @@ _setup_macaddr() {
 
 _save_macaddr() {
 	local _ifname
-	loval _macaddr
+	local _macaddr
 	uci -q get "network.$1_dev.ifname" >/dev/null && {
 		_ifname=$(uci -q get "network.$1.ifname")
-		_macaddr=$(ip link show dev $_ifname | grep link | awk '{print $2}')
-		[ -n "$_macaddr" ] && uci -q set network.$1_dev.macaddr=$_macaddr
+		_macaddr=$(ip link show dev $_ifname >/dev/null 2>&1 | grep link | awk '{print $2}')
+		[ -n "$_macaddr" ] && {
+			uci -q set network.$1_dev.macaddr=$_macaddr
+			uci -q set network.$1.macaddr=$_macaddr
+		}
+	}
+	[ -z "$(uci -q get network.$1.macaddr)" ] && {
+		_ifname=$(uci -q get "network.$1.ifname")
+		[ -n "$_ifname" ] && {
+			_macaddr=$(ip link show dev $_ifname >/dev/null 2>&1  | grep link | awk '{print $2}')
+			[ -n "$_macaddr" ] && {
+				uci -q set network.$1.macaddr=$_macaddr
+			}
+		}
 	}
 }
 
