@@ -27,7 +27,7 @@ MY_DEPENDS := \
     arptables \
     bind-dig \
     conntrack conntrackd ebtables ebtables-utils ip-full \
-    iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace iptables-mod-conntrack-extra \
+    iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace iptables-mod-conntrack-extra iptables-mod-account \
     wireless-tools \
     libiwinfo-lua \
     ca-bundle ca-certificates libustream-openssl \
