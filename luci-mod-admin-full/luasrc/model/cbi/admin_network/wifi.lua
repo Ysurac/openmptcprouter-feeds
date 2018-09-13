@@ -35,6 +35,8 @@ nw.init(m.uci)
 local wnet = nw:get_wifinet(arg[1])
 local wdev = wnet and wnet:get_device()
 
+local wifname = m.uci:get("wireless",wnet.sid,"ifname") or ""
+
 -- redirect to overview page if network does not exist anymore (e.g. after a revert)
 if not wnet or not wdev then
 	luci.http.redirect(luci.dispatcher.build_url("admin/network/wireless"))
@@ -361,9 +363,13 @@ s:tab("advanced", translate("Advanced Settings"))
 
 mode = s:taboption("general", ListValue, "mode", translate("Mode"))
 mode.override_values = true
-mode:value("ap", translate("Access Point"))
-mode:value("sta", translate("Client"))
-mode:value("adhoc", translate("Ad-Hoc"))
+if not wifname:match("^mtkwlan.*") then
+	mode:value("ap", translate("Access Point"))
+end
+if not wifname:match("^mtkap.*") then
+	mode:value("sta", translate("Client"))
+	mode:value("adhoc", translate("Ad-Hoc"))
+end
 
 meshid = s:taboption("general", Value, "mesh_id", translate("Mesh Id"))
 meshid:depends({mode="mesh"})
@@ -431,12 +437,13 @@ end
 -------------------- MAC80211 Interface ----------------------
 
 if hwtype == "mac80211" then
-	if fs.access("/usr/sbin/iw") then
-		mode:value("mesh", "802.11s")
+	if not wifname:match("^mtkap.*") then
+		if fs.access("/usr/sbin/iw") then
+			mode:value("mesh", "802.11s")
+		end
+		mode:value("ahdemo", translate("Pseudo Ad-Hoc (ahdemo)"))
+		mode:value("monitor", translate("Monitor"))
 	end
-
-	mode:value("ahdemo", translate("Pseudo Ad-Hoc (ahdemo)"))
-	mode:value("monitor", translate("Monitor"))
 	bssid:depends({mode="adhoc"})
 	bssid:depends({mode="sta"})
 	bssid:depends({mode="sta-wds"})
@@ -454,8 +461,12 @@ if hwtype == "mac80211" then
 	ml:depends({macfilter="deny"})
 	nt.mac_hints(function(mac, name) ml:value(mac, "%s (%s)" %{ mac, name }) end)
 
-	mode:value("ap-wds", "%s (%s)" % {translate("Access Point"), translate("WDS")})
-	mode:value("sta-wds", "%s (%s)" % {translate("Client"), translate("WDS")})
+	if not wifname:match("^mtkwlan.*") then
+		mode:value("ap-wds", "%s (%s)" % {translate("Access Point"), translate("WDS")})
+	end
+	if not wifname:match("^mtkap.*") then
+		mode:value("sta-wds", "%s (%s)" % {translate("Client"), translate("WDS")})
+	end
 
 	function mode.write(self, section, value)
 		if value == "ap-wds" then
@@ -497,8 +508,10 @@ if hwtype == "mac80211" then
 	isolate:depends({mode="ap"})
 	isolate:depends({mode="ap-wds"})
 
-	ifname = s:taboption("advanced", Value, "ifname", translate("Interface name"), translate("Override default interface name"))
-	ifname.optional = true
+	if not wifname:match("^mtk.*") then
+		ifname = s:taboption("advanced", Value, "ifname", translate("Interface name"), translate("Override default interface name"))
+		ifname.optional = true
+	end
 
 	short_preamble = s:taboption("advanced", Flag, "short_preamble", translate("Short Preamble"))
 	short_preamble.default = short_preamble.enabled
