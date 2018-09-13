@@ -58,20 +58,29 @@ function s.create(self, name)
 		luci.cbi.CREATE_PREFIX .. self.config .. "." ..
 		self.sectiontype .. ".text"
 	)
-	if string.len(name)>3 and not name:match("[^a-zA-Z0-9_]") then
-		uci:section(
-			"glorytun", "glorytun", name,
-			uci:get_all( "glorytun_recipes", recipe )
-		)
+	if #name > 3 and not name:match("[^a-zA-Z0-9_]") then
+		--uci:section(
+		--	"glorytun", "glorytun", name,
+		--	uci:get_all( "glorytun_recipes", recipe )
+		--)
+		local recipe_data = uci:get_all( "glorytun_recipes", recipe )
+		uci:set("glorytun", name,"glorytun")
+		local k, v
+		for k, v in pairs(recipe_data) do
+			uci:set("glorytun", name, k,v)
+		end
 
 		uci:delete("glorytun", name, "_role")
 		uci:delete("glorytun", name, "_description")
+		uci:commit("glorytun")
 		uci:save("glorytun")
 
 		luci.http.redirect( self.extedit:format(name) )
-	else
+	elseif #name > 0 then
 		self.invalid_cts = true
 	end
+
+	return 0
 end
 
 
