@@ -1,5 +1,6 @@
 #
 # Copyright (C) 2017 Jian Chang <aa65535@live.com>
+# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 #
 # This is free software, licensed under the GNU General Public License v3.
 # See /LICENSE for more information.
@@ -8,18 +9,18 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=simple-obfs
-PKG_VERSION:=0.0.5
-PKG_RELEASE:=2
+PKG_VERSION:=64f10bee
+PKG_RELEASE:=3
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/shadowsocks/simple-obfs.git
 PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)-$(PKG_RELEASE)
-PKG_SOURCE_VERSION:=0c6ea880a49d712aa85ef5fa3acaf9ddceb6c421
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION)-$(PKG_SOURCE_VERSION).tar.gz
+PKG_SOURCE_VERSION:=64f10bee0d577d44f197d136e4eec270b760f9e4
+PKG_SOURCE_DATE:=2018-09-13
 
 PKG_LICENSE:=GPLv3
 PKG_LICENSE_FILES:=LICENSE
-PKG_MAINTAINER:=Jian Chang <aa65535@live.com>
+PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)/$(PKG_SOURCE_SUBDIR)
 
