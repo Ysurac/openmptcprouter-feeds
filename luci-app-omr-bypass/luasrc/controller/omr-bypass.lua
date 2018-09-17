@@ -44,7 +44,7 @@ function bypass_add()
 	ucic:set_list("dhcp",ucic:get_first("dhcp","dnsmasq"),"ipset",domains_ipset .. "/ss_rules_dst_bypass")
 	ucic:save("dhcp")
 	ucic:commit("dhcp")
-	--luci.sys.exec("/etc/init.d/dnsmasq restart")
+	luci.sys.exec("/etc/init.d/dnsmasq reload")
 	luci.sys.exec("/etc/init.d/omr-bypass restart")
 	luci.http.redirect(luci.dispatcher.build_url("admin/services/omr-bypass"))
 	return
