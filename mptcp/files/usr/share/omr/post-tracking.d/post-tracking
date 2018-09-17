@@ -7,7 +7,7 @@ set_route() {
 	PREVINTERFACE=$2
 	multipath_config=$(uci -q get network.$INTERFACE.multipath || echo "off")
 	interface_if=$(uci -q get network.$INTERFACE.ifname)
-	[ -z "$interface_if" ] && interface_if=$(ifstatus "$INTERFACE" | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "${INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	multipath_current_config=$(multipath $interface_if | grep deactivated)
 	if [ "$multipath_config" != "off" ] && [ "$SETROUTE" != true ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$multipath_current_config" = "" ]; then
@@ -15,13 +15,13 @@ set_route() {
 	#if [ "$multipath_config" != "off" ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$SETROUTE" != true ]; then
 		interface_gw="$(uci -q get network.$INTERFACE.gateway)"
 		if [ -z "$interface_gw" ]; then
-			interface_gw=$(ubus call network.interface.$INTERFACE status | jsonfilter -q -e '@.route[0].nexthop' | tr -d "\n")
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -e '@.route[0].nexthop' | tr -d "\n")
 		fi
 		if [ -z "$interface_gw" ]; then
-			interface_gw=$(ubus call network.interface.$INTERFACE status | jsonfilter -q -e '@.inactive.route[0].nexthop' | tr -d "\n")
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -e '@.inactive.route[0].nexthop' | tr -d "\n")
 		fi
 		if [ -z "$interface_gw" ]; then
-			interface_gw=$(ubus call network.interface.${INTERFACE}_4 status | jsonfilter -q -e '@.inactive.route[0].nexthop' | tr -d "\n")
+			interface_gw=$(ubus call network.interface.${INTERFACE}_4 status 2>/dev/null | jsonfilter -q -e '@.inactive.route[0].nexthop' | tr -d "\n")
 		fi
 		if [ "$interface_gw" != "" ]; then
 			_log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
