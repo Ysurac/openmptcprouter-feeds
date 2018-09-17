@@ -18,6 +18,19 @@ _bypass_ip() {
 	fi
 }
 
+_bypass_domain() {
+	# Bypass domain even if OMR DNS is not used
+	domains=$(uci -q get dhcp.@dnsmasq[0].ipset)
+	for domain in ${domains//\// }; do
+		if [ -n "$domain" ] && [ "$domain" != "ss_rules_dst_bypass" ]; then
+			resolve=$(dig a +nocmd +noall +answer $domain | awk '{print $5}')
+			for ip in $resolve; do
+				_bypass_ip $ip
+			done
+		fi
+	done
+}
+
 _bypass_proto() {
 	local proto="$1"
 	[ -z "$proto" ] && return
@@ -33,6 +46,8 @@ start_service() {
 
 	config_load omr-bypass
 	config_list_foreach ips "ip" _bypass_ip
+
+	_bypass_domain
 
 	ip rule add prio 1 fwmark 0x539 lookup 991337 > /dev/null 2>&1
 
