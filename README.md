@@ -81,6 +81,12 @@ This is used for OpenMPTCProuter failover.
 Interface to omr-tracker.
 
 
+## luci-app-iperf
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-iperf](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-iperf)
+
+*Description:* Luci interface to iPerf
+
+
 ## omr-6in4
 *Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-6in4](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-6in4)
 
