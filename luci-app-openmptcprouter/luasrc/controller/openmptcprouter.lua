@@ -715,14 +715,12 @@ function interfaces_status()
 		    if multipath_available_state == "" then
 			    multipath_available = "OK"
 		    else
-			    if mArray.openmptcprouter["service_addr"] ~= "" then
-				    multipath_available_state_wan = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
-			    else
-				    multipath_available_state_wan = "none"
-			    end
+			    multipath_available_state_wan = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
 			    if multipath_available_state_wan == "" then
 				    multipath_available = "OK"
-				    mArray.openmptcprouter["server_mptcp"] = "disabled"
+				    if mArray.openmptcprouter["service_addr"] ~= "" then
+					mArray.openmptcprouter["server_mptcp"] = "disabled"
+				    end
 			    else
 				    multipath_available = "ERROR"
 				    connectivity = "WARNING"
