@@ -163,7 +163,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		config_foreach set_route interface $OMR_TRACKER_INTERFACE
 		#config_load shadowsocks-libev
 		#config_foreach del_ss_route server all
-		if [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q get shadowsocks-libev.hi2.mode)" = "tcp_and_udp" ]; then
+		if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q get shadowsocks-libev.hi2.mode)" = "tcp_and_udp" ]; then
 			_log "Tunnel down use ShadowSocks for UDP"
 			uci -q set shadowsocks-libev.ss_rules.redir_udp='hi2'
 			/etc/init.d/shadowsocks-libev rules_down
@@ -178,7 +178,7 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 		_log "Tunnel up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
 		ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
 	fi
-	if [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "hi2" ]; then
+	if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "hi2" ]; then
 		uci -q delete shadowsocks-libev.ss_rules.redir_udp
 		/etc/init.d/shadowsocks-libev rules_down
 		/etc/init.d/shadowsocks-libev rules_up
@@ -195,11 +195,13 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 			ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
 		elif [ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.mtu)" ] || [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.mtu)" = "1500" ]; then
-			local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP $serverip)
-			[ -n "$mtu" ] && {
-				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
-				ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
-				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+			[ -n "$serverip" ] && {
+				local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP $serverip)
+				[ -n "$mtu" ] && {
+					uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
+					ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
+					uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+				}
 			}
 		else
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
@@ -260,7 +262,9 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 	[ -n "$ipaddr" ] && {
 		local asn="$(wget -4 -qO- -T 5 http://api.iptoasn.com/v1/as/ip/$ipaddr | jsonfilter -e '@.as_description')"
 		local serverip=$(uci -q get shadowsocks-libev.sss0.server)
-		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$(omr-tracebox-mptcp $serverip $OMR_TRACKER_DEVICE)"
+		[ -n "$serverip" ] && {
+			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$(omr-tracebox-mptcp $serverip $OMR_TRACKER_DEVICE)"
+		}
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.publicip="$ipaddr"
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency="$OMR_TRACKER_LATENCY"
 		[ -n "$asn" ] && {
@@ -272,13 +276,15 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 			ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
 		elif [ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.mtu)" ] || [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.mtu)" = "1500" ]; then
-			local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP $serverip)
-			[ -n "$mtu" ] && {
-				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
-				ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
-			}
-			[ -n "$mtu" ] && [ -n "$asn" ] && {
-				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+			[ -n "$serverip" ] && {
+				local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP $serverip)
+				[ -n "$mtu" ] && {
+					uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
+					ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
+				}
+				[ -n "$mtu" ] && [ -n "$asn" ] && {
+					uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+				}
 			}
 		elif [ -n "$asn" ]; then
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
