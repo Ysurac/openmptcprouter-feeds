@@ -242,6 +242,7 @@ function wizard_add()
 		ucic:set("shadowsocks-libev","sss0","disabled",1)
 		ucic:save("shadowsocks-libev")
 		ucic:commit("shadowsocks-libev")
+		luci.sys.call("/etc/init.d/shadowsocks rules_down >/dev/null 2>/dev/null")
 	end
 
 	-- Set Glorytun settings
