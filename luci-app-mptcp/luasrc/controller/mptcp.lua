@@ -37,7 +37,12 @@ function multipath_bandwidth()
 		if dev ~= "lo" and dev ~= "" then
 			local multipath = s["multipath"] or "off"
 			if multipath == "on" or multipath == "master" or multipath == "backup" or multipath == "handover" then
-				result[dev] = "[" .. string.gsub((luci.sys.exec("luci-bwc -i %q 2>/dev/null" % dev)), '[\r\n]', '') .. "]"
+				local bwc = luci.sys.exec("luci-bwc -i %q 2>/dev/null" % dev) or ""
+				if bwc ~= nil then
+					result[dev] = "[" .. string.gsub(bwc, '[\r\n]', '') .. "]"
+				else
+					result[dev] = "[]"
+				end
 			end
 		end
 	end)
