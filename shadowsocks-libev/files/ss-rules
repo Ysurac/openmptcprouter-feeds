@@ -47,6 +47,7 @@ populated by other programs like dnsmasq with ipset support
 	ss_rules_src_forward
 	ss_rules_src_checkdst
 	ss_rules_dst_bypass
+	ss_rules_dst_bypass_all
 	ss_rules_dst_forward
 EOF
 }
@@ -97,6 +98,7 @@ ss_rules_parse_args() {
 			--src-forward) o_src_forward="$2"; shift 2;;
 			--src-checkdst) o_src_checkdst="$2"; shift 2;;
 			--dst-bypass) o_dst_bypass="$2"; shift 2;;
+			--dst-bypass_all) o_dst_bypass_all="$2"; shift 2;;
 			--dst-forward) o_dst_forward="$2"; shift 2;;
 			--dst-forward-recentrst) o_dst_forward_recentrst=1; shift 1;;
 			--dst-bypass-file) o_dst_bypass_file="$2"; shift 2;;
@@ -132,11 +134,13 @@ ss_rules_ipset_init() {
 		create ss_rules_src_bypass hash:net hashsize 64
 		create ss_rules_src_forward hash:net hashsize 64
 		create ss_rules_src_checkdst hash:net hashsize 64
+		create ss_rules_dst_bypass_all hash:net hashsize 64
 		create ss_rules_dst_bypass hash:net hashsize 64
 		create ss_rules_dst_bypass_ hash:net hashsize 64
 		create ss_rules_dst_forward hash:net hashsize 64
 		create ss_rules_dst_forward_recentrst_ hash:ip hashsize 64 timeout 3600
 		$(ss_rules_ipset_mkadd ss_rules_dst_bypass_ "$o_dst_bypass_ $o_remote_servers")
+		$(ss_rules_ipset_mkadd ss_rules_dst_bypass_all "$o_dst_bypass_all")
 		$(ss_rules_ipset_mkadd ss_rules_dst_bypass "$o_dst_bypass $(cat "$o_dst_bypass_file" 2>/dev/null | grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}')")
 		$(ss_rules_ipset_mkadd ss_rules_src_bypass "$o_src_bypass")
 		$(ss_rules_ipset_mkadd ss_rules_src_forward "$o_src_forward")
@@ -163,7 +167,7 @@ ss_rules_iptchains_init() {
 ss_rules_iptchains_init_mark() {
 	iptables-restore --noflush <<-EOF
 		*mangle
-		-A PREROUTING -m set --match-set ss_rules_dst_bypass dst -j MARK --set-mark 0x539
+		-A PREROUTING -m set --match-set ss_rules_dst_bypass_all dst -j MARK --set-mark 0x539
 		COMMIT
 	EOF
 }
@@ -186,8 +190,9 @@ ss_rules_iptchains_init_tcp() {
 		:ss_rules_local_out -
 		-I OUTPUT 1 -p tcp -j ss_rules_local_out
 		-A ss_rules_local_out -m set --match-set ss_rules_dst_bypass dst -j RETURN
+		-A ss_rules_local_out -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
 		-A ss_rules_local_out -m set --match-set ss_rules_dst_bypass_ dst -j RETURN
-		-A ss_rules_local_out -m mark --mark 0x539 -j RETURN
+		-A ss_rules_local_out -m mark ! --mark 0 -j RETURN
 		-A ss_rules_local_out -p tcp $o_ipt_extra -j $local_target -m comment --comment "local_default: $o_local_default"
 		COMMIT
 	EOF
@@ -243,9 +248,11 @@ ss_rules_iptchains_init_() {
 		:ss_rules_forward -
 		$(ss_rules_iptchains_mkprerules "$proto")
 		-A ss_rules_pre_src -m set --match-set ss_rules_dst_bypass_ dst -j RETURN
-		-A ss_rules_pre_src -m set --match-set ss_rules_dst_bypass dst -j MARK --set-mark 0x539
+		-A ss_rules_pre_src -m set --match-set ss_rules_dst_bypass_all dst -j MARK --set-mark 0x539
+		-A ss_rules_pre_src -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
 		-A ss_rules_pre_src -m set --match-set ss_rules_dst_bypass dst -j RETURN
-		-A ss_rules_pre_src -m mark --mark 0x539 -j RETURN
+		-A ss_rules_pre_src -m mark ! --mark 0 -j RETURN
+		-A ss_rules_dst -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
 		-A ss_rules_dst -m set --match-set ss_rules_dst_bypass dst -j RETURN
 		-A ss_rules_pre_src -p $proto $o_ipt_extra -j ss_rules_src
 		-A ss_rules_src -m set --match-set ss_rules_src_bypass src -j RETURN
