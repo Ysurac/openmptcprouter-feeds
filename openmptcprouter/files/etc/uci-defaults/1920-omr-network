@@ -55,7 +55,9 @@ if [ "$(uci -q get network.lan.multipath)" != "" ]; then
 fi
 
 lanif="eth0"
-if [ -d /sys/class/net/lan ] || [ -n "$(ip link | grep ' lan')" ]; then
+if [ -d /sys/class/net/lan0 -o -n "$(ip link | grep ' lan0')" ] && [ -d /sys/class/net/wan -o -n "$(ip link | grep ' wan@')" -o -n "$(ip link | grep ' wan:')" ]; then
+		lanif="wan"
+elif [ -d /sys/class/net/lan ] || [ -n "$(ip link | grep ' lan')" ]; then
 	lanif="lan"
 fi
 uci -q batch <<-EOF
@@ -104,15 +106,35 @@ uci -q set network.lan.ip4table='lan'
 #uci -q set "network.lan.ip6assign=64"
 
 # Create WAN interfaces
-if [ "$(uci -q show network | grep wan1)" = "" ]; then
-	if [ -d /sys/class/net/wan ] || [ -n "$(ip link | grep ' wan:')" ]; then
-		uci -q batch <<-EOF
-		delete network.wan
-		EOF
-		_setup_wan_interface wan1 wan master macvlan
-		_setup_wan_interface wan2 wan on macvlan
-		_setup_macvlan wan1
-		_setup_macvlan wan2
+if [ "$(uci -q get network.wan1.multipath)" = "" ]; then
+	if [ -d /sys/class/net/wan ] || [ -n "$(ip link | grep ' wan:')" ] || [ -n "$(ip link | grep ' wan@')" ]; then
+		if [ -d /sys/class/net/lan0 -o -n "$(ip link | grep ' lan0')" ] && [ -d /sys/class/net/lan1 -o -n "$(ip link | grep ' lan1')" ]; then
+			_setup_wan_interface wan1 lan0 master
+			_setup_wan_interface wan2 lan1 on
+
+			_macaddr=$(uci -q get "network.lan0.macaddr")
+			_setup_macaddr "wan1" "${_macaddr:-$(dd if=/dev/urandom bs=1024 count=1 2>/dev/null | md5sum | sed 's/^\(..\)\(..\)\(..\)\(..\)\(..\)\(..\).*$/\1:\2:\3:\4:\5:\6/')}"
+			_macaddr=$(uci -q get "network.lan1.macaddr")
+			_setup_macaddr "wan2" "${_macaddr:-$(dd if=/dev/urandom bs=1024 count=1 2>/dev/null | md5sum | sed 's/^\(..\)\(..\)\(..\)\(..\)\(..\)\(..\).*$/\1:\2:\3:\4:\5:\6/')}"
+			if [ -d /sys/class/net/lan2 ] || [ -n "$(ip link | grep ' lan2')" ]; then
+				_setup_wan_interface wan3 lan2 on
+				_macaddr=$(uci -q get "network.lan2.macaddr")
+				_setup_macaddr "wan3" "${_macaddr:-$(dd if=/dev/urandom bs=1024 count=1 2>/dev/null | md5sum | sed 's/^\(..\)\(..\)\(..\)\(..\)\(..\)\(..\).*$/\1:\2:\3:\4:\5:\6/')}"
+				if [ -d /sys/class/net/lan3 ] || [ -n "$(ip link | grep ' lan3')" ]; then
+					_setup_wan_interface wan4 lan3 on
+					_macaddr=$(uci -q get "network.lan3.macaddr")
+					_setup_macaddr "wan4" "${_macaddr:-$(dd if=/dev/urandom bs=1024 count=1 2>/dev/null | md5sum | sed 's/^\(..\)\(..\)\(..\)\(..\)\(..\)\(..\).*$/\1:\2:\3:\4:\5:\6/') }"
+				fi
+			fi
+		else
+			uci -q batch <<-EOF
+				delete network.wan
+			EOF
+			_setup_wan_interface wan1 wan master macvlan
+			_setup_wan_interface wan2 wan on macvlan
+			_setup_macvlan wan1
+			_setup_macvlan wan2
+		fi
 	elif [ -d /sys/class/net/wan1 ] || [ -n "$(ip link | grep ' wan1')" ]; then
 		if [ -d /sys/class/net/wan2 ] || [ -n "$(ip link | grep ' wan2')" ]; then
 			_setup_wan_interface wan1 wan1 master
