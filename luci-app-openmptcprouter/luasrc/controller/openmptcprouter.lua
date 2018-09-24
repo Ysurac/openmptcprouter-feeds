@@ -120,7 +120,11 @@ function wizard_add()
 			ucic:set("qos",intf,"upload",uploadspeed)
 			ucic:set("qos",intf,"enabled","1")
 		else
+			ucic:set("sqm",intf,"download","")
+			ucic:set("sqm",intf,"upload","")
 			ucic:set("sqm",intf,"enabled","0")
+			ucic:set("qos",intf,"download","")
+			ucic:set("qos",intf,"upload","")
 			ucic:set("qos",intf,"enabled","0")
 		end
 	end
