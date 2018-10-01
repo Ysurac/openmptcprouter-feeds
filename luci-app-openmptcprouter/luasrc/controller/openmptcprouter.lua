@@ -81,6 +81,29 @@ function wizard_add()
 		ucic:set("network","wan" .. i,"defaultroute","0")
 		ucic:save("network")
 		ucic:commit("network")
+
+		ucic:set("qos","wan" .. i,"interface")
+		ucic:set("qos","wan" .. i,"classgroup","Default")
+		ucic:set("qos","wan" .. i,"enabled","0")
+		ucic:set("qos","wan" .. i,"upload","4000")
+		ucic:set("qos","wan" .. i,"download","100000")
+		ucic:save("qos")
+		ucic:commit("qos")
+
+		ucic:set("sqm","wan" .. i,"queue")
+		ucic:set("sqm","wan" .. i,"interface",defif)
+		ucic:set("sqm","wan" .. i,"qdisc","fq_codel")
+		ucic:set("sqm","wan" .. i,"script","simple.qos")
+		ucic:set("sqm","wan" .. i,"qdisc_advanced","0")
+		ucic:set("sqm","wan" .. i,"linklayer","none")
+		ucic:set("sqm","wan" .. i,"enabled","0")
+		ucic:set("sqm","wan" .. i,"debug_logging","0")
+		ucic:set("sqm","wan" .. i,"verbosity","5")
+		ucic:set("sqm","wan" .. i,"download","0")
+		ucic:set("sqm","wan" .. i,"upload","0")
+		ucic:save("sqm")
+		ucic:commit("sqm")
+
 		-- Dirty way to add new interface to firewall...
 		luci.sys.call("uci -q add_list firewall.@zone[1].network=wan" .. i)
 		luci.sys.call("uci -q commit firewall")
@@ -96,6 +119,12 @@ function wizard_add()
 			ucic:delete("network",intf .. "_dev")
 			ucic:save("network")
 			ucic:commit("network")
+			ucic:delete("sqm",intf)
+			ucic:save("sqm")
+			ucic:commit("sqm")
+			ucic:delete("qos",intf)
+			ucic:save("qos")
+			ucic:commit("qos")
 		end
 		gostatus = false
 	end
@@ -896,29 +925,45 @@ function mptcp_check_trace(iface)
 end
 
 function set_ipv6_state(disable_ipv6)
+	-- Disable/Enable IPv6 support
 	luci.sys.exec("sysctl -w net.ipv6.conf.all.disable_ipv6=%s" % disable_ipv6)
 	luci.sys.exec("sed -i 's:^net.ipv6.conf.all.disable_ipv6=[0-9]*:net.ipv6.conf.all.disable_ipv6=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % disable_ipv6)
-	luci.sys.exec("/etc/init.d/odhcpd stop >/dev/null 2>&1")
-	luci.sys.exec("/etc/init.d/odhcpd disable >/dev/null 2>&1")
+
+	-- Disable/Enable IPv6 for firewall
 	ucic:set("firewall",ucic:get_first("firewall","defaults"),"disable_ipv6",disable_ipv6)
 	ucic:save("firewall")
 	ucic:commit("firewall")
+
+	-- Disable/Enable IPv6 in OpenMPTCProuter settings
+	ucic:set("openmptcprouter","settings","disable_ipv6",disable_ipv6)
+	ucic:commit("openmptcprouter")
+
+	-- Disable/Enable route announce of IPv6
 	if disable_ipv6 == "1" then
 		ucic:set("dhcp","lan","ra_default","0")
-	else
-		ucic:set("dhcp","lan","ra_default","1")
+	--else
+	--	ucic:set("dhcp","lan","ra_default","1")
 	end
+
+	-- Disable/Enable IPv6 DHCP and change Shadowsocks listen address
 	if disable_ipv6 == "1" then
 		luci.sys.call("uci -q del dhcp.lan.dhcpv6")
 		luci.sys.call("uci -q del dhcp.lan.ra")
 		luci.sys.call("uci -q del dhcp.lan.ra_default")
 		ucic:set("shadowsocks-libev","hi","local_address","0.0.0.0")
 	else
-		ucic:set("dhcp","lan","dhcpv6","server")
-		ucic:set("dhcp","lan","ra","server")
-		ucic:set("dhcp","lan","ra_default","0")
+	--	ucic:set("dhcp","lan","dhcpv6","server")
+	--	ucic:set("dhcp","lan","ra","server")
+	--	ucic:set("dhcp","lan","ra_default","0")
 		ucic:set("shadowsocks-libev","hi","local_address","::")
 	end
 	ucic:save("dhcp")
 	ucic:commit("dhcp")
+	if disable_ipv6 == "1" then
+		luci.sys.exec("/etc/init.d/odhcpd stop >/dev/null 2>&1")
+		luci.sys.exec("/etc/init.d/odhcpd disable >/dev/null 2>&1")
+	--else
+	--	luci.sys.exec("/etc/init.d/odhcpd start >/dev/null 2>&1")
+	--	luci.sys.exec("/etc/init.d/odhcpd enable >/dev/null 2>&1")
+	end
 end
