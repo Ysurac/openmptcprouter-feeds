@@ -138,7 +138,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 			fi
 			config_load shadowsocks-libev
 			if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
-				local metric=$(ip rule show | grep "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
+				local metric=$(ip rule show | grep -m 1 "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
 				ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
 				config_foreach del_ss_route server $metric
 			else
@@ -228,7 +228,7 @@ if [ "$multipath_config" = "master" ]; then
 		fi
 	fi
 	if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
-		local metric=$(ip rule show | grep "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
+		local metric=$(ip rule show | grep -m 1 "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
 		[ -n "$metric" ] && {
 			ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
 		}
@@ -236,7 +236,7 @@ if [ "$multipath_config" = "master" ]; then
 	multipath_config="on"
 else
 	if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
-		local metric=$(ip rule show | grep "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
+		local metric=$(ip rule show | grep -m 1 "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
 		[ -n "$metric" ] && {
 			ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
 			config_load shadowsocks-libev
@@ -262,9 +262,30 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 	_log "Get status and settings for $OMR_TRACKER_INTERFACE..."
 	local ipaddr="$(omr-ip-intf $OMR_TRACKER_DEVICE)"
 	[ -n "$ipaddr" ] && {
+		# Check if we can get a IPv6 address, if yes enable RA else disable
+		local ip6addr="$(curl -s -6 -m 3 http://ipv6.openmptcprouter.com/)"
+		[ -z "$ip6addr" ] && {
+			local ip6addr="$(curl -s -6 -m 3 http://ifconfig.co/)"
+		}
+		if [ "$(uci -q get openmptcprouter.settings.ipv6_disable)" = "0" ]; then
+			if [ -n "$ip6addr" ] && [ "$(uci -q set dhcp.lan.ra_default)" != 1 ]; then
+				_log "Enable IPv6 RA"
+				uci -q set dhcp.lan.ra=server
+				uci -q set dhcp.lan.ra_default=1
+				uci -q set dhcp.lan.dhcpv6=server
+				/etc/init.d/odhcpd start > /dev/null 2>&1
+				/etc/init.d/odhcpd enable > /dev/null 2>&1
+			elif [ -z "$ip6addr" ] && [ "$(uci -q set dhcp.lan.ra_default)" = 1 ]; then
+				_log "Disable IPv6 RA"
+				uci -q del dhcp.lan.ra
+				uci -q del dhcp.lan.dhcpv6
+				/etc/init.d/odhcpd start > /dev/null 2>&1
+				/etc/init.d/odhcpd enable > /dev/null 2>&1
+			fi
+		fi
 		local asn="$(wget -4 -qO- -T 5 http://api.iptoasn.com/v1/as/ip/$ipaddr | jsonfilter -q -e '@.as_description')"
 		[ -z "$asn" ] && {
-			asn="$(whois $ipaddr 2>/dev/null | grep -i 'netname' | awk '{print $2}')"
+			asn="$(whois $ipaddr 2>/dev/null | grep -m 1 -i 'netname' | awk '{print $2}')"
 		}
 		local serverip=$(uci -q get shadowsocks-libev.sss0.server)
 		[ -n "$serverip" ] && {
@@ -296,8 +317,10 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 		fi
 		if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ]; then
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(( $(date +"%s") - 3500 ))
+			_log "Get status and settings for $OMR_TRACKER_INTERFACE... Failed"
+		else
+			_log "Get status and settings for $OMR_TRACKER_INTERFACE... Done"
 		fi
 		uci -q commit openmptcprouter
 	}
-	_log "Get status and settings for $OMR_TRACKER_INTERFACE... Done"
 fi
