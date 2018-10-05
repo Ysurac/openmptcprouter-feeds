@@ -26,9 +26,7 @@ set_route() {
 		if [ "$interface_gw" != "" ]; then
 			_log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
 			ip route replace default scope global nexthop via $interface_gw dev $interface_if && SETROUTE=true
-			if [ "$(uci -q get omr-bypass.defaults.ifname)" = "" ]; then
-				ip route replace default via $interface_gw dev $interface_if table 991337
-			fi
+			ip route replace default via $interface_gw dev $interface_if table 991337
 		fi
 	fi
 }
@@ -168,6 +166,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 			uci -q set shadowsocks-libev.ss_rules.redir_udp='hi2'
 			/etc/init.d/shadowsocks-libev rules_down
 			/etc/init.d/shadowsocks-libev rules_up
+			/etc/init.d/omr-bypass reload >/dev/null 2>&1
 		fi
 	fi
 	exit 0
@@ -183,6 +182,7 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 		uci -q delete shadowsocks-libev.ss_rules.redir_udp
 		/etc/init.d/shadowsocks-libev rules_down
 		/etc/init.d/shadowsocks-libev rules_up
+		/etc/init.d/omr-bypass reload >/dev/null 2>&1
 	fi
 
 	# Set VPN MTU
@@ -223,9 +223,7 @@ if [ "$multipath_config" = "master" ]; then
 			config_load shadowsocks-libev
 			config_foreach set_ss_route server 1
 		fi
-		if [ "$(uci -q get omr-bypass.defaults.ifname)" = "" ]; then
-			ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
-		fi
+		ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
 	fi
 	if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
 		local metric=$(ip rule show | grep -m 1 "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
@@ -243,9 +241,6 @@ else
 			config_foreach set_ss_route server $metric
 		}
 	fi
-fi
-if [ "$(uci -q get omr-bypass.defaults.ifname)" = "$OMR_TRACKER_DEVICE" ] && [ "$(ip route show table 991337 | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ]; then
-	ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
 fi
 
 [ "$multipath_config" = "on" ] && glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 up > /dev/null 2>&1
