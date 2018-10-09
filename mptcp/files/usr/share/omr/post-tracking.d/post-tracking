@@ -65,12 +65,12 @@ del_ss_route() {
 			if [ "$metric" = "all" ]; then
 				if [ "$nginxip" != "" ] &&  [ "$(ip route show | grep $nginxip)" != "" ]; then
 					_log "Remove all server $nginxip route"
-					ip route delete $nginxip
+					ip route delete $nginxip > /dev/null 2>&1
 				fi
 			else
 				if [ "$nginxip" != "" ] &&  [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $nginxip)" != "" ]; then
 					_log "Remove server $nginxip route via $OMR_TRACKER_DEVICE"
-					ip route delete $nginxip dev $OMR_TRACKER_DEVICE metric $metric
+					ip route delete $nginxip dev $OMR_TRACKER_DEVICE metric $metric > /dev/null 2>&1
 				fi
 			fi
 		done
@@ -78,20 +78,20 @@ del_ss_route() {
 		if [ "$metric" = "all" ]; then
 			if [ "$server_ip" != "" ] &&  [ "$(ip route show | grep $server_ip)" != "" ]; then
 				_log "Remove all server $server_ip route"
-				ip route delete $server_ip
+				ip route delete $server_ip > /dev/null 2>&1
 			fi
 		elif [ "$metric" = "off" ]; then
 			if [ "$server_ip" != "" ] &&  [ "$(ip route show dev $OMR_TRACKER_DEVICE | grep $server_ip)" != "" ]; then
 				_log "Remove all server $server_ip route via $OMR_TRACKER_DEVICE"
-				ip route delete $server_ip dev $OMR_TRACKER_DEVICE
+				ip route delete $server_ip dev $OMR_TRACKER_DEVICE > /dev/null 2>&1
 			fi
 		else
 			if [ "$server_ip" != "" ] &&  [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $server_ip)" != "" ]; then
 				_log "Remove server $server_ip route via $OMR_TRACKER_DEVICE"
-				ip route delete $server_ip dev $OMR_TRACKER_DEVICE metric $metric
+				ip route delete $server_ip dev $OMR_TRACKER_DEVICE metric $metric > /dev/null 2>&1
 			elif [ "$server_ip" != "" ] &&  [ "$(ip route show dev $OMR_TRACKER_DEVICE metric 1 | grep $server_ip)" != "" ]; then
 				_log "Remove server $server_ip route via $OMR_TRACKER_DEVICE (master)"
-				ip route delete $server_ip dev $OMR_TRACKER_DEVICE metric 1
+				ip route delete $server_ip dev $OMR_TRACKER_DEVICE metric 1 > /dev/null 2>&1
 			fi
 		fi
 	fi
@@ -121,32 +121,31 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 	if [ "$OMR_TRACKER_PREV_STATUS" = "$OMR_TRACKER_STATUS" ]; then
 		exit 0
 	fi
-	if [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
-		[ "$multipath_status" = "off" ] || {
-			if [ "$OMR_TRACKER_STATUS_MSG" = "" ]; then
-				_log "$OMR_TRACKER_DEVICE switched off"
-			else
-				_log "$OMR_TRACKER_DEVICE switched off because $OMR_TRACKER_STATUS_MSG"
+	[ "$multipath_status" = "off" ] || {
+		if [ "$OMR_TRACKER_STATUS_MSG" = "" ]; then
+			_log "$OMR_TRACKER_DEVICE switched off"
+		else
+			_log "$OMR_TRACKER_DEVICE switched off because $OMR_TRACKER_STATUS_MSG"
+		fi
+		if [ "$(sysctl -n net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ]; then
+			multipath "$OMR_TRACKER_DEVICE" off > /dev/null 2>&1
+		fi
+		if [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
+			glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 down > /dev/null 2>&1
+		fi
+		config_load shadowsocks-libev
+		if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
+			local metric=$(ip rule show | grep -m 1 "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
+			ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric >/dev/null 2>&1
+			config_foreach del_ss_route server $metric
+		else
+			if [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
+				ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
 			fi
-			if [ "$(sysctl -n net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ]; then
-				multipath "$OMR_TRACKER_DEVICE" off
-			fi
-			if [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
-				glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 down > /dev/null 2>&1
-			fi
-			config_load shadowsocks-libev
-			if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
-				local metric=$(ip rule show | grep -m 1 "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
-				ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
-				config_foreach del_ss_route server $metric
-			else
-				if [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
-					ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
-				fi
-				config_foreach del_ss_route server off
-			fi
-		}
-	fi
+			config_foreach del_ss_route server off
+		fi
+	}
+
 	if [ "$default_gw" = "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
 		config_load network
 		config_foreach set_route interface $OMR_TRACKER_INTERFACE
@@ -164,9 +163,11 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q get shadowsocks-libev.hi2.mode)" = "tcp_and_udp" ]; then
 			_log "Tunnel down use ShadowSocks for UDP"
 			uci -q set shadowsocks-libev.ss_rules.redir_udp='hi2'
-			/etc/init.d/shadowsocks-libev rules_down
-			/etc/init.d/shadowsocks-libev rules_up
-			/etc/init.d/omr-bypass reload >/dev/null 2>&1
+			if /etc/init.d/shadowsocks-libev rules_status ; then
+				/etc/init.d/shadowsocks-libev rules_down
+				/etc/init.d/shadowsocks-libev rules_up
+				/etc/init.d/omr-bypass reload >/dev/null 2>&1
+			fi
 		fi
 	fi
 	exit 0
@@ -180,9 +181,11 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 	if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "hi2" ]; then
 		_log "Tunnel up disable use of ShadowSocks for UDP"
 		uci -q delete shadowsocks-libev.ss_rules.redir_udp
-		/etc/init.d/shadowsocks-libev rules_down
-		/etc/init.d/shadowsocks-libev rules_up
-		/etc/init.d/omr-bypass reload >/dev/null 2>&1
+		if /etc/init.d/shadowsocks-libev rules_status ; then
+			/etc/init.d/shadowsocks-libev rules_down
+			/etc/init.d/shadowsocks-libev rules_up
+			/etc/init.d/omr-bypass reload >/dev/null 2>&1
+		fi
 	fi
 
 	# Set VPN MTU
