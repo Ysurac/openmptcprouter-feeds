@@ -53,11 +53,11 @@ MY_DEPENDS := \
     mmc-utils \
     libimobiledevice \
     comgt kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan usb-modeswitch uqmi adb-enablemodem umbim kmod-mii kmod-usb-net kmod-usb-wdm kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim \
-    (!TARGET_mediatek_mt7623):kmod-rt2800-usb     \
-    (!TARGET_mediatek_mt7623):kmod-mt7601u        \
-    (!TARGET_mediatek_mt7623):kmod-rtl8xxxu       \
-    (!TARGET_mediatek_mt7623):kmod-rtl8192cu      \
-    (!TARGET_mediatek_mt7623):kmod-net-rtl8192su
+    kmod-rt2800-usb     \
+    kmod-mt7601u        \
+    kmod-rtl8xxxu       \
+    kmod-rtl8192cu      \
+    kmod-net-rtl8192su
 
 OMR_SUPPORTED_LANGS := ca zh-cn en fr de el he hu it ja ms no pl pt-br pt ro ru es sv uk vi
 
