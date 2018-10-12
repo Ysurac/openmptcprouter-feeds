@@ -32,7 +32,6 @@ function interface_from_device(dev)
 	return ""
 end
 
-
 function wizard_add()
 	local add_interface = luci.http.formvalue("add_interface") or ""
 	local add_interface_ifname = luci.http.formvalue("add_interface_ifname") or ""
@@ -650,6 +649,7 @@ function interfaces_status()
 	-- overview status
 	mArray.wans = {}
 	mArray.tunnels = {}
+	allintf = {}
 
 	uci:foreach("network", "interface", function (section)
 	    local interface = section[".name"]
@@ -667,7 +667,16 @@ function interfaces_status()
 	    if ifname == "" then
 		ifname = get_device(interface)
 	    end
-	    
+	    duplicateif = false
+	    if ifname ~= "" and ifname ~= nil then
+		if allintf[ifname] then
+		    connectivity = "ERROR"
+		    duplicateif = true
+		else
+		    allintf[ifname] = true
+		end
+	    end
+
 	    --if multipath == "off" and not ifname:match("^tun.*") then return end
 	    if multipath == "off" then return end
 	    
@@ -825,6 +834,7 @@ function interfaces_status()
 		server_ping = server_ping,
 		ipv6_discover = ipv6_discover,
 		multipath_available = multipath_available,
+		duplicateif = duplicateif,
 	    }
 
 	    if ifname ~= nil and ifname:match("^tun.*") then
