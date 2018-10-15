@@ -65,6 +65,7 @@ _intf_rule() {
 	local mode
 	config_get mode $1 multipath "off"
 	[ "$mode" = "off" ] && return
+	[ "$(echo $1 | grep _dev)" != "" ] && return
 	ipset -q flush ss_rules_dst_bypass_$intf > /dev/null 2>&1
 	ipset -q flush ss_rules6_dst_bypass_$intf > /dev/null 2>&1
 	ipset -q --exist restore <<-EOF
@@ -79,6 +80,14 @@ _intf_rule() {
 		-A PREROUTING -m set --match-set ss_rules_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
 		COMMIT
 		EOF
+		if [ "$(iptables -w 40 -t nat -L | grep ss_rules_pre_src)" != "" ]; then
+			iptables-restore --wait=60 --noflush <<-EOF
+			*nat
+			-I ss_rules_pre_src 1 -m mark --mark 0x539$count -j RETURN
+			-I ss_rules_local_out 1 -m mark --mark 0x539$count -j RETURN
+			COMMIT
+			EOF
+		fi
 	fi
 	if [ "$(ip6tables -w 40 -t mangle -L | grep ss_rules6_dst_bypass_$intf)" = "" ]; then
 		ip6tables-restore --wait=60 --noflush <<-EOF
@@ -86,6 +95,14 @@ _intf_rule() {
 		-A PREROUTING -m set --match-set ss_rules6_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
 		COMMIT
 		EOF
+		if [ "$(ip6tables -w 40 -t nat -L | grep ss_rules6_pre_src)" != "" ]; then
+			iptables-restore --wait=60 --noflush <<-EOF
+			*nat
+			-I ss_rules6_pre_src 1 -m mark --mark 0x539$count -j RETURN
+			-I ss_rules6_local_out 1 -m mark --mark 0x539$count -j RETURN
+			COMMIT
+			EOF
+		fi
 	fi
 	uci -q set omr-bypass.$intf=interface
 	uci -q set omr-bypass.$intf.id=$count

@@ -6,7 +6,7 @@ local sys = require "luci.sys"
 local net = require "luci.model.network".init()
 local ifaces = net:get_interfaces() or { net:get_interface() }
 
-m = Map("omr-bypass", translate("Bypass"))
+m = Map("omr-bypass", translate("Bypass"), translate("Here you can bypass ShadowSocks and VPN. If you set Interface to Default this use any working interface."))
 
 s = m:section(TypedSection, "domains", translate("Domains"))
 s.addremove = true
@@ -60,13 +60,15 @@ ifp.rmempty  = true
 ifd.default = "all"
 ifi.default = "all"
 ifp.default = "all"
-ifd:value("all",translate("Master interface"))
-ifi:value("all",translate("Master interface"))
-ifp:value("all",translate("Master interface"))
+ifd:value("all",translate("Default"))
+ifi:value("all",translate("Default"))
+ifp:value("all",translate("Default"))
 for _, iface in ipairs(ifaces) do
-	ifd:value(iface:name(),"%s" % iface:name())
-	ifi:value(iface:name(),"%s" % iface:name())
-	ifp:value(iface:name(),"%s" % iface:name())
+	if iface:is_up() then
+		ifd:value(iface:name(),"%s" % iface:name())
+		ifi:value(iface:name(),"%s" % iface:name())
+		ifp:value(iface:name(),"%s" % iface:name())
+	end
 end
 
 return m
