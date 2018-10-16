@@ -8,13 +8,13 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=openmptcprouter
-PKG_VERSION:=0.94
+PKG_VERSION:=0.95
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
 
 MY_DEPENDS := \
-    omr-tracker 
+    omr-tracker
 
 define Package/$(PKG_NAME)
 SECTION:=OMR
