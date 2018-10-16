@@ -711,6 +711,9 @@ function interfaces_status()
 	    if connectivity ~= "ERROR" and gateway == "" and ifname ~= nil then
 		    if fs.access("/sys/class/net/" .. ifname) then
 			    gateway = ut.trim(sys.exec("ip -4 r list dev " .. ifname .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
+			    if gateway == "" then
+				gateway = ut.trim(sys.exec("ip -4 r list dev " .. ifname .. " | grep default | awk '{print $3}' | tr -d '\n'"))
+			    end
 		    end
 	    end
 	    if connectivity ~= "ERROR" and gateway ~= "" then
