@@ -77,32 +77,40 @@ _intf_rule() {
 	if [ "$(iptables -w 40 -t mangle -L | grep ss_rules_dst_bypass_$intf)" = "" ]; then
 		iptables-restore --wait=60 --noflush <<-EOF
 		*mangle
-		-A PREROUTING -m set --match-set ss_rules_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
+		-I PREROUTING 1 -m set --match-set ss_rules_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
 		COMMIT
 		EOF
-		if [ "$(iptables -w 40 -t nat -L | grep ss_rules_pre_src)" != "" ]; then
-			iptables-restore --wait=60 --noflush <<-EOF
-			*nat
-			-I ss_rules_pre_src 1 -m mark --mark 0x539$count -j RETURN
-			-I ss_rules_local_out 1 -m mark --mark 0x539$count -j RETURN
-			COMMIT
-			EOF
-		fi
+	fi
+	if [ "$(iptables -w 40 -t nat -L | grep ss_rules_pre_src)" != "" ] && [ "$(iptables -w 40 -t nat -L | grep ss_rules_dst_bypass_$intf)" = "" ]; then
+		iptables-restore --wait=60 --noflush <<-EOF
+		*nat
+		-I ss_rules_dst 1 -m set --match-set ss_rules_dst_bypass_$intf dst -j RETURN
+		-I ss_rules_local_out 1 -m set --match-set ss_rules_dst_bypass_$intf dst -j RETURN
+		-I ss_rules_pre_src 1 -m set --match-set ss_rules_dst_bypass_$intf dst -j MARK --set-xmark 0x539$count
+		-I ss_rules_pre_src 2 -m set --match-set ss_rules_dst_bypass_$intf dst -j RETURN
+		-I ss_rules_pre_src 3 -m mark --mark 0x539$count -j RETURN
+		-I ss_rules_local_out 1 -m mark --mark 0x539$count -j RETURN
+		COMMIT
+		EOF
 	fi
 	if [ "$(ip6tables -w 40 -t mangle -L | grep ss_rules6_dst_bypass_$intf)" = "" ]; then
 		ip6tables-restore --wait=60 --noflush <<-EOF
 		*mangle
-		-A PREROUTING -m set --match-set ss_rules6_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
+		-I PREROUTING 1 -m set --match-set ss_rules6_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
 		COMMIT
 		EOF
-		if [ "$(ip6tables -w 40 -t nat -L | grep ss_rules6_pre_src)" != "" ]; then
-			ip6tables-restore --wait=60 --noflush <<-EOF
-			*nat
-			-I ss_rules6_pre_src 1 -m mark --mark 0x539$count -j RETURN
-			-I ss_rules6_local_out 1 -m mark --mark 0x539$count -j RETURN
-			COMMIT
-			EOF
-		fi
+	fi
+	if [ "$(ip6tables -w 40 -t nat -L | grep ss_rules6_pre_src)" != "" ] && [ "$(ip6tables -w 40 -t nat -L | grep ss_rules6_dst_bypass_$intf)" = "" ]; then
+		ip6tables-restore --wait=60 --noflush <<-EOF
+		*nat
+		-I ss_rules6_dst 1 -m set --match-set ss_rules6_dst_bypass_$intf dst -j RETURN
+		-I ss_rules6_local_out 1 -m set --match-set ss_rules6_dst_bypass_$intf dst -j RETURN
+		-I ss_rules6_pre_src 1 -m set --match-set ss_rules6_dst_bypass_$intf dst -j MARK --set-xmark 0x539$count
+		-I ss_rules6_pre_src 2 -m set --match-set ss_rules6_dst_bypass_$intf dst -j RETURN
+		-I ss_rules6_pre_src 3 -m mark --mark 0x539$count -j RETURN
+		-I ss_rules6_local_out 1 -m mark --mark 0x539$count -j RETURN
+		COMMIT
+		EOF
 	fi
 	uci -q set omr-bypass.$intf=interface
 	uci -q set omr-bypass.$intf.id=$count
@@ -179,9 +187,11 @@ start_service() {
 }
 
 service_triggers() {
-	procd_add_reload_trigger omr-bypass network shadowsocks-libev
+	PROCD_RELOAD_DELAY=1000
+	procd_add_reload_trigger omr-bypass shadowsocks-libev
+	procd_add_raw_trigger "interface.*" 2000 /etc/init.d/omr-bypass restart
 }
 
 reload_service() {
-	start
+	restart
 }
