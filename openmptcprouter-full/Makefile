@@ -34,12 +34,13 @@ MY_DEPENDS := \
     ca-bundle ca-certificates libustream-openssl \
     luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-base \
     luci-app-nginx-ha luci-app-omr-tracker \
-    luci-app-sqm \
+    luci-app-sqm sqm-scripts-extra \
     luci-app-vnstat omr-quota luci-app-omr-quota \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd iputils-traceroute6 \
     speedtestc \
     iftop \
+    htop \
     tcpdump \
     ethtool \
     iputils-ping \
