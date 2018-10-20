@@ -10,9 +10,9 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=ndpi-netfilter2
-PKG_VERSION:=97099ff
+PKG_VERSION:=a360566
 PKG_RELEASE:=1
-PKG_REV:=97099ff
+PKG_REV:=a360566
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.bz2
@@ -30,15 +30,15 @@ define Package/iptables-mod-ndpi
 	CATEGORY:=Network
 	TITLE:=ndpi successor of OpenDPI
 	URL:=http://www.ntop.org/products/ndpi/
-	DEPENDS:=+iptables +iptables-mod-conntrack-extra +kmod-ipt-ndpi
-	MAINTAINER:=Thomas Heil <heil@terminal-consulting.de>
+	DEPENDS:=+iptables +iptables-mod-conntrack-extra +kmod-ipt-ndpi +libpcap
+	MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 endef
 
 define Package/iptables-mod-ndpi/description
   nDPI is a ntop-maintained superset of the popular OpenDPI library
 endef
 
-CONFIGURE_CMD=./autogen.sh
+CONFIGURE_CMD = ./autogen.sh
 CONFIGURE_ARGS += --with-pic
 MAKE_PATH := ndpi-netfilter
 
@@ -64,7 +64,7 @@ endef
 define KernelPackage/ipt-ndpi
 	SUBMENU:=Netfilter Extensions
 	TITLE:= nDPI net netfilter module
-	DEPENDS:=+kmod-nf-conntrack +kmod-nf-conntrack-netlink +kmod-ipt-compat-xtables
+	DEPENDS:=+kmod-nf-conntrack +kmod-nf-conntrack-netlink +kmod-ipt-compat-xtables +libpcap
 	KCONFIG:=CONFIG_NF_CONNTRACK_LABELS=y \
 	    CONFIG_NETFILTER_XT_MATCH_CONNLABEL=y
 	FILES:= $(PKG_BUILD_DIR)/ndpi-netfilter/src/xt_ndpi.ko
