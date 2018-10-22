@@ -102,6 +102,8 @@ function wizard_add()
 		ucic:set("sqm","wan" .. i,"upload","0")
 		ucic:save("sqm")
 		ucic:commit("sqm")
+		
+		luci.sys.call("uci -q add_list vnstat.@vnstat[-1].interface=wan" .. i)
 
 		-- Dirty way to add new interface to firewall...
 		luci.sys.call("uci -q add_list firewall.@zone[1].network=wan" .. i)
@@ -124,6 +126,7 @@ function wizard_add()
 			ucic:delete("qos",intf)
 			ucic:save("qos")
 			ucic:commit("qos")
+			luci.sys.call("uci -q del_list vnstat.@vnstat[-1].interface=" .. intf)
 		end
 		gostatus = false
 	end
