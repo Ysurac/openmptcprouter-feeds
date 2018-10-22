@@ -10,11 +10,11 @@ include $(TOPDIR)/rules.mk
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/angt/glorytun.git
-PKG_SOURCE_VERSION:=a0bdb564419b2f287fbadbc412f9ef518e1f3e8e
+PKG_SOURCE_VERSION:=f20fff0e875f5b9a687b879a662968a7f16e2cae
 
 PKG_NAME:=glorytun-udp
 PKG_VERSION:=0.0.99-$(PKG_SOURCE_VERSION)
-PKG_RELEASE:=18
+PKG_RELEASE:=19
 
 PKG_FIXUP:=autoreconf
 
