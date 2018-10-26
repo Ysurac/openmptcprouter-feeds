@@ -20,8 +20,8 @@ include $(INCLUDE_DIR)/package.mk
 define Package/mptcp
   SECTION:=net
   CATEGORY:=Network
-  TITLE:=Multipath TCP configuration scrips
-  DEPENDS:=+ip +iptables +ethtool
+  TITLE:=Multipath TCP configuration scripts
+  DEPENDS:=+ip +iptables +ethtool +ipcalc
   KCONFIG:=\
       CONFIG_MPTCP=y \
       CONFIG_MPTCP_BINDER=y \
