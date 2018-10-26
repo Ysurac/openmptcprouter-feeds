@@ -141,9 +141,9 @@ function wizard_add()
 		ucic:set("network",intf,"netmask",netmask)
 		ucic:set("network",intf,"gateway",gateway)
 
-		local downloadspeed = luci.http.formvalue("cbid.sqm.%s.download" % intf) or ""
-		local uploadspeed = luci.http.formvalue("cbid.sqm.%s.upload" % intf) or ""
-		if downloadspeed ~= "" and uploadspeed ~= "" then
+		local downloadspeed = luci.http.formvalue("cbid.sqm.%s.download" % intf) or "0"
+		local uploadspeed = luci.http.formvalue("cbid.sqm.%s.upload" % intf) or "0"
+		if downloadspeed ~= "0" and uploadspeed ~= "0" then
 			ucic:set("sqm",intf,"download",downloadspeed)
 			ucic:set("sqm",intf,"upload",uploadspeed)
 			ucic:set("sqm",intf,"enabled","1")
