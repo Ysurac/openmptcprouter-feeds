@@ -4,6 +4,8 @@ START=90
 
 USE_PROCD=1
 
+. /usr/lib/unbound/iptools.sh
+
 global_multipath_settings() {
 	local multipath mptcp_path_manager mptcp_schdeduler congestion mptcp_checksum mptcp_syn_retries mptcp_fullmesh_num_subflows mptcp_fullmesh_create_on_err mptcp_ndiffports_num_subflows
 	local multipath_status=0
@@ -111,22 +113,24 @@ interface_multipath_settings() {
 		local netmask6
 		config_get ipaddr6 $config ip6addr
 		config_get gateway6 $config ip6gw
-		ip6addr=`echo $ip6addr | cut -d/ -f1`
-		netmask6=`ipcalc $ipaddr6 | sed -n '/PREFIX=/{;s/.*=//;s/ .*//;p;}'`
-		network6=`ipcalc $ip6addr | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
-		if [ -z "$ip6addr" ] || [ -z "$network6" ]; then
-			ip6addr=$(ip -6 addr show dev $iface | grep -v 'scope link' | grep inet6 | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
-			gateway6=$(ip -6 r list dev $iface | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
-			[ -z "$gateway6" ] && gateway6=$(uci -q get "network.$config.ip6gw")
-			[ -z "$gateway6" ] && gateway6=$(ubus call network.interface.$config status | jsonfilter -q -e '@.route[0].nexthop' | tr -d "\n")
-			[ -z "$gateway6" ] || [ "$( valid_subnet6 $gateway6)" = "ok" ] && gateway6=$(ubus call network.interface.$config status | jsonfilter -q -e '@.inactive.route[0].nexthop' | tr -d "\n")
-			[ -z "$gateway6" ] || [ "$( valid_subnet6 $gateway6)" = "ok" ] && gateway6=$(ubus call network.interface.${config}_6 status 2>/dev/null | jsonfilter -q -e '@.inactive.route[0].nexthop' | tr -d "\n")
-			netmask6=$(ip -6 addr show dev $iface | grep -v 'scope link' | grep inet6 | awk '{print $2}' | cut -d/ -f2 | tr -d "\n")
+		if [ -n "$ipaddr6" ]; then
+			ip6addr=`echo $ip6addr | cut -d/ -f1`
+			netmask6=`ipcalc $ipaddr6 | sed -n '/PREFIX=/{;s/.*=//;s/ .*//;p;}'`
 			network6=`ipcalc $ip6addr | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
+			if [ -z "$ip6addr" ] || [ -z "$network6" ]; then
+				ip6addr=$(ip -6 addr show dev $iface | grep -v 'scope link' | grep inet6 | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
+				gateway6=$(ip -6 r list dev $iface | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
+				[ -z "$gateway6" ] && gateway6=$(uci -q get "network.$config.ip6gw")
+				[ -z "$gateway6" ] && gateway6=$(ubus call network.interface.$config status | jsonfilter -q -e '@.route[0].nexthop' | tr -d "\n")
+				[ -z "$gateway6" ] || [ "$( valid_subnet6 $gateway6)" = "ok" ] && gateway6=$(ubus call network.interface.$config status | jsonfilter -q -e '@.inactive.route[0].nexthop' | tr -d "\n")
+				[ -z "$gateway6" ] || [ "$( valid_subnet6 $gateway6)" = "ok" ] && gateway6=$(ubus call network.interface.${config}_6 status 2>/dev/null | jsonfilter -q -e '@.inactive.route[0].nexthop' | tr -d "\n")
+				netmask6=$(ip -6 addr show dev $iface | grep -v 'scope link' | grep inet6 | awk '{print $2}' | cut -d/ -f2 | tr -d "\n")
+				network6=`ipcalc $ip6addr | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
+			fi
 		fi
 		ip -6 rule del table 6$id > /dev/null 2>&1
 		ip -6 route flush 6$id > /dev/null 2>&1
-		if [ -n "$gateway6" ] && [ -n "$network6" ]; then
+		if [-n "$ip6addr" ] && [ -n "$gateway6" ] && [ -n "$network6" ]; then
 			ip -6 rule add from $ip6addr table 6$id
 			ip -6 route replace $network6/$netmask6 dev $iface scope link table 6$id
 			ip -6 route replace default via $gateway6 dev $iface table 6$id
