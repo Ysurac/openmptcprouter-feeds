@@ -28,15 +28,19 @@ _bypass_domain() {
 
 	[ -z "$intf" ] && intf="all"
 	if [ -n "$domain" ]; then
-		resolve=$(dig a +timeout=3 +nocmd +noall +answer $domain | awk '{print $5}')
-		for ip in $resolve; do
-			_bypass_ip $ip $intf
-		done
-		resolve=$(dig aaaa +timeout=3 +nocmd +noall +answer $domain | awk '{print $5}')
-		for ip in $resolve; do
-			_bypass_ip $ip $intf
-		done
+		logger -t "omr-bypass" "Get IPs of $domain..."
+		if [ -z $BOOT ]; then
+			resolve=$(dig a +timeout=3 +nocmd +noall +answer $domain | awk '{print $5}')
+			for ip in $resolve; do
+				_bypass_ip $ip $intf
+			done
+			resolve=$(dig aaaa +timeout=3 +nocmd +noall +answer $domain | awk '{print $5}')
+			for ip in $resolve; do
+				_bypass_ip $ip $intf
+			done
+		fi
 		uci -q add_list dhcp.@dnsmasq[0].ipset="/$domain/omr_rules_dst_bypass_$intf,omr_rules6_dst_bypass_$intf"
+		logger -t "omr-bypass" "Get IPs of $domain... Done"
 	fi
 }
 
@@ -140,6 +144,11 @@ _bypass_ip_set() {
 	_bypass_ip $ip $interface
 }
 
+boot() {
+	BOOT=1
+	start "$@"
+}
+
 start_service() {
 	local count
 	logger -t "omr-bypass" "Starting OMR-ByPass..."
@@ -225,6 +234,13 @@ start_service() {
 	logger -t "omr-bypass" "OMR-ByPass is running"
 }
 
+stop() {
+	iptables-save --counters | grep -v omr-bypass | iptables-restore --counters
+	for setname in $(ipset -n list | grep "omr_"); do
+		ipset destroy "$setname" 2>/dev/null || true
+	done
+}
+
 service_triggers() {
 	PROCD_RELOAD_DELAY=1000
 	procd_add_reload_trigger omr-bypass
@@ -232,5 +248,6 @@ service_triggers() {
 }
 
 reload_service() {
-	restart
+	[ "$(ipset -n list | grep omr_)" = "" ] && return 0
+	start
 }
