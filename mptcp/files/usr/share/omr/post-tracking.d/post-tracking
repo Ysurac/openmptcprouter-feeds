@@ -286,6 +286,15 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 		[ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE)" ] && {
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE=interface
 		}
+		if [ "$(uci -q get openmptcprouter.latest_versions.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.latest_versions.lc))) -gt 3600 ]; then
+			local latestversions="$(wget -4 -qO- -T 5 http://www.openmptcprouter.com/version/version.json)"
+			[ -n "$latestversions" ] && {
+				uci -q set openmptcprouter.latest_versions=latest_versions
+				uci -q set openmptcprouter.latest_versions.omr=$(echo $latestversions | jsonfilter -q -e '@.omr')
+				uci -q set openmptcprouter.latest_versions.vps=$(echo $latestversions | jsonfilter -q -e '@.vps')
+				uci -q set openmptcprouter.latest_versions.lc=$(date +"%s")
+			}
+		fi
 		local serverip=$(uci -q get shadowsocks-libev.sss0.server)
 		[ -n "$serverip" ] && {
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$(omr-tracebox-mptcp $serverip $OMR_TRACKER_DEVICE)"
@@ -323,3 +332,14 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 	fi
 	uci -q commit openmptcprouter
 fi
+
+[ -n "$OMR_TRACKER_LATENCY" ] && {
+	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency="$OMR_TRACKER_LATENCY"
+	if [ "$multipath_config" = "on" ] && [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath)" != "master" ] && [ "$(uci -q get openmptcprouter.settings.master)" = "dynamic" ]; then
+		masterintf="$(uci show network | grep multipath=\'master\' | cut -d'.' -f2)"
+		if [ -n "$masterintf" ] && [ "$(uci -q get openmptcprouter.$masterintf.latency)" != "" ] && [ "$(uci -q get openmptcprouter.$masterintf.latency | tr -d '\n')" -gt "$(($OMR_TRACKER_LATENCY*2))" ]; then
+			uci -q set network.$masterintf.multipath='on'
+			uci -q set network.$OMR_TRACKER_INTERFACE.multipath='master'
+		fi
+	fi
+}
