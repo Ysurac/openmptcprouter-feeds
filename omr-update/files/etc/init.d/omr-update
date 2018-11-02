@@ -10,23 +10,27 @@ boot() {
 	cd /etc/uci-defaults || return 0
 	source /etc/os-release
 
-	files="$(ls)"
+	OMRVERSION=$(echo $VERSION | sed 's/v//')
+	files="$(ls /etc/uci-defaults)"
 	[ -n "$files" ] && {
 		mkdir -p /usr/share/omr-update
 		if [ "$(grep rom /etc/mtab)" = "" ]; then
 			cp /etc/uci-defaults/* /usr/share/omr-update
 		fi
-		uci -q set openmptcprouter.settings.version=${VERSION}
+		uci -q set openmptcprouter.settings=settings
+		uci -q set openmptcprouter.settings.version=${OMRVERSION}
+		uci commit
 		return 0
 	}
-	if [ "$(uci -q get openmptcprouter.settings.version)" != "${VERSION}" ]; then
+	if [ "$(uci -q get openmptcprouter.settings.version)" != "${OMRVERSION}" ]; then
 		cd /rom/etc/uci-defaults || cd /usr/share/omr-update || return 0
 		files="$(ls)"
 		[ -z "$files" ] && return 0
 		for file in $files; do
 			( . "./$(basename $file)" )
 		done
-		uci -q set openmptcprouter.settings.version=${VERSION}
+		uci -q set openmptcprouter.settings=settings
+		uci -q set openmptcprouter.settings.version=${OMRVERSION}
 		uci commit
 	fi
 	# temporary hack until configd exists
