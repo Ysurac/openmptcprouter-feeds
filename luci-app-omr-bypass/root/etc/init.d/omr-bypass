@@ -44,6 +44,40 @@ _bypass_domain() {
 	fi
 }
 
+_bypass_mac() {
+	local mac
+	local intf
+	config_get mac $1 mac
+	config_get intf $1 interface
+	local intfid="$(uci -q get omr-bypass.$intf.id)"
+
+	[ -z "$intf" ] && intf="all"
+	[ -z "$mac" ] && return
+	if [ "$intf" = "all" ]; then
+		iptables-restore --wait=60  --noflush <<-EOF
+		*mangle
+		-A PREROUTING -m mac --mac-source $mac -j MARK --set-mark 0x539
+		COMMIT
+		EOF
+		ip6tables-restore --wait=60  --noflush <<-EOF
+		*mangle
+		-A PREROUTING -m mac --mac-source $mac -j MARK --set-mark 0x6539
+		COMMIT
+		EOF
+	else
+		iptables-restore --wait=60  --noflush <<-EOF
+		*mangle
+		-A PREROUTING -m mac --mac-source $mac -j MARK --set-mark 0x539$intfid
+		COMMIT
+		EOF
+		ip6tables-restore --wait=60  --noflush <<-EOF
+		*mangle
+		-A PREROUTING -m mac --mac-source $mac -j MARK --set-mark 0x6539$intfid
+		COMMIT
+		EOF
+	fi
+}
+
 _bypass_proto() {
 	local proto
 	local intf
@@ -165,6 +199,7 @@ start_service() {
 	local ndpi_rules=""
 	config_load omr-bypass
 	config_foreach _bypass_ip_set ips
+	config_foreach _bypass_mac macs
 	uci -q del dhcp.@dnsmasq[0].ipset
 	config_foreach _bypass_domain domains
 	uci -q commit dhcp

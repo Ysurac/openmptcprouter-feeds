@@ -21,18 +21,42 @@ hn.rmempty  = true
 ifd = s:option(Value, "interface", translate("Interface"))
 ifd.rmempty  = true
 
-s = m:section(TypedSection, "ip", translate("IPs and Networks"))
+s = m:section(TypedSection, "ips", translate("IPs and Networks"))
 s.addremove = true
 s.anonymous = true
 s.template = "cbi/tblsection"
 
-ip = s:option(Value, "ips", translate("IP"))
+ip = s:option(Value, "ip", translate("IP"))
 ip.datatype = "ipaddr"
 ip.rmempty  = true
 ip.optional = false
 
 ifi = s:option(Value, "interface", translate("Interface"))
 ifi.rmempty  = true
+
+s = m:section(TypedSection, "macs", translate("<abbr title=\"Media Access Control\">MAC</abbr>-Address"))
+s.addremove = true
+s.anonymous = true
+s.template = "cbi/tblsection"
+
+mac = s:option(Value, "mac", translate("MAC-Address"))
+mac.datatype = "list(macaddr)"
+mac.rmempty  = true
+mac.optional = false
+
+function mac.cfgvalue(self, option)
+	local val = Value.cfgvalue(self, section)
+	return ipc.checkmac(val) or val
+end
+
+sys.net.host_hints(function(m, v4, v6, name)
+	if m then
+		mac:value(m, "%s (%s)" %{m, name or v4 or v6})
+	end
+end)
+
+ifm = s:option(Value, "interface", translate("Interface"))
+ifm.rmempty  = true
 
 s = m:section(TypedSection, "dpis", translate("Protocols"))
 s.addremove = true
@@ -60,14 +84,17 @@ ifp.rmempty  = true
 ifd.default = "all"
 ifi.default = "all"
 ifp.default = "all"
+ifm.default = "all"
 ifd:value("all",translate("Default"))
 ifi:value("all",translate("Default"))
 ifp:value("all",translate("Default"))
+ifm:value("all",translate("Default"))
 for _, iface in ipairs(ifaces) do
 	if iface:is_up() then
 		ifd:value(iface:name(),"%s" % iface:name())
 		ifi:value(iface:name(),"%s" % iface:name())
 		ifp:value(iface:name(),"%s" % iface:name())
+		ifm:value(iface:name(),"%s" % iface:name())
 	end
 end
 
