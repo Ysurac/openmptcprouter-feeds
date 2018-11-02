@@ -337,6 +337,7 @@ function wizard_add()
 		ucic:commit("mlvpn")
 	end
 
+	-- Set OpenVPN settings
 	local openvpn_key = luci.http.formvalue("openvpn_key")
 	if openvpn_key ~= "" then
 		local openvpn_key_path = "/etc/luci-uploads/openvpn.key"
@@ -367,6 +368,7 @@ function wizard_add()
 		ucic:commit("openvpn")
 	end
 
+	-- Restart all
 	luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/shadowsocks restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
@@ -396,6 +398,7 @@ function settings_add()
 	local disable_ipv6 = luci.http.formvalue("disable_ipv6") or 0
 	set_ipv6_state(disable_ipv6)
 
+	-- Enable/disable obfs
 	local obfs = luci.http.formvalue("obfs") or 0
 	ucic:foreach("shadowsocks-libev", "ss_redir", function (section)
 		ucic:set("shadowsocks-libev",section[".name"],"obfs",obfs)
@@ -430,6 +433,7 @@ function settings_add()
 	ucic:save("openmptcprouter")
 	ucic:commit("openmptcprouter")
 
+	-- Apply all settings
 	luci.sys.call("/etc/init.d/openmptcprouter restart >/dev/null 2>/dev/null")
 
 	-- Done, redirect
@@ -497,6 +501,7 @@ end
 -- Copyright 2015 OVH <OverTheBox@ovh.net>
 -- Simon Lelievre (simon.lelievre@corp.ovh.com)
 -- Sebastien Duponcheel <sebastien.duponcheel@ovh.net>
+-- Modified by Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 -- Under GPL3+
 function interfaces_status()
 	local ut      = require "luci.util"
@@ -507,7 +512,8 @@ function interfaces_status()
 
 	-- OpenMPTCProuter info
 	mArray.openmptcprouter = {}
-	mArray.openmptcprouter["version"] = ut.trim(sys.exec("cat /etc/os-release | grep VERSION= | sed -e 's:VERSION=::'"))
+	--mArray.openmptcprouter["version"] = ut.trim(sys.exec("cat /etc/os-release | grep VERSION= | sed -e 's:VERSION=::'"))
+	mArray.openmptcprouter["version"] = uci:get("openmptcprouter", "settings", "version") or ut.trim(sys.exec("cat /etc/os-release | grep VERSION= | sed -e 's:VERSION=::' -e 's/^.//' -e 's/.$//'"))
 
 	mArray.openmptcprouter["latest_version_omr"] = uci:get("openmptcprouter", "latest_versions", "omr") or ""
 	mArray.openmptcprouter["latest_version_vps"] = uci:get("openmptcprouter", "latest_versions", "vps") or ""
