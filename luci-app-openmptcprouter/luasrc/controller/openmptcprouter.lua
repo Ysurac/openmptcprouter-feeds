@@ -813,7 +813,7 @@ function interfaces_status()
 	    end
 
 	    local publicIP = uci:get("openmptcprouter",interface,"publicip") or ""
-	    if publicIP == "" then
+	    if ifname ~= nil and publicIP == "" then
 		    publicIP = ut.trim(sys.exec("omr-ip-intf " .. ifname))
 	    end
 	    local whois = ""
@@ -826,7 +826,7 @@ function interfaces_status()
 	    end
 	    
 	    local mtu = uci:get("openmptcprouter",interface,"mtu") or ""
-	    if mtu == "" then
+	    if mtu == "" and ifname ~= nil then
 		    mtu = ut.trim(sys.exec("cat /sys/class/net/" .. ifname .. "/mtu | tr -d '\n'"))
 	    end
 
