@@ -72,6 +72,10 @@ o:value("httping","httping")
 o:value("dns","dns")
 o:value("none","none")
 
+o = s:option(Flag, "mail_alert", translate("Mail alert"), translate("Send a mail when connection state change"))
+o.rmempty     = false
+o.default     = false
+
 o = s:option(DynamicList, "hosts", translate("Hosts"))
 o.placeholder = "4.2.2.1"
 o.default     = { "4.2.2.1", "8.8.8.8" }
@@ -114,6 +118,10 @@ o:value("ping","ping")
 o:value("httping","httping")
 o:value("dns","dns")
 o:value("none","none")
+
+o = s:option(Flag, "mail_alert", translate("Mail alert"), translate("Send a mail when connection status change"))
+o.rmempty     = false
+o.default     = false
 
 o = s:option(DynamicList, "hosts", translate("Hosts"))
 o.placeholder = "4.2.2.1"
