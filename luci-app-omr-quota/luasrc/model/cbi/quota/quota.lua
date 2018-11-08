@@ -6,7 +6,7 @@ local net = require "luci.model.network".init()
 local sys = require "luci.sys"
 local ifaces = sys.net:devices()
 
-m = Map("omr-quota", translate("Quota"), translate("Set quota, when quota is reached interface state is set to down"))
+m = Map("omr-quota", translate("Monthly Quota"), translate("Set monthly quota, when quota is reached interface state is set to down"))
 
 s = m:section(TypedSection, "interface", translate("Interfaces"))
 s.template_addremove = "omr-quota/cbi-select-add"
