@@ -1,5 +1,3 @@
-local ucic = luci.model.uci.cursor()
-local dt = require "luci.cbi.datatypes"
 module("luci.controller.mail", package.seeall)
 
 function index()

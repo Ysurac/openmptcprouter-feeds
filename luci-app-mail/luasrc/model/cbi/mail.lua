@@ -1,7 +1,7 @@
 -- Copyright 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 -- Licensed to the public under the Apache License 2.0.
 
-m = Map("mail", translate("Send mail"), translate("Send mail settings"))
+m = Map("mail", translate("Send mail"), translate("Set mail settings for services that need to send mails."))
 
 s = m:section(TypedSection, "smtp", translate("SMTP"))
 s.anonymous = true
