@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=openmptcprouter-full
-PKG_VERSION:=0.11
+PKG_VERSION:=0.12
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
@@ -36,8 +36,7 @@ MY_DEPENDS := \
     luci-app-nginx-ha luci-app-omr-tracker \
     luci-app-sqm sqm-scripts-extra \
     luci-app-vnstat omr-quota luci-app-omr-quota \
-    luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass \
-    luci-app-mail \
+    luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd iputils-traceroute6 \
     speedtestc \
     iftop \
@@ -72,10 +71,6 @@ endef
 
 define Package/$(PKG_NAME)/description
 OpenMPTCProuter Full package
-endef
-
-define Package/$(PKG_NAME)/conffiles
-/etc/config/$(PKG_NAME)
 endef
 
 define Build/Compile
