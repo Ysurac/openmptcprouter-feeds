@@ -31,8 +31,8 @@ source.rmempty  = false
 
 community = s:option(ListValue, "community", translate("Community"))
 community.optional = false
-community:value("public",translate("public"))
-community:value("private",translate("private"))
+community:value("public","public")
+community:value("private","private")
 
 s = m:section(TypedSection, "com2sec6", translate("com2sec6"))
 s.addremove = false
@@ -49,8 +49,8 @@ source.rmempty  = false
 
 community = s:option(ListValue, "community", translate("Community"))
 community.optional = false
-community:value("public",translate("public"))
-community:value("private",translate("private"))
+community:value("public","public")
+community:value("private","private")
 
 s = m:section(TypedSection, "group", translate("Group"))
 s.addremove = true
@@ -63,14 +63,14 @@ secname:value("rw",translate("Read-write"))
 
 group = s:option(ListValue, "group", translate("Group"))
 group.optional = false
-group:value("public",translate("public"))
-group:value("private",translate("private"))
+group:value("public","public")
+group:value("private","private")
 
 version = s:option(ListValue, "version", translate("version"))
 version.optional = false
-version:value("v1",translate("v1"))
-version:value("v2c",translate("v2c"))
-version:value("usm",translate("usm"))
+version:value("v1","v1")
+version:value("v2c","v2c")
+version:value("usm","usm")
 
 s = m:section(TypedSection, "access", translate("Access"))
 s.addremove = true
@@ -78,19 +78,19 @@ s.anonymous = false
 
 group = s:option(ListValue, "group", translate("Group"))
 group.optional = false
-group:value("public",translate("public"))
-group:value("private",translate("private"))
+group:value("public","public")
+group:value("private","private")
 
 version = s:option(ListValue, "version", translate("version"))
 version.optional = false
 version:value("any",translate("any"))
-version:value("v1",translate("v1"))
-version:value("v2c",translate("v2c"))
-version:value("usm",translate("usm"))
+version:value("v1","v1")
+version:value("v2c","v2c")
+version:value("usm","usm")
 
 context = s:option(ListValue, "context", translate("Context"))
 context.optional = false
-context:value("none",translate("none"))
+context:value("none","none")
 
 level = s:option(ListValue, "level", translate("Level"))
 level.optional = false
@@ -99,18 +99,18 @@ level:value("auth",translate("auth"))
 
 read = s:option(ListValue, "read", translate("Read"))
 read.optional = false
-read:value("all",translate("all"))
-read:value("none",translate("none"))
+read:value("all","all")
+read:value("none","none")
 
 write = s:option(ListValue, "write", translate("Write"))
 write.optional = false
-write:value("all",translate("all"))
-write:value("none",translate("none"))
+write:value("all","all")
+write:value("none","none")
 
 notify = s:option(ListValue, "notify", translate("Notify"))
 notify.optional = false
-notify:value("all",translate("all"))
-notify:value("none",translate("none"))
+notify:value("all","all")
+notify:value("none","none")
 
 s = m:section(TypedSection, "engineid", translate("engineid"))
 s.addremove = false
