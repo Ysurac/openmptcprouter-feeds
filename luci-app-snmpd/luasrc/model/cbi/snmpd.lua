@@ -17,7 +17,7 @@ network.cast = "string"
 network.nocreate = true
 
 s = m:section(TypedSection, "com2sec", translate("com2sec"))
-s.addremove = false
+s.addremove = true
 
 secname = s:option(ListValue, "secname", translate("Server"))
 secname.optional = false
@@ -31,11 +31,10 @@ source.rmempty  = false
 
 community = s:option(ListValue, "community", translate("Community"))
 community.optional = false
-community:value("public","public")
-community:value("private","private")
+community.rmempty = false
 
 s = m:section(TypedSection, "com2sec6", translate("com2sec6"))
-s.addremove = false
+s.addremove = true
 
 secname = s:option(ListValue, "secname", translate("secname"))
 secname.optional = false
@@ -47,10 +46,9 @@ source.datatype = "host"
 source.optional = false
 source.rmempty  = false
 
-community = s:option(ListValue, "community", translate("Community"))
+community = s:option(Value, "community", translate("Community"))
 community.optional = false
-community:value("public","public")
-community:value("private","private")
+community.rmempty  = false
 
 s = m:section(TypedSection, "group", translate("Group"))
 s.addremove = true
