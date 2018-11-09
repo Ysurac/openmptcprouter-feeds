@@ -117,7 +117,7 @@ s.addremove = false
 s.anonymous = true
 
 engineid = s:option(Value, "engineid", translate("engineid"))
-engineidtype = s:options(ListValue, "engineidtype", translate("engineidtype"))
+engineidtype = s:option(ListValue, "engineidtype", translate("engineidtype"))
 engineidtype:value("1",translate("IPv4"))
 engineidtype:value("2",translate("IPv6"))
 engineidtype:value("3",translate("MAC"))
