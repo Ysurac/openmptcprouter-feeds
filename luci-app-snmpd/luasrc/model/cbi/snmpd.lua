@@ -29,7 +29,7 @@ source.datatype = "host"
 source.optional = false
 source.rmempty  = false
 
-community = s:option(ListValue, "community", translate("Community"))
+community = s:option(Value, "community", translate("Community"))
 community.optional = false
 community.rmempty = false
 
