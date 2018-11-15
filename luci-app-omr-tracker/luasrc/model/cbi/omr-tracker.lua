@@ -119,7 +119,7 @@ o:value("httping","httping")
 o:value("dns","dns")
 o:value("none","none")
 
-o = s:option(Flag, "mail_alert", translate("Mail alert"), translate("Send a mail when connection status change"))
+o = s:option(Flag, "mail_alert", translate("Mail alert"), translate("Send a mail when connection status change. You need to configure e-mail settings <a href=\"/cgi-bin/luci/admin/services/mail\">here</a>."))
 o.rmempty     = false
 o.default     = false
 
