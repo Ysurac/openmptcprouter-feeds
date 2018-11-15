@@ -39,7 +39,7 @@ s.addremove = true
 s.anonymous = true
 s.template = "cbi/tblsection"
 
-mac = s:option(Value, "mac", translate("MAC-Address"))
+mac = s:option(Value, "mac", translate("Source MAC-Address"))
 mac.datatype = "list(macaddr)"
 mac.rmempty  = true
 mac.optional = false
@@ -54,6 +54,19 @@ sys.net.host_hints(function(m, v4, v6, name)
 		mac:value(m, "%s (%s)" %{m, name or v4 or v6})
 	end
 end)
+
+ifm = s:option(Value, "interface", translate("Interface"))
+ifm.rmempty  = true
+
+s = m:section(TypedSection, "lan_ip", translate("Source lan IP address"))
+s.addremove = true
+s.anonymous = true
+s.template = "cbi/tblsection"
+
+ip = s:option(Value, "ip", translate("IP Address"))
+ip.datatype = "ipaddr"
+ip.rmempty  = true
+ip.optional = false
 
 ifm = s:option(Value, "interface", translate("Interface"))
 ifm.rmempty  = true
