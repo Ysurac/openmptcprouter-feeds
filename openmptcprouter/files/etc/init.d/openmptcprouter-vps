@@ -1,0 +1,239 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Released under GPL 3. See LICENSE for the full terms.
+
+START=99
+
+USE_PROCD=1
+
+_parse_result() {
+	result=$("echo $1 | jsonfilter -q -e '@.result'")
+	echo $result
+}
+
+_login() {
+	local username password auth
+	server="$(uci -q get openmptcprouter.vps.ip)"
+	[ -z "$server" ] && server="$(uci -q get shadowsocks-libev.sss0.server)"
+	username="$(uci -q get openmptcprouter.vps.username)"
+	password="$(uci -q get openmptcprouter.vps.password)"
+	if [ -z "$token" ]; then
+		auth=`curl --max-time 10 -s -k -H "Content-Type: application/json" -X POST -d '{"username":"'$username'","password":"'$password'"}' https://$server:65500/login`
+		[ -z "$auth" ] && return
+		token="$(echo "$auth" | jsonfilter -q -e '@.token')"
+	fi
+}
+
+_get_json() {
+	local route result
+	route=$1
+	[ -z "$token" ] && _login
+	[ -n "$token" ] && {
+		result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" https://$server:65500/$route`
+		echo $result
+	} || {
+		echo ''
+	}
+}
+
+_set_json() {
+	local route result settings
+	route=$1
+	settings="$2"
+	[ -z "$token" ] && _login
+	[ -n "$token" ] && {
+		result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:65500/$route`
+		echo $result
+	} || {
+		echo ''
+	}
+}
+
+_ss_server_vps() {
+	local disabled port server key method
+	config_get disabled $1 disabled
+	[ "$disabled" = "1" ] && return
+	config_get port $1 server_port
+	config_get server $1 server
+	config_get key $1 key
+	key="$(echo $key | sed 's/+/-/g; s/\//_/g;')"
+	config_get method $1 method
+	local current_port current_key current_method
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.port')"
+	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.key')"
+	current_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.method')"
+	if [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ]; then
+		local settings
+		settings='{"port": '$port',"method":"'$method'","fast_open":true,"reuse_port":true,"no_delay":true,"mptcp":true}'
+		_set_json $server "shadowsocks" "$settings"
+	fi
+}
+
+_get_vps_config() {
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	vps_kernel="$(echo "$vps_config" | jsonfilter -q -e '@.vps.kernel')"
+	vps_machine="$(echo "$vps_config" | jsonfilter -q -e '@.vps.machine')"
+	vps_omr_version="$(echo "$vps_config" | jsonfilter -q -e '@.vps.omr_version')"
+	uci -q batch <<-EOF >/dev/null
+		set openmptcprouter.vps.kernel=$vps_kernel
+		set openmptcprouter.vps.machine=$vps_machine
+		set openmptcprouter.vps.omr_version=$vps_omr_version
+		commit openmptcprouter
+	EOF
+}
+
+_set_redirect_ports_from_vps() {
+	redirect_ports=$1
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	redirect_ports_current="$(echo "$vps_config" | jsonfilter -q -e '@.shorewall.redirect_ports')"
+	[ "$redirect_ports" = "1" ] && redirect_ports_request="enable"
+	[ "$redirect_ports" = "0" ] && redirect_ports_request="disable"
+	[ "$redirect_ports_request" != "$redirect_ports_current" ] && {
+		settings='{"redirect_ports": "'$redirect_ports_request'"}'
+		_set_json $server "shorewall" "$settings"
+	}
+}
+
+_set_mptcp_vps() {
+	local settings
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	checksum_current="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.checksum')"
+	path_manager_current="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.path_manager')"
+	scheduler_current="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.scheduler')"
+	syn_retries_current="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.syn_retries')"
+	congestion_control_current="$(echo "$vps_config" | jsonfilter -q -e '@.network.congestion_control')"
+	checksum="$(uci -q get network.globals.mptcp_checksum)"
+	path_manager="$(uci -q get network.globals.mptcp_path_manager)"
+	scheduler="$(uci -q get network.globals.mptcp_scheduler)"
+	syn_retries="$(uci -q get network.globals.mptcp_syn_retries)"
+	congestion="$(uci -q get network.globals.congestion)"
+	if [ "$checksum_current" != "$checksum" ] || [ "$path_manager_current" != "$path_manager" ] || [ "$scheduler_current" != "$scheduler" ] || [ "$syn_retries_current" != "$syn_retries" ] || [ "$congestion_control_current" != "$congestion" ]; then
+		settings='{"checksum": "'$checksum'","path_manager": "'$path_manager'","scheduler": "'$scheduler'","syn_retries": "'$syn_retries'","congestion_control": "'$congestion'"}'
+		_set_json $server "mptcp" "$settings"
+	fi
+}
+
+_set_config_from_vps() {
+	local shadowsocks_disabled vpn glorytun_state redirect shorewall_redirect mlvpn_key openvpn_key
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+
+	# Shadowsocks settings
+	shadowsocks_disabled="$(uci -q get openmptcprouter.settings.shadowsocks_disable)"
+	[ -z "$shadowsocks_disabled" ] && shadowsocks_disabled=0
+	ss_key="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.key')"
+	ss_key="$(echo $ss_key | sed 's/-/+/g; s/_/\//g;')"
+	if [ "$ss_key" != "$(uci -q get shadowsocks-libev.sss0.key)" ]; then
+		ss_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.method')"
+		#ss_no_delay="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.no_delay')"
+		#ss_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.fast_open')"
+		#ss_reuse_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.reuse_port')"
+		uci -q batch <<-EOF >/dev/null
+			set shadowsocks-libev.sss0.key=$ss_key
+			set shadowsocks-libev.sss0.method=$ss_method
+			set shadowsocks-libev.sss0.disabled=$shadowsocks_disabled
+			commit shadowsocks-libev
+		EOF
+		/etc/init.d/shadowsocks-libev restart >/dev/null 2>&1
+	fi
+
+	# Glorytun settings
+	glorytun_key="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.key')"
+	if [ "$glorytun_key" != "$(uci -q get glorytun.vpn.key)" ]; then
+		vpn="$(uci -q get openmptcprouter.settings.vpn)"
+		glorytun_state=0
+		if [ "$vpn" = "glorytun_udp" ] || [ "$vpn" = "glorytun_tcp" ]; then
+			glorytun_state=1
+		fi
+		uci -q batch <<-EOF >/dev/null
+			set glorytun.vpn.key=$glorytun_key
+			set glorytun.vpn.enable=$glorytun_state
+			commit glorytun
+		EOF
+		/etc/init.d/glorytun restart >/dev/null 2>&1
+		/etc/init.d/glorytun-udp restart >/dev/null 2>&1
+	fi
+
+	# OpenVPN settings
+	openvpn_key="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.key')"
+	[ -n "$openvpn_key" ] && {
+		echo $openvpn_key | base64 -d > /etc/luci-uploads/openvpn.key
+		uci -q batch <<-EOF >/dev/null
+			set openvpn.omr.secret="/etc/luci-uploads/openvpn.key"
+			commit openvpn
+		EOF
+	}
+
+	# MLVPN settings
+	mlvpn_key="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.key')"
+	if [ "$mlvpn_key" != "$(uci -q get mlvpn.general.password)" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set mlvpn.general.password=$mlvpn_key
+			commit mlvpn
+		EOF
+		/etc/init.d/mlvpn restart
+	fi
+
+	# Shorewall settings
+	shorewall_redirect="$(echo "$vps_config" | jsonfilter -q -e '@.shorewall.redirect_ports')"
+	[ "$shorewall_redirect" = "enable" ] && redirect="1"
+	[ "$shorewall_redirect" = "disable" ] && redirect="0"
+	uci -q batch <<-EOF >/dev/null
+		set openmptcprouter.vps.redirect_ports=$redirect
+	EOF
+
+	# MPTCP settings
+	mptcp_path_manager="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.path_manager')"
+	mptcp_scheduler="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.scheduler')"
+	mptcp_checksum="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.checksum')"
+	mptcp_syn_retries="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.syn_retries')"
+	congestion="$(echo "$vps_config" | jsonfilter -q -e '@.network.congestion')"
+	uci -q batch <<-EOF >/dev/null
+		set network.globals.mptcp_path_manager=$mptcp_path_manager
+		set network.globals.mptcp_scheduler=$mptcp_scheduler
+		set network.globals.mptcp_checksum=$mptcp_checksum
+		set network.globals.mptcp_syn_retries=$mptcp_syn_retries
+		set network.globals.congestion=$congestion
+		commit network
+	EOF
+
+	# Check if server get an IPv6, if not disable IPv6 on OMR
+	vps_ipv6_addr="$(echo "$vps_config" | jsonfilter -q -e '@.network.ipv6')"
+	if [ -z "$vps_ipv6_addr" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.settings.disable_ipv6=1
+		EOF
+		sysctl -w net.ipv6.conf.all.disable_ipv6=1
+	fi
+
+	uci -q batch <<-EOF >/dev/null
+		set openmptcprouter.vps.get_config=0
+		commit openmptcprouter
+	EOF
+}
+start_service() {
+	[ -z "$(uci -q get openmptcprouter.vps.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.vps.password)" ] && return
+	_login
+	[ -z "$token" ] && return
+	[ "$(uci -q get openmptcprouter.vps.get_config)" = "1" ] && _set_config_from_vps
+	_get_vps_config
+	config_load shadowsocks-libev
+	config_foreach _ss_server_vps server
+	redirect_port="0"
+	if [ "$(uci -q get openmptcprouter.vps.redirect_ports)" = "1" ] || [ "$(uci -q get upnpd.config.enabled)" = "1" ]; then
+		redirect_port="1"
+	fi
+	_set_redirect_ports_from_vps $redirect_port
+	_set_mptcp_vps
+}
+
+service_triggers() {
+	#procd_add_reload_trigger openmptcprouter shadowsocks-libev glorytun mlvpn openvpn network upnpd
+	procd_add_reload_trigger openmptcprouter shadowsocks-libev network upnpd
+}
