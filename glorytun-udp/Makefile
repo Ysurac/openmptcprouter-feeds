@@ -10,11 +10,11 @@ include $(TOPDIR)/rules.mk
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/angt/glorytun.git
-PKG_SOURCE_VERSION:=f20fff0e875f5b9a687b879a662968a7f16e2cae
+PKG_SOURCE_VERSION:=8ff9d3d7a1481bd82578d98798360cf219f3b73a
 
 PKG_NAME:=glorytun-udp
 PKG_VERSION:=0.0.99-$(PKG_SOURCE_VERSION)
-PKG_RELEASE:=19
+PKG_RELEASE:=20
 
 PKG_FIXUP:=autoreconf
 
@@ -33,6 +33,11 @@ TARGET_CFLAGS += -std=c99 -D_GNU_SOURCE -DGT_RUNDIR=\"\\\"/tmp\"\\\"
 
 define Package/$(PKG_NAME)/conffiles
 /etc/config/glorytun
+endef
+
+define Build/Prepare
+	$(call Build/Prepare/Default)
+	echo "$(PKG_VERSION)" > $(PKG_BUILD_DIR)/VERSION
 endef
 
 define Package/$(PKG_NAME)/install
