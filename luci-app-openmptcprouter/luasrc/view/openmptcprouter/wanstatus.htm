@@ -22,7 +22,13 @@
 -- Copyright 2018 Ycarus (Yannick Chabanois) ycarus@zugaina.org
 --
 -- Small changes to make this work with OpenMPTCProuter
--- New features: DNS detection, IPv6 route received,...
+-- New features: 
+-- * DNS detection
+-- * IPv6 route received
+-- * latest version available
+-- * MPTCP server status
+-- * Server status, errors,icon,...
+-- * Many tests
 -%>
 <%+header%>
 <link rel="stylesheet" type="text/css" href="<%=resource%>/openmptcprouter/css/wanstatus.css?v=git-18.120.38690-2678b12"/>
@@ -37,35 +43,45 @@
 			{
 				mArray.openmptcprouter.wan_addr=replaceLastNChars(mArray.openmptcprouter.wan_addr,"x",6);
 				mArray.openmptcprouter.wan_addr6=replaceLastNChars(mArray.openmptcprouter.wan_addr6,"x",10);
+				mArray.openmptcprouter.service_addr=replaceLastNChars(mArray.openmptcprouter.service_addr,"x",6);
 			}
 			var status = document.getElementById('openmptcprouter_status');
-			var stepbar = false;
 			var temp = '<figure class="tree">';
 			temp += '<ul>';
 			if (mArray.openmptcprouter)
 			{
+				temp += '<li class="remote-from-lease">';
+				temp += '<a href="#">';
+
+				var equipmentIcon = '<img src="<%=resource%>/computer.png" />';
 				if (mArray.openmptcprouter.remote_from_lease)
 				{
-					if (stepbar)
-						stepbar.securedNetwork.status = "done";
-					temp += '<li class="remote-from-lease">';
-					temp += '<a href="#">';
-
-					var equipmentIcon = '<img src="<%=resource%>/computer.png" />';
 					var title = String.format('<br /><strong>%s (%s)</strong>', mArray.openmptcprouter.remote_hostname ? mArray.openmptcprouter.remote_hostname : 'You', mArray.openmptcprouter.remote_addr)
 					var statusMessageClass = "";
 					var statusIcon = "<%=resource%>/openmptcprouter/images/statusOK.png";
 					var statusMessage = "";
-					var content = "";
-
-					temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
-					temp += '</a>'
+				} else {
+					var title = String.format("You (%s)", mArray.openmptcprouter.remote_addr);
+					var statusMessageClass = "warning";
+					var statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
+					var statusMessage = "Your IP was not leased by openmptcprouter";
 				}
+				var content = "";
 
-				temp += '<li id="networkRootNode"><table><tr><td><a href="#">';
+				temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
+				temp += '</a>';
 
+				temp += '<li id="networkRootNode"><table><tr><td><table>';
+				if (mArray.wans)
+				{
+					for( var j = 0; j < mArray.wans.length; j++ )
+					{
+						temp += '<tr class="space"><td></td></tr>';
+					}
+				}
+				temp += '<tr><td></td></tr><tr><td><a href="#" id="omr">';
 				var equipmentIcon = '<img src="<%=resource%>/overthebox.png" style:"top: 0px;" />';
-				var title = String.format("openmptcprouter (%s)", mArray.openmptcprouter.wan_addr || mArray.openmptcprouter.ss_addr || mArray.openmptcprouter.local_addr);
+				var title = String.format("OpenMPTCProuter (%s)", mArray.openmptcprouter.local_addr);
 				var statusMessageClass = "";
 				var statusIcon = "<%=resource%>/openmptcprouter/images/statusOK.png";
 				var statusMessage = "";
@@ -75,7 +91,7 @@
 				{
 					//content += "Version " + mArray.openmptcprouter.version.replace(/\"/g,'');
 					content += "Version " + mArray.openmptcprouter.version;
-					if (mArray.openmptcprouter.latest_version_omr != mArray.openmptcprouter.version)
+					if (mArray.openmptcprouter.latest_version_omr != mArray.openmptcprouter.version && mArray.openmptcprouter.latest_version_omr != "")
 					{
 						content += "<br><i>(Latest available version " + mArray.openmptcprouter.latest_version_omr + ")</i>";
 					}
@@ -101,44 +117,26 @@
 				{
 					for ( dhcpd in mArray.openmptcprouter.dhcpd )
 					{
-						if (stepbar)
-							stepbar.dhcp.status = "done"
 						var dhcp = mArray.openmptcprouter.dhcpd[dhcpd];
-						content += String.format('<span style="text-transform:capitalize;">%s</span> address: %s<br />', dhcp.interface, dhcp.router)
-						content += String.format('<span style="text-transform:capitalize;">%s</span> range: %s - %s<br />', dhcp.interface, dhcp.range_start, dhcp.range_end)
+						content += String.format('<span style="text-transform:capitalize;">%s</span> address: %s<br />', dhcp.interface, dhcp.router);
+						content += String.format('<span style="text-transform:capitalize;">%s</span> range: %s - %s<br />', dhcp.interface, dhcp.range_start, dhcp.range_end);
 					}
 				}
-				else
-				{
-					temp += String.format('lan (%s)', mArray.openmptcprouter.local_addr);
-				}
 
-				if (mArray.openmptcprouter.socks_service_enabled == true) {
+				if (mArray.openmptcprouter.socks_service_enabled == true) 
+				{
 					if (mArray.openmptcprouter.socks_service == false)
 					{
 						statusMessage += 'ShadowSocks is not running<br/>';
-					}
-					if (mArray.openmptcprouter.server_mptcp == "disabled")
-					{
-						statusMessage += 'MPTCP may not be enabled on the server<br/>';
 					}
 				}
 				if (mArray.openmptcprouter.tun_service == false)
 				{
 					statusMessage += 'GloryTUN is not running<br/>';
 				}
-				if (mArray.openmptcprouter.wan_addr == "" && mArray.openmptcprouter.ss_addr == "")
-				{
-					statusMessage += 'No VPS IP address, No WAN IP address<br/>';
-				} 
 				if (mArray.openmptcprouter.dns == false)
 				{
 					statusMessage += 'DNS issue: can\'t resolve hostname<br/>';
-				}
-				if (mArray.openmptcprouter.wan_addr6)
-				{
-					content += "IPv6: " + mArray.openmptcprouter.wan_addr6;
-					content += "<br />";
 				}
 
 				if(statusMessage !== "")
@@ -152,7 +150,7 @@
 					} else if (mArray.openmptcprouter.ss_addr == "")
 					{
 						statusMessage += 'Can\'t get public IP address from ShadowSocks<br/>';
-					}
+					} 
 					if (mArray.openmptcprouter.tun_state == "DOWN")
 					{
 						statusMessage += 'VPN tunnel DOWN<br/>';
@@ -174,7 +172,65 @@
 					}
 				}
 				temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
-				temp += '</a></td>'
+				temp += '</a>';
+				temp += '</td></tr>';
+				temp += '<tr><td><div class="vertdash" ></div></td></tr>';
+				temp += '<tr><td>';
+				temp += '<a href="#" id="omr-vps">';
+				var statusIcon = "<%=resource%>/openmptcprouter/images/statusOK.png";
+				var equipmentIcon = '<img src="<%=resource%>/server.png" />';
+				if (mArray.openmptcprouter.wan_addr == mArray.openmptcprouter.service_addr)
+				{
+					var title = String.format("OpenMPTCProuter Server (%s)", mArray.openmptcprouter.wan_addr);
+				} else if (mArray.openmptcprouter.wan_addr !== "")
+				{
+					var title = String.format("Direct output (%s)", mArray.openmptcprouter.wan_addr);
+				} else {
+					var title = "No output";
+				}
+				content = "";
+				statusMessage = "";
+				if (mArray.openmptcprouter.vps_status == "DOWN")
+				{
+					statusMessage += 'Can\'t ping server<br/>';
+				}
+				if (mArray.openmptcprouter.wan_addr == "" && mArray.openmptcprouter.ss_addr == "")
+				{
+					statusMessage += 'No VPS IP address, No WAN IP address<br/>';
+				}
+				if (mArray.openmptcprouter.socks_service_enabled == true && mArray.openmptcprouter.ss_addr == "")
+				{
+					statusMessage += 'Can\'t get public IP address from ShadowSocks<br/>';
+				} 
+				if (statusMessage !== "")
+				{
+					statusMessageClass = "error";
+					statusIcon = "<%=resource%>/openmptcprouter/images/statusError.png";
+				}
+				if (mArray.openmptcprouter.vps_omr_version)
+				{
+					content += "Version " + mArray.openmptcprouter.vps_omr_version;
+					if (mArray.openmptcprouter.latest_version_vps !== mArray.openmptcprouter.vps_omr_version && mArray.openmptcprouter.latest_version_vps !== "")
+					{
+						content += "<br><i>(Latest available version " + mArray.openmptcprouter.latest_version_vps + ")</i>";
+					}
+				}
+				if (mArray.openmptcprouter.server_mptcp == "disabled")
+				{
+					statusMessage += 'MPTCP may not be enabled on the server<br/>';
+					statusMessageClass = "warning";
+					statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
+				}
+				if (mArray.openmptcprouter.wan_addr6)
+				{
+					content += "IPv6: " + mArray.openmptcprouter.wan_addr6;
+					content += '<br />';
+				}
+				content += '<br />';
+
+				temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
+				temp += '</a></td></tr></table>';
+				temp += '</td>';
 			}
 			if (mArray.wans)
 			{
@@ -241,7 +297,12 @@
 					}
 
 					var equipmentIcon = String.format('<embed id="modem_%s" onload="setColorSVG(\'modem_%s\', \'%s\')" src="<%=resource%>/modem.svg" />', mArray.wans[i].name, mArray.wans[i].name, mArray.wans[i].color);
-					var title = mArray.wans[i].label + " (" + mArray.wans[i].gateway + ")";
+					if (mArray.wans[i].gateway !== "")
+					{
+						var title = mArray.wans[i].label + " (" + mArray.wans[i].gateway + ")";
+					} else {
+						var title = mArray.wans[i].label;
+					}
 					//var content = String.format('%s<br />wan address: <strong>%s</strong><br />whois: %s<br />latency: %s ms<br />multipath: %s', stat, wanip, whois, latency, multipath);
 					var content = "";
 					if(wanip !== '')
@@ -305,37 +366,10 @@
 
 					temp += '</a></li>';
 				}
-
-				// Check
-				if (mArray.openmptcprouter && mArray.openmptcprouter.remote_from_lease == false)
-				{
-					if (stepbar)
-					{
-						stepbar.securedNetwork.status = "doing";
-					}
-
-					temp += '<li>';
-					temp += '<a href="#">';
-
-					var equipmentIcon = '<img src="<%=resource%>/computer.png" />';
-					var title = String.format("You (%s)", mArray.openmptcprouter.remote_addr);
-					var statusMessageClass = "warning";
-					var statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
-					var statusMessage = "Your IP was not leased by openmptcprouter";
-
-					//var content = "Please unplug and plug your ethernet cable or turn off and on your Wifi";
-					var content = ""
-
-					temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
-					temp += '</a></li>';
-				}
-
-				temp += '</ul></td></tr></table>';
-
+				temp += '</ul></td>';
+				temp += '</tr></table>';
 			}
 			temp += '</li>';
-			if (mArray.openmptcprouter && mArray.openmptcprouter.remote_from_lease)
-				temp += '</ul></li>';
 			// Close tree
 			temp += '</ul>';
 			temp += '</figure>';
@@ -361,18 +395,18 @@
 
 	function getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass, statusMessage, content)
 	{
-		return 	String.format(	'<div class="network-node">' +
-									'<div class="equipment-icon">%s</div>' +
-									'<div class="status-icon"><img src="%s" /></div>' +
-									'<div class="info">' +
-										'<div class="title">%s</div>' +
-										'<div class="status-message %s">%s</div>' +
-										'<div class="content">%s</div>' +
-										'<div class="clear"></div>' +
-									'</div>' +
-									'<div class="clear"></div>' +
-								'</div>',
-								equipmentIcon, statusIcon, title, statusMessageClass, statusMessage, content);
+		return String.format('<div class="network-node">' +
+						'<div class="equipment-icon">%s</div>' +
+						'<div class="status-icon"><img src="%s" /></div>' +
+						'<div class="info">' +
+							'<div class="title">%s</div>' +
+							'<div class="status-message %s">%s</div>' +
+							'<div class="content">%s</div>' +
+							'<div class="clear"></div>' +
+						'</div>' +
+						'<div class="clear"></div>' +
+					'</div>',
+					equipmentIcon, statusIcon, title, statusMessageClass, statusMessage, content);
 	}
 
 	function stringToColour(str) {

@@ -33,13 +33,22 @@ end
 
 %>
 <script type="text/javascript" src="<%=resource%>/cbi.js?v=git-18.243.49640-2f13420" data-strings="{&#34;path&#34;:{&#34;resource&#34;:&#34;\/luci-static\/resources&#34;,&#34;browser&#34;:&#34;\/cgi-bin\/luci\/admin\/filebrowser&#34;}}"></script>
-
+<script src="/luci-static/resources/xhr.js?v=git-18.324.48426-65adb4e"></script>
+<script>
+	function jsshowadv() {
+		if(document.getElementById('showadv').checked){
+			document.getElementById('advancedsettings').style.display='inline';
+		} else {
+			document.getElementById('advancedsettings').style.display='none';
+		}
+	}
+</script>
 <% if stderr and #stderr > 0 then %><pre class="error"><%=pcdata(stderr)%></pre><% end %>
 <form class="inline" method="post" action="<%=url('admin/system/openmptcprouter/wizard_add')%>" enctype="multipart/form-data">
     <div class="cbi-map">
 	<h2 name="content"><%:Wizard%></h2>
 	<fieldset class="cbi-section" id="server">
-	<legend><%:Server settings%></legend>
+	    <legend><%:Server settings%></legend>
 	    <div class="cbi-section-descr"><%:Put the values given by OpenMPTCProuter VPS script.%></div>
 	    <div class="cbi-value cbi-value-last" id="server_ip" data-depends="[]" data-index="0">
 	        <label class="cbi-value-title" for="server_ip"><%:Server IP%></label>
@@ -67,15 +76,57 @@ end
 	    </div>
 	    <br />
 	    <div class="cbi-value">
+		<label class="cbi-value-title"><%:Enable IPv6%></label>
+		<div class="cbi-value-field">
+		    <input class="cbi-input-checkbox" type="checkbox" name="enableipv6" value="1" <% if tonumber((luci.sys.exec("sysctl net.ipv6.conf.all.disable_ipv6")):match(" %d+")) == 0 then %>checked<% end %> />
+		    <br />
+		    <div class="cbi-value-description">
+		        <%:You should disable IPv6 here if server doesn't provide IPv6.%>
+		    </div>
+		</div>
+	    </div>
+	    <br />
+	    <div class="cbi-value">
+		<label class="cbi-value-title"><%:OpenMPTCProuter VPS key%></label>
+		<div class="cbi-value-field">
+		    <input type="text" name="openmptcprouter_vps_key" placeholder="OpenMPTCProuter VPS key" class="cbi-input-text" value="<%=uci:get("openmptcprouter","vps","password")%>" data-type="base64">
+		    <br />
+		    <div class="cbi-value-description">
+		        <%:Key to configure and retrieve others keys from OpenMPTCProuter VPS. Empty to disable.%>
+		    </div>
+		</div>
+	    </div>
+	    <div class="cbi-value">
+		<label class="cbi-value-title"><%:Advanced settings%></label>
+		<div class="cbi-value-field">
+		    <input type="checkbox" class="cbi-input-checkbox" id="showadv" value="1" onclick="jsshowadv()" />
+		</div>
+	    </div>
+	</fieldset>
+	<span id="advancedsettings" style="display:none;">
+	<fieldset class="cbi-section" id="shadowsocks">
+	    <legend><%:ShadowSocks settings%></legend>
+	    <div class="cbi-section-descr"><%:By default ShadowSocks is used for TCP traffic.%></div>
+	    <div class="cbi-value">
 		<label class="cbi-value-title"><%:ShadowSocks key%></label>
 		<div class="cbi-value-field">
 		    <input type="text" name="shadowsocks_key" placeholder="ShadowSocks key" class="cbi-input-text" value="<%=uci:get("shadowsocks-libev","sss0","key")%>" data-type="base64">
 		    <br />
 		    <div class="cbi-value-description">
-		        <%:ShadowSocks is used for TCP. Empty to disable.%>
+		        <%:ShadowSocks is used for TCP.%>
 		    </div>
 		</div>
 	    </div>
+	    <div class="cbi-value">
+		<label class="cbi-value-title"><%:Disable ShadowSocks%></label>
+		<div class="cbi-value-field">
+		    <input class="cbi-input-checkbox" type="checkbox" name="disableshadowsocks" value="1" <% if uci:get("shadowsocks-libev","sss0","disabled") == 1 then %>checked<% end %> />
+		</div>
+	    </div>
+	</fieldset>
+	<fieldset class="cbi-section" id="vpn">
+	    <legend><%:VPN settings%></legend>
+	    <div class="cbi-section-descr"><%:By default VPN is used for any traffic that is not TCP.%></div>
 	    <% if nixio.fs.access("/usr/sbin/glorytun") or nixio.fs.access("/usr/sbin/glorytun-udp") then %>
 	    <div class="cbi-value">
 		<label class="cbi-value-title"><%:Glorytun key%></label>
@@ -129,17 +180,8 @@ end
 		    </div>
 		</div>
 	    </div>
-	    <div class="cbi-value">
-		<label class="cbi-value-title"><%:Enable IPv6%></label>
-		<div class="cbi-value-field">
-		    <input class="cbi-input-checkbox" type="checkbox" name="enableipv6" value="1" <% if tonumber((luci.sys.exec("sysctl net.ipv6.conf.all.disable_ipv6")):match(" %d+")) == 0 then %>checked<% end %> />
-		    <br />
-		    <div class="cbi-value-description">
-		        <%:You should disable IPv6 here if server doesn't provide IPv6.%>
-		    </div>
-		</div>
-	    </div>
 	</fieldset>
+	</span>
 	<fieldset class="cbi-section" id="interfaces">
 	    <legend><%:Interfaces settings%></legend>
 	    <div class="cbi-section-descr"><%:You must disable DHCP on your modems and set IP in different networks.%></div>
@@ -155,26 +197,40 @@ end
 	    <h3><%=ifname%></h3>
 	    <fieldset class="cbi-section-node" id="cbi-openmptcprouter-<%=ifname%>">
 		<input type="hidden" name="intf.<%=ifname%>" value="<%=ifname%>" />
-		<div class="cbi-value">
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-proto" data-index="1">
+		    <label class="cbi-value-title"><%:Protocol%></label>
+		    <div class="cbi-value-field">
+			<select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.proto" name="cbid.network.<%=ifname%>.proto" size="1">
+			    <option id="cbid.network.<%=ifname%>.proto-static" value="static"<% if uci:get("network",ifname,"proto") == "static" then %>selected="selected"<% end %>><%:Static address%></option>
+			    <option id="cbid.network.<%=ifname%>.proto-dhcp" value="dhcp"<% if uci:get("network",ifname,"proto") == "dhcp" then %>selected="selected"<% end %>><%:DHCP%></option>
+			    <option id="cbid.network.<%=ifname%>.proto-other" value="other"<% if uci:get("network",ifname,"proto") ~= "static" and uci:get("network",ifname,"proto") ~= "dhcp" then %>selected="selected"<% end %>><%:Other%></option>
+			</select>
+			<br />
+			<div class="cbi-value-description">
+			    <%:You can use DHCP if you have multiple real ethernet ports. Select other if you want to use another protocol available in Network Interfaces page.%>
+			</div>
+		    </div>
+		</div>
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-address" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;static&#34;}]" data-index="2">
 		    <label class="cbi-value-title"><%:IPv4 address%></label>
 		    <div class="cbi-value-field">
-			<input type="text" name="cbid.network.<%=ifname%>.ipaddr" class="cbi-input-text" value="<%=uci:get("network",ifname,"ipaddr")%>" data-type="ip4addr">
+			<input type="text" id="cbid.network.<%=ifname%>.ipaddr" name="cbid.network.<%=ifname%>.ipaddr" class="cbi-input-text" value="<%=uci:get("network",ifname,"ipaddr")%>" data-type="ip4addr">
 			<br />
 			<div class="cbi-value-description">
 			    <%:Set an IP in the same network as the modem%>
 			</div>
 		    </div>
 		</div>
-		<div class="cbi-value">
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-netmask" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;static&#34;}]" data-index="3">
 		    <label class="cbi-value-title"><%:IPv4 netmask%></label>
 		    <div class="cbi-value-field">
-			<input type="text" name="cbid.network.<%=ifname%>.netmask" class="cbi-input-text" value="<%=uci:get("network",ifname,"netmask") or "255.255.255.0"%>" data-type="ip4addr">
+			<input type="text" id="cbid.network.<%=ifname%>.netmask" name="cbid.network.<%=ifname%>.netmask" class="cbi-input-text" value="<%=uci:get("network",ifname,"netmask") or "255.255.255.0"%>" data-type="ip4addr">
 		    </div>
 		</div>
-		<div class="cbi-value">
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-gateway" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;static&#34;}]" data-index="4">
 		    <label class="cbi-value-title"><%:IPv4 gateway%></label>
 		    <div class="cbi-value-field">
-			<input type="text" name="cbid.network.<%=ifname%>.gateway" class="cbi-input-text" value="<%=uci:get("network",ifname,"gateway")%>" data-type="ip4addr">
+			<input type="text" id="cbid.network.<%=ifname%>.gateway" name="cbid.network.<%=ifname%>.gateway" class="cbi-input-text" value="<%=uci:get("network",ifname,"gateway")%>" data-type="ip4addr">
 			<br />
 			<div class="cbi-value-description">
 			    <%:Set here IP of the modem%>
@@ -192,7 +248,7 @@ end
 				upload = uci:get("qos",ifname,"upload")
 			end
 		%>
-		<div class="cbi-value">
+		<div class="cbi-value" data-index="5">
 		    <label class="cbi-value-title"><%:Download speed (Kb/s)%></label>
 		    <div class="cbi-value-field">
 			<input type="text" name="cbid.sqm.<%=ifname%>.download" class="cbi-input-text" value="<%=download%>" data-type="uinteger">
@@ -202,7 +258,7 @@ end
 			</div>
 		    </div>
 		</div>
-		<div class="cbi-value">
+		<div class="cbi-value" data-index="6">
 		    <label class="cbi-value-title"><%:Upload speed (Kb/s)%></label>
 		    <div class="cbi-value-field">
 			<input type="text" name="cbid.sqm.<%=ifname%>.upload" class="cbi-input-text" value="<%=upload%>" data-type="uinteger">
