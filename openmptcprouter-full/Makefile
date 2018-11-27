@@ -36,8 +36,8 @@ MY_DEPENDS := \
     luci-app-nginx-ha luci-app-omr-tracker \
     luci-app-sqm sqm-scripts-extra \
     luci-app-vnstat omr-quota luci-app-omr-quota \
-    luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail luci-app-snmpd \
-    omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd iputils-traceroute6 \
+    luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail luci-app-snmpd luci-app-upnp \
+    omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd iputils-traceroute6 ip6tables \
     speedtestc \
     iftop \
     htop \
