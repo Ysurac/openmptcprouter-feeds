@@ -11,6 +11,8 @@ function index()
 	entry({"admin", "network", "mptcp", "bandwidth"}, template("mptcp/multipath"), _("Bandwidth"), 3).leaf = true
 	entry({"admin", "network", "mptcp", "multipath_bandwidth"}, call("multipath_bandwidth")).leaf = true
 	entry({"admin", "network", "mptcp", "interface_bandwidth"}, call("interface_bandwidth")).leaf = true
+	entry({"admin", "network", "mptcp", "mptcp_check"}, template("mptcp/mptcp_check"), _("MPTCP Support Check"), 4).leaf = true
+	entry({"admin", "network", "mptcp", "mptcp_check_trace"}, post("mptcp_check_trace")).leaf = true
 end
 
 function interface_bandwidth(iface)
@@ -49,4 +51,27 @@ function multipath_bandwidth()
 
 	luci.http.prepare_content("application/json")
 	luci.http.write_json(result)
+end
+
+function mptcp_check_trace(iface)
+	luci.http.prepare_content("text/plain")
+	local tracebox
+	local uci    = require "luci.model.uci".cursor()
+	local interface = get_device(iface)
+	local server = uci:get("shadowsocks-libev", "sss0", "server") or ""
+	if server == "" then return end
+	if interface == "" then
+		tracebox = io.popen("tracebox -s /usr/share/tracebox/omr-mptcp-trace.lua " .. server)
+	else
+		tracebox = io.popen("tracebox -s /usr/share/tracebox/omr-mptcp-trace.lua -i " .. interface .. " " .. server)
+	end
+	if tracebox then
+		while true do
+			local ln = tracebox:read("*l")
+			if not ln then break end
+			luci.http.write(ln)
+			luci.http.write("\n")
+		end
+	end
+	return
 end
