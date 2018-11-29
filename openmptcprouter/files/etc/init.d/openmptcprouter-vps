@@ -21,6 +21,7 @@ _login() {
 		auth=`curl --max-time 10 -s -k -H "Content-Type: application/json" -X POST -d '{"username":"'$username'","password":"'$password'"}' https://$server:65500/login`
 		[ -z "$auth" ] && return
 		token="$(echo "$auth" | jsonfilter -q -e '@.token')"
+		uci -q set openmptcprouter.vps.token="$token"
 	fi
 }
 
@@ -67,7 +68,7 @@ _ss_server_vps() {
 	if [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ]; then
 		local settings
 		settings='{"port": '$port',"method":"'$method'","fast_open":true,"reuse_port":true,"no_delay":true,"mptcp":true}'
-		_set_json $server "shadowsocks" "$settings"
+		_set_json "shadowsocks" "$settings"
 	fi
 }
 
@@ -94,7 +95,7 @@ _set_redirect_ports_from_vps() {
 	[ "$redirect_ports" = "0" ] && redirect_ports_request="disable"
 	[ "$redirect_ports_request" != "$redirect_ports_current" ] && {
 		settings='{"redirect_ports": "'$redirect_ports_request'"}'
-		_set_json $server "shorewall" "$settings"
+		_set_json "shorewall" "$settings"
 	}
 }
 
@@ -112,9 +113,10 @@ _set_mptcp_vps() {
 	scheduler="$(uci -q get network.globals.mptcp_scheduler)"
 	syn_retries="$(uci -q get network.globals.mptcp_syn_retries)"
 	congestion="$(uci -q get network.globals.congestion)"
+	[ -z "$congestion" ] && congestion="bbr"
 	if [ "$checksum_current" != "$checksum" ] || [ "$path_manager_current" != "$path_manager" ] || [ "$scheduler_current" != "$scheduler" ] || [ "$syn_retries_current" != "$syn_retries" ] || [ "$congestion_control_current" != "$congestion" ]; then
 		settings='{"checksum": "'$checksum'","path_manager": "'$path_manager'","scheduler": "'$scheduler'","syn_retries": "'$syn_retries'","congestion_control": "'$congestion'"}'
-		_set_json $server "mptcp" "$settings"
+		_set_json "mptcp" "$settings"
 	fi
 }
 
