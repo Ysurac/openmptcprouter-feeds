@@ -595,6 +595,17 @@ function interfaces_status()
 	mArray.openmptcprouter["vps_kernel"] = uci:get("openmptcprouter","vps","kernel") or ""
 	mArray.openmptcprouter["vps_machine"] = uci:get("openmptcprouter","vps","machine") or ""
 	mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter","vps","omr_version") or ""
+	if mArray.openmptcprouter["service_addr"] ~= "" then
+		local token = uci:get("openmptcprouter","vps","token") or ""
+		if token ~= "" then
+			local vpsinfo_json = sys.exec('curl -4 --max-time 2 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. mArray.openmptcprouter["service_addr"] .. ":65500/status")
+			local vpsinfo = json.decode(vpsinfo_json) or ""
+			if vpsinfo.vps ~= nil then
+				mArray.openmptcprouter["vps_loadavg"] = vpsinfo.vps.loadavg or ""
+				mArray.openmptcprouter["vps_uptime"] = vpsinfo.vps.uptime or ""
+			end
+		end
+	end
 
 	-- Check openmptcprouter service are running
 	mArray.openmptcprouter["tun_service"] = false
