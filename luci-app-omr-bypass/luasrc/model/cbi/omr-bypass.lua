@@ -44,11 +44,6 @@ mac.datatype = "list(macaddr)"
 mac.rmempty  = true
 mac.optional = false
 
-function mac.cfgvalue(self, option)
-	local val = Value.cfgvalue(self, section)
-	return ipc.checkmac(val) or val
-end
-
 sys.net.host_hints(function(m, v4, v6, name)
 	if m then
 		mac:value(m, "%s (%s)" %{m, name or v4 or v6})
@@ -68,8 +63,8 @@ ip.datatype = "ipaddr"
 ip.rmempty  = true
 ip.optional = false
 
-ifm = s:option(Value, "interface", translate("Interface"))
-ifm.rmempty  = true
+ifl = s:option(Value, "interface", translate("Interface"))
+ifl.rmempty  = true
 
 s = m:section(TypedSection, "dpis", translate("Protocols"))
 s.addremove = true
@@ -98,10 +93,12 @@ ifd.default = "all"
 ifi.default = "all"
 ifp.default = "all"
 ifm.default = "all"
+ifl.default = "all"
 ifd:value("all",translate("Default"))
 ifi:value("all",translate("Default"))
 ifp:value("all",translate("Default"))
 ifm:value("all",translate("Default"))
+ifl:value("all",translate("Default"))
 for _, iface in ipairs(ifaces) do
 	if iface:is_up() then
 		ifd:value(iface:name(),"%s" % iface:name())
