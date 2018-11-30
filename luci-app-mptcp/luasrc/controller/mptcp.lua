@@ -53,6 +53,11 @@ function multipath_bandwidth()
 	luci.http.write_json(result)
 end
 
+function get_device(interface)
+	local dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
+	return dump['l3_device']
+end
+
 function mptcp_check_trace(iface)
 	luci.http.prepare_content("text/plain")
 	local tracebox
