@@ -102,6 +102,7 @@ function wizard_add()
 		ucic:commit("sqm")
 		
 		luci.sys.call("uci -q add_list vnstat.@vnstat[-1].interface=wan" .. i)
+		luci.sys.call("uci -q commit vnstat")
 
 		-- Dirty way to add new interface to firewall...
 		luci.sys.call("uci -q add_list firewall.@zone[1].network=wan" .. i)
@@ -285,12 +286,8 @@ function wizard_add()
 	-- Set Glorytun settings
 	if default_vpn:match("^glorytun.*") then
 		ucic:set("glorytun","vpn","enable",1)
-		ucic:save("glorytun")
-		ucic:commit("glorytun")
 	else
 		ucic:set("glorytun","vpn","enable",0)
-		ucic:save("glorytun")
-		ucic:commit("glorytun")
 	end
 
 	local glorytun_key = luci.http.formvalue("glorytun_key")
@@ -304,25 +301,19 @@ function wizard_add()
 		else
 			ucic:set("glorytun","vpn","proto","tcp")
 		end
-		ucic:save("glorytun")
-		ucic:commit("glorytun")
 	else
 		ucic:set("glorytun","vpn","key","")
 		ucic:set("glorytun","vpn","enable",0)
 		ucic:set("glorytun","vpn","proto","tcp")
-		ucic:save("glorytun")
-		ucic:commit("glorytun")
 	end
+	ucic:save("glorytun")
+	ucic:commit("glorytun")
 
 	-- Set MLVPN settings
 	if default_vpn == "mlvpn" then
 		ucic:set("mlvpn","general","enable",1)
-		ucic:save("mlvpn")
-		ucic:commit("mlvpn")
 	else
 		ucic:set("mlvpn","general","enable",0)
-		ucic:save("mlvpn")
-		ucic:commit("mlvpn")
 	end
 
 	local mlvpn_password = luci.http.formvalue("mlvpn_password")
@@ -330,14 +321,12 @@ function wizard_add()
 		ucic:set("mlvpn","general","password",mlvpn_password)
 		ucic:set("mlvpn","general","firstport","65201")
 		ucic:set("mlvpn","general","interface_name","mlvpn0")
-		ucic:save("mlvpn")
-		ucic:commit("mlvpn")
 	else
 		--ucic:set("mlvpn","general","enable",0)
 		ucic:set("mlvpn","general","password","")
-		ucic:save("mlvpn")
-		ucic:commit("mlvpn")
 	end
+	ucic:save("mlvpn")
+	ucic:commit("mlvpn")
 
 	-- Set OpenVPN settings
 	local openvpn_key = luci.http.formvalue("openvpn_key")
@@ -357,18 +346,15 @@ function wizard_add()
 				end
 			end)
 		ucic:set("openvpn","omr","secret",openvpn_key_path)
-		ucic:commit("openvpn")
 	end
 
 	if default_vpn == "openvpn" then
 		ucic:set("openvpn","omr","enabled",1)
-		ucic:save("openvpn")
-		ucic:commit("openvpn")
 	else
 		ucic:set("openvpn","omr","enabled",0)
-		ucic:save("openvpn")
-		ucic:commit("openvpn")
 	end
+	ucic:save("openvpn")
+	ucic:commit("openvpn")
 
 	-- OpenMPTCProuter VPS
 	local openmptcprouter_vps_key = luci.http.formvalue("openmptcprouter_vps_key") or ""
