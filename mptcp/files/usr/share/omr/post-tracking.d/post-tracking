@@ -362,15 +362,16 @@ fi
 	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency="$OMR_TRACKER_LATENCY"
 	if [ "$multipath_config" = "on" ] && [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath)" != "master" ] && [ "$(uci -q get openmptcprouter.settings.master)" = "dynamic" ]; then
 		masterintf="$(uci show network | grep multipath=\'master\' | cut -d'.' -f2)"
-		if [ -n "$masterintf" ] && [ "$(uci -q get openmptcprouter.$masterintf.latency)" != "" ] && [ "$(uci -q get openmptcprouter.$masterintf.latency | tr -d '\n')" -gt "$(($OMR_TRACKER_LATENCY*2))" ]; then
+		masterlatency="$(uci -q get openmptcprouter.$masterintf.latency | tr -d '\n')"
+		if [ -n "$masterintf" ] && [ "$masterlatency" != "" ] && [ "$masterlatency" -gt "$(($OMR_TRACKER_LATENCY*2))" ]; then
 			uci -q set network.$masterintf.multipath='on'
 			uci -q set network.$OMR_TRACKER_INTERFACE.multipath='master'
-			_log "Change master interface from $masterintf to $OMR_TRACKER_INTERFACE"
+			_log "Change master interface from $masterintf ($masterlatency ms) to $OMR_TRACKER_INTERFACE ($OMR_TRACKER_LATENCY ms)"
 		fi
 	fi
 }
 
-if [ "$(uci -q get openmptcprouter.vps.get_config)" = "1" ]; then
+if [ "$(uci -q get openmptcprouter.vps.get_config)" = "1" ] || [ "$(uci -q get openmptcprouter.vps.admin_error)" = "1" ]; then
 	/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1
 	sleep 5
 fi
