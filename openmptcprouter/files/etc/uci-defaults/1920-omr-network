@@ -1,5 +1,4 @@
 #!/bin/sh
-
 . /lib/functions.sh
 
 _setup_macaddr() {
@@ -56,19 +55,47 @@ fi
 
 lanif="eth0"
 if [ -d /sys/class/net/lan0 -o -n "$(ip link | grep ' lan0')" ] && [ -d /sys/class/net/wan -o -n "$(ip link | grep ' wan@')" -o -n "$(ip link | grep ' wan:')" ]; then
-		lanif="wan"
+	lanif="wan"
 elif [ -d /sys/class/net/lan ] || [ -n "$(ip link | grep ' lan')" ]; then
 	lanif="lan"
+elif [ "$(swconfig list 2>&1 | grep switch0)" != "" ]; then
+#	lanif="eth1.2"
+	lanif="eth1.5"
+	uci -q batch <<-EOF
+	set network.@switch_vlan[0]=switch_vlan
+	set network.@switch_vlan[0].device='switch0'
+	set network.@switch_vlan[0].vlan=1
+	set network.@switch_vlan[0].vid=1
+	set network.@switch_vlan[0].ports='3 5t'
+	set network.@switch_vlan[1]=switch_vlan
+	set network.@switch_vlan[1].device='switch0'
+	set network.@switch_vlan[1].vlan=2
+	set network.@switch_vlan[1].vid=2
+	set network.@switch_vlan[1].ports='2 5t'
+	add network switch_vlan
+	set network.@switch_vlan[2].device='switch0'
+	set network.@switch_vlan[2].vlan=3
+	set network.@switch_vlan[2].vid=3
+	set network.@switch_vlan[2].ports='1 5t'
+	add network switch_vlan
+	set network.@switch_vlan[3].device='switch0'
+	set network.@switch_vlan[3].vlan=4
+	set network.@switch_vlan[3].vid=4
+	set network.@switch_vlan[3].ports='0 5t'
+	add network switch_vlan
+	set network.@switch_vlan[4].device='switch0'
+	set network.@switch_vlan[4].vlan=5
+	set network.@switch_vlan[4].vid=5
+	set network.@switch_vlan[4].ports='4 6t'
+	EOF
 fi
 uci -q batch <<-EOF
 set network.lan=interface
 set network.lan.proto=static
 set network.lan.ipaddr=192.168.100.1
 set network.lan.netmask=255.255.255.0
-set network.lan.ifname=$lanif
+set network.lan.ifname=${lanif}
 set network.lan.metric=2048
-set firewall.lan.mtu_fix=1
-commit firewall
 EOF
 
 uci -q batch <<-EOF
@@ -107,7 +134,12 @@ uci -q set network.lan.ip4table='lan'
 
 # Create WAN interfaces
 if [ "$(uci -q get network.wan1.multipath)" = "" ]; then
-	if [ -d /sys/class/net/wan ] || [ -n "$(ip link | grep ' wan:')" ] || [ -n "$(ip link | grep ' wan@')" ]; then
+	if [ "$(swconfig list 2>&1 | grep switch0)" != "" ]; then
+		_setup_wan_interface wan1 eth0.1 master
+		_setup_wan_interface wan2 eth0.2 on
+		_setup_wan_interface wan3 eth0.3 on
+		_setup_wan_interface wan4 eth0.4 on
+	elif [ -d /sys/class/net/wan ] || [ -n "$(ip link | grep ' wan:')" ] || [ -n "$(ip link | grep ' wan@')" ]; then
 		if [ -d /sys/class/net/lan0 -o -n "$(ip link | grep ' lan0')" ] && [ -d /sys/class/net/lan1 -o -n "$(ip link | grep ' lan1')" ]; then
 			_setup_wan_interface wan1 lan0 master
 			_setup_wan_interface wan2 lan1 on
@@ -127,9 +159,6 @@ if [ "$(uci -q get network.wan1.multipath)" = "" ]; then
 				fi
 			fi
 		else
-			uci -q batch <<-EOF
-				delete network.wan
-			EOF
 			_setup_wan_interface wan1 wan master macvlan
 			_setup_wan_interface wan2 wan on macvlan
 			_setup_macvlan wan1
