@@ -101,7 +101,7 @@ function wizard_add()
 		ucic:save("sqm")
 		ucic:commit("sqm")
 		
-		luci.sys.call("uci -q add_list vnstat.@vnstat[-1].interface=wan" .. i)
+		luci.sys.call("uci -q add_list vnstat.@vnstat[-1].interface=" .. defif)
 		luci.sys.call("uci -q commit vnstat")
 
 		-- Dirty way to add new interface to firewall...
