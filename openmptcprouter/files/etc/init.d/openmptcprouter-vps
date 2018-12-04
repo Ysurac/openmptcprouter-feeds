@@ -149,8 +149,37 @@ _set_config_from_vps() {
 	if [ "$glorytun_key" != "$(uci -q get glorytun.vpn.key)" ]; then
 		vpn="$(uci -q get openmptcprouter.settings.vpn)"
 		glorytun_state=0
-		if [ "$vpn" = "glorytun_udp" ] || [ "$vpn" = "glorytun_tcp" ]; then
+		if [ "$vpn" = "glorytun_tcp" ]; then
 			glorytun_state=1
+			client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp_client_ip')"
+			if [ "$client_ip" != "dhcp" ] && [ -n "$client_ip" ]; then
+				host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp_host_ip')"
+				uci -q batch <<-EOF >/dev/null
+					set glorytun.vpn.localip=$client_ip
+					set glorytun.vpn.remoteip=$host_ip
+				EOF
+			else
+				uci -q batch <<-EOF >/dev/null
+					del glorytun.vpn.localip
+					del glorytun.vpn.remoteip
+				EOF
+			fi
+		fi
+		if [ "$vpn" = "glorytun_udp" ]; then
+			glorytun_state=1
+			client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp_client_ip')"
+			if [ "$client_ip" != "dhcp" ] && [ -n "$client_ip" ]; then
+				host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp_host_ip')"
+				uci -q batch <<-EOF >/dev/null
+					set glorytun.vpn.localip=$client_ip
+					set glorytun.vpn.remoteip=$host_ip
+				EOF
+			else
+				uci -q batch <<-EOF >/dev/null
+					del glorytun.vpn.localip
+					del glorytun.vpn.remoteip
+				EOF
+			fi
 		fi
 		uci -q batch <<-EOF >/dev/null
 			set glorytun.vpn.key=$glorytun_key
@@ -213,6 +242,19 @@ _set_config_from_vps() {
 		sysctl -qw net.ipv6.conf.all.disable_ipv6=1
 	fi
 
+	# Get available server
+	available_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.available' | sed -e 's/\[ //' -e 's/ \]//' -e 's/,//g')"
+	uci -q batch <<-EOF >/dev/null
+		del openmptcprouter.vps.available_vpn
+	EOF
+	if [ -n "$available_vpn" ]; then
+		for vpn in $available_vpn; do
+			uci -q batch <<-EOF >/dev/null
+				add_list openmptcprouter.vps.available_vpn=$vpn
+			EOF
+		done
+	fi
+
 	uci -q batch <<-EOF >/dev/null
 		set openmptcprouter.vps.get_config=0
 		commit openmptcprouter
@@ -222,7 +264,13 @@ start_service() {
 	[ -z "$(uci -q get openmptcprouter.vps.username)" ] && return
 	[ -z "$(uci -q get openmptcprouter.vps.password)" ] && return
 	_login
-	[ -z "$token" ] && return
+	[ -z "$token" ] && {
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.vps.admin_error=1
+			commit openmptcprouter
+		EOF
+		return
+	}
 	[ "$(uci -q get openmptcprouter.vps.get_config)" = "1" ] && _set_config_from_vps
 	_get_vps_config
 	config_load shadowsocks-libev
@@ -233,6 +281,10 @@ start_service() {
 	fi
 	_set_redirect_ports_from_vps $redirect_port
 	_set_mptcp_vps
+	uci -q batch <<-EOF >/dev/null
+		set openmptcprouter.vps.admin_error=0
+		commit openmptcprouter
+	EOF
 }
 
 service_triggers() {
