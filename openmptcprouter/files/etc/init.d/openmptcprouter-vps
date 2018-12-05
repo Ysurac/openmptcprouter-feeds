@@ -84,6 +84,61 @@ _get_vps_config() {
 		set openmptcprouter.vps.omr_version=$vps_omr_version
 		commit openmptcprouter
 	EOF
+
+	glorytun_state=0
+	glorytun_change=0
+	vpn="$(uci -q get openmptcprouter.settings.vpn)"
+	if [ "$vpn" = "glorytun_tcp" ]; then
+		glorytun_state=1
+		client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp_client_ip')"
+		if [ "$client_ip" != "dhcp" ] && [ -n "$client_ip" ]; then
+			host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp_host_ip')"
+			if [ "$host_ip" != "$(uci -q get glorytun.vpn.remoteip)" ] || [ "$client_ip" != "$(uci -q get glorytun.vpn.localip)" ]; then
+				uci -q batch <<-EOF >/dev/null
+					set glorytun.vpn.localip=$client_ip
+					set glorytun.vpn.remoteip=$host_ip
+				EOF
+				glorytun_change=1
+			fi
+		else
+			if [ "$(uci -q get glorytun.vpn.remoteip)" != "" ] || [ "$(uci -q get glorytun.vpn.localip)" != "" ]; then
+				uci -q batch <<-EOF >/dev/null
+					del glorytun.vpn.localip
+					del glorytun.vpn.remoteip
+				EOF
+				glorytun_change=1
+			fi
+		fi
+	fi
+	if [ "$vpn" = "glorytun_udp" ]; then
+		glorytun_state=1
+		client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp_client_ip')"
+		if [ "$client_ip" != "dhcp" ] && [ -n "$client_ip" ]; then
+			host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp_host_ip')"
+			if [ "$host_ip" != "$(uci -q get glorytun.vpn.remoteip)" ] || [ "$client_ip" != "$(uci -q get glorytun.vpn.localip)" ]; then
+				uci -q batch <<-EOF >/dev/null
+					set glorytun.vpn.localip=$client_ip
+					set glorytun.vpn.remoteip=$host_ip
+				EOF
+				glorytun_change=1
+			fi
+		else
+			if [ "$(uci -q get glorytun.vpn.remoteip)" != "" ] || [ "$(uci -q get glorytun.vpn.localip)" != "" ]; then
+				uci -q batch <<-EOF >/dev/null
+					del glorytun.vpn.localip
+					del glorytun.vpn.remoteip
+				EOF
+				glorytun_change=1
+			fi
+		fi
+	fi
+	if [ "$glorytun_change" != "0" ]; then
+		uci -q batch <<-EOF >/dev/null
+			commit glorytun
+		EOF
+		/etc/init.d/glorytun restart >/dev/null 2>&1
+		/etc/init.d/glorytun-udp restart >/dev/null 2>&1
+	fi
 }
 
 _set_redirect_ports_from_vps() {
@@ -151,35 +206,9 @@ _set_config_from_vps() {
 		glorytun_state=0
 		if [ "$vpn" = "glorytun_tcp" ]; then
 			glorytun_state=1
-			client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp_client_ip')"
-			if [ "$client_ip" != "dhcp" ] && [ -n "$client_ip" ]; then
-				host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp_host_ip')"
-				uci -q batch <<-EOF >/dev/null
-					set glorytun.vpn.localip=$client_ip
-					set glorytun.vpn.remoteip=$host_ip
-				EOF
-			else
-				uci -q batch <<-EOF >/dev/null
-					del glorytun.vpn.localip
-					del glorytun.vpn.remoteip
-				EOF
-			fi
 		fi
 		if [ "$vpn" = "glorytun_udp" ]; then
 			glorytun_state=1
-			client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp_client_ip')"
-			if [ "$client_ip" != "dhcp" ] && [ -n "$client_ip" ]; then
-				host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp_host_ip')"
-				uci -q batch <<-EOF >/dev/null
-					set glorytun.vpn.localip=$client_ip
-					set glorytun.vpn.remoteip=$host_ip
-				EOF
-			else
-				uci -q batch <<-EOF >/dev/null
-					del glorytun.vpn.localip
-					del glorytun.vpn.remoteip
-				EOF
-			fi
 		fi
 		uci -q batch <<-EOF >/dev/null
 			set glorytun.vpn.key=$glorytun_key
