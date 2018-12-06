@@ -17,6 +17,7 @@ function index()
 	entry({"admin", "system", "openmptcprouter", "interfaces_status"}, call("interfaces_status")).leaf = true
 	entry({"admin", "system", "openmptcprouter", "settings"}, template("openmptcprouter/settings"), _("Advanced Settings"), 3).leaf = true
 	entry({"admin", "system", "openmptcprouter", "settings_add"}, post("settings_add")).leaf = true
+	entry({"admin", "system", "openmptcprouter", "update_vps"}, post("update_vps")).leaf = true
 end
 
 function interface_from_device(dev)
@@ -448,6 +449,20 @@ function settings_add()
 	return
 end
 
+function update_vps()
+	-- Update VPS
+	local update_vps = luci.http.formvalue("flash") or ""
+	if update_vps ~= "" then
+		local token = uci:get("openmptcprouter","vps","token") or ""
+		if token ~= "" then
+			sys.exec('curl -4 --max-time 20 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. mArray.openmptcprouter["service_addr"] .. ":65500/update")
+			luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
+			luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/status"))
+			return
+		end
+	end
+end
+
 function get_ip(interface)
 	local dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
 	local ip = ""
@@ -589,6 +604,7 @@ function interfaces_status()
 			if vpsinfo.vps ~= nil then
 				mArray.openmptcprouter["vps_loadavg"] = vpsinfo.vps.loadavg or ""
 				mArray.openmptcprouter["vps_uptime"] = vpsinfo.vps.uptime or ""
+				mArray.openmptcprouter["vps_mptcp"] = vpsinfo.vps.mptcp or ""
 			end
 		end
 	end
