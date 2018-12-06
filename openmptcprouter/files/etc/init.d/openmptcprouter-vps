@@ -50,7 +50,50 @@ _set_json() {
 	}
 }
 
-_ss_server_vps() {
+_set_glorytun_vps() {
+	local enabled port key
+	enabled="$(uci -q get glorytun.vpn.enable)"
+	[ "$enabled" != "1" ] && return
+	port="$(uci -q get glorytun.vpn.port)"
+	key="$(uci -q get glorytun.vpn.key)"
+	[ -z "$key" ] && return
+	local current_port current_key
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.port')"
+	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.key')"
+	if [ "$current_port" != "$port" ] || [ "$current_key" != "$key" ]; then
+		local settings
+		settings='{"port": '$port',"key":"'$key'"}'
+		_set_json "glorytun" "$settings"
+	fi
+}
+
+_set_openvpn_vps() {
+	local enabled port key
+	enabled="$(uci -q get openvpn.omr.enabled)"
+	[ "$enabled" != "1" ] && return
+	port="$(uci -q get openvpn.omr.port)"
+	keyfile="$(uci -q get openvpn.omr.secret)"
+	if [ -n "$keyfile" ]; then
+		key="$(cat $keyfile | base64)"
+	else
+		key=""
+	fi
+	[ -z "$key" ] && return
+	local current_port current_key
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.port')"
+	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.key')"
+	if [ "$current_port" != "$port" ] || [ "$current_key" != "$key" ]; then
+		local settings
+		settings='{"port": '$port',"key":"'$key'"}'
+		_set_json "openvpn" "$settings"
+	fi
+}
+
+_set_ss_server_vps() {
 	local disabled port server key method
 	config_get disabled $1 disabled
 	[ "$disabled" = "1" ] && return
@@ -58,6 +101,7 @@ _ss_server_vps() {
 	config_get server $1 server
 	config_get key $1 key
 	key="$(echo $key | sed 's/+/-/g; s/\//_/g;')"
+	[ -z "$key" ] && return
 	config_get method $1 method
 	local current_port current_key current_method
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
@@ -65,9 +109,9 @@ _ss_server_vps() {
 	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.port')"
 	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.key')"
 	current_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.method')"
-	if [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ]; then
+	if [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_key" != "$key" ]; then
 		local settings
-		settings='{"port": '$port',"method":"'$method'","fast_open":true,"reuse_port":true,"no_delay":true,"mptcp":true}'
+		settings='{"port": '$port',"method":"'$method'","fast_open":true,"reuse_port":true,"no_delay":true,"mptcp":true,"key":"'$key'"}'
 		_set_json "shadowsocks" "$settings"
 	fi
 }
@@ -90,9 +134,9 @@ _get_vps_config() {
 	vpn="$(uci -q get openmptcprouter.settings.vpn)"
 	if [ "$vpn" = "glorytun_tcp" ]; then
 		glorytun_state=1
-		client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp_client_ip')"
+		client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.client_ip')"
 		if [ "$client_ip" != "dhcp" ] && [ -n "$client_ip" ]; then
-			host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp_host_ip')"
+			host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.host_ip')"
 			if [ "$host_ip" != "$(uci -q get glorytun.vpn.remoteip)" ] || [ "$client_ip" != "$(uci -q get glorytun.vpn.localip)" ]; then
 				uci -q batch <<-EOF >/dev/null
 					set glorytun.vpn.localip=$client_ip
@@ -112,9 +156,9 @@ _get_vps_config() {
 	fi
 	if [ "$vpn" = "glorytun_udp" ]; then
 		glorytun_state=1
-		client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp_client_ip')"
+		client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp.client_ip')"
 		if [ "$client_ip" != "dhcp" ] && [ -n "$client_ip" ]; then
-			host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp_host_ip')"
+			host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp.host_ip')"
 			if [ "$host_ip" != "$(uci -q get glorytun.vpn.remoteip)" ] || [ "$client_ip" != "$(uci -q get glorytun.vpn.localip)" ]; then
 				uci -q batch <<-EOF >/dev/null
 					set glorytun.vpn.localip=$client_ip
@@ -187,11 +231,14 @@ _set_config_from_vps() {
 	ss_key="$(echo $ss_key | sed 's/-/+/g; s/_/\//g;')"
 	if [ "$ss_key" != "$(uci -q get shadowsocks-libev.sss0.key)" ]; then
 		ss_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.method')"
+		ss_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.port')"
+		[ -z "$ss_port" ] && ss_port=65101
 		#ss_no_delay="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.no_delay')"
 		#ss_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.fast_open')"
 		#ss_reuse_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.reuse_port')"
 		uci -q batch <<-EOF >/dev/null
 			set shadowsocks-libev.sss0.key=$ss_key
+			set shadowsocks-libev.sss0.server_port=$ss_port
 			set shadowsocks-libev.sss0.method=$ss_method
 			set shadowsocks-libev.sss0.disabled=$shadowsocks_disabled
 			commit shadowsocks-libev
@@ -210,7 +257,10 @@ _set_config_from_vps() {
 		if [ "$vpn" = "glorytun_udp" ]; then
 			glorytun_state=1
 		fi
+		glorytun_port="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.port')"
+		[ -z "$glorytun_port" ] && glorytun_port="65001"
 		uci -q batch <<-EOF >/dev/null
+			set glorytun.vpn.port=$glorytun_port
 			set glorytun.vpn.key=$glorytun_key
 			set glorytun.vpn.enable=$glorytun_state
 			commit glorytun
@@ -223,7 +273,10 @@ _set_config_from_vps() {
 	openvpn_key="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.key')"
 	[ -n "$openvpn_key" ] && {
 		echo $openvpn_key | base64 -d > /etc/luci-uploads/openvpn.key
+		openvpn_port="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.port')"
+		[ -z "$openvpn_port" ] && openvpn_port="65001"
 		uci -q batch <<-EOF >/dev/null
+			set openvpn.omr.port=$openvpn_port
 			set openvpn.omr.secret="/etc/luci-uploads/openvpn.key"
 			commit openvpn
 		EOF
@@ -289,6 +342,7 @@ _set_config_from_vps() {
 		commit openmptcprouter
 	EOF
 }
+
 start_service() {
 	[ -z "$(uci -q get openmptcprouter.vps.username)" ] && return
 	[ -z "$(uci -q get openmptcprouter.vps.password)" ] && return
@@ -303,7 +357,9 @@ start_service() {
 	[ "$(uci -q get openmptcprouter.vps.get_config)" = "1" ] && _set_config_from_vps
 	_get_vps_config
 	config_load shadowsocks-libev
-	config_foreach _ss_server_vps server
+	config_foreach _set_ss_server_vps server
+	_set_glorytun_vps
+	_set_openvpn_vps
 	redirect_port="0"
 	if [ "$(uci -q get openmptcprouter.vps.redirect_ports)" = "1" ] || [ "$(uci -q get upnpd.config.enabled)" = "1" ]; then
 		redirect_port="1"
@@ -317,6 +373,6 @@ start_service() {
 }
 
 service_triggers() {
-	#procd_add_reload_trigger openmptcprouter shadowsocks-libev glorytun mlvpn openvpn network upnpd
-	procd_add_reload_trigger openmptcprouter shadowsocks-libev network upnpd
+	procd_add_reload_trigger openmptcprouter shadowsocks-libev glorytun mlvpn openvpn network upnpd
+	#procd_add_reload_trigger openmptcprouter shadowsocks-libev network upnpd
 }
