@@ -297,6 +297,63 @@ jobs:
           paths:
             - openmptcprouter
 
+  build_wrt3200acm:
+    machine: true
+
+    environment:
+      - OMR_VERSION: $CIRCLE_TAG
+      - OMR_TARGET: wrt3200acm
+
+    working_directory: ~/
+
+    steps:
+      - run:
+          name: cache
+          command: |
+            echo "cache 22 $OMR_TARGET" > /tmp/cache-target
+            echo "cache 26 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+
+      - restore_cache:
+          keys:
+            - cache-{{ checksum "/tmp/cache-version" }}
+            - cache-{{ checksum "/tmp/cache-target" }}
+
+      - run:
+          name: Build toolchain
+          no_output_timeout: 30m
+          command: |
+            git clone https://github.com/ysurac/openmptcprouter || true
+            cd openmptcprouter
+            git pull || true
+            export OMR_PATH="$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/${CIRCLE_BRANCH:-$CIRCLE_TAG}"
+            export OMR_FEED_URL="$CIRCLE_REPOSITORY_URL"
+            export OMR_FEED_SRC="${CIRCLE_BRANCH:-$CIRCLE_TAG}"
+            sh build.sh prepare {tools,toolchain}/install -j2
+            echo -e "$OMR_PRIVKEY" > ~/openmptcprouter/$OMR_TARGET/source/key-build
+            echo -e "$OMR_PUBKEY" > ~/openmptcprouter/$OMR_TARGET/source/key-build.pub
+
+      - save_cache:
+          key: cache-{{ checksum "/tmp/cache-target" }}
+          paths:
+            - openmptcprouter
+
+      - run:
+          name: Build
+          no_output_timeout: 30m
+          command: make IGNORE_ERRORS=m -C ~/openmptcprouter/$OMR_TARGET/source package/{compile,install,index} target/compile -j2 package/compile -j2 target/install -j2
+
+      - run:
+          name: Deploy
+          command: |
+            ssh -p ${OMR_DEPLOY_PORT:-22} deploy@$OMR_DEPLOY_HOST mkdir -p deploy/release
+            rsync -av --delete-after ~/openmptcprouter/$OMR_TARGET/source/bin/ -e "ssh -q -p ${OMR_DEPLOY_PORT:-22}" deploy@$OMR_DEPLOY_HOST:deploy/release/$OMR_TARGET
+            rm -rf ~/openmptcprouter/$OMR_TARGET/source/bin
+
+      - save_cache:
+          key: cache-{{ checksum "/tmp/cache-version" }}
+          paths:
+            - openmptcprouter
+
 
 workflows:
   version: 2
@@ -316,5 +373,8 @@ workflows:
           requires:
             - prepare
       - build_bpi-r2:
+          requires:
+            - prepare
+      - build_wrt3200acm:
           requires:
             - prepare
