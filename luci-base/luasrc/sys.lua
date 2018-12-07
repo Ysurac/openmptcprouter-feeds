@@ -386,8 +386,8 @@ function process.list()
 	end
 
 	for line in ps do
-		local pid, ppid, user, stat, vsz, mem, cpu, cmd = line:match(
-			"^ *(%d+) +(%d+) +(%S.-%S) +([RSDZTW][W ][<N ]) +(%d+) +(%d+%%) +(%d+%%) +(.+)"
+		local pid, ppid, user, stat, vsz, mem, cpun, cpu, cmd = line:match(
+			"^ *(%d+) +(%d+) +(%S.-%S) +([RSDZTW][W ][<N ]) +(%d+) +(%d+.%d) +(%d+) +(%d+.%d) +(.+)"
 		)
 
 		local idx = tonumber(pid)
