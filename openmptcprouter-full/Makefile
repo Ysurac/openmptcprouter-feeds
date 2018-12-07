@@ -53,7 +53,8 @@ MY_DEPENDS := \
     openvpn-openssl \
     mmc-utils \
     libimobiledevice \
-    comgt kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan usb-modeswitch uqmi adb-enablemodem umbim kmod-mii kmod-usb-net kmod-usb-wdm kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim \
+    comgt kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan usb-modeswitch uqmi adb-enablemodem umbim kmod-mii kmod-usb-net kmod-usb-wdm kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim umbim \
+    kmod-usb-net-huawei-cdc-ncm kmod-usb-net-rndis \
     kmod-rt2800-usb     \
     kmod-mt7601u        \
     kmod-rtl8xxxu       \
