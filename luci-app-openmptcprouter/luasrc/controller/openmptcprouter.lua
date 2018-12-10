@@ -754,6 +754,12 @@ function interfaces_status()
 		    connectivity = "ERROR"
 	    end
 
+	    if ipaddr == "" and ifname ~= nil then
+		    ipaddr = ut.trim(sys.exec("ip -4 -br addr ls dev " .. ifname .. " | awk -F'[ /]+' '{print $3}' | tr -d '\n'"))
+	    end
+	    if ipaddr == "" and ifname ~= nil then
+		    ipaddr = ut.trim(sys.exec("ip -4 addr show dev " .. ifname .. " | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1 | tr -d '\n'"))
+	    end
 	    if ipaddr == "" then
 		    connectivity = "ERROR"
 	    end
