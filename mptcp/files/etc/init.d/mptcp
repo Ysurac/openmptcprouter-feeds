@@ -44,11 +44,11 @@ interface_multipath_settings() {
 
 	config_get enabled "$config" auto "1"
 	config_get iface "$config" ifname
+	count=$(($count+1))
 	[ -z "$iface" ] && iface=$(ifstatus "$config" | jsonfilter -q -e '@["l3_device"]')
 
 	[ "$enabled" = "0" ] && return 0
 
-	count=$(($count+1))
 	id=$count
 	[ -n "$intf" ] && [ "$iface" != "$intf" ] && return 0
 	[ -z "$iface" ] && return 0
@@ -57,6 +57,10 @@ interface_multipath_settings() {
 	config_get mode "$config" multipath "off"
 	[ "$mode" = "master" ] && mode="on"
 	multipath "$iface" "$mode"
+	[ "$mode" != "off" ] && {
+		[ -z "$mptcpintf" ] && mptcpintf="$iface"
+		[ -n "$mptcpintf" ] && mptcpintf="$mptcpintf $iface"
+	}
 	#[ "$mode" = "off" ] && {
 	#	ip rule del table $id > /dev/null 2>&1
 	#	ip route flush $id > /dev/null 2>&1
@@ -87,13 +91,14 @@ interface_multipath_settings() {
 		if [ -z "$gateway" ] || [ "$( valid_subnet4 $gateway )" != "ok" ]; then 
 			gateway=$(ubus call network.interface.${config}_4 status 2>/dev/null | jsonfilter -q -e '@.inactive.route[0].nexthop' | tr -d "\n")
 		fi
-		netmask=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f2 | tr -d "\n")
+		netmask=$(ip -4 addr show dev $iface | grep peer | awk '{print $4}' | cut -d/ -f2 | tr -d "\n")
+		[ -z "$netmask" ] && netmask=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f2 | tr -d "\n")
 		network=`ipcalc.sh $ipaddr $netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 	fi
 	ip rule del table $id > /dev/null 2>&1
 	ip route flush $id > /dev/null 2>&1
 	if [ -n "$gateway" ] && [ -n "$network" ]; then
-		ip rule add from $ipaddr iif $iface oif $iface table $id
+		ip rule add from $ipaddr iif $iface oif $iface table $id pref 0
 		ip route replace $network/$netmask dev $iface scope link table $id
 		ip route replace default via $gateway dev $iface table $id
 		ip route flush $id
@@ -141,7 +146,7 @@ interface_multipath_settings() {
 		ip -6 rule del table 6$id > /dev/null 2>&1
 		ip -6 route flush 6$id > /dev/null 2>&1
 		if [ -n "$ip6addr" ] && [ -n "$gateway6" ] && [ -n "$network6" ]; then
-			ip -6 rule add from $ip6addr iif $iface oif $iface table 6$id
+			ip -6 rule add from $ip6addr iif $iface oif $iface table 6$id pref 0
 			ip -6 route replace $network6/$netmask6 dev $iface scope link table 6$id
 			ip -6 route replace default via $gateway6 dev $iface table 6$id
 			ip -6 route flush 6$id
@@ -167,14 +172,28 @@ load_interfaces() {
 	[ "$multipath" != "off" ] && interfaces=" ${ifname} ${interfaces}"
 }
 
+set_multipath() {
+	ls -1 /sys/class/net/ | while read iface; do
+		exist=0
+		for ifacemptcp in $mptcpintf; do
+			if [ "$iface" = "$ifacemptcp" ]; then
+				exist=1
+			fi
+		done
+		[ "$exist" = "0" ] && multipath $iface off
+	done
+}
+
 start_service() {
 	local intf=$1
 	local id count
 	. /lib/functions.sh
 	. /lib/functions/network.sh
 	global_multipath_settings
+	mptcpintf=""
 	config_load network
 	config_foreach interface_multipath_settings interface $intf
+	set_multipath
 	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && {
 		ethtool --offload eth0 rx off tx off
 	}
