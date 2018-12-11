@@ -77,6 +77,7 @@ function wizard_add()
 			ucic:set("network","wan" .. i,"multipath","master")
 		end
 		ucic:set("network","wan" .. i,"defaultroute","0")
+		ucic:reorder("network","wan" .. i, i + 2)
 		ucic:save("network")
 		ucic:commit("network")
 
@@ -370,6 +371,7 @@ function wizard_add()
 
 	-- Restart all
 	luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
+	luci.sys.call("/etc/init.d/mptcp restart >/dev/null 2>/dev/null")
 	if openmptcprouter_vps_key ~= "" then
 		luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
 		os.execute("sleep 2")
