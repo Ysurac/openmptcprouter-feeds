@@ -46,34 +46,31 @@ interface_multipath_settings() {
 	config_get iface "$config" ifname
 	count=$(($count+1))
 	id=$count
-	ip rule del table $id > /dev/null 2>&1
-	ip route flush $id > /dev/null 2>&1
-	ip -6 rule del table 6$id > /dev/null 2>&1
-	ip -6 route flush 6$id > /dev/null 2>&1
 
-	[ -z "$iface" ] && iface=$(ifstatus "$config" | jsonfilter -q -e '@["l3_device"]')
+	config_get mode "$config" multipath "off"
+	[ "$mode" != "off" ] && {
+		[ -n "$mptcpintf" ] && mptcpintf="$mptcpintf $iface"
+		[ -z "$mptcpintf" ] && mptcpintf="$iface"
+	}
+	[ "$mode" = "master" ] && {
+		mode="on"
+		# Force that only one interface is master
+		if [ "$master" != "" ]; then
+			logger -t "MPTCP" "Multipath master already set, disable master for $config"
+			uci -q set network.$config.multipath="on"
+			uci -q commit network
+		else
+			master="$config"
+		fi
+	}
 
 	[ "$enabled" = "0" ] && return 0
-
+	[ -z "$iface" ] && iface=$(ifstatus "$config" | jsonfilter -q -e '@["l3_device"]')
 	[ -n "$intf" ] && [ "$iface" != "$intf" ] && return 0
 	[ -z "$iface" ] && return 0
 	[ -n "$(ifconfig | grep $iface)" ] || return 0
 	[ "$(echo $iface | grep _dev)" != "" ] && return 0
-	config_get mode "$config" multipath "off"
-	[ "$mode" = "master" ] && {
-		mode="on"
-		# Force that only one interface is master
-		if [ -n "$master" ]; then
-			uci -q network.$config.multipath="on"
-		else
-			master=$config
-		fi
-	}
 	multipath "$iface" "$mode"
-	[ "$mode" != "off" ] && {
-		[ -z "$mptcpintf" ] && mptcpintf="$iface"
-		[ -n "$mptcpintf" ] && mptcpintf="$mptcpintf $iface"
-	}
 	#[ "$mode" = "off" ] && {
 	#	ip rule del table $id > /dev/null 2>&1
 	#	ip route flush $id > /dev/null 2>&1
@@ -117,8 +114,6 @@ interface_multipath_settings() {
 		ip route flush $id
 
 		config_get mode "$config" multipath "off"
-		local enabled
-		config_get enabled "$config" auto "1"
 		[ "$mode" = "master" ] && {
 			ip route replace default via $gateway dev $iface
 		}
@@ -165,8 +160,6 @@ interface_multipath_settings() {
 			ip -6 route flush 6$id
 
 			config_get mode "$config" multipath "off"
-			local enabled
-			config_get enabled "$config" auto "1"
 			[ "$mode" = "master" ] && {
 				ip -6 route replace default via $gateway6 dev $iface
 			}
@@ -199,7 +192,7 @@ set_multipath() {
 
 start_service() {
 	local intf=$1
-	local id count
+	local id count intfmaster
 	. /lib/functions.sh
 	. /lib/functions/network.sh
 	global_multipath_settings
@@ -210,7 +203,12 @@ start_service() {
 	set_multipath
 	# If no master is defined, one interface is defined as master
 	if [ "$master" = "" ]; then
-		uci -q set network.$(echo $mptcpintf | cut -d' ' -f1 | tr -d "\n").multipath="master"
+		intfmaster="$(echo $mptcpintf | cut -d' ' -f1 | tr -d '\n')"
+		[ "$intfmaster" != "" ] && {
+			logger -t "MPTCP" "No master multipath defined, setting it to $intfmaster"
+			uci -q set network.${intfmaster}.multipath="master"
+			uci -q commit network
+		}
 	fi
 	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && {
 		ethtool --offload eth0 rx off tx off
