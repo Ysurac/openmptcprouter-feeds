@@ -60,7 +60,15 @@ interface_multipath_settings() {
 	[ -n "$(ifconfig | grep $iface)" ] || return 0
 	[ "$(echo $iface | grep _dev)" != "" ] && return 0
 	config_get mode "$config" multipath "off"
-	[ "$mode" = "master" ] && mode="on"
+	[ "$mode" = "master" ] && {
+		mode="on"
+		# Force that only one interface is master
+		if [ -n "$master" ]; then
+			uci -q network.$config.multipath="on"
+		else
+			master=$config
+		fi
+	}
 	multipath "$iface" "$mode"
 	[ "$mode" != "off" ] && {
 		[ -z "$mptcpintf" ] && mptcpintf="$iface"
@@ -196,9 +204,14 @@ start_service() {
 	. /lib/functions/network.sh
 	global_multipath_settings
 	mptcpintf=""
+	master=""
 	config_load network
 	config_foreach interface_multipath_settings interface $intf
 	set_multipath
+	# If no master is defined, one interface is defined as master
+	if [ "$master" = "" ]; then
+		uci -q set network.$(echo $mptcpintf | cut -d' ' -f1 | tr -d "\n").multipath="master"
+	fi
 	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && {
 		ethtool --offload eth0 rx off tx off
 	}
