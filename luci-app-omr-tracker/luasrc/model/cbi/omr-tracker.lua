@@ -1,6 +1,5 @@
 local net = require "luci.model.network".init()
 local sys = require "luci.sys"
-local ifaces = sys.net:devices()
 local m, s, o
 
 m = Map("omr-tracker", translate("OMR-Tracker"))
@@ -86,9 +85,9 @@ s.template_addremove = "omr-tracker/cbi-select-add"
 s.addremove = true
 s.add_select_options = { }
 s.add_select_options[''] = ''
-for _, iface in ipairs(ifaces) do
-	if not (iface == "lo" or iface:match("^ifb.*")) then
-		s.add_select_options[iface] = iface
+for _, iface in ipairs(net:get_networks()) do
+	if not (iface:name() == "loopback") then
+		s.add_select_options[iface:name()] = iface:name()
 	end
 end
 
