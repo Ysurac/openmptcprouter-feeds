@@ -13,15 +13,15 @@ _parse_result() {
 
 _login() {
 	local username password auth
-	server="$(uci -q get openmptcprouter.vps.ip)"
+	server="$(uci -q get openmptcprouter.${servername}.ip)"
 	[ -z "$server" ] && server="$(uci -q get shadowsocks-libev.sss0.server)"
-	username="$(uci -q get openmptcprouter.vps.username)"
-	password="$(uci -q get openmptcprouter.vps.password)"
+	username="$(uci -q get openmptcprouter.${servername}.username)"
+	password="$(uci -q get openmptcprouter.${servername}.password)"
 	if [ -z "$token" ]; then
 		auth=`curl --max-time 10 -s -k -H "Content-Type: application/json" -X POST -d '{"username":"'$username'","password":"'$password'"}' https://$server:65500/login`
 		[ -z "$auth" ] && return
 		token="$(echo "$auth" | jsonfilter -q -e '@.token')"
-		uci -q set openmptcprouter.vps.token="$token"
+		uci -q set openmptcprouter.${servername}.token="$token"
 	fi
 }
 
@@ -94,11 +94,11 @@ _set_openvpn_vps() {
 }
 
 _set_ss_server_vps() {
-	local disabled port server key method
+	local disabled port key method
 	config_get disabled $1 disabled
 	[ "$disabled" = "1" ] && return
 	config_get port $1 server_port
-	config_get server $1 server
+	#config_get server $1 server
 	config_get key $1 key
 	key="$(echo $key | sed 's/+/-/g; s/\//_/g;')"
 	[ -z "$key" ] && return
@@ -123,10 +123,9 @@ _get_vps_config() {
 	vps_machine="$(echo "$vps_config" | jsonfilter -q -e '@.vps.machine')"
 	vps_omr_version="$(echo "$vps_config" | jsonfilter -q -e '@.vps.omr_version')"
 	uci -q batch <<-EOF >/dev/null
-		set openmptcprouter.vps.kernel=$vps_kernel
-		set openmptcprouter.vps.machine=$vps_machine
-		set openmptcprouter.vps.omr_version=$vps_omr_version
-		commit openmptcprouter
+		set openmptcprouter.${servername}.kernel=$vps_kernel
+		set openmptcprouter.${servername}.machine=$vps_machine
+		set openmptcprouter.${servername}.omr_version=$vps_omr_version
 	EOF
 
 	glorytun_state=0
@@ -297,7 +296,7 @@ _set_config_from_vps() {
 	[ "$shorewall_redirect" = "enable" ] && redirect="1"
 	[ "$shorewall_redirect" = "disable" ] && redirect="0"
 	uci -q batch <<-EOF >/dev/null
-		set openmptcprouter.vps.redirect_ports=$redirect
+		set openmptcprouter.${servername}.redirect_ports=$redirect
 	EOF
 
 	# MPTCP settings
@@ -327,47 +326,65 @@ _set_config_from_vps() {
 	# Get available server
 	available_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.available' | sed -e 's/\[ //' -e 's/ \]//' -e 's/,//g')"
 	uci -q batch <<-EOF >/dev/null
-		del openmptcprouter.vps.available_vpn
+		del openmptcprouter.${servername}.available_vpn
 	EOF
 	if [ -n "$available_vpn" ]; then
 		for vpn in $available_vpn; do
 			uci -q batch <<-EOF >/dev/null
-				add_list openmptcprouter.vps.available_vpn=$vpn
+				add_list openmptcprouter.${servername}.available_vpn=$vpn
 			EOF
 		done
 	fi
-
 	uci -q batch <<-EOF >/dev/null
-		set openmptcprouter.vps.get_config=0
-		commit openmptcprouter
+		set openmptcprouter.${servername}.get_config=0
 	EOF
 }
 
-start_service() {
-	[ -z "$(uci -q get openmptcprouter.vps.username)" ] && return
-	[ -z "$(uci -q get openmptcprouter.vps.password)" ] && return
+_count_server() {
+	local servername=$1
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	serversnb=$((serversnb+1))
+}
+
+_config_service() {
+	servername=$1
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	token=""
+	vps_config=""
 	_login
 	[ -z "$token" ] && {
 		uci -q batch <<-EOF >/dev/null
-			set openmptcprouter.vps.admin_error=1
-			commit openmptcprouter
+			set openmptcprouter.${servername}.admin_error=1
 		EOF
 		return
 	}
-	[ "$(uci -q get openmptcprouter.vps.get_config)" = "1" ] && _set_config_from_vps
+	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && {
+		_set_config_from_vps
+	}
 	_get_vps_config
 	config_load shadowsocks-libev
 	config_foreach _set_ss_server_vps server
 	_set_glorytun_vps
 	_set_openvpn_vps
 	redirect_port="0"
-	if [ "$(uci -q get openmptcprouter.vps.redirect_ports)" = "1" ] || [ "$(uci -q get upnpd.config.enabled)" = "1" ]; then
+	if [ "$(uci -q get openmptcprouter.${servername}.redirect_ports)" = "1" ] || [ "$(uci -q get upnpd.config.enabled)" = "1" ]; then
 		redirect_port="1"
 	fi
 	_set_redirect_ports_from_vps $redirect_port
 	_set_mptcp_vps
 	uci -q batch <<-EOF >/dev/null
-		set openmptcprouter.vps.admin_error=0
+		set openmptcprouter.${servername}.admin_error=0
+	EOF
+}
+
+start_service() {
+	serversnb=0
+	config_load openmptcprouter
+	config_foreach _count_server server
+	config_foreach _config_service server
+	uci -q batch <<-EOF >/dev/null
 		commit openmptcprouter
 	EOF
 }
