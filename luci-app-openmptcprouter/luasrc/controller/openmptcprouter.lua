@@ -222,6 +222,7 @@ function wizard_add()
 	local servers = luci.http.formvaluetable("server")
 	for server, _ in pairs(servers) do
 		local server_ip = luci.http.formvalue("%s.server_ip" % server) or ""
+		local backup = luci.http.formvalue("%s.backup" % server) or "0"
 
 		-- OpenMPTCProuter VPS
 		local openmptcprouter_vps_key = luci.http.formvalue("%s.openmptcprouter_vps_key" % server) or ""
@@ -230,6 +231,7 @@ function wizard_add()
 		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key)
 		ucic:set("openmptcprouter",server,"get_config","1")
 		ucic:set("openmptcprouter",server,"ip",server_ip)
+		ucic:set("openmptcprouter",server,"backup",backup)
 		ucic:save("openmptcprouter")
 		if server_ip ~= "" then
 			serversnb = serversnb + 1
@@ -244,20 +246,21 @@ function wizard_add()
 
 	for server, _ in pairs(servers) do
 		local server_ip = luci.http.formvalue("%s.server_ip" % server) or ""
+		local backup = luci.http.formvalue("%s.backup" % server) or "0"
 		-- We have an IP, so set it everywhere
 		if server_ip ~= "" then
 			-- Check if we have more than one IP, in this case use Nginx HA
 			if serversnb > 1 then
-				if k == 0 then
+				if backup == "0" then
 					ss_ip=server_ip
 					table.insert(ss_servers_nginx,server_ip .. ":65101 max_fails=3 fail_timeout=30s")
-					table.insert(ss_servers_ha,server_ip .. ":65101 weight 1 check")
+					table.insert(ss_servers_ha,server_ip .. ":65101 check")
 					if vpn_port ~= "" then
 						table.insert(vpn_servers,server_ip .. ":" .. vpn_port .. " max_fails=3 fail_timeout=30s")
 					end
 				else
 					table.insert(ss_servers_nginx,server_ip .. ":65101 backup")
-					table.insert(ss_servers_ha,server_ip .. ":65101 weight 2 check")
+					table.insert(ss_servers_ha,server_ip .. ":65101 backup")
 					if vpn_port ~= "" then
 						table.insert(vpn_servers,server_ip .. ":" .. vpn_port .. " backup")
 					end
