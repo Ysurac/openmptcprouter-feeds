@@ -38,7 +38,6 @@ set_ss_route() {
 	if [ "$server_ip" = "127.0.0.1" ]; then
 		upstreams=$(uci -q get nginx-ha.ShadowSocks.upstreams | sed -e "s/' '/%/" -e 's/ /_/g' -e "s/'//g" -e 's/%/ /')
 		for up in $upstreams; do
-			_log "up: $up - metric: $metric"
 			nginxip=$(echo $up | cut -d: -f1)
 			if [ "$nginxip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $nginxip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ]; then
 				_log "Set server $nginxip route via $OMR_TRACKER_DEVICE"
@@ -356,7 +355,7 @@ fi
 	if [ "$multipath_config" = "on" ] && [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath)" != "master" ] && [ "$(uci -q get openmptcprouter.settings.master)" = "dynamic" ]; then
 		masterintf="$(uci -q show network | grep multipath=\'master\' | cut -d'.' -f2)"
 		masterlatency="$(uci -q get openmptcprouter.$masterintf.latency | tr -d '\n')"
-		if [ -n "$masterintf" ] && [ "$masterlatency" != "" ] && [ "$masterlatency" -gt "$(($OMR_TRACKER_LATENCY*2))" ]; then
+		if [ -n "$masterintf" ] && [ "$masterlatency" != "" ] && [ "$OMR_TRACKER_LATENCY" -lt "$(($masterlatency/2))" ]; then
 			uci -q set network.$masterintf.multipath='on'
 			uci -q set network.$OMR_TRACKER_INTERFACE.multipath='master'
 			_log "Change master interface from $masterintf ($masterlatency ms) to $OMR_TRACKER_INTERFACE ($OMR_TRACKER_LATENCY ms)"
@@ -364,7 +363,7 @@ fi
 	fi
 }
 
-if [ "$(uci -q get openmptcprouter.vps.get_config)" = "1" ] || [ "$(uci -q get openmptcprouter.vps.admin_error)" = "1" ]; then
+if [ "$(uci -q show openmptcprouter | grep get_config=\'1\')" != "" ] || [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" != "" ]; then
 	/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1
 	sleep 5
 fi
