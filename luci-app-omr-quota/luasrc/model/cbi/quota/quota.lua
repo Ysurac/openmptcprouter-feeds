@@ -4,7 +4,6 @@
 local fs = require "nixio.fs"
 local net = require "luci.model.network".init()
 local sys = require "luci.sys"
-local ifaces = sys.net:devices()
 
 m = Map("omr-quota", translate("Monthly Quota"), translate("Set monthly quota, when quota is reached interface state is set to down"))
 
@@ -13,9 +12,9 @@ s.template_addremove = "omr-quota/cbi-select-add"
 s.addremove = true
 s.add_select_options = { }
 s.add_select_options[''] = ''
-for _, iface in ipairs(ifaces) do
-	if not (iface == "lo" or iface:match("^ifb.*")) then
-		s.add_select_options[iface] = iface
+for _, iface in ipairs(net:get_networks()) do
+	if not (iface:name() == "loopback") then
+		s.add_select_options[iface:name()] = iface:name()
 	end
 end
 
