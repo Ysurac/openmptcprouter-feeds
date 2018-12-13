@@ -232,6 +232,7 @@ function wizard_add()
 		ucic:set("openmptcprouter",server,"get_config","1")
 		ucic:set("openmptcprouter",server,"ip",server_ip)
 		ucic:set("openmptcprouter",server,"backup",backup)
+		ucic:set("openmptcprouter",server,"port","65500")
 		ucic:save("openmptcprouter")
 		if server_ip ~= "" then
 			serversnb = serversnb + 1
@@ -494,13 +495,17 @@ function update_vps()
 	-- Update VPS
 	local update_vps = luci.http.formvalue("flash") or ""
 	if update_vps ~= "" then
-		local token = uci:get("openmptcprouter","vps","token") or ""
-		if token ~= "" then
-			sys.exec('curl -4 --max-time 20 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. mArray.openmptcprouter["service_addr"] .. ":65500/update")
-			luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
-			luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/status"))
-			return
-		end
+		ucic:foreach("openmptcprouter", "server", function(s)
+			local serverip = uci:get("openmptcprouter",s[".name"],"ip")
+			local adminport = uci:get("openmptcprouter",s[".name"],"port") or ""
+			local token = uci:get("openmptcprouter",s[".name"],"token") or ""
+			if token ~= "" then
+				sys.exec('curl -4 --max-time 20 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ":" .. adminport .. "/update")
+				luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
+				luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/status"))
+				return
+			end
+		end)
 	end
 end
 
@@ -640,9 +645,10 @@ function interfaces_status()
 	ucic:foreach("openmptcprouter", "server", function(s)
 		local serverip = uci:get("openmptcprouter",s[".name"],"ip")
 		if serverip ~= "" and (mArray.openmptcprouter["service_addr"] == serverip or serverip == mArray.openmptcprouter["wan_addr"]) then
+			local adminport = uci:get("openmptcprouter",s[".name"],"port") or ""
 			local token = uci:get("openmptcprouter",s[".name"],"token") or ""
 			if token ~= "" then
-				local vpsinfo_json = sys.exec('curl -4 --max-time 2 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ":65500/status")
+				local vpsinfo_json = sys.exec('curl -4 --max-time 2 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ":" .. adminport .."/status")
 				local vpsinfo = json.decode(vpsinfo_json) or ""
 				if vpsinfo.vps ~= nil then
 					mArray.openmptcprouter["vps_loadavg"] = vpsinfo.vps.loadavg or ""
@@ -840,18 +846,24 @@ function interfaces_status()
 	    
 	    local latency = ""
 	    local server_ping = ""
-	    if connectivity ~= "ERROR" and ifname ~= "" and gateway ~= "" and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" and mArray.openmptcprouter["service_addr"] ~= "127.0.0.1" then
-		    local server_ping_test = sys.exec("ping -w 1 -c 1 -I " .. ifname .. " " .. mArray.openmptcprouter["service_addr"])
-		    local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
-		    if server_ping_result ~= "" then
-			    server_ping = "DOWN"
-			    if connectivity == "OK" then
-				connectivity = "WARNING"
+	    if connectivity ~= "ERROR" and ifname ~= "" and gateway ~= "" and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" then
+		    local serverip = mArray.openmptcprouter["service_addr"]
+		    if serverip == "127.0.0.1" then
+			    serverip = mArray.openmptcprouter["wan_addr"]
+		    end
+		    if serverip ~= "" then
+			    local server_ping_test = sys.exec("ping -w 1 -c 1 -I " .. ifname .. " " .. mArray.openmptcprouter["service_addr"])
+			    local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
+			    if server_ping_result ~= "" then
+				    server_ping = "DOWN"
+				    if connectivity == "OK" then
+					    connectivity = "WARNING"
+				    end
+			    else
+				    mArray.openmptcprouter["vps_status"] = "UP"
+				    server_ping = "UP"
+				    latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f5 | cut -d '.' -f1"))
 			    end
-		    else
-			    mArray.openmptcprouter["vps_status"] = "UP"
-			    server_ping = "UP"
-			    latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f5 | cut -d '.' -f1"))
 		    end
 	    end
 
