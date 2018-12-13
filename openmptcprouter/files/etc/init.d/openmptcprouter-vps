@@ -17,8 +17,9 @@ _login() {
 	[ -z "$server" ] && server="$(uci -q get shadowsocks-libev.sss0.server)"
 	username="$(uci -q get openmptcprouter.${servername}.username)"
 	password="$(uci -q get openmptcprouter.${servername}.password)"
+	port="$(uci -q get openmptcprouter.${servername}.port)"
 	if [ -z "$token" ]; then
-		auth=`curl --max-time 10 -s -k -H "Content-Type: application/json" -X POST -d '{"username":"'$username'","password":"'$password'"}' https://$server:65500/login`
+		auth=`curl --max-time 10 -s -k -H "Content-Type: application/json" -X POST -d '{"username":"'$username'","password":"'$password'"}' https://$server:$port/login`
 		[ -z "$auth" ] && return
 		token="$(echo "$auth" | jsonfilter -q -e '@.token')"
 		uci -q set openmptcprouter.${servername}.token="$token"
@@ -30,7 +31,7 @@ _get_json() {
 	route=$1
 	[ -z "$token" ] && _login
 	[ -n "$token" ] && {
-		result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" https://$server:65500/$route`
+		result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" https://$server:$port/$route`
 		echo $result
 	} || {
 		echo ''
@@ -43,7 +44,7 @@ _set_json() {
 	settings="$2"
 	[ -z "$token" ] && _login
 	[ -n "$token" ] && {
-		result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:65500/$route`
+		result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$port/$route`
 		echo $result
 	} || {
 		echo ''
@@ -344,6 +345,7 @@ _count_server() {
 	local servername=$1
 	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
 	serversnb=$((serversnb+1))
 }
 
@@ -351,6 +353,7 @@ _config_service() {
 	servername=$1
 	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
 	token=""
 	vps_config=""
 	_login
