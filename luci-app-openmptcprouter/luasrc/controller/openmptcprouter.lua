@@ -37,7 +37,7 @@ function wizard_add()
 	local add_server = luci.http.formvalue("add_server") or ""
 	local add_server_name = luci.http.formvalue("add_server_name") or ""
 	if add_server ~= "" and add_server_name ~= "" then
-		ucic:set("openmptcprouter",add_server_name,"server")
+		ucic:set("openmptcprouter",add_server_name:gsub("[^%w_]+","_"),"server")
 		gostatus = false
 	end
 
@@ -404,6 +404,7 @@ function wizard_add()
 	local shadowsocks_disable = luci.http.formvalue("disableshadowsocks") or "0"
 	ucic:set("openmptcprouter","settings","shadowsocks_disable",shadowsocks_disable)
 	ucic:set("openmptcprouter","settings","vpn",default_vpn)
+	ucic:delete("openmptcprouter","settings","master_lcintf")
 	ucic:save("openmptcprouter")
 	ucic:commit("openmptcprouter")
 
