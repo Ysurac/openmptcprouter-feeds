@@ -218,6 +218,7 @@ function wizard_add()
 	end
 
 	-- Retrieve all server settings
+	local getconf = 0
 	local serversnb = 0
 	local servers = luci.http.formvaluetable("server")
 	for server, _ in pairs(servers) do
@@ -229,7 +230,12 @@ function wizard_add()
 		ucic:set("openmptcprouter",server,"server")
 		ucic:set("openmptcprouter",server,"username","openmptcprouter")
 		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key)
-		ucic:set("openmptcprouter",server,"get_config","1")
+		if backup == "0" and getconf == 0 then
+			ucic:set("openmptcprouter",server,"get_config","1")
+			getconf = getconf + 1
+		else
+			ucic:set("openmptcprouter",server,"get_config","0")
+		end
 		ucic:set("openmptcprouter",server,"ip",server_ip)
 		ucic:set("openmptcprouter",server,"backup",backup)
 		ucic:set("openmptcprouter",server,"port","65500")
@@ -254,10 +260,10 @@ function wizard_add()
 			if serversnb > 1 then
 				if backup == "0" then
 					ss_ip=server_ip
-					table.insert(ss_servers_nginx,server_ip .. ":65101 max_fails=3 fail_timeout=30s")
+					table.insert(ss_servers_nginx,server_ip .. ":65101 max_fails=2 fail_timeout=20s")
 					table.insert(ss_servers_ha,server_ip .. ":65101 check")
 					if vpn_port ~= "" then
-						table.insert(vpn_servers,server_ip .. ":" .. vpn_port .. " max_fails=3 fail_timeout=30s")
+						table.insert(vpn_servers,server_ip .. ":" .. vpn_port .. " max_fails=2 fail_timeout=20s")
 					end
 				else
 					table.insert(ss_servers_nginx,server_ip .. ":65101 backup")
@@ -497,7 +503,7 @@ function update_vps()
 	if update_vps ~= "" then
 		ucic:foreach("openmptcprouter", "server", function(s)
 			local serverip = uci:get("openmptcprouter",s[".name"],"ip")
-			local adminport = uci:get("openmptcprouter",s[".name"],"port") or ""
+			local adminport = uci:get("openmptcprouter",s[".name"],"port") or "65500"
 			local token = uci:get("openmptcprouter",s[".name"],"token") or ""
 			if token ~= "" then
 				sys.exec('curl -4 --max-time 20 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ":" .. adminport .. "/update")
@@ -582,7 +588,6 @@ function interfaces_status()
 	mArray.openmptcprouter = {}
 	--mArray.openmptcprouter["version"] = ut.trim(sys.exec("cat /etc/os-release | grep VERSION= | sed -e 's:VERSION=::'"))
 	mArray.openmptcprouter["version"] = uci:get("openmptcprouter", "settings", "version") or ut.trim(sys.exec("cat /etc/os-release | grep VERSION= | sed -e 's:VERSION=::' -e 's/^.//' -e 's/.$//'"))
-	mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter", "vps", "omr_version") or ""
 
 	mArray.openmptcprouter["latest_version_omr"] = uci:get("openmptcprouter", "latest_versions", "omr") or ""
 	mArray.openmptcprouter["latest_version_vps"] = uci:get("openmptcprouter", "latest_versions", "vps") or ""
@@ -608,22 +613,22 @@ function interfaces_status()
 	mArray.openmptcprouter["wan_addr6"] = ""
 	local tracker_ip = ""
 	if mArray.openmptcprouter["dns"] == true then
+		-- wanaddr
+		mArray.openmptcprouter["wan_addr"] = sys.exec("wget -4 -qO- -T 1 http://ip.openmptcprouter.com")
+		if mArray.openmptcprouter["ipv6"] == "enabled" then
+			mArray.openmptcprouter["wan_addr6"] = uci:get("openmptcprouter","omr","public_detected_ipv6") or ""
+			if mArray.openmptcprouter["wan_addr6"] == "" then
+				mArray.openmptcprouter["wan_addr6"] = sys.exec("wget -6 -qO- -T 1 http://ipv6.openmptcprouter.com")
+			end
+		end
 		-- shadowsocksaddr
-		mArray.openmptcprouter["ss_addr"] = uci:get("openmptcprouter","vps","public_detected_ipv4") or ""
+		mArray.openmptcprouter["ss_addr"] = uci:get("openmptcprouter","omr","public_detected_ipv4") or ""
 		if mArray.openmptcprouter["ss_addr"] == "" then
 			tracker_ip = uci:get("shadowsocks-libev","tracker","local_address") or ""
 			if tracker_ip ~= "" then
 				local tracker_port = uci:get("shadowsocks-libev","tracker","local_port")
 				mArray.openmptcprouter["ss_addr"] = sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ip.openmptcprouter.com")
 				--mArray.openmptcprouter["ss_addr6"] = sys.exec("curl -s -6 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ipv6.openmptcprouter.com")
-			end
-		end
-		-- wanaddr
-		mArray.openmptcprouter["wan_addr"] = sys.exec("wget -4 -qO- -T 1 http://ip.openmptcprouter.com")
-		if mArray.openmptcprouter["ipv6"] == "enabled" then
-			mArray.openmptcprouter["wan_addr6"] = uci:get("openmptcprouter","vps","public_detected_ipv6") or ""
-			if mArray.openmptcprouter["wan_addr6"] == "" then
-				mArray.openmptcprouter["wan_addr6"] = sys.exec("wget -6 -qO- -T 1 http://ipv6.openmptcprouter.com")
 			end
 		end
 	end
@@ -639,21 +644,26 @@ function interfaces_status()
 	end
 
 	-- Get VPS info
-	mArray.openmptcprouter["vps_kernel"] = uci:get("openmptcprouter","vps","kernel") or ""
-	mArray.openmptcprouter["vps_machine"] = uci:get("openmptcprouter","vps","machine") or ""
-	mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter","vps","omr_version") or ""
 	ucic:foreach("openmptcprouter", "server", function(s)
 		local serverip = uci:get("openmptcprouter",s[".name"],"ip")
 		if serverip ~= "" and (mArray.openmptcprouter["service_addr"] == serverip or serverip == mArray.openmptcprouter["wan_addr"]) then
-			local adminport = uci:get("openmptcprouter",s[".name"],"port") or ""
+			mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter", s[".name"], "omr_version") or ""
+			mArray.openmptcprouter["vps_kernel"] = uci:get("openmptcprouter",s[".name"],"kernel") or ""
+			mArray.openmptcprouter["vps_machine"] = uci:get("openmptcprouter",s[".name"],"machine") or ""
+			local adminport = uci:get("openmptcprouter",s[".name"],"port") or "65500"
 			local token = uci:get("openmptcprouter",s[".name"],"token") or ""
 			if token ~= "" then
-				local vpsinfo_json = sys.exec('curl -4 --max-time 2 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ":" .. adminport .."/status")
+				local vpsinfo_json = sys.exec('curl -4 --max-time 2 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ':' .. adminport .. '/status')
 				local vpsinfo = json.decode(vpsinfo_json) or ""
 				if vpsinfo.vps ~= nil then
 					mArray.openmptcprouter["vps_loadavg"] = vpsinfo.vps.loadavg or ""
 					mArray.openmptcprouter["vps_uptime"] = vpsinfo.vps.uptime or ""
 					mArray.openmptcprouter["vps_mptcp"] = vpsinfo.vps.mptcp or ""
+				else
+					uci:set("openmptcprouter",s[".name"],"admin_error","1")
+					uci:delete("openmptcprouter",s[".name"],"token")
+					uci:save("openmptcprouter",s[".name"])
+					uci:commit("openmptcprouter",s[".name"])
 				end
 			end
 		end
@@ -852,7 +862,7 @@ function interfaces_status()
 			    serverip = mArray.openmptcprouter["wan_addr"]
 		    end
 		    if serverip ~= "" then
-			    local server_ping_test = sys.exec("ping -w 1 -c 1 -I " .. ifname .. " " .. mArray.openmptcprouter["service_addr"])
+			    local server_ping_test = sys.exec("ping -w 1 -c 1 -I " .. ifname .. " " .. serverip)
 			    local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
 			    if server_ping_result ~= "" then
 				    server_ping = "DOWN"
@@ -887,7 +897,7 @@ function interfaces_status()
 			    if multipath_available_state_wan == "" then
 				    multipath_available = "OK"
 				    if mArray.openmptcprouter["service_addr"] ~= "" and mArray.openmptcprouter["service_addr"] ~= "127.0.0.1" then
-					mArray.openmptcprouter["server_mptcp"] = "disabled"
+					    mArray.openmptcprouter["server_mptcp"] = "disabled"
 				    end
 			    else
 				    multipath_available = "ERROR"
