@@ -654,16 +654,20 @@ function interfaces_status()
 			local token = uci:get("openmptcprouter",s[".name"],"token") or ""
 			if token ~= "" then
 				local vpsinfo_json = sys.exec('curl -4 --max-time 2 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ':' .. adminport .. '/status')
-				local vpsinfo = json.decode(vpsinfo_json) or ""
-				if vpsinfo.vps ~= nil then
-					mArray.openmptcprouter["vps_loadavg"] = vpsinfo.vps.loadavg or ""
-					mArray.openmptcprouter["vps_uptime"] = vpsinfo.vps.uptime or ""
-					mArray.openmptcprouter["vps_mptcp"] = vpsinfo.vps.mptcp or ""
-				else
-					uci:set("openmptcprouter",s[".name"],"admin_error","1")
-					uci:delete("openmptcprouter",s[".name"],"token")
-					uci:save("openmptcprouter",s[".name"])
-					uci:commit("openmptcprouter",s[".name"])
+				if vpsinfo_json ~= "" and vpsinfo_json ~= nil then
+					local status, vpsinfo = pcall(function() 
+						return json.decode(vpsinfo_json)
+					end)
+					if status and vpsinfo.vps ~= nil then
+						mArray.openmptcprouter["vps_loadavg"] = vpsinfo.vps.loadavg or ""
+						mArray.openmptcprouter["vps_uptime"] = vpsinfo.vps.uptime or ""
+						mArray.openmptcprouter["vps_mptcp"] = vpsinfo.vps.mptcp or ""
+					else
+						uci:set("openmptcprouter",s[".name"],"admin_error","1")
+						uci:delete("openmptcprouter",s[".name"],"token")
+						uci:save("openmptcprouter",s[".name"])
+						uci:commit("openmptcprouter",s[".name"])
+					end
 				end
 			end
 		end
@@ -940,7 +944,7 @@ function interfaces_status()
 		    whois = uci:get("openmptcprouter",interface,"asn") or ""
 		    if whois == "" then
 			    --whois = ut.trim(sys.exec("whois " .. publicIP .. " | grep -i 'netname' | awk '{print $2}'"))
-			    whois = ut.trim(sys.exec("wget -4 -qO- -T 1 'http://api.iptoasn.com/v1/as/ip/" .. publicIP .. "' | jsonfilter -e '@.as_description'"))
+			    whois = ut.trim(sys.exec("wget -4 -qO- -T 1 'http://api.iptoasn.com/v1/as/ip/" .. publicIP .. "' | jsonfilter -q -e '@.as_description'"))
 		    end
 	    end
 	    
