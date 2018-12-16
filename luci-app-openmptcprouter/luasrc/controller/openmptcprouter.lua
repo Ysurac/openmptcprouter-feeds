@@ -502,8 +502,8 @@ function update_vps()
 	local update_vps = luci.http.formvalue("flash") or ""
 	if update_vps ~= "" then
 		ucic:foreach("openmptcprouter", "server", function(s)
-			local serverip = uci:get("openmptcprouter",s[".name"],"ip")
-			local adminport = uci:get("openmptcprouter",s[".name"],"port") or "65500"
+			local serverip = ucic:get("openmptcprouter",s[".name"],"ip")
+			local adminport = ucic:get("openmptcprouter",s[".name"],"port") or "65500"
 			local token = uci:get("openmptcprouter",s[".name"],"token") or ""
 			if token ~= "" then
 				sys.exec('curl -4 --max-time 20 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ":" .. adminport .. "/update")
