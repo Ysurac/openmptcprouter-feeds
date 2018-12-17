@@ -97,6 +97,11 @@ del_ss_route() {
 	fi
 }
 
+dns_flush() {
+	unbound-control flush-negative >/dev/null 2>&1
+	unbound-control flush-bogus >/dev/null 2>&1
+}
+
 if [ -n "$RANDOM" ]; then
 	sleep `expr $RANDOM % 10`
 else
@@ -173,7 +178,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		config_foreach set_route interface $OMR_TRACKER_INTERFACE
 		#config_load shadowsocks-libev
 		#config_foreach del_ss_route server all
-		if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q get shadowsocks-libev.hi2.mode)" = "tcp_and_udp" ]; then
+		if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.shadowsocks)" = "up" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q get shadowsocks-libev.hi2.mode)" = "tcp_and_udp" ]; then
 			_log "Tunnel down use ShadowSocks for UDP"
 			uci -q set shadowsocks-libev.ss_rules.redir_udp='hi2'
 			if /etc/init.d/shadowsocks-libev rules_exist ; then
@@ -182,6 +187,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 			fi
 		fi
 	fi
+	dns_flush
 	exit 0
 fi
 
@@ -232,6 +238,7 @@ if [ "$OMR_TRACKER_PREV_STATUS" != "" ] && [ "$OMR_TRACKER_PREV_STATUS" != "$OMR
 	[ "$mail_alert" = "1" ] && echo -e "Subject: OpenMPTCProuter: $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) is up\n\nOpenMPTCProuter detected that connection $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) is up again." | sendmail $(uci -q get mail.default.to)
 	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='up'
 	uci -q commit openmptcprouter
+	dns_flush
 fi
 
 multipath_config=$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath" || echo "off")
@@ -350,6 +357,7 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 	fi
 	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='up'
 	uci -q commit openmptcprouter
+	dns_flush
 fi
 
 [ -n "$OMR_TRACKER_LATENCY" ] && {
@@ -370,23 +378,23 @@ fi
 if [ "$(pgrep ss-redir)" = "" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "0" ]; then
 	_log "Can't find Shadowsocks, restart it..."
 	/etc/init.d/shadowsocks-libev restart
-	sleep 10
+	sleep 5
 fi
 if [ "$(pgrep glorytun)" = "" ] && [ "$(uci -q get glorytun.vpn.enabled)" = "1" ]; then
 	_log "Can't find Glorytun, restart it..."
 	/etc/init.d/glorytun restart
 	/etc/init.d/glorytun-udp restart
-	sleep 10
+	sleep 5
 fi
 if [ "$(pgrep openvpn)" = "" ] && [ "$(uci -q get openvpn.omr.enabled)" != "0" ]; then
 	_log "Can't find OpenVPN, restart it..."
 	/etc/init.d/openvpn restart
-	sleep 10
+	sleep 5
 fi
 if [ "$(pgrep mlvpn)" = "" ] && [ "$(uci -q get mlvpn.general.enable)" != "0" ]; then
 	_log "Can't find MLVPN, restart it..."
 	/etc/init.d/mlvpn restart
-	sleep 10
+	sleep 5
 fi
 
 if [ "$(uci -q show openmptcprouter | grep get_config=\'1\')" != "" ] || [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" != "" ]; then
