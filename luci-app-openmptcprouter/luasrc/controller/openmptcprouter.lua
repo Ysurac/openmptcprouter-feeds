@@ -447,7 +447,7 @@ function settings_add()
 
 	-- Set tcp_fin_timeout
 	local tcp_fin_timeout = luci.http.formvalue("tcp_fin_timeout")
-	luci.sys.exec("sysctl -w net.ipv4.tcp_fin_timeoute=%s" % tcp_fin_timeout)
+	luci.sys.exec("sysctl -w net.ipv4.tcp_fin_timeout=%s" % tcp_fin_timeout)
 	luci.sys.exec("sed -i 's:^net.ipv4.tcp_fin_timeout=[0-9]*:net.ipv4.tcp_fin_timeout=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_fin_timeout)
 	
 	-- Disable IPv6
@@ -614,20 +614,27 @@ function interfaces_status()
 	local tracker_ip = ""
 	if mArray.openmptcprouter["dns"] == true then
 		-- wanaddr
-		mArray.openmptcprouter["wan_addr"] = sys.exec("wget -4 -qO- -T 1 http://ip.openmptcprouter.com")
+		--mArray.openmptcprouter["wan_addr"] = uci:get("openmptcprouter","omr","public_detected_ipv4") or ""
+		mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("wget -4 -qO- -T 1 http://ip.openmptcprouter.com"))
+		if mArray.openmptcprouter["wan_addr"] == "" then
+			mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("dig TXT +timeout=2 +short o-o.myaddr.l.google.com @ns1.google.com | awk -F'\"' '{print $2}'"))
+		end
+		if mArray.openmptcprouter["wan_addr"] == "" then
+			mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("dig +timeout=2 +short myip.opendns.com @resolver1.opendns.com"))
+		end
 		if mArray.openmptcprouter["ipv6"] == "enabled" then
 			mArray.openmptcprouter["wan_addr6"] = uci:get("openmptcprouter","omr","public_detected_ipv6") or ""
 			if mArray.openmptcprouter["wan_addr6"] == "" then
-				mArray.openmptcprouter["wan_addr6"] = sys.exec("wget -6 -qO- -T 1 http://ipv6.openmptcprouter.com")
+				mArray.openmptcprouter["wan_addr6"] = ut.trim(sys.exec("wget -6 -qO- -T 1 http://ipv6.openmptcprouter.com"))
 			end
 		end
 		-- shadowsocksaddr
-		mArray.openmptcprouter["ss_addr"] = uci:get("openmptcprouter","omr","public_detected_ipv4") or ""
+		mArray.openmptcprouter["ss_addr"] = uci:get("openmptcprouter","omr","detected_ss_ipv4") or ""
 		if mArray.openmptcprouter["ss_addr"] == "" then
 			tracker_ip = uci:get("shadowsocks-libev","tracker","local_address") or ""
 			if tracker_ip ~= "" then
 				local tracker_port = uci:get("shadowsocks-libev","tracker","local_port")
-				mArray.openmptcprouter["ss_addr"] = sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ip.openmptcprouter.com")
+				mArray.openmptcprouter["ss_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 2 http://ip.openmptcprouter.com"))
 				--mArray.openmptcprouter["ss_addr6"] = sys.exec("curl -s -6 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ipv6.openmptcprouter.com")
 			end
 		end
@@ -662,13 +669,19 @@ function interfaces_status()
 						mArray.openmptcprouter["vps_loadavg"] = vpsinfo.vps.loadavg or ""
 						mArray.openmptcprouter["vps_uptime"] = vpsinfo.vps.uptime or ""
 						mArray.openmptcprouter["vps_mptcp"] = vpsinfo.vps.mptcp or ""
+						mArray.openmptcprouter["vps_admin"] = true
 					else
 						uci:set("openmptcprouter",s[".name"],"admin_error","1")
 						uci:delete("openmptcprouter",s[".name"],"token")
 						uci:save("openmptcprouter",s[".name"])
 						uci:commit("openmptcprouter",s[".name"])
+						mArray.openmptcprouter["vps_admin"] = false
 					end
+				else
+					mArray.openmptcprouter["vps_admin"] = false
 				end
+			else
+				mArray.openmptcprouter["vps_admin"] = false
 			end
 		end
 	end)
