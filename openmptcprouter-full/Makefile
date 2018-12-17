@@ -15,7 +15,7 @@ include $(INCLUDE_DIR)/package.mk
 
 MY_DEPENDS := \
     mptcp       \
-    unbound     \
+    unbound unbound-control \
     netifd      \
     mc          \
     openmptcprouter \
