@@ -42,11 +42,12 @@ function wizard_add()
 	end
 
 	-- Remove existing server
-	local delete_server = luci.http.formvaluetable("delete_server") or ""
+	local delete_server = luci.http.formvaluetable("deleteserver") or ""
 	if delete_server ~= "" then
-		for server, _ in pairs(delete_server) do
-			ucic:delete("openmptcprouter",server)
+		for serverdel, _ in pairs(delete_server) do
+			luci.sys.call("uci -q del openmptcprouter." .. serverdel)
 		end
+		gostatus = false
 	end
 
 	-- Add new interface
@@ -135,6 +136,7 @@ function wizard_add()
 	local delete_intf = luci.http.formvaluetable("delete") or ""
 	if delete_intf ~= "" then
 		for intf, _ in pairs(delete_intf) do
+			local defif = ucic:set("network",intf,"ifname")
 			ucic:delete("network",intf)
 			ucic:delete("network",intf .. "_dev")
 			ucic:save("network")
@@ -145,7 +147,7 @@ function wizard_add()
 			ucic:delete("qos",intf)
 			ucic:save("qos")
 			ucic:commit("qos")
-			luci.sys.call("uci -q del_list vnstat.@vnstat[-1].interface=" .. intf)
+			luci.sys.call("uci -q del_list vnstat.@vnstat[-1].interface=" .. defif)
 			gostatus = false
 		end
 	end
