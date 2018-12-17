@@ -9,10 +9,14 @@ log() {
 }
 
 get_ip() {
-	uci -q set openmptcprouter.omr.detected_public_ipv4=$(wget -4 -qO- -T 3 http://ip.openmptcprouter.com)
+	uci -q set openmptcprouter.omr=router
+	uci -q set openmptcprouter.omr.detected_public_ipv4="$(wget -4 -qO- -T 3 http://ip.openmptcprouter.com)"
+	uci -q set openmptcprouter.omr.detected_ss_ipv4=$(curl -s -4 --socks5 "${proxy}" --max-time 3 http://ip.openmptcprouter.com)
 	if [ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 | tr -d '\n')" = "0" ]; then
 		uci -q set openmptcprouter.omr.detected_public_ipv6=$(wget -6 -qO- -T 3 http://ip.openmptcprouter.com)
+		uci -q set openmptcprouter.omr.detected_ss_ipv6=$(curl -s -6 --socks5 "${proxy}" --max-time 3 http://ip.openmptcprouter.com)
 	fi
+	uci -q commit openmptcprouter.omr
 }
 
 timeout=${OMR_TRACKER_TIMEOUT:-5}
@@ -25,7 +29,8 @@ nodns=0
 
 last=0
 nocontact=""
-uci -q set openmptcprouter.omr.shadowsocks="up"
+uci -q set openmptcprouter.omr=router
+uci -q set openmptcprouter.omr.shadowsocks=""
 get_ip
 
 while true; do
@@ -35,16 +40,16 @@ while true; do
 	}
 	if curl -s --socks5 "${proxy}" --max-time "${timeout}" "$host" &>/dev/null ; then
 		nocontact=""
-		[ "${last}" -ge "${retry}" ] && {
+		[ "${last}" -ge "${retry}" ] || [ "$(uci -q get openmptcprouter.omr.shadowsocks)" = "" ] && {
 			log "Shadowsocks is up (can contact ${host})"
 			uci -q set openmptcprouter.omr.shadowsocks="up"
-			uci -q commit openmptcprouter
+			uci -q commit openmptcprouter.omr
 		}
 		if ! /etc/init.d/shadowsocks-libev rules_exist ; then
 			/etc/init.d/shadowsocks-libev rules_up 2> /dev/null
 			get_ip
 		fi
-		[ "$(uci -q get openmptcprouter.omr.ipv4)" = "" ] || ([ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 | tr -d '\n')" = "0" ] && [ "$(uci -q get openmptcprouter.omr.ipv6)" = "" ]) && get_ip
+		[ "$(uci -q get openmptcprouter.omr.detected_public_ipv4)" = "" ] || ([ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 | tr -d '\n')" = "0" ] && [ "$(uci -q get openmptcprouter.omr.detected_public_ipv6)" = "" ]) && get_ip
 		last=0
 	else
 		last=$((last + 1 ))
@@ -53,6 +58,7 @@ while true; do
 			if /etc/init.d/shadowsocks-libev rules_exist ; then
 				log "Shadowsocks is down (can't contact ${nocontact})"
 				uci -q set openmptcprouter.omr.shadowsocks="down"
+				uci -q commit openmptcprouter.omr
 				/etc/init.d/shadowsocks-libev rules_down 2> /dev/null
 				get_ip
 			fi
