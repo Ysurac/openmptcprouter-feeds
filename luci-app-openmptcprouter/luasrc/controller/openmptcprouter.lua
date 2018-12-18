@@ -46,8 +46,8 @@ function wizard_add()
 	if delete_server ~= "" then
 		for serverdel, _ in pairs(delete_server) do
 			luci.sys.call("uci -q del openmptcprouter." .. serverdel)
+			gostatus = false
 		end
-		gostatus = false
 	end
 
 	-- Add new interface
