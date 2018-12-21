@@ -45,8 +45,18 @@ function wizard_add()
 	local delete_server = luci.http.formvaluetable("deleteserver") or ""
 	if delete_server ~= "" then
 		for serverdel, _ in pairs(delete_server) do
-			luci.sys.call("uci -q del openmptcprouter." .. serverdel)
-			gostatus = false
+			ucic:foreach("network", "interface", function(s)
+				local sectionname = s[".name"]
+				ucic:delete("network","server_" .. serverdel .. "_" .. sectionname .. "_route")
+			end)
+			ucic:delete("network","server_" .. serverdel .. "_default_route")
+			ucic:delete("openmptcprouter",serverdel)
+			ucic:save("openmptcprouter")
+			ucic:commit("openmptcprouter")
+			ucic:save("network")
+			ucic:commit("network")
+			luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/wizard"))
+			return
 		end
 	end
 
@@ -439,8 +449,10 @@ end
 
 function settings_add()
 	-- Redirects all ports from VPS to OpenMPTCProuter
-	local redirect_ports = luci.http.formvalue("redirect_ports") or "0"
-	ucic:set("openmptcprouter","vps","redirect_ports",redirect_ports)
+	local redirect_ports = luci.http.formvaluetable("redirect_ports")
+	for server, value in pairs(redirect_ports) do
+		ucic:set("openmptcprouter",server,"redirect_ports",value)
+	end
 
 	-- Set tcp_keepalive_time
 	local tcp_keepalive_time = luci.http.formvalue("tcp_keepalive_time")
@@ -506,7 +518,7 @@ function update_vps()
 		ucic:foreach("openmptcprouter", "server", function(s)
 			local serverip = ucic:get("openmptcprouter",s[".name"],"ip")
 			local adminport = ucic:get("openmptcprouter",s[".name"],"port") or "65500"
-			local token = uci:get("openmptcprouter",s[".name"],"token") or ""
+			local token = ucic:get("openmptcprouter",s[".name"],"token") or ""
 			if token ~= "" then
 				sys.exec('curl -4 --max-time 20 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ":" .. adminport .. "/update")
 				luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")

@@ -2,9 +2,16 @@
 
 <% if stderr and #stderr > 0 then %><pre class="error"><%=pcdata(stderr)%></pre><% end %>
 <% 
-    local omr_version=luci.model.uci.cursor():get("openmptcprouter","vps","omr_version")
     local latest_omr_version=luci.model.uci.cursor():get("openmptcprouter","latest_versions","vps")
-    if omr_version ~= "" and latest_omr_version ~= "" and omr_version ~= latest_omr_version then
+    omr_test = false
+    uci:foreach("openmptcprouter","server", function(s)
+	servername = s[".name"]
+	local omr_version=luci.model.uci.cursor():get("openmptcprouter",servername,"omr_version")
+	if omr_version ~= "" and latest_omr_version ~= "" and omr_version ~= latest_omr_version then
+		omr_test = true
+	end
+    end)
+    if omr_test == true then
 %>
 <form class="inline" method="post" action="<%=url('admin/system/openmptcprouter/update_vps')%>">
     <div class="cbi-map">
@@ -15,6 +22,7 @@
 	    <label class="cbi-value-title"><%:Update OpenMPTCProuter server%></label>
 	    <div class="cbi-value-field">
 		<input type="hidden" name="token" value="<%=token%>" />
+		<input type="hidden" name="server" value="<%=servername%>" />
 		<input type="hidden" name="flash" value="1" />
 		<input type="submit" name="update_vps" class="cbi-button cbi-button-apply" value="<%:Update%>">
 	    </div>
@@ -31,13 +39,23 @@
 	<h2 name="content"><%:Advanced Settings%></h2>
 	<fieldset class="cbi-section" id="networks">
 	<legend><%:VPS settings%></legend>
-	    <div class="cbi-section-descr"></div>
-	    <div class="cbi-value">
-	        <label class="cbi-value-title"><%:Redirects all ports from VPS to OpenMPTCProuter%></label>
-	        <div class="cbi-value-field">
-		    <input type="checkbox" name="redirect_ports" class="cbi-input-checkbox" value="1" <% if luci.model.uci.cursor():get("openmptcprouter","vps","redirect_ports") == "1" then %>checked<% end %>>
+	    <%
+		uci:foreach("openmptcprouter","server", function(s)
+			servername = s[".name"]
+	    %>
+	    <h3><%=servername%></h3>
+	    <div class="cbi-section-node">
+		<div class="cbi-section-descr"></div>
+		<div class="cbi-value">
+	    	    <label class="cbi-value-title"><%:Redirects all ports from server to OpenMPTCProuter%></label>
+	    	    <div class="cbi-value-field">
+			<input type="checkbox" name="redirect_ports.<%=servername%>" class="cbi-input-checkbox" value="1" <% if luci.model.uci.cursor():get("openmptcprouter",servername,"redirect_ports") == "1" then %>checked<% end %>>
+		    </div>
 		</div>
 	    </div>
+	    <%
+		end)
+	    %>
 	    <div class="cbi-value">
 		<label class="cbi-value-title"><%:Enable ShadowSocks OBFS%></label>
 		<div class="cbi-value-field">
