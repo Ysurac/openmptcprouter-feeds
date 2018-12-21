@@ -166,7 +166,8 @@ _intf_rule() {
 	local intf
 	config_get intf $1 ifname
 	[ -z "$ifname" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
-	count=$((count+1))
+	#count=$((count+1))
+	config_get count $1 metric
 	local mode
 	config_get mode $1 multipath "off"
 	[ "$mode" = "off" ] && return
@@ -177,8 +178,21 @@ _intf_rule() {
 	create omr_rules_dst_bypass_$intf hash:net hashsize 64
 	create omr_rules6_dst_bypass_$intf hash:net family inet6 hashsize 64
 	EOF
-	ip rule add prio 1 fwmark 0x539$count lookup $count pref 1 > /dev/null 2>&1
-	ip -6 rule add prio 1 fwmark 0x6539$count lookup 6$count > /dev/null 2>&1
+	uci -q batch <<-EOF >/dev/null
+		delete network.${1}_fw_rule=rule
+		set network.${1}_fw_rule=rule
+		set network.${1}_fw_rule.priority=1
+		set network.${1}_fw_rule.mark=0x539${count}
+		set network.${1}_fw_rule.lookup=${count}
+		delete network.${1}_fw_rule6=rule6
+		set network.${1}_fw_rule6=rule6
+		set network.${1}_fw_rule6.priority=1
+		set network.${1}_fw_rule6.mark=0x6539${count}
+		set network.${1}_fw_rule6.lookup=${count}
+		commit network
+	EOF
+	#ip rule add prio 1 fwmark 0x539$count lookup $count pref 1 > /dev/null 2>&1
+	#ip -6 rule add prio 1 fwmark 0x6539$count lookup 6$count > /dev/null 2>&1
 	if [ "$(iptables -w 40 -t mangle -L | grep omr_rules_dst_bypass_$intf)" = "" ]; then
 		iptables-restore --wait=60 --noflush <<-EOF
 		*mangle
@@ -239,7 +253,7 @@ boot() {
 }
 
 start_service() {
-	local count
+	#local count
 	logger -t "omr-bypass" "Starting OMR-ByPass..."
 	ipset -q flush omr_rules_dst_bypass_all > /dev/null 2>&1
 	ipset -q flush omr_rules6_dst_bypass_all > /dev/null 2>&1
