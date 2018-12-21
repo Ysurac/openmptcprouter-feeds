@@ -43,6 +43,10 @@ mtu.datatype = "range(64,9000)"
 mtu.size = 5
 mtu.rmempty = true
 
+table = s:option(Value, "table", translate("Table"))
+table.rmempty = true
+table.size = 5
+
 routetype = s:option(Value, "type", translate("Route type"))
 routetype:value("", "unicast")
 routetype:value("local", "local")
@@ -84,6 +88,10 @@ if fs.access("/proc/net/ipv6_route") then
 	mtu.datatype = "range(64,9000)"
 	mtu.size = 5
 	mtu.rmempty = true
+
+	table = s:option(Value, "table", translate("Table"))
+	table.rmempty = true
+	table.size = 5
 
 	routetype = s:option(Value, "type", translate("Route type"))
 	routetype:value("", "unicast")
