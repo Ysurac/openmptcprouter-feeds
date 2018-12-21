@@ -7,6 +7,7 @@ START=90
 USE_PROCD=1
 
 . /usr/lib/unbound/iptools.sh
+. /lib/functions/network.sh
 
 global_multipath_settings() {
 	local multipath mptcp_path_manager mptcp_schdeduler congestion mptcp_checksum mptcp_syn_retries mptcp_fullmesh_num_subflows mptcp_fullmesh_create_on_err mptcp_ndiffports_num_subflows
@@ -46,7 +47,8 @@ interface_multipath_settings() {
 	config_get iface "$config" ifname
 	count=$(($count+1))
 	id=$count
-
+	config_set "$config" metric $count
+	uci -q set network.${config}.metric=$count
 	config_get mode "$config" multipath "off"
 	[ "$mode" != "off" ] && {
 		[ -n "$mptcpintf" ] && mptcpintf="$mptcpintf $iface"
@@ -57,8 +59,8 @@ interface_multipath_settings() {
 		# Force that only one interface is master
 		if [ "$master" != "" ]; then
 			logger -t "MPTCP" "Multipath master already set, disable master for $config"
-			uci -q set network.$config.multipath="on"
-			uci -q commit network
+			config_set "$config" multipath "on"
+			uci -q set network.${config}.multipath="on"
 		else
 			master="$config"
 		fi
@@ -88,11 +90,13 @@ interface_multipath_settings() {
 		config_get ipaddr $config ipaddr
 		config_get gateway $config gateway
 		config_get netmask $config netmask
+		[ -n "$ipaddr" ] && [ -n "$netmask" ] && netmask=`ipcalc.sh $ipaddr $netmask | sed -n '/NETMASK=/{;s/.*=//;s/ .*//;p;}'`
 		[ -n "$îpaddr" ] && [ -n "$netmask" ] && network=`ipcalc.sh $ipaddr $netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 	else
-		network_get_ipaddr $config ipaddr
-		ipaddr=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
-		gateway=$(ip -4 r list dev $iface | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
+		network_get_ipaddr ipaddr $config
+		[ -z "$ipaddr" ] && ipaddr=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
+		network_get_gateway gateway $config true
+		[ -z "$gateway" ] && gateway=$(ip -4 r list dev $iface | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
 		[ -z "$gateway" ] && gateway=$(uci -q get "network.$config.gateway")
 		[ -z "$gateway" ] && gateway=$(ubus call network.interface.$config status | jsonfilter -q -e '@.route[0].nexthop' | tr -d "\n")
 		if [ -z "$gateway" ] || [ "$( valid_subnet4 $gateway )" != "ok" ]; then
@@ -101,17 +105,49 @@ interface_multipath_settings() {
 		if [ -z "$gateway" ] || [ "$( valid_subnet4 $gateway )" != "ok" ]; then 
 			gateway=$(ubus call network.interface.${config}_4 status 2>/dev/null | jsonfilter -q -e '@.inactive.route[0].nexthop' | tr -d "\n")
 		fi
-		netmask=$(ip -4 addr show dev $iface | grep peer | awk '{print $4}' | cut -d/ -f2 | tr -d "\n")
+		network_get_subnet netmask $config
+		[ -z "$netmask" ] && netmask=$(ip -4 addr show dev $iface | grep peer | awk '{print $4}' | cut -d/ -f2 | tr -d "\n")
 		[ -z "$netmask" ] && netmask=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f2 | tr -d "\n")
+		[ -n "$ipaddr" ] && [ -n "$netmask" ] && netmask=`ipcalc.sh $ipaddr $netmask | sed -n '/NETMASK=/{;s/.*=//;s/ .*//;p;}'`
 		[ -n "$ipaddr" ] && [ -n "$netmask" ] && network=`ipcalc.sh $ipaddr $netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 	fi
-	ip rule del table $id > /dev/null 2>&1
-	ip route flush $id > /dev/null 2>&1
+	#ip rule del table $id > /dev/null 2>&1
+	#ip route flush $id > /dev/null 2>&1
+	uci -q batch <<-EOF >/dev/null
+		delete network.${config}_rule
+		delete network.${config}_route
+		delete network.${config}_route_default
+		commit network
+	EOF
+
 	if [ -n "$gateway" ] && [ -n "$network" ]; then
-		ip rule add from $ipaddr iif $iface oif $iface table $id pref 0
-		ip route replace $network/$netmask dev $iface scope link table $id
-		ip route replace default via $gateway dev $iface table $id
-		ip route flush $id
+		uci -q batch <<-EOF >/dev/null
+			delete network.${config}_rule
+			set network.${config}_rule=rule
+			set network.${config}_rule.in=${config}
+			set network.${config}_rule.out=${config}
+			set network.${config}_rule.lookup=${id}
+			set network.${config}_rule.priority=0
+			set network.${config}_rule.src="${ipaddr}/32"
+			delete network.${config}_route
+			set network.${config}_route=route
+			set network.${config}_route.interface=${config}
+			set network.${config}_route.target=${network}
+			set network.${config}_route.netmask=${netmask}
+			set network.${config}_route.table=${id}
+			delete network.${config}_route_default
+			set network.${config}_route_default=route
+			set network.${config}_route_default.interface=${config}
+			set network.${config}_route_default.target='0.0.0.0'
+			set network.${config}_route_default.netmask='0.0.0.0'
+			set network.${config}_route_default.gateway=$gateway
+			set network.${config}_route_default.table=${id}
+			commit network
+		EOF
+		#ip rule add from $ipaddr iif $iface oif $iface table $id pref 0
+		#ip route replace $network/$netmask dev $iface scope link table $id
+		#ip route replace default via $gateway dev $iface table $id
+		#ip route flush $id
 
 		config_get mode "$config" multipath "off"
 		[ "$mode" = "master" ] && {
@@ -151,13 +187,34 @@ interface_multipath_settings() {
 				network6=`ipcalc $ip6addr | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 			fi
 		fi
-		ip -6 rule del table 6$id > /dev/null 2>&1
-		ip -6 route flush 6$id > /dev/null 2>&1
+		#ip -6 rule del table 6$id > /dev/null 2>&1
+		#ip -6 route flush 6$id > /dev/null 2>&1
 		if [ -n "$ip6addr" ] && [ -n "$gateway6" ] && [ -n "$network6" ]; then
-			ip -6 rule add from $ip6addr iif $iface oif $iface table 6$id pref 0
-			ip -6 route replace $network6/$netmask6 dev $iface scope link table 6$id
-			ip -6 route replace default via $gateway6 dev $iface table 6$id
-			ip -6 route flush 6$id
+			uci -q batch <<-EOF >/dev/null
+				delete network.${config}_rule6
+				set network.${config}_rule6=rule6
+				set network.${config}_rule6.in=${config}
+				set network.${config}_rule6.out=${config}
+				set network.${config}_rule6.lookup=6${id}
+				set network.${config}_rule6.priority=0
+				set network.${config}_rule6.src="${ipaddr6}/127"
+				delete network.${config}_route6
+				set network.${config}_route6=route6
+				set network.${config}_route6.interface=${config}
+				set network.${config}_route6.target=${network6}/${netmask6}
+				set network.${config}_route6.table=6${id}
+				delete network.${config}_route6_default
+				set network.${config}_route6_default=route6
+				set network.${config}_route6_default.interface=${config}
+				set network.${config}_route6_default.target='::/0'
+				set network.${config}_route6_default.gateway=$gateway6
+				set network.${config}_route6_default.table=6${id}
+				commit network
+			EOF
+			#ip -6 rule add from $ip6addr iif $iface oif $iface table 6$id pref 0
+			#ip -6 route replace $network6/$netmask6 dev $iface scope link table 6$id
+			#ip -6 route replace default via $gateway6 dev $iface table 6$id
+			#ip -6 route flush 6$id
 
 			config_get mode "$config" multipath "off"
 			[ "$mode" = "master" ] && {
@@ -207,9 +264,9 @@ start_service() {
 		[ "$intfmaster" != "" ] && {
 			logger -t "MPTCP" "No master multipath defined, setting it to $intfmaster"
 			uci -q set network.${intfmaster}.multipath="master"
-			uci -q commit network
 		}
 	fi
+	uci -q commit network
 	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && {
 		ethtool --offload eth0 rx off tx off
 	}

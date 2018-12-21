@@ -11,8 +11,6 @@ set_route() {
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "${INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	multipath_current_config=$(multipath $interface_if | grep deactivated)
 	if [ "$multipath_config" != "off" ] && [ "$SETROUTE" != true ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$multipath_current_config" = "" ]; then
-	#if [ "$multipath_config" != "off" ] && [ "$SETROUTE" != true ]; then
-	#if [ "$multipath_config" != "off" ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$SETROUTE" != true ]; then
 		interface_gw="$(uci -q get network.$INTERFACE.gateway)"
 		if [ -z "$interface_gw" ]; then
 			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -e '@.route[0].nexthop' | tr -d "\n")
@@ -25,75 +23,76 @@ set_route() {
 		fi
 		if [ "$interface_gw" != "" ]; then
 			_log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
-			ip route replace default scope global nexthop via $interface_gw dev $interface_if && SETROUTE=true
-			ip route replace default via $interface_gw dev $interface_if table 991337
+			#ip route replace default scope global nexthop via $interface_gw dev $interface_if && SETROUTE=true
+			#ip route replace default via $interface_gw dev $interface_if table 991337
+			uci -q batch <<-EOF >/dev/null
+				set network.default_route=route
+				set network.default_route.interface=$INTERFACE
+				set network.default_route.target='0.0.0.0'
+				set network.default_route.netmask='0.0.0.0'
+				set network.default_route.gateway=$interface_gw
+				commit network.default_route
+				set network.default_fw_route=route
+				set network.default_fw_route.interface=$INTERFACE
+				set network.default_fw_route.target='0.0.0.0'
+				set network.default_fw_route.netmask='0.0.0.0'
+				set network.default_fw_route.gateway=$interface_gw
+				set network.default_fw_route.table=991337
+				commit network.default_fw_route
+			EOF
+			#SETROUTE=true
 		fi
 	fi
 }
 
-set_ss_route() {
-	local server_ip upstreams nginxip
-	local metric=$2
-	config_get server_ip $1 server
-	if [ "$server_ip" = "127.0.0.1" ]; then
-		upstreams=$(uci -q get nginx-ha.ShadowSocks.upstreams | sed -e "s/' '/%/" -e 's/ /_/g' -e "s/'//g" -e 's/%/ /')
-		for up in $upstreams; do
-			nginxip=$(echo $up | cut -d: -f1)
-			if [ "$nginxip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $nginxip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ]; then
-				_log "Set server $nginxip route via $OMR_TRACKER_DEVICE"
-				ip route replace $nginxip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric > /dev/null 2>&1
-			fi
-		done
-	else
-		if [ "$metric" != "off" ] && [ "$server_ip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $server_ip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ]; then
-			_log "Set server $server_ip route via $OMR_TRACKER_DEVICE metric $metric"
-			ip route del $server_ip metric $metric > /dev/null 2>&1
-			ip route replace $server_ip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric > /dev/null 2>&1
-		fi
+set_server_default_route() {
+	local server=$1
+	local serverip
+	config_get serverip $server ip
+	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric 1 | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ]; then
+		_log "Set server $server ($serverip) default route via $OMR_TRACKER_DEVICE_GATEWAY"
+		uci -q batch <<-EOF >/dev/null
+			set network.server_${server}_default_route=route
+			set network.server_${server}_default_route.interface=$OMR_TRACKER_INTERFACE
+			set network.server_${server}_default_route.target=$serverip
+			set network.server_${server}_default_route.netmask='255.255.255.255'
+			set network.server_${server}_default_route.gateway=$OMR_TRACKER_DEVICE_GATEWAY
+			set network.server_${server}_default_route.metric=1
+			commit network.server_${server}_default_route
+		EOF
 	fi
 }
 
-del_ss_route() {
-	local server_ip upstreams nginxip
+set_server_route() {
+	local server=$1
+	local serverip
+	config_get serverip $server ip
 	local metric=$2
-	config_get server_ip $1 server
-	if [ "$server_ip" = "127.0.0.1" ]; then
-		upstreams=$(uci -q get nginx-ha.ShadowSocks.upstreams | sed -e "s/' '/%/" -e 's/ /_/g' -e "s/'//g" -e 's/%/ /')
-		for up in $upstreams; do
-			_log "down : $up"
-			nginxip=$(echo $up | cut -d: -f1)
-			if [ "$metric" = "all" ]; then
-				if [ "$nginxip" != "" ] &&  [ "$(ip route show | grep $nginxip)" != "" ]; then
-					_log "Remove all server $nginxip route"
-					ip route delete $nginxip > /dev/null 2>&1
-				fi
-			else
-				if [ "$nginxip" != "" ] &&  [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $nginxip)" != "" ]; then
-					_log "Remove server $nginxip route via $OMR_TRACKER_DEVICE"
-					ip route delete $nginxip dev $OMR_TRACKER_DEVICE metric $metric > /dev/null 2>&1
-				fi
-			fi
-		done
-	else
-		if [ "$metric" = "all" ]; then
-			if [ "$server_ip" != "" ] &&  [ "$(ip route show | grep $server_ip)" != "" ]; then
-				_log "Remove all server $server_ip route"
-				ip route delete $server_ip > /dev/null 2>&1
-			fi
-		elif [ "$metric" = "off" ]; then
-			if [ "$server_ip" != "" ] &&  [ "$(ip route show dev $OMR_TRACKER_DEVICE | grep $server_ip)" != "" ]; then
-				_log "Remove all server $server_ip route via $OMR_TRACKER_DEVICE"
-				ip route delete $server_ip dev $OMR_TRACKER_DEVICE > /dev/null 2>&1
-			fi
-		else
-			if [ "$server_ip" != "" ] &&  [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $server_ip)" != "" ]; then
-				_log "Remove server $server_ip route via $OMR_TRACKER_DEVICE"
-				ip route delete $server_ip dev $OMR_TRACKER_DEVICE metric $metric > /dev/null 2>&1
-			elif [ "$server_ip" != "" ] &&  [ "$(ip route show dev $OMR_TRACKER_DEVICE metric 1 | grep $server_ip)" != "" ]; then
-				_log "Remove server $server_ip route via $OMR_TRACKER_DEVICE (master)"
-				ip route delete $server_ip dev $OMR_TRACKER_DEVICE metric 1 > /dev/null 2>&1
-			fi
-		fi
+	[ -z "$metric" ] && metric=$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)
+	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ]; then
+		_log "Set server $server ($serverip) route via $OMR_TRACKER_DEVICE_GATEWAY metric $metric"
+		uci -q batch <<-EOF >/dev/null
+			set network.server_${server}_${OMR_TRACKER_INTERFACE}_route=route
+			set network.server_${server}_${OMR_TRACKER_INTERFACE}_route.interface=$OMR_TRACKER_INTERFACE
+			set network.server_${server}_${OMR_TRACKER_INTERFACE}_route.target=$serverip
+			set network.server_${server}_${OMR_TRACKER_INTERFACE}_route.netmask='255.255.255.255'
+			set network.server_${server}_${OMR_TRACKER_INTERFACE}_route.gateway=$OMR_TRACKER_DEVICE_GATEWAY
+			set network.server_${server}_${OMR_TRACKER_INTERFACE}_route.metric=$metric
+			commit network.server_${server}_${OMR_TRACKER_INTERFACE}_route
+		EOF
+	fi
+	if [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ]; then
+		#ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
+		uci -q batch <<-EOF >/dev/null
+			set network.${OMR_TRACKER_INTERFACE}_route_default_metric=route
+			set network.${OMR_TRACKER_INTERFACE}_route_default_metric.interface=$OMR_TRACKER_INTERFACE
+			set network.${OMR_TRACKER_INTERFACE}_route_default_metric.target='0.0.0.0'
+			set network.${OMR_TRACKER_INTERFACE}_route_default_metric.netmask='0.0.0.0'
+			set network.${OMR_TRACKER_INTERFACE}_route_default_metric.gateway=$OMR_TRACKER_DEVICE_GATEWAY
+			set network.${OMR_TRACKER_INTERFACE}_route_default_metric.metric=$metric
+			set network.${OMR_TRACKER_INTERFACE}_route_default_metric.source=$OMR_TRACKER_DEVICE_IP
+			commit network.${OMR_TRACKER_INTERFACE}_route_default_metric
+		EOF
 	fi
 }
 
@@ -143,17 +142,16 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 			glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 down > /dev/null 2>&1
 		fi
 		config_load shadowsocks-libev
-		if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
-			#local metric=$(ip rule show | grep -m 1 "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
-			local metric=$(ip rule show | grep "$OMR_TRACKER_DEVICE_IP" | grep -m 1 "$OMR_TRACKER_DEVICE" | grep -om1 'lookup [[:digit:]]' | awk '{print $2}')
-			ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric >/dev/null 2>&1
-			config_foreach del_ss_route server $metric
-		else
-			if [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
-				ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
-			fi
-			config_foreach del_ss_route server off
-		fi
+		#if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
+		#	local metric=$(ip rule show | grep "$OMR_TRACKER_DEVICE_IP" | grep -m 1 "$OMR_TRACKER_DEVICE" | grep -om1 'lookup [[:digit:]]' | awk '{print $2}')
+		#	ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric >/dev/null 2>&1
+		#	config_foreach del_ss_route server $metric
+		#else
+		#	if [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
+		#		ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
+		#	fi
+		#	config_foreach del_ss_route server off
+		#fi
 	}
 
 	if [ "$default_gw" = "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
@@ -188,13 +186,22 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		fi
 	fi
 	dns_flush
+	/etc/init.d/network reload
 	exit 0
 fi
 
 if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
 	if [ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
 		_log "Tunnel up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
-		ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
+		uci -q batch <<-EOF >/dev/null
+			set network.default_route=route
+			set network.default_route.interface=$OMR_TRACKER_INTERFACE
+			set network.default_route.target='0.0.0.0'
+			set network.default_route.netmask='0.0.0.0'
+			set network.default_route.gateway=$OMR_TRACKER_DEVICE_GATEWAY
+			commit network.default_route
+		EOF
+		#ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
 	fi
 	if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "hi2" ]; then
 		_log "Tunnel up disable use of ShadowSocks for UDP"
@@ -229,6 +236,7 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 		fi
 		uci -q commit openmptcprouter
 	fi
+	/etc/init.d/network reload
 	exit 0
 fi
 
@@ -247,23 +255,43 @@ if [ "$multipath_config" = "master" ]; then
 		omrvpn_intf=$(uci -q get "network.omrvpn.ifname" || echo "tun")
 		if [ "$(ip route show default | grep -v metric | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ]; then
 			_log "Master up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
-			ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
+			#ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
+			uci -q batch <<-EOF >/dev/null
+				set network.default_route=route
+				set network.default_route.interface=$OMR_TRACKER_INTERFACE
+				set network.default_route.target='0.0.0.0'
+				set network.default_route.netmask='0.0.0.0'
+				set network.default_route.gateway=$OMR_TRACKER_DEVICE_GATEWAY
+				commit network.default_route
+			EOF
 		else
-			config_load shadowsocks-libev
-			config_foreach set_ss_route server 1
+			#config_load shadowsocks-libev
+			#config_foreach set_ss_route server 1
+			config_load openmptcprouter
+			config_foreach set_server_default_route server
 		fi
-		ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
+		#ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
+		uci -q batch <<-EOF >/dev/null
+			set network.default_fw_route=route
+			set network.default_fw_route.interface=$OMR_TRACKER_INTERFACE
+			set network.default_fw_route.target='0.0.0.0'
+			set network.default_fw_route.netmask='0.0.0.0'
+			set network.default_fw_route.gateway=$OMR_TRACKER_DEVICE_GATEWAY
+			set network.default_fw_route.table=991337
+			commit network.default_fw_route
+		EOF
 	fi
 	multipath_config="on"
 fi
 if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
-	#local metric=$(ip rule show | grep -m 1 "$OMR_TRACKER_DEVICE_IP" | awk '{print $5}')
-	local metric=$(ip rule show | grep "$OMR_TRACKER_DEVICE_IP" | grep -m 1 "$OMR_TRACKER_DEVICE" | grep -om1 'lookup [[:digit:]]' | awk '{print $2}')
-	[ -n "$metric" ] && {
-		ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
-		config_load shadowsocks-libev
-		config_foreach set_ss_route server $metric
-	}
+	#local metric=$(ip rule show | grep "$OMR_TRACKER_DEVICE_IP" | grep -m 1 "$OMR_TRACKER_DEVICE" | grep -om1 'lookup [[:digit:]]' | awk '{print $2}')
+	#[ -n "$metric" ] && {
+	#	#ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
+	#	config_load shadowsocks-libev
+	#	config_foreach set_ss_route server $metric
+	#}
+	config_load openmptcprouter
+	config_foreach set_server_route server
 fi
 
 [ "$multipath_config" = "on" ] && glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 up > /dev/null 2>&1
@@ -274,6 +302,7 @@ fi
 		multipath "$OMR_TRACKER_DEVICE" "$multipath_config"
 	fi
 }
+/etc/init.d/network reload
 
 # Save wan settings for status page
 if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ]; then
