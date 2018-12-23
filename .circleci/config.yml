@@ -25,8 +25,8 @@ jobs:
       - run:
           name: cache
           command: |
-            echo "cache 20 $OMR_TARGET" > /tmp/cache-target
-            echo "cache 24 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+            echo "cache 21 $OMR_TARGET" > /tmp/cache-target
+            echo "cache 25 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
 
       - restore_cache:
           keys:
@@ -82,8 +82,8 @@ jobs:
       - run:
           name: cache
           command: |
-            echo "cache 20 $OMR_TARGET" > /tmp/cache-target
-            echo "cache 24 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+            echo "cache 21 $OMR_TARGET" > /tmp/cache-target
+            echo "cache 25 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
 
       - restore_cache:
           keys:
@@ -139,8 +139,8 @@ jobs:
       - run:
           name: cache
           command: |
-            echo "cache 22 $OMR_TARGET" > /tmp/cache-target
-            echo "cache 26 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+            echo "cache 23 $OMR_TARGET" > /tmp/cache-target
+            echo "cache 27 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
 
       - restore_cache:
           keys:
@@ -196,8 +196,8 @@ jobs:
       - run:
           name: cache
           command: |
-            echo "cache 22 $OMR_TARGET" > /tmp/cache-target
-            echo "cache 26 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+            echo "cache 23 $OMR_TARGET" > /tmp/cache-target
+            echo "cache 27 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
 
       - restore_cache:
           keys:
@@ -253,8 +253,8 @@ jobs:
       - run:
           name: cache
           command: |
-            echo "cache 22 $OMR_TARGET" > /tmp/cache-target
-            echo "cache 26 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+            echo "cache 23 $OMR_TARGET" > /tmp/cache-target
+            echo "cache 27 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
 
       - restore_cache:
           keys:
@@ -310,8 +310,8 @@ jobs:
       - run:
           name: cache
           command: |
-            echo "cache 22 $OMR_TARGET" > /tmp/cache-target
-            echo "cache 26 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+            echo "cache 23 $OMR_TARGET" > /tmp/cache-target
+            echo "cache 27 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
 
       - restore_cache:
           keys:
@@ -354,6 +354,86 @@ jobs:
           paths:
             - openmptcprouter
 
+  build_wrt32:
+    machine: true
+
+    environment:
+      - OMR_VERSION: $CIRCLE_TAG
+
+    working_directory: ~/
+
+    steps:
+      - run:
+          name: cache
+          command: |
+            echo "cache 23 $OMR_TARGET" > /tmp/cache-target
+            echo "cache 27 $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+
+      - restore_cache:
+          keys:
+            - cache-{{ checksum "/tmp/cache-version" }}
+            - cache-{{ checksum "/tmp/cache-target" }}
+
+      - run:
+          name: Build toolchain
+          no_output_timeout: 30m
+          command: |
+            git clone https://github.com/ysurac/openmptcprouter || true
+            cd openmptcprouter
+            git pull || true
+            export OMR_PATH="$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/${CIRCLE_BRANCH:-$CIRCLE_TAG}"
+            export OMR_FEED_URL="$CIRCLE_REPOSITORY_URL"
+            export OMR_FEED_SRC="${CIRCLE_BRANCH:-$CIRCLE_TAG}"
+            export OMR_TARGET="wrt3200acm"
+            sh build.sh prepare {tools,toolchain}/install -j2
+            echo -e "$OMR_PRIVKEY" > ~/openmptcprouter/wrt3200acm/source/key-build
+            echo -e "$OMR_PUBKEY" > ~/openmptcprouter/wrt3200acm/source/key-build.pub
+
+      - save_cache:
+          key: cache-{{ checksum "/tmp/cache-target" }}
+          paths:
+            - openmptcprouter
+
+      - run:
+          name: Build
+          no_output_timeout: 30m
+          command: make IGNORE_ERRORS=m -C ~/openmptcprouter/wrt3200acm/source package/{compile,install,index} target/compile -j2 package/compile -j2 target/install -j2
+
+      - run:
+          name: Deploy
+          command: |
+            ssh -p ${OMR_DEPLOY_PORT:-22} deploy@$OMR_DEPLOY_HOST mkdir -p deploy/release
+            rsync -av --delete-after ~/openmptcprouter/wrt3200acm/source/bin/ -e "ssh -q -p ${OMR_DEPLOY_PORT:-22}" deploy@$OMR_DEPLOY_HOST:deploy/release/wrt3200acm
+            rm -rf ~/openmptcprouter/wrt3200acm/source/bin
+
+      - save_cache:
+          key: cache-{{ checksum "/tmp/cache-version" }}
+          paths:
+            - openmptcprouter
+
+      - run:
+          name: Build toolchain
+          no_output_timeout: 30m
+          command: |
+            git pull || true
+            export OMR_PATH="$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/${CIRCLE_BRANCH:-$CIRCLE_TAG}"
+            export OMR_FEED_URL="$CIRCLE_REPOSITORY_URL"
+            export OMR_FEED_SRC="${CIRCLE_BRANCH:-$CIRCLE_TAG}"
+            export OMR_TARGET="wrt32x"
+            sh build.sh prepare {tools,toolchain}/install -j2
+            echo -e "$OMR_PRIVKEY" > ~/openmptcprouter/wrt32x/source/key-build
+            echo -e "$OMR_PUBKEY" > ~/openmptcprouter/wrt32x/source/key-build.pub
+
+      - run:
+          name: Build
+          no_output_timeout: 30m
+          command: make IGNORE_ERRORS=m -C ~/openmptcprouter/wrt32x/source package/{compile,install,index} target/compile -j2 package/compile -j2 target/install -j2
+
+      - run:
+          name: Deploy
+          command: |
+            ssh -p ${OMR_DEPLOY_PORT:-22} deploy@$OMR_DEPLOY_HOST mkdir -p deploy/release
+            rsync -av --delete-after ~/openmptcprouter/wrt32x/source/bin/ -e "ssh -q -p ${OMR_DEPLOY_PORT:-22}" deploy@$OMR_DEPLOY_HOST:deploy/release/wrt32x
 
 workflows:
   version: 2
@@ -375,6 +455,6 @@ workflows:
       - build_bpi-r2:
           requires:
             - prepare
-      - build_wrt3200acm:
+      - build_wrt32:
           requires:
             - prepare
