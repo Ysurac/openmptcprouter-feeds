@@ -23,8 +23,8 @@ set_route() {
 		fi
 		if [ "$interface_gw" != "" ]; then
 			_log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
-			#ip route replace default scope global nexthop via $interface_gw dev $interface_if && SETROUTE=true
-			#ip route replace default via $interface_gw dev $interface_if table 991337
+			ip route replace default scope global nexthop via $interface_gw dev $interface_if && SETROUTE=true
+			ip route replace default via $interface_gw dev $interface_if table 991337
 			uci -q batch <<-EOF >/dev/null
 				set network.default_route=route
 				set network.default_route.interface=$INTERFACE
@@ -82,15 +82,16 @@ set_server_route() {
 		EOF
 	fi
 	if [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ]; then
-		#ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
+		ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
 		uci -q batch <<-EOF >/dev/null
+			delete network.${OMR_TRACKER_INTERFACE}_route_default_metric
 			set network.${OMR_TRACKER_INTERFACE}_route_default_metric=route
 			set network.${OMR_TRACKER_INTERFACE}_route_default_metric.interface=$OMR_TRACKER_INTERFACE
 			set network.${OMR_TRACKER_INTERFACE}_route_default_metric.target='0.0.0.0'
 			set network.${OMR_TRACKER_INTERFACE}_route_default_metric.netmask='0.0.0.0'
 			set network.${OMR_TRACKER_INTERFACE}_route_default_metric.gateway=$OMR_TRACKER_DEVICE_GATEWAY
 			set network.${OMR_TRACKER_INTERFACE}_route_default_metric.metric=$metric
-			set network.${OMR_TRACKER_INTERFACE}_route_default_metric.source=$OMR_TRACKER_DEVICE_IP
+			#set network.${OMR_TRACKER_INTERFACE}_route_default_metric.source=$OMR_TRACKER_DEVICE_IP
 			commit network.${OMR_TRACKER_INTERFACE}_route_default_metric
 		EOF
 	fi
@@ -148,7 +149,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		#	config_foreach del_ss_route server $metric
 		#else
 		#	if [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
-		#		ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
+		ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
 		#	fi
 		#	config_foreach del_ss_route server off
 		#fi
@@ -174,8 +175,6 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		fi
 		config_load network
 		config_foreach set_route interface $OMR_TRACKER_INTERFACE
-		#config_load shadowsocks-libev
-		#config_foreach del_ss_route server all
 		if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.shadowsocks)" = "up" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q get shadowsocks-libev.hi2.mode)" = "tcp_and_udp" ]; then
 			_log "Tunnel down use ShadowSocks for UDP"
 			uci -q set shadowsocks-libev.ss_rules.redir_udp='hi2'
@@ -186,7 +185,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		fi
 	fi
 	dns_flush
-	/etc/init.d/network reload
+	ubus call network reload
 	exit 0
 fi
 
@@ -201,7 +200,7 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 			set network.default_route.gateway=$OMR_TRACKER_DEVICE_GATEWAY
 			commit network.default_route
 		EOF
-		#ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
+		ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
 	fi
 	if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "hi2" ]; then
 		_log "Tunnel up disable use of ShadowSocks for UDP"
@@ -236,7 +235,7 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 		fi
 		uci -q commit openmptcprouter
 	fi
-	/etc/init.d/network reload
+	#ubus call network reload
 	exit 0
 fi
 
@@ -255,7 +254,6 @@ if [ "$multipath_config" = "master" ]; then
 		omrvpn_intf=$(uci -q get "network.omrvpn.ifname" || echo "tun")
 		if [ "$(ip route show default | grep -v metric | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ]; then
 			_log "Master up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
-			#ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
 			uci -q batch <<-EOF >/dev/null
 				set network.default_route=route
 				set network.default_route.interface=$OMR_TRACKER_INTERFACE
@@ -264,13 +262,12 @@ if [ "$multipath_config" = "master" ]; then
 				set network.default_route.gateway=$OMR_TRACKER_DEVICE_GATEWAY
 				commit network.default_route
 			EOF
+			ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
 		else
-			#config_load shadowsocks-libev
-			#config_foreach set_ss_route server 1
 			config_load openmptcprouter
 			config_foreach set_server_default_route server
 		fi
-		#ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
+		ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
 		uci -q batch <<-EOF >/dev/null
 			set network.default_fw_route=route
 			set network.default_fw_route.interface=$OMR_TRACKER_INTERFACE
@@ -284,12 +281,6 @@ if [ "$multipath_config" = "master" ]; then
 	multipath_config="on"
 fi
 if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
-	#local metric=$(ip rule show | grep "$OMR_TRACKER_DEVICE_IP" | grep -m 1 "$OMR_TRACKER_DEVICE" | grep -om1 'lookup [[:digit:]]' | awk '{print $2}')
-	#[ -n "$metric" ] && {
-	#	#ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
-	#	config_load shadowsocks-libev
-	#	config_foreach set_ss_route server $metric
-	#}
 	config_load openmptcprouter
 	config_foreach set_server_route server
 fi
@@ -302,7 +293,7 @@ fi
 		multipath "$OMR_TRACKER_DEVICE" "$multipath_config"
 	fi
 }
-/etc/init.d/network reload
+#ubus call network reload
 
 # Save wan settings for status page
 if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ]; then
