@@ -463,6 +463,11 @@ function settings_add()
 	local tcp_fin_timeout = luci.http.formvalue("tcp_fin_timeout")
 	luci.sys.exec("sysctl -w net.ipv4.tcp_fin_timeout=%s" % tcp_fin_timeout)
 	luci.sys.exec("sed -i 's:^net.ipv4.tcp_fin_timeout=[0-9]*:net.ipv4.tcp_fin_timeout=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_fin_timeout)
+
+	-- Set tcp_syn_retries
+	local tcp_syn_retries = luci.http.formvalue("tcp_syn_retries")
+	luci.sys.exec("sysctl -w net.ipv4.tcp_syn_retries=%s" % tcp_syn_retries)
+	luci.sys.exec("sed -i 's:^net.ipv4.tcp_syn_retries=[0-9]*:net.ipv4.tcp_syn_retries=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_syn_retries)
 	
 	-- Disable IPv6
 	local disable_ipv6 = luci.http.formvalue("disable_ipv6") or 0
