@@ -60,7 +60,7 @@ MY_DEPENDS := \
     kmod-rtl8xxxu       \
     kmod-rtl8192cu      \
     kmod-net-rtl8192su \
-    wpad-mini \
+    wpad-basic \
     luci-proto-qmi
 
 OMR_SUPPORTED_LANGS := ca zh-cn en fr de el he hu it ja ms no pl pt-br pt ro ru es sv uk vi
