@@ -40,8 +40,6 @@ set_route() {
 				set network.default_fw_route.table=991337
 				commit network.default_fw_route
 			EOF
-			config_load openmptcprouter
-			config_foreach set_server_default_route server
 			#SETROUTE=true
 		fi
 	fi
@@ -51,7 +49,8 @@ set_server_default_route() {
 	local server=$1
 	local serverip
 	config_get serverip $server ip
-	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric 1 | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ]; then
+	multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath || echo "off")
+	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric 1 | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ]; then
 		_log "Set server $server ($serverip) default route via $OMR_TRACKER_DEVICE_GATEWAY"
 		uci -q batch <<-EOF >/dev/null
 			set network.server_${server}_default_route=route
@@ -62,7 +61,7 @@ set_server_default_route() {
 			set network.server_${server}_default_route.metric=1
 			commit network.server_${server}_default_route
 		EOF
-		ip route replace $serverip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_INTERFACE metric 1
+		ip route replace $serverip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric 1
 	fi
 }
 
@@ -72,7 +71,12 @@ set_server_route() {
 	config_get serverip $server ip
 	local metric=$2
 	[ -z "$metric" ] && metric=$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)
-	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ]; then
+	multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath || echo "off")
+	interface_if=$(uci -q get network.$OMR_TRACKER_INTERFACE.ifname)
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "${OMR_TRACKER_INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	multipath_current_config=$(multipath $interface_if | grep deactivated)
+	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$multipath_current_config" = "" ]; then
 		_log "Set server $server ($serverip) route via $OMR_TRACKER_DEVICE_GATEWAY metric $metric"
 		uci -q batch <<-EOF >/dev/null
 			set network.server_${server}_${OMR_TRACKER_INTERFACE}_route=route
@@ -99,6 +103,18 @@ set_server_route() {
 			commit network.${OMR_TRACKER_INTERFACE}_route_default_metric
 		EOF
 	fi
+}
+
+del_server_route() {
+	local server=$1
+	local serverip
+	config_get serverip $server ip
+	_log "Delete $server ($serverip) route via $OMR_TRACKER_DEVICE_GATEWAY"
+	uci -q batch <<-EOF >/dev/null
+		delete network.server_${server}_${OMR_TRACKER_INTERFACE}_route
+		commit network
+	EOF
+	ip route del $serverip dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
 }
 
 dns_flush() {
@@ -146,17 +162,9 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		if [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
 			glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 down > /dev/null 2>&1
 		fi
-		config_load shadowsocks-libev
-		#if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
-		#	local metric=$(ip rule show | grep "$OMR_TRACKER_DEVICE_IP" | grep -m 1 "$OMR_TRACKER_DEVICE" | grep -om1 'lookup [[:digit:]]' | awk '{print $2}')
-		#	ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric >/dev/null 2>&1
-		#	config_foreach del_ss_route server $metric
-		#else
-		#	if [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
 		ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
-		#	fi
-		#	config_foreach del_ss_route server off
-		#fi
+		config_load openmptcprouter
+		config_foreach del_server_route server
 	}
 
 	if [ "$default_gw" = "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
