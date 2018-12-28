@@ -13,11 +13,15 @@ _save_macaddr() {
 	local _macaddr
 	uci -q get "network.$1_dev.ifname" >/dev/null && {
 		_ifname=$(uci -q get "network.$1.ifname")
-		_macaddr=$(ip link show dev $_ifname 2>/dev/null | grep link | awk '{print $2}')
-		[ -n "$_macaddr" ] && {
-			uci -q set network.$1_dev.macaddr=$_macaddr
-			uci -q set network.$1.macaddr=$_macaddr
-		}
+		if [ -n "$(uci -q get network.$1.macaddr)" ] &&  [ "$(uci -q get network.$1.macaddr)" != "$(uci -q get network.$1_dev.macaddr)" ]; then
+			uci -q set network.$1_dev.macaddr="$(uci -q get network.$1.macaddr)"
+		else
+			_macaddr=$(ip link show dev $_ifname 2>/dev/null | grep link | awk '{print $2}')
+			[ -n "$_macaddr" ] && {
+				uci -q set network.$1_dev.macaddr=$_macaddr
+				uci -q set network.$1.macaddr=$_macaddr
+			}
+		fi
 	}
 	[ -z "$(uci -q get network.$1.macaddr)" ] && {
 		_ifname=$(uci -q get "network.$1.ifname")
@@ -42,7 +46,7 @@ _setup_interface() {
 	
 	[ "$(echo $1 | grep _dev)" != "" ] && {
 		local _intfdev=$(sed 's/_dev//' $1)
-		uci -q get "network.$_intfdev.ifname" >/dev/null && {
+		uci -q get "network.$_intfdev.ifname" >/dev/null || {
 			uci -q batch <<-EOF
 			delete network.$1
 			commit network
