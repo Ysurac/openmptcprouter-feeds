@@ -9,7 +9,7 @@ set_route() {
 	interface_if=$(uci -q get network.$INTERFACE.ifname)
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "${INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
-	multipath_current_config=$(multipath $interface_if | grep deactivated)
+	multipath_current_config=$(multipath $interface_if | grep 'deactivated')
 	if [ "$multipath_config" != "off" ] && [ "$SETROUTE" != true ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$multipath_current_config" = "" ]; then
 		interface_gw="$(uci -q get network.$INTERFACE.gateway)"
 		if [ -z "$interface_gw" ]; then
@@ -75,7 +75,7 @@ set_server_route() {
 	interface_if=$(uci -q get network.$OMR_TRACKER_INTERFACE.ifname)
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "${OMR_TRACKER_INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
-	multipath_current_config=$(multipath $interface_if | grep deactivated)
+	multipath_current_config=$(multipath $interface_if | grep "deactivated")
 	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$multipath_current_config" = "" ]; then
 		_log "Set server $server ($serverip) route via $OMR_TRACKER_DEVICE_GATEWAY metric $metric"
 		uci -q batch <<-EOF >/dev/null
@@ -109,12 +109,16 @@ del_server_route() {
 	local server=$1
 	local serverip
 	config_get serverip $server ip
-	_log "Delete $server ($serverip) route via $OMR_TRACKER_DEVICE_GATEWAY"
+	_log "Delete $server ($serverip) route via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
+	ip route del $serverip dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
+	ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
 	uci -q batch <<-EOF >/dev/null
 		delete network.server_${server}_${OMR_TRACKER_INTERFACE}_route
+		delete network.${OMR_TRACKER_INTERFACE}_route_default_metric
 		commit network
 	EOF
 	ip route del $serverip dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
+	ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
 }
 
 dns_flush() {
@@ -138,7 +142,7 @@ if [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
 	esac
 fi
 
-default_gw=$(ip route show default | grep -v metric | awk '/default/ {print $3}')
+default_gw=$(ip route show default | grep -v "metric" | awk '/default/ {print $3}')
 #current_interface_gw=$(uci -q get "network.$OMR_TRACKER_INTERFACE.gateway")
 
 # An interface in error will never be used in MPTCP
@@ -162,7 +166,6 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		if [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
 			glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 down > /dev/null 2>&1
 		fi
-		ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
 		config_load openmptcprouter
 		config_foreach del_server_route server
 	}
