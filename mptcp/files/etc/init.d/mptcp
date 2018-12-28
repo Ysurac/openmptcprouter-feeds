@@ -10,12 +10,13 @@ USE_PROCD=1
 . /lib/functions/network.sh
 
 global_multipath_settings() {
-	local multipath mptcp_path_manager mptcp_schdeduler congestion mptcp_checksum mptcp_syn_retries mptcp_fullmesh_num_subflows mptcp_fullmesh_create_on_err mptcp_ndiffports_num_subflows
+	local multipath mptcp_path_manager mptcp_schdeduler mptcp_debug congestion mptcp_checksum mptcp_syn_retries mptcp_fullmesh_num_subflows mptcp_fullmesh_create_on_err mptcp_ndiffports_num_subflows
 	local multipath_status=0
 	config_load network
 	config_get multipath globals multipath
 	config_get mptcp_path_manager globals mptcp_path_manager
 	config_get mptcp_scheduler globals mptcp_scheduler
+	config_get mptcp_debug globals mptcp_debug
 	config_get congestion globals congestion
 	config_get mptcp_checksum globals mptcp_checksum
 	config_get mptcp_syn_retries globals mptcp_syn_retries
@@ -31,6 +32,7 @@ global_multipath_settings() {
 	[ -z "$mptcp_scheduler" ] || sysctl -qw net.mptcp.mptcp_scheduler="$mptcp_scheduler"
 	[ -z "$congestion" ] || sysctl -qw net.ipv4.tcp_congestion_control="$congestion"
 	[ -z "$mptcp_checksum" ] || sysctl -qw net.mptcp.mptcp_checksum="$mptcp_checksum"
+	[ -z "$mptcp_debug" ] || sysctl -qw net.mptcp.mptcp_debug="$mptcp_debug"
 	[ -z "$mptcp_syn_retries" ] || sysctl -qw net.mptcp.mptcp_syn_retries="$mptcp_syn_retries"
 	[ -z "$mptcp_fullmesh_num_subflows" ] || sysctl -qw /sys/module/mptcp_fullmesh/parameters/num_subflows="$mptcp_fullmesh_num_subflows"
 	[ -z "$mptcp_fullmesh_create_on_err" ] || sysctl -qw /sys/module/mptcp_fullmesh/parameters/create_on_err="$mptcp_fullmesh_create_on_err"
@@ -124,8 +126,6 @@ interface_multipath_settings() {
 		uci -q batch <<-EOF >/dev/null
 			delete network.${config}_rule
 			set network.${config}_rule=rule
-			set network.${config}_rule.in=${config}
-			set network.${config}_rule.out=${config}
 			set network.${config}_rule.lookup=${id}
 			set network.${config}_rule.priority=0
 			set network.${config}_rule.src="${ipaddr}/32"
@@ -144,7 +144,7 @@ interface_multipath_settings() {
 			set network.${config}_route_default.table=${id}
 			commit network
 		EOF
-		#ip rule add from $ipaddr iif $iface oif $iface table $id pref 0
+		#ip rule add from $ipaddr table $id pref 0
 		#ip route replace $network/$netmask dev $iface scope link table $id
 		#ip route replace default via $gateway dev $iface table $id
 		#ip route flush $id
@@ -193,8 +193,6 @@ interface_multipath_settings() {
 			uci -q batch <<-EOF >/dev/null
 				delete network.${config}_rule6
 				set network.${config}_rule6=rule6
-				set network.${config}_rule6.in=${config}
-				set network.${config}_rule6.out=${config}
 				set network.${config}_rule6.lookup=6${id}
 				set network.${config}_rule6.priority=0
 				set network.${config}_rule6.src="${ipaddr6}/127"
@@ -211,7 +209,7 @@ interface_multipath_settings() {
 				set network.${config}_route6_default.table=6${id}
 				commit network
 			EOF
-			#ip -6 rule add from $ip6addr iif $iface oif $iface table 6$id pref 0
+			#ip -6 rule add from $ip6addr table 6$id pref 0
 			#ip -6 route replace $network6/$netmask6 dev $iface scope link table 6$id
 			#ip -6 route replace default via $gateway6 dev $iface table 6$id
 			#ip -6 route flush 6$id
