@@ -345,8 +345,10 @@ function wizard_add()
 	-- Set Glorytun settings
 	if default_vpn:match("^glorytun.*") then
 		ucic:set("glorytun","vpn","enable",1)
+		ucic:set("network","omrvpn","proto","none")
 	else
 		ucic:set("glorytun","vpn","enable",0)
+		ucic:set("network","omrvpn","proto","dhcp")
 	end
 
 	local glorytun_key = luci.http.formvalue("glorytun_key")
@@ -670,6 +672,13 @@ function interfaces_status()
 		end
 	end
 
+	if  mArray.openmptcprouter["service_addr"] ~= "" and mArray.openmptcprouter["service_addr"] ~= "127.0.0.1" then
+		mArray.openmptcprouter["vps_status"] = "DOWN"
+	else
+		mArray.openmptcprouter["vps_status"] = "UP"
+	end
+
+
 	-- Get VPS info
 	ucic:foreach("openmptcprouter", "server", function(s)
 		local serverip = uci:get("openmptcprouter",s[".name"],"ip")
@@ -690,6 +699,7 @@ function interfaces_status()
 						mArray.openmptcprouter["vps_uptime"] = vpsinfo.vps.uptime or ""
 						mArray.openmptcprouter["vps_mptcp"] = vpsinfo.vps.mptcp or ""
 						mArray.openmptcprouter["vps_admin"] = true
+						mArray.openmptcprouter["vps_status"] = "UP"
 					else
 						uci:set("openmptcprouter",s[".name"],"admin_error","1")
 						uci:delete("openmptcprouter",s[".name"],"token")
@@ -796,12 +806,6 @@ function interfaces_status()
 	mArray.openmptcprouter["loadavg"] = sys.exec("cat /proc/loadavg 2>/dev/null"):match("[%d%.]+ [%d%.]+ [%d%.]+")
 	mArray.openmptcprouter["uptime"] = sys.exec("cat /proc/uptime 2>/dev/null"):match("[%d%.]+")
 
-
-	if  mArray.openmptcprouter["service_addr"] ~= "" and mArray.openmptcprouter["service_addr"] ~= "127.0.0.1" then
-		mArray.openmptcprouter["vps_status"] = "DOWN"
-	else
-		mArray.openmptcprouter["vps_status"] = "UP"
-	end
 	-- overview status
 	mArray.wans = {}
 	mArray.tunnels = {}
