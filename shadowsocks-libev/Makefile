@@ -32,7 +32,7 @@ PKG_USE_MIPS16:=0
 PKG_BUILD_PARALLEL:=1
 
 include $(INCLUDE_DIR)/package.mk
-
+include $(INCLUDE_DIR)/kernel.mk
 
 define Package/shadowsocks-libev-config
   SECTION:=net
@@ -57,7 +57,7 @@ define Package/shadowsocks-libev/Default
     SUBMENU:=Web Servers/Proxies
     TITLE:=shadowsocks-libev $(1)
     URL:=https://github.com/shadowsocks/shadowsocks-libev
-    DEPENDS:=+libcares +libev +libmbedtls +libpcre +libpthread +libsodium +shadowsocks-libev-config +zlib
+    DEPENDS:=+libcares +libev +libmbedtls +libpcre +libpthread +libsodium +shadowsocks-libev-config +zlib +libpcap +libbpf +libcap +libstdcpp +libelf
   endef
 
   define Package/shadowsocks-libev-$(1)/install
@@ -121,6 +121,8 @@ CONFIGURE_ARGS += \
 	--disable-silent-rules \
 	--disable-assert \
 	--disable-ssp \
+
+TARGET_CFLAGS += -I$(STAGING_DIR)/usr/include
 
 $(eval $(call BuildPackage,shadowsocks-libev-config))
 $(eval $(call BuildPackage,shadowsocks-libev-ss-rules))
