@@ -16,7 +16,7 @@ define Package/libbpf
   SECTION:=net
   CATEGORY:=Network
   TITLE:=libbpf
-  DEPENDS:=+libstdcpp
+  DEPENDS:=+libstdcpp +libelf
 endef
 
 define Package/libbpf/description
