@@ -16,14 +16,14 @@ define Package/libbpf
   SECTION:=net
   CATEGORY:=Network
   TITLE:=libbpf
-  DEPENDS:=+libstdcpp +libelf
+  DEPENDS:=+libstdcpp +libelf1
 endef
 
 define Package/libbpf/description
   libbpf
 endef
 
-#EXTRA_CPPFLAGS += -fpermissive -Wno-variadic-macros
+EXTRA_CPPFLAGS += -fpermissive -Wno-variadic-macros
 
 TARGET_CFLAGS += -DCOMPAT_NEED_REALLOCARRAY
 

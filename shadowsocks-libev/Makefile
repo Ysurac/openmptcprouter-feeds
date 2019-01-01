@@ -57,7 +57,7 @@ define Package/shadowsocks-libev/Default
     SUBMENU:=Web Servers/Proxies
     TITLE:=shadowsocks-libev $(1)
     URL:=https://github.com/shadowsocks/shadowsocks-libev
-    DEPENDS:=+libcares +libev +libmbedtls +libpcre +libpthread +libsodium +shadowsocks-libev-config +zlib +libpcap +libbpf +libcap +libstdcpp +libelf
+    DEPENDS:=+libcares +libev +libmbedtls +libpcre +libpthread +libsodium +shadowsocks-libev-config +zlib +libpcap +libbpf +libcap +libstdcpp +libelf1
   endef
 
   define Package/shadowsocks-libev-$(1)/install
