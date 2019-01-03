@@ -577,6 +577,16 @@ function get_gateway(interface)
 			end
 		end
 	end
+	if gateway == "" then
+		if dump and dump.inactive.route then
+			local _, route
+			for _, route in ipairs(dump.inactive.route) do
+				if dump.inactive.route[_].target == "0.0.0.0" then
+					gateway = dump.inactive.route[_].nexthop
+				end
+			end
+		end
+	end
 	
 	if gateway == "" then
 		dump = require("luci.util").ubus("network.interface.%s_4" % interface, "status", {})
@@ -586,6 +596,16 @@ function get_gateway(interface)
 			for _, route in ipairs(dump.route) do
 				if dump.route[_].target == "0.0.0.0" then
 					gateway = dump.route[_].nexthop
+				end
+			end
+		end
+		if gateway == "" then
+			if dump and dump.inactive.route then
+				local _, route
+				for _, route in ipairs(dump.inactive.route) do
+					if dump.inactive.route[_].target == "0.0.0.0" then
+						gateway = dump.inactive.route[_].nexthop
+					end
 				end
 			end
 		end
