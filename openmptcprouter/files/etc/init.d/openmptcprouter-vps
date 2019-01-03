@@ -94,6 +94,15 @@ _set_openvpn_vps() {
 	fi
 }
 
+_get_ss_redir() {
+	config_get cf_ebpf $1 ebpf
+	[ "$cf_ebpf" = "1" ] && ebpf="true"
+	config_get cf_fast_open $1 fast_open
+	[ "$cf_fast_open" = "1" ] && fast_open="true"
+	config_get cf_no_delay $1 no_delay
+	[ "$cf_no_delay" = "1" ] && no_delay="true"
+}
+
 _set_ss_server_vps() {
 	local disabled port key method
 	config_get disabled $1 disabled
@@ -110,9 +119,19 @@ _set_ss_server_vps() {
 	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.port')"
 	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.key')"
 	current_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.method')"
-	if [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_key" != "$key" ]; then
+	current_ebpf="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.ebpf')"
+	current_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.fast_open')"
+	current_no_delay="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.no_delay')"
+	
+	ebpf="false"
+	fast_open="false"
+	no_delay="false"
+	config_load shadowsocks-libev
+	config_foreach _get_ss_redir ss_redir
+
+	if [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_key" != "$key" ] || [ "$current_ebpf" != "$ebpf" ] || [ "$current_fast_open" != "$fast_open" ] || [ "$current_no_delay" != "$no_delay" ]; then
 		local settings
-		settings='{"port": '$port',"method":"'$method'","fast_open":true,"reuse_port":true,"no_delay":true,"mptcp":true,"key":"'$key'"}'
+		settings='{"port": '$port',"method":"'$method'","fast_open":'$fast_open',"reuse_port":true,"no_delay":'$no_delay',"mptcp":true,"key":"'$key'","ebpf":'$ebpf'}'
 		_set_json "shadowsocks" "$settings"
 	fi
 }
@@ -232,6 +251,12 @@ _set_config_from_vps() {
 	if [ -n "$ss_key" ] && [ "$ss_key" != "$(uci -q get shadowsocks-libev.sss0.key)" ]; then
 		ss_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.method')"
 		ss_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.port')"
+		#ss_ebpf="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.ebpf')"
+		#if [ "$ss_ebpf" = "true" ] && [ "$ss_method" = "none" ]; then
+		#	ss_ebpf=1
+		#else
+		#	ss_ebpf=0
+		#fi
 		[ -z "$ss_port" ] && ss_port=65101
 		#ss_no_delay="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.no_delay')"
 		#ss_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.fast_open')"
