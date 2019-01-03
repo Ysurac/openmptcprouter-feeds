@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -54,7 +54,7 @@ MY_DEPENDS := \
     mmc-utils \
     libimobiledevice \
     comgt kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan usb-modeswitch uqmi adb-enablemodem umbim kmod-mii kmod-usb-net kmod-usb-wdm kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim umbim \
-    kmod-usb-net-huawei-cdc-ncm kmod-usb-net-rndis \
+    kmod-usb-net-huawei-cdc-ncm kmod-usb-net-rndis kmod-usb-net-cdc-ether kmod-usb-net-ipheth usbmuxd \
     kmod-rt2800-usb     \
     kmod-mt7601u        \
     kmod-rtl8xxxu       \
