@@ -126,6 +126,7 @@ function options_common(s, tab)
 	s:taboption(tab, Flag, "reuse_port", translate("Enable SO_REUSEPORT"))
 	s:taboption(tab, Flag, "no_delay", translate("Enable TCP_NODELAY"))
 	s:taboption(tab, Flag, "mptcp", translate("Enable MPTCP"))
+	s:taboption(tab, Flag, "ebpf", translate("Enable eBPF"))
 end
 
 function options_obfs(s, tab)
