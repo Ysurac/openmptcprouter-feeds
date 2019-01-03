@@ -241,6 +241,19 @@ _bypass_ip_set() {
 	_bypass_ip $ip $interface
 }
 
+_bypass_asn() {
+	local asn
+	local interface
+	config_get asn $1 asn
+	config_get interface $1 interface
+	local asnips
+	asnips=`curl --max-time 4 -s -k https://stat.ripe.net/data/announced-prefixes/data.json?resource=${asn} | jsonfilter -q -e '@.data.prefixes.*.prefix'`
+	for ip in $asnips; do
+		_bypass_ip $ip $interface
+	done
+
+}
+
 _bypass_omr_server() {
 	local ip
 	config_get ip $1 ip
@@ -288,6 +301,7 @@ start_service() {
 	config_foreach _bypass_ip_set ips
 	config_foreach _bypass_mac macs
 	config_foreach _bypass_lan_ip lan_ip
+	config_foreach _bypass_asn asns
 	uci -q del dhcp.@dnsmasq[0].ipset
 	config_foreach _bypass_domains domains
 	uci -q commit dhcp

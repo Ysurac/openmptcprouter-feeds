@@ -66,6 +66,18 @@ ip.optional = false
 ifl = s:option(Value, "interface", translate("Interface"))
 ifl.rmempty  = true
 
+s = m:section(TypedSection, "asns", translate("ASN"))
+s.addremove = true
+s.anonymous = true
+s.template = "cbi/tblsection"
+
+asn = s:option(Value, "asn", translate("ASN"))
+asn.rmempty  = true
+asn.optional = false
+
+ifa = s:option(Value, "interface", translate("Interface"))
+ifa.rmempty  = true
+
 s = m:section(TypedSection, "dpis", translate("Protocols"))
 s.addremove = true
 s.anonymous = true
@@ -94,17 +106,21 @@ ifi.default = "all"
 ifp.default = "all"
 ifm.default = "all"
 ifl.default = "all"
+ifa.default = "all"
 ifd:value("all",translate("Default"))
 ifi:value("all",translate("Default"))
 ifp:value("all",translate("Default"))
 ifm:value("all",translate("Default"))
 ifl:value("all",translate("Default"))
+ifa:value("all",translate("Default"))
 for _, iface in ipairs(ifaces) do
 	if iface:is_up() then
 		ifd:value(iface:name(),"%s" % iface:name())
 		ifi:value(iface:name(),"%s" % iface:name())
 		ifp:value(iface:name(),"%s" % iface:name())
 		ifm:value(iface:name(),"%s" % iface:name())
+		ifl:value(iface:name(),"%s" % iface:name())
+		ifa:value(iface:name(),"%s" % iface:name())
 	end
 end
 
