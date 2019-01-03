@@ -238,6 +238,12 @@ _set_mptcp_vps() {
 	fi
 }
 
+_set_ss_redir() {
+	local option=$2
+	local value=$3
+	uci -q set shadowsocks-libev.$1.$2=$3
+}
+
 _set_config_from_vps() {
 	local shadowsocks_disabled vpn glorytun_state redirect shorewall_redirect mlvpn_key openvpn_key
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
@@ -251,16 +257,20 @@ _set_config_from_vps() {
 	if [ -n "$ss_key" ] && [ "$ss_key" != "$(uci -q get shadowsocks-libev.sss0.key)" ]; then
 		ss_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.method')"
 		ss_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.port')"
-		#ss_ebpf="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.ebpf')"
-		#if [ "$ss_ebpf" = "true" ] && [ "$ss_method" = "none" ]; then
-		#	ss_ebpf=1
-		#else
-		#	ss_ebpf=0
-		#fi
+		ss_ebpf="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.ebpf')"
+		if [ "$ss_ebpf" = "true" ] && [ "$ss_method" = "none" ]; then
+			ss_ebpf=1
+		else
+			ss_ebpf=0
+		fi
 		[ -z "$ss_port" ] && ss_port=65101
-		#ss_no_delay="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.no_delay')"
-		#ss_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.fast_open')"
+		ss_no_delay="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.no_delay')"
+		ss_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.fast_open')"
 		#ss_reuse_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.reuse_port')"
+		config_load shadowsocks-libev
+		config_foreach _set_ss_redir ss_redir "no_delay" $ss_no_delay
+		config_foreach _set_ss_redir ss_redir "fast_open" $ss_fast_open
+		config_foreach _set_ss_redir ss_ebpf "ebpf" $ss_ebpf
 		uci -q batch <<-EOF >/dev/null
 			set shadowsocks-libev.sss0.key=$ss_key
 			set shadowsocks-libev.sss0.server_port=$ss_port
