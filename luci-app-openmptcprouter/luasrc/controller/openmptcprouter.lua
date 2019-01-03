@@ -216,12 +216,15 @@ function wizard_add()
 	if default_vpn:match("^glorytun.*") then
 		vpn_port = 65001
 		vpn_intf = "tun0"
+		ucic:set("network","omrvpn","proto","none")
 	elseif default_vpn == "mlvpn" then
 		vpn_port = 65201
 		vpn_intf = "mlvpn0"
+		ucic:set("network","omrvpn","proto","dhcp")
 	elseif default_vpn == "openvpn" then
 		vpn_port = 65301
 		vpn_intf = "tun0"
+		ucic:set("network","omrvpn","proto","dhcp")
 	end
 	if vpn_intf ~= "" then
 		ucic:set("network","omrvpn","ifname",vpn_intf)
@@ -345,10 +348,8 @@ function wizard_add()
 	-- Set Glorytun settings
 	if default_vpn:match("^glorytun.*") then
 		ucic:set("glorytun","vpn","enable",1)
-		ucic:set("network","omrvpn","proto","none")
 	else
 		ucic:set("glorytun","vpn","enable",0)
-		ucic:set("network","omrvpn","proto","dhcp")
 	end
 
 	local glorytun_key = luci.http.formvalue("glorytun_key")
