@@ -1,3 +1,10 @@
+#
+# Copyright (C) 2018-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=libbpf
@@ -17,6 +24,7 @@ define Package/libbpf
   CATEGORY:=Network
   TITLE:=libbpf
   DEPENDS:=+libstdcpp +libelf1
+  KCONFIG:=CONFIG_BPF_STREAM_PARSER=y
 endef
 
 define Package/libbpf/description
