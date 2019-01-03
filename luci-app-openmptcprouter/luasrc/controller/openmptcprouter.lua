@@ -702,7 +702,7 @@ function interfaces_status()
 	-- Get VPS info
 	ucic:foreach("openmptcprouter", "server", function(s)
 		local serverip = uci:get("openmptcprouter",s[".name"],"ip")
-		if serverip ~= "" and (mArray.openmptcprouter["service_addr"] == serverip or serverip == mArray.openmptcprouter["wan_addr"]) then
+		if serverip ~= "" then
 			mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter", s[".name"], "omr_version") or ""
 			mArray.openmptcprouter["vps_kernel"] = uci:get("openmptcprouter",s[".name"],"kernel") or ""
 			mArray.openmptcprouter["vps_machine"] = uci:get("openmptcprouter",s[".name"],"machine") or ""
@@ -894,7 +894,7 @@ function interfaces_status()
 	    if gateway == "" then
 		    gateway = get_gateway(interface)
 	    end
-	    if connectivity ~= "ERROR" and gateway == "" and ifname ~= nil then
+	    if gateway == "" and ifname ~= nil then
 		    if fs.access("/sys/class/net/" .. ifname) then
 			    gateway = ut.trim(sys.exec("ip -4 r list dev " .. ifname .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
 			    if gateway == "" then
@@ -902,7 +902,7 @@ function interfaces_status()
 			    end
 		    end
 	    end
-	    if connectivity ~= "ERROR" and gateway ~= "" then
+	    if gateway ~= "" then
 		    local gw_ping_test = ut.trim(sys.exec("ping -w 1 -c 1 " .. gateway .. " | grep '100% packet loss'"))
 		    if gw_ping_test ~= "" then
 			    gw_ping = "DOWN"
