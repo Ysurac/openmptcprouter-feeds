@@ -13,8 +13,10 @@ function index()
 	entry({"admin", "network", "mptcp", "interface_bandwidth"}, call("interface_bandwidth")).leaf = true
 	entry({"admin", "network", "mptcp", "mptcp_check"}, template("mptcp/mptcp_check"), _("MPTCP Support Check"), 4).leaf = true
 	entry({"admin", "network", "mptcp", "mptcp_check_trace"}, post("mptcp_check_trace")).leaf = true
-	entry({"admin", "network", "mptcp", "mptcp_fullmesh"}, template("mptcp/mptcp_fullmesh"), _("MPTCP Fullmesh"), 4).leaf = true
+	entry({"admin", "network", "mptcp", "mptcp_fullmesh"}, template("mptcp/mptcp_fullmesh"), _("MPTCP Fullmesh"), 5).leaf = true
 	entry({"admin", "network", "mptcp", "mptcp_fullmesh_data"}, post("mptcp_fullmesh_data")).leaf = true
+	entry({"admin", "network", "mptcp", "mptcp_connections"}, template("mptcp/mptcp_connections"), _("Established connections"), 6).leaf = true
+	entry({"admin", "network", "mptcp", "mptcp_connections_data"}, post("mptcp_connections_data")).leaf = true
 end
 
 function interface_bandwidth(iface)
@@ -85,11 +87,26 @@ end
 
 function mptcp_fullmesh_data()
 	luci.http.prepare_content("text/plain")
-	local fullmash
+	local fullmesh
 	fullmesh = io.popen("multipath -f")
 	if fullmesh then
 		while true do
 			local ln = fullmesh:read("*l")
+			if not ln then break end
+			luci.http.write(ln)
+			luci.http.write("\n")
+		end
+	end
+	return
+end
+
+function mptcp_connections_data()
+	luci.http.prepare_content("text/plain")
+	local connections
+	connections = io.popen("multipath -c")
+	if connections then
+		while true do
+			local ln = connections:read("*l")
 			if not ln then break end
 			luci.http.write(ln)
 			luci.http.write("\n")
