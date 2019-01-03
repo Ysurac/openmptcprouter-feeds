@@ -1,6 +1,6 @@
 #
 # Copyright (C) 2014-2014 OpenWrt.org
-# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 #
 # This is free software, licensed under the GNU General Public License v3 or later.
 # See /LICENSE for more information.

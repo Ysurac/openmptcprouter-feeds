@@ -1,6 +1,6 @@
 #
 # Copyright (C) 2010-2015 OpenWrt.org
-# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 # - Added gateway setting
 #
 # This is free software, licensed under the GNU General Public License v2.

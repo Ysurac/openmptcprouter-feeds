@@ -1,6 +1,6 @@
 #
 # Copyright (C) 2016 chenhw2 <chenhw2@github.com>
-# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 #
 # See /LICENSE for more information.
 #

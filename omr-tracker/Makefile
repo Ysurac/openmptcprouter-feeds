@@ -1,6 +1,6 @@
 #
 # OpenMPTCProuter tracker is a modified version of OverTheBox tracker from OVH
-# Copyright (C) 2017 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2017-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 #
 # This is free software, licensed under the GNU General Public License v3.
 # See /LICENSE for more information.
