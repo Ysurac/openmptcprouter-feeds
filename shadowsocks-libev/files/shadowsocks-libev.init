@@ -49,9 +49,9 @@ ss_mkjson_server_conf_() {
 	[ -n "$server_port" ] || return 1
 	password="${password//\"/\\\"}"
 	key="$(echo $key | sed 's/+/-/g; s/\//_/g;')"
-	[ "$method" = "none" -a -z "$key" ] && key="none"
-	[ "$method" = "none-ebpf" -a -z "$key" ] && {
-		key="none"
+	[ "$method" = "none" -a -z "$key" ] && key=""
+	[ "$ebpf" = 1 ] && {
+		key=""
 		method="none"
 	}
 	cat <<-EOF
@@ -70,7 +70,7 @@ ss_mkjson_common_conf() {
 	[ "$reuse_port" = 0 ] && reuse_port=false || reuse_port=true
 	[ "$mptcp" = 0 ] && mptcp=false || mptcp=true
 	[ "$syslog" = 0 ] && syslog=false || syslog=true
-	[ "$method" = "none-ebpf" ] && ebpf=true || ebpf=false
+	[ "$ebpf" = 0 ] && ebpf=false || ebpf=true
 	cat <<-EOF
 		"use_syslog": $syslog,
 		"ipv6_first": $ipv6_first,
@@ -389,7 +389,7 @@ validate_common_server_options_() {
 	local cfgtype="$1"; shift
 	local cfg="$1"; shift
 	local func="$1"; shift
-	local stream_methods='"none-ebpf", "none", "table", "rc4", "rc4-md5", "aes-128-cfb", "aes-192-cfb", "aes-256-cfb", "aes-128-ctr", "aes-192-ctr", "aes-256-ctr", "bf-cfb", "camellia-128-cfb", "camellia-192-cfb", "camellia-256-cfb", "salsa20", "chacha20", "chacha20-ietf"'
+	local stream_methods='"none", "table", "rc4", "rc4-md5", "aes-128-cfb", "aes-192-cfb", "aes-256-cfb", "aes-128-ctr", "aes-192-ctr", "aes-256-ctr", "bf-cfb", "camellia-128-cfb", "camellia-192-cfb", "camellia-256-cfb", "salsa20", "chacha20", "chacha20-ietf"'
 	local aead_methods='"aes-128-gcm", "aes-192-gcm", "aes-256-gcm", "chacha20-ietf-poly1305", "xchacha20-ietf-poly1305"'
 
 	"${func:-ss_validate}" "$cfgtype" "$cfg" "$@" \
@@ -420,6 +420,7 @@ validate_common_options_() {
 		'no_delay:bool:0' \
 		'reuse_port:bool:0' \
 		'mptcp:bool:0' \
+		'ebpf:bool:0' \
 		'verbose:bool:0' \
 		'mode:or("tcp_only", "udp_only", "tcp_and_udp"):tcp_only' \
 		'mtu:uinteger' \
