@@ -579,7 +579,7 @@ function get_gateway(interface)
 		end
 	end
 	if gateway == "" then
-		if dump and dump.inactive.route then
+		if dump and dump.inactive and dump.inactive.route then
 			local _, route
 			for _, route in ipairs(dump.inactive.route) do
 				if dump.inactive.route[_].target == "0.0.0.0" then
@@ -601,7 +601,7 @@ function get_gateway(interface)
 			end
 		end
 		if gateway == "" then
-			if dump and dump.inactive.route then
+			if dump and dump.inactive and dump.inactive.route then
 				local _, route
 				for _, route in ipairs(dump.inactive.route) do
 					if dump.inactive.route[_].target == "0.0.0.0" then
