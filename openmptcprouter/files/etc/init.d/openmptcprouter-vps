@@ -101,6 +101,8 @@ _get_ss_redir() {
 	[ "$cf_fast_open" = "1" ] && fast_open="true"
 	config_get cf_no_delay $1 no_delay
 	[ "$cf_no_delay" = "1" ] && no_delay="true"
+	config_get cf_obfs $1 obfs
+	[ "$cf_obfs" = "1" ] && obfs="true"
 }
 
 _set_ss_server_vps() {
@@ -120,18 +122,20 @@ _set_ss_server_vps() {
 	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.key')"
 	current_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.method')"
 	current_ebpf="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.ebpf')"
+	current_obfs="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.obfs')"
 	current_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.fast_open')"
 	current_no_delay="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.no_delay')"
 	
 	ebpf="false"
 	fast_open="false"
 	no_delay="false"
+	obfs="false"
 	config_load shadowsocks-libev
 	config_foreach _get_ss_redir ss_redir
 
-	if [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_key" != "$key" ] || [ "$current_ebpf" != "$ebpf" ] || [ "$current_fast_open" != "$fast_open" ] || [ "$current_no_delay" != "$no_delay" ]; then
+	if [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_key" != "$key" ] || [ "$current_ebpf" != "$ebpf" ] || [ "$current_obfs" != "$obfs" ] || [ "$current_fast_open" != "$fast_open" ] || [ "$current_no_delay" != "$no_delay" ]; then
 		local settings
-		settings='{"port": '$port',"method":"'$method'","fast_open":'$fast_open',"reuse_port":true,"no_delay":'$no_delay',"mptcp":true,"key":"'$key'","ebpf":'$ebpf'}'
+		settings='{"port": '$port',"method":"'$method'","fast_open":'$fast_open',"reuse_port":true,"no_delay":'$no_delay',"mptcp":true,"key":"'$key'","ebpf":'$ebpf',"obfs":'$obfs'}'
 		_set_json "shadowsocks" "$settings"
 	fi
 }
@@ -266,11 +270,13 @@ _set_config_from_vps() {
 		[ -z "$ss_port" ] && ss_port=65101
 		ss_no_delay="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.no_delay')"
 		ss_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.fast_open')"
+		ss_obfs="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.obfs')"
 		#ss_reuse_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.reuse_port')"
 		config_load shadowsocks-libev
 		config_foreach _set_ss_redir ss_redir "no_delay" $ss_no_delay
 		config_foreach _set_ss_redir ss_redir "fast_open" $ss_fast_open
-		config_foreach _set_ss_redir ss_ebpf "ebpf" $ss_ebpf
+		config_foreach _set_ss_redir ss_redir "ebpf" $ss_ebpf
+		config_foreach _set_ss_redir ss_redir "obfs" $ss_obfs
 		uci -q batch <<-EOF >/dev/null
 			set shadowsocks-libev.sss0.key=$ss_key
 			set shadowsocks-libev.sss0.server_port=$ss_port
