@@ -66,7 +66,7 @@ ip.optional = false
 ifl = s:option(Value, "interface", translate("Interface"))
 ifl.rmempty  = true
 
-s = m:section(TypedSection, "asns", translate("ASN"))
+s = m:section(TypedSection, "asns", translate("<abbr tittle=\"Autonomous System Number\">ASN</abbr>"))
 s.addremove = true
 s.anonymous = true
 s.template = "cbi/tblsection"
