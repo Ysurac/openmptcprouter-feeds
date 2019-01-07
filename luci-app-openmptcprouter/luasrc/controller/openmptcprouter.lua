@@ -267,8 +267,8 @@ function wizard_add()
 	local ss_ip
 
 	for server, _ in pairs(servers) do
-		local server_ip = luci.http.formvalue("%s.server_ip" % server) or ""
 		local backup = luci.http.formvalue("%s.backup" % server) or "0"
+		local server_ip = luci.http.formvalue("%s.server_ip" % server) or ""
 		-- We have an IP, so set it everywhere
 		if server_ip ~= "" then
 			-- Check if we have more than one IP, in this case use Nginx HA
@@ -453,8 +453,10 @@ end
 
 function settings_add()
 	-- Redirects all ports from VPS to OpenMPTCProuter
+	local servers = luci.http.formvaluetable("server")
 	local redirect_ports = luci.http.formvaluetable("redirect_ports")
-	for server, value in pairs(redirect_ports) do
+	for server, _ in pairs(servers) do
+		local value = luci.http.formvalue("redirect_ports.%s" % server) or "0"
 		ucic:set("openmptcprouter",server,"redirect_ports",value)
 	end
 
