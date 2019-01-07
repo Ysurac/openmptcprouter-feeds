@@ -701,7 +701,8 @@ function interfaces_status()
 		mArray.openmptcprouter["vps_status"] = "UP"
 	end
 
-
+	mArray.openmptcprouter["vps_admin"] = false
+	mArray.openmptcprouter["vps_admin_error_msg"] = "Not found"
 	-- Get VPS info
 	ucic:foreach("openmptcprouter", "server", function(s)
 		local serverip = uci:get("openmptcprouter",s[".name"],"ip")
@@ -729,12 +730,15 @@ function interfaces_status()
 						uci:save("openmptcprouter",s[".name"])
 						uci:commit("openmptcprouter",s[".name"])
 						mArray.openmptcprouter["vps_admin"] = false
+						mArray.openmptcprouter["vps_admin_error_msg"] = "Answer error"
 					end
 				else
 					mArray.openmptcprouter["vps_admin"] = false
+					mArray.openmptcprouter["vps_admin_error_msg"] = "No answer"
 				end
 			else
 				mArray.openmptcprouter["vps_admin"] = false
+				mArray.openmptcprouter["vps_admin_error_msg"] = "No token"
 			end
 		end
 	end)
