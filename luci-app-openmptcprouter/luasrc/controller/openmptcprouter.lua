@@ -792,6 +792,13 @@ function interfaces_status()
 	if ss_server == "1" then
 		mArray.openmptcprouter["socks_service_enabled"] = false
 	end
+	local ss_key = uci:get("shadowsocks-libev","sss0","key") or ""
+	mArray.openmptcprouter["socks_service_method"] = uci:get("shadowsocks-libev","sss0","method")
+	if ss_key == "" then
+		mArray.openmptcprouter["socks_service_key"] = false
+	else
+		mArray.openmptcprouter["socks_service_key"] = true
+	end
 
 	-- Add DHCP infos by parsing dnsmasq config file
 	mArray.openmptcprouter.dhcpd = {}
