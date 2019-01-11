@@ -660,17 +660,14 @@ function interfaces_status()
 	if mArray.openmptcprouter["dns"] == true then
 		-- wanaddr
 		--mArray.openmptcprouter["wan_addr"] = uci:get("openmptcprouter","omr","public_detected_ipv4") or ""
-		mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("wget -4 -qO- -T 1 http://ip.openmptcprouter.com"))
+		mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("wget -4 -qO- -T 2 http://ip.openmptcprouter.com"))
 		if mArray.openmptcprouter["wan_addr"] == "" then
-			mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("dig TXT +timeout=2 +short o-o.myaddr.l.google.com @ns1.google.com | awk -F'\"' '{print $2}'"))
-		end
-		if mArray.openmptcprouter["wan_addr"] == "" then
-			mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("dig +timeout=2 +short myip.opendns.com @resolver1.opendns.com"))
+			mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("dig TXT +timeout=2 +short o-o.myaddr.l.google.com | awk -F'\"' '{print $2}'"))
 		end
 		if mArray.openmptcprouter["ipv6"] == "enabled" then
 			mArray.openmptcprouter["wan_addr6"] = uci:get("openmptcprouter","omr","public_detected_ipv6") or ""
 			if mArray.openmptcprouter["wan_addr6"] == "" then
-				mArray.openmptcprouter["wan_addr6"] = ut.trim(sys.exec("wget -6 -qO- -T 1 http://ipv6.openmptcprouter.com"))
+				mArray.openmptcprouter["wan_addr6"] = ut.trim(sys.exec("wget -6 -qO- -T 2 http://ipv6.openmptcprouter.com"))
 			end
 		end
 		-- shadowsocksaddr
