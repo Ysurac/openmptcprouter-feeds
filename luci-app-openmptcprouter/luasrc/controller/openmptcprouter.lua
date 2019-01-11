@@ -644,7 +644,7 @@ function interfaces_status()
 	end
 
 	mArray.openmptcprouter["ipv6"] = "disabled"
-	if tonumber((sys.exec("sysctl net.ipv6.conf.all.disable_ipv6")):match(" %d+")) == 0 then
+	if uci:get("openmptcprouter","settings","disable_ipv6") ~= "1" then
 		mArray.openmptcprouter["ipv6"] = "enabled"
 	end
 
