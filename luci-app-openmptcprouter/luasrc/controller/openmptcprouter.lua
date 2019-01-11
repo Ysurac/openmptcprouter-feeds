@@ -202,11 +202,7 @@ function wizard_add()
 	ucic:commit("network")
 
 	-- Enable/disable IPv6
-	local disable_ipv6 = "0"
-	local enable_ipv6 = luci.http.formvalue("enableipv6") or "0"
-	if enable_ipv6 == "0" then 
-		disable_ipv6 = "1"
-	end
+	local disable_ipv6 = luci.http.formvalue("enableipv6") or "1"
 	set_ipv6_state(disable_ipv6)
 	
 	-- Get VPN set by default
@@ -1120,8 +1116,10 @@ end
 
 function set_ipv6_state(disable_ipv6)
 	-- Disable/Enable IPv6 support
-	luci.sys.exec("sysctl -w net.ipv6.conf.all.disable_ipv6=%s" % disable_ipv6)
-	luci.sys.exec("sed -i 's:^net.ipv6.conf.all.disable_ipv6=[0-9]*:net.ipv6.conf.all.disable_ipv6=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % disable_ipv6)
+	--luci.sys.exec("sysctl -qw net.ipv6.conf.all.disable_ipv6=%s" % disable_ipv6)
+	--luci.sys.exec("sed -i 's:^net.ipv6.conf.all.disable_ipv6=[0-9]*:net.ipv6.conf.all.disable_ipv6=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % disable_ipv6)
+	luci.sys.exec("sysctl -qw net.ipv6.conf.all.disable_ipv6=0")
+	luci.sys.exec("sed -i 's:^net.ipv6.conf.all.disable_ipv6=[0-9]*:net.ipv6.conf.all.disable_ipv6=0:' /etc/sysctl.d/zzz_openmptcprouter.conf" % disable_ipv6)
 
 	-- Disable/Enable IPv6 for firewall
 	ucic:set("firewall",ucic:get_first("firewall","defaults"),"disable_ipv6",disable_ipv6)
