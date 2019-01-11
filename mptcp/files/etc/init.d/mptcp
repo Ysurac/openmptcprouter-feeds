@@ -100,18 +100,15 @@ interface_multipath_settings() {
 		network_get_gateway gateway $config true
 		[ -z "$gateway" ] && gateway=$(ip -4 r list dev $iface | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
 		[ -z "$gateway" ] && gateway=$(uci -q get "network.$config.gateway")
-		[ -z "$gateway" ] && gateway=$(ubus call network.interface.$config status | jsonfilter -q -e '@.route[0].nexthop' | tr -d "\n")
+		[ -z "$gateway" ] && gateway=$(ubus call network.interface.$config status | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 		if [ -z "$gateway" ] || [ "$( valid_subnet4 $gateway )" != "ok" ]; then
-			gateway=$(ubus call network.interface.$config status | jsonfilter -q -e '@.route[1].nexthop' | tr -d "\n")
-		fi
-		if [ -z "$gateway" ] || [ "$( valid_subnet4 $gateway )" != "ok" ]; then
-			gateway=$(ubus call network.interface.$config status | jsonfilter -q -e '@.inactive.route[0].nexthop' | tr -d "\n")
+			gateway=$(ubus call network.interface.$config status | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 		fi
 		if [ -z "$gateway" ] || [ "$( valid_subnet4 $gateway )" != "ok" ]; then 
-			gateway=$(ubus call network.interface.${config}_4 status 2>/dev/null | jsonfilter -q -e '@.inactive.route[0].nexthop' | tr -d "\n")
+			gateway=$(ubus call network.interface.${config}_4 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 		fi
 		if [ -z "$gateway" ] || [ "$( valid_subnet4 $gateway )" != "ok" ]; then 
-			gateway=$(ubus call network.interface.${config}_4 status 2>/dev/null | jsonfilter -q -e '@.route[0].nexthop' | tr -d "\n")
+			gateway=$(ubus call network.interface.${config}_4 status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 		fi
 		network_get_subnet netmask $config
 		[ -z "$netmask" ] && netmask=$(ip -4 addr show dev $iface | grep peer | awk '{print $4}' | cut -d/ -f2 | tr -d "\n")
@@ -182,12 +179,12 @@ interface_multipath_settings() {
 				ip6addr=$(ip -6 addr show dev $iface | grep -v 'scope link' | grep inet6 | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
 				gateway6=$(ip -6 r list dev $iface | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
 				[ -z "$gateway6" ] && gateway6=$(uci -q get "network.$config.ip6gw")
-				[ -z "$gateway6" ] && gateway6=$(ubus call network.interface.$config status | jsonfilter -q -e '@.route[0].nexthop' | tr -d "\n")
+				[ -z "$gateway6" ] && gateway6=$(ubus call network.interface.$config status | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::/0"].nexthop' | tr -d "\n")
 				if [ -z "$gateway6" ] || [ "$( valid_subnet6 $gateway6 )" != "ok" ]; then 
-					gateway6=$(ubus call network.interface.$config status | jsonfilter -q -e '@.inactive.route[0].nexthop' | tr -d "\n")
+					gateway6=$(ubus call network.interface.$config status | jsonfilter -q -e '@.route[@.target="::/0"].nexthop' | tr -d "\n")
 				fi
 				if [ -z "$gateway6" ] || [ "$( valid_subnet6 $gateway6 )" != "ok" ]; then
-					gateway6=$(ubus call network.interface.${config}_6 status 2>/dev/null | jsonfilter -q -e '@.inactive.route[0].nexthop' | tr -d "\n")
+					gateway6=$(ubus call network.interface.${config}_6 status 2>/dev/null | jsonfilter -q -e '@.inactive.route[@.target="::/0"].nexthop' | tr -d "\n")
 				fi
 				netmask6=$(ip -6 addr show dev $iface | grep -v 'scope link' | grep inet6 | awk '{print $2}' | cut -d/ -f2 | tr -d "\n")
 				network6=`ipcalc $ip6addr | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
