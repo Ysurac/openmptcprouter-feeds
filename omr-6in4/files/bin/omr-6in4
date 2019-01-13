@@ -17,7 +17,7 @@ while true; do
 		[ -z "$peer" ] && peer=$(ubus call network.interface.omrvpn status | jsonfilter -q -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 		[ -z "$peer" ] && [ -n "$iface" ] && peer=$(ip -4 r list dev $iface | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d "\n")
 		[ -n "$addr" ] && [ -n "$peer" ] && {
-			if [ "$addr" != "$(uci -q get network.omr6in4.ipaddr)" ] || [ "$peer" != "$(uci -q get network.omr6in4.peeraddr)" ]; then
+			if [ "$addr" != "$(uci -q get network.omr6in4.ipaddr)" ] || [ "$peer" != "$(uci -q get network.omr6in4.peeraddr)" ] || [ "$(uci -q get network.omr6in4_route6_default)" = "" ]; then
 				logger -t "omr6in4" "Set network for OMR 6in4 to local $addr peer $peer"
 				uci -q batch <<-EOF
 					set network.omr6in4.ipaddr=$addr
@@ -29,6 +29,17 @@ while true; do
 				else
 					ifup omr6in4
 				fi
+				sleep 5
+				ipv6_gw=$(ubus call network.interface.6in4-omr6in4 status | jsonfilter -q -e '@.route[@.target="::"].nexthop' | tr -d "\n")
+				[ -z "$ipv6_gw" ] && ipv6_gw='fe80::a00:1'
+				ip -6 route replace default via ${ipv6_gw} dev 6in4-omr6in4
+				uci -q batch <<-EOF
+					set network.omr6in4_route6_default=route6
+					set network.omr6in4_route6_default.interface=omr6in4
+					set network.omr6in4_route6_default.target='::'
+					set network.omr6in4_route6_default.gateway=$ipv6_gw
+					commit network
+				EOF
 			fi
 		}
 	fi

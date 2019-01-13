@@ -162,7 +162,7 @@ interface_multipath_settings() {
 			ifconfig $iface txqueuelen 10000 > /dev/null 2>&1
 		}
 	fi
-	if [ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 | tr -d '\n')" != "1" ]; then
+	if [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$config" != "omr6in4" ]; then
 		# IPv6 Updates:
 		local ip6addr
 		local ipaddr6
@@ -179,12 +179,12 @@ interface_multipath_settings() {
 				ip6addr=$(ip -6 addr show dev $iface | grep -v 'scope link' | grep inet6 | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
 				gateway6=$(ip -6 r list dev $iface | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
 				[ -z "$gateway6" ] && gateway6=$(uci -q get "network.$config.ip6gw")
-				[ -z "$gateway6" ] && gateway6=$(ubus call network.interface.$config status | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::/0"].nexthop' | tr -d "\n")
+				[ -z "$gateway6" ] && gateway6=$(ubus call network.interface.$config status | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
 				if [ -z "$gateway6" ] || [ "$( valid_subnet6 $gateway6 )" != "ok" ]; then 
-					gateway6=$(ubus call network.interface.$config status | jsonfilter -q -e '@.route[@.target="::/0"].nexthop' | tr -d "\n")
+					gateway6=$(ubus call network.interface.$config status | jsonfilter -q -e '@.route[@.target="::"].nexthop' | tr -d "\n")
 				fi
 				if [ -z "$gateway6" ] || [ "$( valid_subnet6 $gateway6 )" != "ok" ]; then
-					gateway6=$(ubus call network.interface.${config}_6 status 2>/dev/null | jsonfilter -q -e '@.inactive.route[@.target="::/0"].nexthop' | tr -d "\n")
+					gateway6=$(ubus call network.interface.${config}_6 status 2>/dev/null | jsonfilter -q -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
 				fi
 				netmask6=$(ip -6 addr show dev $iface | grep -v 'scope link' | grep inet6 | awk '{print $2}' | cut -d/ -f2 | tr -d "\n")
 				network6=`ipcalc $ip6addr | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
@@ -207,7 +207,7 @@ interface_multipath_settings() {
 				delete network.${config}_route6_default
 				set network.${config}_route6_default=route6
 				set network.${config}_route6_default.interface=${config}
-				set network.${config}_route6_default.target='::/0'
+				set network.${config}_route6_default.target='::'
 				set network.${config}_route6_default.gateway=$gateway6
 				set network.${config}_route6_default.table=6${id}
 				commit network
