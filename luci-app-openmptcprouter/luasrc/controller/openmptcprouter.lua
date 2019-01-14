@@ -267,7 +267,7 @@ function wizard_add()
 		ucic:set("openmptcprouter",server,"server")
 		ucic:set("openmptcprouter",server,"username","openmptcprouter")
 		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key)
-		if master == server then
+		if master == server or (master == "" and serversnb == 0) then
 			ucic:set("openmptcprouter",server,"get_config","1")
 			ucic:set("openmptcprouter",server,"master","1")
 			ucic:set("openmptcprouter",server,"backup","0")
