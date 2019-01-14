@@ -256,26 +256,27 @@ function wizard_add()
 	end
 
 	-- Retrieve all server settings
-	local getconf = 0
 	local serversnb = 0
 	local servers = luci.http.formvaluetable("server")
 	for server, _ in pairs(servers) do
 		local server_ip = luci.http.formvalue("%s.server_ip" % server) or ""
-		local backup = luci.http.formvalue("%s.backup" % server) or "0"
+		local master = luci.http.formvalue("master") or ""
 
 		-- OpenMPTCProuter VPS
 		local openmptcprouter_vps_key = luci.http.formvalue("%s.openmptcprouter_vps_key" % server) or ""
 		ucic:set("openmptcprouter",server,"server")
 		ucic:set("openmptcprouter",server,"username","openmptcprouter")
 		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key)
-		if backup == "0" and getconf == 0 then
+		if master == server then
 			ucic:set("openmptcprouter",server,"get_config","1")
-			getconf = getconf + 1
+			ucic:set("openmptcprouter",server,"master","1")
+			ucic:set("openmptcprouter",server,"backup","0")
 		else
 			ucic:set("openmptcprouter",server,"get_config","0")
+			ucic:set("openmptcprouter",server,"master","0")
+			ucic:set("openmptcprouter",server,"backup","1")
 		end
 		ucic:set("openmptcprouter",server,"ip",server_ip)
-		ucic:set("openmptcprouter",server,"backup",backup)
 		ucic:set("openmptcprouter",server,"port","65500")
 		ucic:save("openmptcprouter")
 		if server_ip ~= "" then
@@ -290,13 +291,13 @@ function wizard_add()
 	local ss_ip
 
 	for server, _ in pairs(servers) do
-		local backup = luci.http.formvalue("%s.backup" % server) or "0"
+		local master = luci.http.formvalue("master") or ""
 		local server_ip = luci.http.formvalue("%s.server_ip" % server) or ""
 		-- We have an IP, so set it everywhere
 		if server_ip ~= "" then
 			-- Check if we have more than one IP, in this case use Nginx HA
 			if serversnb > 1 then
-				if backup == "0" then
+				if master == server then
 					ss_ip=server_ip
 					table.insert(ss_servers_nginx,server_ip .. ":65101 max_fails=2 fail_timeout=20s")
 					table.insert(ss_servers_ha,server_ip .. ":65101 check")
