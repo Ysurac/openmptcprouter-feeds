@@ -355,8 +355,8 @@ function wizard_add()
 	local shadowsocks_disable = luci.http.formvalue("disableshadowsocks") or "0"
 	if shadowsocks_key ~= "" then
 		ucic:set("shadowsocks-libev","sss0","key",shadowsocks_key)
-		ucic:set("shadowsocks-libev","sss0","method","chacha20")
-		ucic:set("shadowsocks-libev","sss0","server_port","65101")
+		--ucic:set("shadowsocks-libev","sss0","method","chacha20")
+		--ucic:set("shadowsocks-libev","sss0","server_port","65101")
 		ucic:set("shadowsocks-libev","sss0","disabled",shadowsocks_disable)
 		ucic:save("shadowsocks-libev")
 		ucic:commit("shadowsocks-libev")
