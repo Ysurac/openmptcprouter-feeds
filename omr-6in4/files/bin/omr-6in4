@@ -14,8 +14,8 @@ while true; do
 	[ -z "$addr" ] && addr=$(ubus call network.interface.omrvpn status | jsonfilter -q -e '@["ipv4-address"][0].address' | tr -d "\n")
 	if [ -d "/sys/class/net/$iface" ]; then
 		[ -z "$addr" ] && [ -n "$iface" ] && addr=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
-		[ -z "$peer" ] && peer=$(ubus call network.interface.omrvpn status | jsonfilter -q -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
-		[ -z "$peer" ] && [ -n "$iface" ] && peer=$(ip -4 r list dev $iface | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d "\n")
+		[ -z "$peer" ] && peer=$(ubus call network.interface.omrvpn status | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
+		[ -z "$peer" ] && peer=$(ip -4 r list dev $iface | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d "\n")
 		[ -n "$addr" ] && [ -n "$peer" ] && {
 			if [ "$addr" != "$(uci -q get network.omr6in4.ipaddr)" ] || [ "$peer" != "$(uci -q get network.omr6in4.peeraddr)" ] || [ "$(uci -q get network.omr6in4_route6_default)" = "" ]; then
 				logger -t "omr6in4" "Set network for OMR 6in4 to local $addr peer $peer"
@@ -25,12 +25,12 @@ while true; do
 				EOF
 				uci -q commit network
 				if [ -n "$(ip tunnel | grep omr6in4)" ]; then
-					ip tunnel change "6in4-omr6in4" mode sit local ${addr} remote ${peer}
+					ip tunnel change "6in4-omr6in4" mode sit local ${addr} remote ${peer} > /dev/null 2>&1
 				else
 					ifup omr6in4
 				fi
 				sleep 5
-				ipv6_gw=$(ubus call network.interface.6in4-omr6in4 status | jsonfilter -q -e '@.route[@.target="::"].nexthop' | tr -d "\n")
+				ipv6_gw=$(ubus call network.interface.6in4-omr6in4 status | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
 				[ -z "$ipv6_gw" ] && ipv6_gw='fe80::a00:1'
 				ip -6 route replace default via ${ipv6_gw} dev 6in4-omr6in4
 				uci -q batch <<-EOF
