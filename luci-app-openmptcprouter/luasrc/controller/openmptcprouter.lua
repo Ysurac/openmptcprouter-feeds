@@ -499,6 +499,11 @@ function settings_add()
 	luci.sys.exec("sysctl -w net.ipv4.tcp_syn_retries=%s" % tcp_syn_retries)
 	luci.sys.exec("sed -i 's:^net.ipv4.tcp_syn_retries=[0-9]*:net.ipv4.tcp_syn_retries=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_syn_retries)
 	
+	-- Set tcp_fastopen
+	local tcp_fastopen = luci.http.formvalue("tcp_fastopen")
+	luci.sys.exec("sysctl -w net.ipv4.tcp_fastopen=%s" % tcp_fastopen)
+	luci.sys.exec("sed -i 's:^net.ipv4.tcp_fastopen=[0-3]*:net.ipv4.tcp_fastopen=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_fastopen)
+	
 	-- Disable IPv6
 	local disable_ipv6 = luci.http.formvalue("disable_ipv6") or 0
 	set_ipv6_state(disable_ipv6)
