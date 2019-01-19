@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 
 while true; do
 	if [ "$(uci -q get glorytun.vpn.enable)" = "1" ]; then
@@ -12,7 +12,7 @@ while true; do
 		iface=$(uci -q get openvpn.omr.dev)
 	fi
 	[ -z "$addr" ] && addr=$(ubus call network.interface.omrvpn status | jsonfilter -q -e '@["ipv4-address"][0].address' | tr -d "\n")
-	if [ -d "/sys/class/net/$iface" ]; then
+	if [ -n "$iface" ] && [ -d "/sys/class/net/$iface" ]; then
 		[ -z "$addr" ] && [ -n "$iface" ] && addr=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
 		[ -z "$peer" ] && peer=$(ubus call network.interface.omrvpn status | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 		[ -z "$peer" ] && peer=$(ip -4 r list dev $iface | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d "\n")
@@ -22,8 +22,8 @@ while true; do
 				uci -q batch <<-EOF
 					set network.omr6in4.ipaddr=$addr
 					set network.omr6in4.peeraddr=$peer
+					commit network
 				EOF
-				uci -q commit network
 				if [ -n "$(ip tunnel | grep omr6in4)" ]; then
 					ip tunnel change "6in4-omr6in4" mode sit local ${addr} remote ${peer} > /dev/null 2>&1
 				else
