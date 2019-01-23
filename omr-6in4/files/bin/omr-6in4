@@ -30,16 +30,19 @@ while true; do
 					ifup omr6in4 > /dev/null 2>&1
 				fi
 				sleep 5
-				ipv6_gw=$(ubus call network.interface.6in4-omr6in4 status | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
+				ipv6_gw=$(ubus call network.interface.omr6in4 status | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
+				[ "$ipv6_gw" = "::" ] && ipv6_gw='fe80::a00:1'
 				[ -z "$ipv6_gw" ] && ipv6_gw='fe80::a00:1'
 				ip -6 route replace default via ${ipv6_gw} dev 6in4-omr6in4 > /dev/null 2>&1
-				uci -q batch <<-EOF
-					set network.omr6in4_route6_default=route6
-					set network.omr6in4_route6_default.interface=omr6in4
-					set network.omr6in4_route6_default.target='::'
-					set network.omr6in4_route6_default.gateway=$ipv6_gw
-					commit network
-				EOF
+				if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
+					uci -q batch <<-EOF
+						set network.omr6in4_route6_default=route6
+						set network.omr6in4_route6_default.interface=omr6in4
+						set network.omr6in4_route6_default.target='::'
+						set network.omr6in4_route6_default.gateway=$ipv6_gw
+						commit network
+					EOF
+				fi
 			fi
 		}
 	fi
