@@ -1,4 +1,4 @@
--- Copyright 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+-- Copyright 2018-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 -- Licensed to the public under the Apache License 2.0.
 
 local ipc = require "luci.ip"
@@ -86,16 +86,19 @@ s.template = "cbi/tblsection"
 dpi = s:option(Value, "proto", translate("Protocol"))
 dpi.rmempty  = true
 dpi.optional = false
-local protos = {}
-for l in io.lines("/proc/net/xt_ndpi/proto") do
-	local a,b,c,d = l:match('(%w+) (%w+)')
-	if b ~= "2" and not string.match(b,"custom") then
-		table.insert(protos,b)
+local xt_ndpi_available = nixio.fs.access("/proc/net/xt_ndpi/proto")
+if xt_ndpi_available then
+	local protos = {}
+	for l in io.lines("/proc/net/xt_ndpi/proto") do
+		local a,b,c,d = l:match('(%w+) (%w+)')
+		if b ~= "2" and not string.match(b,"custom") then
+			table.insert(protos,b)
+		end
 	end
-end
-table.sort(protos)
-for _,b in ipairs(protos) do
-	dpi:value(b,"%s" % tostring(b))
+	table.sort(protos)
+	for _,b in ipairs(protos) do
+		dpi:value(b,"%s" % tostring(b))
+	end
 end
 
 ifp = s:option(ListValue, "interface", translate("Interface"))
