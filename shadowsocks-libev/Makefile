@@ -94,8 +94,8 @@ define Package/shadowsocks-libev-ss-rules/install
 	$(INSTALL_BIN) ./files/ss-rules.defaults $(1)/etc/uci-defaults
 	$(INSTALL_DIR) $(1)/etc/sysctl.d
 	$(INSTALL_DATA) ./files/shadowsocks.conf $(1)/etc/sysctl.d
-	$(INSTALL_DIR) $(1)/usr/lib/shadowsocks-libev
-	$(INSTALL_DATA) $(PKG_BUILD_DIR)/src/*.ebpf $(1)/usr/lib/shadowsocks-libev
+#	$(INSTALL_DIR) $(1)/usr/lib/shadowsocks-libev
+#	$(INSTALL_DATA) $(PKG_BUILD_DIR)/src/*.ebpf $(1)/usr/lib/shadowsocks-libev
 endef
 
 define Package/shadowsocks-libev-ss-rules/prerm
