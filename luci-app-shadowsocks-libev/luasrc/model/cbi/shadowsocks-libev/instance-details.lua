@@ -27,7 +27,8 @@ s:taboption("general", Flag, "disabled", translate("Disable"))
 ss.option_install_package(s, "general")
 ss.options_common(s, "advanced")
 local obfs_installed = nixio.fs.access("/usr/bin/obfs-local")
-if obfs_installed then
+local v2ray_installed = nixio.fs.access("/usr/bin/v2ray-plugin")
+if obfs_installed or v2ray_installed then
 	ss.options_obfs(s, "obfuscate")
 end
 
@@ -47,9 +48,11 @@ else
 			translate("The address ss-tunnel will forward traffic to"))
 		o.datatype = "hostport"
 	end
-	if obfs_installed then
+	if obfs_installed or v2ray_installed then
 		o = s:taboption("obfuscate", Value, "obfs_host", translate("Host"))
 		o.default = "www.bing.com"
+	end
+	if obfs_installed then
 		s:taboption("obfuscate", Value, "obfs_uri", translate("HTTP path uri"))
 	end
 end

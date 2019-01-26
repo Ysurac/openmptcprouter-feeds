@@ -510,10 +510,13 @@ function settings_add()
 
 	-- Enable/disable obfs
 	local obfs = luci.http.formvalue("obfs") or 0
+	local obfs_plugin = luci.http.formvalue("obfs_plugin") or "v2ray"
 	ucic:foreach("shadowsocks-libev", "ss_redir", function (section)
 		ucic:set("shadowsocks-libev",section[".name"],"obfs",obfs)
+		ucic:set("shadowsocks-libev",section[".name"],"obfs_plugin",obfs_plugin)
 	end)
 	ucic:set("shadowsocks-libev","tracker","obfs",obfs)
+	ucic:set("shadowsocks-libev","tracker","obfs_plugin",obfs_plugin)
 
 	ucic:save("shadowsocks-libev")
 	ucic:commit("shadowsocks-libev")

@@ -131,10 +131,22 @@ end
 
 function options_obfs(s, tab)
 	local o
+	local v2ray_installed = nixio.fs.access("/usr/bin/v2ray-plugin")
+	local obfs_installed = nixio.fs.access("/usr/bin/obfs-local")
 	s:taboption(tab, Flag, "obfs", translate("Enable"))
+	o = s:taboption(tab, ListValue, "obfs_plugin", translate("Plugin"))
+	if v2ray_installed then
+		o:value("v2ray")
+		o.default = "v2ray"
+	else
+		o.default = "obfs-simple"
+	end
+	if obfs_installed then
+		o:value("obfs-simple")
+	end
 	o = s:taboption(tab, ListValue, "obfs_type", translate("Type"))
 	o:value("http")
-	o:value("tls")
+	--o:value("tls")
 	o.default = "http"
 end
 
