@@ -17,7 +17,7 @@ while true; do
 		[ -z "$peer" ] && peer=$(ubus call network.interface.omrvpn status | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 		[ -z "$peer" ] && peer=$(ip -4 r list dev $iface | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d "\n")
 		[ -n "$addr" ] && [ -n "$peer" ] && {
-			if [ "$addr" != "$(uci -q get network.omr6in4.ipaddr)" ] || [ "$peer" != "$(uci -q get network.omr6in4.peeraddr)" ] || [ "$(uci -q get network.omr6in4_route6_default)" = "" ]; then
+			if [ "$addr" != "$(uci -q get network.omr6in4.ipaddr)" ] || [ "$peer" != "$(uci -q get network.omr6in4.peeraddr)" ]; then
 				logger -t "omr6in4" "Set network for OMR 6in4 to local $addr peer $peer"
 				uci -q batch <<-EOF
 					set network.omr6in4.ipaddr=$addr
@@ -30,9 +30,14 @@ while true; do
 					ifup omr6in4 > /dev/null 2>&1
 				fi
 				sleep 5
+				#ipv6_addr=$(ip -6 addr show dev 6in4-omr6in4 | grep inet | awk '{print $2'} | cut -d/ -f1 | tr -d "\n")
+				#ipv6_gw=$(echo $ipv6_addr | sed 's/1$/2')
+				ipv6_addr=$(ubus call network.interface.omr6in4 status | jsonfilter -q -l 1 -e '@.ipv6-address.address' | tr -d "\n")
+				ip -6 addr add $ipv6_addr dev 6in4-omr6in4 > /dev/null 2>&1
 				ipv6_gw=$(ubus call network.interface.omr6in4 status | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
 				[ "$ipv6_gw" = "::" ] && ipv6_gw='fe80::a00:1'
 				[ -z "$ipv6_gw" ] && ipv6_gw='fe80::a00:1'
+				#[ -z "$ipv6_gw" ] && ipv6_gw='fe80::aff:ff01'
 				ip -6 route replace default via ${ipv6_gw} dev 6in4-omr6in4 > /dev/null 2>&1
 				if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
 					uci -q batch <<-EOF
