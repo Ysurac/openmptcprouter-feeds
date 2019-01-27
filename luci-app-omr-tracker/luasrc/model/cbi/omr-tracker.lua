@@ -72,8 +72,11 @@ o:value("dns","dns")
 o:value("none","none")
 
 o = s:option(Flag, "mail_alert", translate("Mail alert"), translate("Send a mail when connection state change"))
+o.optional    = false
 o.rmempty     = false
 o.default     = false
+o.disabled    = 0
+o.enabled     = 1
 
 o = s:option(DynamicList, "hosts", translate("Hosts"))
 o.placeholder = "4.2.2.1"
@@ -119,8 +122,12 @@ o:value("dns","dns")
 o:value("none","none")
 
 o = s:option(Flag, "mail_alert", translate("Mail alert"), translate("Send a mail when connection status change. You need to configure e-mail settings <a href=\"/cgi-bin/luci/admin/services/mail\">here</a>."))
+o.optional    = false
 o.rmempty     = false
 o.default     = false
+o.disabled    = 0
+o.enabled     = 1
+
 
 o = s:option(DynamicList, "hosts", translate("Hosts"))
 o.placeholder = "4.2.2.1"
