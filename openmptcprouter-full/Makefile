@@ -26,7 +26,7 @@ MY_DEPENDS := \
     iperf3-ssl luci-app-iperf \
     arptables \
     bind-dig \
-    conntrack conntrackd ebtables ebtables-utils ip-full \
+    libnetfilter-conntrack ebtables ebtables-utils ip-full \
     iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace iptables-mod-conntrack-extra iptables-mod-account \
     kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra \
     wireless-tools \
@@ -61,7 +61,7 @@ MY_DEPENDS := \
     kmod-rtl8192cu      \
     kmod-net-rtl8192su \
     wpad-basic \
-    luci-proto-qmi
+    luci-proto-qmi v2ray-plugin
 
 OMR_SUPPORTED_LANGS := ca zh-cn en fr de el he hu it ja ms no pl pt-br pt ro ru es sv uk vi
 
