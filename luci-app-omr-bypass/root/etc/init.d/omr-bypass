@@ -155,7 +155,7 @@ _bypass_proto() {
 	domains="$(cat /proc/net/xt_ndpi/host_proto | grep $proto: | sed -e "s/$proto://" -e 's/*//' -e 's/,/ /g')"
 	if [ -n "$domains" ]; then
 		for domain in $domains; do
-			if [ "$(uci -q show omr-bypass | grep $domain)" = "" ]; then
+			if [ -n "$domain" ] && [ "$(uci -q show omr-bypass | grep $domain)" = "" ]; then
 				_bypass_domain $domain $intf
 			fi
 		done
@@ -165,12 +165,14 @@ _bypass_proto() {
 _intf_rule() {
 	local intf
 	config_get intf $1 ifname
-	[ -z "$ifname" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$intf" ] && intf=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
 	#count=$((count+1))
 	config_get count $1 metric
 	local mode
 	config_get mode $1 multipath "off"
 	[ "$mode" = "off" ] && return
+	[ -z "$count" ] && return
+	[ -z "$intf" ] && return
 	[ "$(echo $1 | grep _dev)" != "" ] && return
 	ipset -q flush omr_rules_dst_bypass_$intf > /dev/null 2>&1
 	ipset -q flush omr_rules6_dst_bypass_$intf > /dev/null 2>&1
