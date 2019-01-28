@@ -22,6 +22,11 @@ A LuCI interface was made to make it easier to use. It's used in OpenMPTCProuter
 
 MPTCP support is added in LuCI interface and init scripts. IPv6 support added.
 
+## Shadowsocks-v2ray-plugin-bin
+*Source:* [https://github.com/shadowsocks/v2ray-plugin](https://github.com/shadowsocks/v2ray-plugin)
+
+*Description:* V2ray plugin for Shadowsocks
+
 
 ## Simple-obfs
 *Source:* [https://github.com/shadowsocks/simple-obfs](https://github.com/shadowsocks/simple-obfs)
