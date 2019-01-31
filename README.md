@@ -27,6 +27,8 @@ MPTCP support is added in LuCI interface and init scripts. IPv6 support added.
 
 *Description:* V2ray plugin for Shadowsocks
 
+Support is added in ShadowSocks LuCI interface and init scripts.
+
 
 ## Simple-obfs
 *Source:* [https://github.com/shadowsocks/simple-obfs](https://github.com/shadowsocks/simple-obfs)
