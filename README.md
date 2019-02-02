@@ -140,7 +140,7 @@ This is used to check if there is no other IPv6 route announced on the network
 This is an other way to aggregate same latency connections
 
 
-## ndpi-filter
+## ndpi-netfilter2
 *Source:* [https://github.com/vel21ripn/nDPI](https://github.com/vel21ripn/nDPI)
 
 *Description:* Open Source Deep Packet Inspection Software Toolkit
