@@ -1169,9 +1169,12 @@ function set_ipv6_state(disable_ipv6)
 	-- Disable/Enable route announce of IPv6
 	if disable_ipv6 == "1" then
 		ucic:set("dhcp","lan","ra_default","0")
+		ucic:set("network","lan","ipv6","0")
 	--else
 	--	ucic:set("dhcp","lan","ra_default","1")
 	end
+
+	ucic:set("network","lan","ipv6","0")
 
 	-- Disable/Enable IPv6 DHCP and change Shadowsocks listen address
 	if disable_ipv6 == "1" then
