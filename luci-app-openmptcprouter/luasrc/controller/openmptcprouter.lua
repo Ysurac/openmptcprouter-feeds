@@ -239,7 +239,7 @@ function wizard_add()
 	if default_vpn:match("^glorytun.*") then
 		vpn_port = 65001
 		vpn_intf = "tun0"
-		ucic:set("network","omrvpn","proto","none")
+		ucic:set("network","omrvpn","proto","dhcp")
 	elseif default_vpn == "mlvpn" then
 		vpn_port = 65201
 		vpn_intf = "mlvpn0"
