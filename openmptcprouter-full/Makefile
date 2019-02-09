@@ -61,7 +61,7 @@ MY_DEPENDS := \
     kmod-rtl8192cu      \
     kmod-net-rtl8192su \
     wpad-basic \
-    luci-proto-qmi v2ray-plugin
+    luci-proto-qmi v2ray-plugin netcat
 
 OMR_SUPPORTED_LANGS := ca zh-cn en fr de el he hu it ja ms no pl pt-br pt ro ru es sv uk vi
 
