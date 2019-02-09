@@ -67,7 +67,7 @@ _bypass_mac() {
 		EOF
 		ip6tables-restore --wait=60  --noflush <<-EOF
 		*mangle
-		-A omr-bypass -m mac --mac-source $mac -j MARK --set-mark 0x6539
+		-A omr-bypass6 -m mac --mac-source $mac -j MARK --set-mark 0x6539
 		COMMIT
 		EOF
 	else
@@ -78,7 +78,7 @@ _bypass_mac() {
 		EOF
 		ip6tables-restore --wait=60  --noflush <<-EOF
 		*mangle
-		-A omr-bypass -m mac --mac-source $mac -j MARK --set-mark 0x6539$intfid
+		-A omr-bypass6 -m mac --mac-source $mac -j MARK --set-mark 0x6539$intfid
 		COMMIT
 		EOF
 	fi
@@ -101,7 +101,7 @@ _bypass_lan_ip() {
 		EOF
 		ip6tables-restore --wait=60  --noflush <<-EOF
 		*mangle
-		-A omr-bypass -s $ip -j MARK --set-mark 0x6539
+		-A omr-bypass6 -s $ip -j MARK --set-mark 0x6539
 		COMMIT
 		EOF
 	else
@@ -112,7 +112,7 @@ _bypass_lan_ip() {
 		EOF
 		ip6tables-restore --wait=60  --noflush <<-EOF
 		*mangle
-		-A omr-bypass -s $ip -j MARK --set-mark 0x6539$intfid
+		-A omr-bypass6 -s $ip -j MARK --set-mark 0x6539$intfid
 		COMMIT
 		EOF
 	fi
@@ -135,7 +135,7 @@ _bypass_proto() {
 		EOF
 		ip6tables-restore --wait=60  --noflush <<-EOF
 		*mangle
-		-A omr-bypass-dpi -m ndpi --proto $proto -j MARK --set-mark 0x6539
+		-A omr-bypass6-dpi -m ndpi --proto $proto -j MARK --set-mark 0x6539
 		COMMIT
 		EOF
 	else
@@ -146,7 +146,7 @@ _bypass_proto() {
 		EOF
 		ip6tables-restore --wait=60  --noflush <<-EOF
 		*mangle
-		-A omr-bypass-dpi -m ndpi --proto $proto -j MARK --set-mark 0x6539$intfid
+		-A omr-bypass6-dpi -m ndpi --proto $proto -j MARK --set-mark 0x6539$intfid
 		COMMIT
 		EOF
 	fi
@@ -219,7 +219,7 @@ _intf_rule() {
 	if [ "$(ip6tables -w 40 -t mangle -L | grep omr_rules6_dst_bypass_$intf)" = "" ]; then
 		ip6tables-restore --wait=60 --noflush <<-EOF
 		*mangle
-		-I omr-bypass 1 -m set --match-set omr_rules6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
+		-I omr-bypass6 1 -m set --match-set omr_rules6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
 		COMMIT
 		EOF
 	fi
@@ -287,11 +287,11 @@ start_service() {
 	-I PREROUTING 1 -m addrtype ! --dst-type LOCAL -j omr-bypass
 	COMMIT
 	EOF
-	ip6tables-save --counters | grep -v omr-bypass | ip6tables-restore --counters
+	ip6tables-save --counters | grep -v omr-bypass6 | ip6tables-restore --counters
 	ip6tables-restore --wait=60  --noflush <<-EOF
 	*mangle
-	:omr-bypass -
-	-I PREROUTING 1 -m addrtype ! --dst-type LOCAL -j omr-bypass
+	:omr-bypass6 -
+	-I PREROUTING 1 -m addrtype ! --dst-type LOCAL -j omr-bypass6
 	COMMIT
 	EOF
 
@@ -335,7 +335,7 @@ start_service() {
 	if [ "$(ip6tables -w 40 -t mangle -L | grep 'match-set omr_rules6_dst_bypass_all dst MARK set')" = "" ]; then
 		ip6tables-restore --wait=60 --noflush <<-EOF
 		*mangle
-		-A omr-bypass -m set --match-set omr_rules6_dst_bypass_all dst -j MARK --set-mark 0x6539
+		-A omr-bypass6 -m set --match-set omr_rules6_dst_bypass_all dst -j MARK --set-mark 0x6539
 		COMMIT
 		EOF
 	fi
@@ -359,12 +359,12 @@ start_service() {
 	-A POSTROUTING -m addrtype --dst-type LOCAL -j omr-bypass-dpi
 	COMMIT
 	EOF
-	ip6tables-save --counters | grep -v omr-bypass-dpi | ip6tables-restore --counters
+	ip6tables-save --counters | grep -v omr-bypass6-dpi | ip6tables-restore --counters
 	ip6tables-restore --wait=60  --noflush <<-EOF
 	*mangle
-	:omr-bypass-dpi -
-	-A PREROUTING -m addrtype ! --dst-type LOCAL -j omr-bypass-dpi
-	-A POSTROUTING -m addrtype --dst-type LOCAL -j omr-bypass-dpi
+	:omr-bypass6-dpi -
+	-A PREROUTING -m addrtype ! --dst-type LOCAL -j omr-bypass6-dpi
+	-A POSTROUTING -m addrtype --dst-type LOCAL -j omr-bypass6-dpi
 	COMMIT
 	EOF
 	config_load omr-bypass
@@ -377,6 +377,8 @@ start_service() {
 stop_service() {
 	iptables-save --counters | grep -v omr-bypass | iptables-restore --counters
 	iptables-save --counters | grep -v omr_rules | iptables-restore --counters
+	ip6tables-save --counters | grep -v omr-bypass6 | ip6tables-restore --counters
+	ip6tables-save --counters | grep -v omr_rules6 | ip6tables-restore --counters
 	for setname in $(ipset -n list | grep "omr_"); do
 		ipset destroy "$setname" 2>/dev/null || true
 	done
