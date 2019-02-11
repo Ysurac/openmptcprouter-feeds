@@ -87,9 +87,9 @@ end
 function httpget(url, stream, target)
 	if not target then
 		local source = stream and io.popen or luci.util.exec
-		return source("wget -4 -qO- %s" % luci.util.shellquote(url))
+		return source("wget -4 -T 20 -qO- %s" % luci.util.shellquote(url))
 	else
-		return os.execute("wget -4 -qO %s %s" %
+		return os.execute("wget -4 -T 20 -qO %s %s" %
 			{luci.util.shellquote(target), luci.util.shellquote(url)})
 	end
 end
