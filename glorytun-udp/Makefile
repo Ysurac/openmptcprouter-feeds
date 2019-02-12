@@ -10,7 +10,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/angt/glorytun.git
-PKG_SOURCE_VERSION:=067ddd4aa04dbb628463666a90b7dcf3cd6963c9
+PKG_SOURCE_VERSION:=b91788080f28678ce2942e81069fec34dfff831c
 
 PKG_NAME:=glorytun-udp
 PKG_VERSION:=0.0.99-$(PKG_SOURCE_VERSION)
@@ -29,7 +29,8 @@ URL:=https://github.com/angt/glorytun
 SUBMENU:=VPN
 endef
 
-TARGET_CFLAGS += -std=c99 -D_GNU_SOURCE -DGT_RUNDIR=\"\\\"/tmp\"\\\"
+#TARGET_CFLAGS += -std=c99 -D_GNU_SOURCE -DGT_RUNDIR=\"\\\"/tmp\"\\\"
+TARGET_CFLAGS += -DGT_RUNDIR=\"\\\"/tmp\"\\\"
 
 define Package/$(PKG_NAME)/conffiles
 /etc/config/glorytun
