@@ -4,12 +4,12 @@
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
 #
-# This package come from https://github.com/srchack/custom-packages
+# This package come from https://github.com/fangli/openwrt-vm-tools
 
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=open-vm-tools
-PKG_VERSION:=10.3.0
+PKG_VERSION:=10.3.5
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz

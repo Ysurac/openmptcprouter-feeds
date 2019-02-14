@@ -1,0 +1,962 @@
+diff -urN a/open-vm-tools/configure.ac b/open-vm-tools/configure.ac
+--- a/open-vm-tools/configure.ac	2019-01-23 16:28:44.000000000 +0800
++++ b/open-vm-tools/configure.ac	2019-01-23 15:59:55.000000000 +0800
+@@ -937,7 +937,7 @@
+       AC_VMW_CHECK_LIB([dnet],
+                        [DNET],
+                        [],
+-                       [dnet-config],
++                       [],
+                        [],
+                        [dnet.h],
+                        [intf_open],
+@@ -1151,6 +1151,7 @@
+ AC_TYPE_PID_T
+ AC_TYPE_SIZE_T
+ AC_CHECK_MEMBERS([struct stat.st_rdev])
++AC_CHECK_MEMBERS([struct timespec.tv_sec],[],[],[[#include <time.h>]])
+ AC_HEADER_TIME
+ AC_STRUCT_TM
+ AC_C_VOLATILE
+diff -urN a/open-vm-tools/lib/asyncsocket/asyncsocket.c b/open-vm-tools/lib/asyncsocket/asyncsocket.c
+--- a/open-vm-tools/lib/asyncsocket/asyncsocket.c	2019-01-23 16:28:44.000000000 +0800
++++ b/open-vm-tools/lib/asyncsocket/asyncsocket.c	2019-01-23 16:10:13.000000000 +0800
+@@ -69,8 +69,8 @@
+ #else
+ #include <stddef.h>
+ #include <ctype.h>
++#include <poll.h>
+ #include <sys/types.h>
+-#include <sys/poll.h>
+ #include <sys/socket.h>
+ #include <sys/un.h>
+ #include <netdb.h>
+@@ -86,7 +86,7 @@
+ #include "random.h"
+ #include "asyncsocket.h"
+ #include "asyncSocketBase.h"
+-#include "poll.h"
++#include "vm_poll.h"
+ #include "log.h"
+ #include "err.h"
+ #include "hostinfo.h"
+diff -urN a/open-vm-tools/lib/err/errPosix.c b/open-vm-tools/lib/err/errPosix.c
+--- a/open-vm-tools/lib/err/errPosix.c	2019-01-23 16:28:44.000000000 +0800
++++ b/open-vm-tools/lib/err/errPosix.c	2019-01-23 16:15:29.000000000 +0800
+@@ -31,6 +31,7 @@
+ #include <errno.h>
+ #include <string.h>
+ #include <locale.h>
++#include <stdio.h>
+ 
+ #include "vmware.h"
+ #include "errInt.h"
+@@ -63,11 +64,13 @@
+ {
+    char *p;
+ 
+-#if defined(__linux__) && !defined(__ANDROID__)
++#if defined(__GLIBC__) && !defined(__ANDROID__)
+    p = strerror_r(errorNumber, buf, bufSize);
+ #else
+-   p = strerror(errorNumber);
+-#endif
++   if (strerror_r(errorNumber, buf, bufSize) != 0)
++      snprintf(buf, bufSize, "unknown error %i", errorNumber);
++   p = buf;
++#endif /* defined __GLIBC__ */
+    ASSERT(p != NULL);
+    return p;
+ }
+diff -urN a/open-vm-tools/lib/file/fileIOPosix.c b/open-vm-tools/lib/file/fileIOPosix.c
+--- a/open-vm-tools/lib/file/fileIOPosix.c	2019-01-23 16:28:44.000000000 +0800
++++ b/open-vm-tools/lib/file/fileIOPosix.c	2019-01-23 16:16:39.000000000 +0800
+@@ -206,10 +206,10 @@
+        * the symbols (and anyone building XOPEN<700 gets nothing).
+        */
+       extern ssize_t preadv64(int fd, const struct iovec *iov, int iovcnt,
+-                          __off64_t offset) __attribute__ ((weak));
++                          off64_t offset) __attribute__ ((weak));
+ 
+       extern ssize_t pwritev64(int fd, const struct iovec *iov, int iovcnt,
+-                          __off64_t offset) __attribute__ ((weak));
++                          off64_t offset) __attribute__ ((weak));
+    #else
+       #error "Large file support unavailable. Aborting."
+    #endif
+diff -urN a/open-vm-tools/lib/hgfsServer/hgfsServer.c b/open-vm-tools/lib/hgfsServer/hgfsServer.c
+--- a/open-vm-tools/lib/hgfsServer/hgfsServer.c	2019-01-23 16:28:44.000000000 +0800
++++ b/open-vm-tools/lib/hgfsServer/hgfsServer.c	2019-01-23 16:10:36.000000000 +0800
+@@ -48,7 +48,7 @@
+ #include "hgfsServerOplock.h"
+ #include "hgfsDirNotify.h"
+ #include "userlock.h"
+-#include "poll.h"
++#include "vm_poll.h"
+ #include "mutexRankLib.h"
+ #include "vm_basic_asm.h"
+ #include "unicodeOperations.h"
+diff -urN a/open-vm-tools/lib/hgfsServer/hgfsServerLinux.c b/open-vm-tools/lib/hgfsServer/hgfsServerLinux.c
+--- a/open-vm-tools/lib/hgfsServer/hgfsServerLinux.c	2019-01-23 16:28:44.000000000 +0800
++++ b/open-vm-tools/lib/hgfsServer/hgfsServerLinux.c	2019-01-23 16:16:01.000000000 +0800
+@@ -108,8 +108,10 @@
+  * ALLPERMS (mode 07777) and ACCESSPERMS (mode 0777) are not defined in the
+  * Solaris version of <sys/stat.h>.
+  */
+-#ifdef sun
++#ifndef ACCESSPERMS
+ #   define ACCESSPERMS (S_IRWXU|S_IRWXG|S_IRWXO)
++#endif
++#ifndef ALLPERMS
+ #   define ALLPERMS (S_ISUID|S_ISGID|S_ISVTX|S_IRWXU|S_IRWXG|S_IRWXO)
+ #endif
+ 
+@@ -5292,8 +5294,8 @@
+       goto exit;
+    }
+ 
+-   LOG(6, ("%s: File Size limits: 0x%"FMT64"x 0x%"FMT64"x\n",
+-           __FUNCTION__, fileSize.rlim_cur, fileSize.rlim_max));
++   LOG(6, ("%s: File Size limits: 0x%jx 0x%jx\n",
++           __FUNCTION__, (uintmax_t)fileSize.rlim_cur, (uintmax_t)fileSize.rlim_max));
+ 
+    /*
+     * Check the offset is within the file size range.
+diff -urN a/open-vm-tools/lib/include/asyncsocket.h b/open-vm-tools/lib/include/asyncsocket.h
+--- a/open-vm-tools/lib/include/asyncsocket.h	2019-01-23 16:28:44.000000000 +0800
++++ b/open-vm-tools/lib/include/asyncsocket.h	2019-01-23 16:10:59.000000000 +0800
+@@ -164,7 +164,7 @@
+  * Or the client can specify its favorite poll class and locking behavior.
+  * Use of IVmdbPoll is only supported for regular sockets and for Attach.
+  */
+-#include "poll.h"
++#include "vm_poll.h"
+ struct IVmdbPoll;
+ typedef struct AsyncSocketPollParams {
+    int flags;               /* Default 0, only POLL_FLAG_NO_BULL is valid */
+diff -urN a/open-vm-tools/lib/include/hgfsUtil.h b/open-vm-tools/lib/include/hgfsUtil.h
+--- a/open-vm-tools/lib/include/hgfsUtil.h	2019-01-23 16:28:44.000000000 +0800
++++ b/open-vm-tools/lib/include/hgfsUtil.h	2019-01-23 16:00:49.000000000 +0800
+@@ -53,13 +53,7 @@
+ #      include <time.h>
+ #   endif
+ #   include "vm_basic_types.h"
+-#   if !defined _STRUCT_TIMESPEC &&   \
+-       !defined _TIMESPEC_DECLARED && \
+-       !defined __timespec_defined && \
+-       !defined sun && \
+-       !defined __FreeBSD__ && \
+-       !__APPLE__ && \
+-       !defined _WIN32
++#   if !defined HAVE_STRUCT_TIMESPEC_TV_SEC
+ struct timespec {
+    time_t tv_sec;
+    long   tv_nsec;
+diff -urN a/open-vm-tools/lib/include/poll.h b/open-vm-tools/lib/include/poll.h
+--- a/open-vm-tools/lib/include/poll.h	2019-01-23 16:28:44.000000000 +0800
++++ b/open-vm-tools/lib/include/poll.h	1970-01-01 08:00:00.000000000 +0800
+@@ -1,330 +0,0 @@
+-/*********************************************************
+- * Copyright (C) 1998-2018 VMware, Inc. All rights reserved.
+- *
+- * This program is free software; you can redistribute it and/or modify it
+- * under the terms of the GNU Lesser General Public License as published
+- * by the Free Software Foundation version 2.1 and no later version.
+- *
+- * This program is distributed in the hope that it will be useful, but
+- * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+- * or FITNESS FOR A PARTICULAR PURPOSE.  See the Lesser GNU General Public
+- * License for more details.
+- *
+- * You should have received a copy of the GNU Lesser General Public License
+- * along with this program; if not, write to the Free Software Foundation, Inc.,
+- * 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA.
+- *
+- *********************************************************/
+-
+-/*********************************************************
+- * The contents of this file are subject to the terms of the Common
+- * Development and Distribution License (the "License") version 1.0
+- * and no later version.  You may not use this file except in
+- * compliance with the License.
+- *
+- * You can obtain a copy of the License at
+- *         http://www.opensource.org/licenses/cddl1.php
+- *
+- * See the License for the specific language governing permissions
+- * and limitations under the License.
+- *
+- *********************************************************/
+-
+-
+-#ifndef _POLL_H_
+-#define _POLL_H_
+-
+-#define INCLUDE_ALLOW_USERLEVEL
+-#define INCLUDE_ALLOW_VMCORE
+-#include "includeCheck.h"
+-
+-#include "vm_basic_types.h"
+-#include "vm_basic_defs.h"
+-#include "vmware.h"
+-#include "userlock.h"
+-
+-#if defined(__cplusplus)
+-extern "C" {
+-#endif
+-
+-#ifdef _WIN32
+-#define HZ 100
+-#elif defined linux
+-#include <asm/param.h>
+-#elif __APPLE__
+-#include <TargetConditionals.h>
+-/*
+- * Old SDKs don't define TARGET_OS_IPHONE at all.
+- * New ones define it to 0 on Mac OS X, 1 on iOS.
+- */
+-#if !defined(TARGET_OS_IPHONE) || TARGET_OS_IPHONE == 0
+-#include <sys/kernel.h>
+-#endif
+-#include <sys/poll.h>
+-#define HZ 100
+-#endif
+-#ifdef __ANDROID__
+-/*
+- * <poll.h> of android should be included, but its name is same
+- * with this file. So its content is put here to avoid conflict.
+- */
+-#include <asm/poll.h>
+-#define HZ 100
+-typedef unsigned int  nfds_t;
+-int poll(struct pollfd *, nfds_t, long);
+-#endif
+-
+-
+-/*
+- * Poll event types: each type has a different reason for firing,
+- * or condition that must be met before firing.
+- */
+-
+-typedef enum {
+-   /*
+-    * Actual Poll queue types against which you can register callbacks.
+-    */
+-   POLL_VIRTUALREALTIME = -1, /* Negative because it doesn't have its own Q */
+-   POLL_VTIME = 0,
+-   POLL_REALTIME,
+-   POLL_DEVICE,
+-   POLL_MAIN_LOOP,
+-   POLL_NUM_QUEUES
+-} PollEventType;
+-
+-
+-/*
+- * Classes of events
+- *
+- * These are the predefined classes.  More can be declared
+- * with Poll_AllocClass().
+- */
+-
+-typedef enum PollClass {
+-   POLL_CLASS_MAIN,
+-   POLL_CLASS_PAUSE,
+-   POLL_CLASS_IPC,
+-   POLL_CLASS_CPT,
+-   POLL_CLASS_MKS,
+-   POLL_FIXED_CLASSES,
+-   POLL_DEFAULT_FIXED_CLASSES,
+-   /* Size enum to maximum */
+-   POLL_MAX_CLASSES = 31,
+-} PollClass;
+-
+-/*
+- * Do not use; Special pseudo private poll class supported by
+- * PollDefault only
+- */
+-#define POLL_DEFAULT_CLASS_NET POLL_FIXED_CLASSES
+-#define POLL_DEFAULT_CS_NET    PollClassSet_Singleton(POLL_DEFAULT_CLASS_NET)
+-
+-/*
+- * Each callback is registered in a set of classes
+- */
+-
+-typedef struct PollClassSet {
+-   uintptr_t bits;
+-} PollClassSet;
+-
+-/* An empty PollClassSet. */
+-static INLINE PollClassSet
+-PollClassSet_Empty(void)
+-{
+-   PollClassSet set = { 0 };
+-   return set;
+-}
+-
+-/* A PollClassSet with the single member. */
+-static INLINE PollClassSet
+-PollClassSet_Singleton(PollClass c)
+-{
+-   PollClassSet s = PollClassSet_Empty();
+-
+-   ASSERT_ON_COMPILE(POLL_MAX_CLASSES < sizeof s.bits * 8);
+-   ASSERT(c < POLL_MAX_CLASSES);
+-
+-   s.bits = CONST3264U(1) << c;
+-   return s;
+-}
+-
+-/* Combine two PollClassSets. */
+-static INLINE PollClassSet
+-PollClassSet_Union(PollClassSet lhs, PollClassSet rhs)
+-{
+-   PollClassSet set;
+-   set.bits = lhs.bits | rhs.bits;
+-   return set;
+-}
+-
+-/* Add single class to PollClassSet. */
+-static INLINE PollClassSet
+-PollClassSet_Include(PollClassSet set, PollClass c)
+-{
+-   return PollClassSet_Union(set, PollClassSet_Singleton(c));
+-}
+-
+-
+-#define POLL_CS_MAIN    PollClassSet_Singleton(POLL_CLASS_MAIN)
+-#define POLL_CS_PAUSE   PollClassSet_Union(POLL_CS_MAIN,            \
+-                           PollClassSet_Singleton(POLL_CLASS_PAUSE))
+-#define POLL_CS_CPT     PollClassSet_Union(POLL_CS_PAUSE,           \
+-                           PollClassSet_Singleton(POLL_CLASS_CPT))
+-#define POLL_CS_IPC     PollClassSet_Union(POLL_CS_CPT,             \
+-                           PollClassSet_Singleton(POLL_CLASS_IPC))
+-#define POLL_CS_VMDB    POLL_CS_PAUSE /* POLL_CLASS_VMDB is retired */
+-#define POLL_CS_MKS	PollClassSet_Singleton(POLL_CLASS_MKS)
+-/* 
+- * DANGER.  You don't need POLL_CS_ALWAYS.  Really.  So don't use it.
+- */
+-#define POLL_CS_ALWAYS  PollClassSet_Union(POLL_CS_CPT, POLL_CS_IPC)
+-
+-/*
+- * Poll class-set taxonomy:
+- * POLL_CS_MAIN
+- *    - Unless you NEED another class, use POLL_CS_MAIN.
+- * POLL_CS_PAUSE
+- *    - For callbacks that must occur even if the guest is paused.
+- *      Most VMDB or Foundry commands are in this category.
+- * POLL_CS_CPT
+- *    - Only for callbacks which can trigger intermediate Checkpoint 
+- *      transitions.
+- *      The ONLY such callback is Migrate.
+- * POLL_CS_IPC
+- *    - Only for callbacks which can contain Msg_(Post|Hint|Question) 
+- *      responses, and for signal handlers (why)?
+- *      Vigor, VMDB, and Foundry can contain Msg_* responses.
+- * POLL_CS_MKS
+- *    - Callback runs in MKS thread.
+- * POLL_CS_ALWAYS
+- *    - Only for events that must be processed immediately.
+- *      The ONLY such callback is OvhdMemVmxSizeCheck.
+- */
+-
+-
+-/*
+- * Poll_Callback flags
+- */
+-
+-#define POLL_FLAG_PERIODIC		0x01    // keep after firing
+-#define POLL_FLAG_REMOVE_AT_POWEROFF	0x02  	// self-explanatory
+-#define POLL_FLAG_READ			0x04	// device is ready for reading
+-#define POLL_FLAG_WRITE			0x08	// device is ready for writing
+-#define POLL_FLAG_SOCKET                0x10    // device is a Windows socket
+-#define POLL_FLAG_NO_BULL               0x20    // callback does its own locking
+-#define POLL_FLAG_WINSOCK               0x40    // Winsock style write events
+-#define POLL_FLAG_FD                    0x80    // device is a Windows file descriptor.
+-#define POLL_FLAG_ACCEPT_INVALID_FDS    0x100   // For broken 3rd party libs, e.g. curl
+-#define POLL_FLAG_THUNK_TO_WND          0x200   // thunk callback to window message loop
+-
+-
+-typedef void (*PollerFunction)(void *clientData);
+-typedef void (*PollerFireWrapper)(PollerFunction func,
+-                                  void *funcData,
+-                                  void *wrapperData);
+-typedef Bool (*PollerErrorFn)(const char *errorStr);
+-
+-/*
+- * Initialisers:
+- *
+- *      For the sake of convenience, we declare the initialisers
+- *      for custom implmentations here, even though the actual
+- *      implementations are distinct from the core poll code.
+- */
+-
+-typedef struct PollOptions {
+-   Bool locked;           // Use internal MXUser for locking
+-   Bool allowFullQueue;   // Don't assert when device event queue is full.
+-   VThreadID windowsMsgThread;       // thread that processes Windows messages
+-   PollerFireWrapper fireWrapperFn;  // optional; may be useful for stats
+-   void *fireWrapperData; // optional
+-   PollerErrorFn errorFn; // optional; called upon unrecoverable error
+-} PollOptions;
+-
+-
+-void Poll_InitDefault(void);
+-void Poll_InitDefaultEx(const PollOptions *opts);
+-void Poll_InitGtk(void); // On top of glib for Linux
+-void Poll_InitCF(void);  // On top of CoreFoundation for OSX
+-
+-
+-/*
+- * Functions
+- */
+-int Poll_SocketPair(Bool vmci, Bool stream, int fds[2]);
+-void Poll_Loop(Bool loop, Bool *exit, PollClass c);
+-void Poll_LoopTimeout(Bool loop, Bool *exit, PollClass c, int timeout);
+-Bool Poll_LockingEnabled(void);
+-void Poll_Exit(void);
+-
+-
+-/*
+- * Poll_Callback adds a callback regardless of whether an identical one exists.
+- * The exception to this rule is POLL_DEVICE callbacks: there is a maximum of
+- * one read and one write callback per fd.
+- *
+- * Poll_CallbackRemove removes one callback. If there are multiple identical
+- * callbacks, which one is removed is an implementation detail. Note that in
+- * the case of POLL_DEVICE and POLL_REALTIME callbacks, the fd/delay used to
+- * create the callback is not specified when removing, so all callbacks
+- * of those types with the same flags, function, and clientData are considered
+- * "identical" even if their fd/delay differed.
+- */
+-
+-VMwareStatus Poll_Callback(PollClassSet classSet,
+-                           int flags,
+-                           PollerFunction f,
+-                           void *clientData,
+-                           PollEventType type,
+-                           PollDevHandle info, // fd/microsec delay
+-                           MXUserRecLock *lck);
+-Bool Poll_CallbackRemove(PollClassSet classSet,
+-                         int flags,
+-                         PollerFunction f,
+-                         void *clientData,
+-                         PollEventType type);
+-Bool Poll_CallbackRemoveOneByCB(PollClassSet classSet,
+-                                int flags,
+-                                PollerFunction f,
+-                                PollEventType type,
+-                                void **clientData);
+-
+-void Poll_NotifyChange(PollClassSet classSet);
+-
+-/*
+- * Wrappers for Poll_Callback and Poll_CallbackRemove that present
+- * simpler subsets of those interfaces.
+- */
+-
+-VMwareStatus Poll_CB_Device(PollerFunction f,
+-                            void *clientData,
+-                            PollDevHandle device,
+-                            Bool periodic);
+-
+-Bool Poll_CB_DeviceRemove(PollerFunction f,
+-                          void *clientData,
+-                          Bool periodic);
+-
+-
+-VMwareStatus Poll_CB_RTime(PollerFunction f,
+-                           void *clientData,
+-                           int64 delay,   // microseconds
+-                           Bool periodic,
+-                           MXUserRecLock *lock);
+-
+-Bool Poll_CB_RTimeRemove(PollerFunction f,
+-                         void *clientData,
+-                         Bool periodic);
+-
+-
+-#ifdef _WIN32
+-void Poll_SetPumpsWindowsMessages(Bool pumps);
+-void Poll_SetWindowMessageRecipient(HWND hWnd, UINT msg, Bool alwaysThunk);
+-Bool Poll_FireWndCallback(void *lparam);
+-#endif
+-
+-#if defined(__cplusplus)
+-}  // extern "C"
+-#endif
+-
+-#endif // _POLL_H_
+diff -urN a/open-vm-tools/lib/include/pollImpl.h b/open-vm-tools/lib/include/pollImpl.h
+--- a/open-vm-tools/lib/include/pollImpl.h	2019-01-23 16:28:44.000000000 +0800
++++ b/open-vm-tools/lib/include/pollImpl.h	2019-01-23 16:11:18.000000000 +0800
+@@ -44,7 +44,7 @@
+ #define INCLUDE_ALLOW_USERLEVEL
+ #include "includeCheck.h"
+ 
+-#include "poll.h"
++#include "vm_poll.h"
+ #include "vm_basic_asm.h"
+ 
+ #if defined(__cplusplus)
+diff -urN a/open-vm-tools/lib/include/vm_poll.h b/open-vm-tools/lib/include/vm_poll.h
+--- a/open-vm-tools/lib/include/vm_poll.h	1970-01-01 08:00:00.000000000 +0800
++++ b/open-vm-tools/lib/include/vm_poll.h	2019-01-23 16:13:08.000000000 +0800
+@@ -0,0 +1,330 @@
++/*********************************************************
++ * Copyright (C) 1998-2018 VMware, Inc. All rights reserved.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU Lesser General Public License as published
++ * by the Free Software Foundation version 2.1 and no later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
++ * or FITNESS FOR A PARTICULAR PURPOSE.  See the Lesser GNU General Public
++ * License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public License
++ * along with this program; if not, write to the Free Software Foundation, Inc.,
++ * 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA.
++ *
++ *********************************************************/
++
++/*********************************************************
++ * The contents of this file are subject to the terms of the Common
++ * Development and Distribution License (the "License") version 1.0
++ * and no later version.  You may not use this file except in
++ * compliance with the License.
++ *
++ * You can obtain a copy of the License at
++ *         http://www.opensource.org/licenses/cddl1.php
++ *
++ * See the License for the specific language governing permissions
++ * and limitations under the License.
++ *
++ *********************************************************/
++
++
++#ifndef _POLL_H_
++#define _POLL_H_
++
++#define INCLUDE_ALLOW_USERLEVEL
++#define INCLUDE_ALLOW_VMCORE
++#include "includeCheck.h"
++
++#include "vm_basic_types.h"
++#include "vm_basic_defs.h"
++#include "vmware.h"
++#include "userlock.h"
++
++#if defined(__cplusplus)
++extern "C" {
++#endif
++
++#ifdef _WIN32
++#define HZ 100
++#elif defined linux
++#include <asm/param.h>
++#elif __APPLE__
++#include <TargetConditionals.h>
++/*
++ * Old SDKs don't define TARGET_OS_IPHONE at all.
++ * New ones define it to 0 on Mac OS X, 1 on iOS.
++ */
++#if !defined(TARGET_OS_IPHONE) || TARGET_OS_IPHONE == 0
++#include <sys/kernel.h>
++#endif
++#include <poll.h>
++#define HZ 100
++#endif
++#ifdef __ANDROID__
++/*
++ * <poll.h> of android should be included, but its name is same
++ * with this file. So its content is put here to avoid conflict.
++ */
++#include <asm/poll.h>
++#define HZ 100
++typedef unsigned int  nfds_t;
++int poll(struct pollfd *, nfds_t, long);
++#endif
++
++
++/*
++ * Poll event types: each type has a different reason for firing,
++ * or condition that must be met before firing.
++ */
++
++typedef enum {
++   /*
++    * Actual Poll queue types against which you can register callbacks.
++    */
++   POLL_VIRTUALREALTIME = -1, /* Negative because it doesn't have its own Q */
++   POLL_VTIME = 0,
++   POLL_REALTIME,
++   POLL_DEVICE,
++   POLL_MAIN_LOOP,
++   POLL_NUM_QUEUES
++} PollEventType;
++
++
++/*
++ * Classes of events
++ *
++ * These are the predefined classes.  More can be declared
++ * with Poll_AllocClass().
++ */
++
++typedef enum PollClass {
++   POLL_CLASS_MAIN,
++   POLL_CLASS_PAUSE,
++   POLL_CLASS_IPC,
++   POLL_CLASS_CPT,
++   POLL_CLASS_MKS,
++   POLL_FIXED_CLASSES,
++   POLL_DEFAULT_FIXED_CLASSES,
++   /* Size enum to maximum */
++   POLL_MAX_CLASSES = 31,
++} PollClass;
++
++/*
++ * Do not use; Special pseudo private poll class supported by
++ * PollDefault only
++ */
++#define POLL_DEFAULT_CLASS_NET POLL_FIXED_CLASSES
++#define POLL_DEFAULT_CS_NET    PollClassSet_Singleton(POLL_DEFAULT_CLASS_NET)
++
++/*
++ * Each callback is registered in a set of classes
++ */
++
++typedef struct PollClassSet {
++   uintptr_t bits;
++} PollClassSet;
++
++/* An empty PollClassSet. */
++static INLINE PollClassSet
++PollClassSet_Empty(void)
++{
++   PollClassSet set = { 0 };
++   return set;
++}
++
++/* A PollClassSet with the single member. */
++static INLINE PollClassSet
++PollClassSet_Singleton(PollClass c)
++{
++   PollClassSet s = PollClassSet_Empty();
++
++   ASSERT_ON_COMPILE(POLL_MAX_CLASSES < sizeof s.bits * 8);
++   ASSERT(c < POLL_MAX_CLASSES);
++
++   s.bits = CONST3264U(1) << c;
++   return s;
++}
++
++/* Combine two PollClassSets. */
++static INLINE PollClassSet
++PollClassSet_Union(PollClassSet lhs, PollClassSet rhs)
++{
++   PollClassSet set;
++   set.bits = lhs.bits | rhs.bits;
++   return set;
++}
++
++/* Add single class to PollClassSet. */
++static INLINE PollClassSet
++PollClassSet_Include(PollClassSet set, PollClass c)
++{
++   return PollClassSet_Union(set, PollClassSet_Singleton(c));
++}
++
++
++#define POLL_CS_MAIN    PollClassSet_Singleton(POLL_CLASS_MAIN)
++#define POLL_CS_PAUSE   PollClassSet_Union(POLL_CS_MAIN,            \
++                           PollClassSet_Singleton(POLL_CLASS_PAUSE))
++#define POLL_CS_CPT     PollClassSet_Union(POLL_CS_PAUSE,           \
++                           PollClassSet_Singleton(POLL_CLASS_CPT))
++#define POLL_CS_IPC     PollClassSet_Union(POLL_CS_CPT,             \
++                           PollClassSet_Singleton(POLL_CLASS_IPC))
++#define POLL_CS_VMDB    POLL_CS_PAUSE /* POLL_CLASS_VMDB is retired */
++#define POLL_CS_MKS	PollClassSet_Singleton(POLL_CLASS_MKS)
++/* 
++ * DANGER.  You don't need POLL_CS_ALWAYS.  Really.  So don't use it.
++ */
++#define POLL_CS_ALWAYS  PollClassSet_Union(POLL_CS_CPT, POLL_CS_IPC)
++
++/*
++ * Poll class-set taxonomy:
++ * POLL_CS_MAIN
++ *    - Unless you NEED another class, use POLL_CS_MAIN.
++ * POLL_CS_PAUSE
++ *    - For callbacks that must occur even if the guest is paused.
++ *      Most VMDB or Foundry commands are in this category.
++ * POLL_CS_CPT
++ *    - Only for callbacks which can trigger intermediate Checkpoint 
++ *      transitions.
++ *      The ONLY such callback is Migrate.
++ * POLL_CS_IPC
++ *    - Only for callbacks which can contain Msg_(Post|Hint|Question) 
++ *      responses, and for signal handlers (why)?
++ *      Vigor, VMDB, and Foundry can contain Msg_* responses.
++ * POLL_CS_MKS
++ *    - Callback runs in MKS thread.
++ * POLL_CS_ALWAYS
++ *    - Only for events that must be processed immediately.
++ *      The ONLY such callback is OvhdMemVmxSizeCheck.
++ */
++
++
++/*
++ * Poll_Callback flags
++ */
++
++#define POLL_FLAG_PERIODIC		0x01    // keep after firing
++#define POLL_FLAG_REMOVE_AT_POWEROFF	0x02  	// self-explanatory
++#define POLL_FLAG_READ			0x04	// device is ready for reading
++#define POLL_FLAG_WRITE			0x08	// device is ready for writing
++#define POLL_FLAG_SOCKET                0x10    // device is a Windows socket
++#define POLL_FLAG_NO_BULL               0x20    // callback does its own locking
++#define POLL_FLAG_WINSOCK               0x40    // Winsock style write events
++#define POLL_FLAG_FD                    0x80    // device is a Windows file descriptor.
++#define POLL_FLAG_ACCEPT_INVALID_FDS    0x100   // For broken 3rd party libs, e.g. curl
++#define POLL_FLAG_THUNK_TO_WND          0x200   // thunk callback to window message loop
++
++
++typedef void (*PollerFunction)(void *clientData);
++typedef void (*PollerFireWrapper)(PollerFunction func,
++                                  void *funcData,
++                                  void *wrapperData);
++typedef Bool (*PollerErrorFn)(const char *errorStr);
++
++/*
++ * Initialisers:
++ *
++ *      For the sake of convenience, we declare the initialisers
++ *      for custom implmentations here, even though the actual
++ *      implementations are distinct from the core poll code.
++ */
++
++typedef struct PollOptions {
++   Bool locked;           // Use internal MXUser for locking
++   Bool allowFullQueue;   // Don't assert when device event queue is full.
++   VThreadID windowsMsgThread;       // thread that processes Windows messages
++   PollerFireWrapper fireWrapperFn;  // optional; may be useful for stats
++   void *fireWrapperData; // optional
++   PollerErrorFn errorFn; // optional; called upon unrecoverable error
++} PollOptions;
++
++
++void Poll_InitDefault(void);
++void Poll_InitDefaultEx(const PollOptions *opts);
++void Poll_InitGtk(void); // On top of glib for Linux
++void Poll_InitCF(void);  // On top of CoreFoundation for OSX
++
++
++/*
++ * Functions
++ */
++int Poll_SocketPair(Bool vmci, Bool stream, int fds[2]);
++void Poll_Loop(Bool loop, Bool *exit, PollClass c);
++void Poll_LoopTimeout(Bool loop, Bool *exit, PollClass c, int timeout);
++Bool Poll_LockingEnabled(void);
++void Poll_Exit(void);
++
++
++/*
++ * Poll_Callback adds a callback regardless of whether an identical one exists.
++ * The exception to this rule is POLL_DEVICE callbacks: there is a maximum of
++ * one read and one write callback per fd.
++ *
++ * Poll_CallbackRemove removes one callback. If there are multiple identical
++ * callbacks, which one is removed is an implementation detail. Note that in
++ * the case of POLL_DEVICE and POLL_REALTIME callbacks, the fd/delay used to
++ * create the callback is not specified when removing, so all callbacks
++ * of those types with the same flags, function, and clientData are considered
++ * "identical" even if their fd/delay differed.
++ */
++
++VMwareStatus Poll_Callback(PollClassSet classSet,
++                           int flags,
++                           PollerFunction f,
++                           void *clientData,
++                           PollEventType type,
++                           PollDevHandle info, // fd/microsec delay
++                           MXUserRecLock *lck);
++Bool Poll_CallbackRemove(PollClassSet classSet,
++                         int flags,
++                         PollerFunction f,
++                         void *clientData,
++                         PollEventType type);
++Bool Poll_CallbackRemoveOneByCB(PollClassSet classSet,
++                                int flags,
++                                PollerFunction f,
++                                PollEventType type,
++                                void **clientData);
++
++void Poll_NotifyChange(PollClassSet classSet);
++
++/*
++ * Wrappers for Poll_Callback and Poll_CallbackRemove that present
++ * simpler subsets of those interfaces.
++ */
++
++VMwareStatus Poll_CB_Device(PollerFunction f,
++                            void *clientData,
++                            PollDevHandle device,
++                            Bool periodic);
++
++Bool Poll_CB_DeviceRemove(PollerFunction f,
++                          void *clientData,
++                          Bool periodic);
++
++
++VMwareStatus Poll_CB_RTime(PollerFunction f,
++                           void *clientData,
++                           int64 delay,   // microseconds
++                           Bool periodic,
++                           MXUserRecLock *lock);
++
++Bool Poll_CB_RTimeRemove(PollerFunction f,
++                         void *clientData,
++                         Bool periodic);
++
++
++#ifdef _WIN32
++void Poll_SetPumpsWindowsMessages(Bool pumps);
++void Poll_SetWindowMessageRecipient(HWND hWnd, UINT msg, Bool alwaysThunk);
++Bool Poll_FireWndCallback(void *lparam);
++#endif
++
++#if defined(__cplusplus)
++}  // extern "C"
++#endif
++
++#endif // _POLL_H_
+diff -urN a/open-vm-tools/lib/misc/idLinux.c b/open-vm-tools/lib/misc/idLinux.c
+--- a/open-vm-tools/lib/misc/idLinux.c	2019-01-23 16:28:44.000000000 +0800
++++ b/open-vm-tools/lib/misc/idLinux.c	2019-01-23 16:07:55.000000000 +0800
+@@ -27,12 +27,9 @@
+ #include <sys/syscall.h>
+ #include <string.h>
+ #include <unistd.h>
+-#ifdef __linux__
+-#if defined(__GLIBC__) && \
+-           (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 16))
++#ifdef HAVE_SYS_AUXV_H
+ #include <sys/auxv.h>
+ #endif
+-#endif
+ #ifdef __APPLE__
+ #include <sys/socket.h>
+ #include <TargetConditionals.h>
+@@ -1004,10 +1001,6 @@
+ static Bool
+ IdIsSetUGid(void)
+ {
+-#if defined(__ANDROID__)
+-   /* Android does not have a secure_getenv, so be conservative. */
+-   return TRUE;
+-#else
+    /*
+     * We use __secure_getenv, which returns NULL if the binary is
+     * setuid or setgid. Alternatives include,
+@@ -1018,17 +1011,20 @@
+     * Use (a) when we are based on glibc 2.16, or newer.
+     */
+ 
+-#if defined(__GLIBC__) && \
+-           (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 16))
++#if HAVE_ISSETUGID
++   return issetugid();
++#elif HAVE_GETAUXVAL
+    return getauxval(AT_SECURE) != 0;
+-#else
++#elif HAVE___SECURE_GETENV
+    static const char envName[] = "VMW_SETUGID_TEST";
+ 
+    if (setenv(envName, "1", TRUE) == -1) {
+       return TRUE; /* Conservative */
+    }
+    return __secure_getenv(envName) == NULL;
+-#endif
++#else
++   /* Android does not have a secure_getenv, so be conservative. */
++   return TRUE;
+ #endif
+ }
+ #endif
+diff -urN a/open-vm-tools/lib/nicInfo/nicInfoPosix.c b/open-vm-tools/lib/nicInfo/nicInfoPosix.c
+--- a/open-vm-tools/lib/nicInfo/nicInfoPosix.c	2019-01-23 16:28:44.000000000 +0800
++++ b/open-vm-tools/lib/nicInfo/nicInfoPosix.c	2019-01-23 16:08:41.000000000 +0800
+@@ -34,9 +34,13 @@
+ #include <sys/socket.h>
+ #include <sys/stat.h>
+ #include <errno.h>
+-#if defined(__FreeBSD__) || defined(__APPLE__)
++#if HAVE_SYS_SYSCTL_H
+ # include <sys/sysctl.h>
++#endif
++#if HAVE_IFADDRS_H
+ # include <ifaddrs.h>
++#endif
++#if HAVE_NET_IF_H
+ # include <net/if.h>
+ #endif
+ #ifndef NO_DNET
+diff -urN a/open-vm-tools/lib/rpcIn/rpcin.c b/open-vm-tools/lib/rpcIn/rpcin.c
+--- a/open-vm-tools/lib/rpcIn/rpcin.c	2019-01-23 16:28:44.000000000 +0800
++++ b/open-vm-tools/lib/rpcIn/rpcin.c	2019-01-23 16:13:42.000000000 +0800
+@@ -57,7 +57,7 @@
+ 
+ #if defined(VMTOOLS_USE_VSOCKET)
+ #  include <glib.h>
+-#  include "poll.h"
++#  include "vm_poll.h"
+ #  include "asyncsocket.h"
+ #  include "vmci_defs.h"
+ #include "dataMap.h"
+diff -urN a/open-vm-tools/lib/wiper/wiperPosix.c b/open-vm-tools/lib/wiper/wiperPosix.c
+--- a/open-vm-tools/lib/wiper/wiperPosix.c	2019-01-23 16:28:44.000000000 +0800
++++ b/open-vm-tools/lib/wiper/wiperPosix.c	2019-01-23 15:59:12.000000000 +0800
+@@ -43,6 +43,9 @@
+ #  include <libgen.h>
+ # endif /* __FreeBSD_version >= 500000 */
+ #endif
++#if defined(__linux__)
++#include <sys/sysmacros.h>
++#endif
+ #include <unistd.h>
+ 
+ #include "vmware.h"
+diff -urN a/open-vm-tools/services/plugins/dndcp/dnd/dndLinux.c b/open-vm-tools/services/plugins/dndcp/dnd/dndLinux.c
+--- a/open-vm-tools/services/plugins/dndcp/dnd/dndLinux.c	2019-01-23 16:28:44.000000000 +0800
++++ b/open-vm-tools/services/plugins/dndcp/dnd/dndLinux.c	2019-01-23 16:03:18.000000000 +0800
+@@ -52,7 +52,7 @@
+ 
+ #define DND_ROOTDIR_PERMS     (S_IRWXU | S_IRWXG | S_IRWXO)
+ #define DND_STAGINGDIR_PERMS  (S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH)
+-#ifdef sun
++#ifndef ACCESSPERMS
+ #define ACCESSPERMS           (S_IRWXU | S_IRWXG | S_IRWXO)
+ #endif
+ #ifdef __ANDROID__
+@@ -61,7 +61,6 @@
+  */
+ #define NO_SETMNTENT
+ #define NO_ENDMNTENT
+-#define ACCESSPERMS           (S_IRWXU | S_IRWXG | S_IRWXO)
+ #endif
+ 
+ 
+diff -urN a/open-vm-tools/services/plugins/vix/vixTools.c b/open-vm-tools/services/plugins/vix/vixTools.c
+--- a/open-vm-tools/services/plugins/vix/vixTools.c	2019-01-23 16:28:44.000000000 +0800
++++ b/open-vm-tools/services/plugins/vix/vixTools.c	2019-01-23 16:09:07.000000000 +0800
+@@ -66,7 +66,7 @@
+ #include <unistd.h>
+ #endif
+ 
+-#if defined(sun) || defined(__FreeBSD__) || defined(__APPLE__)
++#ifdef HAVE_SYS_STAT_H
+ #include <sys/stat.h>
+ #endif
+ 
