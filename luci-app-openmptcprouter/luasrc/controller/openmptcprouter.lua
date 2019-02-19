@@ -87,10 +87,12 @@ function wizard_add()
 		end
 		
 		local ointf = interface_from_device(defif) or ""
+		local wanif = defif
 		if ointf ~= "" then
 			if ucic:get("network",ointf,"type") == "" then
 				ucic:set("network",ointf,"type","macvlan")
 			end
+			wanif = "wan" .. i
 		end
 		
 		ucic:set("network","wan" .. i,"interface")
@@ -119,7 +121,7 @@ function wizard_add()
 		ucic:commit("qos")
 
 		ucic:set("sqm","wan" .. i,"queue")
-		ucic:set("sqm","wan" .. i,"interface",defif)
+		ucic:set("sqm","wan" .. i,"interface",wanif)
 		ucic:set("sqm","wan" .. i,"qdisc","fq_codel")
 		ucic:set("sqm","wan" .. i,"script","simple.qos")
 		ucic:set("sqm","wan" .. i,"qdisc_advanced","0")
@@ -132,7 +134,7 @@ function wizard_add()
 		ucic:save("sqm")
 		ucic:commit("sqm")
 		
-		luci.sys.call("uci -q add_list vnstat.@vnstat[-1].interface=" .. defif)
+		luci.sys.call("uci -q add_list vnstat.@vnstat[-1].interface=" .. wanif)
 		luci.sys.call("uci -q commit vnstat")
 
 		-- Dirty way to add new interface to firewall...
@@ -511,7 +513,7 @@ function settings_add()
 	set_ipv6_state(disable_ipv6)
 
 	-- Enable/disable obfs
-	local obfs = luci.http.formvalue("obfs") or 0
+	local obfs = luci.http.formvalue("obfs") or "0"
 	local obfs_plugin = luci.http.formvalue("obfs_plugin") or "v2ray"
 	ucic:foreach("shadowsocks-libev", "ss_redir", function (section)
 		ucic:set("shadowsocks-libev",section[".name"],"obfs",obfs)
@@ -754,6 +756,7 @@ function interfaces_status()
 						mArray.openmptcprouter["vps_uptime"] = vpsinfo.vps.uptime or ""
 						mArray.openmptcprouter["vps_mptcp"] = vpsinfo.vps.mptcp or ""
 						mArray.openmptcprouter["vps_admin"] = true
+						mArray.openmptcprouter["vps_mptcp"] = vpsinfo.mptcp.enabled or ""
 						mArray.openmptcprouter["vps_status"] = "UP"
 					else
 						uci:set("openmptcprouter",s[".name"],"admin_error","1")
