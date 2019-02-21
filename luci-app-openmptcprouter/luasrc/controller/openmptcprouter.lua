@@ -895,7 +895,7 @@ function interfaces_status()
 	    duplicateif = false
 	    if ifname ~= "" and ifname ~= nil then
 		if allintf[ifname] then
-		    connectivity = "ERROR"
+		    --connectivity = "ERROR"
 		    duplicateif = true
 		else
 		    allintf[ifname] = true
