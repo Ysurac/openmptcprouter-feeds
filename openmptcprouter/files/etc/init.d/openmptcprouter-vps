@@ -255,19 +255,26 @@ _set_mptcp_vps() {
 	local settings
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
+	mptcp_enabled_current="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.enabled')"
 	checksum_current="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.checksum')"
 	path_manager_current="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.path_manager')"
 	scheduler_current="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.scheduler')"
 	syn_retries_current="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.syn_retries')"
 	congestion_control_current="$(echo "$vps_config" | jsonfilter -q -e '@.network.congestion_control')"
+	mptcp_enabled="$(uci -q get network.globals.multipath)"
+	if [ "$mptcp_enabled" = "disable" ]; then
+		mptcp_enabled="0"
+	else
+		mptcp_enabled="1"
+	fi
 	checksum="$(uci -q get network.globals.mptcp_checksum)"
 	path_manager="$(uci -q get network.globals.mptcp_path_manager)"
 	scheduler="$(uci -q get network.globals.mptcp_scheduler)"
 	syn_retries="$(uci -q get network.globals.mptcp_syn_retries)"
 	congestion="$(uci -q get network.globals.congestion)"
 	[ -z "$congestion" ] && congestion="bbr"
-	if [ "$checksum_current" != "$checksum" ] || [ "$path_manager_current" != "$path_manager" ] || [ "$scheduler_current" != "$scheduler" ] || [ "$syn_retries_current" != "$syn_retries" ] || [ "$congestion_control_current" != "$congestion" ]; then
-		settings='{"checksum": "'$checksum'","path_manager": "'$path_manager'","scheduler": "'$scheduler'","syn_retries": "'$syn_retries'","congestion_control": "'$congestion'"}'
+	if [ "$mptcp_enabled_current" != "$mptcp_enabled" ] || [ "$checksum_current" != "$checksum" ] || [ "$path_manager_current" != "$path_manager" ] || [ "$scheduler_current" != "$scheduler" ] || [ "$syn_retries_current" != "$syn_retries" ] || [ "$congestion_control_current" != "$congestion" ]; then
+		settings='{"enabled" : "'$mptcp_enabled'", "checksum": "'$checksum'","path_manager": "'$path_manager'","scheduler": "'$scheduler'","syn_retries": "'$syn_retries'","congestion_control": "'$congestion'"}'
 		_set_json "mptcp" "$settings"
 	fi
 }
@@ -388,8 +395,15 @@ _set_config_from_vps() {
 	mptcp_scheduler="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.scheduler')"
 	mptcp_checksum="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.checksum')"
 	mptcp_syn_retries="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.syn_retries')"
+	mptcp_enabled="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.enabled')"
+	if [ "$mptcp_enabled" = "0" ]; then
+		mptcp_enabled="disable"
+	else
+		mptcp_enabled="enable"
+	fi
 	congestion="$(echo "$vps_config" | jsonfilter -q -e '@.network.congestion_control')"
 	uci -q batch <<-EOF >/dev/null
+		set network.globals.multipath=$mptcp_enabled
 		set network.globals.mptcp_path_manager=$mptcp_path_manager
 		set network.globals.mptcp_scheduler=$mptcp_scheduler
 		set network.globals.mptcp_checksum=$mptcp_checksum
