@@ -14,9 +14,9 @@ _bypass_ip() {
 	valid_ip4=$( valid_subnet4 $ip)
 	valid_ip6=$( valid_subnet6 $ip)
 	if [ "$valid_ip4" = "ok" ]; then
-		ipset -q add omr_rules_dst_bypass_$type $ip
+		ipset -q add omr_dst_bypass_$type $ip
 	elif [ "$valid_ip6" = "ok" ]; then
-		ipset -q add omr_rules6_dst_bypass_$type $ip
+		ipset -q add omr6_dst_bypass_$type $ip
 	fi
 }
 
@@ -45,7 +45,7 @@ _bypass_domain() {
 				_bypass_ip $ip $intf
 			done
 		fi
-		uci -q add_list dhcp.@dnsmasq[0].ipset="/$domain/omr_rules_dst_bypass_$intf,omr_rules6_dst_bypass_$intf"
+		uci -q add_list dhcp.@dnsmasq[0].ipset="/$domain/omr_dst_bypass_$intf,omr6_dst_bypass_$intf"
 		#logger -t "omr-bypass" "Get IPs of $domain... Done"
 	fi
 }
@@ -174,11 +174,11 @@ _intf_rule() {
 	[ -z "$count" ] && return
 	[ -z "$intf" ] && return
 	[ "$(echo $1 | grep _dev)" != "" ] && return
-	ipset -q flush omr_rules_dst_bypass_$intf > /dev/null 2>&1
-	ipset -q flush omr_rules6_dst_bypass_$intf > /dev/null 2>&1
+	ipset -q flush omr_dst_bypass_$intf > /dev/null 2>&1
+	ipset -q flush omr6_dst_bypass_$intf > /dev/null 2>&1
 	ipset -q --exist restore <<-EOF
-	create omr_rules_dst_bypass_$intf hash:net hashsize 64
-	create omr_rules6_dst_bypass_$intf hash:net family inet6 hashsize 64
+	create omr_dst_bypass_$intf hash:net hashsize 64
+	create omr6_dst_bypass_$intf hash:net family inet6 hashsize 64
 	EOF
 	if [ "$(uci -q get openmptcprouter.settings.uci_rules)" = "1" ]; then
 		uci -q batch <<-EOF >/dev/null
@@ -198,38 +198,38 @@ _intf_rule() {
 		ip rule add prio 1 fwmark 0x539$count lookup $count pref 1 > /dev/null 2>&1
 		ip -6 rule add prio 1 fwmark 0x6539$count lookup 6$count > /dev/null 2>&1
 	fi
-	if [ "$(iptables -w 40 -t mangle -L | grep omr_rules_dst_bypass_$intf)" = "" ]; then
+	if [ "$(iptables -w 40 -t mangle -L | grep omr_dst_bypass_$intf)" = "" ]; then
 		iptables-restore --wait=60 --noflush <<-EOF
 		*mangle
-		-I omr-bypass 1 -m set --match-set omr_rules_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
+		-I omr-bypass 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
 		COMMIT
 		EOF
 	fi
-	if [ "$(iptables -w 40 -t nat -L | grep ss_rules_pre_src)" != "" ] && [ "$(iptables -w 40 -t nat -L | grep omr_rules_dst_bypass_$intf)" = "" ]; then
+	if [ "$(iptables -w 40 -t nat -L | grep ss_rules_pre_src)" != "" ] && [ "$(iptables -w 40 -t nat -L | grep omr_dst_bypass_$intf)" = "" ]; then
 		iptables-restore --wait=60 --noflush <<-EOF
 		*nat
-		-I ss_rules_dst 1 -m set --match-set omr_rules_dst_bypass_$intf dst -j RETURN
-		-I ss_rules_local_out 1 -m set --match-set omr_rules_dst_bypass_$intf dst -j RETURN
+		-I ss_rules_dst 1 -m set --match-set omr_dst_bypass_$intf dst -j RETURN
+		-I ss_rules_local_out 1 -m set --match-set omr_dst_bypass_$intf dst -j RETURN
 		-I ss_rules_local_out 2 -m mark --mark 0x539$count -j RETURN
-		-I ss_rules_pre_src 1 -m set --match-set omr_rules_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
+		-I ss_rules_pre_src 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
 		-I ss_rules_pre_src 2 -m mark --mark 0x539$count -j RETURN
 		COMMIT
 		EOF
 	fi
-	if [ "$(ip6tables -w 40 -t mangle -L | grep omr_rules6_dst_bypass_$intf)" = "" ]; then
+	if [ "$(ip6tables -w 40 -t mangle -L | grep omr6_dst_bypass_$intf)" = "" ]; then
 		ip6tables-restore --wait=60 --noflush <<-EOF
 		*mangle
-		-I omr-bypass6 1 -m set --match-set omr_rules6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
+		-I omr-bypass6 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
 		COMMIT
 		EOF
 	fi
-	if [ "$(ip6tables -w 40 -t nat -L | grep ss_rules6_pre_src)" != "" ] && [ "$(ip6tables -w 40 -t nat -L | grep omr_rules6_dst_bypass_$intf)" = "" ]; then
+	if [ "$(ip6tables -w 40 -t nat -L | grep ss_rules6_pre_src)" != "" ] && [ "$(ip6tables -w 40 -t nat -L | grep omr6_dst_bypass_$intf)" = "" ]; then
 		ip6tables-restore --wait=60 --noflush <<-EOF
 		*nat
-		-I ss_rules6_dst 1 -m set --match-set omr_rules6_dst_bypass_$intf dst -j RETURN
-		-I ss_rules6_local_out 1 -m set --match-set omr_rules6_dst_bypass_$intf dst -j RETURN
+		-I ss_rules6_dst 1 -m set --match-set omr6_dst_bypass_$intf dst -j RETURN
+		-I ss_rules6_local_out 1 -m set --match-set omr6_dst_bypass_$intf dst -j RETURN
 		-I ss_rules6_local_out 2 -m mark --mark 0x6539$count -j RETURN
-		-I ss_rules6_pre_src 1 -m set --match-set omr_rules6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
+		-I ss_rules6_pre_src 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
 		-I ss_rules6_pre_src 2 -m mark --mark 0x6539$count -j RETURN
 		COMMIT
 		EOF
@@ -273,11 +273,11 @@ boot() {
 start_service() {
 	#local count
 	logger -t "omr-bypass" "Starting OMR-ByPass..."
-	ipset -q flush omr_rules_dst_bypass_all > /dev/null 2>&1
-	ipset -q flush omr_rules6_dst_bypass_all > /dev/null 2>&1
+	ipset -q flush omr_dst_bypass_all > /dev/null 2>&1
+	ipset -q flush omr6_dst_bypass_all > /dev/null 2>&1
 	ipset -q --exist restore <<-EOF
-	create omr_rules_dst_bypass_all hash:net hashsize 64
-	create omr_rules6_dst_bypass_all hash:net family inet6 hashsize 64
+	create omr_dst_bypass_all hash:net hashsize 64
+	create omr6_dst_bypass_all hash:net family inet6 hashsize 64
 	EOF
 
 	iptables-save --counters | grep -v omr-bypass | iptables-restore --counters
@@ -314,38 +314,38 @@ start_service() {
 	ip rule add prio 1 fwmark 0x539 lookup 991337 > /dev/null 2>&1
 	ip -6 rule add prio 1 fwmark 0x6539 lookup 6991337 > /dev/null 2>&1
 
-	if [ "$(iptables -w 40 -t mangle -L | grep 'match-set omr_rules_dst_bypass_all dst MARK set')" = "" ]; then
+	if [ "$(iptables -w 40 -t mangle -L | grep 'match-set omr_dst_bypass_all dst MARK set')" = "" ]; then
 		iptables-restore --wait=60 --noflush <<-EOF
 		*mangle
-		-A omr-bypass -m set --match-set omr_rules_dst_bypass_all dst -j MARK --set-mark 0x539
+		-A omr-bypass -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
 		COMMIT
 		EOF
 	fi
-	if [ "$(iptables -w 40 -t nat -L | grep ss_rules_pre_src)" != "" ] && [ "$(iptables -w 40 -t nat -L | grep omr_rules_dst_bypass_all)" = "" ]; then
+	if [ "$(iptables -w 40 -t nat -L | grep ss_rules_pre_src)" != "" ] && [ "$(iptables -w 40 -t nat -L | grep omr_dst_bypass_all)" = "" ]; then
 		iptables-restore --wait=60 --noflush <<-EOF
 		*nat
-		-I ss_rules_dst 1 -m set --match-set omr_rules_dst_bypass_all dst -j RETURN
-		-I ss_rules_local_out 1 -m set --match-set omr_rules_dst_bypass_all dst -j RETURN
+		-I ss_rules_dst 1 -m set --match-set omr_dst_bypass_all dst -j RETURN
+		-I ss_rules_local_out 1 -m set --match-set omr_dst_bypass_all dst -j RETURN
 		-I ss_rules_local_out 2 -m mark --mark 0x539 -j RETURN
-		-I ss_rules_pre_src 1 -m set --match-set omr_rules_dst_bypass_all dst -j MARK --set-mark 0x539
+		-I ss_rules_pre_src 1 -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
 		-I ss_rules_pre_src 2 -m mark --mark 0x539 -j RETURN
 		COMMIT
 		EOF
 	fi
-	if [ "$(ip6tables -w 40 -t mangle -L | grep 'match-set omr_rules6_dst_bypass_all dst MARK set')" = "" ]; then
+	if [ "$(ip6tables -w 40 -t mangle -L | grep 'match-set omr6_dst_bypass_all dst MARK set')" = "" ]; then
 		ip6tables-restore --wait=60 --noflush <<-EOF
 		*mangle
-		-A omr-bypass6 -m set --match-set omr_rules6_dst_bypass_all dst -j MARK --set-mark 0x6539
+		-A omr-bypass6 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
 		COMMIT
 		EOF
 	fi
-	if [ "$(ip6tables -w 40 -t nat -L | grep ss_rules6_pre_src)" != "" ] && [ "$(ip6tables -w 40 -t nat -L | grep omr_rules6_dst_bypass_all)" = "" ]; then
+	if [ "$(ip6tables -w 40 -t nat -L | grep ss_rules6_pre_src)" != "" ] && [ "$(ip6tables -w 40 -t nat -L | grep omr6_dst_bypass_all)" = "" ]; then
 		ip6tables-restore --wait=60 --noflush <<-EOF
 		*nat
-		-I ss_rules6_dst 1 -m set --match-set omr_rules6_dst_bypass_all dst -j RETURN
-		-I ss_rules6_local_out 1 -m set --match-set omr_rules6_dst_bypass_all dst -j RETURN
+		-I ss_rules6_dst 1 -m set --match-set omr6_dst_bypass_all dst -j RETURN
+		-I ss_rules6_local_out 1 -m set --match-set omr6_dst_bypass_all dst -j RETURN
 		-I ss_rules6_local_out 2 -m mark --mark 0x6539 -j RETURN
-		-I ss_rules6_pre_src 1 -m set --match-set omr_rules6_dst_bypass_all dst -j MARK --set-mark 0x6539
+		-I ss_rules6_pre_src 1 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
 		-I ss_rules6_pre_src 2 -m mark --mark 0x6539 -j RETURN
 		COMMIT
 		EOF
@@ -376,9 +376,9 @@ start_service() {
 
 stop_service() {
 	iptables-save --counters | grep -v omr-bypass | iptables-restore --counters
-	iptables-save --counters | grep -v omr_rules | iptables-restore --counters
+	iptables-save --counters | grep -v omr_dst | iptables-restore --counters
 	ip6tables-save --counters | grep -v omr-bypass6 | ip6tables-restore --counters
-	ip6tables-save --counters | grep -v omr_rules6 | ip6tables-restore --counters
+	ip6tables-save --counters | grep -v omr6_dst | ip6tables-restore --counters
 	for setname in $(ipset -n list | grep "omr_"); do
 		ipset destroy "$setname" 2>/dev/null || true
 	done
