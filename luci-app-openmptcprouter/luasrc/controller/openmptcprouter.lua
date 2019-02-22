@@ -193,6 +193,9 @@ function wizard_add()
 		if not ucic:get("sqm",intf) ~= "" then
 			local defif = ucic:get("network",intf .. "_dev","ifname") or ""
 			if defif == "" then
+				defif = get_device(intf)
+			end
+			if defif == "" then
 				defif = ucic:get("network",intf,"ifname") or ""
 			end
 			ucic:set("sqm",intf,"queue")
@@ -738,7 +741,7 @@ function interfaces_status()
 	mArray.openmptcprouter["vps_admin_error_msg"] = "Not found"
 	-- Get VPS info
 	ucic:foreach("openmptcprouter", "server", function(s)
-		local serverip = uci:get("openmptcprouter",s[".name"],"ip")
+		local serverip = uci:get("openmptcprouter",s[".name"],"ip") or ""
 		if serverip ~= "" then
 			mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter", s[".name"], "omr_version") or ""
 			mArray.openmptcprouter["vps_kernel"] = uci:get("openmptcprouter",s[".name"],"kernel") or ""
@@ -756,7 +759,6 @@ function interfaces_status()
 						mArray.openmptcprouter["vps_uptime"] = vpsinfo.vps.uptime or ""
 						mArray.openmptcprouter["vps_mptcp"] = vpsinfo.vps.mptcp or ""
 						mArray.openmptcprouter["vps_admin"] = true
-						mArray.openmptcprouter["vps_mptcp"] = vpsinfo.mptcp.enabled or ""
 						mArray.openmptcprouter["vps_status"] = "UP"
 					else
 						uci:set("openmptcprouter",s[".name"],"admin_error","1")
