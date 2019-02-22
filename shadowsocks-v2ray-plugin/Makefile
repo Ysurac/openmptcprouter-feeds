@@ -37,18 +37,5 @@ define Package/v2ray-plugin/description
 	Yet another SIP003 plugin for shadowsocks, based on v2ray
 endef
 
-#define Build/Prepare
-#	gzip -dc "$(DL_DIR)/$(PKG_SOURCE)" | tar -C $(PKG_BUILD_DIR)/ -xf -
-#endef
-
-#define Build/Compile
-#	echo "$(PKG_NAME)Compile Skiped!"
-#endef
-
-#define Package/v2ray-plugin/install
-#	$(INSTALL_DIR) $(1)/usr/bin
-#	$(INSTALL_BIN) $(PKG_BUILD_DIR)/v2ray-plugin $(1)/usr/bin/v2ray-plugin
-#endef
-
 $(eval $(call GoBinPackage,v2ray-plugin))
 $(eval $(call BuildPackage,v2ray-plugin))
