@@ -27,15 +27,15 @@ function run_test(server,proto,mode,updown,omit,parallel,transmit,bitrate)
 	local port = t[ math.random( #t ) ]
 	if mode == "tcp" then
 		if updown == "upload" then
-			iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -t %s -J" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit})
+			iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -t %s -J -Z" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit})
 		else
-			iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -R -t %s -J" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit})
+			iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -R -t %s -J -Z" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit})
 		end
 	else
 		if updown == "upload" then
-			iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -t %s -u -b %sm -J" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit,bitrate})
+			iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -t %s -u -b %sm -J -Z" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit,bitrate})
 		else
-			iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -R -t %s -u -b %sm -J" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit,bitrate})
+			iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -R -t %s -u -b %sm -J -Z" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit,bitrate})
 		end
 	end
 	if iperf then
