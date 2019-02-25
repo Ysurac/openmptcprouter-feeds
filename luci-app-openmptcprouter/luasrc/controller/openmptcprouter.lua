@@ -699,15 +699,21 @@ function interfaces_status()
 	if mArray.openmptcprouter["dns"] == true then
 		-- wanaddr
 		--mArray.openmptcprouter["wan_addr"] = uci:get("openmptcprouter","omr","public_detected_ipv4") or ""
-		mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("wget -4 -qO- -T 2 http://ip.openmptcprouter.com"))
-		if mArray.openmptcprouter["wan_addr"] == "" then
-			mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("dig TXT +timeout=2 +short o-o.myaddr.l.google.com | awk -F'\"' '{print $2}'"))
-		end
-		if mArray.openmptcprouter["ipv6"] == "enabled" then
-			mArray.openmptcprouter["wan_addr6"] = uci:get("openmptcprouter","omr","public_detected_ipv6") or ""
-			if mArray.openmptcprouter["wan_addr6"] == "" then
-				mArray.openmptcprouter["wan_addr6"] = ut.trim(sys.exec("wget -6 -qO- -T 2 http://ipv6.openmptcprouter.com"))
+		
+		if uci:get("openmptcprouter","settings","external_check") ~= "0" then
+			mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("wget -4 -qO- -T 2 http://ip.openmptcprouter.com"))
+			if mArray.openmptcprouter["wan_addr"] == "" then
+				mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("dig TXT +timeout=2 +short o-o.myaddr.l.google.com | awk -F'\"' '{print $2}'"))
 			end
+			if mArray.openmptcprouter["ipv6"] == "enabled" then
+				mArray.openmptcprouter["wan_addr6"] = uci:get("openmptcprouter","omr","public_detected_ipv6") or ""
+				if mArray.openmptcprouter["wan_addr6"] == "" then
+					mArray.openmptcprouter["wan_addr6"] = ut.trim(sys.exec("wget -6 -qO- -T 2 http://ipv6.openmptcprouter.com"))
+				end
+			end
+			mArray.openmptcprouter["external_check"] = true
+		else
+			mArray.openmptcprouter["external_check"] = false
 		end
 		-- shadowsocksaddr
 		mArray.openmptcprouter["ss_addr"] = uci:get("openmptcprouter","omr","detected_ss_ipv4") or ""
@@ -715,8 +721,10 @@ function interfaces_status()
 			tracker_ip = uci:get("shadowsocks-libev","tracker","local_address") or ""
 			if tracker_ip ~= "" then
 				local tracker_port = uci:get("shadowsocks-libev","tracker","local_port")
-				mArray.openmptcprouter["ss_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 2 http://ip.openmptcprouter.com"))
-				--mArray.openmptcprouter["ss_addr6"] = sys.exec("curl -s -6 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ipv6.openmptcprouter.com")
+				if uci:get("openmptcprouter","settings","external_check") ~= "0" then
+					mArray.openmptcprouter["ss_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 2 http://ip.openmptcprouter.com"))
+					--mArray.openmptcprouter["ss_addr6"] = sys.exec("curl -s -6 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ipv6.openmptcprouter.com")
+				end
 			end
 		end
 	end
@@ -1043,13 +1051,13 @@ function interfaces_status()
 	    end
 
 	    local publicIP = uci:get("openmptcprouter",interface,"publicip") or ""
-	    if ifname ~= nil and publicIP == "" then
+	    if ifname ~= nil and publicIP == "" and uci:get("openmptcprouter","settings","external_check") ~= "0" then
 		    publicIP = ut.trim(sys.exec("omr-ip-intf " .. ifname))
 	    end
 	    local whois = ""
 	    if publicIP ~= "" then
 		    whois = uci:get("openmptcprouter",interface,"asn") or ""
-		    if whois == "" then
+		    if whois == "" and uci:get("openmptcprouter","settings","external_check") ~= "0" then
 			    --whois = ut.trim(sys.exec("whois " .. publicIP .. " | grep -i 'netname' | awk '{print $2}'"))
 			    whois = ut.trim(sys.exec("wget -4 -qO- -T 1 'http://api.iptoasn.com/v1/as/ip/" .. publicIP .. "' | jsonfilter -q -e '@.as_description'"))
 		    end

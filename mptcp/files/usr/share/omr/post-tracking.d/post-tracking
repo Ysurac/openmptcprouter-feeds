@@ -348,7 +348,9 @@ fi
 # Save wan settings for status page
 if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ]; then
 	_log "Get status and settings for $OMR_TRACKER_INTERFACE..."
-	local ipaddr="$(omr-ip-intf $OMR_TRACKER_DEVICE)"
+	if [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ]; then
+		local ipaddr="$(omr-ip-intf $OMR_TRACKER_DEVICE)"
+	fi
 	[ -n "$ipaddr" ] && {
 		# Check if we can get a IPv6 address, if yes enable RA else disable
 		local ip6addr="$(curl -s -6 -m 3 http://ipv6.openmptcprouter.com/)"
@@ -371,10 +373,12 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 				/etc/init.d/odhcpd enable > /dev/null 2>&1
 			fi
 		fi
-		local asn="$(wget -4 -qO- -T 5 http://api.iptoasn.com/v1/as/ip/$ipaddr | jsonfilter -q -e '@.as_description')"
-		[ -z "$asn" ] && {
-			asn="$(whois $ipaddr 2>/dev/null | grep -m 1 -i 'netname' | awk '{print $2}')"
-		}
+		if [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ]; then
+			local asn="$(wget -4 -qO- -T 5 http://api.iptoasn.com/v1/as/ip/$ipaddr | jsonfilter -q -e '@.as_description')"
+			[ -z "$asn" ] && {
+				asn="$(whois $ipaddr 2>/dev/null | grep -m 1 -i 'netname' | awk '{print $2}')"
+			}
+		fi
 		[ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE)" ] && {
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE=interface
 		}
@@ -421,6 +425,11 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
 		fi
 	}
+	if [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get openmptcprouter.settings.external_check)" = "0" ]; then
+		if ping -c 1 $(uci -q get shadowsocks-libev.sss0.server) &> /dev/null; then
+			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+		fi
+	fi
 	if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ]; then
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(( $(date +"%s") - 3400 ))
 		_log "Get status and settings for $OMR_TRACKER_INTERFACE... Failed"
