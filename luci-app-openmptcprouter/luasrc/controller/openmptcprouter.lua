@@ -237,6 +237,10 @@ function wizard_add()
 	-- Enable/disable IPv6
 	local disable_ipv6 = luci.http.formvalue("enableipv6") or "1"
 	set_ipv6_state(disable_ipv6)
+
+	-- Enable/disable external check
+	local externalcheck = luci.http.formvalue("externalcheck") or "1"
+	ucic:set("openmptcprouter","settings","external_check",externalcheck)
 	
 	-- Get VPN set by default
 	local default_vpn = luci.http.formvalue("default_vpn") or "glorytun_tcp"
