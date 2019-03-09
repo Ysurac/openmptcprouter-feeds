@@ -12,7 +12,7 @@ PKG_MAINTAINER:=chenhw2 <https://github.com/chenhw2>
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/shadowsocks/v2ray-plugin.git
-PKG_SOURCE_VERSION:=8cea1a3
+PKG_SOURCE_VERSION:=a3b8add514ecbe486a4f095a4022277b08bed84a
 
 PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_PARALLEL:=1
