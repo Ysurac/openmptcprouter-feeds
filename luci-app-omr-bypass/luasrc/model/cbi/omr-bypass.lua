@@ -53,7 +53,7 @@ end)
 ifm = s:option(Value, "interface", translate("Interface"))
 ifm.rmempty  = true
 
-s = m:section(TypedSection, "lan_ip", translate("Source lan IP address"))
+s = m:section(TypedSection, "lan_ip", translate("Source lan IP address or network"))
 s.addremove = true
 s.anonymous = true
 s.template = "cbi/tblsection"
