@@ -66,7 +66,7 @@ MY_DEPENDS := \
     kmod-spi-gpio-custom kmod-fb-tft-all lcd4linux-full \
     ca-bundle \
     dejavu-fonts-ttf-DejaVuSerif dejavu-fonts-ttf-DejaVuSerif-Bold dejavu-fonts-ttf-DejaVuSerif-Italic dejavu-fonts-ttf-DejaVuSerif-BoldItalic \
-    TARGET_x86:open-vm-tools
+    (TARGET_x86||TARGET_x86_64):open-vm-tools
 
 OMR_SUPPORTED_LANGS := ca zh-cn en fr de el he hu it ja ms no pl pt-br pt ro ru es sv uk vi
 
