@@ -100,7 +100,6 @@ LCD4LINUX_PLUGINS:= \
 	netdev \
 	netinfo \
 	meminfo \
-	mpd \
 	mpris_dbus \
 	netdev \
 	pop3 \
@@ -114,6 +113,7 @@ LCD4LINUX_PLUGINS:= \
 	w1retap \
 	$(if $(CONFIG_BROKEN),wireless) \
 	xmms \
+#	mpd \
 #	mysql \
 #	python \
 
@@ -123,7 +123,7 @@ PKG_INSTALL:=1
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(BUILD_VARIANT)/$(PKG_NAME)-$(PKG_VERSION)
 
 PKG_BUILD_DEPENDS:= \
-	ppp \
+#	ppp \
 #	libftdi \
 #	libX11 \
 #	python \
@@ -156,10 +156,10 @@ $(call Package/lcd4linux/Default)
 	+LCD4LINUX_CUSTOM_NEEDS_libgd:libgd \
 	$(if $(ICONV_FULL),+LCD4LINUX_CUSTOM_NEEDS_libiconv:libiconv-full) \
 	+LCD4LINUX_CUSTOM_NEEDS_libjpeg:libjpeg \
-	+LCD4LINUX_CUSTOM_NEEDS_libmpdclient:libmpdclient \
 	+LCD4LINUX_CUSTOM_NEEDS_libncurses:libncurses \
 	+LCD4LINUX_CUSTOM_NEEDS_libsqlite3:libsqlite3 \
 	+LCD4LINUX_CUSTOM_NEEDS_libusb:libusb-compat \
+#	+LCD4LINUX_CUSTOM_NEEDS_libmpdclient:libmpdclient \
 #	+LCD4LINUX_CUSTOM_NEEDS_libmysqlclient:libmysqlclient \
 #	+LCD4LINUX_CUSTOM_NEEDS_libftdi:libftdi \
 #	+LCD4LINUX_CUSTOM_NEEDS_libX11:libX11 \
@@ -182,15 +182,15 @@ endef
 
 define Package/lcd4linux-full
 $(call Package/lcd4linux/Default)
-  DEPENDS:= @DEVEL \
+  DEPENDS:= \
 	+libdbus \
 	+libgd \
 	$(if $(ICONV_FULL),+libiconv-full) \
-	+libmpdclient \
 	+libncurses \
 	+libsqlite3 \
 	+libusb-compat \
 	+serdisplib
+#	+libmpdclient \
 #	+libmysqlclient \
 #	+libftdi \
 #	+libX11 \
