@@ -161,6 +161,9 @@ function wizard_add()
 			ucic:save("qos")
 			ucic:commit("qos")
 			luci.sys.call("uci -q del_list vnstat.@vnstat[-1].interface=" .. defif)
+			luci.sys.call("uci -q commit vnstat")
+			luci.sys.call("uci -q del_list firewall.@zone[1].network=wan" .. i)
+			luci.sys.call("uci -q commit firewall")
 			gostatus = false
 		end
 	end
