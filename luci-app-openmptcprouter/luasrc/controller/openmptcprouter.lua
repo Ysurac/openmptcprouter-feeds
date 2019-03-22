@@ -215,19 +215,25 @@ function wizard_add()
 		end
 
 		if downloadspeed ~= "0" and uploadspeed ~= "0" then
-			ucic:set("sqm",intf,"download",downloadspeed)
-			ucic:set("sqm",intf,"upload",uploadspeed)
-			ucic:set("sqm",intf,"enabled","1")
-			ucic:set("qos",intf,"download",downloadspeed)
-			ucic:set("qos",intf,"upload",uploadspeed)
-			ucic:set("qos",intf,"enabled","1")
-		else
-			ucic:set("sqm",intf,"download","0")
-			ucic:set("sqm",intf,"upload","0")
-			ucic:set("sqm",intf,"enabled","0")
-			ucic:set("qos",intf,"download","0")
-			ucic:set("qos",intf,"upload","0")
-			ucic:set("qos",intf,"enabled","0")
+			ucic:set("network",intf,"downloadspeed",downloadspeed)
+			ucic:set("network",intf,"uploadspeed",uploadspeed)
+			if ucic:get("sqm",intf,"download") == "" then
+				ucic:set("sqm",intf,"download",downloadspeed)
+				ucic:set("sqm",intf,"upload",uploadspeed)
+				--ucic:set("sqm",intf,"enabled","1")
+			end
+			if ucic:get("qos",intf,"download") == "" then
+				ucic:set("qos",intf,"download",downloadspeed)
+				ucic:set("qos",intf,"upload",uploadspeed)
+				--ucic:set("qos",intf,"enabled","1")
+			end
+		--else
+		--	ucic:set("sqm",intf,"download","0")
+		--	ucic:set("sqm",intf,"upload","0")
+		--	ucic:set("sqm",intf,"enabled","0")
+		--	ucic:set("qos",intf,"download","0")
+		--	ucic:set("qos",intf,"upload","0")
+		--	ucic:set("qos",intf,"enabled","0")
 		end
 	end
 	ucic:save("sqm")
