@@ -64,7 +64,7 @@ MY_DEPENDS := \
     wpad-basic \
     luci-proto-qmi v2ray-plugin netcat \
     kmod-spi-gpio-custom (!TARGET_mvebu&&!TARGET_mediatek):kmod-fb-tft-all lcd4linux-full \
-    ca-bundle \
+    ca-bundle openssl-util \
     dejavu-fonts-ttf-DejaVuSerif dejavu-fonts-ttf-DejaVuSerif-Bold dejavu-fonts-ttf-DejaVuSerif-Italic dejavu-fonts-ttf-DejaVuSerif-BoldItalic \
     (TARGET_x86||TARGET_x86_64):open-vm-tools
 
