@@ -914,9 +914,9 @@ function interfaces_status()
 	    -- Don't show if0 in the overview
 	    --if interface == "lo" then return end
 
-	    local ifname = section["ifname"] or ""
+	    local ifname = get_device(interface)
 	    if ifname == "" then
-		ifname = get_device(interface)
+		ifname = section["ifname"] or ""
 	    end
 	    duplicateif = false
 	    if ifname ~= "" and ifname ~= nil then
@@ -1211,9 +1211,9 @@ function set_ipv6_state(disable_ipv6)
 		luci.sys.call("uci -q del dhcp.lan.ra_default")
 		ucic:set("shadowsocks-libev","hi","local_address","0.0.0.0")
 	else
-	--	ucic:set("dhcp","lan","dhcpv6","server")
-	--	ucic:set("dhcp","lan","ra","server")
-	--	ucic:set("dhcp","lan","ra_default","1")
+		ucic:set("dhcp","lan","dhcpv6","server")
+		ucic:set("dhcp","lan","ra","server")
+		ucic:set("dhcp","lan","ra_default","1")
 		ucic:set("shadowsocks-libev","hi","local_address","::")
 	end
 	ucic:save("dhcp")
