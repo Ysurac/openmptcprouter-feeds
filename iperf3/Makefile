@@ -11,12 +11,12 @@ include $(TOPDIR)/rules.mk
 PKG_NAME:=iperf
 PKG_SOURCE_VERSION:=40e7c05440583f229edd6b6ca05c5d97b66fcf15
 PKG_VERSION:=3.6-$(PKG_SOURCE_VERSION)
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/esnet/iperf.git
 
-PKG_MAINTAINER:=Felix Fietkau <nbd@nbd.name>
+PKG_MAINTAINER:=Yannick Chabanois <ycarus@zugaina.org>
 PKG_LICENSE:=BSD-3-Clause
 
 PKG_BUILD_PARALLEL:=1
