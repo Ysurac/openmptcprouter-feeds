@@ -15,6 +15,20 @@ function run_test(server,proto,mode,updown,omit,parallel,transmit,bitrate)
 	local iperf
 	local addr = uci:get("iperf",server,"host")
 	local ports = uci:get("iperf",server,"ports")
+	local user = uci:get("iperf",server,"user") or ""
+	local password = uci:get("iperf",server,"password") or ""
+	local key = uci:get("iperf",server,"key") or ""
+	local option = ""
+	if user ~= "" and password ~= "" and key ~= "" then
+		luci.sys.call("echo " .. key .. " | base64 -d > /tmp/iperf.pem")
+		options = options .. " --username mario --rsa-public-key-path /tmp/iperf.pem"
+	end
+	if mode == "udp" then
+		options = options .. " -u -b " .. bitrate
+	end
+	if mode ~= "upload" then
+		options = options .. " -R"
+	end
 	local ipv = "4"
 	if proto == "ipv6" then
 		local ipv = "6"
@@ -25,18 +39,10 @@ function run_test(server,proto,mode,updown,omit,parallel,transmit,bitrate)
 		table.insert(t,pt)
 	end
 	local port = t[ math.random( #t ) ]
-	if mode == "tcp" then
-		if updown == "upload" then
-			iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -t %s -J -Z" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit})
-		else
-			iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -R -t %s -J -Z" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit})
-		end
+	if password ~= "" then
+		iperf = io.popen("IPERF3_PASSWORD=%s iperf3 -c %s -P %s -%s -p %s -O %s -t %s -J -Z %s" % {password,ut.shellquote(addr),parallel,ipv,port,omit,transmit,options})
 	else
-		if updown == "upload" then
-			iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -t %s -u -b %sm -J -Z" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit,bitrate})
-		else
-			iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -R -t %s -u -b %sm -J -Z" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit,bitrate})
-		end
+		iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -t %s -J -Z %s" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit,options})
 	end
 	if iperf then
 		while true do
