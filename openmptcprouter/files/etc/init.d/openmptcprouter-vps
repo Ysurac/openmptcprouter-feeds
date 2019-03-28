@@ -424,6 +424,26 @@ _set_config_from_vps() {
 		sysctl -qw net.ipv6.conf.all.disable_ipv6=1
 	fi
 
+	# Get VPS iperf config
+	iperf_user="$(echo "$vps_config" | jsonfilter -q -e '@.iperf.user')"
+	iperf_pass="$(echo "$vps_config" | jsonfilter -q -e '@.iperf.password')"
+	iperf_key="$(echo "$vps_config" | jsonfilter -q -e '@.iperf.key')"
+	uci -q batch <<-EOF >/dev/null
+		del iperf.${servername}
+		set iperf.${servername}=server
+		set iperf.${servername}.host=$server
+		set iperf.${servername}.ports=65400
+		set iperf.${servername}.ipv4=1
+		set iperf.${servername}.ipv6=0
+		set iperf.${servername}.speed=1000
+		set iperf.${servername}.tcp=1
+		set iperf.${servername}.udp=1
+		set iperf.${servername}.user=$iperf_user
+		set iperf.${servername}.password=$iperf_pass
+		set iperf.${servername}.key=$iperf_key
+		commit iperf
+	EOF
+
 	# Get available server
 	available_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.available' | sed -e 's/\[ //' -e 's/ \]//' -e 's/,//g')"
 	uci -q batch <<-EOF >/dev/null
