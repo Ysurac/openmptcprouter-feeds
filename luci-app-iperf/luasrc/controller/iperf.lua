@@ -18,10 +18,10 @@ function run_test(server,proto,mode,updown,omit,parallel,transmit,bitrate)
 	local user = uci:get("iperf",server,"user") or ""
 	local password = uci:get("iperf",server,"password") or ""
 	local key = uci:get("iperf",server,"key") or ""
-	local option = ""
+	local options = ""
 	if user ~= "" and password ~= "" and key ~= "" then
 		luci.sys.call("echo " .. key .. " | base64 -d > /tmp/iperf.pem")
-		options = options .. " --username mario --rsa-public-key-path /tmp/iperf.pem"
+		options = options .. " --username " .. user .. " --rsa-public-key-path /tmp/iperf.pem"
 	end
 	if mode == "udp" then
 		options = options .. " -u -b " .. bitrate
@@ -40,7 +40,7 @@ function run_test(server,proto,mode,updown,omit,parallel,transmit,bitrate)
 	end
 	local port = t[ math.random( #t ) ]
 	if password ~= "" then
-		iperf = io.popen("IPERF3_PASSWORD=%s iperf3 -c %s -P %s -%s -p %s -O %s -t %s -J -Z %s" % {password,ut.shellquote(addr),parallel,ipv,port,omit,transmit,options})
+		iperf = io.popen("omr-iperf -P %s -%s -O %s -t %s -J -Z %s" % {parallel,ipv,omit,transmit,options})
 	else
 		iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -t %s -J -Z %s" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit,options})
 	end
