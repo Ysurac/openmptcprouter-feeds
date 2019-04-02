@@ -38,6 +38,7 @@ MY_DEPENDS := \
     luci-app-vnstat omr-quota luci-app-omr-quota \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail luci-app-snmpd luci-app-upnp \
     luci-app-wol \
+    luci-ssl-openssl \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd iputils-traceroute6 ip6tables \
     speedtestc \
     iftop \
@@ -56,11 +57,12 @@ MY_DEPENDS := \
     libimobiledevice \
     comgt kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan usb-modeswitch uqmi adb-enablemodem umbim kmod-mii kmod-usb-net kmod-usb-wdm kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim umbim \
     kmod-usb-net-huawei-cdc-ncm kmod-usb-net-rndis kmod-usb-net-cdc-ether kmod-usb-net-ipheth usbmuxd \
-    kmod-rt2800-usb     \
-    kmod-mt7601u        \
-    kmod-rtl8xxxu       \
-    kmod-rtl8192cu      \
+    kmod-rt2800-usb \
+    kmod-mt7601u \
+    kmod-rtl8xxxu \
+    kmod-rtl8192cu \
     kmod-net-rtl8192su \
+    kmod-iwlwifi iwlwifi-firmware-iwl1000 iwlwifi-firmware-iwl100 iwlwifi-firmware-iwl105 iwlwifi-firmware-iwl135 iwlwifi-firmware-iwl2000 iwlwifi-firmware-iwl2030 iwlwifi-firmware-iwl3160 iwlwifi-firmware-iwl3168 iwlwifi-firmware-iwl5000 iwlwifi-firmware-iwl5150 iwlwifi-firmware-iwl6000g2 iwlwifi-firmware-iwl6000g2a iwlwifi-firmware-iwl6000g2b iwlwifi-firmware-iwl6050 iwlwifi-firmware-iwl7260 iwlwifi-firmware-iwl7265 iwlwifi-firmware-iwl7265d iwlwifi-firmware-iwl8260c iwlwifi-firmware-iwl8265 \
     wpad-basic \
     luci-proto-qmi v2ray-plugin netcat \
     kmod-spi-gpio-custom (!TARGET_mvebu&&!TARGET_mediatek):kmod-fb-tft-all lcd4linux-full \
