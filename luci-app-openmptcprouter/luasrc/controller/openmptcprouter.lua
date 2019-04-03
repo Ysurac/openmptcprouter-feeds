@@ -121,7 +121,11 @@ function wizard_add()
 		ucic:commit("qos")
 
 		ucic:set("sqm","wan" .. i,"queue")
-		ucic:set("sqm","wan" .. i,"interface",wanif)
+		if ointf ~= "" then
+			ucic:set("sqm","wan" .. i,"interface","wan" .. i)
+		else
+			ucic:set("sqm","wan" .. i,"interface",defif)
+		end
 		ucic:set("sqm","wan" .. i,"qdisc","fq_codel")
 		ucic:set("sqm","wan" .. i,"script","simple.qos")
 		ucic:set("sqm","wan" .. i,"qdisc_advanced","0")
@@ -175,6 +179,7 @@ function wizard_add()
 		local ipaddr = luci.http.formvalue("cbid.network.%s.ipaddr" % intf) or ""
 		local netmask = luci.http.formvalue("cbid.network.%s.netmask" % intf) or ""
 		local gateway = luci.http.formvalue("cbid.network.%s.gateway" % intf) or ""
+		local sqmenabled = luci.http.formvalue("cbid.sqm.%s.enabled" % intf) or "0"
 		if proto ~= "other" then
 			ucic:set("network",intf,"proto",proto)
 		end
@@ -194,10 +199,7 @@ function wizard_add()
 		end
 
 		if not ucic:get("sqm",intf) ~= "" then
-			local defif = ucic:get("network",intf .. "_dev","ifname") or ""
-			if defif == "" then
-				defif = get_device(intf)
-			end
+			local defif = get_device(intf)
 			if defif == "" then
 				defif = ucic:get("network",intf,"ifname") or ""
 			end
@@ -217,23 +219,27 @@ function wizard_add()
 		if downloadspeed ~= "0" and uploadspeed ~= "0" then
 			ucic:set("network",intf,"downloadspeed",downloadspeed)
 			ucic:set("network",intf,"uploadspeed",uploadspeed)
-			if ucic:get("sqm",intf,"download") == "" then
-				ucic:set("sqm",intf,"download",downloadspeed)
-				ucic:set("sqm",intf,"upload",uploadspeed)
-				--ucic:set("sqm",intf,"enabled","1")
+			ucic:set("sqm",intf,"download",downloadspeed*95/100)
+			ucic:set("sqm",intf,"upload",uploadspeed*95/100)
+			if sqmenabled == "1" then
+				ucic:set("sqm",intf,"enabled","1")
+			else
+				ucic:set("sqm",intf,"enabled","0")
 			end
-			if ucic:get("qos",intf,"download") == "" then
-				ucic:set("qos",intf,"download",downloadspeed)
-				ucic:set("qos",intf,"upload",uploadspeed)
-				--ucic:set("qos",intf,"enabled","1")
+			ucic:set("qos",intf,"download",downloadspeed*95/100)
+			ucic:set("qos",intf,"upload",uploadspeed*95/100)
+			if sqmenabled == "1" then
+				ucic:set("qos",intf,"enabled","1")
+			else
+				ucic:set("qos",intf,"enabled","0")
 			end
-		--else
-		--	ucic:set("sqm",intf,"download","0")
-		--	ucic:set("sqm",intf,"upload","0")
-		--	ucic:set("sqm",intf,"enabled","0")
-		--	ucic:set("qos",intf,"download","0")
-		--	ucic:set("qos",intf,"upload","0")
-		--	ucic:set("qos",intf,"enabled","0")
+		else
+			ucic:set("sqm",intf,"download","0")
+			ucic:set("sqm",intf,"upload","0")
+			ucic:set("sqm",intf,"enabled","0")
+			ucic:set("qos",intf,"download","0")
+			ucic:set("qos",intf,"upload","0")
+			ucic:set("qos",intf,"enabled","0")
 		end
 	end
 	ucic:save("sqm")
