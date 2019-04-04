@@ -63,6 +63,7 @@ MY_DEPENDS := \
     kmod-rtl8192cu \
     kmod-net-rtl8192su \
     kmod-iwlwifi iwlwifi-firmware-iwl1000 iwlwifi-firmware-iwl100 iwlwifi-firmware-iwl105 iwlwifi-firmware-iwl135 iwlwifi-firmware-iwl2000 iwlwifi-firmware-iwl2030 iwlwifi-firmware-iwl3160 iwlwifi-firmware-iwl3168 iwlwifi-firmware-iwl5000 iwlwifi-firmware-iwl5150 iwlwifi-firmware-iwl6000g2 iwlwifi-firmware-iwl6000g2a iwlwifi-firmware-iwl6000g2b iwlwifi-firmware-iwl6050 iwlwifi-firmware-iwl7260 iwlwifi-firmware-iwl7265 iwlwifi-firmware-iwl7265d iwlwifi-firmware-iwl8260c iwlwifi-firmware-iwl8265 \
+    kmod-e1000 kmod-e1000e kmod-igb kmod-ne2k-pci kmod-r8169 kmod-8169cp kmod-8139too kmod-bnx2 \
     wpad-basic \
     luci-proto-qmi v2ray-plugin netcat \
     kmod-spi-gpio-custom (!TARGET_mvebu&&!TARGET_mediatek):kmod-fb-tft-all lcd4linux-full \
