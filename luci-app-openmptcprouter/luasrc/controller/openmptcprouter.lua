@@ -1,9 +1,10 @@
+local math  = require "math"
 local tools = require "luci.tools.status"
 local sys   = require "luci.sys"
 local json  = require("luci.json")
 local fs    = require("nixio.fs")
 local net   = require "luci.model.network".init()
-local ucic = luci.model.uci.cursor()
+local ucic  = luci.model.uci.cursor()
 module("luci.controller.openmptcprouter", package.seeall)
 
 function index()
@@ -219,15 +220,15 @@ function wizard_add()
 		if downloadspeed ~= "0" and uploadspeed ~= "0" then
 			ucic:set("network",intf,"downloadspeed",downloadspeed)
 			ucic:set("network",intf,"uploadspeed",uploadspeed)
-			ucic:set("sqm",intf,"download",downloadspeed*95/100)
-			ucic:set("sqm",intf,"upload",uploadspeed*95/100)
+			ucic:set("sqm",intf,"download",math.ceil(downloadspeed*95/100))
+			ucic:set("sqm",intf,"upload",math.ceil(uploadspeed*95/100))
 			if sqmenabled == "1" then
 				ucic:set("sqm",intf,"enabled","1")
 			else
 				ucic:set("sqm",intf,"enabled","0")
 			end
-			ucic:set("qos",intf,"download",downloadspeed*95/100)
-			ucic:set("qos",intf,"upload",uploadspeed*95/100)
+			ucic:set("qos",intf,"download",math.ceil(downloadspeed*95/100))
+			ucic:set("qos",intf,"upload",math.ceil(uploadspeed*95/100))
 			if sqmenabled == "1" then
 				ucic:set("qos",intf,"enabled","1")
 			else
