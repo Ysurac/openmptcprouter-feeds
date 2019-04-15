@@ -33,7 +33,7 @@ MY_DEPENDS := \
     libiwinfo-lua \
     ca-bundle ca-certificates libustream-openssl \
     luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-base \
-    luci-app-nginx-ha luci-app-omr-tracker \
+    luci-app-nginx-ha luci-app-omr-tracker luci-app-omr-dscp \
     luci-app-sqm sqm-scripts-extra \
     luci-app-vnstat omr-quota luci-app-omr-quota \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail luci-app-snmpd luci-app-upnp \

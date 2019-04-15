@@ -1,0 +1,164 @@
+#!/bin/sh /etc/rc.common
+# vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
+
+# shellcheck disable=SC2034
+START=90
+# shellcheck disable=SC2034
+STOP=10
+# shellcheck disable=SC2034
+USE_PROCD=1
+
+# shellcheck disable=SC1091
+. /lib/functions.sh
+
+# Get the lan interface name
+lan_device=
+config_load network
+config_get lan_device lan ifname
+
+config_load dscp
+
+_ipt() {
+	iptables -w -t mangle "$@"
+}
+
+_add_dscp_rule() {
+	_ipt -A dscp_prerouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j DSCP --set-dscp-class "$class"
+	_ipt -A dscp_prerouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j RETURN
+	_ipt -A dscp_postrouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j DSCP --set-dscp-class "$class"
+	_ipt -A dscp_postrouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j RETURN
+}
+
+_add_dscp_domain() {
+	domain=""; config_get domain "$1" name ""
+	class=""; config_get class "$1" class ""
+	[ -n "$domain" ] && uci -q add_list dhcp.@dnsmasq[0].ipset="/$domain/omr-$class"
+}
+
+_add_dscp_domains_rules() {
+	for $class in cs0 cs1 cs2 cs3 cs4 cs5 cs6 cs7 ef; do
+		_ipt -A dscp_prerouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
+		_ipt -A dscp_prerouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j RETURN
+		_ipt -A dscp_postrouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
+		_ipt -A dscp_postrouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j RETURN
+	done
+}
+
+_add_dscp_rules() {
+	proto=""     ; config_get proto "$1" proto all
+	src_ip=""    ; config_get src_ip "$1" src_ip 0.0.0.0/0
+	src_port=""  ; config_get src_port "$1" src_port 0:65535
+	dest_ip=""   ; config_get dest_ip "$1" dest_ip 0.0.0.0/0
+	dest_port="" ; config_get dest_port "$1" dest_port 0:65535
+	class=""     ; config_get class "$1" class
+	direction="" ; config_get direction "$1" direction "upload"
+	comment=""   ; config_get comment "$1" comment "-"
+
+	case "$direction" in
+		upload|both)
+			# Apply the rule locally
+			case "$proto" in
+				tcp|udp)
+					_add_dscp_rule -m multiport --sports "$src_port" -m multiport --dports "$dest_port"
+					;;
+				*)
+					_add_dscp_rule
+					;;
+			esac
+			;;
+		download|both)
+			;;
+	esac
+}
+
+_add_prerouting_chain() {
+	_ipt -N "$1"
+	_ipt -I PREROUTING -i "$lan_device" -j "$1"
+}
+
+_add_postrouting_chain() {
+	_ipt -N "$1"
+	_ipt -I POSTROUTING -i "$lan_device" -j "$1"
+}
+
+_add_fwmark_chain() {
+	_ipt -N dscp_mark
+	_ipt -A PREROUTING -i "$lan_device" -j dscp_mark
+	_ipt -A POSTROUTING -i "$lan_device" -j dscp_mark
+	for class in cs4 cs5 cs6 cs7; do
+		# xtun (hex) -> 0x7874756e
+		_ipt -A dscp_mark \
+			-m comment --comment "$class" \
+			-m dscp --dscp-class "$class" \
+			-j MARK --set-mark 0x7874756e
+	done
+}
+
+_add_dscp_output_chain() {
+	_ipt -N dscp_output
+	_ipt -I OUTPUT -j dscp_output
+}
+
+_remove_prerouting_chain() {
+	_ipt -F "$1" 2>/dev/null || return
+	_ipt -D PREROUTING -i "$lan_device" -j "$1"
+	_ipt -X "$1"
+}
+
+_remove_postrouting_chain() {
+	_ipt -F "$1" 2>/dev/null || return
+	_ipt -D POSTROUTING -i "$lan_device" -j "$1"
+	_ipt -X "$1"
+}
+
+_remove_output_chain() {
+	_ipt -F "$1" 2>/dev/null || return
+	_ipt -D OUTPUT -j "$1"
+	_ipt -X "$1"
+}
+
+_setup_tunnel() {
+	# Mark the packets to route through xtun0
+	_add_fwmark_chain
+	# tun0: cs0 (default)
+	# xtun0: cs6
+	_ipt -A dscp_output -o "tun0" -j DSCP --set-dscp-class cs6
+}
+
+_cleanup() {
+	_remove_prerouting_chain dscp_prerouting
+	_remove_prerouting_chain dscp_mark
+	_remove_postouting_chain dscp_postrouting
+	_remove_postrouting_chain dscp_mark
+	_remove_output_chain dscp_output
+}
+
+start_service() {
+	# Cleanup
+	_cleanup
+
+	# Add chains
+	_add_prerouting_chain dscp_prerouting
+	_add_postrouting_chain dscp_postrouting
+	_add_dscp_output_chain
+	_add_dscp_domains_rules
+
+	# Setup the tunnels dscp / marks
+	_setup_tunnel
+
+	# Add rules base on the user configuration
+	config_foreach _add_dscp_rules classify
+	config_foreach _add_dscp_domain domains
+}
+
+stop_service() {
+	_cleanup
+}
+
+reload_service() {
+	start
+}
+
+service_triggers() {
+	procd_add_reload_trigger dscp glorytun
+}
