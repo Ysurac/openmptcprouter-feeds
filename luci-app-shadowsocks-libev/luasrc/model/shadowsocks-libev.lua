@@ -146,7 +146,7 @@ function options_obfs(s, tab)
 	end
 	o = s:taboption(tab, ListValue, "obfs_type", translate("Type"))
 	o:value("http")
-	--o:value("tls")
+	o:value("tls")
 	o.default = "http"
 end
 
