@@ -158,6 +158,13 @@ _get_vps_config() {
 		set openmptcprouter.${servername}.omr_version=$vps_omr_version
 	EOF
 
+	pihole="$(echo "$vps_config" | jsonfilter -q -e '@.pihole.state')"
+	if [ "$pihole" = "true" ]; then
+		uci -q set dhcp.@dnsmasq[0].server='10.255.255.1#53'
+	elif [ "$(uci -q get dhcp.@dnsmasq[0].server)" = "10.255.255.1#53" ]; then
+		uci -q set dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+	fi
+
 	glorytun_state=0
 	glorytun_change=0
 	vpn="$(uci -q get openmptcprouter.settings.vpn)"
@@ -314,6 +321,8 @@ _set_config_from_vps() {
 		ss_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.fast_open')"
 		ss_obfs="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.obfs')"
 		ss_obfs_plugin="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.obfs_plugin')"
+		ss_obfs_type="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.obfs_type')"
+		ss_obfs_host="$(echo "$vps_config" | jsonfilter -q -e '@.network.domain')"
 		#ss_reuse_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.reuse_port')"
 		config_load shadowsocks-libev
 		config_foreach _set_ss_redir ss_redir "no_delay" $ss_no_delay
@@ -321,11 +330,15 @@ _set_config_from_vps() {
 		config_foreach _set_ss_redir ss_redir "ebpf" $ss_ebpf
 		config_foreach _set_ss_redir ss_redir "obfs" $ss_obfs
 		config_foreach _set_ss_redir ss_redir "obfs_plugin" $ss_obfs_plugin
+		config_foreach _set_ss_redir ss_redir "obfs_type" $ss_obfs_type
+		config_foreach _set_ss_redir ss_redir "obfs_host" $ss_obfs_host
 		config_foreach _set_ss_redir ss_local "no_delay" $ss_no_delay
 		config_foreach _set_ss_redir ss_local "fast_open" $ss_fast_open
 		config_foreach _set_ss_redir ss_local "ebpf" $ss_ebpf
 		config_foreach _set_ss_redir ss_local "obfs" $ss_obfs
 		config_foreach _set_ss_redir ss_local "obfs_plugin" $ss_obfs_plugin
+		config_foreach _set_ss_redir ss_local "obfs_type" $ss_obfs_type
+		config_foreach _set_ss_redir ss_local "obfs_host" $ss_obfs_host
 		uci -q batch <<-EOF >/dev/null
 			set shadowsocks-libev.sss0.key=$ss_key
 			set shadowsocks-libev.sss0.server_port=$ss_port
