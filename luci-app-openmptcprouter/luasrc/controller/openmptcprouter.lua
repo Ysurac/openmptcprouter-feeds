@@ -19,7 +19,7 @@ function index()
 	entry({"admin", "system", "openmptcprouter", "settings"}, template("openmptcprouter/settings"), _("Advanced Settings"), 3).leaf = true
 	entry({"admin", "system", "openmptcprouter", "settings_add"}, post("settings_add")).leaf = true
 	entry({"admin", "system", "openmptcprouter", "update_vps"}, post("update_vps")).leaf = true
-	entry({"admin", "system", "openmptcprouter", "debug"}, template("openmptcprouter/debug"), _("Show all settings"), 4).leaf = true
+	entry({"admin", "system", "openmptcprouter", "debug"}, template("openmptcprouter/debug"), _("Show all settings"), 5).leaf = true
 end
 
 function interface_from_device(dev)
@@ -254,10 +254,6 @@ function wizard_add()
 	local disable_ipv6 = luci.http.formvalue("enableipv6") or "1"
 	set_ipv6_state(disable_ipv6)
 
-	-- Enable/disable external check
-	local externalcheck = luci.http.formvalue("externalcheck") or "1"
-	ucic:set("openmptcprouter","settings","external_check",externalcheck)
-	
 	-- Get VPN set by default
 	local default_vpn = luci.http.formvalue("default_vpn") or "glorytun_tcp"
 	local vpn_port = ""
@@ -535,15 +531,23 @@ function settings_add()
 	local disable_ipv6 = luci.http.formvalue("enableipv6") or "1"
 	set_ipv6_state(disable_ipv6)
 
+	-- Enable/disable external check
+	local externalcheck = luci.http.formvalue("externalcheck") or "1"
+	ucic:set("openmptcprouter","settings","external_check",externalcheck)
+	ucic:commit("openmptcprouter")
+
 	-- Enable/disable obfs
 	local obfs = luci.http.formvalue("obfs") or "0"
 	local obfs_plugin = luci.http.formvalue("obfs_plugin") or "v2ray"
+	local obfs_type = luci.http.formvalue("obfs_type") or "http"
 	ucic:foreach("shadowsocks-libev", "ss_redir", function (section)
 		ucic:set("shadowsocks-libev",section[".name"],"obfs",obfs)
 		ucic:set("shadowsocks-libev",section[".name"],"obfs_plugin",obfs_plugin)
+		ucic:set("shadowsocks-libev",section[".name"],"obfs_type",obfs_type)
 	end)
 	ucic:set("shadowsocks-libev","tracker","obfs",obfs)
 	ucic:set("shadowsocks-libev","tracker","obfs_plugin",obfs_plugin)
+	ucic:set("shadowsocks-libev","tracker","obfs_type",obfs_type)
 
 	ucic:save("shadowsocks-libev")
 	ucic:commit("shadowsocks-libev")
