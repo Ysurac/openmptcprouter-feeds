@@ -60,7 +60,6 @@ LCD4LINUX_DRIVERS:= \
 	PPM \
 	$(if $(CONFIG_TARGET_rb532),RouterBoard) \
 	$(if $(CONFIG_BROKEN),SamsungSPF) \
-	serdisplib \
 	ShuttleVFD \
 	SimpleLCD \
 	st2205 \
@@ -72,6 +71,7 @@ LCD4LINUX_DRIVERS:= \
 	USBLCD \
 	VNC \
 	WincorNixdorf \
+#	serdisplib \
 #	G15 \
 #	ULA200 \
 #	X11 \
