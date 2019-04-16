@@ -188,8 +188,8 @@ $(call Package/lcd4linux/Default)
 	$(if $(ICONV_FULL),+libiconv-full) \
 	+libncurses \
 	+libsqlite3 \
-	+libusb-compat \
-	+serdisplib
+	+libusb-compat
+#	+serdisplib
 #	+libmpdclient \
 #	+libmysqlclient \
 #	+libftdi \
