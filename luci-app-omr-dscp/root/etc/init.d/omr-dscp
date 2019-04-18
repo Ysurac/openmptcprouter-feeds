@@ -36,7 +36,7 @@ _add_dscp_domain() {
 }
 
 _add_dscp_domains_rules() {
-	for $class in cs0 cs1 cs2 cs3 cs4 cs5 cs6 cs7 ef; do
+	for class in cs0 cs1 cs2 cs3 cs4 cs5 cs6 cs7 ef; do
 		_ipt -A dscp_prerouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
 		_ipt -A dscp_prerouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j RETURN
 		_ipt -A dscp_postrouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
@@ -78,13 +78,13 @@ _add_prerouting_chain() {
 
 _add_postrouting_chain() {
 	_ipt -N "$1"
-	_ipt -I POSTROUTING -i "$lan_device" -j "$1"
+	_ipt -I POSTROUTING -j "$1"
 }
 
 _add_fwmark_chain() {
 	_ipt -N dscp_mark
 	_ipt -A PREROUTING -i "$lan_device" -j dscp_mark
-	_ipt -A POSTROUTING -i "$lan_device" -j dscp_mark
+	_ipt -A POSTROUTING -j dscp_mark
 	for class in cs4 cs5 cs6 cs7; do
 		# xtun (hex) -> 0x7874756e
 		_ipt -A dscp_mark \
@@ -107,7 +107,7 @@ _remove_prerouting_chain() {
 
 _remove_postrouting_chain() {
 	_ipt -F "$1" 2>/dev/null || return
-	_ipt -D POSTROUTING -i "$lan_device" -j "$1"
+	_ipt -D POSTROUTING -j "$1"
 	_ipt -X "$1"
 }
 
@@ -128,7 +128,7 @@ _setup_tunnel() {
 _cleanup() {
 	_remove_prerouting_chain dscp_prerouting
 	_remove_prerouting_chain dscp_mark
-	_remove_postouting_chain dscp_postrouting
+	_remove_postrouting_chain dscp_postrouting
 	_remove_postrouting_chain dscp_mark
 	_remove_output_chain dscp_output
 }

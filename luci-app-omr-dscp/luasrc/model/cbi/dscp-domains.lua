@@ -28,4 +28,8 @@ t:value("cs6", translate("CS6 - Network routing"))
 t:value("cs7", translate("CS7"))
 t:value("ef", translate("EF Voice"))
 
+c = s:option(Value, "comment", translate("Comment"))
+c.optional = true
+
+
 return m
