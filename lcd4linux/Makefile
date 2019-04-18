@@ -71,7 +71,7 @@ LCD4LINUX_DRIVERS:= \
 	USBLCD \
 	VNC \
 	WincorNixdorf \
-#	serdisplib \
+	serdisplib \
 #	G15 \
 #	ULA200 \
 #	X11 \
@@ -188,8 +188,8 @@ $(call Package/lcd4linux/Default)
 	$(if $(ICONV_FULL),+libiconv-full) \
 	+libncurses \
 	+libsqlite3 \
-	+libusb-compat
-#	+serdisplib
+	+libusb-compat \
+	+serdisplib
 #	+libmpdclient \
 #	+libmysqlclient \
 #	+libftdi \
