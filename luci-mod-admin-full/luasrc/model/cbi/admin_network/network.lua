@@ -261,6 +261,7 @@ if network:has_ipv6() then
 	o.rmempty = true
 end
 if fs.access("/proc/sys/net/mptcp") then
+	local uname = nixio.uname()
 	local mtcp = s:option(ListValue, "multipath", translate("Multipath TCP"))
 	mtcp:value("enable", translate("enable"))
 	mtcp:value("disable", translate("disable"))
@@ -272,10 +273,16 @@ if fs.access("/proc/sys/net/mptcp") then
 	mtcppm:value("fullmesh", translate("fullmesh"))
 	mtcppm:value("ndiffports", translate("ndiffports"))
 	mtcppm:value("blinder", translate("blinder"))
+	if uname.release:sub(1,4) == "4.19" then
+		mtcppm:value("netlink", translate("Netlink"))
+	end
 	local mtcpsch = s:option(ListValue, "mptcp_scheduler", translate("Multipath TCP scheduler"))
 	mtcpsch:value("default", translate("default"))
 	mtcpsch:value("roundrobin", translate("round-robin"))
 	mtcpsch:value("redundant", translate("redundant"))
+	if uname.release:sub(1,4) == "4.19" then
+		mtcpsch:value("blest", translate("BLEST"))
+	end
 	local mtcpsyn = s:option(Value, "mptcp_syn_retries", translate("Multipath TCP SYN retries"))
 	mtcpsyn.datatype = "uinteger"
 	mtcpsyn.rmempty = false

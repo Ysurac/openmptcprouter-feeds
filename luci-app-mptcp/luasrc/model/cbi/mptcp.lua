@@ -5,6 +5,8 @@ local m, s, o
 
 m = Map("network", translate("MPTCP"), translate("Networks MPTCP settings. Visit <a href='http://multipath-tcp.org/pmwiki.php/Users/ConfigureMPTCP'>http://multipath-tcp.org/pmwiki.php/Users/ConfigureMPTCP</a> for help."))
 
+local unameinfo = nixio.uname() or { }
+
 s = m:section(TypedSection, "globals")
 local mtcpg = s:option(ListValue, "multipath", translate("Multipath TCP"))
 mtcpg:value("enable", translate("enable"))
@@ -20,10 +22,16 @@ mtcppm:value("default", translate("default"))
 mtcppm:value("fullmesh", translate("fullmesh"))
 mtcppm:value("ndiffports", translate("ndiffports"))
 mtcppm:value("binder", translate("binder"))
+if uname.release:sub(1,4) == "4.19" then
+	mtcppm:value("netlink", translate("Netlink"))
+end
 local mtcpsch = s:option(ListValue, "mptcp_scheduler", translate("Multipath TCP scheduler"))
 mtcpsch:value("default", translate("default"))
 mtcpsch:value("roundrobin", translate("round-robin"))
 mtcpsch:value("redundant", translate("redundant"))
+if uname.release:sub(1,4) == "4.19" then
+	mtcpsch:value("blest", translate("BLEST"))
+end
 local mtcpsyn = s:option(Value, "mptcp_syn_retries", translate("Multipath TCP SYN retries"))
 mtcpsyn.datatype = "uinteger"
 mtcpsyn.rmempty = false
