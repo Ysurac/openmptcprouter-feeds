@@ -157,22 +157,17 @@ _get_vps_config() {
 		set openmptcprouter.${servername}.machine=$vps_machine
 		set openmptcprouter.${servername}.omr_version=$vps_omr_version
 	EOF
+	vpn="$(uci -q get openmptcprouter.settings.vpn)"
 
 	pihole="$(echo "$vps_config" | jsonfilter -q -e '@.pihole.state')"
-	if [ "$pihole" = "true" ]; then
-		uci -q set dhcp.@dnsmasq[0].server='10.255.255.1#53'
-	elif [ "$(uci -q get dhcp.@dnsmasq[0].server)" = "10.255.255.1#53" ]; then
-		uci -q set dhcp.@dnsmasq[0].server='127.0.0.1#5353'
-	fi
 
 	glorytun_state=0
 	glorytun_change=0
-	vpn="$(uci -q get openmptcprouter.settings.vpn)"
 	if [ "$vpn" = "glorytun_tcp" ]; then
 		glorytun_state=1
 		client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.client_ip')"
+		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.host_ip')"
 		if [ "$client_ip" != "dhcp" ] && [ -n "$client_ip" ]; then
-			host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.host_ip')"
 			if [ "$host_ip" != "$(uci -q get glorytun.vpn.remoteip)" ] || [ "$client_ip" != "$(uci -q get glorytun.vpn.localip)" ]; then
 				uci -q batch <<-EOF >/dev/null
 					set glorytun.vpn.localip=$client_ip
@@ -201,12 +196,16 @@ _get_vps_config() {
 				EOF
 			fi
 		fi
+		if [ "$pihole" = "true" ]; then
+			uci -q set dhcp.@dnsmasq[0].server="$host_ip#53"
+			uci -q set dhcp.@dnsmasq[0].rebind_protection='0'
+		fi
 	fi
 	if [ "$vpn" = "glorytun_udp" ]; then
 		glorytun_state=1
 		client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp.client_ip')"
+		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp.host_ip')"
 		if [ "$client_ip" != "dhcp" ] && [ -n "$client_ip" ]; then
-			host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp.host_ip')"
 			if [ "$host_ip" != "$(uci -q get glorytun.vpn.remoteip)" ] || [ "$client_ip" != "$(uci -q get glorytun.vpn.localip)" ]; then
 				uci -q batch <<-EOF >/dev/null
 					set glorytun.vpn.localip=$client_ip
@@ -234,6 +233,24 @@ _get_vps_config() {
 					commit network
 				EOF
 			fi
+		fi
+		if [ "$pihole" = "true" ]; then
+			uci -q set dhcp.@dnsmasq[0].server="$host_ip#53"
+			uci -q set dhcp.@dnsmasq[0].rebind_protection='0'
+		fi
+	fi
+	if [ "$vpn" = "openvpn" ]; then
+		if [ "$pihole" = "true" ]; then
+			host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.host_ip')"
+			uci -q set dhcp.@dnsmasq[0].server="$host_ip#53"
+			uci -q set dhcp.@dnsmasq[0].rebind_protection='0'
+		fi
+	fi
+	if [ "$vpn" = "mlvpn" ]; then
+		if [ "$pihole" = "true" ]; then
+			host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.host_ip')"
+			uci -q set dhcp.@dnsmasq[0].server="$host_ip#53"
+			uci -q set dhcp.@dnsmasq[0].rebind_protection='0'
 		fi
 	fi
 	if [ "$glorytun_change" != "0" ]; then
