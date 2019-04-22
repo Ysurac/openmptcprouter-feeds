@@ -36,7 +36,7 @@ MY_DEPENDS := \
     luci-app-nginx-ha luci-app-omr-tracker luci-app-omr-dscp \
     luci-app-sqm sqm-scripts-extra \
     luci-app-vnstat omr-quota luci-app-omr-quota \
-    luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail luci-app-snmpd luci-app-upnp \
+    luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail luci-app-upnp \
     luci-app-wol \
     luci-ssl-openssl \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd iputils-traceroute6 ip6tables \
@@ -62,14 +62,18 @@ MY_DEPENDS := \
     kmod-rtl8xxxu \
     kmod-rtl8192cu \
     kmod-net-rtl8192su \
+    kmod-random-core \
     (TARGET_x86||TARGET_x86_64):kmod-iwlwifi iwlwifi-firmware-iwl1000 iwlwifi-firmware-iwl100 iwlwifi-firmware-iwl105 iwlwifi-firmware-iwl135 iwlwifi-firmware-iwl2000 iwlwifi-firmware-iwl2030 iwlwifi-firmware-iwl3160 iwlwifi-firmware-iwl3168 iwlwifi-firmware-iwl5000 iwlwifi-firmware-iwl5150 iwlwifi-firmware-iwl6000g2 iwlwifi-firmware-iwl6000g2a iwlwifi-firmware-iwl6000g2b iwlwifi-firmware-iwl6050 iwlwifi-firmware-iwl7260 iwlwifi-firmware-iwl7265 iwlwifi-firmware-iwl7265d iwlwifi-firmware-iwl8260c iwlwifi-firmware-iwl8265 \
     (TARGET_x86||TARGET_x86_64):kmod-e1000 (TARGET_x86||TARGET_x86_64):kmod-e1000e (TARGET_x86||TARGET_x86_64):kmod-igb (TARGET_x86||TARGET_x86_64):kmod-ne2k-pci (TARGET_x86||TARGET_x86_64):kmod-r8169 (TARGET_x86||TARGET_x86_64):kmod-8139too (TARGET_x86||TARGET_x86_64):kmod-bnx2 \
     wpad-basic \
     luci-proto-qmi v2ray-plugin netcat \
-    kmod-spi-gpio-custom (!TARGET_mvebu&&!TARGET_mediatek):kmod-fb-tft-all lcd4linux-full \
+    (!TARGET_mvebu&&!TARGET_mediatek):kmod-fb-tft-all \
     ca-bundle openssl-util \
     dejavu-fonts-ttf-DejaVuSerif dejavu-fonts-ttf-DejaVuSerif-Bold dejavu-fonts-ttf-DejaVuSerif-Italic dejavu-fonts-ttf-DejaVuSerif-BoldItalic \
-    (TARGET_x86||TARGET_x86_64):open-vm-tools
+    (TARGET_x86||TARGET_x86_64):open-vm-tools \
+    luci-app-opkg luci-app-snmpd \
+    lcd4linux-full
+#    kmod-spi-gpio-custom 
 
 OMR_SUPPORTED_LANGS := ca zh-cn en fr de el he hu it ja ms no pl pt-br pt ro ru es sv uk vi
 
