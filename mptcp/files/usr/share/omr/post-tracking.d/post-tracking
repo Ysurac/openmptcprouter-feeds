@@ -122,7 +122,7 @@ del_server_route() {
 	local server=$1
 	local serverip
 	config_get serverip $server ip
-	_log "Delete $server ($serverip) route via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
+	[ -n "$serverip" ] && _log "Delete $server ($serverip) route via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
 	if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			delete network.server_${server}_${OMR_TRACKER_INTERFACE}_route
@@ -432,15 +432,16 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
 		fi
 	fi
+	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='up'
 	if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ]; then
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(( $(date +"%s") - 3400 ))
 		_log "Get status and settings for $OMR_TRACKER_INTERFACE... Failed"
+		uci -q commit openmptcprouter
 	else
 		_log "Get status and settings for $OMR_TRACKER_INTERFACE... Done"
+		uci -q commit openmptcprouter
 		/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1
 	fi
-	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='up'
-	uci -q commit openmptcprouter
 	dns_flush
 fi
 
