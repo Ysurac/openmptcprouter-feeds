@@ -19,7 +19,14 @@ config_get lan_device lan ifname
 config_load dscp
 
 _ipt() {
+	_ipt "$@"
+	_ipt6 "$@"
+}
+_ipt4() {
 	iptables -w -t mangle "$@"
+}
+_ipt6() {
+	ip6tables -w -t mangle "$@"
 }
 
 _add_dscp_rule() {
@@ -37,10 +44,18 @@ _add_dscp_domain() {
 
 _add_dscp_domains_rules() {
 	for class in cs0 cs1 cs2 cs3 cs4 cs5 cs6 cs7 ef; do
-		_ipt -A dscp_prerouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
-		_ipt -A dscp_prerouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j RETURN
-		_ipt -A dscp_postrouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
-		_ipt -A dscp_postrouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j RETURN
+		ipset -q --exist restore <<-EOF
+		create omr-$class hash:net hashsize 64
+		create omr6-$class hash:net family inet6 hashsize 64
+		EOF
+		_ipt4 -A dscp_prerouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
+		_ipt4 -A dscp_prerouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j RETURN
+		_ipt4 -A dscp_postrouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
+		_ipt4 -A dscp_postrouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j RETURN
+		_ipt6 -A dscp_prerouting -m set --match-set omr6-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
+		_ipt6 -A dscp_prerouting -m set --match-set omr6-$class src,dst -m comment --comment "$class" -j RETURN
+		_ipt6 -A dscp_postrouting -m set --match-set omr6-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
+		_ipt6 -A dscp_postrouting -m set --match-set omr6-$class src,dst -m comment --comment "$class" -j RETURN
 	done
 }
 
