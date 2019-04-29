@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI Administration - full-featured for full control
-LUCI_DEPENDS:=+luci-base +luci-app-firewall
+LUCI_DEPENDS:=+luci-base +luci-app-firewall +luci-lib-iptparser
 
 PKG_BUILD_DEPENDS:=iwinfo
 PKG_LICENSE:=Apache-2.0
