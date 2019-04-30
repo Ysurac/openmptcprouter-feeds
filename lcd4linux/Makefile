@@ -9,13 +9,13 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=lcd4linux
-PKG_REV:=e88efc936e7f2f06d0730e2ab738fbfff2ab1a6d
+PKG_REV:=f13470faf00e52d1458f2a88d498716240edc272
 PKG_VERSION:=r$(PKG_REV)
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.bz2
 #PKG_SOURCE_URL:=https://ssl.bulix.org/svn/lcd4linux/trunk/
-PKG_SOURCE_URL:=https://github.com/MaxWiesel/lcd4linux.git
+PKG_SOURCE_URL:=https://github.com/redblue-pkt/lcd4linux.git
 #PKG_SOURCE_SUBDIR:=lcd4linux-$(PKG_VERSION)
 PKG_SOURCE_VERSION:=$(PKG_REV)
 PKG_SOURCE_PROTO:=git
