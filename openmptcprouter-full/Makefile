@@ -67,12 +67,12 @@ MY_DEPENDS := \
     (TARGET_x86||TARGET_x86_64):kmod-e1000 (TARGET_x86||TARGET_x86_64):kmod-e1000e (TARGET_x86||TARGET_x86_64):kmod-igb (TARGET_x86||TARGET_x86_64):kmod-ne2k-pci (TARGET_x86||TARGET_x86_64):kmod-r8169 (TARGET_x86||TARGET_x86_64):kmod-8139too (TARGET_x86||TARGET_x86_64):kmod-bnx2 \
     wpad-basic \
     luci-proto-qmi v2ray-plugin netcat \
-    (!TARGET_mvebu&&!TARGET_mediatek):kmod-fb-tft-all \
     ca-bundle openssl-util \
     dejavu-fonts-ttf-DejaVuSerif dejavu-fonts-ttf-DejaVuSerif-Bold dejavu-fonts-ttf-DejaVuSerif-Italic dejavu-fonts-ttf-DejaVuSerif-BoldItalic \
-    (TARGET_x86||TARGET_x86_64):open-vm-tools \
-    luci-app-opkg luci-app-snmpd \
-    lcd4linux-full
+    luci-app-opkg luci-app-snmpd
+#    (TARGET_x86||TARGET_x86_64):open-vm-tools \
+#    (!TARGET_mvebu&&!TARGET_mediatek):kmod-fb-tft-all \
+#    lcd4linux-full
 #    kmod-spi-gpio-custom 
 
 OMR_SUPPORTED_LANGS := ca zh-cn en fr de el he hu it ja ms no pl pt-br pt ro ru es sv uk vi
