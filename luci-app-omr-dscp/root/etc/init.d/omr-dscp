@@ -18,10 +18,6 @@ config_get lan_device lan ifname
 
 config_load dscp
 
-_ipt() {
-	_ipt "$@"
-	_ipt6 "$@"
-}
 _ipt4() {
 	iptables -w -t mangle "$@"
 }
@@ -30,10 +26,14 @@ _ipt6() {
 }
 
 _add_dscp_rule() {
-	_ipt -A dscp_prerouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j DSCP --set-dscp-class "$class"
-	_ipt -A dscp_prerouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j RETURN
-	_ipt -A dscp_postrouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j DSCP --set-dscp-class "$class"
-	_ipt -A dscp_postrouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j RETURN
+	_ipt4 -A dscp_prerouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j DSCP --set-dscp-class "$class"
+	_ipt4 -A dscp_prerouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j RETURN
+	_ipt4 -A dscp_postrouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j DSCP --set-dscp-class "$class"
+	_ipt4 -A dscp_postrouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j RETURN
+	_ipt6 -A dscp_prerouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j DSCP --set-dscp-class "$class"
+	_ipt6 -A dscp_prerouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j RETURN
+	_ipt6 -A dscp_postrouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j DSCP --set-dscp-class "$class"
+	_ipt6 -A dscp_postrouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j RETURN
 }
 
 _add_dscp_domain() {
@@ -87,22 +87,33 @@ _add_dscp_rules() {
 }
 
 _add_prerouting_chain() {
-	_ipt -N "$1"
-	_ipt -I PREROUTING -i "$lan_device" -j "$1"
+	_ipt4 -N "$1"
+	_ipt4 -I PREROUTING -i "$lan_device" -j "$1"
+	_ipt6 -N "$1"
+	_ipt6 -I PREROUTING -i "$lan_device" -j "$1"
 }
 
 _add_postrouting_chain() {
-	_ipt -N "$1"
-	_ipt -I POSTROUTING -j "$1"
+	_ipt4 -N "$1"
+	_ipt4 -I POSTROUTING -j "$1"
+	_ipt6 -N "$1"
+	_ipt6 -I POSTROUTING -j "$1"
 }
 
 _add_fwmark_chain() {
-	_ipt -N dscp_mark
-	_ipt -A PREROUTING -i "$lan_device" -j dscp_mark
-	_ipt -A POSTROUTING -j dscp_mark
+	_ipt4 -N dscp_mark
+	_ipt4 -A PREROUTING -i "$lan_device" -j dscp_mark
+	_ipt4 -A POSTROUTING -j dscp_mark
+	_ipt6 -N dscp_mark
+	_ipt6 -A PREROUTING -i "$lan_device" -j dscp_mark
+	_ipt6 -A POSTROUTING -j dscp_mark
 	for class in cs4 cs5 cs6 cs7; do
 		# xtun (hex) -> 0x7874756e
-		_ipt -A dscp_mark \
+		_ipt4 -A dscp_mark \
+			-m comment --comment "$class" \
+			-m dscp --dscp-class "$class" \
+			-j MARK --set-mark 0x7874756e
+		_ipt6 -A dscp_mark \
 			-m comment --comment "$class" \
 			-m dscp --dscp-class "$class" \
 			-j MARK --set-mark 0x7874756e
@@ -110,26 +121,37 @@ _add_fwmark_chain() {
 }
 
 _add_dscp_output_chain() {
-	_ipt -N dscp_output
-	_ipt -I OUTPUT -j dscp_output
+	_ipt4 -N dscp_output
+	_ipt4 -I OUTPUT -j dscp_output
+	_ipt6 -N dscp_output
+	_ipt6 -I OUTPUT -j dscp_output
 }
 
 _remove_prerouting_chain() {
-	_ipt -F "$1" 2>/dev/null || return
-	_ipt -D PREROUTING -i "$lan_device" -j "$1"
-	_ipt -X "$1"
+	_ipt4 -F "$1" 2>/dev/null || return
+	_ipt4 -D PREROUTING -i "$lan_device" -j "$1"
+	_ipt4 -X "$1"
+	_ipt6 -F "$1" 2>/dev/null || return
+	_ipt6 -D PREROUTING -i "$lan_device" -j "$1"
+	_ipt6 -X "$1"
 }
 
 _remove_postrouting_chain() {
-	_ipt -F "$1" 2>/dev/null || return
-	_ipt -D POSTROUTING -j "$1"
-	_ipt -X "$1"
+	_ipt4 -F "$1" 2>/dev/null || return
+	_ipt4 -D POSTROUTING -j "$1"
+	_ipt4 -X "$1"
+	_ipt6 -F "$1" 2>/dev/null || return
+	_ipt6 -D POSTROUTING -j "$1"
+	_ipt6 -X "$1"
 }
 
 _remove_output_chain() {
-	_ipt -F "$1" 2>/dev/null || return
-	_ipt -D OUTPUT -j "$1"
-	_ipt -X "$1"
+	_ipt4 -F "$1" 2>/dev/null || return
+	_ipt4 -D OUTPUT -j "$1"
+	_ipt4 -X "$1"
+	_ipt6 -F "$1" 2>/dev/null || return
+	_ipt6 -D OUTPUT -j "$1"
+	_ipt6 -X "$1"
 }
 
 _setup_tunnel() {
@@ -137,7 +159,8 @@ _setup_tunnel() {
 	_add_fwmark_chain
 	# tun0: cs0 (default)
 	# xtun0: cs6
-	_ipt -A dscp_output -o "tun0" -j DSCP --set-dscp-class cs6
+	_ipt4 -A dscp_output -o "tun0" -j DSCP --set-dscp-class cs6
+	_ipt6 -A dscp_output -o "tun0" -j DSCP --set-dscp-class cs6
 }
 
 _cleanup() {
