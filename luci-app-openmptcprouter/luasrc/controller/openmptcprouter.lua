@@ -883,10 +883,10 @@ function interfaces_status()
 	end
 	for itf, option, value in dnsmasq:gmatch("option=(%w+),([%w:-]+),(%d+\.%d+\.%d+\.%d+)") do
 		if mArray.openmptcprouter.dhcpd[itf] then
-			if option == "option:router" or option == "6" then
+			if option == "option:router" or option == "3" then
 				mArray.openmptcprouter.dhcpd[itf].router = value
 			end
-			if option == "option:dns-server" or option == "" then
+			if option == "option:dns-server" or option == "6" then
 				mArray.openmptcprouter.dhcpd[itf].dns = value
 			end
 		end
