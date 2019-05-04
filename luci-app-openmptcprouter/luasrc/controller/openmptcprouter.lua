@@ -154,7 +154,7 @@ function wizard_add()
 	local delete_intf = luci.http.formvaluetable("delete") or ""
 	if delete_intf ~= "" then
 		for intf, _ in pairs(delete_intf) do
-			local defif = ucic:set("network",intf,"ifname")
+			local defif = ucic:get("network",intf,"ifname")
 			ucic:delete("network",intf)
 			ucic:delete("network",intf .. "_dev")
 			ucic:save("network")
@@ -165,7 +165,9 @@ function wizard_add()
 			ucic:delete("qos",intf)
 			ucic:save("qos")
 			ucic:commit("qos")
-			luci.sys.call("uci -q del_list vnstat.@vnstat[-1].interface=" .. defif)
+			if defif ~= "" then
+				luci.sys.call("uci -q del_list vnstat.@vnstat[-1].interface=" .. defif)
+			end
 			luci.sys.call("uci -q commit vnstat")
 			luci.sys.call("uci -q del_list firewall.@zone[1].network=" .. intf)
 			luci.sys.call("uci -q commit firewall")
