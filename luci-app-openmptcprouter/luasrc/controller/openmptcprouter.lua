@@ -837,7 +837,7 @@ function interfaces_status()
 					mArray.openmptcprouter["tun_state"] = "DOWN"
 				end
 				if mArray.openmptcprouter["ipv6"] == "enabled" then
-					local tunnel_ping6_test = ut.trim(sys.exec("ping6 -w 1 -c 1 -I 6in4-omr6in4 fe80::a00:1 | grep '100% packet loss'"))
+					local tunnel_ping6_test = ut.trim(sys.exec("ping6 -w 1 -c 1 fe80::a00:1%6in4-omr6in4 | grep '100% packet loss'"))
 					if tunnel_ping6_test == "" then
 						mArray.openmptcprouter["tun6_state"] = "UP"
 					else
