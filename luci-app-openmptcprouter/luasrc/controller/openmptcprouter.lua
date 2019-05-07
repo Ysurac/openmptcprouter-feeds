@@ -1211,10 +1211,12 @@ function set_ipv6_state(disable_ipv6)
 	if disable_ipv6 == "1" then
 		ucic:set("dhcp","lan","ra_default","0")
 		ucic:set("network","lan","ipv6","0")
+		--luci.sys.call("uci -q del network.lan.ipifaceid")
 	else
 	--	ucic:set("dhcp","lan","ra_default","1")
 		ucic:set("network","lan","ipv6","1")
 		ucic:set("network","lan","delegate","0")
+		--ucic:set("network","lan","ipifaceid","random")
 	end
 	ucic:save("network")
 	ucic:commit("network")
