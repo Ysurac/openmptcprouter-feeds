@@ -70,7 +70,7 @@ MY_DEPENDS := \
     luci-proto-qmi v2ray-plugin netcat \
     ca-bundle openssl-util \
     dejavu-fonts-ttf-DejaVuSerif dejavu-fonts-ttf-DejaVuSerif-Bold dejavu-fonts-ttf-DejaVuSerif-Italic dejavu-fonts-ttf-DejaVuSerif-BoldItalic \
-    luci-app-opkg luci-app-snmpd \
+    luci-app-snmpd \
     (TARGET_x86||TARGET_x86_64):open-vm-tools
 #    (!TARGET_mvebu&&!TARGET_mediatek):kmod-fb-tft-all \
 #    lcd4linux-full
