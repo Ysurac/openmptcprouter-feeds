@@ -71,6 +71,7 @@ MY_DEPENDS := \
     ca-bundle openssl-util \
     dejavu-fonts-ttf-DejaVuSerif dejavu-fonts-ttf-DejaVuSerif-Bold dejavu-fonts-ttf-DejaVuSerif-Italic dejavu-fonts-ttf-DejaVuSerif-BoldItalic \
     luci-app-snmpd \
+    iputils-tracepath \
     (TARGET_x86||TARGET_x86_64):open-vm-tools
 #    (!TARGET_mvebu&&!TARGET_mediatek):kmod-fb-tft-all \
 #    lcd4linux-full
