@@ -190,6 +190,9 @@ function wizard_add()
 		ucic:set("network",intf,"netmask",netmask)
 		ucic:set("network",intf,"gateway",gateway)
 
+		ucic:delete("openmptcprouter",intf,"lc")
+		ucic:save("openmptcprouter")
+
 		local downloadspeed = luci.http.formvalue("cbid.sqm.%s.download" % intf) or "0"
 		local uploadspeed = luci.http.formvalue("cbid.sqm.%s.upload" % intf) or "0"
 
