@@ -82,28 +82,30 @@ _initialize_shadowsocks_tracker() {
 	config_get server $redir_tcp server
 	config_get tracker_server "tracker" server
 	config_get ss_disabled $server disabled 0
-	[ "$server" = "$tracker_server" ] || {
-		[ -z "$tracker_server" ] && {
-			uci -q batch <<-EOF >/dev/null
-			    set shadowsocks-libev.tracker=ss_local
-			    set shadowsocks-libev.tracker.server=$server
-			    set shadowsocks-libev.tracker.local_address="127.0.0.1"
-			    set shadowsocks-libev.tracker.local_port=1111
-			    set shadowsocks-libev.tracker.mode=tcp_and_udp
-			    set shadowsocks-libev.tracker.timeout=600
-			    set shadowsocks-libev.tracker.fast_open=1
-			    set shadowsocks-libev.tracker.syslog=0
-			    set shadowsocks-libev.tracker.reuse_port=1
-			    set shadowsocks-libev.tracker.mptcp=1
-			    set shadowsocks-libev.tracker.verbose=0
-			    commit shadowsocks-libev
-			EOF
-		} || {
-			uci -q batch <<-EOF >/dev/null
-			    set shadowsocks-libev.tracker.server=$server
-			    commit shadowsocks-libev
-			EOF
-		}
+	[ -z "$tracker_server" ] && {
+		logger -t "omr-tracker" "Create ShadowSock tracker ss_local..."
+		uci -q batch <<-EOF >/dev/null
+		    set shadowsocks-libev.tracker=ss_local
+		    set shadowsocks-libev.tracker.server=$server
+		    set shadowsocks-libev.tracker.local_address="127.0.0.1"
+		    set shadowsocks-libev.tracker.local_port=1111
+		    set shadowsocks-libev.tracker.mode=tcp_and_udp
+		    set shadowsocks-libev.tracker.timeout=600
+		    set shadowsocks-libev.tracker.fast_open=1
+		    set shadowsocks-libev.tracker.syslog=0
+		    set shadowsocks-libev.tracker.reuse_port=1
+		    set shadowsocks-libev.tracker.mptcp=1
+		    set shadowsocks-libev.tracker.verbose=0
+		    commit shadowsocks-libev
+		EOF
+		/etc/init.d/shadowsocks-libev restart
+	}
+	[ -n "$tracker_server" ] && [ "$server" = "$tracker_server" ] || {
+		logger -t "omr-tracker" "Set ShadowSock tracker to current server ($tracker_server -> $server)..."
+		uci -q batch <<-EOF >/dev/null
+		    set shadowsocks-libev.tracker.server=$server
+		    commit shadowsocks-libev
+		EOF
 		/etc/init.d/shadowsocks-libev restart
 	}
 }
@@ -137,6 +139,7 @@ _launch_shadowsocks_tracker() {
 
 start_service() {
 	local ss_disabled
+	logger -t "omr-tracker" "Launching..."
 	config_load shadowsocks-libev
 	_initialize_shadowsocks_tracker
 
@@ -149,6 +152,7 @@ start_service() {
 	else
 		/etc/init.d/shadowsocks-libev rules_down
 	fi
+	logger -t "omr-tracker" "Launched"
 }
 
 service_triggers() {
