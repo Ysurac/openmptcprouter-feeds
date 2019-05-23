@@ -57,15 +57,22 @@ _set_glorytun_vps() {
 	[ "$enabled" != "1" ] && return
 	port="$(uci -q get glorytun.vpn.port)"
 	key="$(uci -q get glorytun.vpn.key)"
+	chacha="$(uci -q get glorytun.vpn.chacha20)"
+	if [ "$chacha" = "1" ]; then
+		chacha = "true"
+	else
+		chacha = "false"
+	fi
 	[ -z "$key" ] && return
-	local current_port current_key
+	local current_port current_key current_chacha
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.port')"
 	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.key')"
-	if [ "$current_port" != "$port" ] || [ "$current_key" != "$key" ]; then
+	current_chacha="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.chacha')"
+	if [ "$current_port" != "$port" ] || [ "$current_key" != "$key" ] || [ "$current_chacha" != "$chacha" ]; then
 		local settings
-		settings='{"port": '$port',"key":"'$key'"}'
+		settings='{"port": '$port',"key":"'$key'", "chacha": "'$chacha'"}'
 		_set_json "glorytun" "$settings"
 	fi
 }
@@ -403,10 +410,14 @@ _set_config_from_vps() {
 		fi
 		glorytun_port="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.port')"
 		[ -z "$glorytun_port" ] && glorytun_port="65001"
+		glorytun_chacha="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.chacha')"
+		[ -z "$glorytun_chacha" ] || [ "$glorytun_chacha" = "true" ] && glorytun_chacha=1
+		[ "$glorytun_chacha" = "false" ] && glorytun_chacha=0
 		uci -q batch <<-EOF >/dev/null
 			set glorytun.vpn.port=$glorytun_port
 			set glorytun.vpn.key=$glorytun_key
 			set glorytun.vpn.enable=$glorytun_state
+			set glorytun.vpn.chacha20=$glorytun_chacha
 			commit glorytun
 		EOF
 		/etc/init.d/glorytun restart >/dev/null 2>&1
