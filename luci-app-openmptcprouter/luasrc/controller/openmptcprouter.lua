@@ -797,6 +797,7 @@ function interfaces_status()
 						mArray.openmptcprouter["vps_mptcp"] = vpsinfo.vps.mptcp or ""
 						mArray.openmptcprouter["vps_admin"] = true
 						mArray.openmptcprouter["vps_status"] = "UP"
+						mArray.openmptcprouter["vps_admin_error_msg"] = ""
 					else
 						uci:set("openmptcprouter",s[".name"],"admin_error","1")
 						uci:delete("openmptcprouter",s[".name"],"token")
@@ -981,7 +982,7 @@ function interfaces_status()
 	    if gateway == "" then
 		    gateway = get_gateway(interface)
 	    end
-	    if gateway == "" and ifname ~= nil then
+	    if gateway == "" and ifname ~= nil and ifname ~= "" then
 		    if fs.access("/sys/class/net/" .. ifname) then
 			    gateway = ut.trim(sys.exec("ip -4 r list dev " .. ifname .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
 			    if gateway == "" then
@@ -1059,7 +1060,7 @@ function interfaces_status()
 	    
 	    -- Detect if WAN get an IPv6
 	    local ipv6_discover = "NONE"
-	    if ifname ~= nil and mArray.openmptcprouter["ipv6"] == "enabled" then
+	    if ifname ~= "" and ifname ~= nil and mArray.openmptcprouter["ipv6"] == "enabled" then
 		    local ipv6_result = _ipv6_discover(ifname)
 		    if type(ipv6_result) == "table" and #ipv6_result > 0 then
 			    local ipv6_addr_test
@@ -1092,10 +1093,13 @@ function interfaces_status()
 		    end
 	    end
 	    
-	    if ifname ~= nil then
-		    local mtu = ut.trim(sys.exec("cat /sys/class/net/" .. ifname .. "/mtu | tr -d '\n'"))
-		    if mtu == "" and ifname ~= nil then
-			    mtu = uci:get("openmptcprouter",interface,"mtu") or ""
+	    local mtu = ""
+	    if ifname ~= "" and ifname ~= nil then
+		    if fs.access("/sys/class/net/" .. ifname) then
+			    mtu = ut.trim(sys.exec("cat /sys/class/net/" .. ifname .. "/mtu | tr -d '\n'"))
+			    if mtu == "" and interface ~= nil then
+					mtu = uci:get("openmptcprouter",interface,"mtu") or ""
+			    end
 		    end
 	    end
 
