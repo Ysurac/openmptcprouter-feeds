@@ -551,6 +551,17 @@ _config_service() {
 	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && {
 		_set_config_from_vps
 	}
+	if [ "$(uci -q get openmptcprouter.settings.firstboot)" != "0" ] && [ -n "$(cat /proc/cpuinfo | grep aes)" ]; then
+		logger -t "OMR-VPS" "CPU support AES, set it by default"
+		uci -q batch <<-EOF >/dev/null
+			set glorytun.vpn.chacha20=0
+			commit glorytun
+			shadowsocks-libev.sss0.method=aes-256-gcm
+			commit shadowsocks-libev
+		EOF
+	fi
+	uci -q set openmptcprouter.settings.firstboot=0
+
 	_get_vps_config
 	config_load shadowsocks-libev
 	config_foreach _set_ss_server_vps server
@@ -566,20 +577,6 @@ _config_service() {
 		set openmptcprouter.${servername}.admin_error=0
 	EOF
 }
-
-boot() {
-	if [ "$(uci -q get openmptcprouter.settings.firstboot)" != "0" ] && [ -n "$(cat /proc/cpuinfo | grep aes)" ]; then
-		uci -q batch <<-EOF >/dev/null
-			set glorytun.vpn.chacha20=0
-			commit glorytun
-			shadowsocks-libev.sss0.method=aes-256-gcm
-			commit shadowsocks-libev
-		EOF
-	fi
-	uci -q set openmptcprouter.settings.firstboot=0
-	start "$@"
-}
-
 
 start_service() {
 	serversnb=0
