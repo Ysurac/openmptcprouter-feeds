@@ -212,6 +212,7 @@ _get_vps_config() {
 				set dhcp.@dnsmasq[0].rebind_protection='0'
 				commit dhcp
 			EOF
+			logger -t "OMR-VPS" "Restart dnsmasq..."
 			/etc/init.d/dnsmasq restart >/dev/null 2>&1
 		fi
 	fi
@@ -257,6 +258,7 @@ _get_vps_config() {
 				set dhcp.@dnsmasq[0].rebind_protection='0'
 				commit dhcp
 			EOF
+			logger -t "OMR-VPS" "Restart dnsmasq..."
 			/etc/init.d/dnsmasq restart >/dev/null 2>&1
 		fi
 	fi
@@ -269,6 +271,7 @@ _get_vps_config() {
 				set dhcp.@dnsmasq[0].rebind_protection='0'
 				commit dhcp
 			EOF
+			logger -t "OMR-VPS" "Restart dnsmasq..."
 			/etc/init.d/dnsmasq restart >/dev/null 2>&1
 		fi
 	fi
@@ -281,10 +284,12 @@ _get_vps_config() {
 				set dhcp.@dnsmasq[0].rebind_protection='0'
 				commit dhcp
 			EOF
+			logger -t "OMR-VPS" "Restart dnsmasq..."
 			/etc/init.d/dnsmasq restart >/dev/null 2>&1
 		fi
 	fi
 	if [ "$glorytun_change" != "0" ]; then
+		logger -t "OMR-VPS" "Restart glorytun..."
 		uci -q batch <<-EOF >/dev/null
 			commit glorytun
 		EOF
@@ -394,6 +399,7 @@ _set_config_from_vps() {
 			set shadowsocks-libev.sss0.disabled=$shadowsocks_disabled
 			commit shadowsocks-libev
 		EOF
+		logger -t "OMR-VPS" "Shadowsocks restart..."
 		/etc/init.d/shadowsocks-libev restart >/dev/null 2>&1
 	fi
 
@@ -420,6 +426,7 @@ _set_config_from_vps() {
 			set glorytun.vpn.chacha20=$glorytun_chacha
 			commit glorytun
 		EOF
+		logger -t "OMR-VPS" "Glorytun restart..."
 		/etc/init.d/glorytun restart >/dev/null 2>&1
 		/etc/init.d/glorytun-udp restart >/dev/null 2>&1
 	fi
@@ -435,6 +442,8 @@ _set_config_from_vps() {
 			set openvpn.omr.secret="/etc/luci-uploads/openvpn.key"
 			commit openvpn
 		EOF
+		logger -t "OMR-VPS" "OpenVPN restart..."
+		/etc/init.d/mlvpn restart
 	}
 
 	# MLVPN settings
@@ -444,6 +453,7 @@ _set_config_from_vps() {
 			set mlvpn.general.password=$mlvpn_key
 			commit mlvpn
 		EOF
+		logger -t "OMR-VPS" "MLVPN restart..."
 		/etc/init.d/mlvpn restart
 	fi
 
@@ -551,6 +561,7 @@ _config_service() {
 	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && {
 		_set_config_from_vps
 	}
+	_get_vps_config
 	if [ "$(uci -q get openmptcprouter.settings.firstboot)" != "0" ] && [ -n "$(cat /proc/cpuinfo | grep aes)" ]; then
 		logger -t "OMR-VPS" "CPU support AES, set it by default"
 		uci -q batch <<-EOF >/dev/null
@@ -562,7 +573,6 @@ _config_service() {
 	fi
 	uci -q set openmptcprouter.settings.firstboot=0
 
-	_get_vps_config
 	config_load shadowsocks-libev
 	config_foreach _set_ss_server_vps server
 	_set_glorytun_vps
