@@ -2,7 +2,7 @@
 	LuCI - Lua Configuration Interface
 
 	Copyright 2008 Steven Barth <steven@midlink.org>
-	Copyright 2008-2012 Jo-Philipp Wich <jow@openwrt.org>
+	Copyright 2008-2018 Jo-Philipp Wich <jo@mein.io>
 
 	Licensed under the Apache License, Version 2.0 (the "License");
 	you may not use this file except in compliance with the License.
@@ -12,8 +12,91 @@
 */
 
 var cbi_d = [];
-var cbi_t = [];
 var cbi_strings = { path: {}, label: {} };
+
+function s8(bytes, off) {
+	var n = bytes[off];
+	return (n > 0x7F) ? (n - 256) >>> 0 : n;
+}
+
+function u16(bytes, off) {
+	return ((bytes[off + 1] << 8) + bytes[off]) >>> 0;
+}
+
+function sfh(s) {
+	if (s === null || s.length === 0)
+		return null;
+
+	var bytes = [];
+
+	for (var i = 0; i < s.length; i++) {
+		var ch = s.charCodeAt(i);
+
+		if (ch <= 0x7F)
+			bytes.push(ch);
+		else if (ch <= 0x7FF)
+			bytes.push(((ch >>>  6) & 0x1F) | 0xC0,
+			           ( ch         & 0x3F) | 0x80);
+		else if (ch <= 0xFFFF)
+			bytes.push(((ch >>> 12) & 0x0F) | 0xE0,
+			           ((ch >>>  6) & 0x3F) | 0x80,
+			           ( ch         & 0x3F) | 0x80);
+		else if (code <= 0x10FFFF)
+			bytes.push(((ch >>> 18) & 0x07) | 0xF0,
+			           ((ch >>> 12) & 0x3F) | 0x80,
+			           ((ch >>   6) & 0x3F) | 0x80,
+			           ( ch         & 0x3F) | 0x80);
+	}
+
+	if (!bytes.length)
+		return null;
+
+	var hash = (bytes.length >>> 0),
+	    len = (bytes.length >>> 2),
+	    off = 0, tmp;
+
+	while (len--) {
+		hash += u16(bytes, off);
+		tmp   = ((u16(bytes, off + 2) << 11) ^ hash) >>> 0;
+		hash  = ((hash << 16) ^ tmp) >>> 0;
+		hash += hash >>> 11;
+		off  += 4;
+	}
+
+	switch ((bytes.length & 3) >>> 0) {
+	case 3:
+		hash += u16(bytes, off);
+		hash  = (hash ^ (hash << 16)) >>> 0;
+		hash  = (hash ^ (s8(bytes, off + 2) << 18)) >>> 0;
+		hash += hash >>> 11;
+		break;
+
+	case 2:
+		hash += u16(bytes, off);
+		hash  = (hash ^ (hash << 11)) >>> 0;
+		hash += hash >>> 17;
+		break;
+
+	case 1:
+		hash += s8(bytes, off);
+		hash  = (hash ^ (hash << 10)) >>> 0;
+		hash += hash >>> 1;
+		break;
+	}
+
+	hash  = (hash ^ (hash << 3)) >>> 0;
+	hash += hash >>> 5;
+	hash  = (hash ^ (hash << 4)) >>> 0;
+	hash += hash >>> 17;
+	hash  = (hash ^ (hash << 25)) >>> 0;
+	hash += hash >>> 6;
+
+	return (0x100000000 + hash).toString(16).substr(1);
+}
+
+function _(s) {
+	return (window.TR && TR[sfh(s)]) || s;
+}
 
 function Int(x) {
 	return (/^-?\d+$/.test(x) ? +x : NaN);
@@ -55,7 +138,8 @@ function IPv6(x) {
 	var prefix = (prefix_suffix[0] || '0').split(/:/);
 	var suffix = prefix_suffix.length > 1 ? (prefix_suffix[1] || '0').split(/:/) : [];
 
-	if (suffix.length ? (prefix.length + suffix.length > 7) : (prefix.length > 8))
+	if (suffix.length ? (prefix.length + suffix.length > 7)
+	                  : ((prefix_suffix.length < 2 && prefix.length < 8) || prefix.length > 8))
 		return null;
 
 	var i, word;
@@ -79,365 +163,474 @@ function IPv6(x) {
 	return words;
 }
 
-var cbi_validators = {
+var CBIValidatorPrototype = {
+	apply: function(name, value, args) {
+		var func;
 
-	'integer': function()
-	{
-		return !!Int(this);
+		if (typeof(name) === 'function')
+			func = name;
+		else if (typeof(this.types[name]) === 'function')
+			func = this.types[name];
+		else
+			return false;
+
+		if (value !== undefined && value !== null)
+			this.value = value;
+
+		return func.apply(this, args);
 	},
 
-	'uinteger': function()
-	{
-		return (Int(this) >= 0);
+	assert: function(condition, message) {
+		if (!condition) {
+			this.field.classList.add('cbi-input-invalid');
+			this.error = message;
+			return false;
+		}
+
+		this.field.classList.remove('cbi-input-invalid');
+		this.error = null;
+		return true;
 	},
 
-	'float': function()
-	{
-		return !!Dec(this);
+	compile: function(code) {
+		var pos = 0;
+		var esc = false;
+		var depth = 0;
+		var stack = [ ];
+
+		code += ',';
+
+		for (var i = 0; i < code.length; i++) {
+			if (esc) {
+				esc = false;
+				continue;
+			}
+
+			switch (code.charCodeAt(i))
+			{
+			case 92:
+				esc = true;
+				break;
+
+			case 40:
+			case 44:
+				if (depth <= 0) {
+					if (pos < i) {
+						var label = code.substring(pos, i);
+							label = label.replace(/\\(.)/g, '$1');
+							label = label.replace(/^[ \t]+/g, '');
+							label = label.replace(/[ \t]+$/g, '');
+
+						if (label && !isNaN(label)) {
+							stack.push(parseFloat(label));
+						}
+						else if (label.match(/^(['"]).*\1$/)) {
+							stack.push(label.replace(/^(['"])(.*)\1$/, '$2'));
+						}
+						else if (typeof this.types[label] == 'function') {
+							stack.push(this.types[label]);
+							stack.push(null);
+						}
+						else {
+							throw "Syntax error, unhandled token '"+label+"'";
+						}
+					}
+
+					pos = i+1;
+				}
+
+				depth += (code.charCodeAt(i) == 40);
+				break;
+
+			case 41:
+				if (--depth <= 0) {
+					if (typeof stack[stack.length-2] != 'function')
+						throw "Syntax error, argument list follows non-function";
+
+					stack[stack.length-1] = this.compile(code.substring(pos, i));
+					pos = i+1;
+				}
+
+				break;
+			}
+		}
+
+		return stack;
 	},
 
-	'ufloat': function()
-	{
-		return (Dec(this) >= 0);
-	},
-
-	'ipaddr': function()
-	{
-		return cbi_validators.ip4addr.apply(this) ||
-			cbi_validators.ip6addr.apply(this);
-	},
-
-	'ip4addr': function()
-	{
-		var m = this.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?:\/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})|\/(\d{1,2}))?$/);
-		return !!(m && IPv4(m[1]) && (m[2] ? IPv4(m[2]) : (m[3] ? cbi_validators.ip4prefix.apply(m[3]) : true)));
-	},
-
-	'ip6addr': function()
-	{
-		var m = this.match(/^([0-9a-fA-F:.]+)(?:\/(\d{1,3}))?$/);
-		return !!(m && IPv6(m[1]) && (m[2] ? cbi_validators.ip6prefix.apply(m[2]) : true));
-	},
-
-	'ip4prefix': function()
-	{
-		return !isNaN(this) && this >= 0 && this <= 32;
-	},
-
-	'ip6prefix': function()
-	{
-		return !isNaN(this) && this >= 0 && this <= 128;
-	},
-
-	'cidr': function()
-	{
-		return cbi_validators.cidr4.apply(this) ||
-			cbi_validators.cidr6.apply(this);
-	},
-
-	'cidr4': function()
-	{
-		var m = this.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\/(\d{1,2})$/);
-		return !!(m && IPv4(m[1]) && cbi_validators.ip4prefix.apply(m[2]));
-	},
-
-	'cidr6': function()
-	{
-		var m = this.match(/^([0-9a-fA-F:.]+)\/(\d{1,3})$/);
-		return !!(m && IPv6(m[1]) && cbi_validators.ip6prefix.apply(m[2]));
-	},
-
-	'ipnet4': function()
-	{
-		var m = this.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-		return !!(m && IPv4(m[1]) && IPv4(m[2]));
-	},
-
-	'ipnet6': function()
-	{
-		var m = this.match(/^([0-9a-fA-F:.]+)\/([0-9a-fA-F:.]+)$/);
-		return !!(m && IPv6(m[1]) && IPv6(m[2]));
-	},
-
-	'ip6hostid': function()
-	{
-		if (this == "eui64" || this == "random")
+	validate: function() {
+		/* element is detached */
+		if (!findParent(this.field, 'form'))
 			return true;
 
-		var v6 = IPv6(this);
-		return !(!v6 || v6[0] || v6[1] || v6[2] || v6[3]);
-	},
+		this.field.classList.remove('cbi-input-invalid');
+		this.value = matchesElem(this.field, 'select') ? this.field.options[this.field.selectedIndex].value : this.field.value;
+		this.error = null;
 
-	'ipmask': function()
-	{
-		return cbi_validators.ipmask4.apply(this) ||
-			cbi_validators.ipmask6.apply(this);
-	},
+		var valid;
 
-	'ipmask4': function()
-	{
-		return cbi_validators.cidr4.apply(this) ||
-			cbi_validators.ipnet4.apply(this) ||
-			cbi_validators.ip4addr.apply(this);
-	},
+		if (this.value.length === 0)
+			valid = this.assert(this.optional, _('non-empty value'));
+		else
+			valid = this.vstack[0].apply(this, this.vstack[1]);
 
-	'ipmask6': function()
-	{
-		return cbi_validators.cidr6.apply(this) ||
-			cbi_validators.ipnet6.apply(this) ||
-			cbi_validators.ip6addr.apply(this);
-	},
-
-	'port': function()
-	{
-		var p = Int(this);
-		return (p >= 0 && p <= 65535);
-	},
-
-	'portrange': function()
-	{
-		if (this.match(/^(\d+)-(\d+)$/))
-		{
-			var p1 = +RegExp.$1;
-			var p2 = +RegExp.$2;
-			return (p1 <= p2 && p2 <= 65535);
+		if (!valid) {
+			this.field.setAttribute('data-tooltip', _('Expecting %s').format(this.error));
+			this.field.setAttribute('data-tooltip-style', 'error');
+			this.field.dispatchEvent(new CustomEvent('validation-failure', { bubbles: true }));
+		}
+		else {
+			this.field.removeAttribute('data-tooltip');
+			this.field.removeAttribute('data-tooltip-style');
+			this.field.dispatchEvent(new CustomEvent('validation-success', { bubbles: true }));
 		}
 
-		return cbi_validators.port.apply(this);
+		return valid;
 	},
 
-	'macaddr': function()
-	{
-		return (this.match(/^([a-fA-F0-9]{2}:){5}[a-fA-F0-9]{2}$/) != null);
-	},
+	types: {
+		integer: function() {
+			return this.assert(Int(this.value) !== NaN, _('valid integer value'));
+		},
 
-	'host': function(ipv4only)
-	{
-		return cbi_validators.hostname.apply(this) ||
-			((ipv4only != 1) && cbi_validators.ipaddr.apply(this)) ||
-			((ipv4only == 1) && cbi_validators.ip4addr.apply(this));
-	},
+		uinteger: function() {
+			return this.assert(Int(this.value) >= 0, _('positive integer value'));
+		},
 
-	'hostname': function(strict)
-	{
-		if (this.length <= 253)
-			return (this.match(/^[a-zA-Z0-9_]+$/) != null ||
-			        (this.match(/^[a-zA-Z0-9_][a-zA-Z0-9_\-.]*[a-zA-Z0-9]$/) &&
-			         this.match(/[^0-9.]/))) &&
-			       (!strict || !this.match(/^_/));
+		float: function() {
+			return this.assert(Dec(this.value) !== NaN, _('valid decimal value'));
+		},
 
-		return false;
-	},
+		ufloat: function() {
+			return this.assert(Dec(this.value) >= 0, _('positive decimal value'));
+		},
 
-	'network': function()
-	{
-		return cbi_validators.uciname.apply(this) ||
-			cbi_validators.host.apply(this);
-	},
+		ipaddr: function(nomask) {
+			return this.assert(this.apply('ip4addr', null, [nomask]) || this.apply('ip6addr', null, [nomask]),
+				nomask ? _('valid IP address') : _('valid IP address or prefix'));
+		},
 
-	'hostport': function(ipv4only)
-	{
-		var hp = this.split(/:/);
+		ip4addr: function(nomask) {
+			var re = nomask ? /^(\d+\.\d+\.\d+\.\d+)$/ : /^(\d+\.\d+\.\d+\.\d+)(?:\/(\d+\.\d+\.\d+\.\d+)|\/(\d{1,2}))?$/,
+			    m = this.value.match(re);
 
-		if (hp.length == 2)
-			return (cbi_validators.host.apply(hp[0], ipv4only) &&
-			        cbi_validators.port.apply(hp[1]));
+			return this.assert(m && IPv4(m[1]) && (m[2] ? IPv4(m[2]) : (m[3] ? this.apply('ip4prefix', m[3]) : true)),
+				nomask ? _('valid IPv4 address') : _('valid IPv4 address or network'));
+		},
 
-		return false;
-	},
+		ip6addr: function(nomask) {
+			var re = nomask ? /^([0-9a-fA-F:.]+)$/ : /^([0-9a-fA-F:.]+)(?:\/(\d{1,3}))?$/,
+			    m = this.value.match(re);
 
-	'ip4addrport': function()
-	{
-		var hp = this.split(/:/);
+			return this.assert(m && IPv6(m[1]) && (m[2] ? this.apply('ip6prefix', m[2]) : true),
+				nomask ? _('valid IPv6 address') : _('valid IPv6 address or prefix'));
+		},
 
-		if (hp.length == 2)
-			return (cbi_validators.ipaddr.apply(hp[0]) &&
-			        cbi_validators.port.apply(hp[1]));
-		return false;
-	},
+		ip4prefix: function() {
+			return this.assert(!isNaN(this.value) && this.value >= 0 && this.value <= 32,
+				_('valid IPv4 prefix value (0-32)'));
+		},
 
-	'ipaddrport': function(bracket)
-	{
-		if (this.match(/^([^\[\]:]+):([^:]+)$/)) {
-			var addr = RegExp.$1
-			var port = RegExp.$2
-			return (cbi_validators.ip4addr.apply(addr) &&
-				cbi_validators.port.apply(port));
-                } else if ((bracket == 1) && (this.match(/^\[(.+)\]:([^:]+)$/))) {
-			var addr = RegExp.$1
-			var port = RegExp.$2
-			return (cbi_validators.ip6addr.apply(addr) &&
-				cbi_validators.port.apply(port));
-                } else if ((bracket != 1) && (this.match(/^([^\[\]]+):([^:]+)$/))) {
-			var addr = RegExp.$1
-			var port = RegExp.$2
-			return (cbi_validators.ip6addr.apply(addr) &&
-				cbi_validators.port.apply(port));
-		} else {
-			return false;
-		}
-	},
+		ip6prefix: function() {
+			return this.assert(!isNaN(this.value) && this.value >= 0 && this.value <= 128,
+				_('valid IPv6 prefix value (0-128)'));
+		},
 
-	'wpakey': function()
-	{
-		var v = this;
+		cidr: function() {
+			return this.assert(this.apply('cidr4') || this.apply('cidr6'), _('valid IPv4 or IPv6 CIDR'));
+		},
 
-		if( v.length == 64 )
-			return (v.match(/^[a-fA-F0-9]{64}$/) != null);
-		else
-			return (v.length >= 8) && (v.length <= 63);
-	},
+		cidr4: function() {
+			var m = this.value.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\/(\d{1,2})$/);
+			return this.assert(m && IPv4(m[1]) && this.apply('ip4prefix', m[2]), _('valid IPv4 CIDR'));
+		},
 
-	'wepkey': function()
-	{
-		var v = this;
+		cidr6: function() {
+			var m = this.value.match(/^([0-9a-fA-F:.]+)\/(\d{1,3})$/);
+			return this.assert(m && IPv6(m[1]) && this.apply('ip6prefix', m[2]), _('valid IPv6 CIDR'));
+		},
 
-		if ( v.substr(0,2) == 's:' )
-			v = v.substr(2);
+		ipnet4: function() {
+			var m = this.value.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+			return this.assert(m && IPv4(m[1]) && IPv4(m[2]), _('IPv4 network in address/netmask notation'));
+		},
 
-		if( (v.length == 10) || (v.length == 26) )
-			return (v.match(/^[a-fA-F0-9]{10,26}$/) != null);
-		else
-			return (v.length == 5) || (v.length == 13);
-	},
+		ipnet6: function() {
+			var m = this.value.match(/^([0-9a-fA-F:.]+)\/([0-9a-fA-F:.]+)$/);
+			return this.assert(m && IPv6(m[1]) && IPv6(m[2]), _('IPv6 network in address/netmask notation'));
+		},
 
-	'uciname': function()
-	{
-		return (this.match(/^[a-zA-Z0-9_]+$/) != null);
-	},
-
-	'range': function(min, max)
-	{
-		var val = Dec(this);
-		return (val >= +min && val <= +max);
-	},
-
-	'min': function(min)
-	{
-		return (Dec(this) >= +min);
-	},
-
-	'max': function(max)
-	{
-		return (Dec(this) <= +max);
-	},
-
-	'rangelength': function(min, max)
-	{
-		var val = '' + this;
-		return ((val.length >= +min) && (val.length <= +max));
-	},
-
-	'minlength': function(min)
-	{
-		return ((''+this).length >= +min);
-	},
-
-	'maxlength': function(max)
-	{
-		return ((''+this).length <= +max);
-	},
-
-	'or': function()
-	{
-		for (var i = 0; i < arguments.length; i += 2)
-		{
-			if (typeof arguments[i] != 'function')
-			{
-				if (arguments[i] == this)
-					return true;
-				i--;
-			}
-			else if (arguments[i].apply(this, arguments[i+1]))
-			{
+		ip6hostid: function() {
+			if (this.value == "eui64" || this.value == "random")
 				return true;
+
+			var v6 = IPv6(this.value);
+			return this.assert(!(!v6 || v6[0] || v6[1] || v6[2] || v6[3]), _('valid IPv6 host id'));
+		},
+
+		ipmask: function() {
+			return this.assert(this.apply('ipmask4') || this.apply('ipmask6'),
+				_('valid network in address/netmask notation'));
+		},
+
+		ipmask4: function() {
+			return this.assert(this.apply('cidr4') || this.apply('ipnet4') || this.apply('ip4addr'),
+				_('valid IPv4 network'));
+		},
+
+		ipmask6: function() {
+			return this.assert(this.apply('cidr6') || this.apply('ipnet6') || this.apply('ip6addr'),
+				_('valid IPv6 network'));
+		},
+
+		port: function() {
+			var p = Int(this.value);
+			return this.assert(p >= 0 && p <= 65535, _('valid port value'));
+		},
+
+		portrange: function() {
+			if (this.value.match(/^(\d+)-(\d+)$/)) {
+				var p1 = +RegExp.$1;
+				var p2 = +RegExp.$2;
+				return this.assert(p1 <= p2 && p2 <= 65535,
+					_('valid port or port range (port1-port2)'));
 			}
-		}
-		return false;
-	},
 
-	'and': function()
-	{
-		for (var i = 0; i < arguments.length; i += 2)
-		{
-			if (typeof arguments[i] != 'function')
-			{
-				if (arguments[i] != this)
-					return false;
-				i--;
-			}
-			else if (!arguments[i].apply(this, arguments[i+1]))
-			{
-				return false;
-			}
-		}
-		return true;
-	},
+			return this.assert(this.apply('port'), _('valid port or port range (port1-port2)'));
+		},
 
-	'neg': function()
-	{
-		return cbi_validators.or.apply(
-			this.replace(/^[ \t]*![ \t]*/, ''), arguments);
-	},
+		macaddr: function() {
+			return this.assert(this.value.match(/^([a-fA-F0-9]{2}:){5}[a-fA-F0-9]{2}$/) != null,
+				_('valid MAC address'));
+		},
 
-	'list': function(subvalidator, subargs)
-	{
-		if (typeof subvalidator != 'function')
-			return false;
+		host: function(ipv4only) {
+			return this.assert(this.apply('hostname') || this.apply(ipv4only == 1 ? 'ip4addr' : 'ipaddr'),
+				_('valid hostname or IP address'));
+		},
 
-		var tokens = this.match(/[^ \t]+/g);
-		for (var i = 0; i < tokens.length; i++)
-			if (!subvalidator.apply(tokens[i], subargs))
-				return false;
+		hostname: function(strict) {
+			if (this.value.length <= 253)
+				return this.assert(
+					(this.value.match(/^[a-zA-Z0-9_]+$/) != null ||
+						(this.value.match(/^[a-zA-Z0-9_][a-zA-Z0-9_\-.]*[a-zA-Z0-9]$/) &&
+						 this.value.match(/[^0-9.]/))) &&
+					(!strict || !this.value.match(/^_/)),
+					_('valid hostname'));
 
-		return true;
-	},
-	'phonedigit': function()
-	{
-		return (this.match(/^[0-9\*#!\.]+$/) != null);
-	},
-	'timehhmmss': function()
-	{
-		return (this.match(/^[0-6][0-9]:[0-6][0-9]:[0-6][0-9]$/) != null);
-	},
-	'dateyyyymmdd': function()
-	{
-		if (this == null) {
-			return false;
-		}
-		if (this.match(/^(\d\d\d\d)-(\d\d)-(\d\d)/)) {
-			var year = RegExp.$1;
-			var month = RegExp.$2;
-			var day = RegExp.$2
+			return this.assert(false, _('valid hostname'));
+		},
 
-			var days_in_month = [ 31, 28, 31, 30, 31, 30, 31, 31, 30 , 31, 30, 31 ];
-			function is_leap_year(year) {
-				return ((year % 4) == 0) && ((year % 100) != 0) || ((year % 400) == 0);
-			}
-			function get_days_in_month(month, year) {
-				if ((month == 2) && is_leap_year(year)) {
-					return 29;
-				} else {
-					return days_in_month[month];
+		network: function() {
+			return this.assert(this.apply('uciname') || this.apply('host'),
+				_('valid UCI identifier, hostname or IP address'));
+		},
+
+		hostport: function(ipv4only) {
+			var hp = this.value.split(/:/);
+			return this.assert(hp.length == 2 && this.apply('host', hp[0], [ipv4only]) && this.apply('port', hp[1]),
+				_('valid host:port'));
+		},
+
+		ip4addrport: function() {
+			var hp = this.value.split(/:/);
+			return this.assert(hp.length == 2 && this.apply('ip4addr', hp[0], [true]) && this.apply('port', hp[1]),
+				_('valid IPv4 address:port'));
+		},
+
+		ipaddrport: function(bracket) {
+			var m4 = this.value.match(/^([^\[\]:]+):(\d+)$/),
+			    m6 = this.value.match((bracket == 1) ? /^\[(.+)\]:(\d+)$/ : /^([^\[\]]+):(\d+)$/);
+
+			if (m4)
+				return this.assert(this.apply('ip4addr', m4[1], [true]) && this.apply('port', m4[2]),
+					_('valid address:port'));
+
+			return this.assert(m6 && this.apply('ip6addr', m6[1], [true]) && this.apply('port', m6[2]),
+				_('valid address:port'));
+		},
+
+		wpakey: function() {
+			var v = this.value;
+
+			if (v.length == 64)
+				return this.assert(v.match(/^[a-fA-F0-9]{64}$/), _('valid hexadecimal WPA key'));
+
+			return this.assert((v.length >= 8) && (v.length <= 63), _('key between 8 and 63 characters'));
+		},
+
+		wepkey: function() {
+			var v = this.value;
+
+			if (v.substr(0, 2) === 's:')
+				v = v.substr(2);
+
+			if ((v.length == 10) || (v.length == 26))
+				return this.assert(v.match(/^[a-fA-F0-9]{10,26}$/), _('valid hexadecimal WEP key'));
+
+			return this.assert((v.length === 5) || (v.length === 13), _('key with either 5 or 13 characters'));
+		},
+
+		uciname: function() {
+			return this.assert(this.value.match(/^[a-zA-Z0-9_]+$/), _('valid UCI identifier'));
+		},
+
+		range: function(min, max) {
+			var val = Dec(this.value);
+			return this.assert(val >= +min && val <= +max, _('value between %f and %f').format(min, max));
+		},
+
+		min: function(min) {
+			return this.assert(Dec(this.value) >= +min, _('value greater or equal to %f').format(min));
+		},
+
+		max: function(max) {
+			return this.assert(Dec(this.value) <= +max, _('value smaller or equal to %f').format(max));
+		},
+
+		rangelength: function(min, max) {
+			var val = '' + this.value;
+			return this.assert((val.length >= +min) && (val.length <= +max),
+				_('value between %d and %d characters').format(min, max));
+		},
+
+		minlength: function(min) {
+			return this.assert((''+this.value).length >= +min,
+				_('value with at least %d characters').format(min));
+		},
+
+		maxlength: function(max) {
+			return this.assert((''+this.value).length <= +max,
+				_('value with at most %d characters').format(max));
+		},
+
+		or: function() {
+			var errors = [];
+
+			for (var i = 0; i < arguments.length; i += 2) {
+				if (typeof arguments[i] != 'function') {
+					if (arguments[i] == this.value)
+						return this.assert(true);
+					errors.push('"%s"'.format(arguments[i]));
+					i--;
+				}
+				else if (arguments[i].apply(this, arguments[i+1])) {
+					return this.assert(true);
+				}
+				else {
+					errors.push(this.error);
 				}
 			}
-			/* Firewall rules in the past don't make sense */
-			if (year < 2015) {
-				return false;
-			}
-			if ((month <= 0) || (month > 12)) {
-				return false;
-			}
-			if ((day <= 0) || (day > get_days_in_month(month, year))) {
-				return false;
-			}
-			return true;
 
-		} else {
-			return false;
+			return this.assert(false, _('one of:\n - %s'.format(errors.join('\n - '))));
+		},
+
+		and: function() {
+			for (var i = 0; i < arguments.length; i += 2) {
+				if (typeof arguments[i] != 'function') {
+					if (arguments[i] != this.value)
+						return this.assert(false, '"%s"'.format(arguments[i]));
+					i--;
+				}
+				else if (!arguments[i].apply(this, arguments[i+1])) {
+					return this.assert(false, this.error);
+				}
+			}
+
+			return this.assert(true);
+		},
+
+		neg: function() {
+			return this.apply('or', this.value.replace(/^[ \t]*![ \t]*/, ''), arguments);
+		},
+
+		list: function(subvalidator, subargs) {
+			this.field.setAttribute('data-is-list', 'true');
+
+			var tokens = this.value.match(/[^ \t]+/g);
+			for (var i = 0; i < tokens.length; i++)
+				if (!this.apply(subvalidator, tokens[i], subargs))
+					return this.assert(false, this.error);
+
+			return this.assert(true);
+		},
+
+		phonedigit: function() {
+			return this.assert(this.value.match(/^[0-9\*#!\.]+$/),
+				_('valid phone digit (0-9, "*", "#", "!" or ".")'));
+		},
+
+		timehhmmss: function() {
+			return this.assert(this.value.match(/^[0-6][0-9]:[0-6][0-9]:[0-6][0-9]$/),
+				_('valid time (HH:MM:SS)'));
+		},
+
+		dateyyyymmdd: function() {
+			if (this.value.match(/^(\d\d\d\d)-(\d\d)-(\d\d)/)) {
+				var year  = +RegExp.$1,
+				    month = +RegExp.$2,
+				    day   = +RegExp.$3,
+				    days_in_month = [ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 ];
+
+				function is_leap_year(year) {
+					return ((!(year % 4) && (year % 100)) || !(year % 400));
+				}
+
+				function get_days_in_month(month, year) {
+					return (month === 2 && is_leap_year(year)) ? 29 : days_in_month[month - 1];
+				}
+
+				/* Firewall rules in the past don't make sense */
+				return this.assert(year >= 2015 && month && month <= 12 && day && day <= get_days_in_month(month, year),
+					_('valid date (YYYY-MM-DD)'));
+
+			}
+
+			return this.assert(false, _('valid date (YYYY-MM-DD)'));
+		},
+
+		unique: function(subvalidator, subargs) {
+			var ctx = this,
+				option = findParent(ctx.field, '[data-type][data-name]'),
+			    section = findParent(option, '.cbi-section'),
+			    query = '[data-type="%s"][data-name="%s"]'.format(option.getAttribute('data-type'), option.getAttribute('data-name')),
+			    unique = true;
+
+			section.querySelectorAll(query).forEach(function(sibling) {
+				if (sibling === option)
+					return;
+
+				var input = sibling.querySelector('[data-type]'),
+				    values = input ? (input.getAttribute('data-is-list') ? input.value.match(/[^ \t]+/g) : [ input.value ]) : null;
+
+				if (values !== null && values.indexOf(ctx.value) !== -1)
+					unique = false;
+			});
+
+			if (!unique)
+				return this.assert(false, _('unique value'));
+
+			if (typeof(subvalidator) === 'function')
+				return this.apply(subvalidator, undefined, subargs);
+
+			return this.assert(true);
+		},
+
+		hexstring: function() {
+			return this.assert(this.value.match(/^([a-f0-9][a-f0-9]|[A-F0-9][A-F0-9])+$/),
+				_('hexadecimal encoded value'));
 		}
 	}
 };
+
+function CBIValidator(field, type, optional)
+{
+	this.field = field;
+	this.optional = optional;
+	this.vstack = this.compile(type);
+}
+
+CBIValidator.prototype = CBIValidatorPrototype;
 
 
 function cbi_d_add(field, dep, index) {
@@ -511,20 +704,19 @@ function cbi_d_update() {
 		if (node && node.parentNode && !cbi_d_check(entry.deps)) {
 			node.parentNode.removeChild(node);
 			state = true;
-		} else if (parent && (!node || !node.parentNode) && cbi_d_check(entry.deps)) {
+		}
+		else if (parent && (!node || !node.parentNode) && cbi_d_check(entry.deps)) {
 			var next = undefined;
 
 			for (next = parent.firstChild; next; next = next.nextSibling) {
-				if (next.getAttribute && parseInt(next.getAttribute('data-index'), 10) > entry.index) {
+				if (next.getAttribute && parseInt(next.getAttribute('data-index'), 10) > entry.index)
 					break;
-				}
 			}
 
-			if (!next) {
+			if (!next)
 				parent.appendChild(entry.node);
-			} else {
+			else
 				parent.insertBefore(entry.node, next);
-			}
 
 			state = true;
 		}
@@ -534,14 +726,13 @@ function cbi_d_update() {
 			parent.parentNode.style.display = (parent.options.length <= 1) ? 'none' : '';
 	}
 
-	if (entry && entry.parent) {
-		if (!cbi_t_update())
-			cbi_tag_last(parent);
-	}
+	if (entry && entry.parent)
+		cbi_tag_last(parent);
 
-	if (state) {
+	if (state)
 		cbi_d_update();
-	}
+	else if (parent)
+		parent.dispatchEvent(new CustomEvent('dependency-update', { bubbles: true }));
 }
 
 function cbi_init() {
@@ -565,9 +756,8 @@ function cbi_init() {
 		var index = parseInt(node.getAttribute('data-index'), 10);
 		var depends = JSON.parse(node.getAttribute('data-depends'));
 		if (!isNaN(index) && depends.length > 0) {
-			for (var alt = 0; alt < depends.length; alt++) {
+			for (var alt = 0; alt < depends.length; alt++)
 				cbi_d_add(node, depends[alt], index);
-			}
 		}
 	}
 
@@ -575,9 +765,8 @@ function cbi_init() {
 
 	for (var i = 0, node; (node = nodes[i]) !== undefined; i++) {
 		var events = node.getAttribute('data-update').split(' ');
-		for (var j = 0, event; (event = events[j]) !== undefined; j++) {
-			cbi_bind(node, event, cbi_d_update);
-		}
+		for (var j = 0, event; (event = events[j]) !== undefined; j++)
+			node.addEventListener(event, cbi_d_update);
 	}
 
 	nodes = document.querySelectorAll('[data-choices]');
@@ -619,9 +808,8 @@ function cbi_init() {
 		                   node.getAttribute('data-type'));
 	}
 
-	document.querySelectorAll('.cbi-dropdown').forEach(function(s) {
-		cbi_dropdown_init(s);
-	});
+	document.querySelectorAll('.cbi-dropdown').forEach(cbi_dropdown_init);
+	document.querySelectorAll('[data-browser]').forEach(cbi_browser_init);
 
 	document.querySelectorAll('.cbi-tooltip:not(:empty)').forEach(function(s) {
 		s.parentNode.classList.add('cbi-tooltip-container');
@@ -642,460 +830,230 @@ function cbi_init() {
 	cbi_d_update();
 }
 
-function cbi_bind(obj, type, callback, mode) {
-	if (!obj.addEventListener) {
-		obj.attachEvent('on' + type,
-			function(){
-				var e = window.event;
+function cbi_combobox_init(id, values, def, man) {
+	var obj = (typeof(id) === 'string') ? document.getElementById(id) : id;
+	var sb = E('div', {
+		'name': obj.name,
+		'class': 'cbi-dropdown',
+		'display-items': 5,
+		'optional': obj.getAttribute('data-optional'),
+		'placeholder': _('-- Please choose --'),
+		'data-type': obj.getAttribute('data-type'),
+		'data-optional': obj.getAttribute('data-optional')
+	}, [ E('ul') ]);
 
-				if (!e.target && e.srcElement)
-					e.target = e.srcElement;
-
-				return !!callback(e);
-			}
-		);
-	} else {
-		obj.addEventListener(type, callback, !!mode);
-	}
-	return obj;
-}
-
-function cbi_combobox(id, values, def, man, focus) {
-	var selid = "cbi.combobox." + id;
-	if (document.getElementById(selid)) {
-		return
-	}
-
-	var obj = document.getElementById(id)
-	var sel = document.createElement("select");
-		sel.id = selid;
-		sel.index = obj.index;
-		sel.className = obj.className.replace(/cbi-input-text/, 'cbi-input-select');
-
-	if (obj.nextSibling) {
-		obj.parentNode.insertBefore(sel, obj.nextSibling);
-	} else {
-		obj.parentNode.appendChild(sel);
-	}
-
-	var dt = obj.getAttribute('cbi_datatype');
-	var op = obj.getAttribute('cbi_optional');
-
-	if (!values[obj.value]) {
-		if (obj.value == "") {
-			var optdef = document.createElement("option");
-			optdef.value = "";
-			optdef.appendChild(document.createTextNode(typeof(def) === 'string' ? def : cbi_strings.label.choose));
-			sel.appendChild(optdef);
-		} else {
-			var opt = document.createElement("option");
-			opt.value = obj.value;
-			opt.selected = "selected";
-			opt.appendChild(document.createTextNode(obj.value));
-			sel.appendChild(opt);
-		}
+	if (!(obj.value in values) && obj.value.length) {
+		sb.lastElementChild.appendChild(E('li', {
+			'data-value': obj.value,
+			'selected': ''
+		}, obj.value.length ? obj.value : (def || _('-- Please choose --'))));
 	}
 
 	for (var i in values) {
-		var opt = document.createElement("option");
-		opt.value = i;
-
-		if (obj.value == i) {
-			opt.selected = "selected";
-		}
-
-		opt.appendChild(document.createTextNode(values[i]));
-		sel.appendChild(opt);
+		sb.lastElementChild.appendChild(E('li', {
+			'data-value': i,
+			'selected': (i == obj.value) ? '' : null
+		}, values[i]));
 	}
 
-	var optman = document.createElement("option");
-	optman.value = "";
-	optman.appendChild(document.createTextNode(typeof(man) === 'string' ? man : cbi_strings.label.custom));
-	sel.appendChild(optman);
+	sb.lastElementChild.appendChild(E('li', { 'data-value': '-' }, [
+		E('input', {
+			'type': 'text',
+			'class': 'create-item-input',
+			'data-type': obj.getAttribute('data-type'),
+			'data-optional': true,
+			'placeholder': (man || _('-- custom --'))
+		})
+	]));
 
-	obj.style.display = "none";
-
-	if (dt)
-		cbi_validate_field(sel, op == 'true', dt);
-
-	cbi_bind(sel, "change", function() {
-		if (sel.selectedIndex == sel.options.length - 1) {
-			obj.style.display = "inline";
-			sel.blur();
-			sel.parentNode.removeChild(sel);
-			obj.focus();
-		} else {
-			obj.value = sel.options[sel.selectedIndex].value;
-		}
-
-		try {
-			cbi_d_update();
-		} catch (e) {
-			//Do nothing
-		}
-	})
-
-	// Retrigger validation in select
-	if (focus) {
-		sel.focus();
-		sel.blur();
-	}
-}
-
-function cbi_combobox_init(id, values, def, man) {
-	var obj = (typeof(id) === 'string') ? document.getElementById(id) : id;
-	cbi_bind(obj, "blur", function() {
-		cbi_combobox(obj.id, values, def, man, true);
-	});
-	cbi_combobox(obj.id, values, def, man, false);
+	sb.value = obj.value;
+	obj.parentNode.replaceChild(sb, obj);
 }
 
 function cbi_filebrowser(id, defpath) {
-	var field   = document.getElementById(id);
+	var field   = L.dom.elem(id) ? id : document.getElementById(id);
 	var browser = window.open(
-		cbi_strings.path.browser + ( field.value || defpath || '' ) + '?field=' + id,
+		cbi_strings.path.browser + (field.value || defpath || '') + '?field=' + field.id,
 		"luci_filebrowser", "width=300,height=400,left=100,top=200,scrollbars=yes"
 	);
 
 	browser.focus();
 }
 
-function cbi_browser_init(id, resource, defpath)
+function cbi_browser_init(field)
 {
-	function cbi_browser_btnclick(e) {
-		cbi_filebrowser(id, defpath);
-		return false;
-	}
-
-	var field = document.getElementById(id);
-
-	var btn = document.createElement('img');
-	btn.className = 'cbi-image-button';
-	btn.src = (resource || cbi_strings.path.resource) + '/cbi/folder.gif';
-	field.parentNode.insertBefore(btn, field.nextSibling);
-
-	cbi_bind(btn, 'click', cbi_browser_btnclick);
+	field.parentNode.insertBefore(
+		E('img', {
+			'src': L.resource('cbi/folder.gif'),
+			'class': 'cbi-image-button',
+			'click': function(ev) {
+				cbi_filebrowser(field, field.getAttribute('data-browser'));
+				ev.preventDefault();
+			}
+		}), field.nextSibling);
 }
 
-function cbi_dynlist_init(parent, datatype, optional, choices)
-{
-	var prefix = parent.getAttribute('data-prefix');
-	var holder = parent.getAttribute('data-placeholder');
+CBIDynamicList = {
+	addItem: function(dl, value, text, flash) {
+		var exists = false,
+		    new_item = E('div', { 'class': flash ? 'item flash' : 'item', 'tabindex': 0 }, [
+				E('span', {}, text || value),
+				E('input', {
+					'type': 'hidden',
+					'name': dl.getAttribute('data-prefix'),
+					'value': value })]);
 
-	var values;
+		dl.querySelectorAll('.item, .add-item').forEach(function(item) {
+			if (exists)
+				return;
 
-	function cbi_dynlist_redraw(focus, add, del)
-	{
-		values = [ ];
+			var hidden = item.querySelector('input[type="hidden"]');
 
-		while (parent.firstChild)
-		{
-			var n = parent.firstChild;
-			var i = +n.index;
+			if (hidden && hidden.value === value)
+				exists = true;
+			else if (!hidden || hidden.value >= value)
+				exists = !!item.parentNode.insertBefore(new_item, item);
+		});
 
-			if (i != del)
-			{
-				if (n.nodeName.toLowerCase() == 'input')
-					values.push(n.value || '');
-				else if (n.nodeName.toLowerCase() == 'select')
-					values[values.length-1] = n.options[n.selectedIndex].value;
-			}
+		cbi_d_update();
+	},
 
-			parent.removeChild(n);
-		}
+	removeItem: function(dl, item) {
+		var sb = dl.querySelector('.cbi-dropdown');
+		if (sb) {
+			var value = item.querySelector('input[type="hidden"]').value;
 
-		if (add >= 0)
-		{
-			focus = add+1;
-			values.splice(focus, 0, '');
-		}
-		else if (values.length == 0)
-		{
-			focus = 0;
-			values.push('');
-		}
-
-		for (var i = 0; i < values.length; i++)
-		{
-			var t = document.createElement('input');
-				t.id = prefix + '.' + (i+1);
-				t.name = prefix;
-				t.value = values[i];
-				t.type = 'text';
-				t.index = i;
-				t.className = 'cbi-input-text';
-
-			if (i == 0 && holder)
-			{
-				t.placeholder = holder;
-			}
-
-			var b = E('div', {
-				class: 'cbi-button cbi-button-' + ((i+1) < values.length ? 'remove' : 'add')
-			}, (i+1) < values.length ? '×' : '+');
-
-			parent.appendChild(t);
-			parent.appendChild(b);
-			if (datatype == 'file')
-			{
-				cbi_browser_init(t.id, null, parent.getAttribute('data-browser-path'));
-			}
-
-			parent.appendChild(document.createElement('br'));
-
-			if (datatype)
-			{
-				cbi_validate_field(t.id, ((i+1) == values.length) || optional, datatype);
-			}
-
-			if (choices)
-			{
-				cbi_combobox_init(t.id, choices, '', cbi_strings.label.custom);
-				b.index = i;
-
-				cbi_bind(b, 'keydown',  cbi_dynlist_keydown);
-				cbi_bind(b, 'keypress', cbi_dynlist_keypress);
-
-				if (i == focus || -i == focus)
-					b.focus();
-			}
-			else
-			{
-				cbi_bind(t, 'keydown',  cbi_dynlist_keydown);
-				cbi_bind(t, 'keypress', cbi_dynlist_keypress);
-
-				if (i == focus)
-				{
-					t.focus();
-				}
-				else if (-i == focus)
-				{
-					t.focus();
-
-					/* force cursor to end */
-					var v = t.value;
-					t.value = ' '
-					t.value = v;
-				}
-			}
-
-			cbi_bind(b, 'click', cbi_dynlist_btnclick);
-		}
-	}
-
-	function cbi_dynlist_keypress(ev)
-	{
-		ev = ev ? ev : window.event;
-
-		var se = ev.target ? ev.target : ev.srcElement;
-
-		if (se.nodeType == 3)
-			se = se.parentNode;
-
-		switch (ev.keyCode)
-		{
-			/* backspace, delete */
-			case 8:
-			case 46:
-				if (se.value.length == 0)
-				{
-					if (ev.preventDefault)
-						ev.preventDefault();
-
-					return false;
-				}
-
-				return true;
-
-			/* enter, arrow up, arrow down */
-			case 13:
-			case 38:
-			case 40:
-				if (ev.preventDefault)
-					ev.preventDefault();
-
-				return false;
-		}
-
-		return true;
-	}
-
-	function cbi_dynlist_keydown(ev)
-	{
-		ev = ev ? ev : window.event;
-
-		var se = ev.target ? ev.target : ev.srcElement;
-
-		if (se.nodeType == 3)
-			se = se.parentNode;
-
-		var prev = se.previousSibling;
-		while (prev && prev.name != prefix)
-			prev = prev.previousSibling;
-
-		var next = se.nextSibling;
-		while (next && next.name != prefix)
-			next = next.nextSibling;
-
-		/* advance one further in combobox case */
-		if (next && next.nextSibling.name == prefix)
-			next = next.nextSibling;
-
-		switch (ev.keyCode)
-		{
-			/* backspace, delete */
-			case 8:
-			case 46:
-				var del = (se.nodeName.toLowerCase() == 'select')
-					? true : (se.value.length == 0);
-
-				if (del)
-				{
-					if (ev.preventDefault)
-						ev.preventDefault();
-
-					var focus = se.index;
-					if (ev.keyCode == 8)
-						focus = -focus+1;
-
-					cbi_dynlist_redraw(focus, -1, se.index);
-
-					return false;
-				}
-
-				break;
-
-			/* enter */
-			case 13:
-				cbi_dynlist_redraw(-1, se.index, -1);
-				break;
-
-			/* arrow up */
-			case 38:
-				if (prev)
-					prev.focus();
-
-				break;
-
-			/* arrow down */
-			case 40:
-				if (next)
-					next.focus();
-
-				break;
-		}
-
-		return true;
-	}
-
-	function cbi_dynlist_btnclick(ev)
-	{
-		ev = ev ? ev : window.event;
-
-		var se = ev.target ? ev.target : ev.srcElement;
-		var input = se.previousSibling;
-		while (input && input.name != prefix) {
-			input = input.previousSibling;
-		}
-
-		if (se.classList.contains('cbi-button-remove')) {
-			input.value = '';
-
-			cbi_dynlist_keydown({
-				target:  input,
-				keyCode: 8
-			});
-		}
-		else {
-			cbi_dynlist_keydown({
-				target:  input,
-				keyCode: 13
+			sb.querySelectorAll('ul > li').forEach(function(li) {
+				if (li.getAttribute('data-value') === value)
+					li.removeAttribute('unselectable');
 			});
 		}
 
-		return false;
-	}
+		item.parentNode.removeChild(item);
+		cbi_d_update();
+	},
 
-	cbi_dynlist_redraw(NaN, -1, -1);
-}
+	handleClick: function(ev) {
+		var dl = ev.currentTarget,
+		    item = findParent(ev.target, '.item');
 
-
-function cbi_t_add(section, tab) {
-	var t = document.getElementById('tab.' + section + '.' + tab);
-	var c = document.getElementById('container.' + section + '.' + tab);
-
-	if( t && c ) {
-		cbi_t[section] = (cbi_t[section] || [ ]);
-		cbi_t[section][tab] = { 'tab': t, 'container': c, 'cid': c.id };
-	}
-}
-
-function cbi_t_switch(section, tab) {
-	if( cbi_t[section] && cbi_t[section][tab] ) {
-		var o = cbi_t[section][tab];
-		var h = document.getElementById('tab.' + section);
-		for( var tid in cbi_t[section] ) {
-			var o2 = cbi_t[section][tid];
-			if( o.tab.id != o2.tab.id ) {
-				o2.tab.className = o2.tab.className.replace(/(^| )cbi-tab( |$)/, " cbi-tab-disabled ");
-				o2.container.style.display = 'none';
+		if (item) {
+			this.removeItem(dl, item);
+		}
+		else if (matchesElem(ev.target, '.cbi-button-add')) {
+			var input = ev.target.previousElementSibling;
+			if (input.value.length && !input.classList.contains('cbi-input-invalid')) {
+				this.addItem(dl, input.value, null, true);
+				input.value = '';
 			}
-			else {
-				if(h) h.value = tab;
-				o2.tab.className = o2.tab.className.replace(/(^| )cbi-tab-disabled( |$)/, " cbi-tab ");
-				o2.container.style.display = 'block';
+		}
+	},
+
+	handleDropdownChange: function(ev) {
+		var dl = ev.currentTarget,
+		    sbIn = ev.detail.instance,
+		    sbEl = ev.detail.element,
+		    sbVal = ev.detail.value;
+
+		if (sbVal === null)
+			return;
+
+		sbIn.setValues(sbEl, null);
+		sbVal.element.setAttribute('unselectable', '');
+
+		this.addItem(dl, sbVal.value, sbVal.text, true);
+	},
+
+	handleKeydown: function(ev) {
+		var dl = ev.currentTarget,
+		    item = findParent(ev.target, '.item');
+
+		if (item) {
+			switch (ev.keyCode) {
+			case 8: /* backspace */
+				if (item.previousElementSibling)
+					item.previousElementSibling.focus();
+
+				this.removeItem(dl, item);
+				break;
+
+			case 46: /* delete */
+				if (item.nextElementSibling) {
+					if (item.nextElementSibling.classList.contains('item'))
+						item.nextElementSibling.focus();
+					else
+						item.nextElementSibling.firstElementChild.focus();
+				}
+
+				this.removeItem(dl, item);
+				break;
+			}
+		}
+		else if (matchesElem(ev.target, '.cbi-input-text')) {
+			switch (ev.keyCode) {
+			case 13: /* enter */
+				if (ev.target.value.length && !ev.target.classList.contains('cbi-input-invalid')) {
+					this.addItem(dl, ev.target.value, null, true);
+					ev.target.value = '';
+					ev.target.blur();
+					ev.target.focus();
+				}
+
+				ev.preventDefault();
+				break;
 			}
 		}
 	}
-	return false
+};
+
+function cbi_dynlist_init(dl, datatype, optional, choices)
+{
+	if (!(this instanceof cbi_dynlist_init))
+		return new cbi_dynlist_init(dl, datatype, optional, choices);
+
+	dl.classList.add('cbi-dynlist');
+	dl.appendChild(E('div', { 'class': 'add-item' }, E('input', {
+		'type': 'text',
+		'name': 'cbi.dynlist.' + dl.getAttribute('data-prefix'),
+		'class': 'cbi-input-text',
+		'placeholder': dl.getAttribute('data-placeholder'),
+		'data-type': datatype,
+		'data-optional': true
+	})));
+
+	if (choices)
+		cbi_combobox_init(dl.lastElementChild.lastElementChild, choices, '', _('-- custom --'));
+	else
+		dl.lastElementChild.appendChild(E('div', { 'class': 'cbi-button cbi-button-add' }, '+'));
+
+	dl.addEventListener('click', this.handleClick.bind(this));
+	dl.addEventListener('keydown', this.handleKeydown.bind(this));
+	dl.addEventListener('cbi-dropdown-change', this.handleDropdownChange.bind(this));
+
+	try {
+		var values = JSON.parse(dl.getAttribute('data-values') || '[]');
+
+		if (typeof(values) === 'object' && Array.isArray(values))
+			for (var i = 0; i < values.length; i++)
+				this.addItem(dl, values[i], choices ? choices[values[i]] : null);
+	}
+	catch (e) {}
 }
 
-function cbi_t_update() {
-	var hl_tabs = [ ];
-	var updated = false;
-
-	for( var sid in cbi_t )
-		for( var tid in cbi_t[sid] )
-		{
-			var t = cbi_t[sid][tid].tab;
-			var c = cbi_t[sid][tid].container;
-
-			if (!c.firstElementChild) {
-				t.style.display = 'none';
-			}
-			else if (t.style.display == 'none') {
-				t.style.display = '';
-				t.className += ' cbi-tab-highlighted';
-				hl_tabs.push(t);
-			}
-
-			cbi_tag_last(c);
-			updated = true;
-		}
-
-	if (hl_tabs.length > 0)
-		window.setTimeout(function() {
-			for( var i = 0; i < hl_tabs.length; i++ )
-				hl_tabs[i].className = hl_tabs[i].className.replace(/ cbi-tab-highlighted/g, '');
-		}, 750);
-
-	return updated;
-}
+cbi_dynlist_init.prototype = CBIDynamicList;
 
 
 function cbi_validate_form(form, errmsg)
 {
 	/* if triggered by a section removal or addition, don't validate */
-	if( form.cbi_state == 'add-section' || form.cbi_state == 'del-section' )
+	if (form.cbi_state == 'add-section' || form.cbi_state == 'del-section')
 		return true;
 
-	if( form.cbi_validators )
-	{
-		for( var i = 0; i < form.cbi_validators.length; i++ )
-		{
+	if (form.cbi_validators) {
+		for (var i = 0; i < form.cbi_validators.length; i++) {
 			var validator = form.cbi_validators[i];
-			if( !validator() && errmsg )
-			{
+
+			if (!validator() && errmsg) {
 				alert(errmsg);
 				return false;
 			}
@@ -1114,133 +1072,37 @@ function cbi_validate_reset(form)
 	return true;
 }
 
-function cbi_validate_compile(code)
-{
-	var pos = 0;
-	var esc = false;
-	var depth = 0;
-	var stack = [ ];
-
-	code += ',';
-
-	for (var i = 0; i < code.length; i++)
-	{
-		if (esc)
-		{
-			esc = false;
-			continue;
-		}
-
-		switch (code.charCodeAt(i))
-		{
-		case 92:
-			esc = true;
-			break;
-
-		case 40:
-		case 44:
-			if (depth <= 0)
-			{
-				if (pos < i)
-				{
-					var label = code.substring(pos, i);
-						label = label.replace(/\\(.)/g, '$1');
-						label = label.replace(/^[ \t]+/g, '');
-						label = label.replace(/[ \t]+$/g, '');
-
-					if (label && !isNaN(label))
-					{
-						stack.push(parseFloat(label));
-					}
-					else if (label.match(/^(['"]).*\1$/))
-					{
-						stack.push(label.replace(/^(['"])(.*)\1$/, '$2'));
-					}
-					else if (typeof cbi_validators[label] == 'function')
-					{
-						stack.push(cbi_validators[label]);
-						stack.push(null);
-					}
-					else
-					{
-						throw "Syntax error, unhandled token '"+label+"'";
-					}
-				}
-				pos = i+1;
-			}
-			depth += (code.charCodeAt(i) == 40);
-			break;
-
-		case 41:
-			if (--depth <= 0)
-			{
-				if (typeof stack[stack.length-2] != 'function')
-					throw "Syntax error, argument list follows non-function";
-
-				stack[stack.length-1] =
-					arguments.callee(code.substring(pos, i));
-
-				pos = i+1;
-			}
-			break;
-		}
-	}
-
-	return stack;
-}
-
 function cbi_validate_field(cbid, optional, type)
 {
-	var field = (typeof cbid == "string") ? document.getElementById(cbid) : cbid;
-	var vstack; try { vstack = cbi_validate_compile(type); } catch(e) { };
+	var field = isElem(cbid) ? cbid : document.getElementById(cbid);
+	var validatorFn;
 
-	if (field && vstack && typeof vstack[0] == "function")
-	{
-		var validator = function()
-		{
-			// is not detached
-			if( field.form )
-			{
-				field.className = field.className.replace(/ cbi-input-invalid/g, '');
+	try {
+		var cbiValidator = new CBIValidator(field, type, optional);
+		validatorFn = cbiValidator.validate.bind(cbiValidator);
+	}
+	catch(e) {
+		validatorFn = null;
+	};
 
-				// validate value
-				var value = (field.options && field.options.selectedIndex > -1)
-					? field.options[field.options.selectedIndex].value : field.value;
+	if (validatorFn !== null) {
+		var form = findParent(field, 'form');
 
-				if (!(((value.length == 0) && optional) || vstack[0].apply(value, vstack[1])))
-				{
-					// invalid
-					field.className += ' cbi-input-invalid';
-					return false;
-				}
-			}
+		if (!form.cbi_validators)
+			form.cbi_validators = [ ];
 
-			return true;
-		};
+		form.cbi_validators.push(validatorFn);
 
-		if( ! field.form.cbi_validators )
-			field.form.cbi_validators = [ ];
+		field.addEventListener("blur",  validatorFn);
+		field.addEventListener("keyup", validatorFn);
+		field.addEventListener("cbi-dropdown-change", validatorFn);
 
-		field.form.cbi_validators.push(validator);
-
-		cbi_bind(field, "blur",  validator);
-		cbi_bind(field, "keyup", validator);
-
-		if (field.nodeName == 'SELECT')
-		{
-			cbi_bind(field, "change", validator);
-			cbi_bind(field, "click",  validator);
+		if (matchesElem(field, 'select')) {
+			field.addEventListener("change", validatorFn);
+			field.addEventListener("click",  validatorFn);
 		}
 
-		field.setAttribute("cbi_validate", validator);
-		field.setAttribute("cbi_datatype", type);
-		field.setAttribute("cbi_optional", (!!optional).toString());
-
-		validator();
-
-		var fcbox = document.getElementById('cbi.combobox.' + field.id);
-		if (fcbox)
-			cbi_validate_field(fcbox, optional, type);
+		validatorFn();
 	}
 }
 
@@ -1291,7 +1153,8 @@ function cbi_row_swap(elem, up, store)
 		input.value = ids.join(' ');
 
 	window.scrollTo(0, tr.offsetTop);
-	window.setTimeout(function() { tr.classList.add('flash'); }, 1);
+	void tr.offsetWidth;
+	tr.classList.add('flash');
 
 	return false;
 }
@@ -1300,20 +1163,16 @@ function cbi_tag_last(container)
 {
 	var last;
 
-	for (var i = 0; i < container.childNodes.length; i++)
-	{
+	for (var i = 0; i < container.childNodes.length; i++) {
 		var c = container.childNodes[i];
-		if (c.nodeType == 1 && c.nodeName.toLowerCase() == 'div')
-		{
-			c.className = c.className.replace(/ cbi-value-last$/, '');
+		if (matchesElem(c, 'div')) {
+			c.classList.remove('cbi-value-last');
 			last = c;
 		}
 	}
 
 	if (last)
-	{
-		last.className += ' cbi-value-last';
-	}
+		last.classList.add('cbi-value-last');
 }
 
 function cbi_submit(elem, name, value, action)
@@ -1350,8 +1209,9 @@ String.prototype.format = function()
 		if (typeof(s) !== 'string' && !(s instanceof String))
 			return '';
 
-		for( var i = 0; i < r.length; i += 2 )
+		for (var i = 0; i < r.length; i += 2)
 			s = s.replace(r[i], r[i+1]);
+
 		return s;
 	}
 
@@ -1360,22 +1220,18 @@ String.prototype.format = function()
 	var re = /^(([^%]*)%('.|0|\x20)?(-)?(\d+)?(\.\d+)?(%|b|c|d|u|f|o|s|x|X|q|h|j|t|m))/;
 	var a = b = [], numSubstitutions = 0, numMatches = 0;
 
-	while (a = re.exec(str))
-	{
+	while (a = re.exec(str)) {
 		var m = a[1];
 		var leftpart = a[2], pPad = a[3], pJustify = a[4], pMinLength = a[5];
 		var pPrecision = a[6], pType = a[7];
 
 		numMatches++;
 
-		if (pType == '%')
-		{
+		if (pType == '%') {
 			subst = '%';
 		}
-		else
-		{
-			if (numSubstitutions < arguments.length)
-			{
+		else {
+			if (numSubstitutions < arguments.length) {
 				var param = arguments[numSubstitutions++];
 
 				var pad = '';
@@ -1400,8 +1256,7 @@ String.prototype.format = function()
 
 				var subst = param;
 
-				switch(pType)
-				{
+				switch(pType) {
 					case 'b':
 						subst = (+param || 0).toString(2);
 						break;
@@ -1517,16 +1372,20 @@ String.prototype.nobr = function()
 String.format = function()
 {
 	var a = [ ];
+
 	for (var i = 1; i < arguments.length; i++)
 		a.push(arguments[i]);
+
 	return ''.format.apply(arguments[0], a);
 }
 
 String.nobr = function()
 {
 	var a = [ ];
+
 	for (var i = 1; i < arguments.length; i++)
 		a.push(arguments[i]);
+
 	return ''.nobr.apply(arguments[0], a);
 }
 
@@ -1539,90 +1398,20 @@ if (window.NodeList && !NodeList.prototype.forEach) {
 	};
 }
 
-
-var dummyElem, domParser;
-
-function isElem(e)
-{
-	return (typeof(e) === 'object' && e !== null && 'nodeType' in e);
+if (!window.requestAnimationFrame) {
+	window.requestAnimationFrame = function(f) {
+		window.setTimeout(function() {
+			f(new Date().getTime())
+		}, 1000/30);
+	};
 }
 
-function toElem(s)
-{
-	var elem;
 
-	try {
-		domParser = domParser || new DOMParser();
-		elem = domParser.parseFromString(s, 'text/html').body.firstChild;
-	}
-	catch(e) {}
-
-	if (!elem) {
-		try {
-			dummyElem = dummyElem || document.createElement('div');
-			dummyElem.innerHTML = s;
-			elem = dummyElem.firstChild;
-		}
-		catch (e) {}
-	}
-
-	return elem || null;
-}
-
-function findParent(node, selector)
-{
-	while (node)
-		if (node.msMatchesSelector && node.msMatchesSelector(selector))
-			return node;
-		else if (node.matches && node.matches(selector))
-			return node;
-		else
-			node = node.parentNode;
-
-	return null;
-}
-
-function E()
-{
-	var html = arguments[0],
-	    attr = (arguments[1] instanceof Object && !Array.isArray(arguments[1])) ? arguments[1] : null,
-	    data = attr ? arguments[2] : arguments[1],
-	    elem;
-
-	if (isElem(html))
-		elem = html;
-	else if (html.charCodeAt(0) === 60)
-		elem = toElem(html);
-	else
-		elem = document.createElement(html);
-
-	if (!elem)
-		return null;
-
-	if (attr)
-		for (var key in attr)
-			if (attr.hasOwnProperty(key) && attr[key] !== null && attr[key] !== undefined)
-				elem.setAttribute(key, attr[key]);
-
-	if (typeof(data) === 'function')
-		data = data(elem);
-
-	if (isElem(data)) {
-		elem.appendChild(data);
-	}
-	else if (Array.isArray(data)) {
-		for (var i = 0; i < data.length; i++)
-			if (isElem(data[i]))
-				elem.appendChild(data[i]);
-			else
-				elem.appendChild(document.createTextNode('' + data[i]));
-	}
-	else if (data !== null && data !== undefined) {
-		elem.innerHTML = '' + data;
-	}
-
-	return elem;
-}
+function isElem(e) { return L.dom.elem(e) }
+function toElem(s) { return L.dom.parse(s) }
+function matchesElem(node, selector) { return L.dom.matches(node, selector) }
+function findParent(node, selector) { return L.dom.parent(node, selector) }
+function E() { return L.dom.create.apply(L.dom, arguments) }
 
 if (typeof(window.CustomEvent) !== 'function') {
 	function CustomEvent(event, params) {
@@ -1641,31 +1430,72 @@ CBIDropdown = {
 		var st = window.getComputedStyle(sb, null),
 		    ul = sb.querySelector('ul'),
 		    li = ul.querySelectorAll('li'),
+		    fl = findParent(sb, '.cbi-value-field'),
 		    sel = ul.querySelector('[selected]'),
 		    rect = sb.getBoundingClientRect(),
-		    h = sb.clientHeight - parseFloat(st.paddingTop) - parseFloat(st.paddingBottom),
-		    mh = this.dropdown_items * h,
-		    eh = Math.min(mh, li.length * h);
+		    items = Math.min(this.dropdown_items, li.length);
 
 		document.querySelectorAll('.cbi-dropdown[open]').forEach(function(s) {
 			s.dispatchEvent(new CustomEvent('cbi-dropdown-close', {}));
 		});
 
-		ul.style.maxHeight = mh + 'px';
 		sb.setAttribute('open', '');
 
-		ul.scrollTop = sel ? Math.max(sel.offsetTop - sel.offsetHeight, 0) : 0;
+		var pv = ul.cloneNode(true);
+		    pv.classList.add('preview');
+
+		if (fl)
+			fl.classList.add('cbi-dropdown-open');
+
+		if ('ontouchstart' in window) {
+			var vpWidth = Math.max(document.documentElement.clientWidth, window.innerWidth || 0),
+			    vpHeight = Math.max(document.documentElement.clientHeight, window.innerHeight || 0),
+			    scrollFrom = window.pageYOffset,
+			    scrollTo = scrollFrom + rect.top - vpHeight * 0.5,
+			    start = null;
+
+			ul.style.top = sb.offsetHeight + 'px';
+			ul.style.left = -rect.left + 'px';
+			ul.style.right = (rect.right - vpWidth) + 'px';
+			ul.style.maxHeight = (vpHeight * 0.5) + 'px';
+			ul.style.WebkitOverflowScrolling = 'touch';
+
+			var scrollStep = function(timestamp) {
+				if (!start) {
+					start = timestamp;
+					ul.scrollTop = sel ? Math.max(sel.offsetTop - sel.offsetHeight, 0) : 0;
+				}
+
+				var duration = Math.max(timestamp - start, 1);
+				if (duration < 100) {
+					document.body.scrollTop = scrollFrom + (scrollTo - scrollFrom) * (duration / 100);
+					window.requestAnimationFrame(scrollStep);
+				}
+				else {
+					document.body.scrollTop = scrollTo;
+				}
+			};
+
+			window.requestAnimationFrame(scrollStep);
+		}
+		else {
+			ul.style.maxHeight = '1px';
+			ul.style.top = ul.style.bottom = '';
+
+			window.requestAnimationFrame(function() {
+				var height = items * li[Math.max(0, li.length - 2)].offsetHeight;
+
+				ul.scrollTop = sel ? Math.max(sel.offsetTop - sel.offsetHeight, 0) : 0;
+				ul.style[((rect.top + rect.height + height) > window.innerHeight) ? 'bottom' : 'top'] = rect.height + 'px';
+				ul.style.maxHeight = height + 'px';
+			});
+		}
+
 		ul.querySelectorAll('[selected] input[type="checkbox"]').forEach(function(c) {
 			c.checked = true;
 		});
 
-		ul.style.top = ul.style.bottom = '';
-		ul.style[((sb.getBoundingClientRect().top + eh) > window.innerHeight) ? 'bottom' : 'top'] = rect.height + 'px';
 		ul.classList.add('dropdown');
-
-		var pv = ul.cloneNode(true);
-		    pv.classList.remove('dropdown');
-		    pv.classList.add('preview');
 
 		sb.insertBefore(pv, ul.nextElementSibling);
 
@@ -1684,7 +1514,8 @@ CBIDropdown = {
 
 		var pv = sb.querySelector('ul.preview'),
 		    ul = sb.querySelector('ul.dropdown'),
-		    li = ul.querySelectorAll('li');
+		    li = ul.querySelectorAll('li'),
+		    fl = findParent(sb, '.cbi-value-field');
 
 		li.forEach(function(l) { l.removeAttribute('tabindex'); });
 		sb.lastElementChild.removeAttribute('tabindex');
@@ -1694,6 +1525,10 @@ CBIDropdown = {
 		sb.style.width = sb.style.height = '';
 
 		ul.classList.remove('dropdown');
+		ul.style.top = ul.style.bottom = ul.style.maxHeight = '';
+
+		if (fl)
+			fl.classList.remove('cbi-dropdown-open');
 
 		if (!no_focus)
 			this.setFocus(sb, sb);
@@ -1791,29 +1626,87 @@ CBIDropdown = {
 	},
 
 	saveValues: function(sb, ul) {
-		var sel = ul.querySelectorAll('[selected]'),
-		    div = sb.lastElementChild;
+		var sel = ul.querySelectorAll('li[selected]'),
+		    div = sb.lastElementChild,
+		    strval = '',
+		    values = [];
 
 		while (div.lastElementChild)
 			div.removeChild(div.lastElementChild);
 
 		sel.forEach(function (s) {
+			if (s.hasAttribute('placeholder'))
+				return;
+
+			var v = {
+				text: s.innerText,
+				value: s.hasAttribute('data-value') ? s.getAttribute('data-value') : s.innerText,
+				element: s
+			};
+
 			div.appendChild(E('input', {
 				type: 'hidden',
 				name: s.hasAttribute('name') ? s.getAttribute('name') : (sb.getAttribute('name') || ''),
-				value: s.hasAttribute('value') ? s.getAttribute('value') : s.innerText
+				value: v.value
 			}));
+
+			values.push(v);
+
+			strval += strval.length ? ' ' + v.value : v.value;
 		});
 
+		var detail = {
+			instance: this,
+			element: sb
+		};
+
+		if (this.multi)
+			detail.values = values;
+		else
+			detail.value = values.length ? values[0] : null;
+
+		sb.value = strval;
+
+		sb.dispatchEvent(new CustomEvent('cbi-dropdown-change', {
+			bubbles: true,
+			detail: detail
+		}));
+
 		cbi_d_update();
+	},
+
+	setValues: function(sb, values) {
+		var ul = sb.querySelector('ul');
+
+		if (this.multi) {
+			ul.querySelectorAll('li[data-value]').forEach(function(li) {
+				if (values === null || !(li.getAttribute('data-value') in values))
+					this.toggleItem(sb, li, false);
+				else
+					this.toggleItem(sb, li, true);
+			});
+		}
+		else {
+			var ph = ul.querySelector('li[placeholder]');
+			if (ph)
+				this.toggleItem(sb, ph);
+
+			ul.querySelectorAll('li[data-value]').forEach(function(li) {
+				if (values !== null && (li.getAttribute('data-value') in values))
+					this.toggleItem(sb, li);
+			});
+		}
 	},
 
 	setFocus: function(sb, elem, scroll) {
 		if (sb && sb.hasAttribute && sb.hasAttribute('locked-in'))
 			return;
 
+		if (sb.target && findParent(sb.target, 'ul.dropdown'))
+			return;
+
 		document.querySelectorAll('.focus').forEach(function(e) {
-			if (e.nodeName.toLowerCase() !== 'input') {
+			if (!matchesElem(e, 'input')) {
 				e.classList.remove('focus');
 				e.blur();
 			}
@@ -1830,17 +1723,19 @@ CBIDropdown = {
 
 	createItems: function(sb, value) {
 		var sbox = this,
-		    val = (value || '').trim().split(/\s+/),
+		    val = (value || '').trim(),
 		    ul = sb.querySelector('ul');
 
 		if (!sbox.multi)
-			val.length = Math.min(val.length, 1);
+			val = val.length ? [ val ] : [];
+		else
+			val = val.length ? val.split(/\s+/) : [];
 
 		val.forEach(function(item) {
 			var new_item = null;
 
 			ul.childNodes.forEach(function(li) {
-				if (li.getAttribute && li.getAttribute('value') === item)
+				if (li.getAttribute && li.getAttribute('data-value') === item)
 					new_item = li;
 			});
 
@@ -1851,7 +1746,7 @@ CBIDropdown = {
 				if (tpl)
 					markup = (tpl.textContent || tpl.innerHTML || tpl.firstChild.data).replace(/^<!--|-->$/, '').trim();
 				else
-					markup = '<li value="{{value}}">{{value}}</li>';
+					markup = '<li data-value="{{value}}">{{value}}</li>';
 
 				new_item = E(markup.replace(/{{value}}/g, item));
 
@@ -1878,6 +1773,168 @@ CBIDropdown = {
 		document.querySelectorAll('.cbi-dropdown[open]').forEach(function(s) {
 			s.dispatchEvent(new CustomEvent('cbi-dropdown-close', {}));
 		});
+	},
+
+	handleClick: function(ev) {
+		var sb = ev.currentTarget;
+
+		if (!sb.hasAttribute('open')) {
+			if (!matchesElem(ev.target, 'input'))
+				this.openDropdown(sb);
+		}
+		else {
+			var li = findParent(ev.target, 'li');
+			if (li && li.parentNode.classList.contains('dropdown'))
+				this.toggleItem(sb, li);
+			else if (li && li.parentNode.classList.contains('preview'))
+				this.closeDropdown(sb);
+		}
+
+		ev.preventDefault();
+		ev.stopPropagation();
+	},
+
+	handleKeydown: function(ev) {
+		var sb = ev.currentTarget;
+
+		if (matchesElem(ev.target, 'input'))
+			return;
+
+		if (!sb.hasAttribute('open')) {
+			switch (ev.keyCode) {
+			case 37:
+			case 38:
+			case 39:
+			case 40:
+				this.openDropdown(sb);
+				ev.preventDefault();
+			}
+		}
+		else {
+			var active = findParent(document.activeElement, 'li');
+
+			switch (ev.keyCode) {
+			case 27:
+				this.closeDropdown(sb);
+				break;
+
+			case 13:
+				if (active) {
+					if (!active.hasAttribute('selected'))
+						this.toggleItem(sb, active);
+					this.closeDropdown(sb);
+					ev.preventDefault();
+				}
+				break;
+
+			case 32:
+				if (active) {
+					this.toggleItem(sb, active);
+					ev.preventDefault();
+				}
+				break;
+
+			case 38:
+				if (active && active.previousElementSibling) {
+					this.setFocus(sb, active.previousElementSibling);
+					ev.preventDefault();
+				}
+				break;
+
+			case 40:
+				if (active && active.nextElementSibling) {
+					this.setFocus(sb, active.nextElementSibling);
+					ev.preventDefault();
+				}
+				break;
+			}
+		}
+	},
+
+	handleDropdownClose: function(ev) {
+		var sb = ev.currentTarget;
+
+		this.closeDropdown(sb, true);
+	},
+
+	handleDropdownSelect: function(ev) {
+		var sb = ev.currentTarget,
+		    li = findParent(ev.target, 'li');
+
+		if (!li)
+			return;
+
+		this.toggleItem(sb, li);
+		this.closeDropdown(sb, true);
+	},
+
+	handleMouseover: function(ev) {
+		var sb = ev.currentTarget;
+
+		if (!sb.hasAttribute('open'))
+			return;
+
+		var li = findParent(ev.target, 'li');
+
+		if (li && li.parentNode.classList.contains('dropdown'))
+			this.setFocus(sb, li);
+	},
+
+	handleFocus: function(ev) {
+		var sb = ev.currentTarget;
+
+		document.querySelectorAll('.cbi-dropdown[open]').forEach(function(s) {
+			if (s !== sb || sb.hasAttribute('open'))
+				s.dispatchEvent(new CustomEvent('cbi-dropdown-close', {}));
+		});
+	},
+
+	handleCanaryFocus: function(ev) {
+		this.closeDropdown(ev.currentTarget.parentNode);
+	},
+
+	handleCreateKeydown: function(ev) {
+		var input = ev.currentTarget,
+		    sb = findParent(input, '.cbi-dropdown');
+
+		switch (ev.keyCode) {
+		case 13:
+			ev.preventDefault();
+
+			if (input.classList.contains('cbi-input-invalid'))
+				return;
+
+			this.createItems(sb, input.value);
+			input.value = '';
+			input.blur();
+			break;
+		}
+	},
+
+	handleCreateFocus: function(ev) {
+		var input = ev.currentTarget,
+		    cbox = findParent(input, 'li').querySelector('input[type="checkbox"]'),
+		    sb = findParent(input, '.cbi-dropdown');
+
+		if (cbox)
+			cbox.checked = true;
+
+		sb.setAttribute('locked-in', '');
+	},
+
+	handleCreateBlur: function(ev) {
+		var input = ev.currentTarget,
+		    cbox = findParent(input, 'li').querySelector('input[type="checkbox"]'),
+		    sb = findParent(input, '.cbi-dropdown');
+
+		if (cbox)
+			cbox.checked = false;
+
+		sb.removeAttribute('locked-in');
+	},
+
+	handleCreateClick: function(ev) {
+		ev.currentTarget.querySelector(this.create).focus();
 	}
 };
 
@@ -1893,9 +1950,7 @@ function cbi_dropdown_init(sb) {
 	this.create = sb.getAttribute('item-create') || '.create-item-input';
 	this.template = sb.getAttribute('item-template') || 'script[type="item-template"]';
 
-	var sbox = this,
-	    ul = sb.querySelector('ul'),
-	    items = ul.querySelectorAll('li'),
+	var ul = sb.querySelector('ul'),
 	    more = sb.appendChild(E('span', { class: 'more', tabindex: -1 }, '···')),
 	    open = sb.appendChild(E('span', { class: 'open', tabindex: -1 }, '▾')),
 	    canary = sb.appendChild(E('div')),
@@ -1904,15 +1959,23 @@ function cbi_dropdown_init(sb) {
 	    n = 0;
 
 	if (this.multi) {
+		var items = ul.querySelectorAll('li');
+
 		for (var i = 0; i < items.length; i++) {
-			sbox.transformItem(sb, items[i]);
+			this.transformItem(sb, items[i]);
 
 			if (items[i].hasAttribute('selected') && ndisplay-- > 0)
 				items[i].setAttribute('display', n++);
 		}
 	}
 	else {
-		var sel = sb.querySelectorAll('[selected]');
+		if (this.optional && !ul.querySelector('li[data-value=""]')) {
+			var placeholder = E('li', { placeholder: '' }, this.placeholder);
+			ul.firstChild ? ul.insertBefore(placeholder, ul.firstChild) : ul.appendChild(placeholder);
+		}
+
+		var items = ul.querySelectorAll('li'),
+		    sel = sb.querySelectorAll('[selected]');
 
 		sel.forEach(function(s) {
 			s.removeAttribute('selected');
@@ -1925,14 +1988,9 @@ function cbi_dropdown_init(sb) {
 		}
 
 		ndisplay--;
-
-		if (this.optional && !ul.querySelector('li[value=""]')) {
-			var placeholder = E('li', { placeholder: '' }, this.placeholder);
-			ul.firstChild ? ul.insertBefore(placeholder, ul.firstChild) : ul.appendChild(placeholder);
-		}
 	}
 
-	sbox.saveValues(sb, ul);
+	this.saveValues(sb, ul);
 
 	ul.setAttribute('tabindex', -1);
 	sb.setAttribute('tabindex', 0);
@@ -1950,151 +2008,41 @@ function cbi_dropdown_init(sb) {
 	more.innerHTML = (ndisplay === this.display_items) ? this.placeholder : '···';
 
 
-	sb.addEventListener('click', function(ev) {
-		if (!this.hasAttribute('open')) {
-			if (ev.target.nodeName.toLowerCase() !== 'input')
-				sbox.openDropdown(this);
-		}
-		else {
-			var li = findParent(ev.target, 'li');
-			if (li && li.parentNode.classList.contains('dropdown'))
-				sbox.toggleItem(this, li);
-		}
-
-		ev.preventDefault();
-		ev.stopPropagation();
-	});
-
-	sb.addEventListener('keydown', function(ev) {
-		if (ev.target.nodeName.toLowerCase() === 'input')
-			return;
-
-		if (!this.hasAttribute('open')) {
-			switch (ev.keyCode) {
-			case 37:
-			case 38:
-			case 39:
-			case 40:
-				sbox.openDropdown(this);
-				ev.preventDefault();
-			}
-		}
-		else
-		{
-			var active = findParent(document.activeElement, 'li');
-
-			switch (ev.keyCode) {
-			case 27:
-				sbox.closeDropdown(this);
-				break;
-
-			case 13:
-				if (active) {
-					if (!active.hasAttribute('selected'))
-						sbox.toggleItem(this, active);
-					sbox.closeDropdown(this);
-					ev.preventDefault();
-				}
-				break;
-
-			case 32:
-				if (active) {
-					sbox.toggleItem(this, active);
-					ev.preventDefault();
-				}
-				break;
-
-			case 38:
-				if (active && active.previousElementSibling) {
-					sbox.setFocus(this, active.previousElementSibling);
-					ev.preventDefault();
-				}
-				break;
-
-			case 40:
-				if (active && active.nextElementSibling) {
-					sbox.setFocus(this, active.nextElementSibling);
-					ev.preventDefault();
-				}
-				break;
-			}
-		}
-	});
-
-	sb.addEventListener('cbi-dropdown-close', function(ev) {
-		sbox.closeDropdown(this, true);
-	});
+	sb.addEventListener('click', this.handleClick.bind(this));
+	sb.addEventListener('keydown', this.handleKeydown.bind(this));
+	sb.addEventListener('cbi-dropdown-close', this.handleDropdownClose.bind(this));
+	sb.addEventListener('cbi-dropdown-select', this.handleDropdownSelect.bind(this));
 
 	if ('ontouchstart' in window) {
 		sb.addEventListener('touchstart', function(ev) { ev.stopPropagation(); });
-		window.addEventListener('touchstart', sbox.closeAllDropdowns);
+		window.addEventListener('touchstart', this.closeAllDropdowns);
 	}
 	else {
-		sb.addEventListener('mouseover', function(ev) {
-			if (!this.hasAttribute('open'))
-				return;
+		sb.addEventListener('mouseover', this.handleMouseover.bind(this));
+		sb.addEventListener('focus', this.handleFocus.bind(this));
 
-			var li = findParent(ev.target, 'li');
-			if (li) {
-				if (li.parentNode.classList.contains('dropdown'))
-					sbox.setFocus(this, li);
+		canary.addEventListener('focus', this.handleCanaryFocus.bind(this));
 
-				ev.stopPropagation();
-			}
-		});
-
-		sb.addEventListener('focus', function(ev) {
-			document.querySelectorAll('.cbi-dropdown[open]').forEach(function(s) {
-				if (s !== this || this.hasAttribute('open'))
-					s.dispatchEvent(new CustomEvent('cbi-dropdown-close', {}));
-			});
-		});
-
-		canary.addEventListener('focus', function(ev) {
-			sbox.closeDropdown(this.parentNode);
-		});
-
-		window.addEventListener('mouseover', sbox.setFocus);
-		window.addEventListener('click', sbox.closeAllDropdowns);
+		window.addEventListener('mouseover', this.setFocus);
+		window.addEventListener('click', this.closeAllDropdowns);
 	}
 
 	if (create) {
-		create.addEventListener('keydown', function(ev) {
-			switch (ev.keyCode) {
-			case 13:
-				sbox.createItems(sb, this.value);
-				ev.preventDefault();
-				this.value = '';
-				this.blur();
-				break;
-			}
-		});
-
-		create.addEventListener('focus', function(ev) {
-			var cbox = findParent(this, 'li').querySelector('input[type="checkbox"]');
-			if (cbox) cbox.checked = true;
-			sb.setAttribute('locked-in', '');
-		});
-
-		create.addEventListener('blur', function(ev) {
-			var cbox = findParent(this, 'li').querySelector('input[type="checkbox"]');
-			if (cbox) cbox.checked = false;
-			sb.removeAttribute('locked-in');
-		});
+		create.addEventListener('keydown', this.handleCreateKeydown.bind(this));
+		create.addEventListener('focus', this.handleCreateFocus.bind(this));
+		create.addEventListener('blur', this.handleCreateBlur.bind(this));
 
 		var li = findParent(create, 'li');
 
 		li.setAttribute('unselectable', '');
-		li.addEventListener('click', function(ev) {
-			this.querySelector(sbox.create).focus();
-		});
+		li.addEventListener('click', this.handleCreateClick.bind(this));
 	}
 }
 
 cbi_dropdown_init.prototype = CBIDropdown;
 
 function cbi_update_table(table, data, placeholder) {
-	target = isElem(table) ? table : document.querySelector(table);
+	var target = isElem(table) ? table : document.querySelector(table);
 
 	if (!isElem(target))
 		return;
@@ -2163,6 +2111,27 @@ function cbi_update_table(table, data, placeholder) {
 	});
 }
 
+function showModal(title, children)
+{
+	return L.showModal(title, children);
+}
+
+function hideModal()
+{
+	return L.hideModal();
+}
+
+
 document.addEventListener('DOMContentLoaded', function() {
+	document.addEventListener('validation-failure', function(ev) {
+		if (ev.target === document.activeElement)
+			L.showTooltip(ev);
+	});
+
+	document.addEventListener('validation-success', function(ev) {
+		if (ev.target === document.activeElement)
+			L.hideTooltip(ev);
+	});
+
 	document.querySelectorAll('.table').forEach(cbi_update_table);
 });

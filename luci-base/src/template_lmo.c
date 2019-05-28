@@ -46,14 +46,14 @@ uint32_t sfh_hash(const char *data, int len)
 	switch (rem) {
 		case 3: hash += sfh_get16(data);
 			hash ^= hash << 16;
-			hash ^= data[sizeof(uint16_t)] << 18;
+			hash ^= (signed char)data[sizeof(uint16_t)] << 18;
 			hash += hash >> 11;
 			break;
 		case 2: hash += sfh_get16(data);
 			hash ^= hash << 11;
 			hash += hash >> 17;
 			break;
-		case 1: hash += *data;
+		case 1: hash += (signed char)*data;
 			hash ^= hash << 10;
 			hash += hash >> 1;
 	}
@@ -216,7 +216,7 @@ int lmo_load_catalog(const char *lang, const char *dir)
 	if (!_lmo_active_catalog)
 		_lmo_active_catalog = cat;
 
-	return 0;
+	return cat->archives ? 0 : -1;
 
 err:
 	if (dh) closedir(dh);
@@ -299,6 +299,20 @@ int lmo_translate(const char *key, int keylen, char **out, int *outlen)
 	}
 
 	return -1;
+}
+
+void lmo_iterate(lmo_iterate_cb_t cb, void *priv)
+{
+	unsigned int i;
+	lmo_entry_t *e;
+	lmo_archive_t *ar;
+
+	if (!_lmo_active_catalog)
+		return;
+
+	for (ar = _lmo_active_catalog->archives; ar; ar = ar->next)
+		for (i = 0, e = &ar->index[0]; i < ar->length; e = &ar->index[++i])
+			cb(ntohl(e->key_id), ar->mmap + ntohl(e->offset), ntohl(e->length), priv);
 }
 
 void lmo_close_catalog(const char *lang)

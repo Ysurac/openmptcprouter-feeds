@@ -37,7 +37,7 @@ MY_DEPENDS := \
     luci-app-sqm sqm-scripts-extra \
     luci-app-vnstat omr-quota luci-app-omr-quota \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail luci-app-upnp \
-    luci-app-wol \
+    luci-app-wol luci-app-opkg \
     luci-ssl-openssl \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd iputils-traceroute6 ip6tables \
     speedtestc \
