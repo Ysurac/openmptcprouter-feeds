@@ -46,7 +46,17 @@ _bypass_domain() {
 				_bypass_ip $ip $intf
 			done
 		fi
-		uci -q add_list dhcp.@dnsmasq[0].ipset="/$domain/omr_dst_bypass_$intf,omr6_dst_bypass_$intf"
+		if [ "$(uci -q get dhcp.@dnsmasq[0].ipset | grep /$domain/)" = "" ]; then
+			uci -q add_list dhcp.@dnsmasq[0].ipset="/$domain/omr_dst_bypass_$intf,omr6_dst_bypass_$intf"
+		else
+			dnsmasqipset=$(uci -q get dhcp.@dnsmasq[0].ipset | sed 's/ /\n/g')
+			for dnsipset in $dnsmasqipset; do
+				if [ "$(echo $dnsipset | cut -d/ -f2)" = "$domain" ]; then
+					uci -q del_list dhcp.@dnsmasq[0].ipset=$dnsipset
+					uci -q add_list dhcp.@dnsmasq[0].ipset="$dnsipset,omr_dst_bypass_$intf,omr6_dst_bypass_$intf"
+				fi
+			done
+		fi
 		#logger -t "omr-bypass" "Get IPs of $domain... Done"
 	fi
 }
@@ -312,7 +322,18 @@ start_service() {
 	uci -q delete dhcp.@dnsmasq[0].ipset
 	if [ -n "$dnsmasqipset" ]; then
 		for dnsipset in $dnsmasqipset; do
-			uci -q add_list dhcp.@dnsmasq[0].ipset=$dnsipset
+			ipsets=""
+			allipsets=$(echo $dnsipset | cut -d/ -f3 | sed 's/,/\n/g')
+			for ipset in $allipsets; do
+				[ "$(echo $ipset | grep -v dst_bypass)" != "" ] && {
+					[ "$ipsets" != "" ] && ipsets="$ipsets,$ipset"
+					[ "$ipsets" = "" ] && ipsets="$ipset"
+				}
+			done
+			if [ "$ipsets" != "" ]; then
+				resultipset="/$(echo $dnsipset | cut -d/ -f2)/$ipsets"
+				uci -q add_list dhcp.@dnsmasq[0].ipset=$resultipset
+			fi
 		done
 	fi
 	config_foreach _bypass_domains domains

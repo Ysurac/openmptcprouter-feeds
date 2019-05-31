@@ -6,7 +6,6 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI Interface to DSCP
-#LUCI_DEPENDS:=
 
 PKG_LICENSE:=GPLv3
 

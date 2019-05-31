@@ -39,23 +39,35 @@ _add_dscp_rule() {
 _add_dscp_domain() {
 	domain=""; config_get domain "$1" name ""
 	class=""; config_get class "$1" class ""
-	[ -n "$domain" ] && uci -q add_list dhcp.@dnsmasq[0].ipset="/$domain/omr-$class"
+	[ -n "$domain" ] && [ -n "$class" ] && {
+		if [ "$(uci -q get dhcp.@dnsmasq[0].ipset | grep /$domain/)" = "" ]; then
+			uci -q add_list dhcp.@dnsmasq[0].ipset="/$domain/omr_dscp-$class,omr_dscp6-$class"
+		else
+			dnsmasqipset=$(uci -q get dhcp.@dnsmasq[0].ipset | sed 's/ /\n/g')
+			for dnsipset in $dnsmasqipset; do
+				if [ "$(echo $dnsipset | cut -d/ -f2)" = "$domain" ]; then
+					uci -q del_list dhcp.@dnsmasq[0].ipset=$dnsipset
+					uci -q add_list dhcp.@dnsmasq[0].ipset="$dnsipset,omr_dscp-$class,omr_dscp6-$class"
+				fi
+			done
+		fi
+	}
 }
 
 _add_dscp_domains_rules() {
 	for class in cs0 cs1 cs2 cs3 cs4 cs5 cs6 cs7 ef; do
 		ipset -q --exist restore <<-EOF
-		create omr-$class hash:net hashsize 64
-		create omr6-$class hash:net family inet6 hashsize 64
+		create omr_dscp-$class hash:net hashsize 64
+		create omr_dscp6-$class hash:net family inet6 hashsize 64
 		EOF
-		_ipt4 -A dscp_prerouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
-		_ipt4 -A dscp_prerouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j RETURN
-		_ipt4 -A dscp_postrouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
-		_ipt4 -A dscp_postrouting -m set --match-set omr-$class src,dst -m comment --comment "$class" -j RETURN
-		_ipt6 -A dscp_prerouting -m set --match-set omr6-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
-		_ipt6 -A dscp_prerouting -m set --match-set omr6-$class src,dst -m comment --comment "$class" -j RETURN
-		_ipt6 -A dscp_postrouting -m set --match-set omr6-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
-		_ipt6 -A dscp_postrouting -m set --match-set omr6-$class src,dst -m comment --comment "$class" -j RETURN
+		_ipt4 -A dscp_prerouting -m set --match-set omr_dscp-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
+		_ipt4 -A dscp_prerouting -m set --match-set omr_dscp-$class src,dst -m comment --comment "$class" -j RETURN
+		_ipt4 -A dscp_postrouting -m set --match-set omr_dscp-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
+		_ipt4 -A dscp_postrouting -m set --match-set omr_dscp-$class src,dst -m comment --comment "$class" -j RETURN
+		_ipt6 -A dscp_prerouting -m set --match-set omr_dscp6-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
+		_ipt6 -A dscp_prerouting -m set --match-set omr_dscp6-$class src,dst -m comment --comment "$class" -j RETURN
+		_ipt6 -A dscp_postrouting -m set --match-set omr_dscp6-$class src,dst -m comment --comment "$class" -j DSCP --set-dscp-class "$class"
+		_ipt6 -A dscp_postrouting -m set --match-set omr_dscp6-$class src,dst -m comment --comment "$class" -j RETURN
 	done
 }
 
@@ -154,6 +166,29 @@ _remove_output_chain() {
 	_ipt6 -X "$1"
 }
 
+_remove_ipset_dnsmasq() {
+	#dnsmasqipset=$(uci -q get dhcp.@dnsmasq[0].ipset | sed 's/ /\n/g' | grep -v omr_dscp)
+	# Remove DSCP ipset in DNSMASQ and keep others
+	dnsmasqipset=$(uci -q get dhcp.@dnsmasq[0].ipset | sed 's/ /\n/g')
+	uci -q delete dhcp.@dnsmasq[0].ipset
+	if [ -n "$dnsmasqipset" ]; then
+		for dnsipset in $dnsmasqipset; do
+			ipsets=""
+			allipsets=$(echo $dnsipset | cut -d/ -f3 | sed 's/,/\n/g')
+			for ipset in $allipsets; do
+				[ "$(echo $ipset | grep -v omr_dscp)" != "" ] && {
+					[ "$ipsets" != "" ] && ipsets="$ipsets,$ipset"
+					[ "$ipsets" = "" ] && ipsets="$ipset"
+				}
+			done
+			if [ "$ipsets" != "" ]; then
+				resultipset="/$(echo $dnsipset | cut -d/ -f2)/$ipsets"
+				uci -q add_list dhcp.@dnsmasq[0].ipset=$resultipset
+			fi
+		done
+	fi
+}
+
 _setup_tunnel() {
 	# Mark the packets to route through xtun0
 	_add_fwmark_chain
@@ -169,6 +204,8 @@ _cleanup() {
 	_remove_postrouting_chain dscp_postrouting
 	_remove_postrouting_chain dscp_mark
 	_remove_output_chain dscp_output
+	_remove_ipset_dnsmasq
+	uci -q commit dhcp
 }
 
 start_service() {
@@ -187,6 +224,7 @@ start_service() {
 	# Add rules base on the user configuration
 	config_foreach _add_dscp_rules classify
 	config_foreach _add_dscp_domain domains
+	uci -q commit dhcp
 }
 
 stop_service() {
