@@ -15,7 +15,7 @@ include $(INCLUDE_DIR)/package.mk
 
 MY_DEPENDS := \
     mptcp       \
-    unbound unbound-control \
+    unbound-daemon unbound-control \
     netifd      \
     mc          \
     openmptcprouter \
@@ -28,7 +28,7 @@ MY_DEPENDS := \
     bind-dig \
     libnetfilter-conntrack ebtables ebtables-utils ip-full \
     iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace iptables-mod-conntrack-extra iptables-mod-account \
-    kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra \
+    kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra iptables-mod-extra \
     wireless-tools \
     libiwinfo-lua \
     ca-bundle ca-certificates libustream-openssl \
@@ -55,24 +55,24 @@ MY_DEPENDS := \
     openvpn-openssl \
     mmc-utils \
     libimobiledevice \
-    comgt kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan usb-modeswitch uqmi adb-enablemodem umbim kmod-mii kmod-usb-net kmod-usb-wdm kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim umbim \
-    kmod-usb-net-huawei-cdc-ncm kmod-usb-net-rndis kmod-usb-net-cdc-ether kmod-usb-net-ipheth usbmuxd \
-    kmod-rt2800-usb \
-    kmod-mt7601u \
-    kmod-rtl8xxxu \
-    kmod-rtl8192cu \
-    kmod-net-rtl8192su \
+    comgt \
     kmod-random-core \
     kmod-netem \
-    (TARGET_x86||TARGET_x86_64):kmod-iwlwifi iwlwifi-firmware-iwl1000 iwlwifi-firmware-iwl100 iwlwifi-firmware-iwl105 iwlwifi-firmware-iwl135 iwlwifi-firmware-iwl2000 iwlwifi-firmware-iwl2030 iwlwifi-firmware-iwl3160 iwlwifi-firmware-iwl3168 iwlwifi-firmware-iwl5000 iwlwifi-firmware-iwl5150 iwlwifi-firmware-iwl6000g2 iwlwifi-firmware-iwl6000g2a iwlwifi-firmware-iwl6000g2b iwlwifi-firmware-iwl6050 iwlwifi-firmware-iwl7260 iwlwifi-firmware-iwl7265 iwlwifi-firmware-iwl7265d iwlwifi-firmware-iwl8260c iwlwifi-firmware-iwl8265 \
-    (TARGET_x86||TARGET_x86_64):kmod-e1000 (TARGET_x86||TARGET_x86_64):kmod-e1000e (TARGET_x86||TARGET_x86_64):kmod-igb (TARGET_x86||TARGET_x86_64):kmod-ne2k-pci (TARGET_x86||TARGET_x86_64):kmod-r8169 (TARGET_x86||TARGET_x86_64):kmod-8139too (TARGET_x86||TARGET_x86_64):kmod-bnx2 \
     wpad-basic \
-    luci-proto-qmi v2ray-plugin netcat \
     ca-bundle openssl-util \
     dejavu-fonts-ttf-DejaVuSerif dejavu-fonts-ttf-DejaVuSerif-Bold dejavu-fonts-ttf-DejaVuSerif-Italic dejavu-fonts-ttf-DejaVuSerif-BoldItalic \
     luci-app-snmpd \
-    iputils-tracepath \
-    (TARGET_x86||TARGET_x86_64):open-vm-tools
+    iputils-tracepath v2ray-plugin netcat adb-enablemodem \
+    (TARGET_x86||TARGET_x86_64):open-vm-tools \
+    (TARGET_x86||TARGET_x86_64):kmod-iwlwifi iwlwifi-firmware-iwl1000 iwlwifi-firmware-iwl100 iwlwifi-firmware-iwl105 iwlwifi-firmware-iwl135 iwlwifi-firmware-iwl2000 iwlwifi-firmware-iwl2030 iwlwifi-firmware-iwl3160 iwlwifi-firmware-iwl3168 iwlwifi-firmware-iwl5000 iwlwifi-firmware-iwl5150 iwlwifi-firmware-iwl6000g2 iwlwifi-firmware-iwl6000g2a iwlwifi-firmware-iwl6000g2b iwlwifi-firmware-iwl6050 iwlwifi-firmware-iwl7260 iwlwifi-firmware-iwl7265 iwlwifi-firmware-iwl7265d iwlwifi-firmware-iwl8260c iwlwifi-firmware-iwl8265 \
+    (TARGET_x86||TARGET_x86_64):kmod-e1000 (TARGET_x86||TARGET_x86_64):kmod-e1000e (TARGET_x86||TARGET_x86_64):kmod-igb (TARGET_x86||TARGET_x86_64):kmod-ne2k-pci (TARGET_x86||TARGET_x86_64):kmod-r8169 (TARGET_x86||TARGET_x86_64):kmod-8139too (TARGET_x86||TARGET_x86_64):kmod-bnx2 \
+    kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan usb-modeswitch uqmi \
+    umbim kmod-mii kmod-usb-net kmod-usb-wdm kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim umbim \
+    kmod-usb-net-huawei-cdc-ncm kmod-usb-net-rndis kmod-usb-net-cdc-ether kmod-usb-net-ipheth usbmuxd \
+    kmod-rt2800-usb kmod-mt7601u kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su \
+    luci-proto-qmi
+
+
 #    (!TARGET_mvebu&&!TARGET_mediatek):kmod-fb-tft-all \
 #    lcd4linux-full
 #    kmod-spi-gpio-custom 
