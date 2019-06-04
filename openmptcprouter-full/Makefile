@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=openmptcprouter-full
-PKG_VERSION:=0.12
+PKG_VERSION:=0.13
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
@@ -58,7 +58,6 @@ MY_DEPENDS := \
     comgt \
     kmod-random-core \
     kmod-netem \
-    wpad-basic \
     ca-bundle openssl-util \
     dejavu-fonts-ttf-DejaVuSerif dejavu-fonts-ttf-DejaVuSerif-Bold dejavu-fonts-ttf-DejaVuSerif-Italic dejavu-fonts-ttf-DejaVuSerif-BoldItalic \
     luci-app-snmpd \
@@ -70,8 +69,7 @@ MY_DEPENDS := \
     umbim kmod-mii kmod-usb-net kmod-usb-wdm kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim umbim \
     kmod-usb-net-huawei-cdc-ncm kmod-usb-net-rndis kmod-usb-net-cdc-ether kmod-usb-net-ipheth usbmuxd \
     kmod-rt2800-usb kmod-mt7601u kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su \
-    luci-proto-qmi kmod-eeprom-93cx6
-
+    luci-proto-qmi wpad-basic
 
 #    (!TARGET_mvebu&&!TARGET_mediatek):kmod-fb-tft-all \
 #    lcd4linux-full
