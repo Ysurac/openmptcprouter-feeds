@@ -914,6 +914,21 @@ function interfaces_status()
 	mArray.openmptcprouter["loadavg"] = sys.exec("cat /proc/loadavg 2>/dev/null"):match("[%d%.]+ [%d%.]+ [%d%.]+")
 	mArray.openmptcprouter["uptime"] = sys.exec("cat /proc/uptime 2>/dev/null"):match("[%d%.]+")
 
+	mArray.openmptcprouter["fstype"] = sys.exec("cat /proc/mounts | awk '/\/dev\/root/ {print $3}' | tr -d '\n'")
+	if mArray.openmptcprouter["fstype"] == "ext4" then
+		if sys.exec("cat /proc/mounts | awk '/\/dev\/root/ {print $4}' | grep ro") == "" then
+			mArray.openmptcprouter["fsro"] = false
+		else
+			mArray.openmptcprouter["fsro"] = true
+		end
+	elseif mArray.openmptcprouter["fstype"] == "squashfs" then
+		if sys.exec("cat /proc/mounts | awk '/overlayfs/ {print $4}' | grep overlay") == "" then
+			mArray.openmptcprouter["fsro"] = true
+		else
+			mArray.openmptcprouter["fsro"] = false
+		end
+	end
+
 	-- overview status
 	mArray.wans = {}
 	mArray.tunnels = {}
