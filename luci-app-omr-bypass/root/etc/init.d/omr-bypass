@@ -36,7 +36,7 @@ _bypass_domain() {
 	if [ -n "$domain" ]; then
 		domain=$(echo $domain | sed 's:^\.::')
 		#logger -t "omr-bypass" "Get IPs of $domain..."
-		if [ -z $BOOT ]; then
+		if [ -z $RELOAD ]; then
 			resolve=$(dig a +timeout=3 +nocmd +noall +answer $domain | awk '{print $5}')
 			for ip in $resolve; do
 				_bypass_ip $ip $intf
@@ -185,30 +185,32 @@ _intf_rule() {
 	[ -z "$count" ] && return
 	[ -z "$intf" ] && return
 	[ "$(echo $1 | grep _dev)" != "" ] && return
-	ipset -q flush omr_dst_bypass_$intf > /dev/null 2>&1
-	ipset -q flush omr6_dst_bypass_$intf > /dev/null 2>&1
-	ipset -q --exist restore <<-EOF
-	create omr_dst_bypass_$intf hash:net hashsize 64
-	create omr6_dst_bypass_$intf hash:net family inet6 hashsize 64
-	EOF
-	if [ "$(uci -q get openmptcprouter.settings.uci_rules)" = "1" ]; then
-		uci -q batch <<-EOF >/dev/null
-			delete network.${1}_fw_rule=rule
-			set network.${1}_fw_rule=rule
-			set network.${1}_fw_rule.priority=1
-			set network.${1}_fw_rule.mark=0x539${count}
-			set network.${1}_fw_rule.lookup=${count}
-			delete network.${1}_fw_rule6=rule6
-			set network.${1}_fw_rule6=rule6
-			set network.${1}_fw_rule6.priority=1
-			set network.${1}_fw_rule6.mark=0x6539${count}
-			set network.${1}_fw_rule6.lookup=${count}
-			commit network
+	[ -z "$RELOAD" ] && {
+		ipset -q flush omr_dst_bypass_$intf > /dev/null 2>&1
+		ipset -q flush omr6_dst_bypass_$intf > /dev/null 2>&1
+		ipset -q --exist restore <<-EOF
+		create omr_dst_bypass_$intf hash:net hashsize 64
+		create omr6_dst_bypass_$intf hash:net family inet6 hashsize 64
 		EOF
-	else
-		ip rule add prio 1 fwmark 0x539$count lookup $count pref 1 > /dev/null 2>&1
-		ip -6 rule add prio 1 fwmark 0x6539$count lookup 6$count > /dev/null 2>&1
-	fi
+		if [ "$(uci -q get openmptcprouter.settings.uci_rules)" = "1" ]; then
+			uci -q batch <<-EOF >/dev/null
+				delete network.${1}_fw_rule=rule
+				set network.${1}_fw_rule=rule
+				set network.${1}_fw_rule.priority=1
+				set network.${1}_fw_rule.mark=0x539${count}
+				set network.${1}_fw_rule.lookup=${count}
+				delete network.${1}_fw_rule6=rule6
+				set network.${1}_fw_rule6=rule6
+				set network.${1}_fw_rule6.priority=1
+				set network.${1}_fw_rule6.mark=0x6539${count}
+				set network.${1}_fw_rule6.lookup=${count}
+				commit network
+			EOF
+		else
+			ip rule add prio 1 fwmark 0x539$count lookup $count pref 1 > /dev/null 2>&1
+			ip -6 rule add prio 1 fwmark 0x6539$count lookup 6$count > /dev/null 2>&1
+		fi
+	}
 	if [ "$(iptables -w 40 -t mangle -L | grep omr_dst_bypass_$intf)" = "" ]; then
 		iptables-restore --wait=60 --noflush <<-EOF
 		*mangle
@@ -284,12 +286,14 @@ boot() {
 start_service() {
 	#local count
 	logger -t "omr-bypass" "Starting OMR-ByPass..."
-	ipset -q flush omr_dst_bypass_all > /dev/null 2>&1
-	ipset -q flush omr6_dst_bypass_all > /dev/null 2>&1
-	ipset -q --exist restore <<-EOF
-	create omr_dst_bypass_all hash:net hashsize 64
-	create omr6_dst_bypass_all hash:net family inet6 hashsize 64
-	EOF
+	[ -z "$RELOAD" ] && {
+		ipset -q flush omr_dst_bypass_all > /dev/null 2>&1
+		ipset -q flush omr6_dst_bypass_all > /dev/null 2>&1
+		ipset -q --exist restore <<-EOF
+		create omr_dst_bypass_all hash:net hashsize 64
+		create omr6_dst_bypass_all hash:net family inet6 hashsize 64
+		EOF
+	}
 
 	iptables-save --counters | grep -v omr-bypass | iptables-restore --counters
 	iptables-restore --wait=60  --noflush <<-EOF
@@ -398,7 +402,8 @@ start_service() {
 	config_load omr-bypass
 	config_foreach _bypass_proto dpis
 
-	/etc/init.d/dnsmasq restart
+	[ -z "$RELOAD" ] && /etc/init.d/dnsmasq restart
+	[ -n "$RELOAD" ] && /etc/init.d/dnsmasq restart
 	logger -t "omr-bypass" "OMR-ByPass is running"
 }
 
@@ -420,5 +425,6 @@ service_triggers() {
 
 reload_service() {
 	[ "$( ipset -n list | grep omr_ )" = "" ] && return 0
+	RELOAD=1
 	start
 }
