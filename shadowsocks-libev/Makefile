@@ -19,7 +19,7 @@ PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://github.com/shadowsocks/shadowsocks-libev/releases/download/v$(PKG_VERSION)
-PKG_HASH:=0c63cb6fa8c45c41cce97deaa9c58b1329032463d461f471f2f93a807c9b4974
+PKG_HASH:=9732f8b8f02ffeea261bcf15fbf104f826012f74dbee99d016b75f0894a39649
 
 PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 
