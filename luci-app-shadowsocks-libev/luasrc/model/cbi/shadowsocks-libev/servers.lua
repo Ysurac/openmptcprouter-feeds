@@ -9,7 +9,7 @@ local m, s
 m = Map("shadowsocks-libev",
 	translate("Remote Servers"),
 	translate("Definition of remote shadowsocks servers.  \
-			Disable any of them will also disable instances refering to it."))
+			Disable any of them will also disable instances referring to it."))
 
 local sname = arg[1]
 if sname then
@@ -19,13 +19,18 @@ if sname then
 	end
 	s = m:section(NamedSection, sname, "server")
 	m.title = m.title .. ' - ' .. sname
+	opts = {}
 else
 	s = m:section(TypedSection, "server")
 	s.template = 'cbi/tblsection'
 	s.addremove = true
+	s.extedit = function(self, section)
+		return 'servers/' .. section
+	end
+	opts = {row=true}
 end
 
 s:option(Flag, "disabled", translate("Disable"))
-ss.options_server(s)
+ss.options_server(s, opts)
 
 return m

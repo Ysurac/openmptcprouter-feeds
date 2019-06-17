@@ -24,8 +24,7 @@ end
 
 function src_dst_option(s, ...)
 	local o = s:taboption(...)
-	--o.datatype = "or(ip4addr,cidr4)"
-	o.datatype = "or(ip4addr,ip6addr)"
+	o.datatype = "or(ipaddr,cidr)"
 end
 
 s = m:section(NamedSection, "ss_rules", "ss_rules")
@@ -99,8 +98,8 @@ else
 	o.inputstyle = "apply"
 	o.write = function()
 		return luci.http.redirect(
-			luci.dispatcher.build_url("admin/system/packages") ..
-			"?submit=1&install=iptables-mod-conntrack-extra"
+			luci.dispatcher.build_url("admin/system/opkg") ..
+			"?query=iptables-mod-conntrack-extra"
 		)
 	end
 end

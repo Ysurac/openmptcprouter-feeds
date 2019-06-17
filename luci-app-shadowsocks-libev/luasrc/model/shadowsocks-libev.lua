@@ -1,4 +1,3 @@
--- Copyright 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 -- Copyright 2017 Yousong Zhou <yszhou4tech@gmail.com>
 -- Licensed to the public under the Apache License 2.0.
 
@@ -7,7 +6,6 @@ local ut = require("luci.util")
 local sys = require("luci.sys")
 local ds = require("luci.dispatcher")
 local nw = require("luci.model.network")
-local ucic = luci.model.uci.cursor()
 nw.init()
 module("luci.model.shadowsocks-libev", function(m)
 	setmetatable(m, {__index=function (self, k)
@@ -25,7 +23,7 @@ function values_actions(o)
 end
 
 function values_redir(o, xmode)
-	ucic:foreach("shadowsocks-libev", "ss_redir", function(sdata)
+	o.map.uci:foreach("shadowsocks-libev", "ss_redir", function(sdata)
 		local disabled = ucival_to_bool(sdata["disabled"])
 		local sname = sdata[".name"]
 		local mode = sdata["mode"] or "tcp_only"
@@ -39,7 +37,7 @@ function values_redir(o, xmode)
 end
 
 function values_serverlist(o)
-	ucic:foreach("shadowsocks-libev", "server", function(sdata)
+	o.map.uci:foreach("shadowsocks-libev", "server", function(sdata)
 		local sname = sdata[".name"]
 		local server = sdata["server"]
 		local server_port = sdata["server_port"]
@@ -78,9 +76,13 @@ function options_client(s, tab)
 	o.datatype = "port"
 end
 
-function options_server(s, tab)
+function options_server(s, opts)
 	local o
 	local optfunc
+	local tab = opts and opts.tab or nil
+	local row = opts and opts.row or false
+	local v2ray_installed = nixio.fs.access("/usr/bin/v2ray-plugin")
+	local obfs_installed = nixio.fs.access("/usr/bin/obfs-local")
 
 	if tab == nil then
 		optfunc = function(...) return s:option(...) end
@@ -98,12 +100,39 @@ function options_server(s, tab)
 	for _, m in ipairs(methods) do
 		o:value(m)
 	end
-	o = optfunc(Value, "key", translate("Key (base64 encoding)"))
-	o.datatype = "base64"
-	o.password = true
 	o = optfunc(Value, "password", translate("Password"))
 	o.password = true
 	o.size = 12
+	if not row then
+		o = optfunc(Value, "key", translate("Key (base64)"))
+		o.datatype = "base64"
+		o.password = true
+		o.size = 12
+		--optfunc(Value, "plugin", translate("Plugin"))
+		--optfunc(Value, "plugin_opts", translate("Plugin Options"))
+		optfunc(Flag, "obfs", translate("Enable obfuscation"))
+		o = optfunc(ListValue, "obfs_plugin", translate("OBFS Plugin"))
+		if v2ray_installed then
+			o:value("v2ray")
+			o.default = "v2ray"
+		else
+			o.default = "obfs-simple"
+		end
+		if obfs_installed then
+			o:value("obfs-simple")
+		end
+		if v2ray_installed or obfs_installed then
+			o = optfunc(ListValue, "obfs_type", translate("OBFS Type"))
+			o:value("http")
+			o:value("tls")
+			o.default = "http"
+			o = optfunc(Value, "obfs_host", translate("OBFS Host"))
+			o.default = "www.bing.com"
+		end
+		if obfs_installed then
+			o = optfunc(Value, "obfs_uri", translate("OBFS HTTP path uri"))
+		end
+	end
 end
 
 function options_common(s, tab)
@@ -121,33 +150,11 @@ function options_common(s, tab)
 	s:taboption(tab, Value, "user", translate("Run as"))
 
 	s:taboption(tab, Flag, "verbose", translate("Verbose"))
+	s:taboption(tab, Flag, "mptcp", translate("Enable MPTCP"))
 	s:taboption(tab, Flag, "ipv6_first", translate("IPv6 First"), translate("Prefer IPv6 addresses when resolving names"))
 	s:taboption(tab, Flag, "fast_open", translate("Enable TCP Fast Open"))
-	s:taboption(tab, Flag, "reuse_port", translate("Enable SO_REUSEPORT"))
 	s:taboption(tab, Flag, "no_delay", translate("Enable TCP_NODELAY"))
-	s:taboption(tab, Flag, "mptcp", translate("Enable MPTCP"))
-	--s:taboption(tab, Flag, "ebpf", translate("Enable eBPF"))
-end
-
-function options_obfs(s, tab)
-	local o
-	local v2ray_installed = nixio.fs.access("/usr/bin/v2ray-plugin")
-	local obfs_installed = nixio.fs.access("/usr/bin/obfs-local")
-	s:taboption(tab, Flag, "obfs", translate("Enable"))
-	o = s:taboption(tab, ListValue, "obfs_plugin", translate("Plugin"))
-	if v2ray_installed then
-		o:value("v2ray")
-		o.default = "v2ray"
-	else
-		o.default = "obfs-simple"
-	end
-	if obfs_installed then
-		o:value("obfs-simple")
-	end
-	o = s:taboption(tab, ListValue, "obfs_type", translate("Type"))
-	o:value("http")
-	o:value("tls")
-	o.default = "http"
+	s:taboption(tab, Flag, "reuse_port", translate("Enable SO_REUSEPORT"))
 end
 
 function ucival_to_bool(val)
@@ -164,20 +171,12 @@ function cfgvalue_overview(sdata)
 		cfgvalue_overview_(sdata, lines, {
 			"bind_address",
 		})
-		local installed = nixio.fs.access("/usr/bin/obfs-server")
-		if installed then
-			cfgvalue_overview_(sdata, lines, names_options_obfs)
-		end
 	elseif stype == "ss_local" or stype == "ss_redir" or stype == "ss_tunnel" then
 		cfgvalue_overview_(sdata, lines, names_options_client)
 		if stype == "ss_tunnel" then
 			cfgvalue_overview_(sdata, lines, {"tunnel_address"})
 		end
 		cfgvalue_overview_(sdata, lines, names_options_common)
-		local installed = nixio.fs.access("/usr/bin/obfs-local")
-		if installed then
-			cfgvalue_overview_(sdata, lines, names_options_obfs)
-		end
 	else
 		return nil, nil
 	end
@@ -186,7 +185,7 @@ function cfgvalue_overview(sdata)
 	local value = {
 		[".name"] = sname,
 		name = '%s.<var>%s</var>' % {stype, sname},
-		overview = table.concat(lines, "</br>"),
+		overview = table.concat(lines, "<br />"),
 		disabled = ucival_to_bool(sdata["disabled"]),
 	}
 	return key, value
@@ -231,8 +230,8 @@ function option_install_package(s, tab)
 
 	function p_install.write()
 		return luci.http.redirect(
-			luci.dispatcher.build_url("admin/system/packages") ..
-			"?submit=1&install=%s" % opkg_package
+			luci.dispatcher.build_url("admin/system/opkg") ..
+			"?query=%s" % opkg_package
 		)
 	end
 end
@@ -243,6 +242,8 @@ names_options_server = {
 	"method",
 	"key",
 	"password",
+	"plugin",
+	"plugin_opts",
 }
 
 names_options_client = {
@@ -261,11 +262,6 @@ names_options_common = {
 	"mtu",
 	"timeout",
 	"user",
-	"mptcp",
-}
-
-names_options_obfs = {
-	"obfs",
 }
 
 modes = {

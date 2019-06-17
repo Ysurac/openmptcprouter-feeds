@@ -545,15 +545,11 @@ function settings_add()
 	local obfs = luci.http.formvalue("obfs") or "0"
 	local obfs_plugin = luci.http.formvalue("obfs_plugin") or "v2ray"
 	local obfs_type = luci.http.formvalue("obfs_type") or "http"
-	ucic:foreach("shadowsocks-libev", "ss_redir", function (section)
+	ucic:foreach("shadowsocks-libev", "server", function (section)
 		ucic:set("shadowsocks-libev",section[".name"],"obfs",obfs)
 		ucic:set("shadowsocks-libev",section[".name"],"obfs_plugin",obfs_plugin)
 		ucic:set("shadowsocks-libev",section[".name"],"obfs_type",obfs_type)
 	end)
-	ucic:set("shadowsocks-libev","tracker","obfs",obfs)
-	ucic:set("shadowsocks-libev","tracker","obfs_plugin",obfs_plugin)
-	ucic:set("shadowsocks-libev","tracker","obfs_type",obfs_type)
-
 	ucic:save("shadowsocks-libev")
 	ucic:commit("shadowsocks-libev")
 
