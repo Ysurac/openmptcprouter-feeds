@@ -29,11 +29,14 @@ ss_mkjson_server_conf_() {
 	[ -z "$server" ] || json_add_string server "$server"
 	json_add_int server_port "$server_port"
 	[ -z "$method" ] || json_add_string method "$method"
-	[ -z "$key" ] || json_add_string key "$key"
+	[ -z "$key" ] || {
+		key="$(echo $key | sed 's/+/-/g; s/\//_/g;')"
+		json_add_string key "$key"
+	}
 	[ -z "$password" ] || json_add_string password "$password"
 	[ -z "$plugin" ] || json_add_string plugin "$plugin"
 	[ -z "$plugin_opts" ] || json_add_string plugin_opts "$plugin_opts"
-	if [ "$obfs" = 1; then
+	if [ "$obfs" = 1 ]; then
 		if [ "$obfs_plugin" = "obfs" ]; then
 			obfs_options="obfs=$obfs_type"
 			[ -z "$obfs_host" ] || obfs_options="$obfs_options;obfs-host=$obfs_host"
@@ -220,7 +223,6 @@ rules_up() {
 		config_foreach ss_rules_restart "$cfgtype" "$cfgtype"
 	done
 	ss_rules
-	[ "$(uci -q get openmptcprouter.settings.disable_ipv6)" = "1" ] || ss_rules6
 	[ -f /etc/init.d/omr-bypass ] && {
 		logger -t "Shadowsocks" "Reload omr-bypass rules"
 		/etc/init.d/omr-bypass reload
@@ -231,9 +233,10 @@ rules_down() {
 	rules_exist || return 0
 	logger -t "Shadowsocks" "Rules DOWN"
 	local bin="$ss_bindir/ss-rules"
-	[ -x "$bin" ] && "$bin" -f >/dev/null 2>&1
-	local bin6="$ss_bindir/ss-rules6"
-	[ -x "$bin6" ] && "$bin6" -f >/dev/null 2>&1
+	[ -x "$bin" ] && {
+		"$bin" -f >/dev/null 2>&1
+		"$bin" -6 -f >/dev/null 2>&1
+	}
 }
 
 service_triggers() {
@@ -267,7 +270,7 @@ validate_common_server_options_() {
 	local cfgtype="$1"; shift
 	local cfg="$1"; shift
 	local func="$1"; shift
-	local stream_methods='"table", "rc4", "rc4-md5", "aes-128-cfb", "aes-192-cfb", "aes-256-cfb", "aes-128-ctr", "aes-192-ctr", "aes-256-ctr", "bf-cfb", "camellia-128-cfb", "camellia-192-cfb", "camellia-256-cfb", "salsa20", "chacha20", "chacha20-ietf"'
+	local stream_methods='"none", "table", "rc4", "rc4-md5", "aes-128-cfb", "aes-192-cfb", "aes-256-cfb", "aes-128-ctr", "aes-192-ctr", "aes-256-ctr", "bf-cfb", "camellia-128-cfb", "camellia-192-cfb", "camellia-256-cfb", "salsa20", "chacha20", "chacha20-ietf"'
 	local aead_methods='"aes-128-gcm", "aes-192-gcm", "aes-256-gcm", "chacha20-ietf-poly1305", "xchacha20-ietf-poly1305"'
 
 	"${func:-ss_validate}" "$cfgtype" "$cfg" "$@" \
