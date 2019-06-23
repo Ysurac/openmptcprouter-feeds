@@ -248,6 +248,12 @@ function wizard_add()
 			ucic:set("qos",intf,"enabled","0")
 		end
 	end
+	-- Disable multipath on LAN, VPN and loopback
+	ucic:set("network","loopback","multipath","off")
+	ucic:set("network","lan","multipath","off")
+	ucic:set("network","omr6in4","multipath","off")
+	ucic:set("network","omrvpn","multipath","off")
+
 	ucic:save("sqm")
 	ucic:commit("sqm")
 	ucic:save("qos")
