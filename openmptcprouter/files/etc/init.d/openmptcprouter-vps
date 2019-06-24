@@ -343,6 +343,18 @@ _set_mptcp_vps() {
 	fi
 }
 
+_set_vpn_vps() {
+	local settings
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	vpn_current="$(echo "$vps_config" | jsonfilter -q -e '@.vps.current')"
+	vpn="$(uci -q get openmptcprouter.settings.vpn)"
+	if [ "$vpn_current" != "$vpn" ]; then
+		settings='{"vpn" : "'$vpnd'"}'
+		_set_json "vpn" "$settings"
+	fi
+}
+
 _set_ss_redir() {
 	local option=$2
 	local value=$3
@@ -519,6 +531,12 @@ _set_config_from_vps() {
 		commit iperf
 	EOF
 
+	# Set current VPN
+	current_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
+	uci -q batch <<-EOF >/dev/null
+		set openmptcprouter.settings.vpn=${current_vpn}
+	EOF
+
 	# Get available server
 	available_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.available' | sed -e 's/\[ //' -e 's/ \]//' -e 's/,//g')"
 	uci -q batch <<-EOF >/dev/null
@@ -589,6 +607,7 @@ _config_service() {
 	fi
 	_set_redirect_ports_from_vps $redirect_port
 	_set_mptcp_vps
+	_set_vpn_vps
 	uci -q batch <<-EOF >/dev/null
 		set openmptcprouter.${servername}.admin_error=0
 	EOF
