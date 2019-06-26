@@ -968,10 +968,10 @@ function interfaces_status()
 	    if enabled == "0" then return end
 
 	    local connectivity
-
+	    local multipath_state = ""
 	    if ifname ~= "" and ifname ~= nil then
 		    if fs.access("/sys/class/net/" .. ifname) then
-			    local multipath_state = ut.trim(sys.exec("multipath " .. ifname .. " | grep deactivated"))
+			    multipath_state = ut.trim(sys.exec("multipath " .. ifname .. " | grep deactivated"))
 			    if multipath_state == "" then
 				connectivity = "OK"
 			    else
@@ -1140,6 +1140,7 @@ function interfaces_status()
 		server_ping = server_ping,
 		ipv6_discover = ipv6_discover,
 		multipath_available = multipath_available,
+		multipath_state = multipath_state,
 		duplicateif = duplicateif,
 	    }
 
