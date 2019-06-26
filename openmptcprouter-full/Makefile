@@ -70,8 +70,8 @@ MY_DEPENDS := \
     umbim kmod-mii kmod-usb-net kmod-usb-wdm kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim umbim \
     kmod-usb-net-huawei-cdc-ncm kmod-usb-net-rndis kmod-usb-net-cdc-ether kmod-usb-net-ipheth usbmuxd \
     kmod-rt2800-usb kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su \
-    luci-proto-qmi wpad-basic
-#kmod-mt7601u
+    luci-proto-qmi wpad-basic kmod-mt7601u
+
 #    (!TARGET_mvebu&&!TARGET_mediatek):kmod-fb-tft-all \
 #    lcd4linux-full
 #    kmod-spi-gpio-custom 
