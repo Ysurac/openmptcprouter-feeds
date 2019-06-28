@@ -54,7 +54,7 @@ _set_json() {
 _set_glorytun_vps() {
 	local enabled port key
 	enabled="$(uci -q get glorytun.vpn.enable)"
-	[ "$enabled" != "1" ] && return
+	[ "$enabled" != "1" ] && return "Glorytun disabled"
 	port="$(uci -q get glorytun.vpn.port)"
 	key="$(uci -q get glorytun.vpn.key)"
 	chacha="$(uci -q get glorytun.vpn.chacha20)"
@@ -63,7 +63,7 @@ _set_glorytun_vps() {
 	else
 		chacha = "false"
 	fi
-	[ -z "$key" ] && return
+	[ -z "$key" ] && return "Glorytun key not set"
 	local current_port current_key current_chacha
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
@@ -73,14 +73,14 @@ _set_glorytun_vps() {
 	if [ "$current_port" != "$port" ] || [ "$current_key" != "$key" ] || [ "$current_chacha" != "$chacha" ]; then
 		local settings
 		settings='{"port": '$port',"key":"'$key'", "chacha": "'$chacha'"}'
-		_set_json "glorytun" "$settings"
+		return $(_set_json "glorytun" "$settings")
 	fi
 }
 
 _set_openvpn_vps() {
 	local enabled port key
 	enabled="$(uci -q get openvpn.omr.enabled)"
-	[ "$enabled" != "1" ] && return
+	[ "$enabled" != "1" ] && return "OpenVPN disabled"
 	port="$(uci -q get openvpn.omr.port)"
 	keyfile="$(uci -q get openvpn.omr.secret)"
 	if [ -n "$keyfile" ]; then
@@ -88,7 +88,7 @@ _set_openvpn_vps() {
 	else
 		key=""
 	fi
-	[ -z "$key" ] && return
+	[ -z "$key" ] && return "OpenVPN key not set"
 	local current_port current_key
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
@@ -97,7 +97,7 @@ _set_openvpn_vps() {
 	if [ "$current_port" != "$port" ] || [ "$current_key" != "$key" ]; then
 		local settings
 		settings='{"port": '$port',"key":"'$key'"}'
-		_set_json "openvpn" "$settings"
+		return $(_set_json "openvpn" "$settings")
 	fi
 }
 
@@ -120,12 +120,12 @@ _get_ss_server() {
 _set_ss_server_vps() {
 	local disabled port key method
 	config_get disabled $1 disabled
-	[ "$disabled" = "1" ] && return
+	[ "$disabled" = "1" ] && return "Shadowsocks disabled"
 	config_get port $1 server_port
 	#config_get server $1 server
 	config_get key $1 key
 	key="$(echo $key | sed 's/+/-/g; s/\//_/g;')"
-	[ -z "$key" ] && return
+	[ -z "$key" ] && return "Shadowsocks key not set"
 	config_get method $1 method
 	local current_port current_key current_method
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
@@ -153,7 +153,7 @@ _set_ss_server_vps() {
 	if [ "$current_obfs_plugin" != "$obfs_plugin" ] || [ "$current_obfs_type" != "$obfs_type" ] || [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_key" != "$key" ] || [ "$current_ebpf" != "$ebpf" ] || [ "$current_obfs" != "$obfs" ] || [ "$current_fast_open" != "$fast_open" ] || [ "$current_no_delay" != "$no_delay" ]; then
 		local settings
 		settings='{"port": '$port',"method":"'$method'","fast_open":'$fast_open',"reuse_port":true,"no_delay":'$no_delay',"mptcp":true,"key":"'$key'","ebpf":'$ebpf',"obfs":'$obfs',"obfs_plugin":"'$obfs_plugin'","obfs_type":"'$obfs_type'"}'
-		_set_json "shadowsocks" "$settings"
+		return $(_set_json "shadowsocks" "$settings")
 	fi
 }
 
@@ -351,7 +351,7 @@ _set_vpn_vps() {
 	vpn="$(uci -q get openmptcprouter.settings.vpn)"
 	if [ "$vpn_current" != "$vpn" ]; then
 		settings='{"vpn" : "'$vpn'"}'
-		_set_json "vpn" "$settings"
+		return $(_set_json "vpn" "$settings")
 	fi
 }
 
@@ -576,6 +576,7 @@ _config_service() {
 		EOF
 		return
 	}
+	error=0
 	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && {
 		_set_config_from_vps
 	}
@@ -599,17 +600,17 @@ _config_service() {
 
 	config_load shadowsocks-libev
 	config_foreach _set_ss_server_vps server
-	_set_glorytun_vps
-	_set_openvpn_vps
+	[ -z "$(_set_glorytun_vps)" ] && error=1
+	[ -z "$(_set_openvpn_vps)" ] && error=1
 	redirect_port="0"
 	if [ "$(uci -q get openmptcprouter.${servername}.redirect_ports)" = "1" ] || [ "$(uci -q get upnpd.config.enabled)" = "1" ]; then
 		redirect_port="1"
 	fi
-	_set_redirect_ports_from_vps $redirect_port
-	_set_mptcp_vps
-	_set_vpn_vps
+	[ -z "$(_set_redirect_ports_from_vps $redirect_port)" ] && error=1
+	[ -z "$(_set_mptcp_vps)" ] && error=1
+	[ -z "$(_set_vpn_vps)" ] && error=1
 	uci -q batch <<-EOF >/dev/null
-		set openmptcprouter.${servername}.admin_error=0
+		set openmptcprouter.${servername}.admin_error=$error
 	EOF
 }
 
