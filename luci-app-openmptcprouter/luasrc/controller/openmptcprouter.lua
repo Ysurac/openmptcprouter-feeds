@@ -272,7 +272,8 @@ function wizard_add()
 	if default_vpn:match("^glorytun.*") then
 		vpn_port = 65001
 		vpn_intf = "tun0"
-		ucic:set("network","omrvpn","proto","dhcp")
+		--ucic:set("network","omrvpn","proto","dhcp")
+		ucic:set("network","omrvpn","proto","none")
 	elseif default_vpn == "mlvpn" then
 		vpn_port = 65201
 		vpn_intf = "mlvpn0"
@@ -777,6 +778,7 @@ function interfaces_status()
 	end
 
 	mArray.openmptcprouter["vps_admin"] = false
+	mArray.openmptcprouter["vps_admin_error"] = false
 	mArray.openmptcprouter["vps_admin_error_msg"] = "Not found"
 	-- Get VPS info
 	ucic:foreach("openmptcprouter", "server", function(s)
@@ -785,6 +787,9 @@ function interfaces_status()
 			mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter", s[".name"], "omr_version") or ""
 			mArray.openmptcprouter["vps_kernel"] = uci:get("openmptcprouter",s[".name"],"kernel") or ""
 			mArray.openmptcprouter["vps_machine"] = uci:get("openmptcprouter",s[".name"],"machine") or ""
+			if uci:get("openmptcprouter",s[".name"],"admin_error") == "1" then
+				mArray.openmptcprouter["vps_admin_error"] = true
+			end
 			local adminport = uci:get("openmptcprouter",s[".name"],"port") or "65500"
 			local token = uci:get("openmptcprouter",s[".name"],"token") or ""
 			if token ~= "" then
@@ -802,6 +807,7 @@ function interfaces_status()
 						mArray.openmptcprouter["vps_admin_error_msg"] = ""
 					else
 						uci:set("openmptcprouter",s[".name"],"admin_error","1")
+						mArray.openmptcprouter["vps_admin_error"] = true
 						uci:delete("openmptcprouter",s[".name"],"token")
 						uci:save("openmptcprouter",s[".name"])
 						uci:commit("openmptcprouter",s[".name"])
@@ -983,6 +989,7 @@ function interfaces_status()
 	    else
 		    connectivity = "ERROR"
 	    end
+	    local current_multipath_state = ut.trim(sys.exec("multipath " .. ifname))
 
 	    if ipaddr == "" and ifname ~= nil then
 		    ipaddr = ut.trim(sys.exec("ip -4 -br addr ls dev " .. ifname .. " | awk -F'[ /]+' '{print $3}' | tr -d '\n'"))
@@ -1140,7 +1147,7 @@ function interfaces_status()
 		server_ping = server_ping,
 		ipv6_discover = ipv6_discover,
 		multipath_available = multipath_available,
-		multipath_state = multipath_state,
+		multipath_state = current_multipath_state,
 		duplicateif = duplicateif,
 	    }
 
