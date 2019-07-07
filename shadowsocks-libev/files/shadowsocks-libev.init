@@ -142,13 +142,15 @@ ss_rules_cb() {
 ss_rules() {
 	local cfg="ss_rules"
 	local bin="$ss_bindir/ss-rules"
+	local bin6="$ss_bindir/ss-rules6"
 	local cfgtype
 	local local_port_tcp local_port_udp
 	local args
 
 	[ -x "$bin" ] || return 1
 	"$bin" -f
-	"$bin" -6 -f
+	[ -x "$bin6" ] || return 1
+	"$bin6" -f
 
 	config_get cfgtype "$cfg" TYPE
 	[ "$cfgtype" = ss_rules ] || return 1
@@ -164,7 +166,7 @@ ss_rules() {
 	[ "$dst_forward_recentrst" = 0 ] || args="$args --dst-forward-recentrst"
 
 	ss_rules_call
-	ss_rules_call -6
+	ss_rules_call6
 }
 
 ss_rules_call() {
@@ -188,6 +190,27 @@ ss_rules_call() {
 		|| "$bin" "$@" -f
 }
 
+ss_rules_call6() {
+	"$bin6" "$@" \
+			-s "$ss_redir_servers" \
+			-l "$local_port_tcp" \
+			-L "$local_port_udp" \
+			--src-default "$src_default" \
+			--dst-default "$dst_default" \
+			--local-default "$local_default" \
+			--dst-bypass-file "$dst_ips_bypass_file" \
+			--dst-forward-file "$dst_ips_forward_file" \
+			--dst-bypass "$dst_ips_bypass" \
+			--dst-forward "$dst_ips_forward" \
+			--src-bypass "$src_ips_bypass" \
+			--src-forward "$src_ips_forward" \
+			--src-checkdst "$src_ips_checkdst" \
+			--ifnames "$ifnames" \
+			--ipt-extra "$ipt_args" \
+			$args \
+		|| "$bin6" "$@" -f
+}
+
 start_service() {
 	local cfgtype
 
@@ -201,10 +224,12 @@ start_service() {
 
 stop_service() {
 	local bin="$ss_bindir/ss-rules"
-
 	[ -x "$bin" ] && {
 		"$bin" -f
-		"$bin" -6 -f
+	}
+	local bin6="$ss_bindir/ss-rules6"
+	[ -x "$bin6" ] && {
+		"$bin6" -f
 	}
 	rm -rf "$ss_confdir"
 }
@@ -235,7 +260,9 @@ rules_down() {
 	local bin="$ss_bindir/ss-rules"
 	[ -x "$bin" ] && {
 		"$bin" -f >/dev/null 2>&1
-		"$bin" -6 -f >/dev/null 2>&1
+	}
+	local bin6="$ss_bindir/ss-rules6"
+		"$bin6" -f >/dev/null 2>&1
 	}
 }
 
