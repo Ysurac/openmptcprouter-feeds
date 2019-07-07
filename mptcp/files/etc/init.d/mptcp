@@ -74,6 +74,7 @@ interface_multipath_settings() {
 	[ "$enabled" = "0" ] && return 0
 	[ -n "$intf" ] && [ "$iface" != "$intf" ] && return 0
 	[ -z "$iface" ] && return 0
+	[ "$config" = "omrvpn" ] && return 0
 	[ -n "$(ifconfig | grep $iface)" ] || return 0
 	[ "$(echo $iface | grep _dev)" != "" ] && return 0
 	multipath "$iface" "$mode"
@@ -94,7 +95,7 @@ interface_multipath_settings() {
 		config_get ipaddr $config ipaddr
 		config_get gateway $config gateway
 		config_get netmask $config netmask
-		[ -n "$ipaddr" ] && [ -n "$netmask" ] && netmask=`ipcalc.sh $ipaddr $netmask | sed -n '/NETMASK=/{;s/.*=//;s/ .*//;p;}'`
+		[ -n "$ipaddr" ] && [ -n "$netmask" ] && netmask=`ipcalc.sh $ipaddr $netmask | sed -n '/PREFIX=/{;s/.*=//;s/ .*//;p;}'`
 		[ -n "$îpaddr" ] && [ -n "$netmask" ] && network=`ipcalc.sh $ipaddr $netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 	else
 		network_get_ipaddr ipaddr $config
@@ -116,7 +117,7 @@ interface_multipath_settings() {
 		[ -n "$netmask" ] && [ "$(echo $netmask | grep '/')" != "" ] && netmask=""
 		[ -z "$netmask" ] && netmask=$(ip -4 addr show dev $iface | grep peer | awk '{print $4}' | cut -d/ -f2 | tr -d "\n")
 		[ -z "$netmask" ] && netmask=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f2 | tr -d "\n")
-		[ -n "$ipaddr" ] && [ -n "$netmask" ] && netmask=`ipcalc.sh $ipaddr $netmask | sed -n '/NETMASK=/{;s/.*=//;s/ .*//;p;}'`
+		[ -n "$ipaddr" ] && [ -n "$netmask" ] && netmask=`ipcalc.sh $ipaddr $netmask | sed -n '/PREFIX=/{;s/.*=//;s/ .*//;p;}'`
 		[ -n "$ipaddr" ] && [ -n "$netmask" ] && network=`ipcalc.sh $ipaddr $netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 	fi
 	if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
@@ -158,15 +159,18 @@ interface_multipath_settings() {
 				commit network
 			EOF
 		else
+			#echo "Add routes for $ipaddr table $id"
 			ip rule add from $ipaddr table $id pref 0
+			ip route replace $network/$netmask dev $iface scope link metric $id
 			ip route replace $network/$netmask dev $iface scope link table $id
 			ip route replace default via $gateway dev $iface table $id
 			ip route replace default via $gateway dev $iface metric $id
-			ip route flush $id
+			#ip route flush $id
 		fi
 
 		config_get mode "$config" multipath "off"
 		[ "$mode" = "master" ] && {
+			#echo "ip route replace default via $gateway dev $iface"
 			ip route replace default via $gateway dev $iface
 		}
 		[ "$mode" = "off" ] && {
@@ -277,6 +281,47 @@ set_multipath() {
 	done
 }
 
+add_route() {
+	config_get target "$1" target
+	routeset="$target"
+	config_get netmask "$1" netmask
+	[ -n "$ipaddr" ] && [ -n "$netmask" ] && {
+		netmask=`ipcalc.sh $ipaddr $netmask | sed -n '/PREFIX=/{;s/.*=//;s/ .*//;p;}'`
+		routeset="$routeset/$netmask"
+	}
+	config_get gateway "$1" gateway
+	[ -n "$gateway" ] && routeset="$routeset via $gateway"
+	config_get metric "$1" metric
+	[ -n "$metric" ] && routeset="$routeset metric $metric"
+	config_get mtu "$1" mtu
+	[ -n "$mtu" ] && routeset="$routeset mtu $mtu"
+	config_get type "$1"
+	[ -n "$type" ] && routeset="$routeset type $type"
+	config_get interface "$1" interface
+	iface=$(ifstatus "$interface" | jsonfilter -q -e '@["l3_device"]')
+	routeset="$routeset dev $iface"
+	logger -t "MPTCP" "Add route $routeset"
+	ip route replace $routeset
+}
+
+add_route6() {
+	config_get target "$1" target
+	routeset="$target"
+	config_get gateway "$1" gateway
+	[ -n "$gateway" ] && routeset="$routeset via $gateway"
+	config_get metric "$1" metric
+	[ -n "$metric" ] && routeset="$routeset metric $metric"
+	config_get mtu "$1" mtu
+	[ -n "$mtu" ] && routeset="$routeset mtu $mtu"
+	config_get type "$1"
+	[ -n "$type" ] && routeset="$routeset type $type"
+	config_get interface "$1" interface
+	iface=$(ifstatus "$interface" | jsonfilter -q -e '@["l3_device"]')
+	routeset="$routeset dev $iface"
+	logger -t "MPTCP" "Add IPv6 route $routeset"
+	ip -6 route replace $routeset
+}
+
 remove() {
 	uci -q delete network.$1
 }
@@ -294,8 +339,15 @@ start_service() {
 	#config_foreach remove route6
 	#config_foreach remove rule
 	#config_foreach remove rule6
+	[ -z "$intf" ] && [ -n "$(uci -q get network.@route[-1])" ] && {
+		logger -t "MPTCP" "Flush main table"
+		ip route flush table main
+		ip -6 route flush table main
+	}
 	config_foreach interface_multipath_settings interface $intf
 	set_multipath
+	config_foreach add_route route
+	config_foreach add_route route6
 	# If no master is defined, one interface is defined as master
 	if [ "$master" = "" ]; then
 		intfmaster="$(echo $mptcpintf | cut -d' ' -f1 | tr -d '\n')"
