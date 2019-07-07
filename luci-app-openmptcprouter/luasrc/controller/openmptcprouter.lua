@@ -990,6 +990,17 @@ function interfaces_status()
 		    connectivity = "ERROR"
 	    end
 	    local current_multipath_state = ut.trim(sys.exec("multipath " .. ifname))
+	    if test_current_multipath_state == ifname .. " is deactivated" then
+		    current_multipath_state = "off"
+	    elseif test_current_multipath_state == ifname .. " is in default mode" then
+		    current_multipath_state = "on"
+	    elseif test_current_multipath_state == ifname .. " is in backup mode" then
+		    current_multipath_state = "backup"
+	    elseif test_current_multipath_state == ifname .. " is in handover mode" then
+		    current_multipath_state = "handover"
+	    else
+		    current_multipath_state = ""
+	    end
 
 	    if ipaddr == "" and ifname ~= nil then
 		    ipaddr = ut.trim(sys.exec("ip -4 -br addr ls dev " .. ifname .. " | awk -F'[ /]+' '{print $3}' | tr -d '\n'"))
