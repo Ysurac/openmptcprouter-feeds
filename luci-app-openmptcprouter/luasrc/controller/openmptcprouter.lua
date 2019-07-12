@@ -710,6 +710,11 @@ function interfaces_status()
 	
 	mArray.openmptcprouter["service_addr"] = uci:get("shadowsocks-libev", "sss0", "server") or ""
 	mArray.openmptcprouter["local_addr"] = uci:get("network", "lan", "ipaddr")
+	mArray.openmptcprouter["hostname"] = "OpenMPTCProuter"
+	ucic:foreach("system", "system", function(s)
+		mArray.openmptcprouter["hostname"] = uci:get("system",s[".name"],"hostname") or "OpenMPTCProuter"
+	end)
+
 	mArray.openmptcprouter["server_mptcp"] = ""
 	-- dns
 	mArray.openmptcprouter["dns"] = false
