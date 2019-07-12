@@ -18,6 +18,7 @@ MY_DEPENDS := \
     unbound-daemon unbound-control \
     netifd      \
     mc          \
+    f2fs-tools \
     openmptcprouter \
     dnsmasq-full \
     uhttpd \
@@ -49,7 +50,6 @@ MY_DEPENDS := \
     tracebox \
     luci-proto-3g \
     comgt-ncm luci-proto-ncm \
-    luci-app-mlvpn mlvpn \
     omr-update \
     rng-tools \
     openvpn-openssl \
@@ -72,6 +72,7 @@ MY_DEPENDS := \
     kmod-rt2800-usb kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su \
     luci-proto-qmi wpad-basic kmod-mt7601u
 
+#    luci-app-mlvpn mlvpn \
 #    (!TARGET_mvebu&&!TARGET_mediatek):kmod-fb-tft-all \
 #    lcd4linux-full
 #    kmod-spi-gpio-custom 
