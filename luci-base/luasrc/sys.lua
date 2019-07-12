@@ -137,7 +137,7 @@ end
 net = {}
 
 local function _nethints(what, callback)
-	local _, k, e, mac, ip, name
+	local _, k, e, mac, ip, name, duid, iaid
 	local cur = uci.cursor()
 	local ifn = { }
 	local hosts = { }
@@ -184,6 +184,24 @@ local function _nethints(what, callback)
 					mac = luci.ip.checkmac(mac)
 					if mac and ip then
 						_add(what, mac, ip, nil, name ~= "*" and name)
+					end
+				end
+			end
+		end
+	)
+	
+	cur:foreach("dhcp", "odhcpd",
+		function(s)
+			if type(s.leasefile) == "string" and fs.access(s.leasefile) then
+				for e in io.lines(s.leasefile) do
+					duid, iaid, name, _, ip = e:match("^# %S+ (%S+) (%S+) (%S+) (-?%d+) %S+ %S+ ([0-9a-f:.]+)/[0-9]+")
+					mac = net.duid_to_mac(duid)
+					if mac then
+						if ip and iaid == "ipv4" then
+							_add(what, mac, ip, nil, name ~= "*" and name)
+						elseif ip then
+							_add(what, mac, nil, ip, name ~= "*" and name)
+						end
 					end
 				end
 			end
@@ -386,6 +404,26 @@ function net.devices()
 	return devs
 end
 
+function net.duid_to_mac(duid)
+	local b1, b2, b3, b4, b5, b6
+
+	if type(duid) == "string" then
+		-- DUID-LLT / Ethernet
+		if #duid == 28 then
+			b1, b2, b3, b4, b5, b6 = duid:match("^00010001(%x%x)(%x%x)(%x%x)(%x%x)(%x%x)(%x%x)%x%x%x%x%x%x%x%x$")
+
+		-- DUID-LL / Ethernet
+		elseif #duid == 20 then
+			b1, b2, b3, b4, b5, b6 = duid:match("^00030001(%x%x)(%x%x)(%x%x)(%x%x)(%x%x)(%x%x)$")
+
+		-- DUID-LL / Ethernet (Without Header)
+		elseif #duid == 12 then
+			b1, b2, b3, b4, b5, b6 = duid:match("^(%x%x)(%x%x)(%x%x)(%x%x)(%x%x)(%x%x)$")
+		end
+	end
+
+	return b1 and luci.ip.checkmac(table.concat({ b1, b2, b3, b4, b5, b6 }, ":"))
+end
 
 process = {}
 
@@ -405,11 +443,11 @@ function process.list()
 
 	for line in ps do
 		local pid, ppid, user, stat, vsz, mem, cpu, cmd = line:match(
-			"^ *(%d+) +(%d+) +(%S.-%S) +([RSDZTW][W ][<N ]) +(%d+) +(%d+%%) +(%d+%%) +(.+)"
+			"^ *(%d+) +(%d+) +(%S.-%S) +([RSDZTW][<NW ][<N ]) +(%d+) +(%d+%%) +(%d+%%) +(.+)"
 		)
 
 		local idx = tonumber(pid)
-		if idx then
+		if idx and not cmd:match("top %-bn1") then
 			data[idx] = {
 				['PID']     = pid,
 				['PPID']    = ppid,
@@ -620,4 +658,12 @@ end
 
 function init.stop(name)
 	return (init_action("stop", name) == 0)
+end
+
+function init.restart(name)
+	return (init_action("restart", name) == 0)
+end
+
+function init.reload(name)
+	return (init_action("reload", name) == 0)
 end
