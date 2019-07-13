@@ -997,13 +997,13 @@ function interfaces_status()
 		    connectivity = "ERROR"
 	    end
 	    local current_multipath_state = ut.trim(sys.exec("multipath " .. ifname))
-	    if test_current_multipath_state == ifname .. " is deactivated" then
+	    if string.find(test_current_multipath_state,"deactivated") then
 		    current_multipath_state = "off"
-	    elseif test_current_multipath_state == ifname .. " is in default mode" then
+	    elseif string.find(test_current_multipath_state,"default") then
 		    current_multipath_state = "on"
-	    elseif test_current_multipath_state == ifname .. " is in backup mode" then
+	    elseif string.find(test_current_multipath_state,"backup") then
 		    current_multipath_state = "backup"
-	    elseif test_current_multipath_state == ifname .. " is in handover mode" then
+	    elseif string.find(test_current_multipath_state,"handover") then
 		    current_multipath_state = "handover"
 	    else
 		    current_multipath_state = ""
