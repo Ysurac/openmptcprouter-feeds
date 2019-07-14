@@ -996,7 +996,7 @@ function interfaces_status()
 	    else
 		    connectivity = "ERROR"
 	    end
-	    local current_multipath_state = ut.trim(sys.exec("multipath " .. ifname))
+	    local test_current_multipath_state = ut.trim(sys.exec("multipath " .. ifname))
 	    if string.find(test_current_multipath_state,"deactivated") then
 		    current_multipath_state = "off"
 	    elseif string.find(test_current_multipath_state,"default") then
