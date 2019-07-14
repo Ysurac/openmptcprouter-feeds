@@ -130,11 +130,13 @@ ss_rules_cb() {
 		config_get cfgserver "$cfg" server
 		config_get server "$cfgserver" server
 		ss_redir_servers="$ss_redir_servers $server"
-		if [ "$mode" = tcp_only -o "$mode" = "tcp_and_udp" ]; then
+		if [ "$mode" = "tcp_only" -o "$mode" = "tcp_and_udp" ]; then
 			eval "ss_rules_redir_tcp_$cfg=$local_port"
+			eval "ss_rules6_redir_tcp_$cfg=$local_port"
 		fi
-		if [ "$mode" = udp_only -o "$mode" = "tcp_and_udp" ]; then
+		if [ "$mode" = "udp_only" -o "$mode" = "tcp_and_udp" ]; then
 			eval "ss_rules_redir_udp_$cfg=$local_port"
+			eval "ss_rules6_redir_udp_$cfg=$local_port"
 		fi
 	fi
 }
@@ -161,8 +163,22 @@ ss_rules() {
 
 	eval local_port_tcp="\$ss_rules_redir_tcp_$redir_tcp"
 	eval local_port_udp="\$ss_rules_redir_udp_$redir_udp"
+	eval local_port_tcp6="\$ss_rules6_redir_tcp_$redir_tcp"
+	eval local_port_udp6="\$ss_rules6_redir_udp_$redir_udp"
 	[ -n "$local_port_tcp" -o -n "$local_port_udp" ] || return 1
-	ss_redir_servers="$(echo "$ss_redir_servers" | tr ' ' '\n' | sort -u)"
+	ss_redir_servers4="$(echo "$ss_redir_servers" | grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' | sort -u)"
+	ss_redir_servers6="$(echo "$ss_redir_servers" | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}' | sort -u)"
+	#ss_redir_servers="$(echo "$ss_redir_servers" | tr ' ' '\n' | sort -u)"
+	dst_ips_bypass4="$(echo "$dst_ips_bypass" | grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' | sort -u)"
+	dst_ips_forward4="$(echo "$dst_ips_forward" | grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' | sort -u)"
+	src_ips_bypass4="$(echo "$src_ips_bypass" | grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' | sort -u)"
+	src_ips_forward4="$(echo "$src_ips_forward" | grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' | sort -u)"
+	src_ips_checkdst4="$(echo "$src_ips_checkdst" | grep -o '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' | sort -u)"
+	dst_ips_bypass6="$(echo "$dst_ips_bypass" | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}' | sort -u)"
+	dst_ips_forward6="$(echo "$dst_ips_forward" | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}' | sort -u)"
+	src_ips_bypass6="$(echo "$src_ips_bypass" | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}' | sort -u)"
+	src_ips_forward6="$(echo "$src_ips_forward" | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}' | sort -u)"
+	src_ips_checkdst6="$(echo "$src_ips_checkdst" | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}' | sort -u)"
 	[ "$dst_forward_recentrst" = 0 ] || args="$args --dst-forward-recentrst"
 
 	ss_rules_call
@@ -171,7 +187,7 @@ ss_rules() {
 
 ss_rules_call() {
 	"$bin" "$@" \
-			-s "$ss_redir_servers" \
+			-s "$ss_redir_servers4" \
 			-l "$local_port_tcp" \
 			-L "$local_port_udp" \
 			--src-default "$src_default" \
@@ -179,11 +195,11 @@ ss_rules_call() {
 			--local-default "$local_default" \
 			--dst-bypass-file "$dst_ips_bypass_file" \
 			--dst-forward-file "$dst_ips_forward_file" \
-			--dst-bypass "$dst_ips_bypass" \
-			--dst-forward "$dst_ips_forward" \
-			--src-bypass "$src_ips_bypass" \
-			--src-forward "$src_ips_forward" \
-			--src-checkdst "$src_ips_checkdst" \
+			--dst-bypass "$dst_ips_bypass4" \
+			--dst-forward "$dst_ips_forward4" \
+			--src-bypass "$src_ips_bypass4" \
+			--src-forward "$src_ips_forward4" \
+			--src-checkdst "$src_ips_checkdst4" \
 			--ifnames "$ifnames" \
 			--ipt-extra "$ipt_args" \
 			$args \
@@ -192,19 +208,19 @@ ss_rules_call() {
 
 ss_rules_call6() {
 	"$bin6" "$@" \
-			-s "$ss_redir_servers" \
-			-l "$local_port_tcp" \
-			-L "$local_port_udp" \
+			-s "$ss_redir_servers6" \
+			-l "$local_port_tcp6" \
+			-L "$local_port_udp6" \
 			--src-default "$src_default" \
 			--dst-default "$dst_default" \
 			--local-default "$local_default" \
 			--dst-bypass-file "$dst_ips_bypass_file" \
 			--dst-forward-file "$dst_ips_forward_file" \
-			--dst-bypass "$dst_ips_bypass" \
-			--dst-forward "$dst_ips_forward" \
-			--src-bypass "$src_ips_bypass" \
-			--src-forward "$src_ips_forward" \
-			--src-checkdst "$src_ips_checkdst" \
+			--dst-bypass "$dst_ips_bypass6" \
+			--dst-forward "$dst_ips_forward6" \
+			--src-bypass "$src_ips_bypass6" \
+			--src-forward "$src_ips_forward6" \
+			--src-checkdst "$src_ips_checkdst6" \
 			--ifnames "$ifnames" \
 			--ipt-extra "$ipt_args" \
 			$args \
@@ -219,18 +235,13 @@ start_service() {
 	for cfgtype in ss_local ss_redir ss_server ss_tunnel; do
 		config_foreach ss_xxx "$cfgtype" "$cfgtype"
 	done
-	ss_rules
+	# Add rule to match traffic marked by firewall for bypass
+	ip rule add prio 1 fwmark 0x539 lookup 991337 > /dev/null 2>&1
+	rules_up
 }
 
 stop_service() {
-	local bin="$ss_bindir/ss-rules"
-	[ -x "$bin" ] && {
-		"$bin" -f
-	}
-	local bin6="$ss_bindir/ss-rules6"
-	[ -x "$bin6" ] && {
-		"$bin6" -f
-	}
+	rules_down
 	rm -rf "$ss_confdir"
 }
 
@@ -268,7 +279,7 @@ rules_down() {
 }
 
 service_triggers() {
-	procd_add_reload_interface_trigger wan
+	procd_add_reload_interface_trigger wan*
 	procd_add_reload_trigger shadowsocks-libev
 	procd_open_validate
 	validate_server_section
