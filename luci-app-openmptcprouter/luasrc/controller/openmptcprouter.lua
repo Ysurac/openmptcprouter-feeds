@@ -536,6 +536,12 @@ function settings_add()
 	
 	-- Set tcp_fastopen
 	local tcp_fastopen = luci.http.formvalue("tcp_fastopen")
+	local fastopen = luci.http.formvalue("disablefastopen") or "0"
+	if fastopen == "0" then
+		tcp_fastopen = "0"
+	elseif tcp_fastopen == "0" and fastopen == "1" then
+		tcp_fastopen = "3"
+	end
 	luci.sys.exec("sysctl -w net.ipv4.tcp_fastopen=%s" % tcp_fastopen)
 	luci.sys.exec("sed -i 's:^net.ipv4.tcp_fastopen=[0-3]*:net.ipv4.tcp_fastopen=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_fastopen)
 	
@@ -547,6 +553,16 @@ function settings_add()
 	local externalcheck = luci.http.formvalue("externalcheck") or "1"
 	ucic:set("openmptcprouter","settings","external_check",externalcheck)
 	ucic:commit("openmptcprouter")
+
+	-- Enable/disable fast open
+	local fastopen = luci.http.formvalue("disablefastopen") or "0"
+	ucic:foreach("shadowsocks-libev", "ss_redir", function (section)
+		ucic:set("shadowsocks-libev",section[".name"],"fast_open",fastopen)
+	end)
+	ucic:foreach("shadowsocks-libev", "ss_local", function (section)
+		ucic:set("shadowsocks-libev",section[".name"],"fast_open",fastopen)
+	end)
+
 
 	-- Enable/disable obfs
 	local obfs = luci.http.formvalue("obfs") or "0"
