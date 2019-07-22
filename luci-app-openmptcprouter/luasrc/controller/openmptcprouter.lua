@@ -554,6 +554,11 @@ function settings_add()
 	ucic:set("openmptcprouter","settings","external_check",externalcheck)
 	ucic:commit("openmptcprouter")
 
+	-- Enable/disable external check
+	local savevnstat = luci.http.formvalue("savevnstat") or "0"
+	luci.sys.exec("uci -q set vnstat.@vnstat[0].backup=%s" % savevnstat)
+	ucic:commit("openmptcprouter")
+
 	-- Enable/disable fast open
 	local fastopen = luci.http.formvalue("disablefastopen") or "0"
 	ucic:foreach("shadowsocks-libev", "ss_redir", function (section)
