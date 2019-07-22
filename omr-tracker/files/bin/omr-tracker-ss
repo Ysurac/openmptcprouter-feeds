@@ -8,7 +8,21 @@ log() {
 	logger -p daemon.info -t "${basename}" "$@"
 }
 
-get_ip() {
+_ping_server() {
+	local serverss=$1
+	local host
+	config_get host $serverss server
+	ret=$(ping \
+	    -w "$OMR_TRACKER_TIMEOUT" \
+	    -c 1 \
+	    -q \
+	    "${host}"
+	) && echo "$ret" | grep -sq " 0% packet loss" && {
+		server_ping=true
+	}
+}
+
+_get_ip() {
 	uci -q set openmptcprouter.omr=router
 	if [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ]; then
 		uci -q set openmptcprouter.omr.detected_public_ipv4="$(wget -4 -qO- -T 3 http://ip.openmptcprouter.com)"
@@ -50,7 +64,7 @@ while true; do
 		if [ -z "$(iptables -t nat -L | grep ss_rules_forward)" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.disabled)" != "1" ]; then
 			log "Reload Shadowsocks rules"
 			/etc/init.d/shadowsocks-libev rules_up 2> /dev/null
-			get_ip
+			_get_ip
 		fi
 		[ "$(uci -q get openmptcprouter.omr.detected_public_ipv4)" = "" ] || ([ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.detected_public_ipv6)" = "" ]) && get_ip
 		last=0
@@ -63,7 +77,13 @@ while true; do
 				uci -q set openmptcprouter.omr.shadowsocks="down"
 				uci -q commit openmptcprouter.omr
 				/etc/init.d/shadowsocks-libev rules_down 2> /dev/null
-				get_ip
+				_get_ip
+				server_ping=false
+				config_load shadowsocks_libev
+				config_foreach _ping_server server
+				if [ "$server_ping" = false ]; then
+					log "Server is down, no answer to ping"
+				fi
 			fi
 		}
 	fi
