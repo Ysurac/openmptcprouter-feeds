@@ -495,7 +495,7 @@ function wizard_add()
 		luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
 		os.execute("sleep 2")
 	end
-	luci.sys.call("/etc/init.d/shadowsocks restart >/dev/null 2>/dev/null")
+	luci.sys.call("/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
 	--luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
