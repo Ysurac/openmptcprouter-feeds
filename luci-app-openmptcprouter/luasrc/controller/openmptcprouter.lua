@@ -165,7 +165,7 @@ function wizard_add()
 			ucic:delete("qos",intf)
 			ucic:save("qos")
 			ucic:commit("qos")
-			if defif ~= "" then
+			if defif ~= nil and defif ~= "" then
 				luci.sys.call("uci -q del_list vnstat.@vnstat[-1].interface=" .. defif)
 			end
 			luci.sys.call("uci -q commit vnstat")
@@ -498,7 +498,7 @@ function wizard_add()
 	luci.sys.call("/etc/init.d/shadowsocks restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
+	--luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/omr-tracker restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
@@ -1003,6 +1003,7 @@ function interfaces_status()
 
 	    local connectivity
 	    local multipath_state = ""
+	    local current_multipath_state = ""
 	    if ifname ~= "" and ifname ~= nil then
 		    if fs.access("/sys/class/net/" .. ifname) then
 			    multipath_state = ut.trim(sys.exec("multipath " .. ifname .. " | grep deactivated"))
@@ -1017,23 +1018,25 @@ function interfaces_status()
 	    else
 		    connectivity = "ERROR"
 	    end
-	    local test_current_multipath_state = ut.trim(sys.exec("multipath " .. ifname))
-	    if string.find(test_current_multipath_state,"deactivated") then
-		    current_multipath_state = "off"
-	    elseif string.find(test_current_multipath_state,"default") then
-		    current_multipath_state = "on"
-	    elseif string.find(test_current_multipath_state,"backup") then
-		    current_multipath_state = "backup"
-	    elseif string.find(test_current_multipath_state,"handover") then
-		    current_multipath_state = "handover"
-	    else
-		    current_multipath_state = ""
+	    if ifname ~= "" and ifname ~= nil then
+		    local test_current_multipath_state = ut.trim(sys.exec("multipath " .. ifname))
+		    if string.find(test_current_multipath_state,"deactivated") then
+			    current_multipath_state = "off"
+		    elseif string.find(test_current_multipath_state,"default") then
+			    current_multipath_state = "on"
+		    elseif string.find(test_current_multipath_state,"backup") then
+			    current_multipath_state = "backup"
+		    elseif string.find(test_current_multipath_state,"handover") then
+			    current_multipath_state = "handover"
+		    else
+			    current_multipath_state = ""
+		    end
 	    end
 
-	    if ipaddr == "" and ifname ~= nil then
+	    if ipaddr == "" and ifname ~= nil and ifname ~= "" then
 		    ipaddr = ut.trim(sys.exec("ip -4 -br addr ls dev " .. ifname .. " | awk -F'[ /]+' '{print $3}' | tr -d '\n'"))
 	    end
-	    if ipaddr == "" and ifname ~= nil then
+	    if ipaddr == "" and ifname ~= nil and ifname ~= "" then
 		    ipaddr = ut.trim(sys.exec("ip -4 addr show dev " .. ifname .. " | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1 | tr -d '\n'"))
 	    end
 	    if ipaddr == "" then
