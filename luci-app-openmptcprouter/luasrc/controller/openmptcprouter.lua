@@ -983,7 +983,7 @@ function interfaces_status()
 	    --if interface == "lo" then return end
 
 	    local ifname = get_device(interface)
-	    if ifname == "" then
+	    if ifname == "" or ifname == nil then
 		ifname = section["ifname"] or ""
 	    end
 	    duplicateif = false
