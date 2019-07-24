@@ -72,6 +72,52 @@ set_server_default_route() {
 	fi
 }
 
+set_routes_intf() {
+	local INTERFACE=$1
+	multipath_config=$(uci -q get network.$INTERFACE.multipath || echo "off")
+	interface_if=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "${INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.ifname)
+	multipath_current_config=$(multipath $interface_if | grep 'deactivated')
+	if [ "$multipath_config" != "off" ] && [ "$multipath_current_config" = "" ] && [ "$interface_if" != "" ]; then
+		interface_gw="$(uci -q get network.$INTERFACE.gateway)"
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.${INTERFACE}_4 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
+		fi
+		if [ "$interface_gw" != "" ]; then
+			routesintf="$routesintf nexthop via $interface_gw dev $interface_if weight 1"
+		fi
+	fi
+}
+
+set_server_all_routes() {
+	local server=$1
+	local serverip
+	config_get serverip $server ip
+	interface_if=$(uci -q get network.$OMR_TRACKER_INTERFACE.ifname)
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "${OMR_TRACKER_INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	multipath_current_config=$(multipath $interface_if | grep "deactivated")
+	multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath || echo "off")
+	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show $serverip | grep nexthop | grep $OMR_TRACKER_DEVICE_GATEWAY | grep $OMR_TRACKER_INTERFACE)" = "" ] && [ "$multipath_config_route" != "off" ]; then
+		routesintf=""
+		config_load network
+		config_foreach set_routes_intf interface
+		[ -n "$routesintf" ] && {
+			_log "Set server $server ($serverip) default route $routesintf"
+			ip route replace $serverip scope global $routesintf
+		}
+	fi
+}
+
+
+
 set_server_route() {
 	local server=$1
 	local serverip
@@ -182,6 +228,9 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		fi
 		config_load openmptcprouter
 		config_foreach del_server_route server
+		if [ "$(uci -q get openmptcprouter.settings.master)" = "redundant" ]; then
+			config_foreach set_server_all_routes server
+		fi
 	}
 
 	if [ "$default_gw" = "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
@@ -308,7 +357,11 @@ if [ "$multipath_config" = "master" ]; then
 			ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
 		else
 			config_load openmptcprouter
-			config_foreach set_server_default_route server
+			if [ "$(uci -q get openmptcprouter.settings.master)" = "redundant" ]; then
+				config_foreach set_server_all_routes server
+			else
+				config_foreach set_server_default_route server
+			fi
 		fi
 		ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
 		if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
