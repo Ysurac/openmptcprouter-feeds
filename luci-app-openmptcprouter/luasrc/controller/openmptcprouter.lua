@@ -536,10 +536,10 @@ function settings_add()
 	
 	-- Set tcp_fastopen
 	local tcp_fastopen = luci.http.formvalue("tcp_fastopen")
-	local fastopen = luci.http.formvalue("disablefastopen") or "0"
-	if fastopen == "0" then
+	local disablefastopen = luci.http.formvalue("disablefastopen") or "0"
+	if disablefastopen == "1" then
 		tcp_fastopen = "0"
-	elseif tcp_fastopen == "0" and fastopen == "1" then
+	elseif tcp_fastopen == "0" and disablefastopen == "0" then
 		tcp_fastopen = "3"
 	end
 	luci.sys.exec("sysctl -w net.ipv4.tcp_fastopen=%s" % tcp_fastopen)
@@ -560,7 +560,12 @@ function settings_add()
 	ucic:commit("openmptcprouter")
 
 	-- Enable/disable fast open
-	local fastopen = luci.http.formvalue("disablefastopen") or "0"
+	local disablefastopen = luci.http.formvalue("disablefastopen") or "0"
+	if disablefastopen == "0" then
+		fastopen = "1"
+	else
+		fastopen = "0"
+	end
 	ucic:foreach("shadowsocks-libev", "ss_redir", function (section)
 		ucic:set("shadowsocks-libev",section[".name"],"fast_open",fastopen)
 	end)
