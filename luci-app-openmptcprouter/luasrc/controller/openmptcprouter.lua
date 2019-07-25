@@ -834,7 +834,7 @@ function interfaces_status()
 						mArray.openmptcprouter["vps_loadavg"] = vpsinfo.vps.loadavg or ""
 						mArray.openmptcprouter["vps_uptime"] = vpsinfo.vps.uptime or ""
 						mArray.openmptcprouter["vps_mptcp"] = vpsinfo.vps.mptcp or ""
-						mArray.openmptcprouter["vps_hostname"] = vpsinfo.vps.hostname or "OpenMPTCProuter Server"
+						mArray.openmptcprouter["vps_hostname"] = vpsinfo.vps.hostname or ""
 						mArray.openmptcprouter["vps_admin"] = true
 						mArray.openmptcprouter["vps_status"] = "UP"
 						mArray.openmptcprouter["vps_admin_error_msg"] = ""
@@ -857,7 +857,9 @@ function interfaces_status()
 			end
 		end
 	end)
-
+	if mArray.openmptcprouter["vps_hostname"] == "" then
+		mArray.openmptcprouter["vps_hostname"] = "Server"
+	end
 	-- Check openmptcprouter service are running
 	mArray.openmptcprouter["tun_service"] = false
 	mArray.openmptcprouter["tun_state"] = ""
