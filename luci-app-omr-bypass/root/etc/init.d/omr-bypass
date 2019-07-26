@@ -105,28 +105,36 @@ _bypass_lan_ip() {
 
 	[ -z "$intf" ] && intf="all"
 	[ -z "$ip" ] && return
+	valid_ip4=$( valid_subnet4 $ip)
+	valid_ip6=$( valid_subnet6 $ip)
 	if [ "$intf" = "all" ]; then
-		iptables-restore --wait=60  --noflush <<-EOF
-		*mangle
-		-A omr-bypass -s $ip -j MARK --set-mark 0x539
-		COMMIT
-		EOF
-		ip6tables-restore --wait=60  --noflush <<-EOF
-		*mangle
-		-A omr-bypass6 -s $ip -j MARK --set-mark 0x6539
-		COMMIT
-		EOF
+		if [ "$valid_ip4" = "ok" ]; then
+			iptables-restore --wait=60  --noflush <<-EOF
+			*mangle
+			-A omr-bypass -s $ip -j MARK --set-mark 0x539
+			COMMIT
+			EOF
+		elif [ "$valid_ip6" = "ok" ]; then
+			ip6tables-restore --wait=60  --noflush <<-EOF
+			*mangle
+			-A omr-bypass6 -s $ip -j MARK --set-mark 0x6539
+			COMMIT
+			EOF
+		fi
 	else
-		iptables-restore --wait=60  --noflush <<-EOF
-		*mangle
-		-A omr-bypass -s $ip -j MARK --set-mark 0x539$intfid
-		COMMIT
-		EOF
-		ip6tables-restore --wait=60  --noflush <<-EOF
-		*mangle
-		-A omr-bypass6 -s $ip -j MARK --set-mark 0x6539$intfid
-		COMMIT
-		EOF
+		if [ "$valid_ip4" = "ok" ]; then
+			iptables-restore --wait=60  --noflush <<-EOF
+			*mangle
+			-A omr-bypass -s $ip -j MARK --set-mark 0x539$intfid
+			COMMIT
+			EOF
+		elif [ "$valid_ip6" = "ok" ]; then
+			ip6tables-restore --wait=60  --noflush <<-EOF
+			*mangle
+			-A omr-bypass6 -s $ip -j MARK --set-mark 0x6539$intfid
+			COMMIT
+			EOF
+		fi
 	fi
 }
 
@@ -299,7 +307,6 @@ start_service() {
 		create omr6_dst_bypass_all hash:net family inet6 hashsize 64
 		EOF
 	}
-
 	iptables-save --counters | grep -v omr-bypass | iptables-restore --counters
 	iptables-restore --wait=60  --noflush <<-EOF
 	*mangle
@@ -314,11 +321,9 @@ start_service() {
 	-I PREROUTING 1 -m addrtype ! --dst-type LOCAL -j omr-bypass6
 	COMMIT
 	EOF
-
-
+	
 	config_load network
 	config_foreach _intf_rule interface
-
 	local ndpi_rules=""
 	config_load openmptcprouter
 	config_foreach _bypass_omr_server server
