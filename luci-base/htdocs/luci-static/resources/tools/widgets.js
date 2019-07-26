@@ -30,7 +30,21 @@ var CBIZoneSelect = form.ListValue.extend({
 
 	renderWidget: function(section_id, option_index, cfgvalue) {
 		var values = L.toArray((cfgvalue != null) ? cfgvalue : this.default),
+		    isOutputOnly = false,
 		    choices = {};
+
+		if (this.option == 'dest') {
+			for (var i = 0; i < this.section.children.length; i++) {
+				var opt = this.section.children[i];
+				if (opt.option == 'src') {
+					var val = opt.cfgvalue(section_id) || opt.default;
+					isOutputOnly = (val == null || val == '');
+					break;
+				}
+			}
+
+			this.title = isOutputOnly ? _('Output zone') :  _('Destination zone');
+		}
 
 		if (this.allowlocal) {
 			choices[''] = E('span', {
@@ -39,7 +53,7 @@ var CBIZoneSelect = form.ListValue.extend({
 			}, [
 				E('strong', _('Device')),
 				(this.allowany || this.allowlocal)
-					? ' (%s)'.format(this.alias != 'dest' ? _('output') : _('input')) : ''
+					? ' (%s)'.format(this.option != 'dest' ? _('output') : _('input')) : ''
 			]);
 		}
 		else if (!this.multiple && (this.rmempty || this.optional)) {
@@ -55,7 +69,7 @@ var CBIZoneSelect = form.ListValue.extend({
 				'style': 'background-color:' + firewall.getColorForName(null)
 			}, [
 				E('strong', _('Any zone')),
-				(this.allowany && this.allowlocal) ? ' (%s)'.format(_('forward')) : ''
+				(this.allowany && this.allowlocal && !isOutputOnly) ? ' (%s)'.format(_('forward')) : ''
 			]);
 		}
 
@@ -120,7 +134,64 @@ var CBIZoneSelect = form.ListValue.extend({
 				'</li>'
 		});
 
-		return widget.render();
+		var elem = widget.render();
+
+		if (this.option == 'src') {
+			elem.addEventListener('cbi-dropdown-change', L.bind(function(ev) {
+				var opt = this.map.lookupOption('dest', section_id),
+				    val = ev.detail.instance.getValue();
+
+				if (opt == null)
+					return;
+
+				var cbid = opt[0].cbid(section_id),
+				    label = document.querySelector('label[for="widget.%s"]'.format(cbid)),
+				    node = document.getElementById(cbid);
+
+				L.dom.content(label, val == '' ? _('Output zone') : _('Destination zone'));
+
+				if (val == '') {
+					if (L.dom.callClassMethod(node, 'getValue') == '')
+						L.dom.callClassMethod(node, 'setValue', '*');
+
+					var emptyval = node.querySelector('[data-value=""]'),
+					    anyval = node.querySelector('[data-value="*"]');
+
+					L.dom.content(anyval.querySelector('span'), E('strong', _('Any zone')));
+
+					if (emptyval != null)
+						emptyval.parentNode.removeChild(emptyval);
+				}
+				else {
+					var anyval = node.querySelector('[data-value="*"]'),
+					    emptyval = node.querySelector('[data-value=""]');
+
+					if (emptyval == null) {
+						emptyval = anyval.cloneNode(true);
+						emptyval.removeAttribute('display');
+						emptyval.removeAttribute('selected');
+						emptyval.setAttribute('data-value', '');
+					}
+
+					L.dom.content(emptyval.querySelector('span'), [
+						E('strong', _('Device')), ' (%s)'.format(_('input'))
+					]);
+
+					L.dom.content(anyval.querySelector('span'), [
+						E('strong', _('Any zone')), ' (%s)'.format(_('forward'))
+					]);
+
+					anyval.parentNode.insertBefore(emptyval, anyval);
+				}
+
+			}, this));
+		}
+		else if (isOutputOnly) {
+			var emptyval = elem.querySelector('[data-value=""]');
+			emptyval.parentNode.removeChild(emptyval);
+		}
+
+		return elem;
 	},
 });
 
@@ -128,10 +199,16 @@ var CBIZoneForwards = form.DummyValue.extend({
 	__name__: 'CBI.ZoneForwards',
 
 	load: function(section_id) {
-		return Promise.all([ firewall.getDefaults(), firewall.getZones(), network.getNetworks() ]).then(L.bind(function(dzn) {
-			this.defaults = dzn[0];
-			this.zones = dzn[1];
-			this.networks = dzn[2];
+		return Promise.all([
+			firewall.getDefaults(),
+			firewall.getZones(),
+			network.getNetworks(),
+			network.getDevices()
+		]).then(L.bind(function(dznd) {
+			this.defaults = dznd[0];
+			this.zones = dznd[1];
+			this.networks = dznd[2];
+			this.devices = dznd[3];
 
 			return this.super('load', section_id);
 		}, this));
@@ -140,6 +217,8 @@ var CBIZoneForwards = form.DummyValue.extend({
 	renderZone: function(zone) {
 		var name = zone.getName(),
 		    networks = zone.getNetworks(),
+		    devices = zone.getDevices(),
+		    subnets = zone.getSubnets(),
 		    ifaces = [];
 
 		for (var j = 0; j < networks.length; j++) {
@@ -152,20 +231,38 @@ var CBIZoneForwards = form.DummyValue.extend({
 				'class': 'ifacebadge' + (network.getName() == this.network ? ' ifacebadge-active' : '')
 			}, network.getName() + ': ');
 
-			var devices = network.isBridge() ? network.getDevices() : L.toArray(network.getDevice());
+			var subdevs = network.isBridge() ? network.getDevices() : L.toArray(network.getDevice());
 
-			for (var k = 0; k < devices.length && devices[k]; k++) {
+			for (var k = 0; k < subdevs.length && subdevs[k]; k++) {
 				span.appendChild(E('img', {
-					'title': devices[k].getI18n(),
-					'src': L.resource('icons/%s%s.png'.format(devices[k].getType(), devices[k].isUp() ? '' : '_disabled'))
+					'title': subdevs[k].getI18n(),
+					'src': L.resource('icons/%s%s.png'.format(subdevs[k].getType(), subdevs[k].isUp() ? '' : '_disabled'))
 				}));
 			}
 
-			if (!devices.length)
+			if (!subdevs.length)
 				span.appendChild(E('em', _('(empty)')));
 
 			ifaces.push(span);
 		}
+
+		for (var i = 0; i < devices.length; i++) {
+			var device = this.devices.filter(function(dev) { return dev.getName() == devices[i] })[0],
+			    title = device ? device.getI18n() : _('Absent Interface'),
+			    type = device ? device.getType() : 'ethernet',
+			    up = device ? device.isUp() : false;
+
+			ifaces.push(E('span', { 'class': 'ifacebadge' }, [
+				E('img', {
+					'title': title,
+					'src': L.resource('icons/%s%s.png'.format(type, up ? '' : '_disabled'))
+				}),
+				device ? device.getName() : devices[i]
+			]));
+		}
+
+		if (subnets.length > 0)
+			ifaces.push(E('span', { 'class': 'ifacebadge' }, [ '{ %s }'.format(subnets.join('; ')) ]));
 
 		if (!ifaces.length)
 			ifaces.push(E('span', { 'class': 'ifacebadge' }, E('em', _('(empty)'))));
@@ -319,9 +416,120 @@ var CBINetworkSelect = form.ListValue.extend({
 	},
 });
 
+var CBIDeviceSelect = form.ListValue.extend({
+	__name__: 'CBI.DeviceSelect',
+
+	load: function(section_id) {
+		return network.getDevices().then(L.bind(function(devices) {
+			this.devices = devices;
+
+			return this.super('load', section_id);
+		}, this));
+	},
+
+	filter: function(section_id, value) {
+		return true;
+	},
+
+	renderWidget: function(section_id, option_index, cfgvalue) {
+		var values = L.toArray((cfgvalue != null) ? cfgvalue : this.default),
+		    choices = {},
+		    checked = {},
+		    order = [];
+
+		for (var i = 0; i < values.length; i++)
+			checked[values[i]] = true;
+
+		values = [];
+
+		if (!this.multiple && (this.rmempty || this.optional))
+			choices[''] = E('em', _('unspecified'));
+
+		for (var i = 0; i < this.devices.length; i++) {
+			var device = this.devices[i],
+			    name = device.getName(),
+			    type = device.getType();
+
+			if (name == 'lo' || name == this.exclude || !this.filter(section_id, name))
+				continue;
+
+			if (this.noaliases && type == 'alias')
+				continue;
+
+			if (this.nobridges && type == 'bridge')
+				continue;
+
+			if (this.noinactive && device.isUp() == false)
+				continue;
+
+			var item = E([
+				E('img', {
+					'title': device.getI18n(),
+					'src': L.resource('icons/%s%s.png'.format(type, device.isUp() ? '' : '_disabled'))
+				}),
+				E('span', { 'class': 'hide-open' }, [ name ]),
+				E('span', { 'class': 'hide-close'}, [ device.getI18n() ])
+			]);
+
+			var networks = device.getNetworks();
+
+			if (networks.length > 0)
+				L.dom.append(item.lastChild, [ ' (', networks.join(', '), ')' ]);
+
+			if (checked[name])
+				values.push(name);
+
+			choices[name] = item;
+			order.push(name);
+		}
+
+		if (!this.nocreate) {
+			var keys = Object.keys(checked).sort();
+
+			for (var i = 0; i < keys.length; i++) {
+				if (choices.hasOwnProperty(keys[i]))
+					continue;
+
+				choices[keys[i]] = E([
+					E('img', {
+						'title': _('Absent Interface'),
+						'src': L.resource('icons/ethernet_disabled.png')
+					}),
+					E('span', { 'class': 'hide-open' }, [ keys[i] ]),
+					E('span', { 'class': 'hide-close'}, [ '%s: "%h"'.format(_('Absent Interface'), keys[i]) ])
+				]);
+
+				values.push(keys[i]);
+				order.push(keys[i]);
+			}
+		}
+
+		var widget = new ui.Dropdown(this.multiple ? values : values[0], choices, {
+			id: this.cbid(section_id),
+			sort: order,
+			multiple: this.multiple,
+			optional: this.optional || this.rmempty,
+			select_placeholder: E('em', _('unspecified')),
+			display_items: this.display_size || this.size || 3,
+			dropdown_items: this.dropdown_size || this.size || 5,
+			validate: L.bind(this.validate, this, section_id),
+			create: !this.nocreate,
+			create_markup: '' +
+				'<li data-value="{{value}}">' +
+					'<img title="'+_('Custom Interface')+': &quot;{{value}}&quot;" src="'+L.resource('icons/ethernet_disabled.png')+'" />' +
+					'<span class="hide-open">{{value}}</span>' +
+					'<span class="hide-close">'+_('Custom Interface')+': "{{value}}"</span>' +
+				'</li>'
+		});
+
+		return widget.render();
+	},
+});
+
 
 return L.Class.extend({
 	ZoneSelect: CBIZoneSelect,
 	ZoneForwards: CBIZoneForwards,
-	NetworkSelect: CBINetworkSelect
+	NetworkSelect: CBINetworkSelect,
+	DeviceSelect: CBIDeviceSelect,
 });

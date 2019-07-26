@@ -287,8 +287,8 @@ var UISelect = UIElement.extend({
 		this.node = frameEl;
 
 		if (this.options.widget == 'select') {
-			this.setUpdateEvents(frameEl, 'change', 'click', 'blur');
-			this.setChangeEvents(frameEl, 'change');
+			this.setUpdateEvents(frameEl.firstChild, 'change', 'click', 'blur');
+			this.setChangeEvents(frameEl.firstChild, 'change');
 		}
 		else {
 			var radioEls = frameEl.querySelectorAll('input[type="radio"]');
@@ -879,7 +879,7 @@ var UIDropdown = UIElement.extend({
 				else
 					markup = '<li data-value="{{value}}">{{value}}</li>';
 
-				new_item = E(markup.replace(/{{value}}/g, item));
+				new_item = E(markup.replace(/{{value}}/g, '%h'.format(item)));
 
 				if (sbox.options.multi) {
 					sbox.transformItem(sb, new_item);
@@ -1797,7 +1797,7 @@ return L.Class.extend({
 								return chg[1];
 
 						case 4:
-							return "'" + chg[3].replace(/'/g, "'\"'\"'") + "'";
+							return "'%ḧ'".format(chg[3].replace(/'/g, "'\"'\"'"));
 
 						default:
 							return chg[m1-1];
@@ -1929,7 +1929,7 @@ return L.Class.extend({
 						method: 'post',
 						timeout: L.env.apply_timeout * 1000,
 						query: L.ui.changes.confirm_auth
-					}).then(call);
+					}).then(call, call);
 				}, delay);
 			};
 

@@ -285,6 +285,41 @@ local methods = {
 			local fs = require "nixio.fs"
 			return { offload_support = not not fs.access("/sys/module/xt_FLOWOFFLOAD/refcnt") }
 		end
+	},
+
+
+	conntrack_helpers = {
+		call = function()
+			local fd = io.open("/usr/share/fw3/helpers.conf", "r")
+			local rv = {}
+
+			local line, entry
+			while true do
+				line = fd:read("*l")
+				if not line then
+					break
+				end
+
+				if line:match("^%s*config%s") then
+					if entry then
+						rv[#rv+1] = entry
+					end
+					entry = {}
+				else
+					local opt, val = line:match("^%s*option%s+(%S+)%s+(%S.*)$")
+					if opt and val then
+						opt = opt:gsub("^'(.+)'$", "%1"):gsub('^"(.+)"$', "%1")
+						val = val:gsub("^'(.+)'$", "%1"):gsub('^"(.+)"$', "%1")
+						entry[opt] = val
+					end
+				end
+			end
+			if entry then
+				rv[#rv+1] = entry
+			end
+
+			return { helpers = rv }
+		end
 	}
 }
 
