@@ -759,19 +759,21 @@ function interfaces_status()
 	mArray.openmptcprouter["wan_addr"] = ""
 	mArray.openmptcprouter["wan_addr6"] = ""
 	local tracker_ip = ""
+	local check_ipv4_website = uci:get("openmptcprouter","settings","check_ipv4_website") or "http://ip.openmptcprouter.com"
+	local check_ipv6_website = uci:get("openmptcprouter","settings","check_ipv6_website") or "http://ipv6.openmptcprouter.com"
 	if mArray.openmptcprouter["dns"] == true then
 		-- wanaddr
 		--mArray.openmptcprouter["wan_addr"] = uci:get("openmptcprouter","omr","public_detected_ipv4") or ""
 		
 		if uci:get("openmptcprouter","settings","external_check") ~= "0" then
-			mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("wget -4 -qO- -T 2 http://ip.openmptcprouter.com"))
+			mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("wget -4 -qO- -T 2 " .. check_ipv4_website))
 			if mArray.openmptcprouter["wan_addr"] == "" then
 				mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("dig TXT +timeout=2 +short o-o.myaddr.l.google.com | awk -F'\"' '{print $2}'"))
 			end
 			if mArray.openmptcprouter["ipv6"] == "enabled" then
 				mArray.openmptcprouter["wan_addr6"] = uci:get("openmptcprouter","omr","public_detected_ipv6") or ""
 				if mArray.openmptcprouter["wan_addr6"] == "" then
-					mArray.openmptcprouter["wan_addr6"] = ut.trim(sys.exec("wget -6 -qO- -T 2 http://ipv6.openmptcprouter.com"))
+					mArray.openmptcprouter["wan_addr6"] = ut.trim(sys.exec("wget -6 -qO- -T 2 " .. check_ipv6_website))
 				end
 			end
 			mArray.openmptcprouter["external_check"] = true
@@ -785,7 +787,7 @@ function interfaces_status()
 			if tracker_ip ~= "" then
 				local tracker_port = uci:get("shadowsocks-libev","tracker","local_port")
 				if uci:get("openmptcprouter","settings","external_check") ~= "0" then
-					mArray.openmptcprouter["ss_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 2 http://ip.openmptcprouter.com"))
+					mArray.openmptcprouter["ss_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 2 " .. check_ipv4_website))
 					--mArray.openmptcprouter["ss_addr6"] = sys.exec("curl -s -6 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ipv6.openmptcprouter.com")
 				end
 			end
