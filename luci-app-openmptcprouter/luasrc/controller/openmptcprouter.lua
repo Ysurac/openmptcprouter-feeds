@@ -418,9 +418,18 @@ function wizard_add()
 		ucic:set("glorytun","vpn","chacha20",1)
 		if default_vpn == "glorytun_udp" then
 			ucic:set("glorytun","vpn","proto","udp")
+			ucic:set("glorytun","vpn","localip","10.255.254.2")
+			ucic:set("glorytun","vpn","remoteip","10.255.254.1")
+			ucic:set("network","omr6in4","ipaddr","10.255.254.2")
+			ucic:set("network","omr6in4","peeraddr","10.255.254.1")
 		else
 			ucic:set("glorytun","vpn","proto","tcp")
+			ucic:set("glorytun","vpn","localip","10.255.255.2")
+			ucic:set("glorytun","vpn","remoteip","10.255.255.1")
+			ucic:set("network","omr6in4","ipaddr","10.255.255.2")
+			ucic:set("network","omr6in4","peeraddr","10.255.255.1")
 		end
+		ucic:set("network","omrvpn","proto","none")
 	else
 		ucic:set("glorytun","vpn","key","")
 		ucic:set("glorytun","vpn","enable",0)
@@ -432,6 +441,7 @@ function wizard_add()
 	-- Set MLVPN settings
 	if default_vpn == "mlvpn" then
 		ucic:set("mlvpn","general","enable",1)
+		ucic:set("network","omrvpn","proto","dhcp")
 	else
 		ucic:set("mlvpn","general","enable",0)
 	end
@@ -470,11 +480,14 @@ function wizard_add()
 
 	if default_vpn == "openvpn" then
 		ucic:set("openvpn","omr","enabled",1)
+		ucic:set("network","omrvpn","proto","dhcp")
 	else
 		ucic:set("openvpn","omr","enabled",0)
 	end
 	ucic:save("openvpn")
 	ucic:commit("openvpn")
+	ucic:save("network")
+	ucic:commit("network")
 
 	-- OpenMPTCProuter VPS
 	--local openmptcprouter_vps_key = luci.http.formvalue("openmptcprouter_vps_key") or ""
