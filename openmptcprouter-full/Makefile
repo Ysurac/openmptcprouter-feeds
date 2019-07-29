@@ -40,7 +40,7 @@ MY_DEPENDS := \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail luci-app-upnp \
     luci-app-wol luci-app-opkg \
     luci-app-uhttpd \
-    luci-mod-rpc \
+    luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
     luci-ssl-openssl \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd iputils-traceroute6 ip6tables \
     speedtestc \
