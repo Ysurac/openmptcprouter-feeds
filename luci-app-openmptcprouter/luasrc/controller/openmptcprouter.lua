@@ -781,7 +781,7 @@ function interfaces_status()
 		if uci:get("openmptcprouter","settings","external_check") ~= "0" then
 			mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("wget -4 -qO- -T 2 " .. check_ipv4_website))
 			if mArray.openmptcprouter["wan_addr"] == "" then
-				mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("dig TXT +timeout=2 +short o-o.myaddr.l.google.com | awk -F'\"' '{print $2}'"))
+				mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("dig TXT +timeout=2 +short o-o.myaddr.l.google.com @ns1.google.com | awk -F'\"' '{print $2}'"))
 			end
 			if mArray.openmptcprouter["ipv6"] == "enabled" then
 				mArray.openmptcprouter["wan_addr6"] = uci:get("openmptcprouter","omr","public_detected_ipv6") or ""
