@@ -196,6 +196,8 @@ var CBIMap = CBINode.extend({
 
 		if (changed && (n || 0) < 10)
 			this.checkDepends(ev, (n || 10) + 1);
+
+		ui.tabs.updateTabs(ev, this.root);
 	}
 });
 
@@ -1065,6 +1067,10 @@ var CBITableSection = CBITypedSection.extend({
 			.catch(function() {});
 	},
 
+	addModalOptions: function(modalSection, section_id, ev) {
+
+	},
+
 	renderMoreOptionsModal: function(section_id, ev) {
 		var parent = this.map,
 		    title = parent.title,
@@ -1109,7 +1115,7 @@ var CBITableSection = CBITypedSection.extend({
 		}
 
 		//ev.target.classList.add('spinning');
-		m.render().then(L.bind(function(nodes) {
+		Promise.resolve(this.addModalOptions(s, section_id, ev)).then(L.bind(m.render, m)).then(L.bind(function(nodes) {
 			//ev.target.classList.remove('spinning');
 			L.ui.showModal(title, [
 				nodes,
@@ -1460,7 +1466,7 @@ var CBIListValue = CBIValue.extend({
 			id: this.cbid(section_id),
 			size: this.size,
 			sort: this.keylist,
-			optional: this.rmempty || this.optional,
+			optional: this.optional,
 			placeholder: this.placeholder,
 			validate: L.bind(this.validate, this, section_id)
 		});
