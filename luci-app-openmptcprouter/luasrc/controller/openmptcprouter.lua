@@ -278,6 +278,10 @@ function wizard_add()
 		vpn_port = 65201
 		vpn_intf = "mlvpn0"
 		ucic:set("network","omrvpn","proto","dhcp")
+	elseif default_vpn == "dsvpn" then
+		vpn_port = 65011
+		vpn_intf = "tun0"
+		ucic:set("network","omrvpn","proto","none")
 	elseif default_vpn == "openvpn" then
 		vpn_port = 65301
 		vpn_intf = "tun0"
@@ -363,6 +367,7 @@ function wizard_add()
 			end
 			ucic:set("shadowsocks-libev","sss0","server",server_ip)
 			ucic:set("glorytun","vpn","host",server_ip)
+			ucic:set("dsvpn","vpn","host",server_ip)
 			ucic:set("mlvpn","general","host",server_ip)
 			luci.sys.call("uci -q del openvpn.omr.remote")
 			luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
@@ -379,6 +384,8 @@ function wizard_add()
 	ucic:commit("openvpn")
 	ucic:save("mlvpn")
 	ucic:commit("mlvpn")
+	ucic:save("dsvpn")
+	ucic:commit("dsvpn")
 	ucic:save("glorytun")
 	ucic:commit("glorytun")
 	ucic:save("shadowsocks-libev")
@@ -437,6 +444,29 @@ function wizard_add()
 	end
 	ucic:save("glorytun")
 	ucic:commit("glorytun")
+
+	-- Set A Dead Simple VPN settings
+	if default_vpn == "dsvpn" then
+		ucic:set("dsvpn","vpn","enable",1)
+	else
+		ucic:set("dsvpn","vpn","enable",0)
+	end
+
+	local dsvpn_key = luci.http.formvalue("dsvpn_key")
+	if dsvpn_key ~= "" then
+		ucic:set("dsvpn","vpn","port","65011")
+		ucic:set("dsvpn","vpn","key",dsvpn_key)
+		ucic:set("glorytun","vpn","localip","10.255.251.2")
+		ucic:set("glorytun","vpn","remoteip","10.255.251.1")
+		ucic:set("network","omr6in4","ipaddr","10.255.251.2")
+		ucic:set("network","omr6in4","peeraddr","10.255.251.1")
+		ucic:set("network","omrvpn","proto","none")
+	else
+		ucic:set("dsvpn","vpn","key","")
+		ucic:set("dsvpn","vpn","enable",0)
+	end
+	ucic:save("dsvpn")
+	ucic:commit("dsvpn")
 
 	-- Set MLVPN settings
 	if default_vpn == "mlvpn" then
@@ -509,6 +539,7 @@ function wizard_add()
 		os.execute("sleep 2")
 	end
 	luci.sys.call("/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null")
+	luci.sys.call("/etc/init.d/dsvpn restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
 	--luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
@@ -879,7 +910,7 @@ function interfaces_status()
 	mArray.openmptcprouter["tun_service"] = false
 	mArray.openmptcprouter["tun_state"] = ""
 	mArray.openmptcprouter["tun6_state"] = ""
-	if string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?glorytun(-udp)?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?mlvpn?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?openvpn?$'"), "%d+") then
+	if string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?glorytun(-udp)?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?mlvpn?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?openvpn?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?dsvpn?$'"), "%d+") then
 		mArray.openmptcprouter["tun_service"] = true
 		mArray.openmptcprouter["tun_ip"] = get_ip("omrvpn")
 		local tun_dev = uci:get("network","omrvpn","ifname")

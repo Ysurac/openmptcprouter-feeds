@@ -17,6 +17,7 @@ MY_DEPENDS := \
     mptcp       \
     unbound-daemon unbound-control \
     netifd      \
+    dsvpn \
     mc          \
     f2fs-tools \
     openmptcprouter \
