@@ -14,7 +14,7 @@ PKG_NAME:=dsvpn
 PKG_VERSION:=0.1.0-$(PKG_SOURCE_VERSION)
 PKG_RELEASE:=1
 
-PKG_FIXUP:=autoreconf
+PKG_BUILD_PARALLEL:=0
 
 include $(INCLUDE_DIR)/package.mk
 
