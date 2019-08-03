@@ -14,8 +14,6 @@ PKG_NAME:=dsvpn
 PKG_VERSION:=0.1.0-$(PKG_SOURCE_VERSION)
 PKG_RELEASE:=1
 
-PKG_BUILD_PARALLEL:=0
-
 include $(INCLUDE_DIR)/package.mk
 
 define Package/$(PKG_NAME)
@@ -42,4 +40,3 @@ define Package/$(PKG_NAME)/install
 endef
 
 $(eval $(call BuildPackage,$(PKG_NAME)))
-
