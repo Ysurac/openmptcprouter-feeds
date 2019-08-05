@@ -439,7 +439,7 @@ function wizard_add()
 		ucic:set("network","omrvpn","proto","none")
 	else
 		ucic:set("glorytun","vpn","key","")
-		ucic:set("glorytun","vpn","enable",0)
+		--ucic:set("glorytun","vpn","enable",0)
 		ucic:set("glorytun","vpn","proto","tcp")
 	end
 	ucic:save("glorytun")
@@ -463,7 +463,7 @@ function wizard_add()
 		ucic:set("network","omrvpn","proto","none")
 	else
 		ucic:set("dsvpn","vpn","key","")
-		ucic:set("dsvpn","vpn","enable",0)
+		--ucic:set("dsvpn","vpn","enable",0)
 	end
 	ucic:save("dsvpn")
 	ucic:commit("dsvpn")
