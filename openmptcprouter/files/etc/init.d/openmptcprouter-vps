@@ -298,6 +298,19 @@ _get_vps_config() {
 			/etc/init.d/dnsmasq restart >/dev/null 2>&1
 		fi
 	fi
+	if [ "$vpn" = "dsvpn" ]; then
+		if [ "$pihole" = "true" ] && [ "$(uci -q get dhcp.@dnsmasq[0].server)" != "$host_ip#53" ]; then
+			host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.host_ip')"
+			uci -q batch <<-EOF >/dev/null
+				delete dhcp.@dnsmasq[0].server
+				add_list dhcp.@dnsmasq[0].server="$host_ip#53"
+				set dhcp.@dnsmasq[0].rebind_protection='0'
+				commit dhcp
+			EOF
+			logger -t "OMR-VPS" "Restart dnsmasq..."
+			/etc/init.d/dnsmasq restart >/dev/null 2>&1
+		fi
+	fi
 	if [ "$glorytun_change" != "0" ]; then
 		logger -t "OMR-VPS" "Restart glorytun..."
 		uci -q batch <<-EOF >/dev/null
@@ -380,7 +393,7 @@ _set_ss_redir() {
 }
 
 _set_config_from_vps() {
-	local shadowsocks_disabled vpn glorytun_state redirect shorewall_redirect mlvpn_key openvpn_key
+	local shadowsocks_disabled vpn glorytun_state redirect shorewall_redirect mlvpn_key openvpn_key dsvpn_key
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 
@@ -480,6 +493,17 @@ _set_config_from_vps() {
 		EOF
 		logger -t "OMR-VPS" "MLVPN restart..."
 		/etc/init.d/mlvpn restart
+	fi
+
+	# DSVPN settings
+	dsvpn_key="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.key')"
+	if [ -n "$dsvpn_key" ] && [ "$dsvpn_key" != "$(uci -q get dsvpn.vpn.key)" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set dsvpn.vpn.key=$dsvpn_key
+			commit dsvpn
+		EOF
+		logger -t "OMR-VPS" "DSVPN restart..."
+		/etc/init.d/dsvpn restart
 	fi
 
 	# Shorewall settings
@@ -639,6 +663,6 @@ start_service() {
 }
 
 service_triggers() {
-	procd_add_reload_trigger openmptcprouter shadowsocks-libev glorytun mlvpn openvpn network upnpd
+	procd_add_reload_trigger openmptcprouter shadowsocks-libev glorytun mlvpn openvpn network upnpd dsvpn
 	#procd_add_reload_trigger openmptcprouter shadowsocks-libev network upnpd
 }
