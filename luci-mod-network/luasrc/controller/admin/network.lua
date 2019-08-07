@@ -1,5 +1,6 @@
 -- Copyright 2008 Steven Barth <steven@midlink.org>
 -- Copyright 2011-2018 Jo-Philipp Wich <jo@mein.io>
+-- Copyright 2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter project
 -- Licensed to the public under the Apache License 2.0.
 
 module("luci.controller.admin.network", package.seeall)
@@ -136,6 +137,12 @@ function index()
 		page.leaf = true
 
 		page = entry({"admin", "network", "diag_ping6"}, post("diag_ping6"), nil)
+		page.leaf = true
+
+		page = entry({"admin", "network", "diag_getip"}, post("diag_getip"), nil)
+		page.leaf = true
+
+		page = entry({"admin", "network", "diag_netstat"}, post("diag_netstat"), nil)
 		page.leaf = true
 
 		page = entry({"admin", "network", "diag_traceroute6"}, post("diag_traceroute6"), nil)
@@ -419,4 +426,12 @@ end
 
 function diag_traceroute6(addr)
 	diag_command("traceroute6 -q 1 -w 2 -n %s 2>&1", addr)
+end
+
+function diag_getip(addr)
+	diag_command("wget -4 -qO- -T 2 %s 2>&1", addr)
+end
+
+function diag_netstat()
+	diag_command("netstat -lapute 2>&1","http://www.none.com/")
 end
