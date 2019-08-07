@@ -7,7 +7,7 @@ local json  = require("luci.json")
 local fs    = require("nixio.fs")
 local net   = require "luci.model.network".init()
 local ucic  = luci.model.uci.cursor()
-local json  = require "luci.jsonc"
+local jsonc  = require "luci.jsonc"
 
 function interface_from_device(dev)
 	for _, iface in ipairs(net:get_networks()) do
@@ -233,7 +233,7 @@ function default_vpn(default_vpn)
 		vpn_intf = "tun0"
 		--ucic:set("network","omrvpn","proto","dhcp")
 		ucic:set("network","omrvpn","proto","none")
-		if default_vpn == "glorytun" then
+		if default_vpn == "glorytun_udp" then
 			ucic:set("glorytun","vpn","proto","udp")
 			ucic:set("glorytun","vpn","localip","10.255.254.2")
 			ucic:set("glorytun","vpn","remoteip","10.255.254.1")
@@ -251,10 +251,10 @@ function default_vpn(default_vpn)
 		vpn_intf = "tun0"
 		--ucic:set("network","omrvpn","proto","dhcp")
 		ucic:set("network","omrvpn","proto","none")
-		ucic:set("dsvpn","vpn","localip","10.255.254.2")
-		ucic:set("dsvpn","vpn","remoteip","10.255.254.1")
-		ucic:set("network","omr6in4","ipaddr","10.255.254.2")
-		ucic:set("network","omr6in4","peeraddr","10.255.254.1")
+		ucic:set("dsvpn","vpn","localip","10.255.251.2")
+		ucic:set("dsvpn","vpn","remoteip","10.255.251.1")
+		ucic:set("network","omr6in4","ipaddr","10.255.251.2")
+		ucic:set("network","omr6in4","peeraddr","10.255.251.1")
 	elseif default_vpn == "mlvpn" then
 		vpn_port = 65201
 		vpn_intf = "mlvpn0"
@@ -328,83 +328,6 @@ function server_settings(server,server_ip,openmptcprouter_vps_key)
 	ucic:set("qos","serverout","dsthost",server_ip)
 	ucic:save("qos")
 	ucic:commit("qos")
-	ucic:save("mlvpn")
-	ucic:commit("mlvpn")
-	ucic:save("dsvpn")
-	ucic:commit("dsvpn")
-	ucic:save("glorytun")
-	ucic:commit("glorytun")
-	ucic:save("shadowsocks-libev")
-	ucic:commit("shadowsocks-libev")
-end
-
-function server_failover(server,master)
-	if master == server or master == "" then
-		ucic:set("openmptcprouter",server,"get_config","1")
-		ucic:set("openmptcprouter",server,"master","1")
-		ucic:set("openmptcprouter",server,"backup","0")
-	else
-		ucic:set("openmptcprouter",server,"get_config","0")
-		ucic:set("openmptcprouter",server,"master","0")
-		ucic:set("openmptcprouter",server,"backup","1")
-	end
-
-	local ss_servers_nginx = {}
-	local ss_servers_ha = {}
-	local vpn_servers = {}
-	local k = 0
-	local ss_ip
-
-	-- We have an IP, so set it everywhere
-	if server_ip ~= "" then
-		-- Check if we have more than one IP, in this case use Nginx HA
-		if master == server then
-			ss_ip=server_ip
-			table.insert(ss_servers_nginx,server_ip .. ":65101 max_fails=2 fail_timeout=20s")
-			table.insert(ss_servers_ha,server_ip .. ":65101 check")
-			if vpn_port ~= "" then
-				table.insert(vpn_servers,server_ip .. ":" .. vpn_port .. " max_fails=2 fail_timeout=20s")
-			end
-		else
-			table.insert(ss_servers_nginx,server_ip .. ":65101 backup")
-			table.insert(ss_servers_ha,server_ip .. ":65101 backup")
-			if vpn_port ~= "" then
-				table.insert(vpn_servers,server_ip .. ":" .. vpn_port .. " backup")
-			end
-		end
-				k = k + 1
-				ucic:set("nginx-ha","ShadowSocks","enable","1")
-				ucic:set("nginx-ha","VPN","enable","1")
-				ucic:set("nginx-ha","ShadowSocks","upstreams",ss_servers_nginx)
-				ucic:set("nginx-ha","VPN","upstreams",vpn_servers)
-				ucic:set("haproxy-tcp","general","enable","0")
-				ucic:set("haproxy-tcp","general","upstreams",ss_servers_ha)
-				server_ip = "127.0.0.1"
-				--ucic:set("shadowsocks-libev","sss0","server",ss_ip)
-			else
-				ucic:set("nginx-ha","ShadowSocks","enable","0")
-				ucic:set("nginx-ha","VPN","enable","0")
-				--ucic:set("shadowsocks-libev","sss0","server",server_ip)
-				--ucic:set("openmptcprouter","vps","ip",server_ip)
-				--ucic:save("openmptcprouter")
-			end
-			ucic:set("shadowsocks-libev","sss0","server",server_ip)
-			ucic:set("glorytun","vpn","host",server_ip)
-			ucic:set("dsvpn","vpn","host",server_ip)
-			ucic:set("mlvpn","general","host",server_ip)
-			luci.sys.call("uci -q del openvpn.omr.remote")
-			luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
-			ucic:set("qos","serverin","srchost",server_ip)
-			ucic:set("qos","serverout","dsthost",server_ip)
-		end
-	end
-
-	ucic:save("qos")
-	ucic:commit("qos")
-	ucic:save("nginx-ha")
-	ucic:commit("nginx-ha")
-	ucic:save("openvpn")
-	ucic:commit("openvpn")
 	ucic:save("mlvpn")
 	ucic:commit("mlvpn")
 	ucic:save("dsvpn")
@@ -925,8 +848,13 @@ function interfaces_status()
 		mptcp[ipaddr].ipaddr= ipaddr
 	end
 
+
+	mArray.openmptcprouter['model'] = sys.exec("ubus call system board | jsonfilter -q -e '@.model' 2>/dev/nul")
+	local board_name = sys.exec("ubus call system board | jsonfilter -q -e '@.board_name' 2>/dev/nul")
 	-- retrieve core temperature
-	--mArray.openmptcprouter["core_temp"] = sys.exec("cat /sys/devices/platform/coretemp.0/hwmon/hwmon0/temp2_input 2>/dev/null"):match("%d+")
+	if board_name:match("^raspberrypi.*") then
+		mArray.openmptcprouter["core_temp"] = sys.exec("cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null"):match("%d+")
+	end
 	mArray.openmptcprouter["loadavg"] = sys.exec("cat /proc/loadavg 2>/dev/null"):match("[%d%.]+ [%d%.]+ [%d%.]+")
 	mArray.openmptcprouter["uptime"] = sys.exec("cat /proc/uptime 2>/dev/null"):match("[%d%.]+")
 
@@ -1482,7 +1410,7 @@ local methods = {
 }
 
 local function parseInput()
-	local parse = json.new()
+	local parse = jsonc.new()
 	local done, err
 
 	while true do
@@ -1495,7 +1423,7 @@ local function parseInput()
 	end
 
 	if not done then
-		print(json.stringify({ error = err or "Incomplete input" }))
+		print(jsonc.stringify({ error = err or "Incomplete input" }))
 		os.exit(1)
 	end
 
@@ -1505,12 +1433,12 @@ end
 local function validateArgs(func, uargs)
 	local method = methods[func]
 	if not method then
-		print(json.stringify({ error = "Method not found" }))
+		print(jsonc.stringify({ error = "Method not found" }))
 		os.exit(1)
 	end
 
 	if type(uargs) ~= "table" then
-		print(json.stringify({ error = "Invalid arguments" }))
+		print(jsonc.stringify({ error = "Invalid arguments" }))
 		os.exit(1)
 	end
 
@@ -1522,7 +1450,7 @@ local function validateArgs(func, uargs)
 		if margs[k] == nil or
 		    (v ~= nil and type(v) ~= type(margs[k]))
 		then
-			print(json.stringify({ error = "Invalid arguments" }))
+			print(jsonc.stringify({ error = "Invalid arguments" }))
 			os.exit(1)
 		end
 	end
@@ -1532,11 +1460,11 @@ end
 if arg[1] == "list" then
 	local _, method, rv = nil, nil, {}
 	for _, method in pairs(methods) do rv[_] = method.args or {} end
-	print((json.stringify(rv):gsub(":%[%]", ":{}")))
+	print((jsonc.stringify(rv):gsub(":%[%]", ":{}")))
 elseif arg[1] == "call" then
 	local args = parseInput()
 	local method = validateArgs(arg[2], args)
 	local result, code = method.call(args)
-	print((json.stringify(result):gsub("^%[%]$", "{}")))
+	print((jsonc.stringify(result):gsub("^%[%]$", "{}")))
 	os.exit(code or 0)
 end

@@ -456,8 +456,8 @@ function wizard_add()
 	if dsvpn_key ~= "" then
 		ucic:set("dsvpn","vpn","port","65011")
 		ucic:set("dsvpn","vpn","key",dsvpn_key)
-		ucic:set("glorytun","vpn","localip","10.255.251.2")
-		ucic:set("glorytun","vpn","remoteip","10.255.251.1")
+		ucic:set("dsvpn","vpn","localip","10.255.251.2")
+		ucic:set("dsvpn","vpn","remoteip","10.255.251.1")
 		ucic:set("network","omr6in4","ipaddr","10.255.251.2")
 		ucic:set("network","omr6in4","peeraddr","10.255.251.1")
 		ucic:set("network","omrvpn","proto","none")
@@ -764,6 +764,14 @@ end
 -- Modified by Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 -- Under GPL3+
 function interfaces_status()
+	local ut = require "luci.util"
+	local rv = ut.ubus("openmptcprouter", "status", {}) or {_=0}
+
+	luci.http.prepare_content("application/json")
+	luci.http.write_json(rv)
+end
+
+function old_interfaces_status()
 	local ut      = require "luci.util"
 	local ntm     = require "luci.model.network".init()
 	local uci     = require "luci.model.uci".cursor()

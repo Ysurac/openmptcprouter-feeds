@@ -54,7 +54,7 @@ _set_json() {
 _set_glorytun_vps() {
 	local enabled port key
 	enabled="$(uci -q get glorytun.vpn.enable)"
-	[ "$enabled" != "1" ] && echo "Glorytun disabled"
+	[ "$enabled" != "1" ] && echo "Glorytun disabled" && return
 	port="$(uci -q get glorytun.vpn.port)"
 	key="$(uci -q get glorytun.vpn.key)"
 	chacha="$(uci -q get glorytun.vpn.chacha20)"
@@ -63,7 +63,7 @@ _set_glorytun_vps() {
 	else
 		chacha="false"
 	fi
-	[ -z "$key" ] && echo "Glorytun key not set"
+	[ -z "$key" ] && echo "Glorytun key not set" && return
 	local current_port current_key current_chacha
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
@@ -82,7 +82,7 @@ _set_glorytun_vps() {
 _set_openvpn_vps() {
 	local enabled port key
 	enabled="$(uci -q get openvpn.omr.enabled)"
-	[ "$enabled" != "1" ] && echo "OpenVPN disabled"
+	[ "$enabled" != "1" ] && echo "OpenVPN disabled" && return
 	port="$(uci -q get openvpn.omr.port)"
 	keyfile="$(uci -q get openvpn.omr.secret)"
 	if [ -n "$keyfile" ]; then
@@ -90,7 +90,7 @@ _set_openvpn_vps() {
 	else
 		key=""
 	fi
-	[ -z "$key" ] && echo "OpenVPN key not set"
+	[ -z "$key" ] && echo "OpenVPN key not set" && return
 	local current_port current_key
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
@@ -397,6 +397,16 @@ _set_config_from_vps() {
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 
+	# Set current VPN
+	current_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
+	if [ -n "$current_vpn" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.settings.vpn=${current_vpn}
+		EOF
+	fi
+	current_vpn="$(uci -q get openmptcprouter.settings.vpn)"
+
+
 	# Shadowsocks settings
 	shadowsocks_disabled="$(uci -q get openmptcprouter.settings.shadowsocks_disable)"
 	[ -z "$shadowsocks_disabled" ] && shadowsocks_disabled=0
@@ -475,9 +485,15 @@ _set_config_from_vps() {
 		echo $openvpn_key | base64 -d > /etc/luci-uploads/openvpn.key
 		openvpn_port="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.port')"
 		[ -z "$openvpn_port" ] && openvpn_port="65001"
+		vpn="$(uci -q get openmptcprouter.settings.vpn)"
+		openvpn_state=0
+		if [ "$vpn" = "openvpn" ]; then
+			openvpn_state=1
+		fi
 		uci -q batch <<-EOF >/dev/null
 			set openvpn.omr.port=$openvpn_port
 			set openvpn.omr.secret="/etc/luci-uploads/openvpn.key"
+			set openvpn.omr.enabled=$openvpn_state
 			commit openvpn
 		EOF
 		logger -t "OMR-VPS" "OpenVPN restart..."
@@ -487,8 +503,14 @@ _set_config_from_vps() {
 	# MLVPN settings
 	mlvpn_key="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.key')"
 	if [ -n "$mlvpn_key" ] && [ "$mlvpn_key" != "$(uci -q get mlvpn.general.password)" ]; then
+		vpn="$(uci -q get openmptcprouter.settings.vpn)"
+		mlvpn_state=0
+		if [ "$vpn" = "mlvpn" ]; then
+			mlvpn_state=1
+		fi
 		uci -q batch <<-EOF >/dev/null
 			set mlvpn.general.password=$mlvpn_key
+			set mlvpn.general.enable=$mlvpn_state
 			commit mlvpn
 		EOF
 		logger -t "OMR-VPS" "MLVPN restart..."
@@ -498,8 +520,13 @@ _set_config_from_vps() {
 	# DSVPN settings
 	dsvpn_key="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.key')"
 	if [ -n "$dsvpn_key" ] && [ "$dsvpn_key" != "$(uci -q get dsvpn.vpn.key)" ]; then
+		dsvpn_state=0
+		if [ "$vpn" = "dsvpn" ]; then
+			dsvpn_state=1
+		fi
 		uci -q batch <<-EOF >/dev/null
 			set dsvpn.vpn.key=$dsvpn_key
+			set dsvpn.vpn.enable=$dsvpn_state
 			commit dsvpn
 		EOF
 		logger -t "OMR-VPS" "DSVPN restart..."
@@ -568,12 +595,6 @@ _set_config_from_vps() {
 		commit iperf
 	EOF
 
-	# Set current VPN
-	current_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
-	uci -q batch <<-EOF >/dev/null
-		set openmptcprouter.settings.vpn=${current_vpn}
-	EOF
-
 	# Get available server
 	available_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.available' | sed -e 's/\[ //' -e 's/ \]//' -e 's/,//g')"
 	uci -q batch <<-EOF >/dev/null
@@ -588,6 +609,7 @@ _set_config_from_vps() {
 	fi
 	uci -q batch <<-EOF >/dev/null
 		set openmptcprouter.${servername}.get_config=0
+		commit openmptcprouter
 	EOF
 }
 
