@@ -1,5 +1,6 @@
 #
 # Copyright (C) 2018-2019 chenhw2 <https://github.com/chenhw2>
+# Copyright (C) 2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter project
 #
 # This is free software, licensed under the GNU General Public License v3.
 # See /LICENSE for more information.
@@ -8,11 +9,11 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=v2ray-plugin
-PKG_MAINTAINER:=chenhw2 <https://github.com/chenhw2>
+PKG_MAINTAINER:=Ycarus
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/shadowsocks/v2ray-plugin.git
-PKG_SOURCE_VERSION:=1e5b3780468cadb1b3efa456434b525c208c888d
+PKG_SOURCE_VERSION:=2e56b2b70d12233e336afbaa6788bf5f5c12e2ee
 
 PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_PARALLEL:=1
