@@ -6,6 +6,8 @@ START=99
 
 USE_PROCD=1
 
+EXTRA_COMMANDS="set_pihole"
+
 _parse_result() {
 	result=$("echo $1 | jsonfilter -q -e '@.result'")
 	echo $result
@@ -174,17 +176,6 @@ _get_vps_config() {
 	EOF
 	vpn="$(uci -q get openmptcprouter.settings.vpn)"
 
-	pihole="$(echo "$vps_config" | jsonfilter -q -e '@.pihole.state')"
-	if [ "$pihole" = "true" ]; then
-		uci -q batch <<-EOF >/dev/null
-			set openmptcprouter.${servername}.pihole='1'
-		EOF
-	else
-		uci -q batch <<-EOF >/dev/null
-			set openmptcprouter.${servername}.pihole='0'
-		EOF
-	fi
-
 	glorytun_state=0
 	glorytun_change=0
 	if [ "$vpn" = "glorytun_tcp" ]; then
@@ -223,16 +214,6 @@ _get_vps_config() {
 				glorytun_change=1
 			fi
 		fi
-		if [ "$pihole" = "true" ] && [ "$(uci -q get dhcp.@dnsmasq[0].server)" != "$host_ip#53" ]; then
-			uci -q batch <<-EOF >/dev/null
-				delete dhcp.@dnsmasq[0].server
-				add_list dhcp.@dnsmasq[0].server="$host_ip#53"
-				set dhcp.@dnsmasq[0].rebind_protection='0'
-				commit dhcp
-			EOF
-			logger -t "OMR-VPS" "Restart dnsmasq..."
-			/etc/init.d/dnsmasq restart >/dev/null 2>&1
-		fi
 	fi
 	if [ "$vpn" = "glorytun_udp" ]; then
 		glorytun_state=1
@@ -270,6 +251,45 @@ _get_vps_config() {
 				glorytun_change=1
 			fi
 		fi
+	fi
+	if [ "$glorytun_change" != "0" ]; then
+		logger -t "OMR-VPS" "Restart glorytun..."
+		uci -q batch <<-EOF >/dev/null
+			commit glorytun
+		EOF
+		/etc/init.d/glorytun restart >/dev/null 2>&1
+		/etc/init.d/glorytun-udp restart >/dev/null 2>&1
+	fi
+}
+
+set_pihole() {
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	vpn="$(uci -q get openmptcprouter.settings.vpn)"
+	pihole="$(echo "$vps_config" | jsonfilter -q -e '@.pihole.state')"
+	if [ "$pihole" = "true" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.pihole='1'
+		EOF
+	else
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.pihole='0'
+		EOF
+	fi
+
+	if [ "$vpn" = "glorytun_tcp" ]; then
+		if [ "$pihole" = "true" ] && [ "$(uci -q get dhcp.@dnsmasq[0].server)" != "$host_ip#53" ]; then
+			uci -q batch <<-EOF >/dev/null
+				delete dhcp.@dnsmasq[0].server
+				add_list dhcp.@dnsmasq[0].server="$host_ip#53"
+				set dhcp.@dnsmasq[0].rebind_protection='0'
+				commit dhcp
+			EOF
+			logger -t "OMR-VPS" "Restart dnsmasq..."
+			/etc/init.d/dnsmasq restart >/dev/null 2>&1
+		fi
+	fi
+	if [ "$vpn" = "glorytun_udp" ]; then
 		if [ "$pihole" = "true" ] && [ "$(uci -q get dhcp.@dnsmasq[0].server)" != "$host_ip#53" ]; then
 			uci -q batch <<-EOF >/dev/null
 				delete dhcp.@dnsmasq[0].server
@@ -319,14 +339,6 @@ _get_vps_config() {
 			logger -t "OMR-VPS" "Restart dnsmasq..."
 			/etc/init.d/dnsmasq restart >/dev/null 2>&1
 		fi
-	fi
-	if [ "$glorytun_change" != "0" ]; then
-		logger -t "OMR-VPS" "Restart glorytun..."
-		uci -q batch <<-EOF >/dev/null
-			commit glorytun
-		EOF
-		/etc/init.d/glorytun restart >/dev/null 2>&1
-		/etc/init.d/glorytun-udp restart >/dev/null 2>&1
 	fi
 }
 
@@ -666,6 +678,7 @@ _config_service() {
 		}
 	fi
 	uci -q set openmptcprouter.settings.firstboot=0
+	set_pihole
 
 	config_load shadowsocks-libev
 	config_foreach _set_ss_server_vps server
