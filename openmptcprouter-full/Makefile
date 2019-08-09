@@ -72,7 +72,7 @@ MY_DEPENDS := \
     umbim kmod-mii kmod-usb-net kmod-usb-wdm kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim umbim \
     kmod-usb-net-huawei-cdc-ncm kmod-usb-net-rndis kmod-usb-net-cdc-ether kmod-usb-net-ipheth usbmuxd \
     kmod-rt2800-usb kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su \
-    luci-proto-qmi wpad-basic kmod-mt7601u
+    luci-proto-qmi wpad-basic kmod-mt7601u kmod-rtl8187
 
 #    (TARGET_x86||TARGET_x86_64):open-vm-tools \
 #    luci-app-mlvpn mlvpn \
