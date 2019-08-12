@@ -166,6 +166,11 @@ _set_ss_server_vps() {
 _get_vps_config() {
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
+	vps_lastchange="$(echo "$vps_config" | jsonfilter -q -e '@.vps.lastchange')"
+	if [ -n "$(uci -q get openmptcprouter.${servername}.lastchange)" ] && [ "$vps_lastchange" -gt "$(uci -q get openmptcprouter.${servername}.lastchange)" ]; then
+		_set_config_from_vps
+	fi
+
 	vps_kernel="$(echo "$vps_config" | jsonfilter -q -e '@.vps.kernel')"
 	vps_machine="$(echo "$vps_config" | jsonfilter -q -e '@.vps.machine')"
 	vps_omr_version="$(echo "$vps_config" | jsonfilter -q -e '@.vps.omr_version')"
@@ -691,6 +696,7 @@ _config_service() {
 	[ -z "$(_set_redirect_ports_from_vps $redirect_port)" ] && error=1
 	[ -z "$(_set_mptcp_vps)" ] && error=1
 	[ -z "$(_set_vpn_vps)" ] && error=1
+	[ "$error" = 0 ] && uci -q set openmptcprouter.${servername}.lastchange=$(date "+%s")
 	uci -q batch <<-EOF >/dev/null
 		set openmptcprouter.${servername}.admin_error=$error
 	EOF
