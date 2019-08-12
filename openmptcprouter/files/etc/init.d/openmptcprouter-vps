@@ -424,14 +424,16 @@ _set_config_from_vps() {
 	[ -z "$vps_config" ] && return
 
 	# Set current VPN
-	current_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
-	if [ -n "$current_vpn" ]; then
-		uci -q batch <<-EOF >/dev/null
-			set openmptcprouter.settings.vpn=${current_vpn}
-		EOF
-	fi
 	current_vpn="$(uci -q get openmptcprouter.settings.vpn)"
-
+	if [ -z "$current_vpn" ] || [ -n "$vps_lastchange" ]; then
+		current_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
+		if [ -n "$current_vpn" ]; then
+			uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.settings.vpn=${current_vpn}
+			commit openmptcprouter
+			EOF
+		fi
+	fi
 
 	# Shadowsocks settings
 	shadowsocks_disabled="$(uci -q get openmptcprouter.settings.shadowsocks_disable)"
