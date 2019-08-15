@@ -227,24 +227,21 @@ function wizard_add()
 			ucic:set("network",intf,"uploadspeed",uploadspeed)
 			ucic:set("sqm",intf,"download",math.ceil(downloadspeed*95/100))
 			ucic:set("sqm",intf,"upload",math.ceil(uploadspeed*95/100))
-			if sqmenabled == "1" then
-				ucic:set("sqm",intf,"enabled","1")
-			else
-				ucic:set("sqm",intf,"enabled","0")
-			end
 			ucic:set("qos",intf,"download",math.ceil(downloadspeed*95/100))
 			ucic:set("qos",intf,"upload",math.ceil(uploadspeed*95/100))
-			if sqmenabled == "1" then
-				ucic:set("qos",intf,"enabled","1")
-			else
-				ucic:set("qos",intf,"enabled","0")
-			end
 		else
 			ucic:set("sqm",intf,"download","0")
 			ucic:set("sqm",intf,"upload","0")
 			ucic:set("sqm",intf,"enabled","0")
 			ucic:set("qos",intf,"download","0")
 			ucic:set("qos",intf,"upload","0")
+			ucic:set("qos",intf,"enabled","0")
+		end
+		if sqmenabled == "1" then
+			ucic:set("sqm",intf,"enabled","1")
+			ucic:set("qos",intf,"enabled","1")
+		else
+			ucic:set("sqm",intf,"enabled","0")
 			ucic:set("qos",intf,"enabled","0")
 		end
 	end
