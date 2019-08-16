@@ -597,12 +597,19 @@ function settings_add()
 	-- Enable/disable external check
 	local externalcheck = luci.http.formvalue("externalcheck") or "1"
 	ucic:set("openmptcprouter","settings","external_check",externalcheck)
-	ucic:commit("openmptcprouter")
 
 	-- Enable/disable external check
 	local savevnstat = luci.http.formvalue("savevnstat") or "0"
 	luci.sys.exec("uci -q set vnstat.@vnstat[0].backup=%s" % savevnstat)
-	ucic:commit("openmptcprouter")
+	ucic:commit("vnstat")
+
+	-- Enable/disable gateway ping
+	local disablegwping = luci.http.formvalue("disablegwping") or "0"
+	ucic:set("openmtpcprouter","settings","disablegwping",disablegwping)
+
+	-- Enable/disable server ping
+	local disableserverping = luci.http.formvalue("disableserverping") or "0"
+	ucic:set("openmtpcprouter","settings","disableserverping",disableserverping)
 
 	-- Enable/disable fast open
 	local disablefastopen = luci.http.formvalue("disablefastopen") or "0"
