@@ -689,13 +689,15 @@ function interfaces_status()
 	local ut = require "luci.util"
 	local mArray = ut.ubus("openmptcprouter", "status", {}) or {_=0}
 
-	mArray.openmptcprouter["remote_addr"] = luci.http.getenv("REMOTE_ADDR") or ""
-	mArray.openmptcprouter["remote_from_lease"] = false
-	local leases=tools.dhcp_leases()
-	for _, value in pairs(leases) do
-		if value["ipaddr"] == mArray.openmptcprouter["remote_addr"] then
-			mArray.openmptcprouter["remote_from_lease"] = true
-			mArray.openmptcprouter["remote_hostname"] = value["hostname"]
+	if mArray ~= nil then
+		mArray.openmptcprouter["remote_addr"] = luci.http.getenv("REMOTE_ADDR") or ""
+		mArray.openmptcprouter["remote_from_lease"] = false
+		local leases=tools.dhcp_leases()
+		for _, value in pairs(leases) do
+			if value["ipaddr"] == mArray.openmptcprouter["remote_addr"] then
+				mArray.openmptcprouter["remote_from_lease"] = true
+				mArray.openmptcprouter["remote_hostname"] = value["hostname"]
+			end
 		end
 	end
 
