@@ -25,7 +25,6 @@ MY_DEPENDS := \
     uhttpd \
     uhttpd-mod-ubus \
     curl \
-    usbutils \
     iperf3-ssl luci-app-iperf \
     arptables \
     bind-dig \
