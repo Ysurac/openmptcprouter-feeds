@@ -17,6 +17,7 @@ PKG_SOURCE_VERSION:=e7c6a35f0ac83fa7afec24ad52c8281abd3533ad
 #PKG_SOURCE_VERSION:=f7623914afabda582f146caab1081e601a34e882
 PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 PKG_LICENSE:=GPL-2.0
+PKG_BUILD_PARALLEL:=0
 
 include $(INCLUDE_DIR)/package.mk
 
