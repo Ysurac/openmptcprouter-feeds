@@ -26,6 +26,7 @@ define Package/speedtestc
 	CATEGORY:=Network
 	MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 	TITLE:=Client for SpeedTest.net infrastructure written in pure C99 standard using only POSIX libraries.
+	DEPENDS:=+libopenssl
 endef
 
 define Package/speedtestc/install
