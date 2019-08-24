@@ -18,7 +18,7 @@ hn.datatype = "hostname"
 hn.optional = false
 hn.rmempty  = true
 
-ifd = s:option(Value, "interface", translate("Interface"))
+ifd = s:option(ListValue, "interface", translate("Interface"))
 ifd.rmempty  = true
 
 s = m:section(TypedSection, "ips", translate("IPs and Networks"))
@@ -31,7 +31,7 @@ ip.datatype = "ipaddr"
 ip.rmempty  = true
 ip.optional = false
 
-ifi = s:option(Value, "interface", translate("Interface"))
+ifi = s:option(ListValue, "interface", translate("Interface"))
 ifi.rmempty  = true
 
 s = m:section(TypedSection, "macs", translate("<abbr title=\"Media Access Control\">MAC</abbr>-Address"))
@@ -50,7 +50,7 @@ sys.net.host_hints(function(m, v4, v6, name)
 	end
 end)
 
-ifm = s:option(Value, "interface", translate("Interface"))
+ifm = s:option(ListValue, "interface", translate("Interface"))
 ifm.rmempty  = true
 
 s = m:section(TypedSection, "lan_ip", translate("Source lan IP address or network"))
@@ -63,7 +63,7 @@ ip.datatype = "ipaddr"
 ip.rmempty  = true
 ip.optional = false
 
-ifl = s:option(Value, "interface", translate("Interface"))
+ifl = s:option(ListValue, "interface", translate("Interface"))
 ifl.rmempty  = true
 
 s = m:section(TypedSection, "asns", translate("<abbr tittle=\"Autonomous System Number\">ASN</abbr>"))
@@ -75,7 +75,7 @@ asn = s:option(Value, "asn", translate("ASN"))
 asn.rmempty  = true
 asn.optional = false
 
-ifa = s:option(Value, "interface", translate("Interface"))
+ifa = s:option(ListValue, "interface", translate("Interface"))
 ifa.rmempty  = true
 
 s = m:section(TypedSection, "dpis", translate("Protocols"))
@@ -83,7 +83,7 @@ s.addremove = true
 s.anonymous = true
 s.template = "cbi/tblsection"
 
-dpi = s:option(Value, "proto", translate("Protocol"))
+dpi = s:option(ListValue, "proto", translate("Protocol"))
 dpi.rmempty  = true
 dpi.optional = false
 local xt_ndpi_available = nixio.fs.access("/proc/net/xt_ndpi/proto")
