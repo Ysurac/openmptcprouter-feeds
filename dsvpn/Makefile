@@ -9,7 +9,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/jedisct1/dsvpn.git
-PKG_SOURCE_VERSION:=5372b454ae7925f11951b17cf42e52e270a75141
+PKG_SOURCE_VERSION:=4a1417b4d9a7c55bac3ac289ea90e7f9d2038d0e
 PKG_NAME:=dsvpn
 PKG_VERSION:=0.1.3-$(PKG_SOURCE_VERSION)
 PKG_RELEASE:=1
@@ -34,7 +34,7 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/sbin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/dsvpn $(1)/usr/sbin/$(PKG_NAME)
 	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_BIN) init $(1)/etc/init.d/$(PKG_NAME)
+	$(INSTALL_BIN) files/init $(1)/etc/init.d/$(PKG_NAME)
 	$(INSTALL_DIR) $(1)/etc/config
 	touch $(1)/etc/config/dsvpn
 endef
