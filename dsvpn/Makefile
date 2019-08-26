@@ -25,10 +25,11 @@ URL:=https://github.com/jedisct1/dsvpn
 SUBMENU:=VPN
 endef
 
-
 define Package/$(PKG_NAME)/conffiles
 /etc/config/dsvpn
 endef
+
+TARGET_CFLAGS += -DOPENWRT_BUILD
 
 define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/sbin
