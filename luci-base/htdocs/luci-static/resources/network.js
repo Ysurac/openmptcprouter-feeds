@@ -51,18 +51,19 @@ var callNetworkWirelessStatus = rpc.declare({
 
 var callLuciNetdevs = rpc.declare({
 	object: 'luci',
-	method: 'netdevs'
+	method: 'getNetworkDevices',
+	expect: { '': {} }
 });
 
 var callLuciIfaddrs = rpc.declare({
 	object: 'luci',
-	method: 'ifaddrs',
+	method: 'getIfaddrs',
 	expect: { result: [] }
 });
 
 var callLuciBoardjson = rpc.declare({
 	object: 'luci',
-	method: 'boardjson'
+	method: 'getBoardJSON'
 });
 
 var callIwinfoInfo = rpc.declare({
@@ -83,95 +84,104 @@ var callNetworkDeviceStatus = rpc.declare({
 	expect: { '': {} }
 });
 
-var _cache = {},
+var callGetProtoHandlers = rpc.declare({
+	object: 'network',
+	method: 'get_proto_handlers',
+	expect: { '': {} }
+});
+
+var _init = null,
     _state = null,
-    _protocols = {};
+    _protocols = {},
+    _protospecs = {};
 
-function getWifiState() {
-	if (_cache.wifi == null)
-		return callNetworkWirelessStatus().then(function(state) {
-			if (!L.isObject(state))
-				throw !1;
-			return (_cache.wifi = state);
-		}).catch(function() {
-			return (_cache.wifi = {});
-		});
-
-	return Promise.resolve(_cache.wifi);
+function getWifiState(cache) {
+	return callNetworkWirelessStatus().then(function(state) {
+		if (!L.isObject(state))
+			throw !1;
+		return state;
+	}).catch(function() {
+		return {};
+	});
 }
 
-function getInterfaceState() {
-	if (_cache.interfacedump == null)
-		return callNetworkInterfaceStatus().then(function(state) {
-			if (!Array.isArray(state))
-				throw !1;
-			return (_cache.interfacedump = state);
-		}).catch(function() {
-			return (_cache.interfacedump = []);
-		});
-
-	return Promise.resolve(_cache.interfacedump);
+function getInterfaceState(cache) {
+	return callNetworkInterfaceStatus().then(function(state) {
+		if (!Array.isArray(state))
+			throw !1;
+		return state;
+	}).catch(function() {
+		return [];
+	});
 }
 
-function getDeviceState() {
-	if (_cache.devicedump == null)
-		return callNetworkDeviceStatus().then(function(state) {
-			if (!L.isObject(state))
-				throw !1;
-			return (_cache.devicedump = state);
-		}).catch(function() {
-			return (_cache.devicedump = {});
-		});
-
-	return Promise.resolve(_cache.devicedump);
+function getDeviceState(cache) {
+	return callNetworkDeviceStatus().then(function(state) {
+		if (!L.isObject(state))
+			throw !1;
+		return state;
+	}).catch(function() {
+		return {};
+	});
 }
 
-function getIfaddrState() {
-	if (_cache.ifaddrs == null)
-		return callLuciIfaddrs().then(function(addrs) {
-			if (!Array.isArray(addrs))
-				throw !1;
-			return (_cache.ifaddrs = addrs);
-		}).catch(function() {
-			return (_cache.ifaddrs = []);
-		});
-
-	return Promise.resolve(_cache.ifaddrs);
+function getIfaddrState(cache) {
+	return callLuciIfaddrs().then(function(addrs) {
+		if (!Array.isArray(addrs))
+			throw !1;
+		return addrs;
+	}).catch(function() {
+		return [];
+	});
 }
 
-function getNetdevState() {
-	if (_cache.devices == null)
-		return callLuciNetdevs().then(function(state) {
-			if (!L.isObject(state))
-				throw !1;
-			return (_cache.devices = state);
-		}).catch(function() {
-			return (_cache.devices = {});
-		});
-
-	return Promise.resolve(_cache.devices);
+function getNetdevState(cache) {
+	return callLuciNetdevs().then(function(state) {
+		if (!L.isObject(state))
+			throw !1;
+		return state;
+	}).catch(function() {
+		return {};
+	});
 }
 
-function getBoardState() {
-	if (_cache.board == null)
-		return callLuciBoardjson().then(function(state) {
-			if (!L.isObject(state))
-				throw !1;
-			return (_cache.board = state);
-		}).catch(function() {
-			return (_cache.board = {});
-		});
+function getBoardState(cache) {
+	return callLuciBoardjson().then(function(state) {
+		if (!L.isObject(state))
+			throw !1;
+		return state;
+	}).catch(function() {
+		return {};
+	});
+}
 
-	return Promise.resolve(_cache.board);
+function getProtocolHandlers(cache) {
+	return callGetProtoHandlers().then(function(protos) {
+		if (!L.isObject(protos))
+			throw !1;
+
+		Object.assign(_protospecs, protos);
+
+		return Promise.all(Object.keys(protos).map(function(p) {
+			return Promise.resolve(L.require('protocol.%s'.format(p))).catch(function(err) {
+				if (L.isObject(err) && err.name != 'NetworkError')
+					L.error(err);
+			});
+		})).then(function() {
+			return protos;
+		});
+	}).catch(function() {
+		return {};
+	});
 }
 
 function getWifiStateBySid(sid) {
 	var s = uci.get('wireless', sid);
 
 	if (s != null && s['.type'] == 'wifi-iface') {
-		for (var radioname in _cache.wifi) {
-			for (var i = 0; i < _cache.wifi[radioname].interfaces.length; i++) {
-				var netstate = _cache.wifi[radioname].interfaces[i];
+		for (var radioname in _state.radios) {
+			for (var i = 0; i < _state.radios[radioname].interfaces.length; i++) {
+				var netstate = _state.radios[radioname].interfaces[i];
 
 				if (typeof(netstate.section) != 'string')
 					continue;
@@ -179,7 +189,7 @@ function getWifiStateBySid(sid) {
 				var s2 = uci.get('wireless', netstate.section);
 
 				if (s2 != null && s['.type'] == s2['.type'] && s['.name'] == s2['.name'])
-					return [ radioname, _cache.wifi[radioname], netstate ];
+					return [ radioname, _state.radios[radioname], netstate ];
 			}
 		}
 	}
@@ -188,15 +198,15 @@ function getWifiStateBySid(sid) {
 }
 
 function getWifiStateByIfname(ifname) {
-	for (var radioname in _cache.wifi) {
-		for (var i = 0; i < _cache.wifi[radioname].interfaces.length; i++) {
-			var netstate = _cache.wifi[radioname].interfaces[i];
+	for (var radioname in _state.radios) {
+		for (var i = 0; i < _state.radios[radioname].interfaces.length; i++) {
+			var netstate = _state.radios[radioname].interfaces[i];
 
 			if (typeof(netstate.ifname) != 'string')
 				continue;
 
 			if (netstate.ifname == ifname)
-				return [ radioname, _cache.wifi[radioname], netstate ];
+				return [ radioname, _state.radios[radioname], netstate ];
 		}
 	}
 
@@ -336,7 +346,7 @@ function appendValue(config, section, option, value) {
 	    rv = false;
 
 	if (isArray == false)
-		values = String(values || '').split(/\s+/);
+		values = L.toArray(values);
 
 	if (values.indexOf(value) == -1) {
 		values.push(value);
@@ -354,7 +364,7 @@ function removeValue(config, section, option, value) {
 	    rv = false;
 
 	if (isArray == false)
-		values = String(values || '').split(/\s+/);
+		values = L.toArray(values);
 
 	for (var i = values.length - 1; i >= 0; i--) {
 		if (values[i] == value) {
@@ -413,17 +423,19 @@ function maskToPrefix(mask, v6) {
 	return bits;
 }
 
-function initNetworkState() {
-	if (_state == null)
-		return (_state = Promise.all([
+function initNetworkState(refresh) {
+	if (_state == null || refresh) {
+		_init = _init || Promise.all([
 			getInterfaceState(), getDeviceState(), getBoardState(),
-			getWifiState(), getIfaddrState(), getNetdevState(),
+			getWifiState(), getIfaddrState(), getNetdevState(), getProtocolHandlers(),
 			uci.load('network'), uci.load('wireless'), uci.load('luci')
-		]).finally(function() {
-			var ifaddrs = _cache.ifaddrs,
-			    devices = _cache.devices,
-			    board = _cache.board,
-			    s = { isTunnel: {}, isBridge: {}, isSwitch: {}, isWifi: {}, interfaces: {}, bridges: {}, switches: {} };
+		]).then(function(data) {
+			var board = data[2], ifaddrs = data[4], devices = data[5];
+			var s = {
+				isTunnel: {}, isBridge: {}, isSwitch: {}, isWifi: {},
+				ifaces: data[0], devices: data[1], radios: data[3],
+				netdevs: {}, bridges: {}, switches: {}
+			};
 
 			for (var i = 0, a; (a = ifaddrs[i]) != null; i++) {
 				var name = a.name.replace(/:.+$/, '');
@@ -432,7 +444,7 @@ function initNetworkState() {
 					s.isTunnel[name] = true;
 
 				if (s.isTunnel[name] || !(isIgnoredIfname(name) || isVirtualIfname(name))) {
-					s.interfaces[name] = s.interfaces[name] || {
+					s.netdevs[name] = s.netdevs[name] || {
 						idx:      a.ifindex || i,
 						name:     name,
 						rawname:  a.name,
@@ -442,15 +454,15 @@ function initNetworkState() {
 					};
 
 					if (a.family == 'packet') {
-						s.interfaces[name].flags   = a.flags;
-						s.interfaces[name].stats   = a.data;
-						s.interfaces[name].macaddr = a.addr;
+						s.netdevs[name].flags   = a.flags;
+						s.netdevs[name].stats   = a.data;
+						s.netdevs[name].macaddr = a.addr;
 					}
 					else if (a.family == 'inet') {
-						s.interfaces[name].ipaddrs.push(a.addr + '/' + a.netmask);
+						s.netdevs[name].ipaddrs.push(a.addr + '/' + a.netmask);
 					}
 					else if (a.family == 'inet6') {
-						s.interfaces[name].ip6addrs.push(a.addr + '/' + a.netmask);
+						s.netdevs[name].ip6addrs.push(a.addr + '/' + a.netmask);
 					}
 				}
 			}
@@ -467,7 +479,7 @@ function initNetworkState() {
 					};
 
 					for (var i = 0; dev.ports && i < dev.ports.length; i++) {
-						var subdev = s.interfaces[dev.ports[i]];
+						var subdev = s.netdevs[dev.ports[i]];
 
 						if (subdev == null)
 							continue;
@@ -477,6 +489,16 @@ function initNetworkState() {
 					}
 
 					s.bridges[devname] = b;
+					s.isBridge[devname] = true;
+				}
+
+				if (s.netdevs.hasOwnProperty(devname)) {
+					Object.assign(s.netdevs[devname], {
+						macaddr: dev.mac,
+						type:    dev.type,
+						mtu:     dev.mtu,
+						qlen:    dev.qlen
+					});
 				}
 			}
 
@@ -544,17 +566,28 @@ function initNetworkState() {
 				}
 			}
 
-			return (_state = s);
-		}));
+			if (L.isObject(board.dsl) && L.isObject(board.dsl.modem)) {
+				s.hasDSLModem = board.dsl.modem;
+			}
 
-	return Promise.resolve(_state);
+			_init = null;
+
+			return (_state = s);
+		});
+	}
+
+	return (_state != null ? Promise.resolve(_state) : _init);
 }
 
 function ifnameOf(obj) {
-	if (obj instanceof Interface)
-		return obj.name();
-	else if (obj instanceof Protocol)
-		return obj.ifname();
+	if (obj instanceof Protocol)
+		return obj.getIfname();
+	else if (obj instanceof Device)
+		return obj.getName();
+	else if (obj instanceof WifiDevice)
+		return obj.getName();
+	else if (obj instanceof WifiNetwork)
+		return obj.getIfname();
 	else if (typeof(obj) == 'string')
 		return obj.replace(/:.+$/, '');
 
@@ -580,10 +613,18 @@ function deviceSort(a, b) {
 var Network, Protocol, Device, WifiDevice, WifiNetwork;
 
 Network = L.Class.extend({
+	prefixToMask: prefixToMask,
+	maskToPrefix: maskToPrefix,
+
+	flushCache: function() {
+		initNetworkState(true);
+		return _init;
+	},
+
 	getProtocol: function(protoname, netname) {
 		var v = _protocols[protoname];
 		if (v != null)
-			return v(netname || '__dummy__');
+			return new v(netname || '__dummy__');
 
 		return null;
 	},
@@ -592,18 +633,35 @@ Network = L.Class.extend({
 		var rv = [];
 
 		for (var protoname in _protocols)
-			rv.push(_protocols[protoname]('__dummy__'));
+			rv.push(new _protocols[protoname]('__dummy__'));
 
 		return rv;
 	},
 
 	registerProtocol: function(protoname, methods) {
-		var proto = Protocol.extend(Object.assign({}, methods, {
+		var spec = L.isObject(_protospecs) ? _protospecs[protoname] : null;
+		var proto = Protocol.extend(Object.assign({
+			getI18n: function() {
+				return protoname;
+			},
+
+			isFloating: function() {
+				return false;
+			},
+
+			isVirtual: function() {
+				return (L.isObject(spec) && spec.no_device == true);
+			},
+
+			renderFormOptions: function(section) {
+
+			}
+		}, methods, {
 			__init__: function(name) {
 				this.sid = name;
 			},
 
-			proto: function() {
+			getProtocol: function() {
 				return protoname;
 			}
 		}));
@@ -620,7 +678,7 @@ Network = L.Class.extend({
 	registerErrorCode: function(code, message) {
 		if (typeof(code) == 'string' &&
 		    typeof(message) == 'string' &&
-		    proto_errors.hasOwnProperty(code)) {
+		    !proto_errors.hasOwnProperty(code)) {
 			proto_errors[code] = message;
 			return true;
 		}
@@ -661,9 +719,9 @@ Network = L.Class.extend({
 				return this.instantiateNetwork(name);
 			}
 			else if (name != null) {
-				for (var i = 0; i < _cache.interfacedump.length; i++)
-					if (_cache.interfacedump[i].interface == name)
-						return this.instantiateNetwork(name, _cache.interfacedump[i].proto);
+				for (var i = 0; i < _state.ifaces.length; i++)
+					if (_state.ifaces[i].interface == name)
+						return this.instantiateNetwork(name, _state.ifaces[i].proto);
 			}
 
 			return null;
@@ -678,10 +736,10 @@ Network = L.Class.extend({
 			for (var i = 0; i < uciInterfaces.length; i++)
 				networks[uciInterfaces[i]['.name']] = this.instantiateNetwork(uciInterfaces[i]['.name']);
 
-			for (var i = 0; i < _cache.interfacedump.length; i++)
-				if (networks[_cache.interfacedump[i].interface] == null)
-					networks[_cache.interfacedump[i].interface] =
-						this.instantiateNetwork(_cache.interfacedump[i].interface, _cache.interfacedump[i].proto);
+			for (var i = 0; i < _state.ifaces.length; i++)
+				if (networks[_state.ifaces[i].interface] == null)
+					networks[_state.ifaces[i].interface] =
+						this.instantiateNetwork(_state.ifaces[i].interface, _state.ifaces[i].proto);
 
 			var rv = [];
 
@@ -795,7 +853,7 @@ Network = L.Class.extend({
 			if (name == null)
 				return null;
 
-			if (_state.interfaces.hasOwnProperty(name) || isWifiIfname(name))
+			if (_state.netdevs.hasOwnProperty(name) || isWifiIfname(name))
 				return this.instantiateDevice(name);
 
 			var netid = getWifiNetidBySid(name);
@@ -826,7 +884,7 @@ Network = L.Class.extend({
 				}
 			}
 
-			for (var ifname in _state.interfaces) {
+			for (var ifname in _state.netdevs) {
 				if (devices.hasOwnProperty(ifname))
 					continue;
 
@@ -1017,7 +1075,7 @@ Network = L.Class.extend({
 			var radioname = existingDevice['.name'],
 			    netid = getWifiNetidBySid(sid) || [];
 
-			return this.instantiateWifiNetwork(sid, radioname, _cache.wifi[radioname], netid[0], null, { ifname: netid });
+			return this.instantiateWifiNetwork(sid, radioname, _state.radios[radioname], netid[0], null, { ifname: netid });
 		}, this));
 	},
 
@@ -1037,20 +1095,24 @@ Network = L.Class.extend({
 		return initNetworkState().then(L.bind(function() {
 			var rv = [];
 
-			for (var i = 0; i < _state.interfacedump.length; i++) {
-				if (!Array.isArray(_state.interfacedump[i].route))
+			for (var i = 0; i < _state.ifaces.length; i++) {
+				if (!Array.isArray(_state.ifaces[i].route))
 					continue;
 
-				for (var j = 0; j < _state.interfacedump[i].route.length; j++) {
-					if (typeof(_state.interfacedump[i].route[j]) != 'object' ||
-					    typeof(_state.interfacedump[i].route[j].target) != 'string' ||
-					    typeof(_state.interfacedump[i].route[j].mask) != 'number')
+				for (var j = 0; j < _state.ifaces[i].route.length; j++) {
+					if (typeof(_state.ifaces[i].route[j]) != 'object' ||
+					    typeof(_state.ifaces[i].route[j].target) != 'string' ||
+					    typeof(_state.ifaces[i].route[j].mask) != 'number')
 					    continue;
 
-					if (_state.interfacedump[i].route[j].table)
+					if (_state.ifaces[i].route[j].table)
 						continue;
 
-					rv.push(_state.interfacedump[i]);
+					if (_state.ifaces[i].route[j].target != addr ||
+					    _state.ifaces[i].route[j].mask != mask)
+					    continue;
+
+					rv.push(_state.ifaces[i]);
 				}
 			}
 
@@ -1062,25 +1124,25 @@ Network = L.Class.extend({
 		return initNetworkState().then(L.bind(function() {
 			var rv = [];
 
-			for (var i = 0; i < _state.interfacedump.length; i++) {
-				if (Array.isArray(_state.interfacedump[i]['ipv4-address']))
-					for (var j = 0; j < _state.interfacedump[i]['ipv4-address'].length; j++)
-						if (typeof(_state.interfacedump[i]['ipv4-address'][j]) == 'object' &&
-						    _state.interfacedump[i]['ipv4-address'][j].address == addr)
-							return _state.interfacedump[i];
+			for (var i = 0; i < _state.ifaces.length; i++) {
+				if (Array.isArray(_state.ifaces[i]['ipv4-address']))
+					for (var j = 0; j < _state.ifaces[i]['ipv4-address'].length; j++)
+						if (typeof(_state.ifaces[i]['ipv4-address'][j]) == 'object' &&
+						    _state.ifaces[i]['ipv4-address'][j].address == addr)
+							return _state.ifaces[i];
 
-				if (Array.isArray(_state.interfacedump[i]['ipv6-address']))
-					for (var j = 0; j < _state.interfacedump[i]['ipv6-address'].length; j++)
-						if (typeof(_state.interfacedump[i]['ipv6-address'][j]) == 'object' &&
-						    _state.interfacedump[i]['ipv6-address'][j].address == addr)
-							return _state.interfacedump[i];
+				if (Array.isArray(_state.ifaces[i]['ipv6-address']))
+					for (var j = 0; j < _state.ifaces[i]['ipv6-address'].length; j++)
+						if (typeof(_state.ifaces[i]['ipv6-address'][j]) == 'object' &&
+						    _state.ifaces[i]['ipv6-address'][j].address == addr)
+							return _state.ifaces[i];
 
-				if (Array.isArray(_state.interfacedump[i]['ipv6-prefix-assignment']))
-					for (var j = 0; j < _state.interfacedump[i]['ipv6-prefix-assignment'].length; j++)
-						if (typeof(_state.interfacedump[i]['ipv6-prefix-assignment'][j]) == 'object' &&
-							typeof(_state.interfacedump[i]['ipv6-prefix-assignment'][j]['local-address']) == 'object' &&
-						    _state.interfacedump[i]['ipv6-prefix-assignment'][j]['local-address'].address == addr)
-							return _state.interfacedump[i];
+				if (Array.isArray(_state.ifaces[i]['ipv6-prefix-assignment']))
+					for (var j = 0; j < _state.ifaces[i]['ipv6-prefix-assignment'].length; j++)
+						if (typeof(_state.ifaces[i]['ipv6-prefix-assignment'][j]) == 'object' &&
+							typeof(_state.ifaces[i]['ipv6-prefix-assignment'][j]['local-address']) == 'object' &&
+						    _state.ifaces[i]['ipv6-prefix-assignment'][j]['local-address'].address == addr)
+							return _state.ifaces[i];
 			}
 
 			return null;
@@ -1135,6 +1197,16 @@ Network = L.Class.extend({
 
 	instantiateWifiNetwork: function(sid, radioname, radiostate, netid, netstate, iwinfo) {
 		return new WifiNetwork(sid, radioname, radiostate, netid, netstate, iwinfo);
+	},
+
+	getIfnameOf: function(obj) {
+		return ifnameOf(obj);
+	},
+
+	getDSLModemType: function() {
+		return initNetworkState().then(function() {
+			return _state.hasDSLModem ? _state.hasDSLModem.type : null;
+		});
 	}
 });
 
@@ -1153,11 +1225,11 @@ Protocol = L.Class.extend({
 	},
 
 	_ubus: function(field) {
-		for (var i = 0; i < _cache.interfacedump.length; i++) {
-			if (_cache.interfacedump[i].interface != this.sid)
+		for (var i = 0; i < _state.ifaces.length; i++) {
+			if (_state.ifaces[i].interface != this.sid)
 				continue;
 
-			return (field != null ? _cache.interfacedump[i][field] : _cache.interfacedump[i]);
+			return (field != null ? _state.ifaces[i][field] : _state.ifaces[i]);
 		}
 	},
 
@@ -1175,7 +1247,7 @@ Protocol = L.Class.extend({
 		if (this.isFloating())
 			ifname = this._ubus('l3_device');
 		else
-			ifname = this._ubus('device');
+			ifname = this._ubus('device') || this._ubus('l3_device');
 
 		if (ifname != null)
 			return ifname;
@@ -1185,7 +1257,7 @@ Protocol = L.Class.extend({
 	},
 
 	getProtocol: function() {
-		return 'none';
+		return null;
 	},
 
 	getI18n: function() {
@@ -1455,11 +1527,6 @@ Protocol = L.Class.extend({
 			return new Device(ifname, this);
 		}
 		else {
-			var ifname = this._ubus('l3_device') || this._ubus('device');
-
-			if (ifname != null)
-				return L.network.instantiateDevice(ifname, this);
-
 			var ifnames = L.toArray(uci.get('network', this.sid, 'ifname'));
 
 			for (var i = 0; i < ifnames.length; i++) {
@@ -1471,6 +1538,16 @@ Protocol = L.Class.extend({
 
 			return (ifname != null ? L.network.instantiateDevice(ifname[0], this) : null);
 		}
+	},
+
+	getL2Device: function() {
+		var ifname = this._ubus('device');
+		return (ifname != null ? L.network.instantiateDevice(ifname, this) : null);
+	},
+
+	getL3Device: function() {
+		var ifname = this._ubus('l3_device');
+		return (ifname != null ? L.network.instantiateDevice(ifname, this) : null);
 	},
 
 	getDevices: function() {
@@ -1559,12 +1636,12 @@ Device = L.Class.extend({
 		}
 
 		this.ifname  = this.ifname || ifname;
-		this.dev     = _state.interfaces[this.ifname];
+		this.dev     = _state.netdevs[this.ifname];
 		this.network = network;
 	},
 
 	_ubus: function(field) {
-		var dump = _cache.devicedump[this.ifname] || {};
+		var dump = _state.devices[this.ifname] || {};
 
 		return (field != null ? dump[field] : dump);
 	},
@@ -1574,7 +1651,15 @@ Device = L.Class.extend({
 	},
 
 	getMAC: function() {
-		return this._ubus('macaddr');
+		var mac = (this.dev != null ? this.dev.macaddr : null);
+		if (mac == null)
+			mac = this._ubus('macaddr');
+
+		return mac ? mac.toUpperCase() : null;
+	},
+
+	getMTU: function() {
+		return this.dev ? this.dev.mtu : null;
 	},
 
 	getIPAddrs: function() {
@@ -1655,7 +1740,9 @@ Device = L.Class.extend({
 			return null;
 
 		for (var i = 0; i < br.ifnames.length; i++)
-			rv.push(L.network.instantiateDevice(br.ifnames[i]));
+			rv.push(L.network.instantiateDevice(br.ifnames[i].name));
+
+		rv.sort(deviceSort);
 
 		return rv;
 	},
@@ -1786,8 +1873,8 @@ WifiDevice = L.Class.extend({
 	},
 
 	isUp: function() {
-		if (L.isObject(_cache.wifi[this.sid]))
-			return (_cache.wifi[this.sid].up == true);
+		if (L.isObject(_state.radios[this.sid]))
+			return (_state.radios[this.sid].up == true);
 
 		return false;
 	},
