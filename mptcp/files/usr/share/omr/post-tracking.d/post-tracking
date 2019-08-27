@@ -5,7 +5,8 @@ set_route() {
 	local multipath_config interface_gw interface_if
 	INTERFACE=$1
 	PREVINTERFACE=$2
-	multipath_config=$(uci -q get network.$INTERFACE.multipath || echo "off")
+	multipath_config=$(uci -q get network.$INTERFACE.multipath)
+	[ -z "$multipath_config" ] && multipath_config=$(uci -q get openmptcprouter.$INTERFACE.multipath || echo "off")
 	interface_if=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "${INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.ifname)
@@ -53,7 +54,8 @@ set_server_default_route() {
 	local server=$1
 	local serverip
 	config_get serverip $server ip
-	multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath || echo "off")
+	multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath)
+	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath || echo "off")
 	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric 1 | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ]; then
 		_log "Set server $server ($serverip) default route via $OMR_TRACKER_DEVICE_GATEWAY"
 		if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
@@ -74,7 +76,8 @@ set_server_default_route() {
 
 set_routes_intf() {
 	local INTERFACE=$1
-	multipath_config=$(uci -q get network.$INTERFACE.multipath || echo "off")
+	multipath_config=$(uci -q get network.$INTERFACE.multipath)
+	[ -z "$multipath_config" ] && multipath_config_route=$(uci -q get network.$INTERFACE.multipath || echo "off")
 	interface_if=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "${INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.ifname)
@@ -104,7 +107,8 @@ set_server_all_routes() {
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "${OMR_TRACKER_INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	multipath_current_config=$(multipath $interface_if | grep "deactivated")
-	multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath || echo "off")
+	multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath)
+	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath || echo "off")
 	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show $serverip | grep nexthop | grep $OMR_TRACKER_DEVICE_GATEWAY | grep $OMR_TRACKER_INTERFACE)" = "" ] && [ "$multipath_config_route" != "off" ]; then
 		routesintf=""
 		config_load network
@@ -124,7 +128,8 @@ set_server_route() {
 	config_get serverip $server ip
 	local metric=$2
 	[ -z "$metric" ] && metric=$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)
-	multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath || echo "off")
+	multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath)
+	[ "$multipath_config_route" ] && multipath_config_route=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath || echo "off")
 	interface_if=$(uci -q get network.$OMR_TRACKER_INTERFACE.ifname)
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "${OMR_TRACKER_INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
@@ -360,7 +365,8 @@ if [ "$OMR_TRACKER_PREV_STATUS" != "" ] && [ "$OMR_TRACKER_PREV_STATUS" != "$OMR
 	dns_flush
 fi
 
-multipath_config=$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath" || echo "off")
+multipath_config=$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath")
+[ "$multipath_config" ] && multipath_config=$(uci -q get "openmptcprouter.$OMR_TRACKER_INTERFACE.multipath" || echo "off")
 if [ "$multipath_config" = "master" ]; then
 	if [ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
 		omrvpn_intf=$(uci -q get "network.omrvpn.ifname" || echo "tun")
@@ -530,6 +536,7 @@ fi
 	#[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.latency_max)" -lt "$OMR_TRACKER_LATENCY" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency_max="$OMR_TRACKER_LATENCY"
 	if [ "$multipath_config" = "on" ] && [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath)" != "master" ] && ([ "$(uci -q get openmptcprouter.settings.master)" = "dynamic" ] || (([ "$(uci -q get openmptcprouter.settings.master)" = "change" ] || [ "$(uci -q get openmptcprouter.settings.master)" = "" ]) && [ "$(uci -q get openmptcprouter.settings.master_lcintf | grep $OMR_TRACKER_INTERFACE)" = "" ])); then
 		masterintf="$(uci -q show network | grep multipath=\'master\' | cut -d'.' -f2)"
+		[ -z "$masterintf" ] && masterintf="$(uci -q show openmptcprouter | grep multipath=\'master\' | cut -d'.' -f2)"
 		masterlatency="$(uci -q get openmptcprouter.$masterintf.latency | tr -d '\n')"
 		if [ -z "$masterlatency" ] || [ "$(uci -q get openmptcprouter.$masterintf.state)" = "down" ]; then
 			masterlatency=1000
@@ -537,12 +544,15 @@ fi
 		if [ -n "$masterintf" ] && ([ "$masterlatency" != "" ] || [ "$(uci -q get openmptcprouter.$masterintf.state)" = "down" ]); then
 			if (([ "$(uci -q get openmptcprouter.settings.master)" = "change" ] || [ "$(uci -q get openmptcprouter.settings.master)" = "" ]) && [ "$OMR_TRACKER_LATENCY" -lt "$((masterlatency/2))" ]) || ([ "$(uci -q get openmptcprouter.settings.master)" = "dynamic" ] && [ "$OMR_TRACKER_LATENCY" -lt "$((masterlatency/2))" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.latency_previous)" -lt "$((masterlatency/2))" ]); then
 				uci -q set network.$masterintf.multipath='on'
+				uci -q set openmptcprouter.$masterintf.multipath='on'
 				uci -q set network.$OMR_TRACKER_INTERFACE.multipath='master'
+				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.multipath='master'
 				if [ "$(uci -q get openmptcprouter.settings.master_lcintf | grep $OMR_TRACKER_INTERFACE)" = "" ]; then
 					uci -q add_list openmptcprouter.settings.master_lcintf="$OMR_TRACKER_INTERFACE"
 				fi
 				if [ "$(uci -q get openmptcprouter.settings.master)" != "dynamic" ]; then
 					uci -q commit network
+					uci -q commit openmptcprouter
 				fi
 				_log "Change master interface from $masterintf ($masterlatency ms) to $OMR_TRACKER_INTERFACE ($OMR_TRACKER_LATENCY ms)"
 			fi

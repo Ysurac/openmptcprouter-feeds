@@ -105,13 +105,17 @@ function wizard_add()
 		ucic:set("network","wan" .. i,"ip4table","wan")
 		if multipath_master then
 			ucic:set("network","wan" .. i,"multipath","on")
+			ucic:set("openmptcprouter","wan" .. i,"multipath","on")
 		else
 			ucic:set("network","wan" .. i,"multipath","master")
+			ucic:set("openmptcprouter","wan" .. i,"multipath","master")
 		end
 		ucic:set("network","wan" .. i,"defaultroute","0")
 		ucic:reorder("network","wan" .. i, i + 2)
 		ucic:save("network")
 		ucic:commit("network")
+		ucic:save("openmptcprouter")
+		ucic:commit("openmptcprouter")
 
 		ucic:set("qos","wan" .. i,"interface")
 		ucic:set("qos","wan" .. i,"classgroup","Default")

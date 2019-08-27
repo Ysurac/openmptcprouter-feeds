@@ -52,7 +52,12 @@ interface_multipath_settings() {
 	id=$count
 	config_set "$config" metric $count
 	uci -q set network.${config}.metric=$count
+	uci -q set openmptcprouter.${config}.metric=$count
 	config_get mode "$config" multipath
+	[ "$mode" = "" ] && {
+		mode="$(uci -q get openmptcprouter.${config}.multipath)"
+		[ -n "$mode" ] && uci -q set network.${config}.multipath="$mode"
+	}
 	[ "$mode" = "" ] && {
 		[ "$config" = "lan" ] && mode="off"
 		[ "$config" = "omrvpn" ] && mode="off"
@@ -60,6 +65,7 @@ interface_multipath_settings() {
 		[ "$mode" = "" ] && mode="on"
 		logger -t "MPTCP" "Multipath not defined for $config set to $mode"
 		uci -q set network.${config}.multipath="$mode"
+		uci -q set openmptcprouter.${config}.multipath="$mode"
 	}
 	[ "$mode" != "off" ] && {
 		[ -n "$mptcpintf" ] && mptcpintf="$mptcpintf $iface"
@@ -74,6 +80,7 @@ interface_multipath_settings() {
 			logger -t "MPTCP" "Multipath master already set, disable master for $config"
 			config_set "$config" multipath "on"
 			uci -q set network.${config}.multipath="on"
+			uci -q set openmptcprouter.${config}.multipath="on"
 		else
 			master="$config"
 		fi
@@ -176,7 +183,8 @@ interface_multipath_settings() {
 			#ip route flush $id
 		fi
 
-		config_get mode "$config" multipath "off"
+		#config_get mode "$config" multipath ""
+		#[ "$mode" = "" ] && mode="$(uci -q get openmptcprouter.${config}.multipath)"
 		[ "$mode" = "master" ] && {
 			#echo "ip route replace default via $gateway dev $iface"
 			ip route replace default via $gateway dev $iface
@@ -258,7 +266,7 @@ interface_multipath_settings() {
 				ip -6 route flush 6$id
 			fi
 
-			config_get mode "$config" multipath "off"
+			#config_get mode "$config" multipath "off"
 			[ "$mode" = "master" ] && {
 				ip -6 route replace default via $gateway6 dev $iface
 			}
@@ -273,8 +281,9 @@ interface_multipath_settings() {
 
 load_interfaces() {
 	config_get ifname "$1" ifname
-	config_get multipath "$1" multipath "off"
-	[ "$multipath" != "off" ] && interfaces=" ${ifname} ${interfaces}"
+	config_get multipath "$1" multipath ""
+	[ -z "$multipath" ] && multipath="$(uci -q get openmptcprouter.$1.multipath)"
+	[ "$multipath" != "off" ] && [ "$multipath" != "" ] && interfaces=" ${ifname} ${interfaces}"
 }
 
 set_multipath() {
@@ -331,6 +340,7 @@ add_route6() {
 }
 
 remove() {
+	logger -t "MPTCP" "Remove network.$1"
 	uci -q delete network.$1
 }
 
@@ -362,9 +372,11 @@ start_service() {
 		[ "$intfmaster" != "" ] && {
 			logger -t "MPTCP" "No master multipath defined, setting it to $intfmaster"
 			uci -q set network.${intfmaster}.multipath="master"
+			uci -q set openmptcprouter.${intfmaster}.multipath="master"
 		}
 	fi
 	uci -q commit network
+	uci -q commit openmptcprouter
 	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && [ -z "$(ubus call system board | jsonfilter -e '@.board_name' | grep '4-model-b')" ] && {
 		ethtool --offload eth0 rx off tx off
 	}
