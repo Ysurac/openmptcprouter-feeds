@@ -21,6 +21,8 @@ PKG_BUILD_DEPENDS:=golang/host
 GO_PKG:=github.com/shadowsocks/v2ray-plugin
 #GO_PKG_BUILD_PKG:=github.com/shadowsocks/v2ray-plugin
 
+PKG_USE_MIPS16:=0
+
 include $(INCLUDE_DIR)/package.mk
 include ../golang/golang-package.mk
 
@@ -31,7 +33,6 @@ define Package/v2ray-plugin
 	URL:=https://github.com/shadowsocks/v2ray-plugin
 	DEPENDS:=$(GO_ARCH_DEPENDS) \
 	    +golang-protobuf-dev +v2ray-core-dev +v2ray-ext-dev +golang-golang-x-crypto-dev
-	PKGARCH:=all
 endef
 
 define Package/v2ray-plugin/description
