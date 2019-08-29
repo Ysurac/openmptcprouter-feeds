@@ -410,6 +410,24 @@ _set_vpn_vps() {
 	fi
 }
 
+_get_local_wan_ip() {
+	wanip="$(uci -q get openmptcprouter.$1.publicip)"
+	[ -z "$wanips" ] && wanips=$wanip || wanips=$wanips\n$wanip
+}
+_set_wan_ip() {
+	wan=$1
+	local settings
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	wanip_current="$(echo "$vps_config" | jsonfilter -q -e '@.wan.ips')"
+	if [ -n "$wanips" ] && [ "$wanip_current" != "$wanips" ]; then
+		settings='{"ips" : "'$wanips'"}'
+		echo $(_set_json "wan" "$settings")
+	else
+		echo 1
+	fi
+}
+
 _set_ss_redir() {
 	local option=$2
 	local value=$3
@@ -701,6 +719,7 @@ _config_service() {
 	[ -z "$(_set_mptcp_vps)" ] && error=1
 	[ -z "$(_set_vpn_vps)" ] && error=1
 	_set_pihole
+	[ -n "$wanips"] && _set_wan_ip
 	[ "$error" = 0 ] && uci -q set openmptcprouter.${servername}.lastchange=$(date "+%s")
 	uci -q batch <<-EOF >/dev/null
 		set openmptcprouter.${servername}.admin_error=$error
@@ -718,9 +737,12 @@ set_pihole() {
 
 start_service() {
 	serversnb=0
+	wanips=""
 	config_load openmptcprouter
 	config_foreach _count_server server
 	config_foreach _config_service server
+	config_foreach _get_local_wan_ip interface
+
 	uci -q batch <<-EOF >/dev/null
 		commit openmptcprouter
 	EOF
