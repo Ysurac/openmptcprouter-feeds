@@ -660,14 +660,15 @@ function interfaces_status()
 		--mArray.openmptcprouter["wan_addr"] = uci:get("openmptcprouter","omr","public_detected_ipv4") or ""
 		
 		if uci:get("openmptcprouter","settings","external_check") ~= "0" then
-			mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("wget -4 -qO- -T 2 " .. check_ipv4_website))
+			timeout = uci:get("openmptcprouter","settings","status_getip_timeout") or "2"
+			mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("wget -4 -qO- -T " .. timeout .. " " .. check_ipv4_website))
 			if mArray.openmptcprouter["wan_addr"] == "" then
-				mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("dig TXT +timeout=2 +short o-o.myaddr.l.google.com @ns1.google.com | awk -F'\"' '{print $2}'"))
+				mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("dig TXT +timeout=" .. timeout .. " +short o-o.myaddr.l.google.com @ns1.google.com | awk -F'\"' '{print $2}'"))
 			end
 			if mArray.openmptcprouter["ipv6"] == "enabled" then
 				mArray.openmptcprouter["wan_addr6"] = uci:get("openmptcprouter","omr","public_detected_ipv6") or ""
 				if mArray.openmptcprouter["wan_addr6"] == "" then
-					mArray.openmptcprouter["wan_addr6"] = ut.trim(sys.exec("wget -6 -qO- -T 2 " .. check_ipv6_website))
+					mArray.openmptcprouter["wan_addr6"] = ut.trim(sys.exec("wget -6 -qO- -T " .. timeout .. " " .. check_ipv6_website))
 				end
 			end
 			mArray.openmptcprouter["external_check"] = true
@@ -681,7 +682,7 @@ function interfaces_status()
 			if tracker_ip ~= "" then
 				local tracker_port = uci:get("shadowsocks-libev","tracker","local_port")
 				if uci:get("openmptcprouter","settings","external_check") ~= "0" then
-					mArray.openmptcprouter["ss_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 2 " .. check_ipv4_website))
+					mArray.openmptcprouter["ss_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m " .. timeout .. " " .. check_ipv4_website))
 					--mArray.openmptcprouter["ss_addr6"] = sys.exec("curl -s -6 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ipv6.openmptcprouter.com")
 				end
 			end
@@ -717,13 +718,14 @@ function interfaces_status()
 			mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter", s[".name"], "omr_version") or ""
 			mArray.openmptcprouter["vps_kernel"] = uci:get("openmptcprouter",s[".name"],"kernel") or ""
 			mArray.openmptcprouter["vps_machine"] = uci:get("openmptcprouter",s[".name"],"machine") or ""
+			timeout = uci:get("openmptcprouter","settings","status_vps_timeout") or "2"
 			if uci:get("openmptcprouter",s[".name"],"admin_error") == "1" then
 				mArray.openmptcprouter["vps_admin_error"] = true
 			end
 			local adminport = uci:get("openmptcprouter",s[".name"],"port") or "65500"
 			local token = uci:get("openmptcprouter",s[".name"],"token") or ""
 			if token ~= "" then
-				local vpsinfo_json = sys.exec('curl -4 --max-time 2 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ':' .. adminport .. '/status')
+				local vpsinfo_json = sys.exec('curl -4 --max-time ' .. timeout .. ' -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ':' .. adminport .. '/status')
 				if vpsinfo_json ~= "" and vpsinfo_json ~= nil then
 					local status, vpsinfo = pcall(function() 
 						return json.decode(vpsinfo_json)
