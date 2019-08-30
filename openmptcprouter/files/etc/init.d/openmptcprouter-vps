@@ -167,7 +167,7 @@ _get_vps_config() {
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 	vps_lastchange="$(echo "$vps_config" | jsonfilter -q -e '@.vps.lastchange')"
-	if [ -n "$(uci -q get openmptcprouter.${servername}.lastchange)" ] && [ "$vps_lastchange" -gt "$(uci -q get openmptcprouter.${servername}.lastchange)" ]; then
+	if [ -n "$(uci -q get openmptcprouter.${servername}.lastchange)" ] && [ -n "$vps_lastchange" ] && [ "$vps_lastchange" -gt "$(uci -q get openmptcprouter.${servername}.lastchange)" ]; then
 		_set_config_from_vps
 	fi
 
@@ -412,19 +412,21 @@ _set_vpn_vps() {
 
 _get_local_wan_ip() {
 	wanip="$(uci -q get openmptcprouter.$1.publicip)"
-	[ -z "$wanips" ] && wanips=$wanip || wanips=$wanips\n$wanip
+	[ -n "$wanip" ] && {
+		[ -z "$wanips" ] && wanips=$wanip || wanips="$wanips"'\n'"$wanip"
+	}
 }
 _set_wan_ip() {
-	wan=$1
 	local settings
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 	wanip_current="$(echo "$vps_config" | jsonfilter -q -e '@.wan.ips')"
 	if [ -n "$wanips" ] && [ "$wanip_current" != "$wanips" ]; then
 		settings='{"ips" : "'$wanips'"}'
-		echo $(_set_json "wan" "$settings")
-	else
-		echo 1
+		result=$(_set_json "wan" "$settings")
+		#echo $(_set_json "wan" "$settings")
+	#else
+	#	echo 1
 	fi
 }
 
@@ -706,7 +708,6 @@ _config_service() {
 		}
 	fi
 	uci -q set openmptcprouter.settings.firstboot=0
-
 	config_load shadowsocks-libev
 	config_foreach _set_ss_server_vps server
 	[ -z "$(_set_glorytun_vps)" ] && error=1
@@ -719,7 +720,7 @@ _config_service() {
 	[ -z "$(_set_mptcp_vps)" ] && error=1
 	[ -z "$(_set_vpn_vps)" ] && error=1
 	_set_pihole
-	[ -n "$wanips"] && _set_wan_ip
+	[ -n "$wanips" ] && _set_wan_ip
 	[ "$error" = 0 ] && uci -q set openmptcprouter.${servername}.lastchange=$(date "+%s")
 	uci -q batch <<-EOF >/dev/null
 		set openmptcprouter.${servername}.admin_error=$error
@@ -740,8 +741,8 @@ start_service() {
 	wanips=""
 	config_load openmptcprouter
 	config_foreach _count_server server
-	config_foreach _config_service server
 	config_foreach _get_local_wan_ip interface
+	config_foreach _config_service server
 
 	uci -q batch <<-EOF >/dev/null
 		commit openmptcprouter
