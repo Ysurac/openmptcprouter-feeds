@@ -9,7 +9,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/jedisct1/dsvpn.git
-PKG_SOURCE_VERSION:=4a1417b4d9a7c55bac3ac289ea90e7f9d2038d0e
+PKG_SOURCE_VERSION:=e2ea043bf9dcc1617b77dce405fe6ffc62cdc455
 PKG_NAME:=dsvpn
 PKG_VERSION:=0.1.3-$(PKG_SOURCE_VERSION)
 PKG_RELEASE:=1
