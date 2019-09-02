@@ -28,6 +28,7 @@ define Package/vnstat/Default
   SECTION:=net
   CATEGORY:=Network
   URL:=http://humdi.net/vnstat/
+  DEPENDS+=libsqlite3
 endef
 
 define Package/vnstat
