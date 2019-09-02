@@ -544,11 +544,11 @@ function wizard_add()
 		os.execute("sleep 2")
 	end
 	luci.sys.call("/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/dsvpn restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
-	--luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
+	luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
+	luci.sys.call("/etc/init.d/dsvpn restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/omr-tracker restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
 	if gostatus == true then
