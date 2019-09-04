@@ -28,7 +28,7 @@ define Package/vnstat/Default
   SECTION:=net
   CATEGORY:=Network
   URL:=http://humdi.net/vnstat/
-  DEPENDS+=libsqlite3
+  DEPENDS:=+libsqlite3
 endef
 
 define Package/vnstat
@@ -96,7 +96,7 @@ define Package/vnstat/install
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/vnstat.defaults $(1)/etc/uci-defaults/vnstat
 	$(INSTALL_DIR) $(1)/usr/libexec/rpcd
-	$(INSTALL_BIN) ./files/vnstat.rpcd $(1)/usr/lib/libexec/rpcd/vnstat
+	$(INSTALL_BIN) ./files/vnstat.rpcd $(1)/usr/libexec/rpcd/vnstat
 endef
 
 define Package/vnstati/install
