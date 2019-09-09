@@ -8,6 +8,19 @@ EXTRA_COMMANDS="reload_rules"
 
 . /usr/lib/unbound/iptools.sh
 
+_add_proto() {
+	protoname=$1
+	echo "add_custom $protoname" >/proc/net/xt_ndpi/proto
+	hosts="$( uci -q get omr-bypass.$protoname.url )"
+	for url in $hosts; do
+		echo "$protoname:$url" >/proc/net/xt_ndpi/host_proto
+	done
+	ip="$( uci -q get omr-bypass.$protoname.ip )"
+	for ip in $ips; do
+		echo "$protoname:$ip" >/proc/net/xt_ndpi/ip_proto
+	done
+}
+
 _bypass_ip() {
 	local ip=$1
 	local type=$2
@@ -296,6 +309,9 @@ boot() {
 start_service() {
 	#local count
 	logger -t "omr-bypass" "Starting OMR-ByPass..."
+	config_load omr-bypass
+	config_foreach _add_proto proto
+
 	[ -n "$RELOAD" ] && [ "$(ipset --list | grep omr_dst_bypass_all)" = "" ] && {
 		unset RELOAD
 	}

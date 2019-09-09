@@ -95,7 +95,7 @@ if xt_ndpi_available then
 			table.insert(protos,b)
 		end
 	end
-	table.sort(protos)
+	table.sort(protos, function(a, b) return a:upper() < b:upper() end)
 	for _,b in ipairs(protos) do
 		dpi:value(b,"%s" % tostring(b))
 	end
