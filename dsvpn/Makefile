@@ -9,7 +9,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/jedisct1/dsvpn.git
-PKG_SOURCE_VERSION:=23ca90b3016cae77f1ac5ba32d1d38362d53d9cc
+PKG_SOURCE_VERSION:=57fb1bd5baf87c1e9b03833eb641897cab972895
 PKG_NAME:=dsvpn
 PKG_VERSION:=0.1.3-$(PKG_SOURCE_VERSION)
 PKG_RELEASE:=1
@@ -29,7 +29,7 @@ define Package/$(PKG_NAME)/conffiles
 /etc/config/dsvpn
 endef
 
-TARGET_CFLAGS += -DOPENWRT_BUILD
+TARGET_CFLAGS += -DNO_DEFAULT_ROUTES -DNO_DEFAULT_FIREWALL -DNO_DEFAULT_CONGESTION
 
 define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/sbin
