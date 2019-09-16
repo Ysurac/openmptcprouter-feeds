@@ -16,7 +16,7 @@ s.addremove = true
 s.add_select_options = { }
 s.add_select_options[''] = ''
 s.extedit = luci.dispatcher.build_url(
-	"admin", "services", "glorytun", "settings", "%s"
+	"admin", "vpn", "glorytun", "settings", "%s"
 )
 
 uci:load("glorytun_recipes")
