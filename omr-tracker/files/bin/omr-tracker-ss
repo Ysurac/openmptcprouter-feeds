@@ -4,7 +4,7 @@
 name=$0
 basename="$(basename $0)"
 
-log() {
+_log() {
 	logger -p daemon.info -t "${basename}" "$@"
 }
 
@@ -59,12 +59,12 @@ while true; do
 	if [ "$(curl -s -I -w %{http_code} --socks5 ${proxy} --max-time ${timeout} $host -o /dev/null)" != "000" ]; then
 		nocontact=""
 		[ "${last}" -ge "${retry}" ] || [ "$(uci -q get openmptcprouter.omr.shadowsocks)" = "" ] && {
-			log "Shadowsocks is up (can contact ${host})"
+			_log "Shadowsocks is up (can contact ${host})"
 			uci -q set openmptcprouter.omr.shadowsocks="up"
 			uci -q commit openmptcprouter.omr
 		}
 		if [ -z "$(iptables -t nat -L | grep ss_rules_forward)" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.disabled)" != "1" ]; then
-			log "Reload Shadowsocks rules"
+			_log "Reload Shadowsocks rules"
 			/etc/init.d/shadowsocks-libev rules_up 2> /dev/null
 			_get_ip
 		fi
@@ -75,7 +75,7 @@ while true; do
 		[ -z "$nocontact" ] && nocontact="$host" || nocontact="$nocontact, $host"
 		[ "${last}" -ge "${retry}" ] && {
 			if [ -n "$(iptables -t nat -L | grep ss_rules_forward)" ]; then
-				log "Shadowsocks is down (can't contact ${nocontact})"
+				_log "Shadowsocks is down (can't contact ${nocontact})"
 				uci -q set openmptcprouter.omr.shadowsocks="down"
 				uci -q commit openmptcprouter.omr
 				/etc/init.d/shadowsocks-libev rules_down 2> /dev/null
@@ -84,7 +84,7 @@ while true; do
 				server="$(uci -q get shadowsocks-libev.sss0.server)"
 				_ping_server $server
 				if [ "$server_ping" = false ]; then
-					log "Server ($server) seems down, no answer to ping"
+					_log "Server ($server) seems down, no answer to ping"
 				fi
 			fi
 		}
