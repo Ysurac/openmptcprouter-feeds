@@ -73,7 +73,8 @@ MY_DEPENDS := \
     kmod-usb-net-huawei-cdc-ncm kmod-usb-net-rndis kmod-usb-net-cdc-ether kmod-usb-net-ipheth usbmuxd \
     kmod-rt2800-usb kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su \
     luci-proto-qmi wpad-basic kmod-mt7601u kmod-rtl8187 \
-    luci-app-mlvpn kmod-ath9k kmod-ath9k-htc
+    luci-app-mlvpn
+#     kmod-ath9k kmod-ath9k-htc
 
 #    (TARGET_x86||TARGET_x86_64):open-vm-tools \
 #    luci-app-mlvpn mlvpn \
