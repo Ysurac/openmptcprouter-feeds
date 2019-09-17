@@ -358,9 +358,11 @@ function wizard_add()
 				ucic:set("nginx-ha","VPN","upstreams",vpn_servers)
 				ucic:set("haproxy-tcp","general","enable","0")
 				ucic:set("haproxy-tcp","general","upstreams",ss_servers_ha)
+				ucic:set("openmptcprouter","settings","ha","1")
 				server_ip = "127.0.0.1"
 				--ucic:set("shadowsocks-libev","sss0","server",ss_ip)
 			else
+				ucic:set("openmptcprouter","settings","ha","0")
 				ucic:set("nginx-ha","ShadowSocks","enable","0")
 				ucic:set("nginx-ha","VPN","enable","0")
 				--ucic:set("shadowsocks-libev","sss0","server",server_ip)
