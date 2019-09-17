@@ -100,7 +100,7 @@ end
 local updown = s:option( Button, "_updown", translate("Start/Stop") )
 updown._state = false
 updown.redirect = luci.dispatcher.build_url(
-	"admin", "services", "glorytun"
+	"admin", "vpn", "glorytun"
 )
 function updown.cbid(self, section)
 	local pid = s.getPID(section)
