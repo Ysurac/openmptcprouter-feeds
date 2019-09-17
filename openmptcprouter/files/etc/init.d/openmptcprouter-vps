@@ -463,6 +463,10 @@ _set_config_from_vps() {
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 
+	# get VPS ip
+	vpsip="$(uci -q get openmptcprouter.${servername}.ip)"
+	vps_lastchange="$(echo "$vps_config" | jsonfilter -q -e '@.vps.lastchange')"
+
 	# Set current VPN
 	current_vpn="$(uci -q get openmptcprouter.settings.vpn)"
 	if [ -z "$current_vpn" ] || [ -n "$vps_lastchange" ]; then
@@ -513,8 +517,11 @@ _set_config_from_vps() {
 			set shadowsocks-libev.sss0.obfs_plugin=$ss_obfs_plugin
 			set shadowsocks-libev.sss0.obfs_type=$ss_obfs_type
 			set shadowsocks-libev.sss0.obfs_host=$ss_obfs_host
-			commit shadowsocks-libev
 		EOF
+		if [ "$(uci -q get shadowsocks-libev.sss0.server)" != "127.0.0.1" ]; then
+			uci -q set shadowsocks-libev.sss0.server="$vpsip"
+		fi
+		uci -q commit shadowsocks-libev.sss0
 		logger -t "OMR-VPS" "Shadowsocks restart..."
 		/etc/init.d/shadowsocks-libev restart >/dev/null 2>&1
 	fi
@@ -540,8 +547,11 @@ _set_config_from_vps() {
 			set glorytun.vpn.key=$glorytun_key
 			set glorytun.vpn.enable=$glorytun_state
 			set glorytun.vpn.chacha20=$glorytun_chacha
-			commit glorytun
 		EOF
+		if [ "$(uci -q get glorytun.vpn.host)" != "127.0.0.1" ]; then
+			uci -q set glorytun.vpn.host="$vpsip"
+		fi
+		uci -q commit glorytun
 		logger -t "OMR-VPS" "Glorytun restart..."
 		/etc/init.d/glorytun restart >/dev/null 2>&1
 		/etc/init.d/glorytun-udp restart >/dev/null 2>&1
@@ -562,8 +572,11 @@ _set_config_from_vps() {
 			set openvpn.omr.port=$openvpn_port
 			set openvpn.omr.secret="/etc/luci-uploads/openvpn.key"
 			set openvpn.omr.enabled=$openvpn_state
-			commit openvpn
 		EOF
+		if [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ]; then
+			uci -q set openvpn.omr.remote="$vpsip"
+		fi
+		uci -q commit openvpn
 		logger -t "OMR-VPS" "OpenVPN restart..."
 		/etc/init.d/openvpn restart
 	}
@@ -581,6 +594,10 @@ _set_config_from_vps() {
 			set mlvpn.general.enable=$mlvpn_state
 			commit mlvpn
 		EOF
+		if [ "$(uci -q get mlvpn.general.host)" != "127.0.0.1" ]; then
+			uci -q set mlvpn.general.host="$vpsip"
+		fi
+		uci -q commit mlvpn
 		logger -t "OMR-VPS" "MLVPN restart..."
 		/etc/init.d/mlvpn restart
 	fi
@@ -597,6 +614,10 @@ _set_config_from_vps() {
 			set dsvpn.vpn.enable=$dsvpn_state
 			commit dsvpn
 		EOF
+		if [ "$(uci -q get dsvpn.vpn.host)" != "127.0.0.1" ]; then
+			uci -q set dsvpn.vpn.host="$vpsip"
+		fi
+		uci -q commit dsvpn
 		logger -t "OMR-VPS" "DSVPN restart..."
 		/etc/init.d/dsvpn restart
 	fi
