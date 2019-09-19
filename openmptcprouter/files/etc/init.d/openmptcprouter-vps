@@ -272,6 +272,46 @@ _get_vps_config() {
 			fi
 		fi
 	fi
+	vpsip="$(uci -q get openmptcprouter.${servername}.ip)"
+	if [ "$(uci -q get shadowsocks-libev.sss0.server)" != "127.0.0.1" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "$vpsip" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set shadowsocks-libev.sss0.server="$vpsip"
+			commit shadowsocks-libev
+		EOF
+		logger -t "OMR-VPS" "Restart shadowsocks..."
+		/etc/init.d/shadowsocks-libev restart
+	fi
+	if [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ] && [ "$(uci -q get openvpn.omr.remote)" != "$vpsip" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set openvpn.omr.remote="$vpsip"
+			commit openvpn
+		EOF
+		logger -t "OMR-VPS" "Restart OpenVPN..."
+		/etc/init.d/openvpn restart
+	fi
+	if [ "$(uci -q get dsvpn.vpn.host)" != "127.0.0.1" ] && [ "$(uci -q get dsvpn.vpn.host)" != "$vpsip" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set dsvpn.vpn.host="$vpsip"
+			commit dsvpn
+		EOF
+		logger -t "OMR-VPS" "Restart DSVPN..."
+		/etc/init.d/dsvpn restart
+	fi
+	if [ "$(uci -q get mlvpn.general.host)" != "127.0.0.1" ] && [ "$(uci -q get mlvpn.general.host)" != "$vpsip" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set mlvpn.general.host="$vpsip"
+			commit mlvpn
+		EOF
+		logger -t "OMR-VPS" "Restart MLVPN..."
+		/etc/init.d/mlvpn restart
+	fi
+	if [ "$(uci -q get glorytun.vpn.host)" != "127.0.0.1" ] && [ "$(uci -q get glorytun.vpn.host)" != "$vpsip" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set glorytun.vpn.host="$vpsip"
+		EOF
+		glorytun_change=1
+	fi
+
 	if [ "$glorytun_change" != "0" ]; then
 		logger -t "OMR-VPS" "Restart glorytun..."
 		uci -q batch <<-EOF >/dev/null
@@ -462,6 +502,8 @@ _set_config_from_vps() {
 	local shadowsocks_disabled vpn glorytun_state redirect shorewall_redirect mlvpn_key openvpn_key dsvpn_key
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
+
+	logger -t "OMR-VPS" "Get config from VPS..."
 
 	# get VPS ip
 	vpsip="$(uci -q get openmptcprouter.${servername}.ip)"
