@@ -385,16 +385,27 @@ function wizard_add()
 	ucic:save("nginx-ha")
 	ucic:commit("nginx-ha")
 	ucic:save("openvpn")
-	ucic:commit("openvpn")
+	--ucic:commit("openvpn")
 	ucic:save("mlvpn")
-	ucic:commit("mlvpn")
+	--ucic:commit("mlvpn")
 	ucic:save("dsvpn")
-	ucic:commit("dsvpn")
+	--ucic:commit("dsvpn")
 	ucic:save("glorytun")
-	ucic:commit("glorytun")
+	--ucic:commit("glorytun")
 	ucic:save("shadowsocks-libev")
-	ucic:commit("shadowsocks-libev")
+	--ucic:commit("shadowsocks-libev")
 
+
+	local encryption = luci.http.formvalue("encryption")
+	if encryption == "none" then
+		ucic:set("shadowsocks-libev","sss0","method","none")
+	elseif encryption == "aes-256-gcm" then
+		ucic:set("shadowsocks-libev","sss0","method","aes-256-gcm")
+		ucic:set("glorytun","vpn","chacha20","0")
+	elseif encryption == "chacha20" then
+		ucic:set("shadowsocks-libev","sss0","method","chacha20")
+		ucic:set("glorytun","vpn","chacha20","1")
+	end
 
 	-- Set ShadowSocks settings
 	local shadowsocks_key = luci.http.formvalue("shadowsocks_key")
@@ -429,7 +440,6 @@ function wizard_add()
 		ucic:set("glorytun","vpn","port","65001")
 		ucic:set("glorytun","vpn","key",glorytun_key)
 		ucic:set("glorytun","vpn","mptcp",1)
-		ucic:set("glorytun","vpn","chacha20",1)
 		if default_vpn == "glorytun_udp" then
 			ucic:set("glorytun","vpn","proto","udp")
 			ucic:set("glorytun","vpn","localip","10.255.254.2")
