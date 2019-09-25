@@ -6,7 +6,7 @@ START=99
 
 USE_PROCD=1
 
-EXTRA_COMMANDS="set_pihole"
+EXTRA_COMMANDS="set_pihole backup_send backup_get"
 
 _parse_result() {
 	result=$("echo $1 | jsonfilter -q -e '@.result'")
@@ -742,6 +742,28 @@ _set_config_from_vps() {
 		set openmptcprouter.${servername}.get_config=0
 		commit openmptcprouter
 	EOF
+}
+
+backup_send() {
+	sysupgrade -b /tmp/backup.tar.gz
+	backup_data="$(cat /tmp/backup.tar.gz | base64)"
+	backup_sha256sum="$(sha256sum /tmp/backup.tar.gz | awk '{print $1}')"
+	[ -n "$backup_data" ] && {
+		local backupjson
+		backupjson='{"data": "'$backup_data'","sha256sum": "'$backup_sha256sum'"}'
+		echo $(_set_json "backup" "$backupjson")
+	}
+}
+
+backup_get() {
+	vps_backup=$(_get_json "backup")
+	[ -z "$vps_backup" ] && return
+	backup_data="$(echo "$vps_backup" | jsonfilter -q -e '@.data')"
+	backup_sha256sum="$(echo "$vps_backup" | jsonfilter -q -e '@.sha256sum')"
+	[ -n "$backup_data" ] && {
+		echo $backup_data | base64 -d > /tmp/backup.tar.gz
+		sysupgrade -t /tmp/backup.tar.gz
+	}
 }
 
 _count_server() {
