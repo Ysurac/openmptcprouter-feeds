@@ -605,6 +605,7 @@ function settings_add()
 	end
 	luci.sys.exec("sysctl -w net.ipv4.tcp_fastopen=%s" % tcp_fastopen)
 	luci.sys.exec("sed -i 's:^net.ipv4.tcp_fastopen=[0-3]*:net.ipv4.tcp_fastopen=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_fastopen)
+	ucic:set("openmptcprouter", "settings","disable_fastopen", disablefastopen)
 	
 	-- Disable IPv6
 	local disable_ipv6 = luci.http.formvalue("enableipv6") or "1"
