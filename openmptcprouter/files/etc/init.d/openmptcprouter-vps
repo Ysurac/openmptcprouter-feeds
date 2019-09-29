@@ -6,7 +6,7 @@ START=99
 
 USE_PROCD=1
 
-EXTRA_COMMANDS="set_pihole backup_send backup_get"
+EXTRA_COMMANDS="set_pihole backup_send backup_get set_vps_firewall"
 
 _parse_result() {
 	result=$("echo $1 | jsonfilter -q -e '@.result'")
@@ -487,6 +487,68 @@ _set_wan_ip() {
 	fi
 }
 
+_vps_firewall_redirect_port() {
+	local src proto src_dport
+	config_get src $1 src
+	config_get proto $1 proto
+	config_get src_dport $1 src_dport
+	[ -n "$src" ] && [ -n "$proto" ] && [ -n "$src_dport" ] && {
+		if [ "$proto" = "tcp udp" ]; then
+			vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port tcp")
+			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "tcp","fwtype" : "DNAT"}'
+			_set_json "shorewallopen" "$settings"
+			vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port udp")
+			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "udp","fwtype" : "DNAT"}'
+			_set_json "shorewallopen" "$settings"
+		else
+			vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port $proto")
+			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT"}'
+			_set_json "shorewallopen" "$settings"
+		fi
+	} || echo 1
+}
+
+_vps_firewall_close_port() {
+	echo "$vpsfwlist"
+	echo "$vpsfwlist" | while read -r line; do
+		echo "line: $line"
+		[ -n "$line" ] && {
+			proto=$(echo $line | awk '{print $4}')
+			src_port=$(echo $line | awk '{print $5}')
+			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT"}'
+			_set_json "shorewallclose" "$settings"
+		}
+	done
+}
+
+_set_vps_firewall() {
+	servername=$1
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	token=""
+	vps_config=""
+	_login
+	[ -z "$token" ] && {
+		logger -t "OMR-VPS" "Can't get token, try later"
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.admin_error=1
+		EOF
+		return
+	}
+	settings='{"name" : "redirect router"}'
+	fw_list=$(_set_json "shorewalllist" "$settings")
+	vpsfwlist=$(echo $fw_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')
+	config_load firewall
+	config_foreach _vps_firewall_redirect_port redirect
+	[ -n "$vpsfwlist" ] && _vps_firewall_close_port
+}
+
+set_vps_firewall() {
+	config_load openmptcprouter
+	config_foreach _set_vps_firewall server
+}
+
 _set_ss_redir() {
 	local option=$2
 	local value=$3
@@ -744,18 +806,53 @@ _set_config_from_vps() {
 	EOF
 }
 
-backup_send() {
+_backup_send() {
+	servername=$1
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	token=""
+	vps_config=""
+	_login
+	[ -z "$token" ] && {
+		logger -t "OMR-VPS" "Can't get token, try later"
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.admin_error=1
+		EOF
+		return
+	}
 	sysupgrade -b /tmp/backup.tar.gz
-	backup_data="$(cat /tmp/backup.tar.gz | base64)"
+	backup_data="$(cat /tmp/backup.tar.gz | base64 | tr -d '\n')"
 	backup_sha256sum="$(sha256sum /tmp/backup.tar.gz | awk '{print $1}')"
 	[ -n "$backup_data" ] && {
+		logger -t "OMR-VPS" "Send backup file to server"
 		local backupjson
 		backupjson='{"data": "'$backup_data'","sha256sum": "'$backup_sha256sum'"}'
-		echo $(_set_json "backup" "$backupjson")
+		_set_json "backuppost" "$backupjson"
 	}
 }
 
-backup_get() {
+backup_send() {
+	config_load openmptcprouter
+	config_foreach _backup_send server
+}
+
+
+_backup_get() {
+	servername=$1
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	token=""
+	vps_config=""
+	_login
+	[ -z "$token" ] && {
+		logger -t "OMR-VPS" "Can't get token, try later"
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.admin_error=1
+		EOF
+		return
+	}
 	vps_backup=$(_get_json "backup")
 	[ -z "$vps_backup" ] && return
 	backup_data="$(echo "$vps_backup" | jsonfilter -q -e '@.data')"
@@ -765,6 +862,12 @@ backup_get() {
 		sysupgrade -t /tmp/backup.tar.gz
 	}
 }
+
+backup_get() {
+	config_load openmptcprouter
+	config_foreach _backup_get server
+}
+
 
 _count_server() {
 	local servername=$1
@@ -814,6 +917,7 @@ _config_service() {
 	config_foreach _set_ss_server_vps server
 	[ -z "$(_set_glorytun_vps)" ] && error=1
 	[ -z "$(_set_openvpn_vps)" ] && error=1
+	_set_vps_firewall
 	redirect_port="0"
 	if [ "$(uci -q get openmptcprouter.${servername}.redirect_ports)" = "1" ] || [ "$(uci -q get upnpd.config.enabled)" = "1" ]; then
 		redirect_port="1"
@@ -831,6 +935,19 @@ _config_service() {
 
 _set_pihole_server() {
 	servername=$1
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	token=""
+	vps_config=""
+	_login
+	[ -z "$token" ] && {
+		logger -t "OMR-VPS" "Can't get token, try later"
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.admin_error=1
+		EOF
+		return
+	}
 	_set_pihole $servername
 }
 
