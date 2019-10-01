@@ -578,6 +578,8 @@ function settings_add()
 	for server, _ in pairs(servers) do
 		local redirectports = luci.http.formvalue("redirect_ports.%s" % server) or "0"
 		ucic:set("openmptcprouter",server,"redirect_ports",redirectports)
+		local nofwredirect = luci.http.formvalue("nofwredirect.%s" % server) or "0"
+		ucic:set("openmptcprouter",server,"nofwredirect",nofwredirect)
 	end
 
 	-- Set tcp_keepalive_time
