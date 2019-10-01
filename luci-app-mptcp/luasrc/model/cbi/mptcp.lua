@@ -32,6 +32,7 @@ mtcpsch:value("roundrobin", translate("round-robin"))
 mtcpsch:value("redundant", translate("redundant"))
 if uname.release:sub(1,4) == "4.19" then
 	mtcpsch:value("blest", translate("BLEST"))
+	mtcpsch:value("ecf", translate("ECF"))
 end
 local mtcpsyn = s:option(Value, "mptcp_syn_retries", translate("Multipath TCP SYN retries"))
 mtcpsyn.datatype = "uinteger"
