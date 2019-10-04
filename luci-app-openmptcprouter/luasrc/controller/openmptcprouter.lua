@@ -611,7 +611,7 @@ function settings_add()
 	
 	-- Disable IPv6
 	local disable_ipv6 = luci.http.formvalue("enableipv6") or "1"
-	local dump = require("luci.util").ubus("openmptcprouter", "disableipv6", { disable_ipv6 = disable_ipv6})
+	local dump = require("luci.util").ubus("openmptcprouter", "disableipv6", { disable_ipv6 = tonumber(disable_ipv6)})
 
 	-- Enable/disable external check
 	local externalcheck = luci.http.formvalue("externalcheck") or "1"
