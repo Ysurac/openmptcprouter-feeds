@@ -19,6 +19,8 @@ function index()
 	entry({"admin", "system", "openmptcprouter", "settings"}, template("openmptcprouter/settings"), _("Advanced Settings"), 3).leaf = true
 	entry({"admin", "system", "openmptcprouter", "settings_add"}, post("settings_add")).leaf = true
 	entry({"admin", "system", "openmptcprouter", "update_vps"}, post("update_vps")).leaf = true
+	entry({"admin", "system", "openmptcprouter", "backup"}, template("openmptcprouter/backup"), _("Backup on server"), 3).leaf = true
+	entry({"admin", "system", "openmptcprouter", "backupgr"}, post("backupgr")).leaf = true
 	entry({"admin", "system", "openmptcprouter", "debug"}, template("openmptcprouter/debug"), _("Show all settings"), 5).leaf = true
 end
 
@@ -263,9 +265,10 @@ function wizard_add()
 	ucic:commit("network")
 
 	-- Enable/disable IPv6
-	local disable_ipv6 = luci.http.formvalue("enableipv6") or "1"
-	local ut = require "luci.util"
-	local result = ut.ubus("openmptcprouter", "set_ipv6_state", { disable_ipv6 = disable_ipv6 })
+	local disableipv6 = luci.http.formvalue("enableipv6") or "1"
+	ucic:set("openmptcprouter","settings","disable_ipv6",disable_ipv6)
+	--local ut = require "luci.util"
+	--local result = ut.ubus("openmptcprouter", "set_ipv6_state", { disable_ipv6 = disableipv6 })
 
 	-- Get VPN set by default
 	local default_vpn = luci.http.formvalue("default_vpn") or "glorytun_tcp"
@@ -696,6 +699,17 @@ function update_vps()
 	if update_vps ~= "" then
 		local ut = require "luci.util"
 		local result = ut.ubus("openmptcprouter", "update_vps", {})
+	end
+end
+
+function backupgr()
+	local get_backup = luci.http.formvalue("restore") or ""
+	if get_backup ~= "" then
+		luci.sys.call("/etc/init.d/openmptcprouter-vps backup_get >/dev/null 2>/dev/null")
+	end
+	local send_backup = luci.http.formvalue("save") or ""
+	if send_backup ~= "" then
+		luci.sys.call("/etc/init.d/openmptcprouter-vps backup_send >/dev/null 2>/dev/null")
 	end
 end
 

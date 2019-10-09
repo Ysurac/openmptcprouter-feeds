@@ -33,40 +33,6 @@ omr_intf_set() {
 	fi
 }
 
-set_ipv6_state() {
-	local disable_ipv6=$1
-	local sysctl_ipv6=0
-	sysctl -w net.ipv6.conf.all.disable_ipv6=$sysctl_ipv6
-	sed -i 's:^net.ipv6.conf.all.disable_ipv6=[0-9]*:net.ipv6.conf.all.disable_ipv6=$sysctl_ipv6:' /etc/sysctl.d/zzz_openmptcprouter.conf
-	
-	uci -q set firewall.@defaults[0].disable_ipv6=$disable_ipv6
-	uci -q commit firewall
-
-	if [ "$disable_ipv6" == "1" ]; then
-		uci -q set dhcp.lan.ra_default="0"
-		uci -q set network.lan.ipv6="0"
-		uci -q delete network.lan.ipv6
-		uci -q delete dhcp.lan.dhcpv6
-		uci -q delete dhcp.lan.ra
-		uci -q delete dhcp.lan.ra_default
-		uci -q delete dhcp.lan.ra_preference
-		uci -q set shadowsocks-libev.hi.local_address="0.0.0.0"
-	else
-		uci -q set dhcp.lan.ra_default="1"
-		uci -q set dhcp.lan.ra_preference="high"
-		uci -q set network.lan.ipv6="1"
-		uci -q set network.lan.delegate="0"
-		uci -q set shadowsocks-libev.hi.local_address="::"
-	fi
-	uci -q commit shadowsocks-libev
-	uci -q commit dhcp
-	uci -q commit network
-	#if [ "$disable_ipv6" == "1" ]; then
-	#	/etc/init.d/odhcpd stop >/dev/null 2>&1
-	#	/etc/init.d/odhcpd disable >/dev/null 2>&1
-	#fi
-}
-
 start_service() {
 	local scaling_min_freq scaling_max_freq
 
@@ -94,11 +60,6 @@ start_service() {
 			echo $scaling_governor > $c/scaling_governor
 		done
 	}
-	config_get disable_ipv6 settings disable_ipv6 "0"
-	if [ "$(uci -q get firewall.@defaults[0].disable_ipv6)" != "$disable_ipv6" ]; then
-		set_ipv6_state $disable_ipv6
-	fi
-	
 	# remove sysctl already defined in /etc/sysctl.d/
 	sed -i -e '/tcp_fin_timeout/d' -e '/tcp_keepalive_time/d' -e '/nf_conntrack_max/d' -e '/tcp_syn_retries/d' -e '/tcp_fastopen/d' /etc/sysctl.conf
 	sed -i -e '/tcp_fin_timeout/d' -e '/tcp_keepalive_time/d' -e '/nf_conntrack_max/d' -e '/tcp_syn_retries/d' -e '/tcp_fastopen/d' /etc/sysctl.d/10-default.conf

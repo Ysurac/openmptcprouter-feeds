@@ -854,7 +854,7 @@ _backup_get() {
 		EOF
 		return
 	}
-	vps_backup=$(_get_json "backup")
+	vps_backup=$(_get_json "backupget")
 	[ -z "$vps_backup" ] && return
 	backup_data="$(echo "$vps_backup" | jsonfilter -q -e '@.data')"
 	backup_sha256sum="$(echo "$vps_backup" | jsonfilter -q -e '@.sha256sum')"
@@ -867,6 +867,36 @@ _backup_get() {
 backup_get() {
 	config_load openmptcprouter
 	config_foreach _backup_get server
+}
+
+_backup_list() {
+	servername=$1
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	token=""
+	vps_config=""
+	_login
+	[ -z "$token" ] && {
+		logger -t "OMR-VPS" "Can't get token, try later"
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.admin_error=1
+		EOF
+		return
+	}
+	vps_backup=$(_get_json "backuplist")
+	[ -z "$vps_backup" ] && return
+	backup_lastmodif="$(echo "$vps_backup" | jsonfilter -q -e '@.modif')"
+	[ -n "$backup_lastmodif" ] && {
+		uci -q set openmptcprouter.$servername.lastbackup=$backup_lastmodif
+	}
+}
+
+
+
+backup_list() {
+	config_load openmptcprouter
+	config_foreach _backup_list server
 }
 
 
@@ -919,6 +949,7 @@ _config_service() {
 	[ -z "$(_set_glorytun_vps)" ] && error=1
 	[ -z "$(_set_openvpn_vps)" ] && error=1
 	_set_vps_firewall
+	_backup_list
 	redirect_port="0"
 	if [ "$(uci -q get openmptcprouter.${servername}.redirect_ports)" = "1" ] || [ "$(uci -q get upnpd.config.enabled)" = "1" ]; then
 		redirect_port="1"
