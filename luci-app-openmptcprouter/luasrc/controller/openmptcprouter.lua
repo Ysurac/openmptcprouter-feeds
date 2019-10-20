@@ -103,6 +103,7 @@ function wizard_add()
 		ucic:set("network","wan" .. i,"proto","static")
 		if ointf ~= "" then
 			ucic:set("network","wan" .. i,"type","macvlan")
+			ucic:set("macvlan","wan" .. i,"macvlan")
 		end
 		ucic:set("network","wan" .. i,"ip4table","wan")
 		if multipath_master then
@@ -114,6 +115,8 @@ function wizard_add()
 		end
 		ucic:set("network","wan" .. i,"defaultroute","0")
 		ucic:reorder("network","wan" .. i, i + 2)
+		ucic:save("macvlan")
+		ucic:commit("macvlan")
 		ucic:save("network")
 		ucic:commit("network")
 		ucic:save("openmptcprouter")
