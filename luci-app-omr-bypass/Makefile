@@ -10,6 +10,7 @@ LUCI_DEPENDS:=+dnsmasq-full +shadowsocks-libev-ss-rules +iptables-mod-ndpi +ipta
 
 PKG_LICENSE:=GPLv3
 
-include ../luci/luci.mk
+#include ../luci/luci.mk
+include $(TOPDIR)/feeds/luci/luci.mk
 
 # call BuildPackage - OpenWrt buildroot signature

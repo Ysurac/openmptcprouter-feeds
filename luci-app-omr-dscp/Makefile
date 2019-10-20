@@ -9,6 +9,7 @@ LUCI_TITLE:=LuCI Interface to DSCP
 
 PKG_LICENSE:=GPLv3
 
-include ../luci/luci.mk
+#include ../luci/luci.mk
+include $(TOPDIR)/feeds/luci/luci.mk
 
 # call BuildPackage - OpenWrt buildroot signature

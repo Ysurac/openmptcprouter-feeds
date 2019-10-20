@@ -15,6 +15,7 @@ PKG_LICENSE:=GPLv2
 
 PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 
-include ../luci/luci.mk
+#include ../luci/luci.mk
+include $(TOPDIR)/feeds/luci/luci.mk
 
 # call BuildPackage - OpenWrt buildroot signature

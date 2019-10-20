@@ -10,6 +10,7 @@ include $(TOPDIR)/rules.mk
 LUCI_TITLE:=OpenMPTCProuter Theme (default)
 LUCI_DEPENDS:=
 
-include ../luci/luci.mk
+#include ../luci/luci.mk
+include $(TOPDIR)/feeds/luci/luci.mk
 
 # call BuildPackage - OpenWrt buildroot signature
