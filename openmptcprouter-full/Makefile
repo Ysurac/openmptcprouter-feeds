@@ -42,8 +42,9 @@ MY_DEPENDS := \
     luci-app-wol luci-app-opkg \
     luci-app-uhttpd \
     luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
-    luci-ssl-openssl \
     luci-app-openvpn \
+    luci-app-macvlan \
+    shadowsocks-libev-ss-server \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd iputils-traceroute6 ip6tables \
     speedtestc \
     iftop \
@@ -53,6 +54,7 @@ MY_DEPENDS := \
     iputils-ping \
     tracebox \
     luci-proto-3g \
+    luci-proto-wireguard \
     comgt-ncm luci-proto-ncm \
     omr-update \
     rng-tools \
@@ -74,7 +76,8 @@ MY_DEPENDS := \
     kmod-usb-net-huawei-cdc-ncm kmod-usb-net-rndis kmod-usb-net-cdc-ether kmod-usb-net-ipheth usbmuxd \
     kmod-rt2800-usb kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su \
     luci-proto-qmi wpad-basic kmod-mt7601u kmod-rtl8187 \
-    luci-app-mlvpn
+    luci-app-mlvpn \
+    softethervpn5-client softethervpn5-server wireguard
 #     kmod-ath9k kmod-ath9k-htc
 
 #    (TARGET_x86||TARGET_x86_64):open-vm-tools \
