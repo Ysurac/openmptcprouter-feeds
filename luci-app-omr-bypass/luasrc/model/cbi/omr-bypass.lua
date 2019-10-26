@@ -34,6 +34,26 @@ ip.optional = false
 ifi = s:option(ListValue, "interface", translate("Interface"))
 ifi.rmempty  = true
 
+s = m:section(TypedSection, "dest_port", translate("Ports destination"))
+s.addremove = true
+s.anonymous = true
+s.template = "cbi/tblsection"
+
+ip = s:option(Value, "dport", translate("port"))
+ip.rmempty  = true
+ip.optional = false
+
+proto = s:option(ListValue, "protp", translate("Protocol"))
+proto:value("all",translate("ALL"))
+proto:value("tcp","TCP")
+proto:value("udp","UDP")
+proto:value("icmp","ICMP")
+proto.rmempty  = true
+proto.optional = false
+
+ifdp = s:option(ListValue, "interface", translate("Interface"))
+ifdp.rmempty  = true
+
 s = m:section(TypedSection, "macs", translate("<abbr title=\"Media Access Control\">MAC</abbr>-Address"))
 s.addremove = true
 s.anonymous = true
@@ -78,12 +98,12 @@ asn.optional = false
 ifa = s:option(ListValue, "interface", translate("Interface"))
 ifa.rmempty  = true
 
-s = m:section(TypedSection, "dpis", translate("Protocols"))
+s = m:section(TypedSection, "dpis", translate("Protocols and services"))
 s.addremove = true
 s.anonymous = true
 s.template = "cbi/tblsection"
 
-dpi = s:option(ListValue, "proto", translate("Protocol"))
+dpi = s:option(ListValue, "proto", translate("Protocol/Service"))
 dpi.rmempty  = true
 dpi.optional = false
 local xt_ndpi_available = nixio.fs.access("/proc/net/xt_ndpi/proto")
@@ -110,12 +130,14 @@ ifp.default = "all"
 ifm.default = "all"
 ifl.default = "all"
 ifa.default = "all"
+ifdp.default = "all"
 ifd:value("all",translate("Default"))
 ifi:value("all",translate("Default"))
 ifp:value("all",translate("Default"))
 ifm:value("all",translate("Default"))
 ifl:value("all",translate("Default"))
 ifa:value("all",translate("Default"))
+ifdp:value("all",translate("Default"))
 for _, iface in ipairs(ifaces) do
 	if iface:is_up() then
 		ifd:value(iface:name(),"%s" % iface:name())
@@ -124,6 +146,7 @@ for _, iface in ipairs(ifaces) do
 		ifm:value(iface:name(),"%s" % iface:name())
 		ifl:value(iface:name(),"%s" % iface:name())
 		ifa:value(iface:name(),"%s" % iface:name())
+		ifdp:value(iface:name(),"%s" % iface:name())
 	end
 end
 
