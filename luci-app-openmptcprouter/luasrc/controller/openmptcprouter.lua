@@ -101,6 +101,7 @@ function wizard_add()
 		ucic:set("network","wan" .. i,"interface")
 		ucic:set("network","wan" .. i,"ifname",defif)
 		ucic:set("network","wan" .. i,"proto","static")
+		ucic:set("openmptcprouter","wan" .. i,"interface")
 		if ointf ~= "" then
 			ucic:set("network","wan" .. i,"type","macvlan")
 			ucic:set("macvlan","wan" .. i,"macvlan")
@@ -200,6 +201,10 @@ function wizard_add()
 		ucic:set("network",intf,"gateway",gateway)
 
 		ucic:delete("openmptcprouter",intf,"lc")
+		ucic:save("openmptcprouter")
+
+		local multipathvpn = luci.http.formvalue("multipathvpn.%s.enabled" % intf) or "0"
+		ucic:set("openmptcprouter",intf,"multipathvpn",multipathvpn)
 		ucic:save("openmptcprouter")
 
 		local downloadspeed = luci.http.formvalue("cbid.sqm.%s.download" % intf) or "0"
