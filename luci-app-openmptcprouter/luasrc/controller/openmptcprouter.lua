@@ -291,6 +291,10 @@ function wizard_add()
 		vpn_port = 65201
 		vpn_intf = "mlvpn0"
 		ucic:set("network","omrvpn","proto","dhcp")
+	elseif default_vpn == "ubond" then
+		vpn_port = 65201
+		vpn_intf = "ubond0"
+		ucic:set("network","omrvpn","proto","dhcp")
 	elseif default_vpn == "dsvpn" then
 		vpn_port = 65011
 		vpn_intf = "tun0"
@@ -384,6 +388,7 @@ function wizard_add()
 			ucic:set("glorytun","vpn","host",server_ip)
 			ucic:set("dsvpn","vpn","host",server_ip)
 			ucic:set("mlvpn","general","host",server_ip)
+			ucic:set("ubond","general","host",server_ip)
 			luci.sys.call("uci -q del openvpn.omr.remote")
 			luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
 			ucic:set("qos","serverin","srchost",server_ip)
@@ -398,6 +403,7 @@ function wizard_add()
 	ucic:save("openvpn")
 	--ucic:commit("openvpn")
 	ucic:save("mlvpn")
+	ucic:save("ubond")
 	--ucic:commit("mlvpn")
 	ucic:save("dsvpn")
 	--ucic:commit("dsvpn")
@@ -516,6 +522,26 @@ function wizard_add()
 	ucic:save("mlvpn")
 	ucic:commit("mlvpn")
 
+	-- Set UBOND settings
+	if default_vpn == "ubond" then
+		ucic:set("ubond","general","enable",1)
+		ucic:set("network","omrvpn","proto","dhcp")
+	else
+		ucic:set("ubond","general","enable",0)
+	end
+
+	local ubond_password = luci.http.formvalue("ubond_password")
+	if ubond_password ~= "" then
+		ucic:set("ubond","general","password",ubond_password)
+		ucic:set("ubond","general","firstport","65201")
+		ucic:set("ubond","general","interface_name","ubond0")
+	else
+		--ucic:set("ubond","general","enable",0)
+		ucic:set("ubond","general","password","")
+	end
+	ucic:save("ubond")
+	ucic:commit("ubond")
+
 	-- Set OpenVPN settings
 	local openvpn_key = luci.http.formvalue("openvpn_key")
 	if openvpn_key ~= "" then
@@ -570,6 +596,7 @@ function wizard_add()
 	luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
+	luci.sys.call("/etc/init.d/ubond restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/dsvpn restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/omr-tracker restart >/dev/null 2>/dev/null")
