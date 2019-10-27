@@ -1,4 +1,5 @@
 -- Copyright 2008 Steven Barth <steven@midlink.org>
+-- Copyright 2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 -- Licensed to the public under the Apache License 2.0.
 
 local uci = luci.model.uci.cursor()
@@ -73,10 +74,10 @@ t = s:option(ListValue, "class", translate("Class"))
 	t:value("cs1", translate("CS1 - Low priority"))
 	t:value("cs2", translate("CS2 - High priority"))
 	t:value("cs3", translate("CS3 - SIP"))
-	t:value("cs4", translate("CS4 - Streaming video"))
-	t:value("cs5", translate("CS5"))
+	t:value("cs4", translate("CS4 - Real-Time Interactive"))
+	t:value("cs5", translate("CS5 - Broadcast Video"))
 	t:value("cs6", translate("CS6 - Network routing"))
-	t:value("cs7", translate("CS7"))
+	t:value("cs7", translate("CS7 - Latency sensitive"))
 	t:value("ef", translate("EF - Voice"))
 
 comment = s:option(Value, "comment", translate("Comment"))
