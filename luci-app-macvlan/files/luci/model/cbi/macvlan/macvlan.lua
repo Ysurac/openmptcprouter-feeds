@@ -3,7 +3,7 @@
 local net = require "luci.model.network".init()
 local ifaces = net:get_interfaces() or { net:get_interface() }
 
-m = Map("macvlan", translate("Macvlan"))
+m = Map("macvlan", translate("Macvlan"), translate("You can configure Macvlan virtual interfaces base on the real itnerface you want."))
 
 s = m:section(TypedSection, "macvlan", translate("Macvlan Settings"))
 s.addremove = true
