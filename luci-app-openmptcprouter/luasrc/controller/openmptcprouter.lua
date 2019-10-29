@@ -735,6 +735,7 @@ function update_vps()
 		local ut = require "luci.util"
 		local result = ut.ubus("openmptcprouter", "update_vps", {})
 	end
+	return
 end
 
 function backupgr()
@@ -746,6 +747,8 @@ function backupgr()
 	if send_backup ~= "" then
 		luci.sys.call("/etc/init.d/openmptcprouter-vps backup_send >/dev/null 2>/dev/null")
 	end
+	luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/backup"))
+	return
 end
 
 function get_device(interface)
