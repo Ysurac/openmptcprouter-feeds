@@ -21,6 +21,8 @@ hn.rmempty  = true
 ifd = s:option(ListValue, "interface", translate("Interface"))
 ifd.rmempty  = true
 
+dn = s:option(Value,"note",translate("Note"))
+
 s = m:section(TypedSection, "ips", translate("IPs and Networks"))
 s.addremove = true
 s.anonymous = true
@@ -33,6 +35,9 @@ ip.optional = false
 
 ifi = s:option(ListValue, "interface", translate("Interface"))
 ifi.rmempty  = true
+
+inn = s:option(Value,"note",translate("Note"))
+
 
 s = m:section(TypedSection, "dest_port", translate("Ports destination"))
 s.addremove = true
@@ -54,6 +59,8 @@ proto.optional = false
 ifdp = s:option(ListValue, "interface", translate("Interface"))
 ifdp.rmempty  = true
 
+dpn = s:option(Value,"note",translate("Note"))
+
 s = m:section(TypedSection, "macs", translate("<abbr title=\"Media Access Control\">MAC</abbr>-Address"))
 s.addremove = true
 s.anonymous = true
@@ -73,6 +80,8 @@ end)
 ifm = s:option(ListValue, "interface", translate("Interface"))
 ifm.rmempty  = true
 
+macn = s:option(Value,"note",translate("Note"))
+
 s = m:section(TypedSection, "lan_ip", translate("Source lan IP address or network"))
 s.addremove = true
 s.anonymous = true
@@ -86,6 +95,8 @@ ip.optional = false
 ifl = s:option(ListValue, "interface", translate("Interface"))
 ifl.rmempty  = true
 
+lanipn = s:option(Value,"note",translate("Note"))
+
 s = m:section(TypedSection, "asns", translate("<abbr tittle=\"Autonomous System Number\">ASN</abbr>"))
 s.addremove = true
 s.anonymous = true
@@ -97,6 +108,8 @@ asn.optional = false
 
 ifa = s:option(ListValue, "interface", translate("Interface"))
 ifa.rmempty  = true
+
+asnn = s:option(Value,"note",translate("Note"))
 
 s = m:section(TypedSection, "dpis", translate("Protocols and services"))
 s.addremove = true
@@ -123,6 +136,9 @@ end
 
 ifp = s:option(ListValue, "interface", translate("Interface"))
 ifp.rmempty  = true
+
+psn = s:option(Value,"note",translate("Note"))
+
 
 ifd.default = "all"
 ifi.default = "all"

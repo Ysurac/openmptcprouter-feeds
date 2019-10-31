@@ -6,7 +6,7 @@ START=99
 
 USE_PROCD=1
 
-EXTRA_COMMANDS="set_pihole backup_send backup_get set_vps_firewall"
+EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall"
 
 _parse_result() {
 	result=$("echo $1 | jsonfilter -q -e '@.result'")
@@ -299,6 +299,7 @@ _get_vps_config() {
 	fi
 	if [ "$(uci -q get mlvpn.general.host)" != "127.0.0.1" ] && [ "$(uci -q get mlvpn.general.host)" != "$vpsip" ]; then
 		uci -q batch <<-EOF >/dev/null
+			set mlvpn.general="mlvpn"
 			set mlvpn.general.host="$vpsip"
 			commit mlvpn
 		EOF
@@ -848,6 +849,9 @@ _backup_send() {
 backup_send() {
 	config_load openmptcprouter
 	config_foreach _backup_send server
+	sleep 2
+	config_foreach _backup_list server
+	uci -q commit openmptcprouter
 }
 
 
@@ -871,6 +875,7 @@ _backup_get() {
 	backup_data="$(echo "$vps_backup" | jsonfilter -q -e '@.data')"
 	backup_sha256sum="$(echo "$vps_backup" | jsonfilter -q -e '@.sha256sum')"
 	[ -n "$backup_data" ] && {
+		logger -t "OMR-VPS" "Restore backup"
 		echo $backup_data | base64 -d > /tmp/backup.tar.gz
 		sysupgrade -t /tmp/backup.tar.gz
 	}
@@ -879,6 +884,7 @@ _backup_get() {
 backup_get() {
 	config_load openmptcprouter
 	config_foreach _backup_get server
+	uci -q commit openmptcprouter
 }
 
 _backup_list() {
@@ -909,6 +915,7 @@ _backup_list() {
 backup_list() {
 	config_load openmptcprouter
 	config_foreach _backup_list server
+	uci -q commit openmptcprouter
 }
 
 
