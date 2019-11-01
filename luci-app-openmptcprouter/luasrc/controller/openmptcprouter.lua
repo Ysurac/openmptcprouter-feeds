@@ -419,8 +419,8 @@ function wizard_add()
 	elseif encryption == "aes-256-gcm" then
 		ucic:set("shadowsocks-libev","sss0","method","aes-256-gcm")
 		ucic:set("glorytun","vpn","chacha20","0")
-	elseif encryption == "chacha20" then
-		ucic:set("shadowsocks-libev","sss0","method","chacha20")
+	elseif encryption == "chacha20-ietf-poly1305" then
+		ucic:set("shadowsocks-libev","sss0","method","chacha20-ietf-poly1305")
 		ucic:set("glorytun","vpn","chacha20","1")
 	end
 
@@ -429,7 +429,7 @@ function wizard_add()
 	local shadowsocks_disable = luci.http.formvalue("disableshadowsocks") or "0"
 	if shadowsocks_key ~= "" then
 		ucic:set("shadowsocks-libev","sss0","key",shadowsocks_key)
-		--ucic:set("shadowsocks-libev","sss0","method","chacha20")
+		--ucic:set("shadowsocks-libev","sss0","method","chacha20-ietf-poly1305")
 		--ucic:set("shadowsocks-libev","sss0","server_port","65101")
 		ucic:set("shadowsocks-libev","sss0","disabled",shadowsocks_disable)
 		ucic:save("shadowsocks-libev")
