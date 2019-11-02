@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 # Released under GPL 3. See LICENSE for the full terms.
 
 START=99
@@ -21,9 +21,10 @@ _login() {
 	password="$(uci -q get openmptcprouter.${servername}.password)"
 	serverport="$(uci -q get openmptcprouter.${servername}.port)"
 	if [ -z "$token" ]; then
-		auth=`curl --max-time 10 -s -k -H "Content-Type: application/json" -X POST -d '{"username":"'$username'","password":"'$password'"}' https://$server:$serverport/login`
+		#auth=`curl --max-time 10 -s -k -H "Content-Type: application/json" -X POST -d '{"username":"'$username'","password":"'$password'"}' https://$server:$serverport/login`
+		auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://$server:$serverport/token`
 		[ -z "$auth" ] && return
-		token="$(echo "$auth" | jsonfilter -q -e '@.token')"
+		token="$(echo "$auth" | jsonfilter -q -e '@.access_token')"
 		uci -q set openmptcprouter.${servername}.token="$token"
 	fi
 }
@@ -33,7 +34,7 @@ _get_json() {
 	route=$1
 	[ -z "$token" ] && _login
 	[ -n "$token" ] && {
-		result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" https://$server:$serverport/$route`
+		result=`curl --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://$server:$serverport/$route`
 		echo $result
 	} || {
 		echo ''
@@ -297,9 +298,9 @@ _get_vps_config() {
 		logger -t "OMR-VPS" "Restart DSVPN..."
 		/etc/init.d/dsvpn restart
 	fi
-	if [ "$(uci -q get mlvpn.general.host)" != "127.0.0.1" ] && [ "$(uci -q get mlvpn.general.host)" != "$vpsip" ]; then
+	if [ "$(uci -q get mlvpn.general.host)" != "127.0.0.1" ] && [ "$(uci -q get mlvpn.general.host)" != "$vpsip" ] && [ -f /etc/init.d/mlvpn ]; then
 		uci -q batch <<-EOF >/dev/null
-			set mlvpn.general="mlvpn"
+			set mlvpn.general=mlvpn
 			set mlvpn.general.host="$vpsip"
 			commit mlvpn
 		EOF
@@ -523,18 +524,18 @@ _vps_firewall_close_port() {
 }
 
 _set_vps_firewall() {
-	servername=$1
-	[ "$(uci -q get openmptcprouter.${servername}.nofwredirect)" = "1" ] && return
-	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
-	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
-	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	fwservername=$1
+	[ "$(uci -q get openmptcprouter.${fwservername}.nofwredirect)" = "1" ] && return
+	[ -z "$(uci -q get openmptcprouter.${fwservername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${fwservername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${fwservername}.port)" ] && return
 	token=""
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
 		logger -t "OMR-VPS" "Can't get token, try later"
 		uci -q batch <<-EOF >/dev/null
-			set openmptcprouter.${servername}.admin_error=1
+			set openmptcprouter.${fwservername}.admin_error=1
 		EOF
 		return
 	}
@@ -849,9 +850,6 @@ _backup_send() {
 backup_send() {
 	config_load openmptcprouter
 	config_foreach _backup_send server
-	sleep 2
-	config_foreach _backup_list server
-	uci -q commit openmptcprouter
 }
 
 
@@ -875,7 +873,6 @@ _backup_get() {
 	backup_data="$(echo "$vps_backup" | jsonfilter -q -e '@.data')"
 	backup_sha256sum="$(echo "$vps_backup" | jsonfilter -q -e '@.sha256sum')"
 	[ -n "$backup_data" ] && {
-		logger -t "OMR-VPS" "Restore backup"
 		echo $backup_data | base64 -d > /tmp/backup.tar.gz
 		sysupgrade -t /tmp/backup.tar.gz
 	}
@@ -884,21 +881,20 @@ _backup_get() {
 backup_get() {
 	config_load openmptcprouter
 	config_foreach _backup_get server
-	uci -q commit openmptcprouter
 }
 
 _backup_list() {
-	servername=$1
-	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
-	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
-	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	bservername=$1
+	[ -z "$(uci -q get openmptcprouter.${bservername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${bservername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${bservername}.port)" ] && return
 	token=""
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
 		logger -t "OMR-VPS" "Can't get token, try later"
 		uci -q batch <<-EOF >/dev/null
-			set openmptcprouter.${servername}.admin_error=1
+			set openmptcprouter.${bservername}.admin_error=1
 		EOF
 		return
 	}
@@ -906,7 +902,7 @@ _backup_list() {
 	[ -z "$vps_backup" ] && return
 	backup_lastmodif="$(echo "$vps_backup" | jsonfilter -q -e '@.modif')"
 	[ -n "$backup_lastmodif" ] && {
-		uci -q set openmptcprouter.$servername.lastbackup=$backup_lastmodif
+		uci -q set openmptcprouter.$bservername.lastbackup=$backup_lastmodif
 	}
 }
 
@@ -915,7 +911,6 @@ _backup_list() {
 backup_list() {
 	config_load openmptcprouter
 	config_foreach _backup_list server
-	uci -q commit openmptcprouter
 }
 
 
@@ -946,6 +941,7 @@ _config_service() {
 	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && {
 		_set_config_from_vps
 	}
+
 	_get_vps_config
 	if [ "$(uci -q get openmptcprouter.settings.firstboot)" != "0" ]; then
 		[ -z "$vps_config" ] && vps_config=$(_get_json "config")
@@ -978,28 +974,33 @@ _config_service() {
 	[ -z "$(_set_vpn_vps)" ] && error=1
 	#_set_pihole
 	[ -n "$wanips" ] && _set_wan_ip
-	[ "$error" = 0 ] && uci -q set openmptcprouter.${servername}.lastchange=$(date "+%s")
+	[ "$error" = 0 ] && {
+		#logger -t "OMR-VPS" "No errors"
+		uci -q set openmptcprouter.${servername}.lastchange=$(date "+%s")
+	}
+	#[ "$error" != 0 ] && logger -t "OMR-VPS" "Error !"
 	uci -q batch <<-EOF >/dev/null
 		set openmptcprouter.${servername}.admin_error=$error
+		commit openmptcprouter
 	EOF
 }
 
 _set_pihole_server() {
-	servername=$1
-	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
-	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
-	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	pservername=$1
+	[ -z "$(uci -q get openmptcprouter.${pservername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${pservername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${pservername}.port)" ] && return
 	token=""
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
 		logger -t "OMR-VPS" "Can't get token, try later"
 		uci -q batch <<-EOF >/dev/null
-			set openmptcprouter.${servername}.admin_error=1
+			set openmptcprouter.${pservername}.admin_error=1
 		EOF
 		return
 	}
-	_set_pihole $servername
+	_set_pihole $pservername
 }
 
 set_pihole() {
