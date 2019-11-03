@@ -319,8 +319,9 @@ function wizard_add()
 
 		-- OpenMPTCProuter VPS
 		local openmptcprouter_vps_key = luci.http.formvalue("%s.openmptcprouter_vps_key" % server) or ""
+		local openmptcprouter_vps_username = luci.http.formvalue("%s.openmptcprouter_vps_username" % server) or ""
 		ucic:set("openmptcprouter",server,"server")
-		ucic:set("openmptcprouter",server,"username","openmptcprouter")
+		ucic:set("openmptcprouter",server,"username",openmptcprouter_vps_username)
 		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key)
 		if master == server or (master == "" and serversnb == 0) then
 			ucic:set("openmptcprouter",server,"get_config","1")
