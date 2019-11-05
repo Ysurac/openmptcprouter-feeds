@@ -543,26 +543,6 @@ function wizard_add()
 	ucic:save("ubond")
 	ucic:commit("ubond")
 
-	-- Set OpenVPN settings
-	local openvpn_key = luci.http.formvalue("openvpn_key")
-	if openvpn_key ~= "" then
-		local openvpn_key_path = "/etc/luci-uploads/openvpn.key"
-		local fp
-		luci.http.setfilehandler(
-			function(meta, chunk, eof)
-				if not fp and meta and meta.name == "openvpn_key" then
-					fp = io.open(openvpn_key_path, "w")
-				end
-				if fp and chunk then
-					fp:write(chunk)
-				end
-				if fp and eof then
-					fp:close()
-				end
-			end)
-		ucic:set("openvpn","omr","secret",openvpn_key_path)
-	end
-
 	if default_vpn == "openvpn" then
 		ucic:set("openvpn","omr","enabled",1)
 		ucic:set("network","omrvpn","proto","dhcp")

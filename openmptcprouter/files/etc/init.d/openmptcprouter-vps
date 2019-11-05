@@ -82,32 +82,6 @@ _set_glorytun_vps() {
 	fi
 }
 
-_set_openvpn_vps() {
-	local enabled port key
-	enabled="$(uci -q get openvpn.omr.enabled)"
-	[ "$enabled" != "1" ] && echo "OpenVPN disabled" && return
-	port="$(uci -q get openvpn.omr.port)"
-	keyfile="$(uci -q get openvpn.omr.secret)"
-	if [ -n "$keyfile" ]; then
-		key="$(cat $keyfile | base64)"
-	else
-		key=""
-	fi
-	[ -z "$key" ] && echo "OpenVPN key not set" && return
-	local current_port current_key
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
-	[ -z "$vps_config" ] && return
-	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.port')"
-	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.key')"
-	if [ "$current_port" != "$port" ] || [ "$current_key" != "$key" ]; then
-		local settings
-		settings='{"port": '$port',"key":"'$key'"}'
-		echo $(_set_json "openvpn" "$settings")
-	else
-		echo 1
-	fi
-}
-
 _get_ss_redir() {
 	config_get cf_ebpf $1 ebpf
 	[ "$cf_ebpf" = "1" ] && ebpf="true"
@@ -699,6 +673,29 @@ _set_config_from_vps() {
 	[ -n "$openvpn_client_ca" ] && {
 		echo $openvpn_client_ca | base64 -d > /etc/luci-uploads/ca.crt
 	}
+	[ -n "$openvpn_client_key" ] && [ -n "$openvpn_client_crt" ] && [ -n "$openvpn_client_ca" ] && {
+		openvpn_port="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.port')"
+		[ -z "$openvpn_port" ] && openvpn_port="65001"
+		vpn="$(uci -q get openmptcprouter.settings.vpn)"
+		openvpn_state=0
+		if [ "$vpn" = "openvpn" ]; then
+			openvpn_state=1
+		fi
+		uci -q batch <<-EOF >/dev/null
+			set openvpn.omr.port=$openvpn_port
+			set openvpn.omr.key="/etc/luci-uploads/client.key"
+			set openvpn.omr.cert="/etc/luci-uploads/client.crt"
+			set openvpn.omr.ca="/etc/luci-uploads/ca.crt"
+			set openvpn.omr.enabled=$openvpn_state
+			set openvpn.omr.tls_client=1
+		EOF
+		if [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ]; then
+			uci -q set openvpn.omr.remote="$vpsip"
+		fi
+		uci -q commit openvpn
+		logger -t "OMR-VPS" "OpenVPN restart..."
+		/etc/init.d/openvpn restart
+	}
 
 	# MLVPN settings
 	mlvpn_key="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.key')"
@@ -962,7 +959,6 @@ _config_service() {
 	config_load shadowsocks-libev
 	config_foreach _set_ss_server_vps server
 	[ -z "$(_set_glorytun_vps)" ] && error=1
-	[ -z "$(_set_openvpn_vps)" ] && error=1
 	_set_vps_firewall
 	_backup_list
 	redirect_port="0"
