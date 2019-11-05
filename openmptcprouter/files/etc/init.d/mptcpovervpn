@@ -8,6 +8,10 @@
 	USE_PROCD=1
 }
 
+_getremoteip() {
+	[ "$(uci -q get openmptcprouter.$1.master)" = "1" ] && remoteip=$(uci -q get openmptcprouter.$1.ip)
+}
+
 mptcp_over_vpn() {
 	local interface=$1
 	nbintf=$(($nbintf+1))
@@ -15,7 +19,9 @@ mptcp_over_vpn() {
 		nbintfvpn=$(($nbintfvpn+1))
 		logger -t "MPTCPoverVPN" "Enable MPTCP over VPN for ${interface}"
 		id=$(uci -q get network.${interface}.metric)
-		remoteip=$(uci -q get openmptcprouter.vps.ip)
+		remoteip=""
+		config_load_openmptcprouter
+		config_foreach _getremoteip server
 		localip=$(ubus call network.interface.$interface status | jsonfilter -e '@["ipv4-address"][0].address' | tr -d "\n")
 		multipath=$(uci -q get network.${interface}.multipath)
 		[ -z "$multipath" ] && multipath="on"
