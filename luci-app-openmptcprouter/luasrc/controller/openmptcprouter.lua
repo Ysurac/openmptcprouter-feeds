@@ -545,7 +545,7 @@ function wizard_add()
 
 	if default_vpn == "openvpn" then
 		ucic:set("openvpn","omr","enabled",1)
-		ucic:set("network","omrvpn","proto","dhcp")
+		ucic:set("network","omrvpn","proto","none")
 	else
 		ucic:set("openvpn","omr","enabled",0)
 	end
