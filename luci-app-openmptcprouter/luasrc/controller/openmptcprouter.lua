@@ -1,5 +1,4 @@
 local math  = require "math"
-local tools = require "luci.tools.status"
 local sys   = require "luci.sys"
 local json  = require("luci.json")
 local fs    = require("nixio.fs")
