@@ -10,8 +10,10 @@ set_route() {
 	interface_if=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "${INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.ifname)
-	multipath_current_config=$(multipath $interface_if | grep 'deactivated')
-	if [ "$multipath_config" != "off" ] && [ "$SETROUTE" != true ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$multipath_current_config" = "" ]; then
+	#multipath_current_config=$(multipath $interface_if | grep 'deactivated')
+	interface_current_config=$(uci -q get openmptcprouter.$INTERFACE.state || echo "up")
+	#if [ "$multipath_config" != "off" ] && [ "$SETROUTE" != true ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$multipath_current_config" = "" ]; then
+	if [ "$multipath_config" != "off" ] && [ "$SETROUTE" != true ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$interface_current_config" = "up" ]; then
 		interface_gw="$(uci -q get network.$INTERFACE.gateway)"
 		if [ -z "$interface_gw" ]; then
 			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
@@ -81,8 +83,10 @@ set_routes_intf() {
 	interface_if=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "${INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.ifname)
-	multipath_current_config=$(multipath $interface_if | grep 'deactivated')
-	if [ "$multipath_config" != "off" ] && [ "$multipath_current_config" = "" ] && [ "$interface_if" != "" ]; then
+	#multipath_current_config=$(multipath $interface_if | grep 'deactivated')
+	interface_current_config=$(uci -q openmptcprouter.$INTERFACE.state || echo "up")
+	#if [ "$multipath_config" != "off" ] && [ "$multipath_current_config" = "" ] && [ "$interface_if" != "" ]; then
+	if [ "$multipath_config" != "off" ] && [ "$interface_current_config" = "up" ] && [ "$interface_if" != "" ]; then
 		interface_gw="$(uci -q get network.$INTERFACE.gateway)"
 		if [ -z "$interface_gw" ]; then
 			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
@@ -106,7 +110,6 @@ set_server_all_routes() {
 	interface_if=$(uci -q get network.$OMR_TRACKER_INTERFACE.ifname)
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "${OMR_TRACKER_INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
-	multipath_current_config=$(multipath $interface_if | grep "deactivated")
 	multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath)
 	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath || echo "off")
 	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show $serverip | grep nexthop | grep $OMR_TRACKER_DEVICE_GATEWAY | grep $OMR_TRACKER_INTERFACE)" = "" ] && [ "$multipath_config_route" != "off" ]; then
@@ -133,8 +136,10 @@ set_server_route() {
 	interface_if=$(uci -q get network.$OMR_TRACKER_INTERFACE.ifname)
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "${OMR_TRACKER_INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
-	multipath_current_config=$(multipath $interface_if | grep "deactivated")
-	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$multipath_current_config" = "" ]; then
+	#multipath_current_config=$(multipath $interface_if | grep "deactivated")
+	interface_current_config=$(uci -q openmptcprouter.$OMR_TRACKER_INTERFACE.state || echo "up")
+	#if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$multipath_current_config" = "" ]; then
+	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ]; then
 		_log "Set server $server ($serverip) route via $OMR_TRACKER_DEVICE_GATEWAY metric $metric"
 		if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
 			uci -q batch <<-EOF >/dev/null
@@ -204,9 +209,9 @@ disable_pihole() {
 
 enable_pihole() {
 	local server=$1
+	nbserver=$((nbserver+1))
 	if [ "$(uci -q get openmptcprouter.${server}.pihole)" = "1" ] && [ "$(uci -q get dhcp.@dnsmasq[0].server)" = "127.0.0.1#5353" ]; then
-		_log "Enable Pi-Hole..."
-		/etc/init.d/openmptcprouter-vps set_pihole
+		piholeenabled=$((piholeenabled+1))
 	fi
 }
 
@@ -246,9 +251,9 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 			_log "$OMR_TRACKER_DEVICE switched off because $OMR_TRACKER_STATUS_MSG"
 		fi
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='down'
-		if [ "$(sysctl -n net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ]; then
-			multipath "$OMR_TRACKER_DEVICE" off > /dev/null 2>&1
-		fi
+		#if [ "$(sysctl -n net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ]; then
+		#	multipath "$OMR_TRACKER_DEVICE" off > /dev/null 2>&1
+		#fi
 		if [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
 			glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 down > /dev/null 2>&1
 		fi
@@ -350,8 +355,11 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 		fi
 		uci -q commit openmptcprouter
 	fi
+	nbserver=0
+	piholeenabled=0
 	config_load openmptcprouter
 	config_foreach enable_pihole server
+	[ "$nbserver" = "$piholeenabled" ] && /etc/init.d/openmptcprouter-vps set_pihole
 	#ubus call network reload
 	exit 0
 fi
@@ -557,6 +565,9 @@ fi
 				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.multipath='master'
 				if [ "$(uci -q get openmptcprouter.settings.master_lcintf | grep $OMR_TRACKER_INTERFACE)" = "" ]; then
 					uci -q add_list openmptcprouter.settings.master_lcintf="$OMR_TRACKER_INTERFACE"
+				fi
+				if [ "$(uci -q get openmptcprouter.settings.master)" = "" ]; then
+					uci -q set openmptcprouter.settings.master="change"
 				fi
 				if [ "$(uci -q get openmptcprouter.settings.master)" != "dynamic" ]; then
 					uci -q commit network
