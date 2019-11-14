@@ -858,6 +858,14 @@ _backup_get() {
 	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	[ -z "$lastbackup" ] || [ "$lastbackup" -lt "$(uci -q get openmptcprouter.$servername.lastbackup)" ] && {
+		lastbackup="$(uci -q get openmptcprouter.$servername.lastbackup)"
+		serverbackup="$servername"
+	}
+}
+
+_backup_get_and_apply() {
+	servername=$1
 	token=""
 	vps_config=""
 	_login
@@ -879,8 +887,11 @@ _backup_get() {
 }
 
 backup_get() {
+	lastbackup=""
+	serverbackup=""
 	config_load openmptcprouter
 	config_foreach _backup_get server
+	[ -n "$serverbackup" ] && _backup_get_and_apply $serverbackup
 }
 
 _backup_list() {
@@ -911,6 +922,7 @@ _backup_list() {
 backup_list() {
 	config_load openmptcprouter
 	config_foreach _backup_list server
+	uci -q commit openmptcprouter
 }
 
 

@@ -17,10 +17,10 @@ function index()
 	entry({"admin", "system", "openmptcprouter", "status"}, template("openmptcprouter/wanstatus"), _("Status"), 2).leaf = true
 	entry({"admin", "system", "openmptcprouter", "interfaces_status"}, call("interfaces_status")).leaf = true
 	entry({"admin", "system", "openmptcprouter", "settings"}, template("openmptcprouter/settings"), _("Advanced Settings"), 3).leaf = true
-	entry({"admin", "system", "openmptcprouter", "settings_add"}, post("settings_add")).leaf = true
-	entry({"admin", "system", "openmptcprouter", "update_vps"}, post("update_vps")).leaf = true
+	entry({"admin", "system", "openmptcprouter", "settings_add"}, post("settings_add"))
+	entry({"admin", "system", "openmptcprouter", "update_vps"}, post("update_vps"))
 	entry({"admin", "system", "openmptcprouter", "backup"}, template("openmptcprouter/backup"), _("Backup on server"), 3).leaf = true
-	entry({"admin", "system", "openmptcprouter", "backupgr"}, post("backupgr")).leaf = true
+	entry({"admin", "system", "openmptcprouter", "backupgr"}, post("backupgr"))
 	entry({"admin", "system", "openmptcprouter", "debug"}, template("openmptcprouter/debug"), _("Show all settings"), 5).leaf = true
 end
 
