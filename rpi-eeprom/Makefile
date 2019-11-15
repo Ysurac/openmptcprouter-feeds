@@ -24,7 +24,7 @@ define Package/rpi-eeprom
   CATEGORY:=Raspberry Pi
   URL:=https://github.com/raspberrypi/rpi-eeprom
   TITLE:=rpi-eeprom
-  DEPENDS:=+rpi-userland +fwtool
+  DEPENDS:=+rpi-userland +fwtool +pciutils +blkid
 endef
 
 define Package/rpi-eeprom/description
@@ -39,7 +39,8 @@ define Package/rpi-eeprom/install
 		$(1)/usr/bin \
 		$(1)/etc/default
 	$(CP) $(PKG_BUILD_DIR)/rpi-eeprom-update $(1)/usr/bin
-	$(CP) $(PKG_BUILD_DIR)/rpi-eeprom-update-default $(1)/etc/default
+	$(CP) $(PKG_BUILD_DIR)/rpi-eeprom-update $(1)/usr/bin
+	$(CP) $(PKG_BUILD_DIR)/firmware/vl805 $(1)/usr/bin
 	$(CP) -r $(PKG_BUILD_DIR)/firmware/critical $(1)/lib/firmware/raspberrypi/bootloader/critical
 	$(CP) -r $(PKG_BUILD_DIR)/firmware/beta $(1)/lib/firmware/raspberrypi/bootloader/beta
 endef
