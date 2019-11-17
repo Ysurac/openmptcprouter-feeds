@@ -907,6 +907,10 @@ function interfaces_status()
 	    if ifname == "" or ifname == nil then
 		ifname = section["ifname"] or ""
 	    end
+	    --if ifname ~= nil and ifname:match("^tun.*") and interface:match("^ovpn.*") then
+	    --ifname = get_device(interface:sub(5))
+	    --end
+	    
 	    duplicateif = false
 	    if ifname ~= "" and ifname ~= nil then
 		if allintf[ifname] then
@@ -965,6 +969,10 @@ function interfaces_status()
 
 	    -- Detect WAN gateway status
 	    local gw_ping = "UP"
+	    if ifname ~= nil and ifname:match("^tun.*") and interface:match("^ovpn.*") then
+		gateway = ut.trim(sys.exec("ip -4 r list dev " .. ifname .. " | grep via | grep -v default | grep -v metric | awk '{print $1}' | tr -d '\n'"))
+	    end
+
 	    if gateway == "" then
 		    gateway = get_gateway(interface)
 	    end
@@ -988,7 +996,7 @@ function interfaces_status()
 		    gw_ping = "DOWN"
 		    connectivity = "ERROR"
 	    end
-	    
+
 	    local latency = ""
 	    local server_ping = ""
 	    --if connectivity ~= "ERROR" and ifname ~= "" and gateway ~= "" and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" and ipaddr ~= "" then
@@ -1068,11 +1076,21 @@ function interfaces_status()
 		    end
 	    end
 
-	    local publicIP = uci:get("openmptcprouter",interface,"publicip") or ""
-	    if ifname ~= nil and publicIP == "" and uci:get("openmptcprouter","settings","external_check") ~= "0" then
-		    publicIP = ut.trim(sys.exec("omr-ip-intf " .. ifname))
-	    end
+	    local publicIP = ""
 	    local whois = ""
+	    if ifname ~= nil and ifname:match("^tun.*") and interface:match("^ovpn.*") then
+		    publicIP = uci:get("openmptcprouter",interface:sub(5),"publicip") or ""
+		    if ifname ~= nil and publicIP == "" and uci:get("openmptcprouter","settings","external_check") ~= "0" then
+			    publicIP = ut.trim(sys.exec("omr-ip-intf " .. get_device(interface:sub(5))))
+		    end
+	    else
+		    publicIP = uci:get("openmptcprouter",interface,"publicip") or ""
+		    if ifname ~= nil and publicIP == "" and uci:get("openmptcprouter","settings","external_check") ~= "0" then
+			    publicIP = ut.trim(sys.exec("omr-ip-intf " .. ifname))
+		    end
+	    end
+	    
+	    whois = ""
 	    if publicIP ~= "" then
 		    whois = uci:get("openmptcprouter",interface,"asn") or ""
 		    if whois == "" and uci:get("openmptcprouter","settings","external_check") ~= "0" then

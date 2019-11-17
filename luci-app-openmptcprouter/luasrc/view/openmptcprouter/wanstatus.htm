@@ -311,7 +311,7 @@
 				temp += '</a></td></tr></table>';
 				temp += '</td>';
 			}
-			if (mArray !== null && mArray.wans)
+			if (mArray !== null && (mArray.wans || mArray.tunnels))
 			{
 				temp += '<td><ul>';
 				var master = 0;
@@ -466,6 +466,162 @@
 					if(mArray.wans[i].qos && mArray.wans[i].download > 0 && mArray.wans[i].upload > 0)
 					{
 						content += String.format('%s %s/%s kbps (%s)',_('traffic control:'), mArray.wans[i].download, mArray.wans[i].upload, mArray.wans[i].qos)
+					}
+					temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
+
+					temp += '</a></li>';
+				}
+				for( var i = 0; i < mArray.tunnels.length; i++ )
+				{
+					// Get link color
+					mArray.tunnels[i].color = stringToColour(mArray.tunnels[i].name)
+					// Mwan status infos and colors
+					var stat = '';
+					var cssc = '';
+					switch (mArray.tunnels[i].status)
+					{
+						case 'OK':
+							stat = 'Online';
+							cssc = 'rgb(144, 240, 144)';
+							statusIcon = "<%=resource%>/openmptcprouter/images/statusOK.png";
+							statusMessageClass = "";
+							statusMessage = "";
+							break;
+						case 'ERROR':
+							stat = 'Offline';
+							cssc = 'rgb(240, 144, 144)';
+							statusIcon = "<%=resource%>/openmptcprouter/images/statusError.png";
+							statusMessageClass = "error";
+							statusMessage = "";
+							break;
+						default:
+							stat = 'Unknown';
+							cssc = 'rgb(144, 240, 144)';
+							statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
+							statusMessageClass = "warning";
+							statusMessage = "";
+					}
+					// Populate info
+					var wanip   = mArray.tunnels[i].wanip;
+					if (anonymize == "true" && testPrivateIP(wanip) == false)
+					{
+						wanip=replaceLastNChars(wanip,"x",6);
+					}
+					var ipaddr   = mArray.tunnels[i].ipaddr;
+					if (anonymize == "true" && testPrivateIP(ipaddr) == false)
+					{
+						ipaddr=replaceLastNChars(ipaddr,"x",6);
+					}
+					var whois   = mArray.tunnels[i].whois;
+					var multipath = mArray.tunnels[i].multipath;
+					if(multipath == 'master')
+					{
+						master++;
+					}
+					var latency = mArray.tunnels[i].latency;
+					var mtu = mArray.tunnels[i].mtu;
+					var gateway = mArray.tunnels[i].gateway;
+					if (anonymize == "true" && testPrivateIP(gateway) == false)
+					{
+						gateway=replaceLastNChars(gateway,"x",6);
+					}
+					var gw_ping = mArray.tunnels[i].gw_ping;
+					var server_ping = mArray.tunnels[i].server_ping;
+					var ipv6_discover = mArray.tunnels[i].ipv6_discover;
+					var multipath_available = mArray.tunnels[i].multipath_available;
+					var multipath_state = mArray.tunnels[i].multipath_state;
+					var duplicateif = mArray.tunnels[i].duplicateif;
+					// Generate template
+					if(mArray.openmptcprouter.remote_from_lease == true && mArray.tunnels.length == 1)
+					{
+						temp += String.format('<li class="subnode-only-child"><a href="%q">', mArray.tunnels[i].link);
+					} else {
+						temp += String.format('<li><a href="%q">', mArray.tunnels[i].link);
+					}
+
+					var equipmentIcon = String.format('<embed id="modem_%s" onload="setColorSVG(\'modem_%s\', \'%s\')" src="<%=resource%>/modem.svg" />', mArray.tunnels[i].name, mArray.tunnels[i].name, mArray.tunnels[i].color);
+					if (mArray.tunnels[i].gateway !== "")
+					{
+						var title = mArray.tunnels[i].label + " (" + mArray.tunnels[i].gateway + ")";
+					} else {
+						var title = mArray.tunnels[i].label;
+					}
+					var content = "";
+					if(ipaddr !== '')
+					{
+						content += String.format('%s <strong>%s</strong><br />',_('ip address:'), ipaddr);
+					}
+					if(wanip !== '')
+					{
+						content += String.format('%s <strong>%s</strong><br />',_('wan address:'), wanip);
+					}
+					if(whois !== '')
+					{
+						content += String.format('%s %s<br />',_('whois:'), whois);
+					}
+					if(latency !== '')
+					{
+						content += String.format('%s %s ms<br />',_('latency:'), latency);
+					}
+					if(mtu !== '')
+					{
+						content += String.format('%s %s<br />',_('mtu:'), mtu);
+					}
+					if(ipaddr == '')
+					{
+						statusMessage += _('No IP defined') + '<br />'
+					}
+					if(gateway == '')
+					{
+						statusMessage += _('No gateway defined') + '<br />'
+					} else if(gw_ping == 'DOWN')
+					{
+						statusMessage += _('Gateway DOWN') + '<br />'
+					} else if(multipath_available == 'ERROR')
+					{
+						statusMessage += _('Multipath seems to be blocked on the connection') + '<br />'
+					}
+					if(server_ping == 'DOWN')
+					{
+						statusMessage += _('No Server ping response after 1 second') + '<br />'
+					}
+					if (stat == 'Offline' && ipaddr != '' && ipaddr == mArray.tunnels[i].gateway)
+					{
+						statusMessage += _('Wan IP and gateway are identical') + '<br />';
+						statusMessageClass = "error";
+					}
+					if(multipath == 'master') 
+					{
+						if (master > 1)
+						{
+							statusMessage += _('Multipath master already defined') + '<br />';
+							statusMessageClass = "error";
+						}
+						if(multipath_state !== 'on' && multipath_state !== '')
+						{
+							statusMessage += _('Multipath current state is ') + multipath_state + '<br />';
+							statusMessageClass = "error";
+						}
+					} else {
+						if(multipath !== multipath_state && multipath_state !== '')
+						{
+							statusMessage += _('Multipath current state is ') + multipath_state + '<br />';
+							statusMessageClass = "error";
+						}
+					}
+					if(duplicateif)
+					{
+						statusMessage += _('Network interface duplicated') + '<br />';
+						statusMessageClass = "error";
+					}
+					if(ipv6_discover == 'DETECTED')
+					{
+						statusMessage += _('IPv6 route received') + '<br />'
+					}
+					content += String.format('multipath: %s<br />',multipath);
+					if(mArray.tunnels[i].qos && mArray.tunnels[i].download > 0 && mArray.tunnels[i].upload > 0)
+					{
+						content += String.format('%s %s/%s kbps (%s)',_('traffic control:'), mArray.tunnels[i].download, mArray.tunnels[i].upload, mArray.tunnels[i].qos)
 					}
 					temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
 

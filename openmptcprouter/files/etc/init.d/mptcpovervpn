@@ -23,7 +23,8 @@ mptcp_over_vpn() {
 		config_load_openmptcprouter
 		config_foreach _getremoteip server
 		localip=$(ubus call network.interface.$interface status | jsonfilter -e '@["ipv4-address"][0].address' | tr -d "\n")
-		multipath=$(uci -q get network.${interface}.multipath)
+		[ -z "$(uci -q get openmptcprouter.ovpn${interface}.multipath)" ] && multipath=$(uci -q get network.${interface}.multipath)
+		[ -n "$(uci -q get openmptcprouter.ovpn${interface}.multipath)" ] && multipath=$(uci -q get openmptcprouter.ovpn${interface}.multipath)
 		[ -z "$multipath" ] && multipath="on"
 		uci -q batch <<-EOF >/dev/null
 			set network.ovpn${interface}=interface
@@ -32,6 +33,7 @@ mptcp_over_vpn() {
 			set network.ovpn${interface}.peerdns='0'
 			set network.ovpn${interface}.proto='none'
 			set network.ovpn${interface}.multipath='on'
+			set network.${interface}.multipath='off'
 			commit network
 			set openvpn.${interface}=openvpn
 			set openvpn.${interface}.dev="tun${id}"
