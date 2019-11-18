@@ -24,6 +24,15 @@
 	local ntm = require "luci.model.network".init()
 	local uci = require "luci.model.uci".cursor()
 
+	function get_device(interface)
+		local dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
+		if dump and dump['l3_device'] ~= "" then
+			return dump['l3_device']
+		else
+			return interface
+		end
+	end
+
 	local dev
 	local devices = { "all" }
 	for _, dev in ipairs(ntm:get_networks()) do
@@ -35,7 +44,7 @@
 		--end
 	end
 
-	local curdev = luci.http.formvalue("dev") or "all"
+	local curifname = luci.http.formvalue("dev") or "all"
 -%>
 
 <%+header%>
@@ -96,7 +105,7 @@
 		);
 	}
 
-<% if curdev == "all" then %>
+<% if curifname == "all" then %>
 	var all = true;
 	var bwxhr = new XHR();
 
@@ -652,7 +661,7 @@
 				label_scale.innerHTML = String.format('<%:(%d minute window, %d second interval)%>', data_wanted / 60, 3);
 
 				/* render datasets, start update interval */
-				XHR.poll(3, '<%=build_url("admin/network/mptcp/interface_bandwidth", curdev)%>', null,
+				XHR.poll(3, '<%=build_url("admin/network/mptcp/interface_bandwidth", curifname)%>', null,
 					function(x, data)
 					{
 						var data_max   = 0;
@@ -762,12 +771,15 @@
 <h2><a id="content" name="content"><%:Realtime Traffic%></a></h2>
 
 <ul class="cbi-tabmenu">
-	<% for _, dev in ipairs(devices) do %>
-		<li class="cbi-tab<%= dev == curdev and "" or "-disabled" %>"><a href="?dev=<%=pcdata(dev)%>"><%=pcdata(dev)%></a></li>
+	<% for _, dev in ipairs(devices) do 
+		local ifname = get_device(dev)
+	%>
+		
+		<li class="cbi-tab<%= ifname == curifname and "" or "-disabled" %>"><a href="?dev=<%=pcdata(get_device(dev))%>"><%=pcdata(dev)%></a></li>
 	<% end %>
 </ul>
 
-<% if curdev == "all" then %>
+<% if curifname == "all" then %>
 
 <strong><%:Download:%></strong>
 <embed id="dnsvg" style="width:100%; height:300px; border:1px solid #000000; background-color:#FFFFFF" src="<%=resource%>/bandwidth.svg" />
