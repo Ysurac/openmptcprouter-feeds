@@ -39,10 +39,7 @@ function multipath_bandwidth()
 	local uci = luci.model.uci.cursor()
 
 	uci:foreach("network", "interface", function(s)
-		local dev = s["ifname"] or ""
-		if dev == "" then
-			dev = get_device(s["ifname"])
-		end
+		local dev = get_device(s["ifname"])
 		if dev ~= "lo" and dev ~= "" then
 			local multipath = s["multipath"] or "off"
 			if multipath == "on" or multipath == "master" or multipath == "backup" or multipath == "handover" then
