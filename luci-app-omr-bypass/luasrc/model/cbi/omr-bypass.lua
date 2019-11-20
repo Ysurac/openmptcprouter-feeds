@@ -44,9 +44,9 @@ s.addremove = true
 s.anonymous = true
 s.template = "cbi/tblsection"
 
-ip = s:option(Value, "dport", translate("port"))
-ip.rmempty  = true
-ip.optional = false
+dp = s:option(Value, "dport", translate("port"))
+dp.rmempty  = true
+dp.optional = false
 
 proto = s:option(ListValue, "protp", translate("Protocol"))
 proto:value("all",translate("ALL"))
