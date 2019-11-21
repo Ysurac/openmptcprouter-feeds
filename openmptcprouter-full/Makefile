@@ -56,6 +56,8 @@ MY_DEPENDS := \
     luci-proto-3g \
     luci-proto-wireguard \
     comgt-ncm luci-proto-ncm \
+    luci-proto-modemmanager \
+    luci-proto-ppp \
     omr-update \
     rng-tools \
     openvpn-openssl \
