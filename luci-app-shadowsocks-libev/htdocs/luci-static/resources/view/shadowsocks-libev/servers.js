@@ -76,6 +76,7 @@ return L.view.extend({
 			if (editBtn)
 				editBtn.click();
 		}
-		return this.super('addFooter', arguments);
+		//return this.super('addFooter', arguments);
+		return null;
 	}
 });
