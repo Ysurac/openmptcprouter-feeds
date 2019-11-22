@@ -583,6 +583,7 @@ function wizard_add()
 	luci.sys.call("/etc/init.d/dsvpn restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/omr-tracker restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
+	luci.sys.call("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
 	if gostatus == true then
 		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/status"))
 	else
