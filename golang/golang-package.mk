@@ -246,12 +246,10 @@ define GoPackage/Build/Compile
 			mips|mipsle)     installsuffix="-installsuffix $(GO_MIPS)" ;; \
 			mips64|mips64le) installsuffix="-installsuffix $(GO_MIPS64)" ;; \
 			esac ; \
-			trimpath="all=-trimpath=$(GO_PKG_BUILD_DIR)" ; \
 			ldflags="all=-linkmode external -extldflags '$(TARGET_LDFLAGS)'" ; \
 			go install \
 				$$$$installsuffix \
-				-gcflags "$$$$trimpath" \
-				-asmflags "$$$$trimpath" \
+				-trimpath \
 				-ldflags "$$$$ldflags" \
 				-v \
 				$(1) \

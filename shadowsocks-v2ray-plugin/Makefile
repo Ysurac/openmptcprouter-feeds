@@ -32,7 +32,8 @@ define Package/v2ray-plugin
 	TITLE:=SIP003 plugin for shadowsocks, based on v2ray
 	URL:=https://github.com/shadowsocks/v2ray-plugin
 	DEPENDS:=$(GO_ARCH_DEPENDS) \
-	    +golang-protobuf-dev +v2ray-core-dev +v2ray-ext-dev +golang-golang-x-crypto-dev
+	    +golang-protobuf-dev +v2ray-core +v2ray-ext-dev +golang-golang-x-crypto-dev
+	#    +golang-protobuf-dev +v2ray-core-dev +v2ray-ext-dev +golang-golang-x-crypto-dev
 endef
 
 define Package/v2ray-plugin/description
