@@ -568,23 +568,23 @@ function wizard_add()
 	ucic:commit("openmptcprouter")
 
 	-- Restart all
-	luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/mptcp restart >/dev/null 2>/dev/null")
-	if openmptcprouter_vps_key ~= "" then
-		luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
-		os.execute("sleep 2")
-	end
-	luci.sys.call("/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/ubond restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/dsvpn restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/omr-tracker restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
 	if gostatus == true then
+		luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/mptcp restart >/dev/null 2>/dev/null")
+		if openmptcprouter_vps_key ~= "" then
+			luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
+			os.execute("sleep 2")
+		end
+		luci.sys.call("/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/ubond restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/dsvpn restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/omr-tracker restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
 		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/status"))
 	else
 		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/wizard"))
