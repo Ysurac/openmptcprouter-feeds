@@ -208,7 +208,10 @@ while true; do
 			fi
 		fi
 		if [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
-			OMR_TRACKER_DEVICE_GATEWAY=$(ip -4 r list dev "$OMR_TRACKER_DEVICE" | awk '/proto kernel/ {print $1}' | tr -d "\n")
+			OMR_TRACKER_DEVICE_ROUTE=$(ip -4 r list dev "$OMR_TRACKER_DEVICE" | grep via | grep -v default | awk '{print $1}' | tr -d "\n")
+		fi
+		if [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
+			OMR_TRACKER_DEVICE_GATEWAY=$(ip -4 r list dev "$OMR_TRACKER_DEVICE" | grep kernel | awk '/proto kernel/ {print $1}' | tr -d "\n")
 		fi
 
 		# execute specific tracker
@@ -217,8 +220,13 @@ while true; do
 			tries="$OMR_TRACKER_TRIES"
 			# loop until tries attempts have been reached
 			while [ "$tries" -gt 0 ]; do
-				_ping "$OMR_TRACKER_DEVICE_GATEWAY" "$OMR_TRACKER_DEVICE" "no"
-				status=$?
+				if [ -n "$OMR_TRACKER_DEVICE_ROUTE" ]; then
+					_ping "$OMR_TRACKER_DEVICE_ROUTE" "$OMR_TRACKER_DEVICE" "no"
+					status=$?
+				else
+					_ping "$OMR_TRACKER_DEVICE_GATEWAY" "$OMR_TRACKER_DEVICE" "no"
+					status=$?
+				fi
 				if $(exit $status) && [ "$OMR_TRACKER_TYPE" = "none" ]; then
 					OMR_TRACKER_STATUS_MSG=""
 					OMR_TRACKER_STATUS="OK"
