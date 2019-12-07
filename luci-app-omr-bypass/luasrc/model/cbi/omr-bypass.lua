@@ -48,7 +48,7 @@ dp = s:option(Value, "dport", translate("port"))
 dp.rmempty  = true
 dp.optional = false
 
-proto = s:option(ListValue, "protp", translate("Protocol"))
+proto = s:option(ListValue, "proto", translate("Protocol"))
 proto:value("all",translate("ALL"))
 proto:value("tcp","TCP")
 proto:value("udp","UDP")
