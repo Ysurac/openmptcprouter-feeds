@@ -736,7 +736,11 @@ end
 
 function get_device(interface)
 	local dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
-	return dump['l3_device']
+	if dump ~= nil then
+		return dump['l3_device']
+	else
+		return ""
+	end
 end
 
 -- This function come from modules/luci-bbase/luasrc/tools/status.lua from old OpenWrt
