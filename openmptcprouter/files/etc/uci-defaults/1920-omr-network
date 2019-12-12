@@ -31,6 +31,16 @@ _setup_macvlan() {
 	_setup_macaddr "$1_dev" "${_macaddr:-auto$(date +%s)}"
 }
 
+_setup_macvlan_update() {
+	uci -q get "network.$1_dev.ifname" >/dev/null || return
+
+	uci -q batch <<-EOF
+	set macvlan.$1=macvlan
+	set macvlan.$1.ifname=$_ifname
+	commit macvlan
+	EOF
+}
+
 _setup_multipath_off() {
     uci -q get "network.$1.multipath" >/dev/null && return
     uci -q set "network.$1.multipath=off"
@@ -50,6 +60,9 @@ _setup_wan_interface() {
 	EOF
 	[ -n "$4" ] && uci -q set network.$1.type=$4
 }
+
+config_load network
+config_foreach _setup_macvlan_update interface
 
 if [ "$(uci -q get network.lan.multipath)" != "" ]; then
 	exit 0
