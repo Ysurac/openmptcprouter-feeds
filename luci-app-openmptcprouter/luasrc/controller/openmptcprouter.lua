@@ -275,7 +275,7 @@ function wizard_add()
 
 	-- Enable/disable IPv6
 	local disableipv6 = luci.http.formvalue("enableipv6") or "1"
-	ucic:set("openmptcprouter","settings","disable_ipv6",disable_ipv6)
+	ucic:set("openmptcprouter","settings","disable_ipv6",disableipv6)
 	--local ut = require "luci.util"
 	--local result = ut.ubus("openmptcprouter", "set_ipv6_state", { disable_ipv6 = disableipv6 })
 
