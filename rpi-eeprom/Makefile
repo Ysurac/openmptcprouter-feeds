@@ -13,7 +13,7 @@ PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/raspberrypi/rpi-eeprom.git
-PKG_SOURCE_VERSION:=99e88912af108d46e4edd5f168634b84883c1d86
+PKG_SOURCE_VERSION:=45aa4ed42cf558725aa83fbe9624017e60a0caa0
 
 CMAKE_INSTALL:=1
 
@@ -39,7 +39,7 @@ define Package/rpi-eeprom/install
 		$(1)/usr/bin \
 		$(1)/etc/default
 	$(CP) $(PKG_BUILD_DIR)/rpi-eeprom-update $(1)/usr/bin
-	$(CP) $(PKG_BUILD_DIR)/rpi-eeprom-update $(1)/usr/bin
+	$(CP) $(PKG_BUILD_DIR)/rpi-eeprom-update-default $(1)/etc/default/rpi-eeprom-update
 	$(CP) $(PKG_BUILD_DIR)/firmware/vl805 $(1)/usr/bin
 	$(CP) -r $(PKG_BUILD_DIR)/firmware/critical $(1)/lib/firmware/raspberrypi/bootloader/critical
 	$(CP) -r $(PKG_BUILD_DIR)/firmware/beta $(1)/lib/firmware/raspberrypi/bootloader/beta
