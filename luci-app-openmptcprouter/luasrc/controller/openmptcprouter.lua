@@ -645,11 +645,11 @@ function settings_add()
 
 	-- Enable/disable gateway ping
 	local disablegwping = luci.http.formvalue("disablegwping") or "0"
-	ucic:set("openmtpcprouter","settings","disablegwping",disablegwping)
+	ucic:set("openmptcprouter","settings","disablegwping",disablegwping)
 
 	-- Enable/disable server ping
 	local disableserverping = luci.http.formvalue("disableserverping") or "0"
-	ucic:set("openmtpcprouter","settings","disableserverping",disableserverping)
+	ucic:set("openmptcprouter","settings","disableserverping",disableserverping)
 
 	-- Enable/disable fast open
 	local disablefastopen = luci.http.formvalue("disablefastopen") or "0"
