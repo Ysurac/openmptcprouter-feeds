@@ -691,7 +691,7 @@ function interfaces_status()
 			tracker_ip = uci:get("shadowsocks-libev","tracker","local_address") or ""
 			if tracker_ip ~= "" then
 				local tracker_port = uci:get("shadowsocks-libev","tracker","local_port")
-				if uci:get("openmptcprouter","settings","external_check") ~= "0" then
+				if mArray.openmptcprouter["external_check"] ~= false then
 					mArray.openmptcprouter["ss_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m " .. timeout .. " " .. check_ipv4_website))
 					--mArray.openmptcprouter["ss_addr6"] = sys.exec("curl -s -6 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ipv6.openmptcprouter.com")
 				end
@@ -1040,26 +1040,32 @@ function interfaces_status()
 		    -- Test if multipath can work on the connection
 		    local multipath_available_state = uci:get("openmptcprouter",interface,"mptcp_status") or ""
 		    if multipath_available_state == "" then
+			    if mArray.openmptcprouter["external_check"] ~= false then
 			    --if mArray.openmptcprouter["service_addr"] ~= "" then
 			    --    multipath_available_state = ut.trim(sys.exec("omr-tracebox-mptcp " .. mArray.openmptcprouter["service_addr"] .. " " .. ifname .. " | grep 'MPTCP disabled'"))
 			    --else
 				    multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
 			    --end
+			    end
 		    else
 			    multipath_available_state = ut.trim(sys.exec("echo '" .. multipath_available_state .. "' | grep 'MPTCP disabled'"))
 		    end
 		    if multipath_available_state == "" then
 			    multipath_available = "OK"
 		    else
-			    multipath_available_state_wan = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
-			    if multipath_available_state_wan == "" then
-				    multipath_available = "OK"
-				    if mArray.openmptcprouter["service_addr"] ~= "" and mArray.openmptcprouter["service_addr"] ~= "127.0.0.1" then
-					    mArray.openmptcprouter["server_mptcp"] = "disabled"
+			    if mArray.openmptcprouter["external_check"] ~= false then
+				    multipath_available_state_wan = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
+				    if multipath_available_state_wan == "" then
+					    multipath_available = "OK"
+					    if mArray.openmptcprouter["service_addr"] ~= "" and mArray.openmptcprouter["service_addr"] ~= "127.0.0.1" then
+						    mArray.openmptcprouter["server_mptcp"] = "disabled"
+					    end
+				    else
+					    multipath_available = "ERROR"
+					    connectivity = "WARNING"
 				    end
 			    else
-				    multipath_available = "ERROR"
-				    connectivity = "WARNING"
+				    multipath_available = "NO CHECK"
 			    end
 		    end
 	    else
@@ -1094,12 +1100,12 @@ function interfaces_status()
 	    local whois = ""
 	    if ifname ~= nil and ifname:match("^tun.*") and interface:match("^ovpn.*") then
 		    publicIP = uci:get("openmptcprouter",interface:sub(5),"publicip") or ""
-		    if ifname ~= nil and publicIP == "" and uci:get("openmptcprouter","settings","external_check") ~= "0" then
+		    if ifname ~= nil and publicIP == "" and mArray.openmptcprouter["external_check"] ~= false then
 			    publicIP = ut.trim(sys.exec("omr-ip-intf " .. get_device(interface:sub(5))))
 		    end
 	    else
 		    publicIP = uci:get("openmptcprouter",interface,"publicip") or ""
-		    if ifname ~= nil and publicIP == "" and uci:get("openmptcprouter","settings","external_check") ~= "0" then
+		    if ifname ~= nil and publicIP == "" and mArray.openmptcprouter["external_check"] ~= false then
 			    publicIP = ut.trim(sys.exec("omr-ip-intf " .. ifname))
 		    end
 	    end
@@ -1107,7 +1113,7 @@ function interfaces_status()
 	    whois = ""
 	    if publicIP ~= "" then
 		    whois = uci:get("openmptcprouter",interface,"asn") or ""
-		    if whois == "" and uci:get("openmptcprouter","settings","external_check") ~= "0" and mArray.openmptcprouter["dns"] == true then
+		    if whois == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] == true then
 			    --whois = ut.trim(sys.exec("whois " .. publicIP .. " | grep -i 'netname' | awk '{print $2}'"))
 			    whois = ut.trim(sys.exec("wget -4 -qO- -T 1 'http://api.iptoasn.com/v1/as/ip/" .. publicIP .. "' | jsonfilter -q -e '@.as_description'"))
 		    end
