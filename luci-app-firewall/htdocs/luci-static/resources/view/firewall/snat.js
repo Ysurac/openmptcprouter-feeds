@@ -92,7 +92,7 @@ return L.view.extend({
 		m = new form.Map('firewall', _('Firewall - Source NAT'),
 			_('Source NAT is a specific form of masquerading which allows fine grained control over the source IP used for outgoing traffic, for example to map multiple WAN addresses to internal subnets.'));
 
-		s = m.section(form.GridSection, 'snat', _('Port SNAT'));
+		s = m.section(form.GridSection, 'redirect', _('Port SNAT'));
 		s.addremove = true;
 		s.anonymous = true;
 		s.sortable  = true;
