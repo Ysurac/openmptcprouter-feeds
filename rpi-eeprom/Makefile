@@ -39,6 +39,7 @@ define Package/rpi-eeprom/install
 		$(1)/usr/bin \
 		$(1)/etc/default
 	$(CP) $(PKG_BUILD_DIR)/rpi-eeprom-update $(1)/usr/bin
+	$(CP) $(PKG_BUILD_DIR)/rpi-eeprom-config $(1)/usr/bin
 	$(CP) $(PKG_BUILD_DIR)/rpi-eeprom-update-default $(1)/etc/default/rpi-eeprom-update
 	$(CP) $(PKG_BUILD_DIR)/firmware/vl805 $(1)/usr/bin
 	$(CP) -r $(PKG_BUILD_DIR)/firmware/critical $(1)/lib/firmware/raspberrypi/bootloader/critical
