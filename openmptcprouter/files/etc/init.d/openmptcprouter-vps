@@ -449,6 +449,7 @@ _get_local_wan_ip() {
 		[ -z "$wanips" ] && wanips=$wanip || wanips="$wanips"'\n'"$wanip"
 	}
 }
+
 _set_wan_ip() {
 	local settings
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
@@ -460,6 +461,18 @@ _set_wan_ip() {
 		#echo $(_set_json "wan" "$settings")
 	#else
 	#	echo 1
+	fi
+}
+
+_set_lan_ip() {
+	local settings
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	lanip_current="$(echo "$vps_config" | jsonfilter -q -e '@.lan.ips')"
+	lanips="$(uci -q get network.lan.ipaddr)/$(uci -q get network.lan.netmask)"
+	if [ "$lanips" != "/" ] && [ "$lanip_current" != "$lanips" ]; then
+		settings='{"ips" : ["'$lanips'"]}'
+		result=$(_set_json "router" "$settings")
 	fi
 }
 
@@ -613,7 +626,8 @@ _set_config_from_vps() {
 
 	# Glorytun settings
 	glorytun_key="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.key')"
-	if [ -n "$glorytun_key" ] && [ "$glorytun_key" != "$(uci -q get glorytun.vpn.key)" ]; then
+	glorytun_port="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.port')"
+	if [ -n "$glorytun_key" ] && [ "$glorytun_key" != "$(uci -q get glorytun.vpn.key)" ] && [ -n "$glorytun_port" ] && [ "$glorytun_port" != "$(uci -q get glorytun.vpn.port)" ]; then
 		vpn="$(uci -q get openmptcprouter.settings.vpn)"
 		glorytun_state=0
 		if [ "$vpn" = "glorytun_tcp" ]; then
@@ -726,7 +740,8 @@ _set_config_from_vps() {
 
 	# DSVPN settings
 	dsvpn_key="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.key')"
-	if [ -n "$dsvpn_key" ] && [ "$dsvpn_key" != "$(uci -q get dsvpn.vpn.key)" ]; then
+	dsvpn_port="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.port')"
+	if [ -n "$dsvpn_key" ] && [ "$dsvpn_key" != "$(uci -q get dsvpn.vpn.key)" ] && [ -n "$dsvpn_port" ] && [ "$dsvpn_port" != "$(uci -q get dsvpn.vpn.port)" ]; then
 		dsvpn_state=0
 		if [ "$vpn" = "dsvpn" ]; then
 			dsvpn_state=1
@@ -734,6 +749,7 @@ _set_config_from_vps() {
 		uci -q batch <<-EOF >/dev/null
 			set dsvpn.vpn.key=$dsvpn_key
 			set dsvpn.vpn.enable=$dsvpn_state
+			set dsvpn.vpn.port=$dsvpn_port
 			commit dsvpn
 		EOF
 		if [ "$(uci -q get dsvpn.vpn.host)" != "127.0.0.1" ]; then
@@ -993,6 +1009,7 @@ _config_service() {
 	[ -z "$(_set_vpn_vps)" ] && error=1
 	#_set_pihole
 	[ -n "$wanips" ] && _set_wan_ip
+	_set_lan_ip
 	[ "$error" = 0 ] && {
 		#logger -t "OMR-VPS" "No errors"
 		uci -q set openmptcprouter.${servername}.lastchange=$(date "+%s")
