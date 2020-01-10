@@ -178,6 +178,13 @@ _get_vps_config() {
 		uci -q set glorytun.vpn.proto='tcp'
 		client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.client_ip')"
 		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.host_ip')"
+		port="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.port')"
+		if [ "$(uci -q get glorytun.vpn.port)" != "$port" ]; then
+			uci -q batch <<-EOF >/dev/null
+				set glorytun.vpn.port=$port
+			EOF
+			glorytun_change=1
+		fi
 		if [ "$client_ip" != "dhcp" ] && [ -n "$client_ip" ]; then
 			if [ "$host_ip" != "$(uci -q get glorytun.vpn.remoteip)" ] || [ "$client_ip" != "$(uci -q get glorytun.vpn.localip)" ]; then
 				uci -q batch <<-EOF >/dev/null
@@ -215,6 +222,12 @@ _get_vps_config() {
 		uci -q set glorytun.vpn.proto='udp'
 		client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp.client_ip')"
 		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp.host_ip')"
+		port="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.port')"
+		if [ "$(uci -q get glorytun.vpn.port)" != "$port" ]; then
+			uci -q batch <<-EOF >/dev/null
+				set glorytun.vpn.port=$port
+			EOF
+		fi
 		if [ "$client_ip" != "dhcp" ] && [ -n "$client_ip" ]; then
 			if [ "$host_ip" != "$(uci -q get glorytun.vpn.remoteip)" ] || [ "$client_ip" != "$(uci -q get glorytun.vpn.localip)" ]; then
 				uci -q batch <<-EOF >/dev/null
@@ -264,6 +277,14 @@ _get_vps_config() {
 		logger -t "OMR-VPS" "Restart OpenVPN..."
 		/etc/init.d/openvpn restart
 	fi
+	port="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.port')"
+	if [ "$(uci -q get dsvpn.vpn.port)" != "$port" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set dsvpn.vpn.port=$port
+			commit dsvpn
+		EOF
+	fi
+
 	if [ "$(uci -q get dsvpn.vpn.host)" != "127.0.0.1" ] && [ "$(uci -q get dsvpn.vpn.host)" != "$vpsip" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set dsvpn.vpn.host="$vpsip"
