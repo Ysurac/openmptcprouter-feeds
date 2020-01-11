@@ -278,11 +278,17 @@ _get_vps_config() {
 		/etc/init.d/openvpn restart
 	fi
 	port="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.port')"
-	if [ "$(uci -q get dsvpn.vpn.port)" != "$port" ]; then
+	localip="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.client_ip')"
+	remoteip="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.host_ip')"
+	if [ "$(uci -q get dsvpn.vpn.port)" != "$port" ] || [ "$(uci -q get dsvpn.vpn.localip)" != "$localip" ] || [ "$(uci -q get dsvpn.vpn.remoteip)" != "$remoteip" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set dsvpn.vpn.port=$port
+			set dsvpn.vpn.localip=$localip
+			set dsvpn.vpn.remoteip=$remoteip
 			commit dsvpn
 		EOF
+		logger -t "OMR-VPS" "Restart DSVPN..."
+		/etc/init.d/dsvpn restart
 	fi
 
 	if [ "$(uci -q get dsvpn.vpn.host)" != "127.0.0.1" ] && [ "$(uci -q get dsvpn.vpn.host)" != "$vpsip" ]; then
