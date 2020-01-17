@@ -93,7 +93,7 @@ _ping() {
 	local host=$1
 	local device=$2
 	local localip=$3
-	if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ]; then
+	if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "modemmanager" ]; then
 		ret=$(ping -I "${device}" \
 			-w "$OMR_TRACKER_TIMEOUT" \
 			-c 1 \
@@ -241,14 +241,16 @@ while true; do
 						config_foreach _ping_server server $OMR_TRACKER_DEVICE
 					fi
 					if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST" ]; then
-						# Check if route is not used
-						while ! ip route add $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP > /dev/null 2&>1
-						do
-							logger -t "omr-tracker" "Can't create route to $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP. waiting..."
-							sleep 2
-							ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2&>1
-							_restart
-						done
+						if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "modemmanager" ]; then
+							# Check if route is not used
+							while ! ip route add $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP > /dev/null 2&>1
+							do
+								logger -t "omr-tracker" "Can't create route to $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP. waiting..."
+								sleep 2
+								ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2&>1
+								_restart
+							done
+						fi
 						if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
 							_ping "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE" "yes"
 							statusb=$?
