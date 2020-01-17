@@ -940,10 +940,20 @@ function interfaces_status()
 	    
 	    if enabled == "0" then return end
 
-	    local connectivity
+	    local connectivity = "OK"
+	    if ipaddr == "" and ifname ~= nil and ifname ~= "" then
+		    ipaddr = ut.trim(sys.exec("ip -4 -br addr ls dev " .. ifname .. " | awk -F'[ /]+' '{print $3}' | tr -d '\n'"))
+	    end
+	    if ipaddr == "" and ifname ~= nil and ifname ~= "" then
+		    ipaddr = ut.trim(sys.exec("ip -4 addr show dev " .. ifname .. " | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1 | tr -d '\n'"))
+	    end
+	    if ipaddr == "" then
+		    connectivity = "ERROR"
+	    end
+
 	    local multipath_state = ""
 	    local current_multipath_state = ""
-	    if ifname ~= "" and ifname ~= nil then
+	    if ifname ~= "" and ifname ~= nil and connectivity ~= "ERROR" then
 		    if fs.access("/sys/class/net/" .. ifname) then
 			    multipath_state = ut.trim(sys.exec("multipath " .. ifname .. " | grep deactivated"))
 			    if multipath_state == "" then
@@ -957,7 +967,7 @@ function interfaces_status()
 	    else
 		    connectivity = "ERROR"
 	    end
-	    if ifname ~= "" and ifname ~= nil then
+	    if ifname ~= "" and ifname ~= nil and connectivity ~= "ERROR" then
 		    local test_current_multipath_state = ut.trim(sys.exec("multipath " .. ifname))
 		    if string.find(test_current_multipath_state,"deactivated") then
 			    current_multipath_state = "off"
@@ -970,15 +980,6 @@ function interfaces_status()
 		    else
 			    current_multipath_state = ""
 		    end
-	    end
-	    if ipaddr == "" and ifname ~= nil and ifname ~= "" then
-		    ipaddr = ut.trim(sys.exec("ip -4 -br addr ls dev " .. ifname .. " | awk -F'[ /]+' '{print $3}' | tr -d '\n'"))
-	    end
-	    if ipaddr == "" and ifname ~= nil and ifname ~= "" then
-		    ipaddr = ut.trim(sys.exec("ip -4 addr show dev " .. ifname .. " | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1 | tr -d '\n'"))
-	    end
-	    if ipaddr == "" then
-		    connectivity = "ERROR"
 	    end
 
 	    -- Detect WAN gateway status
@@ -998,7 +999,7 @@ function interfaces_status()
 			    end
 		    end
 	    end
-	    if gateway ~= "" and uci:get("openmptcprouter", "settings", "disablegwping") ~= "1" then
+	    if gateway ~= "" and uci:get("openmptcprouter", "settings", "disablegwping") ~= "1" and connectivity ~= "ERROR" then
 		    local gw_ping_test = ut.trim(sys.exec("ping -w 1 -c 1 " .. gateway .. " | grep '100% packet loss'"))
 		    if gw_ping_test ~= "" then
 			    gw_ping = "DOWN"
@@ -1014,7 +1015,7 @@ function interfaces_status()
 	    local latency = ""
 	    local server_ping = ""
 	    --if connectivity ~= "ERROR" and ifname ~= "" and gateway ~= "" and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" and ipaddr ~= "" then
-	    if ifname ~= "" and gateway ~= "" and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" and ipaddr ~= "" then
+	    if ifname ~= "" and gateway ~= "" and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" and ipaddr ~= "" and connectivity ~= "ERROR" then
 		    local serverip = mArray.openmptcprouter["service_addr"]
 		    if serverip == "127.0.0.1" then
 			    serverip = mArray.openmptcprouter["wan_addr"]
@@ -1095,40 +1096,38 @@ function interfaces_status()
 			    end
 		    end
 	    end
-
-	    local publicIP = ""
-	    local whois = ""
-	    if ifname ~= nil and ifname:match("^tun.*") and interface:match("^ovpn.*") then
-		    publicIP = uci:get("openmptcprouter",interface:sub(5),"publicip") or ""
-		    if ifname ~= nil and publicIP == "" and mArray.openmptcprouter["external_check"] ~= false then
-			    publicIP = ut.trim(sys.exec("omr-ip-intf " .. get_device(interface:sub(5))))
-		    end
-	    else
-		    publicIP = uci:get("openmptcprouter",interface,"publicip") or ""
-		    if ifname ~= nil and publicIP == "" and mArray.openmptcprouter["external_check"] ~= false then
-			    publicIP = ut.trim(sys.exec("omr-ip-intf " .. ifname))
-		    end
-	    end
-	    
-	    whois = ""
-	    if publicIP ~= "" then
-		    whois = uci:get("openmptcprouter",interface,"asn") or ""
-		    if whois == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] == true then
-			    --whois = ut.trim(sys.exec("whois " .. publicIP .. " | grep -i 'netname' | awk '{print $2}'"))
-			    whois = ut.trim(sys.exec("wget -4 -qO- -T 1 'http://api.iptoasn.com/v1/as/ip/" .. publicIP .. "' | jsonfilter -q -e '@.as_description'"))
-		    end
-	    end
-	    
 	    local mtu = ""
-	    if ifname ~= "" and ifname ~= nil then
-		    if fs.access("/sys/class/net/" .. ifname) then
-			    mtu = ut.trim(sys.exec("cat /sys/class/net/" .. ifname .. "/mtu | tr -d '\n'"))
-			    if mtu == "" and interface ~= nil then
-					mtu = uci:get("openmptcprouter",interface,"mtu") or ""
+	    local whois = ""
+	    local publicIP = ""
+
+	    if connectivity ~= "ERROR" then
+		    if ifname ~= nil and ifname:match("^tun.*") and interface:match("^ovpn.*") then
+			    publicIP = uci:get("openmptcprouter",interface:sub(5),"publicip") or ""
+			    if ifname ~= nil and publicIP == "" and mArray.openmptcprouter["external_check"] ~= false then
+				    publicIP = ut.trim(sys.exec("omr-ip-intf " .. get_device(interface:sub(5))))
+			    end
+		    else
+			    publicIP = uci:get("openmptcprouter",interface,"publicip") or ""
+			    if ifname ~= nil and publicIP == "" and mArray.openmptcprouter["external_check"] ~= false then
+				    publicIP = ut.trim(sys.exec("omr-ip-intf " .. ifname))
+			    end
+		    end
+		    if publicIP ~= "" then
+		    	    whois = uci:get("openmptcprouter",interface,"asn") or ""
+			    if whois == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] == true then
+				    --whois = ut.trim(sys.exec("whois " .. publicIP .. " | grep -i 'netname' | awk '{print $2}'"))
+				    whois = ut.trim(sys.exec("wget -4 -qO- -T 1 'http://api.iptoasn.com/v1/as/ip/" .. publicIP .. "' | jsonfilter -q -e '@.as_description'"))
+			    end
+		    end
+		    if ifname ~= "" and ifname ~= nil then
+			    if fs.access("/sys/class/net/" .. ifname) then
+				    mtu = ut.trim(sys.exec("cat /sys/class/net/" .. ifname .. "/mtu | tr -d '\n'"))
+				    if mtu == "" and interface ~= nil then
+						mtu = uci:get("openmptcprouter",interface,"mtu") or ""
+				    end
 			    end
 		    end
 	    end
-
 	    local data = {
 		label = section["label"] or interface,
 		name = interface,
