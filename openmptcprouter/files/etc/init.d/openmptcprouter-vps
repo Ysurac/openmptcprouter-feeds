@@ -503,6 +503,22 @@ _set_lan_ip() {
 	fi
 }
 
+_set_vpn_ip() {
+	local settings
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	vpnifname="$(uci -q get network.omrvpn.ifname)"
+	vpnip_local_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.remoteip')"
+	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} | awk -F'[ /]+' '{print $3}')
+	vpnip_remote_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.localip')"
+	vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep via | grep -v default | grep -v / | awk '{print $1}' | tr -d "\n")
+	[ -z "$vpnip_remote" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep kernel | awk '{print $1}' | tr -d "\n")
+	if [ "$vpnip_remote" != "" ] && [ "$vpnip_local" != "" ] && [ "$vpnip_remote" != "$vpnip_remote_current" ] && [ "$vpnip_local" != "$vpnip_local_current" ]; then
+		settings='{"remoteip" : "'$vpnip_local'","localip" : "'$vpnip_remote'"}'
+		result=$(_set_json "vpnips" "$settings")
+	fi
+}
+
 _vps_firewall_redirect_port() {
 	local src proto src_dport
 	config_get src $1 src
@@ -586,10 +602,11 @@ _set_config_from_vps() {
 	# get VPS ip
 	vpsip="$(uci -q get openmptcprouter.${servername}.ip)"
 	vps_lastchange="$(echo "$vps_config" | jsonfilter -q -e '@.vps.lastchange')"
+	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.user_permission')"
 
 	# Set current VPN
 	current_vpn="$(uci -q get openmptcprouter.settings.vpn)"
-	if [ -z "$current_vpn" ] || [ -n "$vps_lastchange" ]; then
+	if [ -z "$current_vpn" ] || [ -n "$vps_lastchange" ] || [ "$user_permission" = "ro" ]; then
 		current_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
 		if [ -n "$current_vpn" ]; then
 			uci -q batch <<-EOF >/dev/null
@@ -1006,11 +1023,13 @@ _config_service() {
 	}
 
 	_get_vps_config
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
+
 	if [ "$(uci -q get openmptcprouter.settings.firstboot)" != "0" ]; then
-		[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 		[ -n "$vps_config" ] && [ -n "$(cat /proc/cpuinfo | grep aes)" ] && {
 			vps_aes="$(echo "$vps_config" | jsonfilter -q -e '@.vps.aes')"
-			if [ "$vps_aes" != "false" ]; then
+			if [ "$vps_aes" != "false" ] && [ "$user_permission" != "ro" ]; then
 				logger -t "OMR-VPS" "CPU support AES, set it by default"
 				uci -q batch <<-EOF >/dev/null
 					set glorytun.vpn.chacha20="0"
@@ -1022,21 +1041,26 @@ _config_service() {
 		}
 		[ -n "$vps_config" ] && uci -q set openmptcprouter.settings.firstboot=0
 	fi
-	config_load shadowsocks-libev
-	config_foreach _set_ss_server_vps server
-	[ -z "$(_set_glorytun_vps)" ] && error=1
-	_set_vps_firewall
+	if [ "$user_permission" != "ro" ]; then
+		config_load shadowsocks-libev
+		config_foreach _set_ss_server_vps server
+		[ -z "$(_set_glorytun_vps)" ] && error=1
+		_set_vps_firewall
+	fi
 	_backup_list
 	redirect_port="0"
 	if [ "$(uci -q get openmptcprouter.${servername}.redirect_ports)" = "1" ] || [ "$(uci -q get upnpd.config.enabled)" = "1" ]; then
 		redirect_port="1"
 	fi
-	[ -z "$(_set_redirect_ports_from_vps $redirect_port)" ] && error=1
-	[ -z "$(_set_mptcp_vps)" ] && error=1
-	[ -z "$(_set_vpn_vps)" ] && error=1
+	if [ "$user_permission" != "ro" ]; then
+		[ -z "$(_set_redirect_ports_from_vps $redirect_port)" ] && error=1
+		[ -z "$(_set_mptcp_vps)" ] && error=1
+		[ -z "$(_set_vpn_vps)" ] && error=1
+	fi
 	#_set_pihole
 	[ -n "$wanips" ] && _set_wan_ip
 	_set_lan_ip
+	_set_vpn_ip
 	[ "$error" = 0 ] && {
 		#logger -t "OMR-VPS" "No errors"
 		uci -q set openmptcprouter.${servername}.lastchange=$(date "+%s")
