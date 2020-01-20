@@ -17,48 +17,50 @@ mptcp_over_vpn() {
 	nbintf=$(($nbintf+1))
 	if [ "$(uci -q get openmptcprouter.${interface}.multipathvpn)" = "1" ]; then
 		nbintfvpn=$(($nbintfvpn+1))
-		logger -t "MPTCPoverVPN" "Enable MPTCP over VPN for ${interface}"
-		id=$(uci -q get network.${interface}.metric)
-		remoteip=""
-		config_load_openmptcprouter
-		config_foreach _getremoteip server
-		localip=$(ubus call network.interface.$interface status | jsonfilter -e '@["ipv4-address"][0].address' | tr -d "\n")
-		[ -z "$(uci -q get openmptcprouter.ovpn${interface}.multipath)" ] && multipath=$(uci -q get network.${interface}.multipath)
-		[ -n "$(uci -q get openmptcprouter.ovpn${interface}.multipath)" ] && multipath=$(uci -q get openmptcprouter.ovpn${interface}.multipath)
-		[ -z "$multipath" ] && multipath="on"
-		uci -q batch <<-EOF >/dev/null
-			set network.ovpn${interface}=interface
-			set network.ovpn${interface}.ifname="tun${id}"
-			set network.ovpn${interface}.defaultroute='0'
-			set network.ovpn${interface}.peerdns='0'
-			set network.ovpn${interface}.proto='none'
-			set network.ovpn${interface}.multipath='on'
-			set network.${interface}.multipath='off'
-			commit network
-			set openvpn.${interface}=openvpn
-			set openvpn.${interface}.dev="tun${id}"
-			set openvpn.${interface}.cipher='AES-256-CBC'
-			set openvpn.${interface}.port='65301'
-			set openvpn.${interface}.remote="${remoteip}"
-			set openvpn.${interface}.local="${localip}"
-			set openvpn.${interface}.lport='0'
-			set openvpn.${interface}.ncp_disable='1'
-			set openvpn.${interface}.auth_nocache='1'
-			set openvpn.${interface}.proto='udp'
-			set openvpn.${interface}.client='1'
-			set openvpn.${interface}.enabled='1'
-			set openvpn.${interface}.allow_recursive_routing='1'
-			set openvpn.${interface}.key='/etc/luci-uploads/client.key'
-			set openvpn.${interface}.cert='/etc/luci-uploads/client.crt'
-			set openvpn.${interface}.ca='/etc/luci-uploads/ca.crt'
-			commit openvpn
-			set openmptcprouter.${interface}.multipath="off"
-			set openmptcprouter.${interface}.multipathvpn="1"
-			set openmptcprouter.ovpn${interface}="interface"
-			set openmptcprouter.ovpn${interface}.multipath="${multipath}"
-			set openmptcprouter.ovpn${interface}.vpn="1"
-			commit openmptcprouter
-		EOF
+		if [ "$(uci -q get network.ovpn${interface})" = "" ]; then
+			logger -t "MPTCPoverVPN" "Enable MPTCP over VPN for ${interface}"
+			id=$(uci -q get network.${interface}.metric)
+			remoteip=""
+			config_load_openmptcprouter
+			config_foreach _getremoteip server
+			localip=$(ubus call network.interface.$interface status | jsonfilter -e '@["ipv4-address"][0].address' | tr -d "\n")
+			[ -z "$(uci -q get openmptcprouter.ovpn${interface}.multipath)" ] && multipath=$(uci -q get network.${interface}.multipath)
+			[ -n "$(uci -q get openmptcprouter.ovpn${interface}.multipath)" ] && multipath=$(uci -q get openmptcprouter.ovpn${interface}.multipath)
+			[ -z "$multipath" ] && multipath="on"
+			uci -q batch <<-EOF >/dev/null
+				set network.ovpn${interface}=interface
+				set network.ovpn${interface}.ifname="tun${id}"
+				set network.ovpn${interface}.defaultroute='0'
+				set network.ovpn${interface}.peerdns='0'
+				set network.ovpn${interface}.proto='none'
+				set network.ovpn${interface}.multipath='${multipath}'
+				set network.${interface}.multipath='off'
+				commit network
+				set openvpn.${interface}=openvpn
+				set openvpn.${interface}.dev="tun${id}"
+				set openvpn.${interface}.cipher='AES-256-CBC'
+				set openvpn.${interface}.port='65301'
+				set openvpn.${interface}.remote="${remoteip}"
+				set openvpn.${interface}.local="${localip}"
+				set openvpn.${interface}.lport='0'
+				set openvpn.${interface}.ncp_disable='1'
+				set openvpn.${interface}.auth_nocache='1'
+				set openvpn.${interface}.proto='udp'
+				set openvpn.${interface}.client='1'
+				set openvpn.${interface}.enabled='1'
+				set openvpn.${interface}.allow_recursive_routing='1'
+				set openvpn.${interface}.key='/etc/luci-uploads/client.key'
+				set openvpn.${interface}.cert='/etc/luci-uploads/client.crt'
+				set openvpn.${interface}.ca='/etc/luci-uploads/ca.crt'
+				commit openvpn
+				set openmptcprouter.${interface}.multipath="off"
+				set openmptcprouter.${interface}.multipathvpn="1"
+				set openmptcprouter.ovpn${interface}="interface"
+				set openmptcprouter.ovpn${interface}.multipath="${multipath}"
+				set openmptcprouter.ovpn${interface}.vpn="1"
+				commit openmptcprouter
+			EOF
+		fi
 	elif [ "$(uci -q get openmptcprouter.opvn${interface})" != "" ]; then
 		logger -t "MPTCPoverVPN" "Disable MPTCP over VPN for ${interface}"
 		multipath=$(uci -q get openmptcprouter.opvn${interface}.multipath)
