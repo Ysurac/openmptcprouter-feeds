@@ -31,6 +31,7 @@ MY_DEPENDS := \
     libnetfilter-conntrack ebtables ebtables-utils ip-full \
     iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace iptables-mod-conntrack-extra iptables-mod-account \
     kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra iptables-mod-extra \
+    iptables-mod-ipsec kmod-crypto-authenc kmod-ipsec kmod-ipsec4 kmod-ipsec6 kmod-ipt-ipsec \
     wireless-tools \
     libiwinfo-lua \
     ca-bundle ca-certificates libustream-openssl \
@@ -78,7 +79,7 @@ MY_DEPENDS := \
     kmod-usb-net-huawei-cdc-ncm kmod-usb-net-rndis kmod-usb-net-cdc-ether kmod-usb-net-ipheth usbmuxd \
     kmod-rt2800-usb kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su \
     luci-proto-qmi wpad-basic kmod-mt7601u kmod-rtl8187 \
-    wireguard
+    wireguard luci-app-ipsec-vpnd
 #    softethervpn5-client softethervpn5-server
 
 #    luci-app-mlvpn ubond \
