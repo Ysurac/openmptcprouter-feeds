@@ -106,6 +106,7 @@ function wizard_add()
 		if ointf ~= "" then
 			ucic:set("network","wan" .. i,"type","macvlan")
 			ucic:set("macvlan","wan" .. i,"macvlan")
+			ucic:set("macvlan","wan" .. i,"ifname",defif)
 		end
 		ucic:set("network","wan" .. i,"ip4table","wan")
 		if multipath_master then
