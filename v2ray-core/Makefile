@@ -1,5 +1,6 @@
 #
 # Copyright (C) 2019 Xingwang Liao
+# Copyright (C) 2020 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -8,12 +9,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=v2ray-core
-PKG_VERSION:=4.21.3
+PKG_VERSION:=4.22.1
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/v2ray/v2ray-core/tar.gz/v$(PKG_VERSION)?
-PKG_HASH:=2052ea02ec5569b32748e5c859dcd066fa3818d5caafa70ddaf216576aaec188
+PKG_HASH:=31c1934eeac3552c7ab68eac9dc3e964e05f3c743b3733b0b6a0159c495019d6
 
 PKG_LICENSE:=MIT
 PKG_LICENSE_FILES:=LICENSE
