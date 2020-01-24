@@ -10,7 +10,7 @@ s.addremove = true
 s.anonymous = false
 s.template = "cbi/tblsection"
 
-hn = s:option(ListValue, "ifname", translate("Interface"))
+hn = s:option(Value, "ifname", translate("Interface"))
 hn.rmempty  = false
 
 for _, iface in ipairs(ifaces) do
