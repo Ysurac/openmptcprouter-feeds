@@ -308,8 +308,11 @@ function wizard_add()
 	end
 	if vpn_intf ~= "" then
 		ucic:set("network","omrvpn","ifname",vpn_intf)
+		ucic:set("sqm","omrvpn","interface",vpn_intf)
 		ucic:save("network")
 		ucic:commit("network")
+		ucic:save("sqm")
+		ucic:commit("sqm")
 	end
 
 	-- Retrieve all server settings
