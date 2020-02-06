@@ -87,6 +87,7 @@ return L.Class.extend({
 			}
 		});
 		o.value('', '<unset>');
+		o.value('', 'all');
 		o.default = '';
 	},
 	values_serverlist: function(o) {
