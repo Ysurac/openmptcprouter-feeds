@@ -24,7 +24,7 @@ define Package/rpi-eeprom
   CATEGORY:=Raspberry Pi
   URL:=https://github.com/raspberrypi/rpi-eeprom
   TITLE:=rpi-eeprom
-  DEPENDS:=+rpi-userland +fwtool +pciutils +blkid
+  DEPENDS:=+fwtool +pciutils +blkid
 endef
 
 define Package/rpi-eeprom/description
