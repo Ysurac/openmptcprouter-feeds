@@ -84,15 +84,14 @@ start_service()
 	nbintfvpn=0
 	config_load openmptcprouter
 	config_foreach mptcp_over_vpn interface
-	if [ "$nbintf" = "$nbintfvpn" ] &&  [ "$nbintf" = "0" ]; then
+	if [ "$nbintf" = "$nbintfvpn" ] &&  [ "$nbintf" != "0" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set shadowsocks-libev.sss0.disabled='1'
 			set glorytun.vpn.host='10.255.250.1'
 		EOF
-	elif [ "$(uci -q get glorytun.vpn.host)" = "10.255.250.1" ]; then
+	elif [ "$(uci -q get glorytun.vpn.host)" = "10.255.250.1" ] && [ "$nbintf" != "$nbintfvpn" ]; then
 		uci -q batch <<-EOF >/dev/null
 			delete shadowsocks-libev.sss0.disabled
-			set shadowsocks-libev.mptcpovervpn.disabled='1'
 			set glorytun.vpn.host="$(uci -q get openmptcprouter.vps.ip)"
 		EOF
 	fi
@@ -104,8 +103,10 @@ start_service()
 			set shadowsocks-libev.mptcpovervpn.key="$(uci -q get shadowsocks-libev.sss0.key)"
 			set shadowsocks-libev.mptcpovervpn.method="$(uci -q get shadowsocks-libev.sss0.method)"
 			set shadowsocks-libev.mptcpovervpn.server="10.255.250.1"
+			delete shadowsocks-libev.mptcpovervpn.disabled
 		EOF
 		for c in $(seq 1 $NBCPU); do
+			uci -q batch <<-EOF >/dev/null
 				set shadowsocks-libev.hivpn$c=ss_redir
 				set shadowsocks-libev.hivpn$c.server="mptcpovervpn"
 				set shadowsocks-libev.hivpn$c.local_address='0.0.0.0'
