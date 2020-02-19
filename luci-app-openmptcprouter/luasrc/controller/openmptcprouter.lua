@@ -60,9 +60,27 @@ function wizard_add()
 			ucic:commit("openmptcprouter")
 			ucic:save("network")
 			ucic:commit("network")
-			luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/wizard"))
-			return
 		end
+		local nbserver = 0
+		local server_ip = ''
+		ucic:foreach("openmptcprouter", "server", function(s)
+			local servername = s[".name"]
+			nbserver = nbserver + 1
+			server_ip = ucic("openmptcprouter",servername,"ip")
+		end)
+		if nbserver == 1 and server_ip ~= "" then
+			ucic:set("shadowsocks-libev","sss0","server",server_ip)
+			ucic:set("glorytun","vpn","host",server_ip)
+			ucic:set("dsvpn","vpn","host",server_ip)
+			ucic:set("mlvpn","general","host",server_ip)
+			ucic:set("ubond","general","host",server_ip)
+			luci.sys.call("uci -q del openvpn.omr.remote")
+			luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
+			ucic:set("qos","serverin","srchost",server_ip)
+			ucic:set("qos","serverout","dsthost",server_ip)
+		end
+		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/wizard"))
+		return
 	end
 
 	-- Add new interface
