@@ -549,31 +549,56 @@ _vps_firewall_redirect_port() {
 	config_get src $1 src
 	config_get proto $1 proto
 	config_get src_dport $1 src_dport
+	config_get family $1 family "ipv4"
 	[ "$src" = "vpn" ] && [ -n "$proto" ] && [ -n "$src_dport" ] && {
 		if [ "$proto" = "tcp udp" ]; then
-			vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port tcp")
-			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "tcp","fwtype" : "DNAT"}'
+			if [ "$family" = "ipv4" ]; then
+				vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port tcp")
+			else
+				vpsfw6list=$(echo "$vpsfw6list" | grep -v "$port	# OMR redirect router $src_dport port tcp")
+			fi
+			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "tcp","fwtype" : "DNAT","ipproto" : "'$family'"}'
 			_set_json "shorewallopen" "$settings"
-			vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port udp")
-			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "udp","fwtype" : "DNAT"}'
+			if [ "$family" = "ipv4" ]; then
+				vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port udp")
+			else
+				vpsfw6list=$(echo "$vpsfw6list" | grep -v "$port	# OMR redirect router $src_dport port udp")
+			fi
+			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "udp","fwtype" : "DNAT","ipproto" : "'$family'"}'
 			_set_json "shorewallopen" "$settings"
 		else
-			vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port $proto")
-			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT"}'
+			if [ "$family" = "ipv4" ]; then
+				vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port $proto")
+			else
+				vpsfw6list=$(echo "$vpsfw6list" | grep -v "$port	# OMR redirect router $src_dport port $proto")
+			fi
+			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT","ipproto" : "'$family'"}'
 			_set_json "shorewallopen" "$settings"
 		fi
 	}
 }
 
 _vps_firewall_close_port() {
-	echo "$vpsfwlist" | while read -r line; do
-		[ -n "$line" ] && {
-			proto=$(echo $line | awk '{print $4}')
-			src_dport=$(echo $line | awk '{print $5}')
-			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT"}'
-			_set_json "shorewallclose" "$settings"
-		}
-	done
+	[ -n "$vpsfwlist" ] && {
+		echo "$vpsfwlist" | while read -r line; do
+			[ -n "$line" ] && {
+				proto=$(echo $line | awk '{print $4}')
+				src_dport=$(echo $line | awk '{print $5}')
+				settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT"}'
+				_set_json "shorewallclose" "$settings"
+			}
+		done
+	}
+	[ -n "$vpsfw6list" ] && {
+		echo "$vpsfw6list" | while read -r line; do
+			[ -n "$line" ] && {
+				proto=$(echo $line | awk '{print $4}')
+				src_dport=$(echo $line | awk '{print $5}')
+				settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT","ipproto" : "ipv6"}'
+				_set_json "shorewallclose" "$settings"
+			}
+		done
+	}
 }
 
 _set_vps_firewall() {
@@ -596,9 +621,12 @@ _set_vps_firewall() {
 	settings='{"name" : "redirect router"}'
 	fw_list=$(_set_json "shorewalllist" "$settings")
 	vpsfwlist=$(echo $fw_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')
+	settings='{"name" : "redirect router","ipproto" : "ipv6"}'
+	fw6_list=$(_set_json "shorewalllist" "$settings")
+	vpsfw6list=$(echo $fw6_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')
 	config_load firewall
 	config_foreach _vps_firewall_redirect_port redirect
-	[ -n "$vpsfwlist" ] && _vps_firewall_close_port
+	[ -n "$vpsfwlist" ] || [ -n "$vpsfw6list" ] && _vps_firewall_close_port
 }
 
 set_vps_firewall() {
