@@ -48,7 +48,7 @@ function wizard_add()
 
 	-- Remove existing server
 	local delete_server = luci.http.formvaluetable("deleteserver") or ""
-	if delete_server ~= "" then
+	if delete_server ~= "" and next(delete_server) ~= nil then
 		for serverdel, _ in pairs(delete_server) do
 			ucic:foreach("network", "interface", function(s)
 				local sectionname = s[".name"]
@@ -66,9 +66,9 @@ function wizard_add()
 		ucic:foreach("openmptcprouter", "server", function(s)
 			local servername = s[".name"]
 			nbserver = nbserver + 1
-			server_ip = ucic("openmptcprouter",servername,"ip")
+			server_ip = ucic:get("openmptcprouter",servername,"ip")
 		end)
-		if nbserver == 1 and server_ip ~= "" then
+		if nbserver == 1 and server_ip ~= "" and server_ip ~= nil then
 			ucic:set("shadowsocks-libev","sss0","server",server_ip)
 			ucic:set("glorytun","vpn","host",server_ip)
 			ucic:set("dsvpn","vpn","host",server_ip)
