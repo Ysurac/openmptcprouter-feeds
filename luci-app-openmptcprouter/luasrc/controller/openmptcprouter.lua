@@ -256,7 +256,7 @@ function wizard_add()
 			ucic:set("sqm",intf,"upload","0")
 		end
 
-		if downloadspeed ~= "0" and uploadspeed ~= "0" then
+		if downloadspeed ~= "0" and uploadspeed ~= "0" and downloadspeed ~= "" and uploadspeed ~= "" then
 			ucic:set("network",intf,"downloadspeed",downloadspeed)
 			ucic:set("network",intf,"uploadspeed",uploadspeed)
 			ucic:set("sqm",intf,"download",math.ceil(downloadspeed*95/100))
