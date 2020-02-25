@@ -24,7 +24,7 @@ set_route() {
 		if [ -z "$interface_gw" ]; then
 			interface_gw=$(ubus call network.interface.${INTERFACE}_4 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 		fi
-		if [ "$interface_gw" != "" ]; then
+		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ]; then
 			_log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
 			ip route replace default scope global nexthop via $interface_gw dev $interface_if && SETROUTE=true
 			ip route replace default via $interface_gw dev $interface_if table 991337
@@ -97,7 +97,7 @@ set_routes_intf() {
 		if [ -z "$interface_gw" ]; then
 			interface_gw=$(ubus call network.interface.${INTERFACE}_4 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 		fi
-		if [ "$interface_gw" != "" ]; then
+		if [ "$interface_gw" != "" ] && [ "$interface_if != "" ]; then
 			routesintf="$routesintf nexthop via $interface_gw dev $interface_if weight 1"
 		fi
 	fi
@@ -437,8 +437,6 @@ if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
 	else
 		config_foreach set_server_route server
 	fi
-elif [ "$multipath_config" = "on" ]; then
-	_log "Warning for $OMR_TRACKER_INTERFACE - IP: $OMR_TRACKER_DEVICE_IP - GW: $OMR_TRACKER_DEVICE_GATEWAY"
 fi
 
 [ "$multipath_config" = "on" ] && {
@@ -468,6 +466,7 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 		local ipaddr="$(omr-ip-intf $OMR_TRACKER_DEVICE)"
 	else
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state="up"
 	fi
 	[ -n "$ipaddr" ] && {
 		# Check if we can get a IPv6 address, if yes enable RA else disable
