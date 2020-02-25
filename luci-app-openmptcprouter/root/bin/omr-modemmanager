@@ -1,11 +1,12 @@
 #!/bin/sh
 MODEM_INTF=$1
 [ -z "$MODEM_INTF" ] && return
-ALL_MODEMS=$(timeout 1 mmcli -L)
-for MODEM in $ALL_MODEMS; do
+timeout 1 mmcli -L | while read MODEM; do
 	MODEM_ID=$(echo $MODEM |  awk -F' ' '{print $1}' | awk -F/ '{print $6}')
-	MODEM_INFO=$(timeout 1 mmcli -m $MODEM_ID --output-keyvalue | grep $MODEM_INTF)
+	MODEM_INFO="$(timeout 1 mmcli -m $MODEM_ID --output-keyvalue)"
+	if [ -n "$MODEM_INFO" ] && [ "$(echo "$MODEM_INFO" | grep 'modem.generic.device ' | awk -F": " '{print $2}')" = "$MODEM_INTF" ]; then
+		PERCENT=$(echo "$MODEM_INFO" | grep 'modem.generic.signal-quality.value' | awk -F": " '{print $2}')
+		echo $PERCENT
+		exit
+	fi
 done
-[ -z "$MODEM_INFO" ] && return
-PERCENT=$(echo $MODEM_INFO | grep 'modem.generic.signal-quality.value' | awk -F": " '{print $2}')
-echo $PERCENT
