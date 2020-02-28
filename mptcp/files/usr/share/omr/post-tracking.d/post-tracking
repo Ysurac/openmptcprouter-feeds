@@ -28,25 +28,6 @@ set_route() {
 			_log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
 			ip route replace default scope global nexthop via $interface_gw dev $interface_if && SETROUTE=true
 			ip route replace default via $interface_gw dev $interface_if table 991337
-			if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
-				uci -q batch <<-EOF >/dev/null
-					set network.default_route=route
-					set network.default_route.interface=$INTERFACE
-					set network.default_route.target='0.0.0.0'
-					set network.default_route.netmask='0.0.0.0'
-					set network.default_route.gateway=$interface_gw
-					set network.default_route.created=tracker
-					commit network.default_route
-					set network.default_fw_route=route
-					set network.default_fw_route.interface=$INTERFACE
-					set network.default_fw_route.target='0.0.0.0'
-					set network.default_fw_route.netmask='0.0.0.0'
-					set network.default_fw_route.gateway=$interface_gw
-					set network.default_fw_route.table=991337
-					set network.default_fw_route.created=tracker
-					commit network.default_fw_route
-				EOF
-			fi
 			#SETROUTE=true
 		fi
 	fi
@@ -60,19 +41,17 @@ set_server_default_route() {
 	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath || echo "off")
 	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric 1 | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ]; then
 		_log "Set server $server ($serverip) default route via $OMR_TRACKER_DEVICE_GATEWAY"
-		if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
-			uci -q batch <<-EOF >/dev/null
-				set network.server_${server}_default_route=route
-				set network.server_${server}_default_route.interface=$OMR_TRACKER_INTERFACE
-				set network.server_${server}_default_route.target=$serverip
-				set network.server_${server}_default_route.netmask='255.255.255.255'
-				set network.server_${server}_default_route.gateway=$OMR_TRACKER_DEVICE_GATEWAY
-				set network.server_${server}_default_route.metric=1
-				set network.server_${server}_default_route.created=tracker
-				commit network.server_${server}_default_route
-			EOF
-		fi
 		ip route replace $serverip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric 1
+	fi
+}
+
+delete_server_default_route() {
+	local server=$1
+	local serverip
+	config_get serverip $server ip
+	if [ "$serverip" != "" ] && [ "$(ip route show $serverip)" != "" ]; then
+		_log "Delete server ($serverip) default route"
+		ip route del $serverip metric 1
 	fi
 }
 
@@ -139,38 +118,13 @@ set_server_route() {
 	#multipath_current_config=$(multipath $interface_if | grep "deactivated")
 	interface_current_config=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.state || echo "up")
 	#if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$multipath_current_config" = "" ]; then
-	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ]; then
+	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE table $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ]; then
 		_log "Set server $server ($serverip) route via $OMR_TRACKER_DEVICE_GATEWAY metric $metric"
-		if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
-			uci -q batch <<-EOF >/dev/null
-				set network.server_${server}_${OMR_TRACKER_INTERFACE}_route=route
-				set network.server_${server}_${OMR_TRACKER_INTERFACE}_route.interface=$OMR_TRACKER_INTERFACE
-				set network.server_${server}_${OMR_TRACKER_INTERFACE}_route.target=$serverip
-				set network.server_${server}_${OMR_TRACKER_INTERFACE}_route.netmask='255.255.255.255'
-				set network.server_${server}_${OMR_TRACKER_INTERFACE}_route.gateway=$OMR_TRACKER_DEVICE_GATEWAY
-				set network.server_${server}_${OMR_TRACKER_INTERFACE}_route.metric=$metric
-				set network.server_${server}_${OMR_TRACKER_INTERFACE}_route.created=tracker
-				commit network.server_${server}_${OMR_TRACKER_INTERFACE}_route
-			EOF
-		fi
-		ip route replace $serverip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
+		#ip route replace $serverip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
+		ip route replace $serverip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table $metric
 	fi
 	if [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ]; then
 		ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
-		if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
-			uci -q batch <<-EOF >/dev/null
-				delete network.${OMR_TRACKER_INTERFACE}_route_default_metric
-				set network.${OMR_TRACKER_INTERFACE}_route_default_metric=route
-				set network.${OMR_TRACKER_INTERFACE}_route_default_metric.interface=$OMR_TRACKER_INTERFACE
-				set network.${OMR_TRACKER_INTERFACE}_route_default_metric.target='0.0.0.0'
-				set network.${OMR_TRACKER_INTERFACE}_route_default_metric.netmask='0.0.0.0'
-				set network.${OMR_TRACKER_INTERFACE}_route_default_metric.gateway=$OMR_TRACKER_DEVICE_GATEWAY
-				set network.${OMR_TRACKER_INTERFACE}_route_default_metric.metric=$metric
-				#set network.${OMR_TRACKER_INTERFACE}_route_default_metric.source=$OMR_TRACKER_DEVICE_IP
-				set network.${OMR_TRACKER_INTERFACE}_route_default_metric.created=tracker
-				commit network.${OMR_TRACKER_INTERFACE}_route_default_metric
-			EOF
-		fi
 	fi
 }
 
@@ -178,18 +132,10 @@ del_server_route() {
 	local server=$1
 	local serverip
 	config_get serverip $server ip
-	[ -n "$serverip" ] && _log "Delete $server ($serverip) route via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
-	if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
-		uci -q batch <<-EOF >/dev/null
-			delete network.server_${server}_${OMR_TRACKER_INTERFACE}_route
-			delete network.${OMR_TRACKER_INTERFACE}_route_default_metric
-			commit network
-		EOF
-	fi
+	[ -n "$serverip" ] && _log "Delete default route via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
 	local metric
 	metric=$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)
 	ip route del $serverip dev $OMR_TRACKER_DEVICE metric $metric >/dev/null 2>&1
-	ip route del $serverip dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
 	ip route del $serverip dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
 	if [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
 		ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
@@ -301,6 +247,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		fi
 		config_load openmptcprouter
 		config_foreach disable_pihole server
+		config_foreach set_server_default_route server
 	fi
 	dns_flush
 	uci -q delete openmptcprouter.$OMR_TRACKER_INTERFACE.lc
@@ -312,17 +259,6 @@ fi
 if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
 	if [ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
 		_log "Tunnel up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
-		if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
-			uci -q batch <<-EOF >/dev/null
-				set network.default_route=route
-				set network.default_route.interface=$OMR_TRACKER_INTERFACE
-				set network.default_route.target='0.0.0.0'
-				set network.default_route.netmask='0.0.0.0'
-				set network.default_route.gateway=$OMR_TRACKER_DEVICE_GATEWAY
-				set network.default_route.created=tracker
-				commit network.default_route
-			EOF
-		fi
 		ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
 	fi
 	if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "hi2" ]; then
@@ -370,6 +306,7 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 	piholeenabled=0
 	config_load openmptcprouter
 	config_foreach enable_pihole server
+	config_foreach delete_server_default_route server
 	[ "$nbserver" = "$piholeenabled" ] && /etc/init.d/openmptcprouter-vps set_pihole
 	#ubus call network reload
 	exit 0
@@ -394,39 +331,16 @@ if [ "$multipath_config" = "master" ]; then
 		omrvpn_intf=$(uci -q get "network.omrvpn.ifname" || echo "tun")
 		if [ -n "$omrvpn_intf" ] && [ "$(ip route show default | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ]; then
 			_log "Master up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
-			if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
-				uci -q batch <<-EOF >/dev/null
-					set network.default_route=route
-					set network.default_route.interface=$OMR_TRACKER_INTERFACE
-					set network.default_route.target='0.0.0.0'
-					set network.default_route.netmask='0.0.0.0'
-					set network.default_route.gateway=$OMR_TRACKER_DEVICE_GATEWAY
-					set network.default_route.created=tracker
-					commit network.default_route
-				EOF
-			fi
 			ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
 		else
 			config_load openmptcprouter
 			if [ "$(uci -q get openmptcprouter.settings.master)" = "redundant" ]; then
 				config_foreach set_server_all_routes server
-			else
-				config_foreach set_server_default_route server
+	#		else
+	#			config_foreach set_server_default_route server
 			fi
 		fi
 		ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
-		if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
-			uci -q batch <<-EOF >/dev/null
-				set network.default_fw_route=route
-				set network.default_fw_route.interface=$OMR_TRACKER_INTERFACE
-				set network.default_fw_route.target='0.0.0.0'
-				set network.default_fw_route.netmask='0.0.0.0'
-				set network.default_fw_route.gateway=$OMR_TRACKER_DEVICE_GATEWAY
-				set network.default_fw_route.table=991337
-				set network.default_fw_route.created=tracker
-				commit network.default_fw_route
-			EOF
-		fi
 	fi
 	multipath_config="on"
 fi
