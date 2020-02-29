@@ -76,7 +76,7 @@ set_routes_intf() {
 		if [ -z "$interface_gw" ]; then
 			interface_gw=$(ubus call network.interface.${INTERFACE}_4 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 		fi
-		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ]; then
+		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ "$(ip route show $serverip | grep $interface_if)" = "" ]; then
 			routesintf="$routesintf nexthop via $interface_gw dev $interface_if weight 1"
 		fi
 	fi
@@ -118,9 +118,11 @@ set_server_route() {
 	#multipath_current_config=$(multipath $interface_if | grep "deactivated")
 	interface_current_config=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.state || echo "up")
 	#if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$multipath_current_config" = "" ]; then
-	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE table $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ]; then
+	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ]; then
 		_log "Set server $server ($serverip) route via $OMR_TRACKER_DEVICE_GATEWAY metric $metric"
 		ip route replace $serverip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric
+	fi
+	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE table $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ]; then
 		ip route replace $serverip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table $metric
 	fi
 	if [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ]; then
