@@ -79,7 +79,7 @@ MY_DEPENDS := \
     !TARGET_mvebu:kmod-usb-net-huawei-cdc-ncm !TARGET_mvebu:kmod-usb-net-rndis !TARGET_mvebu:kmod-usb-net-cdc-ether !TARGET_mvebu:kmod-usb-net-ipheth !TARGET_mvebu:usbmuxd \
     kmod-rt2800-usb kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su \
     !TARGET_mvebu:luci-proto-qmi wpad-basic kmod-mt7601u kmod-rtl8187 \
-    wireguard luci-app-mlvpn mlvpn
+    wireguard luci-app-mlvpn mlvpn 464xlat
 #    softethervpn5-client softethervpn5-server
 
 #    luci-app-mlvpn ubond \
