@@ -524,7 +524,7 @@ _set_client2client() {
 	[ -z "$vps_config" ] && return
 	c2cips="$(echo "$vps_config" | jsonfilter -q -e '@.client2client.lanips')"
 	vpnifname="$(uci -q get network.omrvpn.ifname)"
-	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} | awk -F'[ /]+' '{print $3}')
+	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} | awk -F'[ /]+' '{print $3}' | tr -d "\n")
 	for lanip in $c2cips; do
 		c2cid=$((c2cid+1))
 		target=$(echo $lanip | awk -F '/' '{print $1}' | tr -d "\n")
@@ -932,12 +932,25 @@ _set_config_from_vps() {
 	uci -q batch <<-EOF >/dev/null
 		del openmptcprouter.${servername}.available_vpn
 	EOF
-	if [ -n "$available_vpn" ]; then
-		for vpn in $available_vpn; do
+
+	if [ "$user_permission" = "ro" ]; then
+		current_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
+		if [ -n "$current_vpn" ]; then
 			uci -q batch <<-EOF >/dev/null
-				add_list openmptcprouter.${servername}.available_vpn=$vpn
+				delete openmptcprouter.${servername}.available_vpn
+				set openmptcprouter.${servername}.available_vpn=${current_vpn}
 			EOF
-		done
+		fi
+	
+	else
+		if [ -n "$available_vpn" ]; then
+			for vpn in $available_vpn; do
+				uci -q batch <<-EOF >/dev/null
+					delete openmptcprouter.${servername}.available_vpn
+					add_list openmptcprouter.${servername}.available_vpn=$vpn
+				EOF
+			done
+		fi
 	fi
 	uci -q batch <<-EOF >/dev/null
 		set openmptcprouter.${servername}.get_config=0
