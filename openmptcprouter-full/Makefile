@@ -15,7 +15,7 @@ include $(INCLUDE_DIR)/package.mk
 
 MY_DEPENDS := \
     mptcp       \
-    unbound-daemon unbound-control \
+    unbound-daemon unbound-control unbound-anchor \
     netifd      \
     luci-app-dsvpn \
     mc          \
