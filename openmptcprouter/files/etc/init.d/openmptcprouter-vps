@@ -504,7 +504,7 @@ _set_vpn_ip() {
 	vpnip_local_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.remoteip')"
 	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} | awk -F'[ /]+' '{print $3}')
 	vpnip_remote_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.localip')"
-	vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep via | grep -v default | grep -v / | awk '{print $1}' | tr -d "\n")
+	vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep via | grep -v default | grep -v / | grep -v metric | awk '{print $1}' | tr -d "\n")
 	[ -z "$vpnip_remote" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep kernel | awk '{print $1}' | tr -d "\n")
 	if [ "$vpnip_remote" != "" ] && [ "$vpnip_local" != "" ] && [ "$vpnip_remote" != "$vpnip_remote_current" ] && [ "$vpnip_local" != "$vpnip_local_current" ]; then
 		settings='{"remoteip" : "'$vpnip_local'","localip" : "'$vpnip_remote'"}'
@@ -525,6 +525,7 @@ _set_client2client() {
 	c2cips="$(echo "$vps_config" | jsonfilter -q -e '@.client2client.lanips[0]')"
 	vpnifname="$(uci -q get network.omrvpn.ifname)"
 	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} | awk -F'[ /]+' '{print $3}' | tr -d "\n")
+	vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep via | grep -v default | grep -v / | grep -v metric | awk '{print $1}' | tr -d "\n")
 	for lanip in $c2cips; do
 		c2cid=$((c2cid+1))
 		targetip=$(echo $lanip | awk -F '/' '{print $1}' | tr -d "\n")
@@ -535,7 +536,7 @@ _set_client2client() {
 			set network.omr_client2client_${c2cid}.interface=omrvpn
 			set network.omr_client2client_${c2cid}.target="${target}"
 			set network.omr_client2client_${c2cid}.netmask="${netmask}"
-			set network.omr_client2client_${c2cid}.gateway="${vpnip_local}"
+			set network.omr_client2client_${c2cid}.gateway="${vpnip_remote}"
 		EOF
 	done
 	uci -q commit network
