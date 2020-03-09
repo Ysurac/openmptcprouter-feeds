@@ -196,6 +196,12 @@ function wizard_add()
 			ucic:delete("qos",intf)
 			ucic:save("qos")
 			ucic:commit("qos")
+			ucic:delete("openmptcprouter",intf)
+			ucic:save("openmptcprouter")
+			ucic:commit("openmptcprouter")
+			ucic:delete("macvlan",intf)
+			ucic:save("macvlan")
+			ucic:commit("macvlan")
 			if defif ~= nil and defif ~= "" then
 				luci.sys.call("uci -q del_list vnstat.@vnstat[-1].interface=" .. defif)
 			end
@@ -209,6 +215,7 @@ function wizard_add()
 	-- Set interfaces settings
 	local interfaces = luci.http.formvaluetable("intf")
 	for intf, _ in pairs(interfaces) do
+		local label = luci.http.formvalue("cbid.network.%s.label" % intf) or ""
 		local proto = luci.http.formvalue("cbid.network.%s.proto" % intf) or "static"
 		local ipaddr = luci.http.formvalue("cbid.network.%s.ipaddr" % intf) or ""
 		local netmask = luci.http.formvalue("cbid.network.%s.netmask" % intf) or ""
@@ -217,6 +224,7 @@ function wizard_add()
 		if proto ~= "other" then
 			ucic:set("network",intf,"proto",proto)
 		end
+		ucic:set("network",intf,"label",label)
 		ucic:set("network",intf,"ipaddr",ipaddr)
 		ucic:set("network",intf,"netmask",netmask)
 		ucic:set("network",intf,"gateway",gateway)
