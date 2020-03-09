@@ -29,6 +29,13 @@ _login() {
 	fi
 }
 
+_ping_server() {
+	server="$(uci -q get openmptcprouter.${servername}.ip)"
+	[ -z "$server" ] && server="$(uci -q get shadowsocks-libev.sss0.server)"
+	ret=$(ping -c 3 -w 3 -Q 184 $server) && echo "$ret" | grep -sq "bytes from" && return
+	false
+}
+
 _get_json() {
 	local route result
 	route=$1
@@ -1079,11 +1086,30 @@ _config_service() {
 	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.ip)" ] && return
 	token=""
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
-		logger -t "OMR-VPS" "Can't get token, try later"
+		reason=""
+		_ping_server
+		status=$?
+		if $(exit $status); then
+			reason="can ping server"
+		else
+			reason="can't ping server"
+		fi
+		port="$(uci -q get openmptcprouter.${servername}.port)"
+		server="$(uci -q get openmptcprouter.${servername}.ip)"
+		if [ "$(curl -k -m 3 https://${server}:${port}/)" = "" ]; then
+			reason="$reason, no server API answer"
+		else
+			reason="$reason, server API answer"
+		fi
+		if [ "$(uci -q get openmptcprouter.${servername}.username)" != "openmptcprouter" ]; then
+			reason="$reason, custom username"
+		fi
+		logger -t "OMR-VPS" "Can't get token, try later ($reason)"
 		uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
