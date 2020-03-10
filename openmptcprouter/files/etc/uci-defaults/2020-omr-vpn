@@ -24,7 +24,7 @@ if [ "$(uci -q get glorytun.vpn.localip)" = "10.0.0.2" ]; then
 	EOF
 fi
 
-if [ "$(uci -q get openvpn.omr)" = "" ]; then
+if [ "$(uci -q get openvpn.omr.proto)" != "tcp-client" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set openvpn.omr=openvpn
 		set openvpn.omr.dev=tun0
@@ -34,9 +34,41 @@ if [ "$(uci -q get openvpn.omr)" = "" ]; then
 		set openvpn.omr.enabled=0
 		set openvpn.omr.ncp_disable=1
 		set openvpn.omr.auth_nocache=1
+		set openvpn.omr.client=1
+		set openvpn.omr.tls_client=1
+		set openvpn.omr.reneg_sec=0
+		set openvpn.omr.allow_recursive_routing=1
+		set openvpn.omr.sndbuf=0
+		set openvpn.omr.rcvbuf=0
+		set openvpn.omr.route_delay=5
 		commit openvpn
 	EOF
 fi
+#if [ "$(uci -q get openvpn.omr.com_lzo)" = "" ]; then
+#	uci -q batch <<-EOF >/dev/null
+#		set openvpn.omr.comp_lzo=adaptive
+#	EOF
+#fi
+if [ "$(uci -q get ipsec.ipsec.password)" = "myvpn" ]; then
+	uci -q batch <<-EOF >/dev/null
+		set ipsec.ipsec.enabled='0'
+		commit ipsec
+	EOF
+	chmod u+x /etc/init.d/ipsec
+fi
+
+if [ "$(uci -q get dsvpn.vpn)" = "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		set dsvpn.vpn=dsvpn
+		set dsvpn.vpn.dev=tun0
+		set dsvpn.vpn.port=65011
+		set dsvpn.vpn.localip=10.255.251.2
+		set dsvpn.vpn.remoteip=10.255.251.1
+		set dsvpn.vpn.enable=0
+		commit dsvpn
+	EOF
+fi
+
 
 if [ "$(uci -q show firewall | grep omrvpn)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
@@ -52,5 +84,25 @@ if [ "$(uci -q show firewall | grep omrvpn)" = "" ]; then
 		commit firewall
 	EOF
 fi
+if [ "$(uci -q get ucitrack.@network[-1].affects | grep glorytun)" = "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		add_list ucitrack.@network[-1].affects="glorytun"
+		commit ucitrack
+	EOF
+fi
+if [ "$(uci -q get ucitrack.@network[-1].affects | grep dsvpn)" = "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		add_list ucitrack.@network[-1].affects="dsvpn"
+		commit ucitrack
+	EOF
+fi
+if [ "$(uci -q get ucitrack.@glorytun[-1].affects | grep openmptcprouter-vps)" = "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		add_list ucitrack.@glorytun[-1].affects="openmptcprouter-vps"
+		commit ucitrack
+	EOF
+fi
+
+
 rm -f /tmp/luci-indexcache
 exit 0

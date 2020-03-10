@@ -29,6 +29,7 @@ endef
 
 define Package/$(PKG_NAME)/conffiles
 /etc/config/$(PKG_NAME)
+/etc/vnstat_backup.tar.gz
 endef
 
 define Build/Compile

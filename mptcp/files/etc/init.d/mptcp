@@ -52,7 +52,21 @@ interface_multipath_settings() {
 	id=$count
 	config_set "$config" metric $count
 	uci -q set network.${config}.metric=$count
-	config_get mode "$config" multipath "off"
+	uci -q set openmptcprouter.${config}.metric=$count
+	config_get mode "$config" multipath
+	[ "$mode" = "" ] && {
+		mode="$(uci -q get openmptcprouter.${config}.multipath)"
+		[ -n "$mode" ] && uci -q set network.${config}.multipath="$mode"
+	}
+	[ "$mode" = "" ] && {
+		[ "$config" = "lan" ] && mode="off"
+		[ "$config" = "omrvpn" ] && mode="off"
+		[ "$config" = "omr6in4" ] && mode="off"
+		[ "$mode" = "" ] && mode="on"
+		logger -t "MPTCP" "Multipath not defined for $config set to $mode"
+		uci -q set network.${config}.multipath="$mode"
+		uci -q set openmptcprouter.${config}.multipath="$mode"
+	}
 	[ "$mode" != "off" ] && {
 		[ -n "$mptcpintf" ] && mptcpintf="$mptcpintf $iface"
 		[ -z "$mptcpintf" ] && mptcpintf="$iface"
@@ -66,14 +80,17 @@ interface_multipath_settings() {
 			logger -t "MPTCP" "Multipath master already set, disable master for $config"
 			config_set "$config" multipath "on"
 			uci -q set network.${config}.multipath="on"
+			uci -q set openmptcprouter.${config}.multipath="on"
 		else
 			master="$config"
 		fi
 	}
+	uci -q set openmptcprouter.${config}.multipath="$mode"
 
 	[ "$enabled" = "0" ] && return 0
 	[ -n "$intf" ] && [ "$iface" != "$intf" ] && return 0
 	[ -z "$iface" ] && return 0
+	[ "$config" = "omrvpn" ] && return 0
 	[ -n "$(ifconfig | grep $iface)" ] || return 0
 	[ "$(echo $iface | grep _dev)" != "" ] && return 0
 	multipath "$iface" "$mode"
@@ -94,7 +111,7 @@ interface_multipath_settings() {
 		config_get ipaddr $config ipaddr
 		config_get gateway $config gateway
 		config_get netmask $config netmask
-		[ -n "$ipaddr" ] && [ -n "$netmask" ] && netmask=`ipcalc.sh $ipaddr $netmask | sed -n '/NETMASK=/{;s/.*=//;s/ .*//;p;}'`
+		[ -n "$ipaddr" ] && [ -n "$netmask" ] && netmask=`ipcalc.sh $ipaddr $netmask | sed -n '/PREFIX=/{;s/.*=//;s/ .*//;p;}'`
 		[ -n "$îpaddr" ] && [ -n "$netmask" ] && network=`ipcalc.sh $ipaddr $netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 	else
 		network_get_ipaddr ipaddr $config
@@ -112,11 +129,14 @@ interface_multipath_settings() {
 		if [ -z "$gateway" ] || [ "$( valid_subnet4 $gateway )" != "ok" ]; then 
 			gateway=$(ubus call network.interface.${config}_4 status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 		fi
+		if [ -z "$gateway" ] || [ "$( valid_subnet4 $gateway )" != "ok" ]; then
+			gateway=$(traceroute -m1 -i $iface 8.8.8.8 2>/dev/null | awk 'FNR==2{ print $2 }')
+		fi
 		network_get_subnet netmask $config
 		[ -n "$netmask" ] && [ "$(echo $netmask | grep '/')" != "" ] && netmask=""
 		[ -z "$netmask" ] && netmask=$(ip -4 addr show dev $iface | grep peer | awk '{print $4}' | cut -d/ -f2 | tr -d "\n")
 		[ -z "$netmask" ] && netmask=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f2 | tr -d "\n")
-		[ -n "$ipaddr" ] && [ -n "$netmask" ] && netmask=`ipcalc.sh $ipaddr $netmask | sed -n '/NETMASK=/{;s/.*=//;s/ .*//;p;}'`
+		[ -n "$ipaddr" ] && [ -n "$netmask" ] && netmask=`ipcalc.sh $ipaddr $netmask | sed -n '/PREFIX=/{;s/.*=//;s/ .*//;p;}'`
 		[ -n "$ipaddr" ] && [ -n "$netmask" ] && network=`ipcalc.sh $ipaddr $netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 	fi
 	if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
@@ -158,21 +178,25 @@ interface_multipath_settings() {
 				commit network
 			EOF
 		else
+			#echo "Add routes for $ipaddr table $id"
 			ip rule add from $ipaddr table $id pref 0
+			ip route replace $network/$netmask dev $iface scope link metric $id
 			ip route replace $network/$netmask dev $iface scope link table $id
 			ip route replace default via $gateway dev $iface table $id
 			ip route replace default via $gateway dev $iface metric $id
-			ip route flush $id
+			#ip route flush $id
 		fi
 
-		config_get mode "$config" multipath "off"
+		#config_get mode "$config" multipath ""
+		#[ "$mode" = "" ] && mode="$(uci -q get openmptcprouter.${config}.multipath)"
 		[ "$mode" = "master" ] && {
+			#echo "ip route replace default via $gateway dev $iface"
 			ip route replace default via $gateway dev $iface
 		}
 		[ "$mode" = "off" ] && {
-			ifconfig $iface txqueuelen 90 > /dev/null 2>&1
+			ifconfig $iface txqueuelen 50 > /dev/null 2>&1
 		} || {
-			ifconfig $iface txqueuelen 10000 > /dev/null 2>&1
+			ifconfig $iface txqueuelen 100 > /dev/null 2>&1
 		}
 	fi
 	if [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$config" != "omr6in4" ]; then
@@ -246,14 +270,14 @@ interface_multipath_settings() {
 				ip -6 route flush 6$id
 			fi
 
-			config_get mode "$config" multipath "off"
+			#config_get mode "$config" multipath "off"
 			[ "$mode" = "master" ] && {
 				ip -6 route replace default via $gateway6 dev $iface
 			}
 			[ "$mode" = "off" ] && {
-				ifconfig $iface txqueuelen 90 > /dev/null 2>&1
+				ifconfig $iface txqueuelen 50 > /dev/null 2>&1
 			} || {
-				ifconfig $iface txqueuelen 10000 > /dev/null 2>&1
+				ifconfig $iface txqueuelen 100 > /dev/null 2>&1
 			}
 		fi
 	fi
@@ -261,8 +285,9 @@ interface_multipath_settings() {
 
 load_interfaces() {
 	config_get ifname "$1" ifname
-	config_get multipath "$1" multipath "off"
-	[ "$multipath" != "off" ] && interfaces=" ${ifname} ${interfaces}"
+	config_get multipath "$1" multipath ""
+	[ -z "$multipath" ] && multipath="$(uci -q get openmptcprouter.$1.multipath)"
+	[ "$multipath" != "off" ] && [ "$multipath" != "" ] && interfaces=" ${ifname} ${interfaces}"
 }
 
 set_multipath() {
@@ -277,7 +302,50 @@ set_multipath() {
 	done
 }
 
+add_route() {
+	config_get target "$1" target
+	routeset="$target"
+	config_get netmask "$1" netmask
+	[ -n "$target" ] && [ -n "$netmask" ] && {
+		netmask=`ipcalc.sh $target $netmask | sed -n '/PREFIX=/{;s/.*=//;s/ .*//;p;}'`
+		network=`ipcalc.sh $target $netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
+		[ -n "$netmask" ] && [ "$target" = "$network" ] && routeset="$routeset/$netmask"
+	}
+	config_get gateway "$1" gateway
+	[ -n "$gateway" ] && routeset="$routeset via $gateway"
+	config_get metric "$1" metric
+	[ -n "$metric" ] && routeset="$routeset metric $metric"
+	config_get mtu "$1" mtu
+	[ -n "$mtu" ] && routeset="$routeset mtu $mtu"
+	config_get type "$1"
+	[ -n "$type" ] && routeset="$routeset type $type"
+	config_get interface "$1" interface
+	iface=$(ifstatus "$interface" | jsonfilter -q -e '@["l3_device"]')
+	routeset="$routeset dev $iface"
+	logger -t "MPTCP" "Add route $routeset"
+	ip route replace $routeset
+}
+
+add_route6() {
+	config_get target "$1" target
+	routeset="$target"
+	config_get gateway "$1" gateway
+	[ -n "$gateway" ] && routeset="$routeset via $gateway"
+	config_get metric "$1" metric
+	[ -n "$metric" ] && routeset="$routeset metric $metric"
+	config_get mtu "$1" mtu
+	[ -n "$mtu" ] && routeset="$routeset mtu $mtu"
+	config_get type "$1"
+	[ -n "$type" ] && routeset="$routeset type $type"
+	config_get interface "$1" interface
+	iface=$(ifstatus "$interface" | jsonfilter -q -e '@["l3_device"]')
+	routeset="$routeset dev $iface"
+	logger -t "MPTCP" "Add IPv6 route $routeset"
+	ip -6 route replace $routeset
+}
+
 remove() {
+	logger -t "MPTCP" "Remove network.$1"
 	uci -q delete network.$1
 }
 
@@ -294,18 +362,27 @@ start_service() {
 	#config_foreach remove route6
 	#config_foreach remove rule
 	#config_foreach remove rule6
+	[ -z "$intf" ] && [ -n "$(uci -q get network.@route[-1])" ] && {
+		logger -t "MPTCP" "Flush main table"
+		ip route flush table main
+		ip -6 route flush table main
+	}
 	config_foreach interface_multipath_settings interface $intf
 	set_multipath
+	config_foreach add_route route
+	config_foreach add_route route6
 	# If no master is defined, one interface is defined as master
-	if [ "$master" = "" ]; then
+	if [ "$master" = "" ] && [ "$intf" = "" ]; then
 		intfmaster="$(echo $mptcpintf | cut -d' ' -f1 | tr -d '\n')"
 		[ "$intfmaster" != "" ] && {
 			logger -t "MPTCP" "No master multipath defined, setting it to $intfmaster"
 			uci -q set network.${intfmaster}.multipath="master"
+			uci -q set openmptcprouter.${intfmaster}.multipath="master"
 		}
 	fi
 	uci -q commit network
-	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && {
+	uci -q commit openmptcprouter
+	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && [ -z "$(ubus call system board | jsonfilter -e '@.board_name' | grep '4-model-b')" ] && {
 		ethtool --offload eth0 rx off tx off
 	}
 }
@@ -315,15 +392,17 @@ reload_service() {
 	return 0
 }
 
-service_triggers() {
-	local interfaces
-	procd_add_reload_trigger network
-	config_load network
-	config_foreach load_interfaces interface
+add_interface_trigger() {
+	local interface ignore
 
-	[ -n "${interfaces}" ] && {
-		for n in $interfaces ; do
-			procd_add_interface_trigger "interface.*" $n /etc/init.d/mptcp reload $n
-		done
-	}
+	config_get interface "$1" interface
+	config_get_bool ignore "$1" ignore 0
+
+	[ -n "$interface" -a $ignore -eq 0 ] && procd_add_interface_trigger "interface.*" "$interface" /etc/init.d/mptcp reload
+}
+
+service_triggers() {
+	procd_add_reload_trigger "network"
+	config_load network
+	config_foreach add_interface_trigger interface
 }

@@ -24,9 +24,21 @@ _setup_macvlan() {
 	set network.$1.ifname=$1
 	set network.$1.type=macvlan
 	set network.$1.masterintf=$_ifname
+	set macvlan.$1=macvlan
+	set macvlan.$1.ifname=$_ifname
 	EOF
 	_macaddr=$(uci -q get "network.$1.macaddr")
 	_setup_macaddr "$1_dev" "${_macaddr:-auto$(date +%s)}"
+}
+
+_setup_macvlan_update() {
+	uci -q get "network.$1_dev.ifname" >/dev/null || return
+
+	uci -q batch <<-EOF
+	set macvlan.$1=macvlan
+	set macvlan.$1.ifname=$_ifname
+	commit macvlan
+	EOF
 }
 
 _setup_multipath_off() {
@@ -49,7 +61,10 @@ _setup_wan_interface() {
 	[ -n "$4" ] && uci -q set network.$1.type=$4
 }
 
-if [ "$(uci -q get network.lan.multipath)" != "" ]; then
+config_load network
+config_foreach _setup_macvlan_update interface
+
+if [ "$(uci -q show network.lan | grep multipath)" != "" ]; then
 	exit 0
 fi
 
@@ -96,6 +111,7 @@ set network.lan.ipaddr=192.168.100.1
 set network.lan.netmask=255.255.255.0
 set network.lan.ifname=${lanif}
 set network.lan.metric=2048
+set network.lan.ipv6=0
 set network.lan.delegate=0
 EOF
 
@@ -134,7 +150,7 @@ uci -q set network.lan.ip4table='lan'
 #uci -q set "network.lan.ip6assign=64"
 
 # Create WAN interfaces
-if [ "$(uci -q get network.wan1.multipath)" = "" ]; then
+if [ "$(uci -q show network.wan1 | grep multipath)" = "" ] && [ "$(uci -q show macvlan)" = "" ]; then
 	if [ "$(swconfig list 2>&1 | grep switch0)" != "" ]; then
 		_setup_wan_interface wan1 eth0.1 master
 		_setup_wan_interface wan2 eth0.2 on
@@ -219,6 +235,7 @@ if [ "$(uci -q get network.wan1.multipath)" = "" ]; then
 	#set network.@route6[-1].target='::/0'
 	#EOF
 fi
+uci -q commit macvlan
 uci -q commit network
 rm -f /tmp/luci-indexcache
 exit 0

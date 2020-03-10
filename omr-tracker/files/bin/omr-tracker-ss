@@ -4,21 +4,37 @@
 name=$0
 basename="$(basename $0)"
 
-log() {
+_log() {
 	logger -p daemon.info -t "${basename}" "$@"
 }
 
-get_ip() {
+_ping_server() {
+	local host=$1
+	ret=$(ping \
+	    -w "$OMR_TRACKER_TIMEOUT" \
+	    -c 1 \
+	    -q \
+	    "${host}"
+	) && echo "$ret" | grep -sq " 0% packet loss" && {
+		server_ping=true
+	}
+}
+
+_get_ip() {
 	uci -q set openmptcprouter.omr=router
 	if [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ]; then
-		uci -q set openmptcprouter.omr.detected_public_ipv4="$(wget -4 -qO- -T 3 http://ip.openmptcprouter.com)"
-		uci -q set openmptcprouter.omr.detected_ss_ipv4=$(curl -s -4 --socks5 "${proxy}" --max-time 3 http://ip.openmptcprouter.com)
+		check_ipv4_website="$(uci -q get openmptcprouter.settings.check_ipv4_website)"
+		[ -z "$check_ipv4_website" ] && check_ipv4_website="http://ip.openmptcprouter.com"
+		check_ipv6_website="$(uci -q get openmptcprouter.settings.check_ipv6_website)"
+		[ -z "$check_ipv6_website" ] && check_ipv6_website="http://ipv6.openmptcprouter.com"
+		uci -q set openmptcprouter.omr.detected_public_ipv4="$(wget -4 -qO- -T 3 $check_ipv4_website)"
+		uci -q set openmptcprouter.omr.detected_ss_ipv4="$(curl -s -4 --socks5 "${proxy}" --max-time 3 $check_ipv4_website)"
 		if [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ]; then
-			uci -q set openmptcprouter.omr.detected_public_ipv6=$(wget -6 -qO- -T 3 http://ip.openmptcprouter.com)
+			uci -q set openmptcprouter.omr.detected_public_ipv6="$(wget -6 -qO- -T 3 $check_ipv6_website)"
 		#	uci -q set openmptcprouter.omr.detected_ss_ipv6=$(curl -s -6 --socks5 ":::1111" --max-time 3 http://ip.openmptcprouter.com)
 		fi
 	fi
-	uci -q commit openmptcprouter.omr
+	uci -q commit openmptcprouter
 }
 
 timeout=${OMR_TRACKER_TIMEOUT:-5}
@@ -32,8 +48,8 @@ nodns=0
 last=0
 nocontact=""
 uci -q set openmptcprouter.omr=router
-uci -q set openmptcprouter.omr.shadowsocks=""
-get_ip
+uci -q delete openmptcprouter.omr.shadowsocks=""
+_get_ip
 
 while true; do
 	host="${hosts%% *}"
@@ -43,27 +59,33 @@ while true; do
 	if [ "$(curl -s -I -w %{http_code} --socks5 ${proxy} --max-time ${timeout} $host -o /dev/null)" != "000" ]; then
 		nocontact=""
 		[ "${last}" -ge "${retry}" ] || [ "$(uci -q get openmptcprouter.omr.shadowsocks)" = "" ] && {
-			log "Shadowsocks is up (can contact ${host})"
+			_log "Shadowsocks is up (can contact via http ${host})"
 			uci -q set openmptcprouter.omr.shadowsocks="up"
 			uci -q commit openmptcprouter.omr
 		}
-		if [ -z "$(iptables -t nat -L | grep ss_rules_forward)" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.disabled)" != "1" ]; then
-			log "Reload Shadowsocks rules"
+		if [ -z "$(iptables -t nat -L -n | grep ss_rules_forward)" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.disabled)" != "1" ]; then
+			_log "Reload Shadowsocks rules"
 			/etc/init.d/shadowsocks-libev rules_up 2> /dev/null
-			get_ip
+			_get_ip
 		fi
-		[ "$(uci -q get openmptcprouter.omr.detected_public_ipv4)" = "" ] || ([ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.detected_public_ipv6)" = "" ]) && get_ip
+		[ "$(uci -q get openmptcprouter.omr.detected_public_ipv4)" = "" ] || ([ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.detected_public_ipv6)" = "" ]) && _get_ip
 		last=0
 	else
 		last=$((last + 1 ))
 		[ -z "$nocontact" ] && nocontact="$host" || nocontact="$nocontact, $host"
 		[ "${last}" -ge "${retry}" ] && {
-			if [ -n "$(iptables -t nat -L | grep ss_rules_forward)" ]; then
-				log "Shadowsocks is down (can't contact ${nocontact})"
+			if [ -n "$(iptables -t nat -L -n | grep ss_rules_forward)" ]; then
+				_log "Shadowsocks is down (can't contact via http ${nocontact})"
 				uci -q set openmptcprouter.omr.shadowsocks="down"
 				uci -q commit openmptcprouter.omr
 				/etc/init.d/shadowsocks-libev rules_down 2> /dev/null
-				get_ip
+				_get_ip
+				server_ping=false
+				server="$(uci -q get shadowsocks-libev.sss0.server)"
+				_ping_server $server
+				if [ "$server_ping" = false ]; then
+					_log "Server ($server) seems down, no answer to ping"
+				fi
 			fi
 		}
 	fi

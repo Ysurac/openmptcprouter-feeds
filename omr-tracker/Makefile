@@ -19,7 +19,7 @@ define Package/$(PKG_NAME)
   CATEGORY:=Network
   TITLE:=OpenMPTCProuter tracker
   PKGARCH:=all
-  DEPENDS:=+bind-dig +httping +whois
+  DEPENDS:=+bind-dig +httping +whois +shadowsocks-libev-ss-local
 endef
 
 define Package/$(PKG_NAME)/description

@@ -18,8 +18,10 @@ hn.datatype = "hostname"
 hn.optional = false
 hn.rmempty  = true
 
-ifd = s:option(Value, "interface", translate("Interface"))
+ifd = s:option(ListValue, "interface", translate("Interface"))
 ifd.rmempty  = true
+
+dn = s:option(Value,"note",translate("Note"))
 
 s = m:section(TypedSection, "ips", translate("IPs and Networks"))
 s.addremove = true
@@ -31,8 +33,33 @@ ip.datatype = "ipaddr"
 ip.rmempty  = true
 ip.optional = false
 
-ifi = s:option(Value, "interface", translate("Interface"))
+ifi = s:option(ListValue, "interface", translate("Interface"))
 ifi.rmempty  = true
+
+inn = s:option(Value,"note",translate("Note"))
+
+
+s = m:section(TypedSection, "dest_port", translate("Ports destination"))
+s.addremove = true
+s.anonymous = true
+s.template = "cbi/tblsection"
+
+dp = s:option(Value, "dport", translate("port"))
+dp.rmempty  = true
+dp.optional = false
+
+proto = s:option(ListValue, "proto", translate("Protocol"))
+proto:value("all",translate("ALL"))
+proto:value("tcp","TCP")
+proto:value("udp","UDP")
+proto:value("icmp","ICMP")
+proto.rmempty  = true
+proto.optional = false
+
+ifdp = s:option(ListValue, "interface", translate("Interface"))
+ifdp.rmempty  = true
+
+dpn = s:option(Value,"note",translate("Note"))
 
 s = m:section(TypedSection, "macs", translate("<abbr title=\"Media Access Control\">MAC</abbr>-Address"))
 s.addremove = true
@@ -50,8 +77,10 @@ sys.net.host_hints(function(m, v4, v6, name)
 	end
 end)
 
-ifm = s:option(Value, "interface", translate("Interface"))
+ifm = s:option(ListValue, "interface", translate("Interface"))
 ifm.rmempty  = true
+
+macn = s:option(Value,"note",translate("Note"))
 
 s = m:section(TypedSection, "lan_ip", translate("Source lan IP address or network"))
 s.addremove = true
@@ -63,8 +92,10 @@ ip.datatype = "ipaddr"
 ip.rmempty  = true
 ip.optional = false
 
-ifl = s:option(Value, "interface", translate("Interface"))
+ifl = s:option(ListValue, "interface", translate("Interface"))
 ifl.rmempty  = true
+
+lanipn = s:option(Value,"note",translate("Note"))
 
 s = m:section(TypedSection, "asns", translate("<abbr tittle=\"Autonomous System Number\">ASN</abbr>"))
 s.addremove = true
@@ -75,15 +106,17 @@ asn = s:option(Value, "asn", translate("ASN"))
 asn.rmempty  = true
 asn.optional = false
 
-ifa = s:option(Value, "interface", translate("Interface"))
+ifa = s:option(ListValue, "interface", translate("Interface"))
 ifa.rmempty  = true
 
-s = m:section(TypedSection, "dpis", translate("Protocols"))
+asnn = s:option(Value,"note",translate("Note"))
+
+s = m:section(TypedSection, "dpis", translate("Protocols and services"))
 s.addremove = true
 s.anonymous = true
 s.template = "cbi/tblsection"
 
-dpi = s:option(Value, "proto", translate("Protocol"))
+dpi = s:option(ListValue, "proto", translate("Protocol/Service"))
 dpi.rmempty  = true
 dpi.optional = false
 local xt_ndpi_available = nixio.fs.access("/proc/net/xt_ndpi/proto")
@@ -95,7 +128,7 @@ if xt_ndpi_available then
 			table.insert(protos,b)
 		end
 	end
-	table.sort(protos)
+	table.sort(protos, function(a, b) return a:upper() < b:upper() end)
 	for _,b in ipairs(protos) do
 		dpi:value(b,"%s" % tostring(b))
 	end
@@ -104,18 +137,23 @@ end
 ifp = s:option(ListValue, "interface", translate("Interface"))
 ifp.rmempty  = true
 
+psn = s:option(Value,"note",translate("Note"))
+
+
 ifd.default = "all"
 ifi.default = "all"
 ifp.default = "all"
 ifm.default = "all"
 ifl.default = "all"
 ifa.default = "all"
+ifdp.default = "all"
 ifd:value("all",translate("Default"))
 ifi:value("all",translate("Default"))
 ifp:value("all",translate("Default"))
 ifm:value("all",translate("Default"))
 ifl:value("all",translate("Default"))
 ifa:value("all",translate("Default"))
+ifdp:value("all",translate("Default"))
 for _, iface in ipairs(ifaces) do
 	if iface:is_up() then
 		ifd:value(iface:name(),"%s" % iface:name())
@@ -124,6 +162,7 @@ for _, iface in ipairs(ifaces) do
 		ifm:value(iface:name(),"%s" % iface:name())
 		ifl:value(iface:name(),"%s" % iface:name())
 		ifa:value(iface:name(),"%s" % iface:name())
+		ifdp:value(iface:name(),"%s" % iface:name())
 	end
 end
 

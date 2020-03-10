@@ -77,9 +77,9 @@ _post_tracking() {
 
 _ping_server() {
 	local serverip=$(uci -q get openmptcprouter.$1.ip)
-	local deviceip=$2
-	if [ -n "$serverip" ] && [ -n "$deviceip" ]; then
-		_ping $serverip $deviceip "yes"
+	local device=$2
+	if [ -n "$serverip" ] && [ -n "$device" ]; then
+		_ping $serverip $device "yes"
 		statusp=$?
 		if $(exit $statusp); then
 			serverip_ping=true
@@ -91,20 +91,35 @@ _ping_server() {
 
 _ping() {
 	local host=$1
-	local deviceip=$2
+	local device=$2
 	local localip=$3
-	ret=$(ping -I "${deviceip}" \
-		-w "$OMR_TRACKER_TIMEOUT" \
-		-c 1 \
-		-q \
-		"${host}"
-	) && echo "$ret" | grep -sq " 0% packet loss" && {
-		if [ "$localip" = "yes" ]; then
-			OMR_TRACKER_LATENCY=$(echo "$ret" | cut -d "/" -s -f5 | cut -d "." -f1)
-			_update_rto "$OMR_TRACKER_LATENCY"
-		fi
-		return
-	}
+	if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]; then
+		ret=$(ping -I "${device}" \
+			-w "$OMR_TRACKER_TIMEOUT" \
+			-c 2 \
+			-Q 184 \
+			"${host}"
+		) && echo "$ret" | grep -sq "bytes from" && {
+			if [ "$localip" = "yes" ]; then
+				OMR_TRACKER_LATENCY=$(echo "$ret" | cut -d "/" -s -f5 | cut -d "." -f1)
+				_update_rto "$OMR_TRACKER_LATENCY"
+			fi
+			return
+		}
+	else
+		ret=$(ping -B -I "${device}" \
+			-w "$OMR_TRACKER_TIMEOUT" \
+			-c 2 \
+			-Q 184 \
+			"${host}"
+		) && echo "$ret" | grep -sq "bytes from" && {
+			if [ "$localip" = "yes" ]; then
+				OMR_TRACKER_LATENCY=$(echo "$ret" | cut -d "/" -s -f5 | cut -d "." -f1)
+				_update_rto "$OMR_TRACKER_LATENCY"
+			fi
+			return
+		}
+	fi
 	false
 }
 
@@ -157,11 +172,12 @@ while true; do
 	OMR_TRACKER_STATUS="ERROR"
 	OMR_TRACKER_STATUS_MSG=""
 	OMR_TRACKER_LATENCY=
-	OMR_TRACKER_TIMEOUT=$((rto / 1000 + (rto % 1000 ? 1 : 0)))
+	#OMR_TRACKER_TIMEOUT=$((rto / 1000 + (rto % 1000 ? 1 : 0)))
 	OMR_TRACKER_LIST_HOSTS=""
+	OMR_TRACKER_DEVICE_GATEWAY=
 	serverip_ping=false
 
-	if [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
+	if [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ] && [ -n "$(ip link show $OMR_TRACKER_DEVICE | grep UP)" ]; then
 		# retrieve iface ip and gateway
 		OMR_TRACKER_DEVICE_IP=$(ip -4 -br addr ls dev "$OMR_TRACKER_DEVICE" | awk -F'[ /]+' '{print $3}')
 		if [ -z "$OMR_TRACKER_DEVICE_IP" ]; then
@@ -190,6 +206,12 @@ while true; do
 				OMR_TRACKER_DEVICE_GATEWAY=""
 			fi
 		fi
+		if [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
+			OMR_TRACKER_DEVICE_ROUTE=$(ip -4 r list dev "$OMR_TRACKER_DEVICE" | grep via | grep -v default | grep -v metric | grep -v / | awk '{print $1}' | tr -d "\n")
+		fi
+		if [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
+			OMR_TRACKER_DEVICE_GATEWAY=$(ip -4 r list dev "$OMR_TRACKER_DEVICE" | grep kernel | awk '/proto kernel/ {print $1}' | tr -d "\n")
+		fi
 
 		# execute specific tracker
 		if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
@@ -197,8 +219,13 @@ while true; do
 			tries="$OMR_TRACKER_TRIES"
 			# loop until tries attempts have been reached
 			while [ "$tries" -gt 0 ]; do
-				_ping "$OMR_TRACKER_DEVICE_GATEWAY" "$OMR_TRACKER_DEVICE_IP" "no"
-				status=$?
+				if [ -n "$OMR_TRACKER_DEVICE_ROUTE" ]; then
+					_ping "$OMR_TRACKER_DEVICE_ROUTE" "$OMR_TRACKER_DEVICE" "no"
+					status=$?
+				else
+					_ping "$OMR_TRACKER_DEVICE_GATEWAY" "$OMR_TRACKER_DEVICE" "no"
+					status=$?
+				fi
 				if $(exit $status) && [ "$OMR_TRACKER_TYPE" = "none" ]; then
 					OMR_TRACKER_STATUS_MSG=""
 					OMR_TRACKER_STATUS="OK"
@@ -210,19 +237,22 @@ while true; do
 					serverip_ping=false
 					if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
 						config_load openmptcprouter
-						config_foreach _ping_server server $OMR_TRACKER_DEVICE_IP
+						config_foreach _ping_server server $OMR_TRACKER_DEVICE
 					fi
-					if [ "$serverip_ping" = false ]; then
-						# Check if route is not used
-						while ! ip route add $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP > /dev/null 2&>1
-						do
-							logger -t "omr-tracker" "Can't create route to $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP. waiting..."
-							sleep 2
-							ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2&>1
-							_restart
-						done
+					if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST" ]; then
+						if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]; then
+							OMR_TRACKER_HOST=$(resolveip -4 $OMR_TRACKER_HOST | tr -d "\n")
+							# Check if route is not used
+							while ! ip route add $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP > /dev/null 2&>1
+							do
+								logger -t "omr-tracker" "Can't create route to $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP. waiting..."
+								sleep 2
+								ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2&>1
+								_restart
+							done
+						fi
 						if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
-							_ping "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE_IP" "yes"
+							_ping "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE" "yes"
 							statusb=$?
 						elif [ "$OMR_TRACKER_TYPE" = "httping" ]; then
 							_httping "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE_IP" "yes"
@@ -257,7 +287,7 @@ while true; do
 				[ "$OMR_TRACKER_HOST" = "$OMR_TRACKER_HOSTS" ] || {
 					OMR_TRACKER_HOSTS="${OMR_TRACKER_HOSTS#* } $OMR_TRACKER_HOST"
 				}
-				OMR_TRACKER_TIMEOUT=$((OMR_TRACKER_TIMEOUT * 2))
+				#OMR_TRACKER_TIMEOUT=$((OMR_TRACKER_TIMEOUT * 2))
 				sleep "$OMR_TRACKER_INTERVAL_TRIES"
 			done
 		fi

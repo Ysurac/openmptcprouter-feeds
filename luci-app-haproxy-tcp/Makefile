@@ -12,6 +12,6 @@ LUCI_DEPENDS:=+haproxy-nossl
 
 PKG_LICENSE:=MIT
 
-include ../luci/luci.mk
-
+#include ../luci/luci.mk
+include $(TOPDIR)/feeds/luci/luci.mk
 # call BuildPackage - OpenWrt buildroot signature

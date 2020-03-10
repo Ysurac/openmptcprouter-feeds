@@ -12,10 +12,18 @@ if [ "$(uci -q get openmptcprouter.latest_versions)" = "" ]; then
 	if [ "$(uci -q show dhcp | grep 127.0.0.1#5353)" = "" ]; then
 		uci -q batch <<-EOF >/dev/null
 			add_list dhcp.@dnsmasq[-1].server="127.0.0.1#5353"
+			add_list dhcp.@dnsmasq[-1].server="/use-application-dns.net/"
 			commit dhcp
 		EOF
 	fi
 fi
+if [ "$(uci -q show dhcp | grep 'use-application-dns.net'" = "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		add_list dhcp.@dnsmasq[-1].server="/use-application-dns.net/"
+		commit dhcp
+	EOF
+fi
+
 if [ "$(uci -q get dhcp.@dnsmasq[0].rebind_domain)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set dhcp.@dnsmasq[-1].noresolv=1
@@ -25,6 +33,13 @@ if [ "$(uci -q get dhcp.@dnsmasq[0].rebind_domain)" = "" ]; then
 		commit dhcp
 	EOF
 fi
+if [ "$(uci -q get dhcp.lan.dhcp_options)" = "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		uci add_list dhcp.lan.dhcp_option='252,"\n"'
+		commit dhcp
+	EOF
+fi
+
 #uci -q batch <<-EOF >/dev/null
 #	set unbound.@unbound[-1].add_local_fqdn=0
 #	set unbound.@unbound[-1].localservice=1

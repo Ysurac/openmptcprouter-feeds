@@ -1,5 +1,10 @@
 #!/bin/sh
-checkip=$(dig +short A ip.openmptcprouter.com | tr -d "\n")
+check_ipv4_website="$(uci -q get openmptcprouter.settings.check_ipv4_website)"
+[ -z "$check_ipv4_website" ] && check_ipv4_website="http://ip.openmptcprouter.com"
+checkip=$(echo $check_ipv4_website | sed -e 's/https:\/\///' -e 's/http:\/\///' | xargs dig +short A | tr -d "\n")
 ipset add ss_rules_dst_bypass_all $checkip > /dev/null 2>&1
-curl -s -4 -m 3 --interface $1 http://ip.openmptcprouter.com
+ip="$(curl -s -4 -m 2 --interface $1 $check_ipv4_website)"
 ipset del ss_rules_dst_bypass_all $checkip > /dev/null 2>&1
+if expr "$ip" : '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$' >/dev/null; then
+	echo $ip
+fi

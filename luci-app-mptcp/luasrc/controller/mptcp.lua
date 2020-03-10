@@ -39,13 +39,24 @@ function multipath_bandwidth()
 	local uci = luci.model.uci.cursor()
 
 	uci:foreach("network", "interface", function(s)
-		local dev = s["ifname"] or ""
+		local intname = s[".name"]
+		local dev = get_device(intname)
+		if dev == "" then
+			dev = get_device(s["ifname"])
+		end
+		local multipath = s["multipath"] or ""
 		if dev ~= "lo" and dev ~= "" then
-			local multipath = s["multipath"] or "off"
+			if multipath == "" then
+				multipath = uci:get("openmptcprouter", intname, "multipath") or ""
+			end
+			if multipath == "" then
+				multipath = "off"
+			end
 			if multipath == "on" or multipath == "master" or multipath == "backup" or multipath == "handover" then
 				local bwc = luci.sys.exec("luci-bwc -i %q 2>/dev/null" % dev) or ""
 				if bwc ~= nil then
-					result[dev] = "[" .. string.gsub(bwc, '[\r\n]', '') .. "]"
+					--result[dev] = "[" .. string.gsub(bwc, '[\r\n]', '') .. "]"
+					result[intname] = "[" .. string.gsub(bwc, '[\r\n]', '') .. "]"
 				else
 					result[dev] = "[]"
 				end
@@ -59,7 +70,11 @@ end
 
 function get_device(interface)
 	local dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
-	return dump['l3_device']
+	if dump then
+		return dump['l3_device']
+	else
+		return ""
+	end
 end
 
 function mptcp_check_trace(iface)

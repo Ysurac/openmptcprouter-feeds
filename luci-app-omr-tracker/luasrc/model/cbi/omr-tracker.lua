@@ -78,7 +78,7 @@ o.default     = false
 o.disabled    = 0
 o.enabled     = 1
 
-o = s:option(DynamicList, "hosts", translate("Hosts"))
+o = s:option(DynamicList, "hosts", translate("Hosts"),translate("Must be IPs and not domains"))
 o.placeholder = "4.2.2.1"
 o.default     = { "4.2.2.1", "8.8.8.8" }
 o.rmempty     = false

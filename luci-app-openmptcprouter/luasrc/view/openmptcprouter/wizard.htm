@@ -5,6 +5,7 @@
 	local net = require "luci.model.network".init()
 	local fs = require "nixio.fs"
 	local sys = require "luci.sys"
+	local ut = require "luci.util"
 	local ifaces = sys.net:devices()
 	local servers_ip = {}
 	local server_ip = uci:get("shadowsocks-libev","sss0","server")
@@ -66,7 +67,7 @@ end
 		<div class="cbi-value">
 		    <label class="cbi-value-title" for="server_ip"><%:Server IP%></label>
 		    <div class="cbi-value-field">
-			    <input name="<%=servername%>.server_ip" id="<%=servername%>.server_ip" placeholder="Server IP" class="cbi-input-text" value="<%=uci:get("openmptcprouter",servername,"ip")%>" data-type="ip4addr" data-optional="false">
+			    <input name="<%=servername%>.server_ip" id="<%=servername%>.server_ip" placeholder="<%:Server IP%>" class="cbi-input-text" value="<%=uci:get("openmptcprouter",servername,"ip")%>" data-optional="false">
 			<div class="cbi-value-description">
 			    <%:Server IP will be set for ShadowSocks, Glorytun, OpenVPN and MLVPN%>
 			</div>
@@ -74,12 +75,22 @@ end
 		</div>
 		<br />
 		<div class="cbi-value">
-		    <label class="cbi-value-title"><%:OpenMPTCProuter VPS key%></label>
+		    <label class="cbi-value-title"><%:Server username%></label>
 		    <div class="cbi-value-field">
-			<input type="text" name="<%=servername%>.openmptcprouter_vps_key" placeholder="OpenMPTCProuter VPS key" class="cbi-input-text" value="<%=uci:get("openmptcprouter",servername,"password")%>" data-type="base64" data-optional="false">
+			<input type="text" name="<%=servername%>.openmptcprouter_vps_username" placeholder="<%:Server username%>" class="cbi-input-text" value="<%=uci:get("openmptcprouter",servername,"username")%>" data-optional="false">
 			<br />
 			<div class="cbi-value-description">
-			    <%:Key to configure and retrieve others keys from OpenMPTCProuter VPS. Empty to disable.%>
+			    <%:API username to retrieve personnalized settings from the server.%>
+			</div>
+		    </div>
+		</div>
+		<div class="cbi-value">
+		    <label class="cbi-value-title"><%:Server key%></label>
+		    <div class="cbi-value-field">
+			<input type="text" name="<%=servername%>.openmptcprouter_vps_key" placeholder="<%:Server key%>" class="cbi-input-text" value="<%=uci:get("openmptcprouter",servername,"password")%>" data-optional="false">
+			<br />
+			<div class="cbi-value-description">
+			    <%:Key to configure and retrieve others keys from Server and to set server settings from OpenMPTCProuter.%>
 			</div>
 		    </div>
 		</div>
@@ -135,7 +146,7 @@ end
 	    <div class="cbi-value">
 		<label class="cbi-value-title"><%:ShadowSocks key%></label>
 		<div class="cbi-value-field">
-		    <input type="text" name="shadowsocks_key" placeholder="ShadowSocks key" class="cbi-input-text" value="<%=uci:get("shadowsocks-libev","sss0","key")%>" data-type="base64">
+		    <input type="text" name="shadowsocks_key" placeholder="<%:ShadowSocks key%>" class="cbi-input-text" value="<%=uci:get("shadowsocks-libev","sss0","key")%>" />
 		    <br />
 		    <div class="cbi-value-description">
 		        <%:ShadowSocks is used for TCP.%>
@@ -145,7 +156,32 @@ end
 	    <div class="cbi-value">
 		<label class="cbi-value-title"><%:Disable ShadowSocks%></label>
 		<div class="cbi-value-field">
-		    <input class="cbi-input-checkbox" type="checkbox" name="disableshadowsocks" value="1" <% if uci:get("shadowsocks-libev","sss0","disabled") == 1 then %>checked<% end %> />
+		    <input class="cbi-input-checkbox" type="checkbox" name="disableshadowsocks" value="1" <% if uci:get("shadowsocks-libev","sss0","disabled") == "1" then %>checked<% end %> />
+		</div>
+	    </div>
+	    <div class="cbi-value">
+		<label class="cbi-value-title"><%:Encryption%></label>
+		<div class="cbi-value-field">
+		    <select class="cbi-input-select" name="encryption" size="1">
+			<% 
+			    local method=uci:get("shadowsocks-libev","sss0","method")
+			%>
+			<option value="none" <% if method == "none" then %>selected="selected"<% end %>><%:None%></option>
+			<option value="aes-256-gcm" <% if method == "aes-256-gcm" then %>selected="selected"<% end %>>AES-256-GCM</option>
+			<option value="chacha20-ietf-poly1305" <% if method == "chacha20" or method == "chacha20-ietf-poly1305" then %>selected="selected"<% end %>>chacha20</option>
+			<option value="other" <% if method ~= "chacha20" and method ~= "aes-256-gcm" and method ~= "chacha20-ietf-poly1305" and method ~= "none" then %>selected="selected"<% end %>><%:other%></option>
+		    </select>
+		    <br />
+		    <div class="cbi-value-description">
+		        <%
+			    if ut.trim(sys.exec("cat /proc/cpuinfo | grep aes")) ~= "" then
+			%>
+				<%:An Advanced Encryption Standard (AES) instruction set is integrated in the processor.%>
+			<% else %>
+				<%:There is no Advanced Encryption Standard (AES) instruction set integrated in the processor, you should use chacha20.%>
+			<% end %>
+			<%:Encryption method is also used for Glorytun.%>
+		    </div>
 		</div>
 	    </div>
 	</fieldset>
@@ -156,10 +192,22 @@ end
 	    <div class="cbi-value">
 		<label class="cbi-value-title"><%:Glorytun key%></label>
 		<div class="cbi-value-field">
-		    <input type="text" name="glorytun_key" placeholder="Glorytun key" class="cbi-input-text" value="<%=uci:get("glorytun","vpn","key")%>">
+		    <input type="text" name="glorytun_key" placeholder="<%:Glorytun key%>" class="cbi-input-text" value="<%=uci:get("glorytun","vpn","key")%>">
 		    <br />
 		    <div class="cbi-value-description">
 		        <%:Glorytun TCP is used by default for UDP and ICMP%>
+		    </div>
+		</div>
+	    </div>
+	    <% end %>
+	    <% if nixio.fs.access("/usr/sbin/dsvpn") then %>
+	    <div class="cbi-value">
+		<label class="cbi-value-title"><%:A Dead Simple VPN key%></label>
+		<div class="cbi-value-field">
+		    <input type="text" name="dsvpn_key" placeholder="<%:A Dead Simple VPN key%>" class="cbi-input-text" value="<%=uci:get("dsvpn","vpn","key")%>">
+		    <br />
+		    <div class="cbi-value-description">
+		        <%:A Dead Simple VPN is a TCP VPN that can replace Glorytun TCP%>
 		    </div>
 		</div>
 	    </div>
@@ -168,7 +216,7 @@ end
 	    <div class="cbi-value">
 		<label class="cbi-value-title"><%:MLVPN password%></label>
 		<div class="cbi-value-field">
-		    <input type="text" name="mlvpn_password" placeholder="MLVPN password" class="cbi-input-text" value="<%=uci:get("mlvpn","general","password")%>">
+		    <input type="text" name="mlvpn_password" placeholder="<%:MLVPN password%>" class="cbi-input-text" value="<%=uci:get("mlvpn","general","password")%>">
 		    <br />
 		    <div class="cbi-value-description">
 		        <%:MLVPN can replace Glorytun with connections with same latency%>
@@ -176,15 +224,14 @@ end
 		</div>
 	    </div>
 	    <% end %>
-	    <% if nixio.fs.access("/usr/sbin/openvpn") then %>
+	    <% if nixio.fs.access("/usr/sbin/ubond") then %>
 	    <div class="cbi-value">
-		<label class="cbi-value-title"><%:OpenVPN key%></label>
+		<label class="cbi-value-title"><%:UBOND password%></label>
 		<div class="cbi-value-field">
-		    <input type="file" name="openvpn_key" class="cbi-input-file">
-		    <input type="text" class="cbi-input-text" data-update="change" value="<%=uci:get("openvpn","omr","secret")%>" />
+		    <input type="text" name="ubond_password" placeholder="<%:UBOND password%>" class="cbi-input-text" value="<%=uci:get("ubond","general","password")%>">
 		    <br />
 		    <div class="cbi-value-description">
-		        <%:You need to upload OpenVPN key file generated by OpenMPTCProuter VPS script to use OpenVPN TCP%>
+		        <%:UBOND can replace Glorytun with connections with same latency%>
 		    </div>
 		</div>
 	    </div>
@@ -200,13 +247,17 @@ end
 				available_vpns = {available_vpns}
 			end
 			for _, vpn in pairs(available_vpns) do
-				if vpn == "glorytun-tcp" then
+				if vpn == "glorytun_tcp" then
 				%>
 					<% if nixio.fs.access("/usr/sbin/glorytun") then %><option value="glorytun_tcp" <% if uci:get("glorytun","vpn","enable") == "1" and uci:get("glorytun","vpn","proto") == "tcp" then %>selected="selected"<% end %>>Glorytun TCP</option><% end %>
-				<% elseif vpn == "glorytun-udp" then %>
+				<% elseif vpn == "glorytun_udp" then %>
 					<% if nixio.fs.access("/usr/sbin/glorytun-udp") then %><option value="glorytun_udp" <% if uci:get("glorytun","vpn","enable") == "1" and uci:get("glorytun","vpn","proto") == "udp" then %>selected="selected"<% end %>>Glorytun UDP</option><% end %>
+				<% elseif vpn == "dsvpn" then %>
+					<% if nixio.fs.access("/usr/sbin/dsvpn") then %><option value="dsvpn" <% if uci:get("dsvpn","vpn","enable") == "1" then %>selected="selected"<% end %>>A Dead Simple VPN</option><% end %>
 				<% elseif vpn == "mlvpn" then %>
 					<% if nixio.fs.access("/usr/sbin/mlvpn") then %><option value="mlvpn" <% if uci:get("mlvpn","general","enable") == "1" then %>selected="selected"<% end %>>MLVPN</option><% end %>
+				<% elseif vpn == "ubond" then %>
+					<% if nixio.fs.access("/usr/sbin/ubond") then %><option value="ubond" <% if uci:get("ubond","general","enable") == "1" then %>selected="selected"<% end %>>UBOND</option><% end %>
 				<% elseif vpn == "openvpn" then %>
 					<% if nixio.fs.access("/usr/sbin/openvpn") then %><option value="openvpn" <% if uci:get("openvpn","omr","enabled") == "1" then %>selected="selected"<% end %>>OpenVPN</option><% end %>
 				<%
@@ -219,7 +270,9 @@ end
 		%>
 			<% if nixio.fs.access("/usr/sbin/glorytun") then %><option value="glorytun_tcp" <% if uci:get("glorytun","vpn","enable") == "1" and uci:get("glorytun","vpn","proto") == "tcp" then %>selected="selected"<% end %>>Glorytun TCP</option><% end %>
 			<% if nixio.fs.access("/usr/sbin/glorytun-udp") then %><option value="glorytun_udp" <% if uci:get("glorytun","vpn","enable") == "1" and uci:get("glorytun","vpn","proto") == "udp" then %>selected="selected"<% end %>>Glorytun UDP</option><% end %>
+			<% if nixio.fs.access("/usr/sbin/dsvpn") then %><option value="dsvpn" <% if uci:get("dsvpn","vpn","enable") == "1" then %>selected="selected"<% end %>>A Dead Simple VPN</option><% end %>
 			<% if nixio.fs.access("/usr/sbin/mlvpn") then %><option value="mlvpn" <% if uci:get("mlvpn","general","enable") == "1" then %>selected="selected"<% end %>>MLVPN</option><% end %>
+			<% if nixio.fs.access("/usr/sbin/ubond") then %><option value="ubond" <% if uci:get("ubond","general","enable") == "1" then %>selected="selected"<% end %>>UBOND</option><% end %>
 			<% if nixio.fs.access("/usr/sbin/openvpn") then %><option value="openvpn" <% if uci:get("openvpn","omr","enabled") == "1" then %>selected="selected"<% end %>>OpenVPN</option><% end %>
 			<option value="none" <% if uci:get("openmptcprouter","settings","vpn") == "none" then %>selected="selected"<% end %>>None</option>
 		<%
@@ -228,7 +281,7 @@ end
 		    </select>
 		    <br />
 		    <div class="cbi-value-description">
-		        <%:Set the default VPN used for UDP and ICMP when ShadowSocks is enabled, for all traffic if ShadowSocks is disabled.%>
+		        <%:Set the default VPN used for UDP and ICMP when ShadowSocks is enabled, for all traffic if ShadowSocks is disabled.%> <%:All VPN available here can do aggregation over MPTCP or using own internal method.%>
 		    </div>
 		</div>
 	    </div>
@@ -240,8 +293,11 @@ end
 <% 
     for _, iface in ipairs(net:get_networks()) do
 	local ifname = iface:name()
-	local multipath = uci:get("network",ifname,"multipath")
-	if multipath ~= "off" then
+	--local multipath = uci:get("network",ifname,"multipath")
+	local multipath = uci:get("openmptcprouter",ifname,"multipath")
+	local multipathvpn = uci:get("openmptcprouter",ifname,"multipathvpn")
+	local vpn = uci:get("openmptcprouter",ifname,"vpn")
+	if (multipath ~= nil and multipath ~= "off" and vpn ~= "1") or multipathvpn == "1" then
 %>
 	    <div class="cbi-section-remove right">
 		<input type="submit" name="delete.<%=ifname%>" value="<%:Delete%>" class="cbi-button" />
@@ -249,7 +305,17 @@ end
 	    <h3><%=ifname%></h3>
 	    <fieldset class="cbi-section-node" id="cbi-openmptcprouter-<%=ifname%>">
 		<input type="hidden" name="intf.<%=ifname%>" value="<%=ifname%>" />
-		<div class="cbi-value" id="cbi-network-<%=ifname%>-proto" data-index="1">
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-label" data-index="1">
+		    <label class="cbi-value-title"><%:Label%></label>
+		    <div class="cbi-value-field">
+			<input type="text" id="cbid.network.<%=ifname%>.label" name="cbid.network.<%=ifname%>.label" class="cbi-input-text" value="<%=uci:get("network",ifname,"label")%>">
+			<br />
+			<div class="cbi-value-description">
+			    <%:Label for the interface%>
+			</div>
+		    </div>
+		</div>
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-proto" data-index="2">
 		    <label class="cbi-value-title"><%:Protocol%></label>
 		    <div class="cbi-value-field">
 			<select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.proto" name="cbid.network.<%=ifname%>.proto" size="1">
@@ -263,7 +329,7 @@ end
 			</div>
 		    </div>
 		</div>
-		<div class="cbi-value" id="cbi-network-<%=ifname%>-address" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;static&#34;}]" data-index="2">
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-address" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;static&#34;}]" data-index="3">
 		    <label class="cbi-value-title"><%:IPv4 address%></label>
 		    <div class="cbi-value-field">
 			<input type="text" id="cbid.network.<%=ifname%>.ipaddr" name="cbid.network.<%=ifname%>.ipaddr" class="cbi-input-text" value="<%=uci:get("network",ifname,"ipaddr")%>" data-type="ip4addr">
@@ -273,13 +339,13 @@ end
 			</div>
 		    </div>
 		</div>
-		<div class="cbi-value" id="cbi-network-<%=ifname%>-netmask" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;static&#34;}]" data-index="3">
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-netmask" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;static&#34;}]" data-index="4">
 		    <label class="cbi-value-title"><%:IPv4 netmask%></label>
 		    <div class="cbi-value-field">
 			<input type="text" id="cbid.network.<%=ifname%>.netmask" name="cbid.network.<%=ifname%>.netmask" class="cbi-input-text" value="<%=uci:get("network",ifname,"netmask") or "255.255.255.0"%>" data-type="ip4addr">
 		    </div>
 		</div>
-		<div class="cbi-value" id="cbi-network-<%=ifname%>-gateway" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;static&#34;}]" data-index="4">
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-gateway" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;static&#34;}]" data-index="5">
 		    <label class="cbi-value-title"><%:IPv4 gateway%></label>
 		    <div class="cbi-value-field">
 			<input type="text" id="cbid.network.<%=ifname%>.gateway" name="cbid.network.<%=ifname%>.gateway" class="cbi-input-text" value="<%=uci:get("network",ifname,"gateway")%>" data-type="ip4addr">
@@ -304,17 +370,27 @@ end
 				end
 			end
 		%>
-		<div class="cbi-value" data-index="5">
+		<div class="cbi-value" data-index="6">
+		    <label class="cbi-value-title"><%:MPTCP over VPN%></label>
+		    <div class="cbi-value-field">
+			<input class="cbi-input-checkbox" type="checkbox" name="multipathvpn.<%=ifname%>.enabled" value="1" <% if uci:get("openmptcprouter",ifname,"multipathvpn") == "1" then %>checked<% end %> />
+			<br />
+			<div class="cbi-value-description">
+			    <%:You can enable MPTCP over VPN if your provider filter Multipath TCP.%>
+			</div>
+		    </div>
+		</div>
+		<div class="cbi-value" data-index="7">
 		    <label class="cbi-value-title"><%:Enable SQM%></label>
 		    <div class="cbi-value-field">
-			<input class="cbi-input-checkbox" type="checkbox" name="cbid.sqm.enabled" value="1" <% if uci:get("sqm",ifname,"enabled") == 1 then %>checked<% end %> />
+			<input class="cbi-input-checkbox" type="checkbox" name="cbid.sqm.<%=ifname%>.enabled" value="1" <% if uci:get("sqm",ifname,"enabled") == "1" then %>checked<% end %> />
 			<br />
 			<div class="cbi-value-description">
 			    <%:You should disable SQM for LTE or any interfaces with variable speed.%>
 			</div>
 		    </div>
 		</div>
-		<div class="cbi-value" data-index="6">
+		<div class="cbi-value" data-index="8">
 		    <label class="cbi-value-title"><%:Download speed (Kb/s)%></label>
 		    <div class="cbi-value-field">
 			<input type="text" name="cbid.sqm.<%=ifname%>.download" class="cbi-input-text" value="<%=download%>" data-type="uinteger">
@@ -330,7 +406,7 @@ end
 			-->
 		    </div>
 		</div>
-		<div class="cbi-value" data-index="7">
+		<div class="cbi-value" data-index="9">
 		    <label class="cbi-value-title"><%:Upload speed (Kb/s)%></label>
 		    <div class="cbi-value-field">
 			<input type="text" name="cbid.sqm.<%=ifname%>.upload" class="cbi-input-text" value="<%=upload%>" data-type="uinteger">

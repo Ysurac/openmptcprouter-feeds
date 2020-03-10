@@ -1,10 +1,12 @@
 #!/bin/sh /etc/rc.common
-# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 # Released under GPL 3. See LICENSE for the full terms.
 
 START=99
 
 USE_PROCD=1
+
+EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall"
 
 _parse_result() {
 	result=$("echo $1 | jsonfilter -q -e '@.result'")
@@ -19,11 +21,19 @@ _login() {
 	password="$(uci -q get openmptcprouter.${servername}.password)"
 	serverport="$(uci -q get openmptcprouter.${servername}.port)"
 	if [ -z "$token" ]; then
-		auth=`curl --max-time 10 -s -k -H "Content-Type: application/json" -X POST -d '{"username":"'$username'","password":"'$password'"}' https://$server:$serverport/login`
+		#auth=`curl --max-time 10 -s -k -H "Content-Type: application/json" -X POST -d '{"username":"'$username'","password":"'$password'"}' https://$server:$serverport/login`
+		auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://$server:$serverport/token`
 		[ -z "$auth" ] && return
-		token="$(echo "$auth" | jsonfilter -q -e '@.token')"
+		token="$(echo "$auth" | jsonfilter -q -e '@.access_token')"
 		uci -q set openmptcprouter.${servername}.token="$token"
 	fi
+}
+
+_ping_server() {
+	server="$(uci -q get openmptcprouter.${servername}.ip)"
+	[ -z "$server" ] && server="$(uci -q get shadowsocks-libev.sss0.server)"
+	ret=$(ping -c 3 -w 3 -Q 184 $server) && echo "$ret" | grep -sq "bytes from" && return
+	false
 }
 
 _get_json() {
@@ -31,7 +41,7 @@ _get_json() {
 	route=$1
 	[ -z "$token" ] && _login
 	[ -n "$token" ] && {
-		result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" https://$server:$serverport/$route`
+		result=`curl --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://$server:$serverport/$route`
 		echo $result
 	} || {
 		echo ''
@@ -54,16 +64,16 @@ _set_json() {
 _set_glorytun_vps() {
 	local enabled port key
 	enabled="$(uci -q get glorytun.vpn.enable)"
-	[ "$enabled" != "1" ] && return
+	[ "$enabled" != "1" ] && echo "Glorytun disabled" && return
 	port="$(uci -q get glorytun.vpn.port)"
 	key="$(uci -q get glorytun.vpn.key)"
 	chacha="$(uci -q get glorytun.vpn.chacha20)"
 	if [ "$chacha" = "1" ]; then
-		chacha = "true"
+		chacha="true"
 	else
-		chacha = "false"
+		chacha="false"
 	fi
-	[ -z "$key" ] && return
+	[ -z "$key" ] && echo "Glorytun key not set" && return
 	local current_port current_key current_chacha
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
@@ -73,31 +83,9 @@ _set_glorytun_vps() {
 	if [ "$current_port" != "$port" ] || [ "$current_key" != "$key" ] || [ "$current_chacha" != "$chacha" ]; then
 		local settings
 		settings='{"port": '$port',"key":"'$key'", "chacha": "'$chacha'"}'
-		_set_json "glorytun" "$settings"
-	fi
-}
-
-_set_openvpn_vps() {
-	local enabled port key
-	enabled="$(uci -q get openvpn.omr.enabled)"
-	[ "$enabled" != "1" ] && return
-	port="$(uci -q get openvpn.omr.port)"
-	keyfile="$(uci -q get openvpn.omr.secret)"
-	if [ -n "$keyfile" ]; then
-		key="$(cat $keyfile | base64)"
+		echo $(_set_json "glorytun" "$settings")
 	else
-		key=""
-	fi
-	[ -z "$key" ] && return
-	local current_port current_key
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
-	[ -z "$vps_config" ] && return
-	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.port')"
-	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.key')"
-	if [ "$current_port" != "$port" ] || [ "$current_key" != "$key" ]; then
-		local settings
-		settings='{"port": '$port',"key":"'$key'"}'
-		_set_json "openvpn" "$settings"
+		echo 1
 	fi
 }
 
@@ -108,6 +96,9 @@ _get_ss_redir() {
 	[ "$cf_fast_open" = "1" ] && fast_open="true"
 	config_get cf_no_delay $1 no_delay
 	[ "$cf_no_delay" = "1" ] && no_delay="true"
+}
+
+_get_ss_server() {
 	config_get cf_obfs $1 obfs
 	[ "$cf_obfs" = "1" ] && obfs="true"
 	config_get obfs_plugin $1 obfs_plugin
@@ -145,17 +136,38 @@ _set_ss_server_vps() {
 	obfs_type="http"
 	config_load shadowsocks-libev
 	config_foreach _get_ss_redir ss_redir
+	config_foreach _get_ss_server server
 
 	if [ "$current_obfs_plugin" != "$obfs_plugin" ] || [ "$current_obfs_type" != "$obfs_type" ] || [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_key" != "$key" ] || [ "$current_ebpf" != "$ebpf" ] || [ "$current_obfs" != "$obfs" ] || [ "$current_fast_open" != "$fast_open" ] || [ "$current_no_delay" != "$no_delay" ]; then
 		local settings
 		settings='{"port": '$port',"method":"'$method'","fast_open":'$fast_open',"reuse_port":true,"no_delay":'$no_delay',"mptcp":true,"key":"'$key'","ebpf":'$ebpf',"obfs":'$obfs',"obfs_plugin":"'$obfs_plugin'","obfs_type":"'$obfs_type'"}'
-		_set_json "shadowsocks" "$settings"
+		echo $(_set_json "shadowsocks" "$settings")
 	fi
 }
 
 _get_vps_config() {
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
+	vps_lastchange="$(echo "$vps_config" | jsonfilter -q -e '@.vps.lastchange')"
+	if [ -n "$(uci -q get openmptcprouter.${servername}.lastchange)" ] && [ -n "$vps_lastchange" ] && [ "$vps_lastchange" -gt "$(uci -q get openmptcprouter.${servername}.lastchange)" ]; then
+		_set_config_from_vps
+	fi
+
+	piholeomr="$(uci -q get openmptcprouter.${servername}.pihole)"
+	pihole="$(echo "$vps_config" | jsonfilter -q -e '@.pihole.state')"
+	if [ "$pihole" = "true" ] && [ "$piholeomr" != "1" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.pihole='1'
+			commit openmptcprouter
+		EOF
+	elif [ "$pihole" = "false" ] && [ "$piholeomr" != "0" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.pihole='0'
+			commit openmptcprouter
+		EOF
+	fi
+
+
 	vps_kernel="$(echo "$vps_config" | jsonfilter -q -e '@.vps.kernel')"
 	vps_machine="$(echo "$vps_config" | jsonfilter -q -e '@.vps.machine')"
 	vps_omr_version="$(echo "$vps_config" | jsonfilter -q -e '@.vps.omr_version')"
@@ -166,14 +178,20 @@ _get_vps_config() {
 	EOF
 	vpn="$(uci -q get openmptcprouter.settings.vpn)"
 
-	pihole="$(echo "$vps_config" | jsonfilter -q -e '@.pihole.state')"
-
 	glorytun_state=0
 	glorytun_change=0
 	if [ "$vpn" = "glorytun_tcp" ]; then
 		glorytun_state=1
+		uci -q set glorytun.vpn.proto='tcp'
 		client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.client_ip')"
 		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.host_ip')"
+		port="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.port')"
+		if [ "$(uci -q get glorytun.vpn.port)" != "$port" ]; then
+			uci -q batch <<-EOF >/dev/null
+				set glorytun.vpn.port=$port
+			EOF
+			glorytun_change=1
+		fi
 		if [ "$client_ip" != "dhcp" ] && [ -n "$client_ip" ]; then
 			if [ "$host_ip" != "$(uci -q get glorytun.vpn.remoteip)" ] || [ "$client_ip" != "$(uci -q get glorytun.vpn.localip)" ]; then
 				uci -q batch <<-EOF >/dev/null
@@ -205,21 +223,18 @@ _get_vps_config() {
 				glorytun_change=1
 			fi
 		fi
-		if [ "$pihole" = "true" ] && [ "$(uci -q get dhcp.@dnsmasq[0].server)" != "$host_ip#53" ]; then
-			uci -q batch <<-EOF >/dev/null
-				delete dhcp.@dnsmasq[0].server
-				add_list dhcp.@dnsmasq[0].server="$host_ip#53"
-				set dhcp.@dnsmasq[0].rebind_protection='0'
-				commit dhcp
-			EOF
-			logger -t "OMR-VPS" "Restart dnsmasq..."
-			/etc/init.d/dnsmasq restart >/dev/null 2>&1
-		fi
 	fi
 	if [ "$vpn" = "glorytun_udp" ]; then
 		glorytun_state=1
+		uci -q set glorytun.vpn.proto='udp'
 		client_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp.client_ip')"
 		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp.host_ip')"
+		port="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.port')"
+		if [ "$(uci -q get glorytun.vpn.port)" != "$port" ]; then
+			uci -q batch <<-EOF >/dev/null
+				set glorytun.vpn.port=$port
+			EOF
+		fi
 		if [ "$client_ip" != "dhcp" ] && [ -n "$client_ip" ]; then
 			if [ "$host_ip" != "$(uci -q get glorytun.vpn.remoteip)" ] || [ "$client_ip" != "$(uci -q get glorytun.vpn.localip)" ]; then
 				uci -q batch <<-EOF >/dev/null
@@ -251,6 +266,98 @@ _get_vps_config() {
 				glorytun_change=1
 			fi
 		fi
+	fi
+	vpsip="$(uci -q get openmptcprouter.${servername}.ip)"
+	if [ "$(uci -q get shadowsocks-libev.sss0.server)" != "127.0.0.1" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "$vpsip" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set shadowsocks-libev.sss0.server="$vpsip"
+			commit shadowsocks-libev
+		EOF
+		logger -t "OMR-VPS" "Restart shadowsocks..."
+		/etc/init.d/shadowsocks-libev restart
+	fi
+	if [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ] && [ "$(uci -q get openvpn.omr.remote)" != "$vpsip" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set openvpn.omr.remote="$vpsip"
+			commit openvpn
+		EOF
+		logger -t "OMR-VPS" "Restart OpenVPN..."
+		/etc/init.d/openvpn restart
+	fi
+	port="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.port')"
+	localip="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.client_ip')"
+	remoteip="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.host_ip')"
+	if ([ "$(uci -q get dsvpn.vpn.host)" != "127.0.0.1" ] && [ "$(uci -q get dsvpn.vpn.host)" != "$vpsip" ]) || [ "$(uci -q get dsvpn.vpn.port)" != "$port" ] || [ "$(uci -q get dsvpn.vpn.localip)" != "$localip" ] || [ "$(uci -q get dsvpn.vpn.remoteip)" != "$remoteip" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set dsvpn.vpn.port=$port
+			set dsvpn.vpn.localip=$localip
+			set dsvpn.vpn.remoteip=$remoteip
+			set dsvpn.vpn.host="$vpsip"
+			commit dsvpn
+		EOF
+		logger -t "OMR-VPS" "Restart DSVPN..."
+		/etc/init.d/dsvpn restart
+	fi
+
+	if [ "$(uci -q get mlvpn.general.host)" != "127.0.0.1" ] && [ "$(uci -q get mlvpn.general.host)" != "$vpsip" ] && [ -f /etc/init.d/mlvpn ]; then
+		uci -q batch <<-EOF >/dev/null
+			set mlvpn.general=mlvpn
+			set mlvpn.general.host="$vpsip"
+			commit mlvpn
+		EOF
+		logger -t "OMR-VPS" "Restart MLVPN..."
+		/etc/init.d/mlvpn restart
+	fi
+	if [ "$(uci -q get glorytun.vpn.host)" != "127.0.0.1" ] && [ "$(uci -q get glorytun.vpn.host)" != "$vpsip" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set glorytun.vpn.host="$vpsip"
+		EOF
+		glorytun_change=1
+	fi
+
+	if [ "$glorytun_change" != "0" ]; then
+		logger -t "OMR-VPS" "Restart glorytun..."
+		uci -q batch <<-EOF >/dev/null
+			commit glorytun
+		EOF
+		/etc/init.d/glorytun restart >/dev/null 2>&1
+		/etc/init.d/glorytun-udp restart >/dev/null 2>&1
+	fi
+}
+
+_set_pihole() {
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	vpn="$(uci -q get openmptcprouter.settings.vpn)"
+	piholeomr="$(uci -q get openmptcprouter.${servername}.pihole)"
+	pihole="$(echo "$vps_config" | jsonfilter -q -e '@.pihole.state')"
+	if [ "$pihole" = "true" ] && [ "$piholeomr" != "1" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.pihole='1'
+			commit openmptcprouter
+		EOF
+	elif [ "$pihole" = "false" ] && [ "$piholeomr" != "0" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.pihole='0'
+			commit openmptcprouter
+		EOF
+	fi
+
+	if [ "$vpn" = "glorytun_tcp" ]; then
+		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.host_ip')"
+		if [ "$pihole" = "true" ] && [ "$(uci -q get dhcp.@dnsmasq[0].server)" != "$host_ip#53" ]; then
+			uci -q batch <<-EOF >/dev/null
+				delete dhcp.@dnsmasq[0].server
+				add_list dhcp.@dnsmasq[0].server="$host_ip#53"
+				set dhcp.@dnsmasq[0].rebind_protection='0'
+				commit dhcp
+			EOF
+			logger -t "OMR-VPS" "Restart dnsmasq..."
+			/etc/init.d/dnsmasq restart >/dev/null 2>&1
+		fi
+	fi
+	if [ "$vpn" = "glorytun_udp" ]; then
+		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp.host_ip')"
 		if [ "$pihole" = "true" ] && [ "$(uci -q get dhcp.@dnsmasq[0].server)" != "$host_ip#53" ]; then
 			uci -q batch <<-EOF >/dev/null
 				delete dhcp.@dnsmasq[0].server
@@ -263,8 +370,8 @@ _get_vps_config() {
 		fi
 	fi
 	if [ "$vpn" = "openvpn" ]; then
+		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.host_ip')"
 		if [ "$pihole" = "true" ] && [ "$(uci -q get dhcp.@dnsmasq[0].server)" != "$host_ip#53" ]; then
-			host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.host_ip')"
 			uci -q batch <<-EOF >/dev/null
 				delete dhcp.@dnsmasq[0].server
 				add_list dhcp.@dnsmasq[0].server="$host_ip#53"
@@ -276,8 +383,8 @@ _get_vps_config() {
 		fi
 	fi
 	if [ "$vpn" = "mlvpn" ]; then
+		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.host_ip')"
 		if [ "$pihole" = "true" ] && [ "$(uci -q get dhcp.@dnsmasq[0].server)" != "$host_ip#53" ]; then
-			host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.host_ip')"
 			uci -q batch <<-EOF >/dev/null
 				delete dhcp.@dnsmasq[0].server
 				add_list dhcp.@dnsmasq[0].server="$host_ip#53"
@@ -288,13 +395,18 @@ _get_vps_config() {
 			/etc/init.d/dnsmasq restart >/dev/null 2>&1
 		fi
 	fi
-	if [ "$glorytun_change" != "0" ]; then
-		logger -t "OMR-VPS" "Restart glorytun..."
-		uci -q batch <<-EOF >/dev/null
-			commit glorytun
-		EOF
-		/etc/init.d/glorytun restart >/dev/null 2>&1
-		/etc/init.d/glorytun-udp restart >/dev/null 2>&1
+	if [ "$vpn" = "dsvpn" ]; then
+		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.host_ip')"
+		if [ "$pihole" = "true" ] && [ "$(uci -q get dhcp.@dnsmasq[0].server)" != "$host_ip#53" ]; then
+			uci -q batch <<-EOF >/dev/null
+				delete dhcp.@dnsmasq[0].server
+				add_list dhcp.@dnsmasq[0].server="$host_ip#53"
+				set dhcp.@dnsmasq[0].rebind_protection='0'
+				commit dhcp
+			EOF
+			logger -t "OMR-VPS" "Restart dnsmasq..."
+			/etc/init.d/dnsmasq restart >/dev/null 2>&1
+		fi
 	fi
 }
 
@@ -305,10 +417,13 @@ _set_redirect_ports_from_vps() {
 	redirect_ports_current="$(echo "$vps_config" | jsonfilter -q -e '@.shorewall.redirect_ports')"
 	[ "$redirect_ports" = "1" ] && redirect_ports_request="enable"
 	[ "$redirect_ports" = "0" ] && redirect_ports_request="disable"
-	[ "$redirect_ports_request" != "$redirect_ports_current" ] && {
+	if [ "$redirect_ports_request" != "$redirect_ports_current" ]; then
 		settings='{"redirect_ports": "'$redirect_ports_request'"}'
-		_set_json "shorewall" "$settings"
-	}
+		echo $(_set_json "shorewall" "$settings")
+	else
+		echo 1
+	fi
+
 }
 
 _set_mptcp_vps() {
@@ -335,8 +450,193 @@ _set_mptcp_vps() {
 	[ -z "$congestion" ] && congestion="bbr"
 	if [ "$mptcp_enabled_current" != "$mptcp_enabled" ] || [ "$checksum_current" != "$checksum" ] || [ "$path_manager_current" != "$path_manager" ] || [ "$scheduler_current" != "$scheduler" ] || [ "$syn_retries_current" != "$syn_retries" ] || [ "$congestion_control_current" != "$congestion" ]; then
 		settings='{"enabled" : "'$mptcp_enabled'", "checksum": "'$checksum'","path_manager": "'$path_manager'","scheduler": "'$scheduler'","syn_retries": "'$syn_retries'","congestion_control": "'$congestion'"}'
-		_set_json "mptcp" "$settings"
+		echo $(_set_json "mptcp" "$settings")
+	else
+		echo 1
 	fi
+}
+
+_set_vpn_vps() {
+	local settings
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	vpn_current="$(echo "$vps_config" | jsonfilter -q -e '@.vps.current')"
+	vpn="$(uci -q get openmptcprouter.settings.vpn)"
+	if [ "$vpn_current" != "$vpn" ]; then
+		settings='{"vpn" : "'$vpn'"}'
+		echo $(_set_json "vpn" "$settings")
+	else
+		echo 1
+	fi
+}
+
+_get_local_wan_ip() {
+	wanip="$(uci -q get openmptcprouter.$1.publicip)"
+	[ -n "$wanip" ] && {
+		[ -z "$wanips" ] && wanips=$wanip || wanips="$wanips"'\n'"$wanip"
+	}
+}
+
+_set_wan_ip() {
+	local settings
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	wanip_current="$(echo "$vps_config" | jsonfilter -q -e '@.wan.ips')"
+	if [ -n "$wanips" ] && [ "$wanip_current" != "$wanips" ]; then
+		settings='{"ips" : "'$wanips'"}'
+		result=$(_set_json "wan" "$settings")
+		#echo $(_set_json "wan" "$settings")
+	#else
+	#	echo 1
+	fi
+}
+
+_set_lan_ip() {
+	local settings
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	lanip_current="$(echo "$vps_config" | jsonfilter -q -e '@.lan.ips')"
+	lanips="$(uci -q get network.lan.ipaddr)/$(uci -q get network.lan.netmask)"
+	if [ "$lanips" != "/" ] && [ "$lanip_current" != "$lanips" ]; then
+		settings='{"lanips" : ["'$lanips'"]}'
+		result=$(_set_json "lan" "$settings")
+	fi
+}
+
+_set_vpn_ip() {
+	local settings
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	vpnifname="$(uci -q get network.omrvpn.ifname)"
+	vpnip_local_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.remoteip')"
+	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} | awk -F'[ /]+' '{print $3}')
+	vpnip_remote_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.localip')"
+	vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep via | grep -v default | grep -v / | grep -v metric | awk '{print $1}' | tr -d "\n")
+	[ -z "$vpnip_remote" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep kernel | awk '{print $1}' | tr -d "\n")
+	if [ "$vpnip_remote" != "" ] && [ "$vpnip_local" != "" ] && ([ "$vpnip_remote" != "$vpnip_remote_current" ] || [ "$vpnip_local" != "$vpnip_local_current" ]); then
+		settings='{"remoteip" : "'$vpnip_local'","localip" : "'$vpnip_remote'"}'
+		result=$(_set_json "vpnips" "$settings")
+	fi
+}
+
+_delete_client2client() {
+	if [ -n "$(echo $1 | grep omr_client2client)" ]; then
+		uci -q delete network.$1
+	fi
+}
+
+_set_client2client() {
+	local c2cid=0
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	c2cips="$(echo "$vps_config" | jsonfilter -q -e '@.client2client.lanips[0]')"
+	vpnifname="$(uci -q get network.omrvpn.ifname)"
+	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} | awk -F'[ /]+' '{print $3}' | tr -d "\n")
+	vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep via | grep -v default | grep -v / | grep -v metric | awk '{print $1}' | tr -d "\n")
+	for lanip in $c2cips; do
+		c2cid=$((c2cid+1))
+		targetip=$(echo $lanip | awk -F '/' '{print $1}' | tr -d "\n")
+		netmask=$(echo $lanip | awk -F '/' '{print $2}' | tr -d "\n")
+		target=$(ipcalc.sh $targetip $netmask | grep NETWORK | awk -F '=' '{print $2}' | tr -d "\n")
+		uci -q batch <<-EOF >/dev/null
+			set network.omr_client2client_${c2cid}=route
+			set network.omr_client2client_${c2cid}.interface=omrvpn
+			set network.omr_client2client_${c2cid}.target="${target}"
+			set network.omr_client2client_${c2cid}.netmask="${netmask}"
+			set network.omr_client2client_${c2cid}.gateway="${vpnip_remote}"
+		EOF
+	done
+	uci -q commit network
+}
+
+_vps_firewall_redirect_port() {
+	local src proto src_dport
+	config_get src $1 src
+	config_get proto $1 proto
+	config_get src_dport $1 src_dport
+	config_get family $1 family "ipv4"
+	[ "$src" = "vpn" ] && [ -n "$proto" ] && [ -n "$src_dport" ] && {
+		if [ "$proto" = "tcp udp" ]; then
+			if [ "$family" = "ipv4" ]; then
+				vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port tcp")
+			else
+				vpsfw6list=$(echo "$vpsfw6list" | grep -v "$port	# OMR redirect router $src_dport port tcp")
+			fi
+			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "tcp","fwtype" : "DNAT","ipproto" : "'$family'"}'
+			_set_json "shorewallopen" "$settings"
+			if [ "$family" = "ipv4" ]; then
+				vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port udp")
+			else
+				vpsfw6list=$(echo "$vpsfw6list" | grep -v "$port	# OMR redirect router $src_dport port udp")
+			fi
+			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "udp","fwtype" : "DNAT","ipproto" : "'$family'"}'
+			_set_json "shorewallopen" "$settings"
+		else
+			if [ "$family" = "ipv4" ]; then
+				vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port $proto")
+			else
+				vpsfw6list=$(echo "$vpsfw6list" | grep -v "$port	# OMR redirect router $src_dport port $proto")
+			fi
+			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT","ipproto" : "'$family'"}'
+			_set_json "shorewallopen" "$settings"
+		fi
+	}
+}
+
+_vps_firewall_close_port() {
+	[ -n "$vpsfwlist" ] && {
+		echo "$vpsfwlist" | while read -r line; do
+			[ -n "$line" ] && {
+				proto=$(echo $line | awk '{print $4}')
+				src_dport=$(echo $line | awk '{print $5}')
+				settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT"}'
+				_set_json "shorewallclose" "$settings"
+			}
+		done
+	}
+	[ -n "$vpsfw6list" ] && {
+		echo "$vpsfw6list" | while read -r line; do
+			[ -n "$line" ] && {
+				proto=$(echo $line | awk '{print $4}')
+				src_dport=$(echo $line | awk '{print $5}')
+				settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT","ipproto" : "ipv6"}'
+				_set_json "shorewallclose" "$settings"
+			}
+		done
+	}
+}
+
+_set_vps_firewall() {
+	fwservername=$1
+	[ -z "$servername" ] && servername=$fwservername
+	[ "$(uci -q get openmptcprouter.${fwservername}.nofwredirect)" = "1" ] && return
+	[ -z "$(uci -q get openmptcprouter.${fwservername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${fwservername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${fwservername}.port)" ] && return
+	token=""
+	vps_config=""
+	_login
+	[ -z "$token" ] && {
+		logger -t "OMR-VPS" "Can't get token, try later"
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${fwservername}.admin_error=1
+		EOF
+		return
+	}
+	settings='{"name" : "redirect router"}'
+	fw_list=$(_set_json "shorewalllist" "$settings")
+	vpsfwlist=$(echo $fw_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')
+	settings='{"name" : "redirect router","ipproto" : "ipv6"}'
+	fw6_list=$(_set_json "shorewalllist" "$settings")
+	vpsfw6list=$(echo $fw6_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')
+	config_load firewall
+	config_foreach _vps_firewall_redirect_port redirect
+	[ -n "$vpsfwlist" ] || [ -n "$vpsfw6list" ] && _vps_firewall_close_port
+}
+
+set_vps_firewall() {
+	config_load openmptcprouter
+	config_foreach _set_vps_firewall server
 }
 
 _set_ss_redir() {
@@ -351,9 +651,29 @@ _set_ss_redir() {
 }
 
 _set_config_from_vps() {
-	local shadowsocks_disabled vpn glorytun_state redirect shorewall_redirect mlvpn_key openvpn_key
+	local shadowsocks_disabled vpn glorytun_state redirect shorewall_redirect mlvpn_key openvpn_key dsvpn_key
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
+
+	logger -t "OMR-VPS" "Get config from VPS..."
+
+	# get VPS ip
+	vpsip="$(uci -q get openmptcprouter.${servername}.ip)"
+	vps_lastchange="$(echo "$vps_config" | jsonfilter -q -e '@.vps.lastchange')"
+	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
+	[ -z "$user_permission" ] && user_permission="rw"
+
+	# Set current VPN
+	current_vpn="$(uci -q get openmptcprouter.settings.vpn)"
+	if [ -z "$current_vpn" ] || [ -n "$vps_lastchange" ] || [ "$user_permission" = "ro" ]; then
+		current_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
+		if [ -n "$current_vpn" ]; then
+			uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.settings.vpn=${current_vpn}
+			commit openmptcprouter
+			EOF
+		fi
+	fi
 
 	# Shadowsocks settings
 	shadowsocks_disabled="$(uci -q get openmptcprouter.settings.shadowsocks_disable)"
@@ -373,6 +693,11 @@ _set_config_from_vps() {
 		ss_no_delay="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.no_delay')"
 		ss_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.fast_open')"
 		ss_obfs="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.obfs')"
+		if [ "$ss_obfs" = "true" ]; then
+			ss_obfs=1
+		else
+			ss_obfs=0
+		fi
 		ss_obfs_plugin="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.obfs_plugin')"
 		ss_obfs_type="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.obfs_type')"
 		ss_obfs_host="$(echo "$vps_config" | jsonfilter -q -e '@.network.domain')"
@@ -381,31 +706,31 @@ _set_config_from_vps() {
 		config_foreach _set_ss_redir ss_redir "no_delay" $ss_no_delay
 		config_foreach _set_ss_redir ss_redir "fast_open" $ss_fast_open
 		config_foreach _set_ss_redir ss_redir "ebpf" $ss_ebpf
-		config_foreach _set_ss_redir ss_redir "obfs" $ss_obfs
-		config_foreach _set_ss_redir ss_redir "obfs_plugin" $ss_obfs_plugin
-		config_foreach _set_ss_redir ss_redir "obfs_type" $ss_obfs_type
-		config_foreach _set_ss_redir ss_redir "obfs_host" $ss_obfs_host
 		config_foreach _set_ss_redir ss_local "no_delay" $ss_no_delay
 		config_foreach _set_ss_redir ss_local "fast_open" $ss_fast_open
 		config_foreach _set_ss_redir ss_local "ebpf" $ss_ebpf
-		config_foreach _set_ss_redir ss_local "obfs" $ss_obfs
-		config_foreach _set_ss_redir ss_local "obfs_plugin" $ss_obfs_plugin
-		config_foreach _set_ss_redir ss_local "obfs_type" $ss_obfs_type
-		config_foreach _set_ss_redir ss_local "obfs_host" $ss_obfs_host
 		uci -q batch <<-EOF >/dev/null
 			set shadowsocks-libev.sss0.key=$ss_key
 			set shadowsocks-libev.sss0.server_port=$ss_port
 			set shadowsocks-libev.sss0.method=$ss_method
 			set shadowsocks-libev.sss0.disabled=$shadowsocks_disabled
-			commit shadowsocks-libev
+			set shadowsocks-libev.sss0.obfs=$ss_obfs
+			set shadowsocks-libev.sss0.obfs_plugin=$ss_obfs_plugin
+			set shadowsocks-libev.sss0.obfs_type=$ss_obfs_type
+			set shadowsocks-libev.sss0.obfs_host=$ss_obfs_host
 		EOF
+		if [ "$(uci -q get shadowsocks-libev.sss0.server)" != "127.0.0.1" ]; then
+			uci -q set shadowsocks-libev.sss0.server="$vpsip"
+		fi
+		uci -q commit shadowsocks-libev.sss0
 		logger -t "OMR-VPS" "Shadowsocks restart..."
 		/etc/init.d/shadowsocks-libev restart >/dev/null 2>&1
 	fi
 
 	# Glorytun settings
 	glorytun_key="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.key')"
-	if [ -n "$glorytun_key" ] && [ "$glorytun_key" != "$(uci -q get glorytun.vpn.key)" ]; then
+	glorytun_port="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.port')"
+	if ([ -n "$glorytun_key" ] && [ "$glorytun_key" != "$(uci -q get glorytun.vpn.key)" ]) || ([ -n "$glorytun_port" ] || [ "$glorytun_port" != "$(uci -q get glorytun.vpn.port)" ]); then
 		vpn="$(uci -q get openmptcprouter.settings.vpn)"
 		glorytun_state=0
 		if [ "$vpn" = "glorytun_tcp" ]; then
@@ -414,7 +739,6 @@ _set_config_from_vps() {
 		if [ "$vpn" = "glorytun_udp" ]; then
 			glorytun_state=1
 		fi
-		glorytun_port="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.port')"
 		[ -z "$glorytun_port" ] && glorytun_port="65001"
 		glorytun_chacha="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.chacha')"
 		[ -z "$glorytun_chacha" ] || [ "$glorytun_chacha" = "true" ] && glorytun_chacha=1
@@ -424,8 +748,11 @@ _set_config_from_vps() {
 			set glorytun.vpn.key=$glorytun_key
 			set glorytun.vpn.enable=$glorytun_state
 			set glorytun.vpn.chacha20=$glorytun_chacha
-			commit glorytun
 		EOF
+		if [ "$(uci -q get glorytun.vpn.host)" != "127.0.0.1" ]; then
+			uci -q set glorytun.vpn.host="$vpsip"
+		fi
+		uci -q commit glorytun
 		logger -t "OMR-VPS" "Glorytun restart..."
 		/etc/init.d/glorytun restart >/dev/null 2>&1
 		/etc/init.d/glorytun-udp restart >/dev/null 2>&1
@@ -437,24 +764,102 @@ _set_config_from_vps() {
 		echo $openvpn_key | base64 -d > /etc/luci-uploads/openvpn.key
 		openvpn_port="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.port')"
 		[ -z "$openvpn_port" ] && openvpn_port="65001"
+		vpn="$(uci -q get openmptcprouter.settings.vpn)"
+		openvpn_state=0
+		if [ "$vpn" = "openvpn" ]; then
+			openvpn_state=1
+		fi
 		uci -q batch <<-EOF >/dev/null
 			set openvpn.omr.port=$openvpn_port
 			set openvpn.omr.secret="/etc/luci-uploads/openvpn.key"
-			commit openvpn
+			set openvpn.omr.enabled=$openvpn_state
 		EOF
+		if [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ]; then
+			uci -q set openvpn.omr.remote="$vpsip"
+		fi
+		uci -q commit openvpn
+		logger -t "OMR-VPS" "OpenVPN restart..."
+		/etc/init.d/openvpn restart
+	}
+	openvpn_client_key="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.client_key')"
+	[ -n "$openvpn_client_key" ] && {
+		echo $openvpn_client_key | base64 -d > /etc/luci-uploads/client.key
+	}
+	openvpn_client_crt="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.client_crt')"
+	[ -n "$openvpn_client_crt" ] && {
+		echo $openvpn_client_crt | base64 -d > /etc/luci-uploads/client.crt
+	}
+	openvpn_client_ca="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.client_ca')"
+	[ -n "$openvpn_client_ca" ] && {
+		echo $openvpn_client_ca | base64 -d > /etc/luci-uploads/ca.crt
+	}
+	[ -n "$openvpn_client_key" ] && [ -n "$openvpn_client_crt" ] && [ -n "$openvpn_client_ca" ] && {
+		openvpn_port="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.port')"
+		[ -z "$openvpn_port" ] && openvpn_port="65001"
+		vpn="$(uci -q get openmptcprouter.settings.vpn)"
+		openvpn_state=0
+		if [ "$vpn" = "openvpn" ]; then
+			openvpn_state=1
+		fi
+		uci -q batch <<-EOF >/dev/null
+			set openvpn.omr.port=$openvpn_port
+			set openvpn.omr.key="/etc/luci-uploads/client.key"
+			set openvpn.omr.cert="/etc/luci-uploads/client.crt"
+			set openvpn.omr.ca="/etc/luci-uploads/ca.crt"
+			set openvpn.omr.enabled=$openvpn_state
+			set openvpn.omr.tls_client=1
+			set openvpn.omr.client=1
+			set openvpn.omr.allow_recursive_routing=1
+		EOF
+		if [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ]; then
+			uci -q set openvpn.omr.remote="$vpsip"
+		fi
+		uci -q commit openvpn
 		logger -t "OMR-VPS" "OpenVPN restart..."
 		/etc/init.d/openvpn restart
 	}
 
 	# MLVPN settings
 	mlvpn_key="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.key')"
-	if [ -n "$mlvpn_key" ] && [ "$mlvpn_key" != "$(uci -q get mlvpn.general.password)" ]; then
+	if [ -n "$mlvpn_key" ] && [ "$mlvpn_key" != "$(uci -q get mlvpn.general.password)" ] && [ -f /etc/init.d/mlvpn ]; then
+		vpn="$(uci -q get openmptcprouter.settings.vpn)"
+		mlvpn_state=0
+		if [ "$vpn" = "mlvpn" ]; then
+			mlvpn_state=1
+		fi
 		uci -q batch <<-EOF >/dev/null
 			set mlvpn.general.password=$mlvpn_key
+			set mlvpn.general.enable=$mlvpn_state
 			commit mlvpn
 		EOF
+		if [ "$(uci -q get mlvpn.general.host)" != "127.0.0.1" ]; then
+			uci -q set mlvpn.general.host="$vpsip"
+		fi
+		uci -q commit mlvpn
 		logger -t "OMR-VPS" "MLVPN restart..."
 		/etc/init.d/mlvpn restart
+	fi
+
+	# DSVPN settings
+	dsvpn_key="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.key')"
+	dsvpn_port="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.port')"
+	if ([ -n "$dsvpn_key" ] && [ "$dsvpn_key" != "$(uci -q get dsvpn.vpn.key)" ]) || ([ -n "$dsvpn_port" ] && [ "$dsvpn_port" != "$(uci -q get dsvpn.vpn.port)" ]); then
+		dsvpn_state=0
+		if [ "$vpn" = "dsvpn" ]; then
+			dsvpn_state=1
+		fi
+		uci -q batch <<-EOF >/dev/null
+			set dsvpn.vpn.key=$dsvpn_key
+			set dsvpn.vpn.enable=$dsvpn_state
+			set dsvpn.vpn.port=$dsvpn_port
+			commit dsvpn
+		EOF
+		if [ "$(uci -q get dsvpn.vpn.host)" != "127.0.0.1" ]; then
+			uci -q set dsvpn.vpn.host="$vpsip"
+		fi
+		uci -q commit dsvpn
+		logger -t "OMR-VPS" "DSVPN restart..."
+		/etc/init.d/dsvpn restart
 	fi
 
 	# Shorewall settings
@@ -497,6 +902,20 @@ _set_config_from_vps() {
 			set openmptcprouter.settings.disable_ipv6=1
 		EOF
 		sysctl -qw net.ipv6.conf.all.disable_ipv6=1
+	else
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.ipv6=$vps_ipv6_addr
+		EOF
+	fi
+
+	omr6in4_vps_localip="$(echo "$vps_config" | jsonfilter -q -e '@.6in4.localip')"
+	omr6in4_vps_remoteip="$(echo "$vps_config" | jsonfilter -q -e '@.6in4.remoteip')"
+	if ([ -n "$omr6in4_vps_localip" ] && [ "$omr6in4_vps_localip" != "$(uci -q get network.omr6in4.gateway)" ]) || ([ -n "$omr6in4_vps_remoteip" ] && [ "$omr6in4_vps_remoteip" != "$(uci -q get network.omr6in4.ip6addr)" ]); then
+		uci -q batch <<-EOF >/dev/null
+			set network.omr6in4.ip6addr=$omr6in4_vps_remoteip
+			set network.omr6in4.gateway=$omr6in4_vps_localip
+			commit network
+		EOF
 	fi
 
 	# Get VPS iperf config
@@ -515,7 +934,7 @@ _set_config_from_vps() {
 		set iperf.${servername}.udp=1
 		set iperf.${servername}.user=$iperf_user
 		set iperf.${servername}.password=$iperf_pass
-		set iperf.${servername}.key=$iperf_key
+		set iperf.${servername}.key="$iperf_key"
 		commit iperf
 	EOF
 
@@ -524,17 +943,135 @@ _set_config_from_vps() {
 	uci -q batch <<-EOF >/dev/null
 		del openmptcprouter.${servername}.available_vpn
 	EOF
-	if [ -n "$available_vpn" ]; then
-		for vpn in $available_vpn; do
+
+	if [ "$user_permission" = "ro" ]; then
+		current_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
+		if [ -n "$current_vpn" ]; then
 			uci -q batch <<-EOF >/dev/null
-				add_list openmptcprouter.${servername}.available_vpn=$vpn
+				set openmptcprouter.${servername}.available_vpn=${current_vpn}
 			EOF
-		done
+		fi
+	
+	else
+		if [ -n "$available_vpn" ]; then
+			for vpn in $available_vpn; do
+				uci -q batch <<-EOF >/dev/null
+					add_list openmptcprouter.${servername}.available_vpn=$vpn
+				EOF
+			done
+		fi
 	fi
 	uci -q batch <<-EOF >/dev/null
 		set openmptcprouter.${servername}.get_config=0
+		commit openmptcprouter
 	EOF
 }
+
+_backup_send() {
+	servername=$1
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	token=""
+	vps_config=""
+	_login
+	[ -z "$token" ] && {
+		logger -t "OMR-VPS" "Can't get token, try later"
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.admin_error=1
+		EOF
+		return
+	}
+	sysupgrade -b /tmp/backup.tar.gz
+	backup_data="$(cat /tmp/backup.tar.gz | base64 | tr -d '\n')"
+	backup_sha256sum="$(sha256sum /tmp/backup.tar.gz | awk '{print $1}')"
+	[ -n "$backup_data" ] && {
+		logger -t "OMR-VPS" "Send backup file to server"
+		local backupjson
+		backupjson='{"data": "'$backup_data'","sha256sum": "'$backup_sha256sum'"}'
+		_set_json "backuppost" "$backupjson"
+	}
+}
+
+backup_send() {
+	config_load openmptcprouter
+	config_foreach _backup_send server
+}
+
+
+_backup_get() {
+	servername=$1
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	[ -z "$lastbackup" ] || [ "$lastbackup" -lt "$(uci -q get openmptcprouter.$servername.lastbackup)" ] && {
+		lastbackup="$(uci -q get openmptcprouter.$servername.lastbackup)"
+		serverbackup="$servername"
+	}
+}
+
+_backup_get_and_apply() {
+	servername=$1
+	token=""
+	vps_config=""
+	_login
+	[ -z "$token" ] && {
+		logger -t "OMR-VPS" "Can't get token, try later"
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.admin_error=1
+		EOF
+		return
+	}
+	vps_backup=$(_get_json "backupget")
+	[ -z "$vps_backup" ] && return
+	backup_data="$(echo "$vps_backup" | jsonfilter -q -e '@.data')"
+	backup_sha256sum="$(echo "$vps_backup" | jsonfilter -q -e '@.sha256sum')"
+	[ -n "$backup_data" ] && {
+		echo $backup_data | base64 -d > /tmp/backup.tar.gz
+		sysupgrade -t /tmp/backup.tar.gz
+	}
+}
+
+backup_get() {
+	lastbackup=""
+	serverbackup=""
+	config_load openmptcprouter
+	config_foreach _backup_get server
+	[ -n "$serverbackup" ] && _backup_get_and_apply $serverbackup
+}
+
+_backup_list() {
+	bservername=$1
+	[ -z "$servername" ] && servername=$bservername
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	token=""
+	vps_config=""
+	_login
+	[ -z "$token" ] && {
+		logger -t "OMR-VPS" "Can't get token, try later"
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.admin_error=1
+		EOF
+		return
+	}
+	vps_backup=$(_get_json "backuplist")
+	[ -z "$vps_backup" ] && return
+	backup_lastmodif="$(echo "$vps_backup" | jsonfilter -q -e '@.modif')"
+	[ -n "$backup_lastmodif" ] && {
+		uci -q set openmptcprouter.$servername.lastbackup=$backup_lastmodif
+	}
+}
+
+
+
+backup_list() {
+	config_load openmptcprouter
+	config_foreach _backup_list server
+	uci -q commit openmptcprouter
+}
+
 
 _count_server() {
 	local servername=$1
@@ -549,56 +1086,133 @@ _config_service() {
 	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.ip)" ] && return
 	token=""
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
+		reason=""
+		_ping_server
+		status=$?
+		if $(exit $status); then
+			reason="can ping server"
+		else
+			reason="can't ping server"
+		fi
+		port="$(uci -q get openmptcprouter.${servername}.port)"
+		server="$(uci -q get openmptcprouter.${servername}.ip)"
+		if [ "$(curl -k -m 3 https://${server}:${port}/)" = "" ]; then
+			reason="$reason, no server API answer"
+		else
+			reason="$reason, server API answer"
+		fi
+		if [ "$(uci -q get openmptcprouter.${servername}.username)" != "openmptcprouter" ]; then
+			reason="$reason, custom username"
+		fi
+		logger -t "OMR-VPS" "Can't get token, try later ($reason)"
 		uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
 		return
 	}
+	error=0
 	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && {
 		_set_config_from_vps
 	}
-	_get_vps_config
-	if [ "$(uci -q get openmptcprouter.settings.firstboot)" != "0" ] && [ -n "$(cat /proc/cpuinfo | grep aes)" ]; then
-		logger -t "OMR-VPS" "CPU support AES, set it by default"
-		uci -q batch <<-EOF >/dev/null
-			set glorytun.vpn.chacha20=0
-			commit glorytun
-			set shadowsocks-libev.sss0.method=aes-256-gcm
-			commit shadowsocks-libev
-		EOF
-	fi
-	uci -q set openmptcprouter.settings.firstboot=0
 
-	config_load shadowsocks-libev
-	config_foreach _set_ss_server_vps server
-	_set_glorytun_vps
-	_set_openvpn_vps
+	_get_vps_config
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
+
+	if [ "$(uci -q get openmptcprouter.settings.firstboot)" != "0" ]; then
+		[ -n "$vps_config" ] && [ -n "$(cat /proc/cpuinfo | grep aes)" ] && {
+			vps_aes="$(echo "$vps_config" | jsonfilter -q -e '@.vps.aes')"
+			if [ "$vps_aes" != "false" ] && [ "$user_permission" != "ro" ]; then
+				logger -t "OMR-VPS" "CPU support AES, set it by default"
+				uci -q batch <<-EOF >/dev/null
+					set glorytun.vpn.chacha20="0"
+					commit glorytun
+					set shadowsocks-libev.sss0.method="aes-256-gcm"
+					commit shadowsocks-libev
+				EOF
+			fi
+		}
+		[ -n "$vps_config" ] && uci -q set openmptcprouter.settings.firstboot=0
+	fi
+	if [ "$user_permission" != "ro" ]; then
+		config_load shadowsocks-libev
+		config_foreach _set_ss_server_vps server
+		[ -z "$(_set_glorytun_vps)" ] && error=1
+		_set_vps_firewall
+	fi
+	_backup_list
 	redirect_port="0"
 	if [ "$(uci -q get openmptcprouter.${servername}.redirect_ports)" = "1" ] || [ "$(uci -q get upnpd.config.enabled)" = "1" ]; then
 		redirect_port="1"
 	fi
-	_set_redirect_ports_from_vps $redirect_port
-	_set_mptcp_vps
+	if [ "$user_permission" != "ro" ]; then
+		[ -z "$(_set_redirect_ports_from_vps $redirect_port)" ] && error=1
+		[ -z "$(_set_mptcp_vps)" ] && error=1
+		[ -z "$(_set_vpn_vps)" ] && error=1
+	fi
+	#_set_pihole
+	[ -n "$wanips" ] && _set_wan_ip
+	_set_lan_ip
+	_set_vpn_ip
+	config_load network
+	config_foreach _delete_client2client route
+	if [ "$(uci -q get openmptcprouter.settings.vpn)" != "openvpn" ] && [ "$(echo "$vps_config" | jsonfilter -q -e '@.client2client.enabled')" == "true" ]; then
+		_set_client2client
+	fi
+	[ "$error" = 0 ] && {
+		#logger -t "OMR-VPS" "No errors"
+		uci -q set openmptcprouter.${servername}.lastchange=$(date "+%s")
+	}
+	#[ "$error" != 0 ] && logger -t "OMR-VPS" "Error !"
 	uci -q batch <<-EOF >/dev/null
-		set openmptcprouter.${servername}.admin_error=0
+		set openmptcprouter.${servername}.admin_error=$error
+		commit openmptcprouter
 	EOF
+}
+
+_set_pihole_server() {
+	pservername=$1
+	[ -z "$servername" ] && servername=$pservername
+	[ -z "$(uci -q get openmptcprouter.${pservername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${pservername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${pservername}.port)" ] && return
+	token=""
+	vps_config=""
+	_login
+	[ -z "$token" ] && {
+		logger -t "OMR-VPS" "Can't get token, try later"
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${pservername}.admin_error=1
+		EOF
+		return
+	}
+	_set_pihole $pservername
+}
+
+set_pihole() {
+	config_load openmptcprouter
+	config_foreach _set_pihole_server server
 }
 
 start_service() {
 	serversnb=0
+	wanips=""
 	config_load openmptcprouter
 	config_foreach _count_server server
+	config_foreach _get_local_wan_ip interface
 	config_foreach _config_service server
+
 	uci -q batch <<-EOF >/dev/null
 		commit openmptcprouter
 	EOF
 }
 
 service_triggers() {
-	procd_add_reload_trigger openmptcprouter shadowsocks-libev glorytun mlvpn openvpn network upnpd
+	procd_add_reload_trigger openmptcprouter shadowsocks-libev glorytun mlvpn openvpn network upnpd dsvpn
 	#procd_add_reload_trigger openmptcprouter shadowsocks-libev network upnpd
 }

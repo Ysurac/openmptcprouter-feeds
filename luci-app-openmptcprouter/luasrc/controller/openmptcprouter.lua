@@ -1,10 +1,10 @@
 local math  = require "math"
-local tools = require "luci.tools.status"
 local sys   = require "luci.sys"
 local json  = require("luci.json")
 local fs    = require("nixio.fs")
 local net   = require "luci.model.network".init()
 local ucic  = luci.model.uci.cursor()
+local ipc = require "luci.ip"
 module("luci.controller.openmptcprouter", package.seeall)
 
 function index()
@@ -17,8 +17,10 @@ function index()
 	entry({"admin", "system", "openmptcprouter", "status"}, template("openmptcprouter/wanstatus"), _("Status"), 2).leaf = true
 	entry({"admin", "system", "openmptcprouter", "interfaces_status"}, call("interfaces_status")).leaf = true
 	entry({"admin", "system", "openmptcprouter", "settings"}, template("openmptcprouter/settings"), _("Advanced Settings"), 3).leaf = true
-	entry({"admin", "system", "openmptcprouter", "settings_add"}, post("settings_add")).leaf = true
-	entry({"admin", "system", "openmptcprouter", "update_vps"}, post("update_vps")).leaf = true
+	entry({"admin", "system", "openmptcprouter", "settings_add"}, post("settings_add"))
+	entry({"admin", "system", "openmptcprouter", "update_vps"}, post("update_vps"))
+	entry({"admin", "system", "openmptcprouter", "backup"}, template("openmptcprouter/backup"), _("Backup on server"), 3).leaf = true
+	entry({"admin", "system", "openmptcprouter", "backupgr"}, post("backupgr"))
 	entry({"admin", "system", "openmptcprouter", "debug"}, template("openmptcprouter/debug"), _("Show all settings"), 5).leaf = true
 end
 
@@ -40,12 +42,13 @@ function wizard_add()
 	local add_server_name = luci.http.formvalue("add_server_name") or ""
 	if add_server ~= "" and add_server_name ~= "" then
 		ucic:set("openmptcprouter",add_server_name:gsub("[^%w_]+","_"),"server")
+		ucic:set("openmptcprouter",add_server_name:gsub("[^%w_]+","_"),"user","openmptcprouter")
 		gostatus = false
 	end
 
 	-- Remove existing server
 	local delete_server = luci.http.formvaluetable("deleteserver") or ""
-	if delete_server ~= "" then
+	if delete_server ~= "" and next(delete_server) ~= nil then
 		for serverdel, _ in pairs(delete_server) do
 			ucic:foreach("network", "interface", function(s)
 				local sectionname = s[".name"]
@@ -53,13 +56,32 @@ function wizard_add()
 			end)
 			ucic:delete("network","server_" .. serverdel .. "_default_route")
 			ucic:delete("openmptcprouter",serverdel)
+			ucic:delete("iperf",serverdel)
 			ucic:save("openmptcprouter")
 			ucic:commit("openmptcprouter")
 			ucic:save("network")
 			ucic:commit("network")
-			luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/wizard"))
-			return
 		end
+		local nbserver = 0
+		local server_ip = ''
+		ucic:foreach("openmptcprouter", "server", function(s)
+			local servername = s[".name"]
+			nbserver = nbserver + 1
+			server_ip = ucic:get("openmptcprouter",servername,"ip")
+		end)
+		if nbserver == 1 and server_ip ~= "" and server_ip ~= nil then
+			ucic:set("shadowsocks-libev","sss0","server",server_ip)
+			ucic:set("glorytun","vpn","host",server_ip)
+			ucic:set("dsvpn","vpn","host",server_ip)
+			ucic:set("mlvpn","general","host",server_ip)
+			ucic:set("ubond","general","host",server_ip)
+			luci.sys.call("uci -q del openvpn.omr.remote")
+			luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
+			ucic:set("qos","serverin","srchost",server_ip)
+			ucic:set("qos","serverout","dsthost",server_ip)
+		end
+		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/wizard"))
+		return
 	end
 
 	-- Add new interface
@@ -99,19 +121,28 @@ function wizard_add()
 		ucic:set("network","wan" .. i,"interface")
 		ucic:set("network","wan" .. i,"ifname",defif)
 		ucic:set("network","wan" .. i,"proto","static")
+		ucic:set("openmptcprouter","wan" .. i,"interface")
 		if ointf ~= "" then
 			ucic:set("network","wan" .. i,"type","macvlan")
+			ucic:set("macvlan","wan" .. i,"macvlan")
+			ucic:set("macvlan","wan" .. i,"ifname",defif)
 		end
 		ucic:set("network","wan" .. i,"ip4table","wan")
 		if multipath_master then
 			ucic:set("network","wan" .. i,"multipath","on")
+			ucic:set("openmptcprouter","wan" .. i,"multipath","on")
 		else
 			ucic:set("network","wan" .. i,"multipath","master")
+			ucic:set("openmptcprouter","wan" .. i,"multipath","master")
 		end
 		ucic:set("network","wan" .. i,"defaultroute","0")
 		ucic:reorder("network","wan" .. i, i + 2)
+		ucic:save("macvlan")
+		ucic:commit("macvlan")
 		ucic:save("network")
 		ucic:commit("network")
+		ucic:save("openmptcprouter")
+		ucic:commit("openmptcprouter")
 
 		ucic:set("qos","wan" .. i,"interface")
 		ucic:set("qos","wan" .. i,"classgroup","Default")
@@ -165,7 +196,7 @@ function wizard_add()
 			ucic:delete("qos",intf)
 			ucic:save("qos")
 			ucic:commit("qos")
-			if defif ~= "" then
+			if defif ~= nil and defif ~= "" then
 				luci.sys.call("uci -q del_list vnstat.@vnstat[-1].interface=" .. defif)
 			end
 			luci.sys.call("uci -q commit vnstat")
@@ -191,6 +222,10 @@ function wizard_add()
 		ucic:set("network",intf,"gateway",gateway)
 
 		ucic:delete("openmptcprouter",intf,"lc")
+		ucic:save("openmptcprouter")
+
+		local multipathvpn = luci.http.formvalue("multipathvpn.%s.enabled" % intf) or "0"
+		ucic:set("openmptcprouter",intf,"multipathvpn",multipathvpn)
 		ucic:save("openmptcprouter")
 
 		local downloadspeed = luci.http.formvalue("cbid.sqm.%s.download" % intf) or "0"
@@ -222,23 +257,13 @@ function wizard_add()
 			ucic:set("sqm",intf,"upload","0")
 		end
 
-		if downloadspeed ~= "0" and uploadspeed ~= "0" then
+		if downloadspeed ~= "0" and uploadspeed ~= "0" and downloadspeed ~= "" and uploadspeed ~= "" then
 			ucic:set("network",intf,"downloadspeed",downloadspeed)
 			ucic:set("network",intf,"uploadspeed",uploadspeed)
 			ucic:set("sqm",intf,"download",math.ceil(downloadspeed*95/100))
 			ucic:set("sqm",intf,"upload",math.ceil(uploadspeed*95/100))
-			if sqmenabled == "1" then
-				ucic:set("sqm",intf,"enabled","1")
-			else
-				ucic:set("sqm",intf,"enabled","0")
-			end
 			ucic:set("qos",intf,"download",math.ceil(downloadspeed*95/100))
 			ucic:set("qos",intf,"upload",math.ceil(uploadspeed*95/100))
-			if sqmenabled == "1" then
-				ucic:set("qos",intf,"enabled","1")
-			else
-				ucic:set("qos",intf,"enabled","0")
-			end
 		else
 			ucic:set("sqm",intf,"download","0")
 			ucic:set("sqm",intf,"upload","0")
@@ -247,7 +272,20 @@ function wizard_add()
 			ucic:set("qos",intf,"upload","0")
 			ucic:set("qos",intf,"enabled","0")
 		end
+		if sqmenabled == "1" then
+			ucic:set("sqm",intf,"enabled","1")
+			ucic:set("qos",intf,"enabled","1")
+		else
+			ucic:set("sqm",intf,"enabled","0")
+			ucic:set("qos",intf,"enabled","0")
+		end
 	end
+	-- Disable multipath on LAN, VPN and loopback
+	ucic:set("network","loopback","multipath","off")
+	ucic:set("network","lan","multipath","off")
+	ucic:set("network","omr6in4","multipath","off")
+	ucic:set("network","omrvpn","multipath","off")
+
 	ucic:save("sqm")
 	ucic:commit("sqm")
 	ucic:save("qos")
@@ -256,8 +294,10 @@ function wizard_add()
 	ucic:commit("network")
 
 	-- Enable/disable IPv6
-	local disable_ipv6 = luci.http.formvalue("enableipv6") or "1"
-	set_ipv6_state(disable_ipv6)
+	local disableipv6 = luci.http.formvalue("enableipv6") or "1"
+	ucic:set("openmptcprouter","settings","disable_ipv6",disableipv6)
+	--local ut = require "luci.util"
+	--local result = ut.ubus("openmptcprouter", "set_ipv6_state", { disable_ipv6 = disableipv6 })
 
 	-- Get VPN set by default
 	local default_vpn = luci.http.formvalue("default_vpn") or "glorytun_tcp"
@@ -266,11 +306,20 @@ function wizard_add()
 	if default_vpn:match("^glorytun.*") then
 		vpn_port = 65001
 		vpn_intf = "tun0"
-		ucic:set("network","omrvpn","proto","dhcp")
+		--ucic:set("network","omrvpn","proto","dhcp")
+		ucic:set("network","omrvpn","proto","none")
 	elseif default_vpn == "mlvpn" then
 		vpn_port = 65201
 		vpn_intf = "mlvpn0"
 		ucic:set("network","omrvpn","proto","dhcp")
+	elseif default_vpn == "ubond" then
+		vpn_port = 65201
+		vpn_intf = "ubond0"
+		ucic:set("network","omrvpn","proto","dhcp")
+	elseif default_vpn == "dsvpn" then
+		vpn_port = 65011
+		vpn_intf = "tun0"
+		ucic:set("network","omrvpn","proto","none")
 	elseif default_vpn == "openvpn" then
 		vpn_port = 65301
 		vpn_intf = "tun0"
@@ -278,8 +327,11 @@ function wizard_add()
 	end
 	if vpn_intf ~= "" then
 		ucic:set("network","omrvpn","ifname",vpn_intf)
+		ucic:set("sqm","omrvpn","interface",vpn_intf)
 		ucic:save("network")
 		ucic:commit("network")
+		ucic:save("sqm")
+		ucic:commit("sqm")
 	end
 
 	-- Retrieve all server settings
@@ -291,8 +343,9 @@ function wizard_add()
 
 		-- OpenMPTCProuter VPS
 		local openmptcprouter_vps_key = luci.http.formvalue("%s.openmptcprouter_vps_key" % server) or ""
+		local openmptcprouter_vps_username = luci.http.formvalue("%s.openmptcprouter_vps_username" % server) or ""
 		ucic:set("openmptcprouter",server,"server")
-		ucic:set("openmptcprouter",server,"username","openmptcprouter")
+		ucic:set("openmptcprouter",server,"username",openmptcprouter_vps_username)
 		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key)
 		if master == server or (master == "" and serversnb == 0) then
 			ucic:set("openmptcprouter",server,"get_config","1")
@@ -345,9 +398,11 @@ function wizard_add()
 				ucic:set("nginx-ha","VPN","upstreams",vpn_servers)
 				ucic:set("haproxy-tcp","general","enable","0")
 				ucic:set("haproxy-tcp","general","upstreams",ss_servers_ha)
+				ucic:set("openmptcprouter","settings","ha","1")
 				server_ip = "127.0.0.1"
 				--ucic:set("shadowsocks-libev","sss0","server",ss_ip)
 			else
+				ucic:set("openmptcprouter","settings","ha","0")
 				ucic:set("nginx-ha","ShadowSocks","enable","0")
 				ucic:set("nginx-ha","VPN","enable","0")
 				--ucic:set("shadowsocks-libev","sss0","server",server_ip)
@@ -356,7 +411,9 @@ function wizard_add()
 			end
 			ucic:set("shadowsocks-libev","sss0","server",server_ip)
 			ucic:set("glorytun","vpn","host",server_ip)
+			ucic:set("dsvpn","vpn","host",server_ip)
 			ucic:set("mlvpn","general","host",server_ip)
+			ucic:set("ubond","general","host",server_ip)
 			luci.sys.call("uci -q del openvpn.omr.remote")
 			luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
 			ucic:set("qos","serverin","srchost",server_ip)
@@ -369,25 +426,42 @@ function wizard_add()
 	ucic:save("nginx-ha")
 	ucic:commit("nginx-ha")
 	ucic:save("openvpn")
-	ucic:commit("openvpn")
+	--ucic:commit("openvpn")
 	ucic:save("mlvpn")
-	ucic:commit("mlvpn")
+	ucic:save("ubond")
+	--ucic:commit("mlvpn")
+	ucic:save("dsvpn")
+	--ucic:commit("dsvpn")
 	ucic:save("glorytun")
-	ucic:commit("glorytun")
+	--ucic:commit("glorytun")
 	ucic:save("shadowsocks-libev")
-	ucic:commit("shadowsocks-libev")
+	--ucic:commit("shadowsocks-libev")
 
+
+	local encryption = luci.http.formvalue("encryption")
+	if encryption == "none" then
+		ucic:set("shadowsocks-libev","sss0","method","none")
+	elseif encryption == "aes-256-gcm" then
+		ucic:set("shadowsocks-libev","sss0","method","aes-256-gcm")
+		ucic:set("glorytun","vpn","chacha20","0")
+	elseif encryption == "chacha20-ietf-poly1305" then
+		ucic:set("shadowsocks-libev","sss0","method","chacha20-ietf-poly1305")
+		ucic:set("glorytun","vpn","chacha20","1")
+	end
 
 	-- Set ShadowSocks settings
 	local shadowsocks_key = luci.http.formvalue("shadowsocks_key")
 	local shadowsocks_disable = luci.http.formvalue("disableshadowsocks") or "0"
 	if shadowsocks_key ~= "" then
 		ucic:set("shadowsocks-libev","sss0","key",shadowsocks_key)
-		--ucic:set("shadowsocks-libev","sss0","method","chacha20")
+		--ucic:set("shadowsocks-libev","sss0","method","chacha20-ietf-poly1305")
 		--ucic:set("shadowsocks-libev","sss0","server_port","65101")
 		ucic:set("shadowsocks-libev","sss0","disabled",shadowsocks_disable)
 		ucic:save("shadowsocks-libev")
 		ucic:commit("shadowsocks-libev")
+		if shadowsocks_disable == "1" then
+			luci.sys.call("/etc/init.d/shadowsocks rules_down >/dev/null 2>/dev/null")
+		end
 	else
 		ucic:set("shadowsocks-libev","sss0","key","")
 		ucic:set("shadowsocks-libev","sss0","disabled",shadowsocks_disable)
@@ -408,23 +482,55 @@ function wizard_add()
 		ucic:set("glorytun","vpn","port","65001")
 		ucic:set("glorytun","vpn","key",glorytun_key)
 		ucic:set("glorytun","vpn","mptcp",1)
-		ucic:set("glorytun","vpn","chacha20",1)
 		if default_vpn == "glorytun_udp" then
 			ucic:set("glorytun","vpn","proto","udp")
+			ucic:set("glorytun","vpn","localip","10.255.254.2")
+			ucic:set("glorytun","vpn","remoteip","10.255.254.1")
+			ucic:set("network","omr6in4","ipaddr","10.255.254.2")
+			ucic:set("network","omr6in4","peeraddr","10.255.254.1")
 		else
 			ucic:set("glorytun","vpn","proto","tcp")
+			ucic:set("glorytun","vpn","localip","10.255.255.2")
+			ucic:set("glorytun","vpn","remoteip","10.255.255.1")
+			ucic:set("network","omr6in4","ipaddr","10.255.255.2")
+			ucic:set("network","omr6in4","peeraddr","10.255.255.1")
 		end
+		ucic:set("network","omrvpn","proto","none")
 	else
 		ucic:set("glorytun","vpn","key","")
-		ucic:set("glorytun","vpn","enable",0)
+		--ucic:set("glorytun","vpn","enable",0)
 		ucic:set("glorytun","vpn","proto","tcp")
 	end
 	ucic:save("glorytun")
 	ucic:commit("glorytun")
 
+	-- Set A Dead Simple VPN settings
+	if default_vpn == "dsvpn" then
+		ucic:set("dsvpn","vpn","enable",1)
+	else
+		ucic:set("dsvpn","vpn","enable",0)
+	end
+
+	local dsvpn_key = luci.http.formvalue("dsvpn_key")
+	if dsvpn_key ~= "" then
+		ucic:set("dsvpn","vpn","port","65011")
+		ucic:set("dsvpn","vpn","key",dsvpn_key)
+		ucic:set("dsvpn","vpn","localip","10.255.251.2")
+		ucic:set("dsvpn","vpn","remoteip","10.255.251.1")
+		ucic:set("network","omr6in4","ipaddr","10.255.251.2")
+		ucic:set("network","omr6in4","peeraddr","10.255.251.1")
+		ucic:set("network","omrvpn","proto","none")
+	else
+		ucic:set("dsvpn","vpn","key","")
+		--ucic:set("dsvpn","vpn","enable",0)
+	end
+	ucic:save("dsvpn")
+	ucic:commit("dsvpn")
+
 	-- Set MLVPN settings
 	if default_vpn == "mlvpn" then
 		ucic:set("mlvpn","general","enable",1)
+		ucic:set("network","omrvpn","proto","dhcp")
 	else
 		ucic:set("mlvpn","general","enable",0)
 	end
@@ -441,33 +547,36 @@ function wizard_add()
 	ucic:save("mlvpn")
 	ucic:commit("mlvpn")
 
-	-- Set OpenVPN settings
-	local openvpn_key = luci.http.formvalue("openvpn_key")
-	if openvpn_key ~= "" then
-		local openvpn_key_path = "/etc/luci-uploads/openvpn.key"
-		local fp
-		luci.http.setfilehandler(
-			function(meta, chunk, eof)
-				if not fp and meta and meta.name == "openvpn_key" then
-					fp = io.open(openvpn_key_path, "w")
-				end
-				if fp and chunk then
-					fp:write(chunk)
-				end
-				if fp and eof then
-					fp:close()
-				end
-			end)
-		ucic:set("openvpn","omr","secret",openvpn_key_path)
+	-- Set UBOND settings
+	if default_vpn == "ubond" then
+		ucic:set("ubond","general","enable",1)
+		ucic:set("network","omrvpn","proto","dhcp")
+	else
+		ucic:set("ubond","general","enable",0)
 	end
+
+	local ubond_password = luci.http.formvalue("ubond_password")
+	if ubond_password ~= "" then
+		ucic:set("ubond","general","password",ubond_password)
+		ucic:set("ubond","general","firstport","65201")
+		ucic:set("ubond","general","interface_name","ubond0")
+	else
+		--ucic:set("ubond","general","enable",0)
+		ucic:set("ubond","general","password","")
+	end
+	ucic:save("ubond")
+	ucic:commit("ubond")
 
 	if default_vpn == "openvpn" then
 		ucic:set("openvpn","omr","enabled",1)
+		ucic:set("network","omrvpn","proto","none")
 	else
 		ucic:set("openvpn","omr","enabled",0)
 	end
 	ucic:save("openvpn")
 	ucic:commit("openvpn")
+	ucic:save("network")
+	ucic:commit("network")
 
 	-- OpenMPTCProuter VPS
 	--local openmptcprouter_vps_key = luci.http.formvalue("openmptcprouter_vps_key") or ""
@@ -482,20 +591,24 @@ function wizard_add()
 	ucic:commit("openmptcprouter")
 
 	-- Restart all
-	luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/mptcp restart >/dev/null 2>/dev/null")
-	if openmptcprouter_vps_key ~= "" then
-		luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
-		os.execute("sleep 2")
-	end
-	luci.sys.call("/etc/init.d/shadowsocks restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/omr-tracker restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
 	if gostatus == true then
+		luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/mptcp restart >/dev/null 2>/dev/null")
+		if openmptcprouter_vps_key ~= "" then
+			luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
+			os.execute("sleep 2")
+		end
+		luci.sys.call("/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/ubond restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/dsvpn restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/omr-tracker restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/mptcpovervpn restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
 		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/status"))
 	else
 		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/wizard"))
@@ -508,8 +621,10 @@ function settings_add()
 	local servers = luci.http.formvaluetable("server")
 	local redirect_ports = luci.http.formvaluetable("redirect_ports")
 	for server, _ in pairs(servers) do
-		local value = luci.http.formvalue("redirect_ports.%s" % server) or "0"
-		ucic:set("openmptcprouter",server,"redirect_ports",value)
+		local redirectports = luci.http.formvalue("redirect_ports.%s" % server) or "0"
+		ucic:set("openmptcprouter",server,"redirect_ports",redirectports)
+		local nofwredirect = luci.http.formvalue("nofwredirect.%s" % server) or "0"
+		ucic:set("openmptcprouter",server,"nofwredirect",nofwredirect)
 	end
 
 	-- Set tcp_keepalive_time
@@ -529,31 +644,61 @@ function settings_add()
 	
 	-- Set tcp_fastopen
 	local tcp_fastopen = luci.http.formvalue("tcp_fastopen")
+	local disablefastopen = luci.http.formvalue("disablefastopen") or "0"
+	if disablefastopen == "1" then
+		tcp_fastopen = "0"
+	elseif tcp_fastopen == "0" and disablefastopen == "0" then
+		tcp_fastopen = "3"
+	end
 	luci.sys.exec("sysctl -w net.ipv4.tcp_fastopen=%s" % tcp_fastopen)
 	luci.sys.exec("sed -i 's:^net.ipv4.tcp_fastopen=[0-3]*:net.ipv4.tcp_fastopen=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_fastopen)
+	ucic:set("openmptcprouter", "settings","disable_fastopen", disablefastopen)
 	
 	-- Disable IPv6
 	local disable_ipv6 = luci.http.formvalue("enableipv6") or "1"
-	set_ipv6_state(disable_ipv6)
+	local dump = require("luci.util").ubus("openmptcprouter", "disableipv6", { disable_ipv6 = tonumber(disable_ipv6)})
 
 	-- Enable/disable external check
 	local externalcheck = luci.http.formvalue("externalcheck") or "1"
 	ucic:set("openmptcprouter","settings","external_check",externalcheck)
-	ucic:commit("openmptcprouter")
+
+	-- Enable/disable external check
+	local savevnstat = luci.http.formvalue("savevnstat") or "0"
+	luci.sys.exec("uci -q set vnstat.@vnstat[0].backup=%s" % savevnstat)
+	ucic:commit("vnstat")
+
+	-- Enable/disable gateway ping
+	local disablegwping = luci.http.formvalue("disablegwping") or "0"
+	ucic:set("openmptcprouter","settings","disablegwping",disablegwping)
+
+	-- Enable/disable server ping
+	local disableserverping = luci.http.formvalue("disableserverping") or "0"
+	ucic:set("openmptcprouter","settings","disableserverping",disableserverping)
+
+	-- Enable/disable fast open
+	local disablefastopen = luci.http.formvalue("disablefastopen") or "0"
+	if disablefastopen == "0" then
+		fastopen = "1"
+	else
+		fastopen = "0"
+	end
+	ucic:foreach("shadowsocks-libev", "ss_redir", function (section)
+		ucic:set("shadowsocks-libev",section[".name"],"fast_open",fastopen)
+	end)
+	ucic:foreach("shadowsocks-libev", "ss_local", function (section)
+		ucic:set("shadowsocks-libev",section[".name"],"fast_open",fastopen)
+	end)
+
 
 	-- Enable/disable obfs
 	local obfs = luci.http.formvalue("obfs") or "0"
 	local obfs_plugin = luci.http.formvalue("obfs_plugin") or "v2ray"
 	local obfs_type = luci.http.formvalue("obfs_type") or "http"
-	ucic:foreach("shadowsocks-libev", "ss_redir", function (section)
+	ucic:foreach("shadowsocks-libev", "server", function (section)
 		ucic:set("shadowsocks-libev",section[".name"],"obfs",obfs)
 		ucic:set("shadowsocks-libev",section[".name"],"obfs_plugin",obfs_plugin)
 		ucic:set("shadowsocks-libev",section[".name"],"obfs_type",obfs_type)
 	end)
-	ucic:set("shadowsocks-libev","tracker","obfs",obfs)
-	ucic:set("shadowsocks-libev","tracker","obfs_plugin",obfs_plugin)
-	ucic:set("shadowsocks-libev","tracker","obfs_type",obfs_type)
-
 	ucic:save("shadowsocks-libev")
 	ucic:commit("shadowsocks-libev")
 
@@ -594,680 +739,154 @@ function update_vps()
 	-- Update VPS
 	local update_vps = luci.http.formvalue("flash") or ""
 	if update_vps ~= "" then
-		ucic:foreach("openmptcprouter", "server", function(s)
-			local serverip = ucic:get("openmptcprouter",s[".name"],"ip")
-			local adminport = ucic:get("openmptcprouter",s[".name"],"port") or "65500"
-			local token = ucic:get("openmptcprouter",s[".name"],"token") or ""
-			if token ~= "" then
-				sys.exec('curl -4 --max-time 20 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ":" .. adminport .. "/update")
-				luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
-				luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/status"))
-				return
-			end
-		end)
+		local ut = require "luci.util"
+		local result = ut.ubus("openmptcprouter", "update_vps", {})
 	end
+	return
 end
 
-function get_ip(interface)
-	local dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
-	local ip = ""
-	if dump and dump['ipv4-address'] then
-		local _, ipv4address
-		for _, ipv4address in ipairs(dump['ipv4-address']) do
-			ip = dump['ipv4-address'][_].address
-		end
+function backupgr()
+	local get_backup = luci.http.formvalue("restore") or ""
+	if get_backup ~= "" then
+		luci.sys.call("/etc/init.d/openmptcprouter-vps backup_get >/dev/null 2>/dev/null")
 	end
-	if ip == "" then
-		local dump = require("luci.util").ubus("network.interface.%s_4" % interface, "status", {})
-		if dump and dump['ipv4-address'] then
-			local _, ipv4address
-			for _, ipv4address in ipairs(dump['ipv4-address']) do
-				ip = dump['ipv4-address'][_].address
-			end
-		end
+	local send_backup = luci.http.formvalue("save") or ""
+	if send_backup ~= "" then
+		luci.sys.call("/etc/init.d/openmptcprouter-vps backup_send >/dev/null 2>/dev/null")
 	end
-	return ip
+	luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/backup"))
+	return
 end
 
 function get_device(interface)
 	local dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
-	return dump['l3_device']
+	if dump ~= nil then
+		return dump['l3_device']
+	else
+		return ""
+	end
 end
 
-function get_gateway(interface)
-	local gateway = ""
-	local dump = nil
+-- This function come from modules/luci-bbase/luasrc/tools/status.lua from old OpenWrt
+-- Copyright 2011 Jo-Philipp Wich <jow@openwrt.org>
+-- Licensed to the public under the Apache License 2.0.
+local function dhcp_leases_common(family)
+	local rv = { }
+	local nfs = require "nixio.fs"
+	local sys = require "luci.sys"
+	local leasefile = "/tmp/dhcp.leases"
 
-	dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
+	ucic:foreach("dhcp", "dnsmasq",
+	    function(s)
+		    if s.leasefile and nfs.access(s.leasefile) then
+			    leasefile = s.leasefile
+			    return false
+		    end
+	    end)
 
-	if dump and dump.route then
-		local _, route
-		for _, route in ipairs(dump.route) do
-			if dump.route[_].target == "0.0.0.0" then
-				gateway = dump.route[_].nexthop
-			end
-		end
-	end
-	if gateway == "" then
-		if dump and dump.inactive and dump.inactive.route then
-			local _, route
-			for _, route in ipairs(dump.inactive.route) do
-				if dump.inactive.route[_].target == "0.0.0.0" then
-					gateway = dump.inactive.route[_].nexthop
-				end
-			end
-		end
-	end
-	
-	if gateway == "" then
-		dump = require("luci.util").ubus("network.interface.%s_4" % interface, "status", {})
-
-		if dump and dump.route then
-			local _, route
-			for _, route in ipairs(dump.route) do
-				if dump.route[_].target == "0.0.0.0" then
-					gateway = dump.route[_].nexthop
-				end
-			end
-		end
-		if gateway == "" then
-			if dump and dump.inactive and dump.inactive.route then
-				local _, route
-				for _, route in ipairs(dump.inactive.route) do
-					if dump.inactive.route[_].target == "0.0.0.0" then
-						gateway = dump.inactive.route[_].nexthop
+	local fd = io.open(leasefile, "r")
+	if fd then
+		while true do
+			local ln = fd:read("*l")
+			if not ln then
+				break
+			else
+				local ts, mac, ip, name, duid = ln:match("^(%d+) (%S+) (%S+) (%S+) (%S+)")
+				local expire = tonumber(ts) or 0
+				if ts and mac and ip and name and duid then
+					if family == 4 and not ip:match(":") then
+						rv[#rv+1] = {
+						    expires  = (expire ~= 0) and os.difftime(expire, os.time()),
+						    macaddr  = ipc.checkmac(mac) or "00:00:00:00:00:00",
+						    ipaddr   = ip,
+						    hostname = (name ~= "*") and name
+						}
+					elseif family == 6 and ip:match(":") then
+						rv[#rv+1] = {
+						    expires  = (expire ~= 0) and os.difftime(expire, os.time()),
+						    ip6addr  = ip,
+						    duid     = (duid ~= "*") and duid,
+						    hostname = (name ~= "*") and name
+						}
 					end
 				end
 			end
 		end
+		fd:close()
 	end
-	return gateway
+
+	local lease6file = "/tmp/hosts/odhcpd"
+	ucic:foreach("dhcp", "odhcpd",
+	    function(t)
+		    if t.leasefile and nfs.access(t.leasefile) then
+			    lease6file = t.leasefile
+			    return false
+		    end
+	end)
+	local fd = io.open(lease6file, "r")
+	if fd then
+		while true do
+			local ln = fd:read("*l")
+			if not ln then
+				break
+			else
+				local iface, duid, iaid, name, ts, id, length, ip = ln:match("^# (%S+) (%S+) (%S+) (%S+) (-?%d+) (%S+) (%S+) (.*)")
+				local expire = tonumber(ts) or 0
+				if ip and iaid ~= "ipv4" and family == 6 then
+					rv[#rv+1] = {
+					    expires  = (expire >= 0) and os.difftime(expire, os.time()),
+					    duid     = duid,
+					    ip6addr  = ip,
+					    hostname = (name ~= "-") and name
+					}
+				elseif ip and iaid == "ipv4" and family == 4 then
+					rv[#rv+1] = {
+					    expires  = (expire >= 0) and os.difftime(expire, os.time()),
+					    macaddr  = sys.net.duid_to_mac(duid) or "00:00:00:00:00:00",
+					    ipaddr   = ip,
+					    hostname = (name ~= "-") and name
+					}
+				end
+			end
+		end
+		fd:close()
+	end
+
+	if family == 6 then
+		local _, lease
+		local hosts = sys.net.host_hints()
+		for _, lease in ipairs(rv) do
+			local mac = sys.net.duid_to_mac(lease.duid)
+			local host = mac and hosts[mac]
+			if host then
+				if not lease.name then
+					lease.host_hint = host.name or host.ipv4 or host.ipv6
+				elseif host.name and lease.hostname ~= host.name then
+					lease.host_hint = host.name
+				end
+			end
+		end
+	end
+
+	return rv
 end
 
--- This function come from OverTheBox by OVH with some changes
--- Copyright 2015 OVH <OverTheBox@ovh.net>
--- Simon Lelievre (simon.lelievre@corp.ovh.com)
--- Sebastien Duponcheel <sebastien.duponcheel@ovh.net>
--- Modified by Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
--- Under GPL3+
 function interfaces_status()
-	local ut      = require "luci.util"
-	local ntm     = require "luci.model.network".init()
-	local uci     = require "luci.model.uci".cursor()
+	local ut = require "luci.util"
+	local mArray = ut.ubus("openmptcprouter", "status", {}) or {_=0}
 
-	local mArray = {}
-
-	-- OpenMPTCProuter info
-	mArray.openmptcprouter = {}
-	--mArray.openmptcprouter["version"] = ut.trim(sys.exec("cat /etc/os-release | grep VERSION= | sed -e 's:VERSION=::'"))
-	mArray.openmptcprouter["version"] = uci:get("openmptcprouter", "settings", "version") or ut.trim(sys.exec("cat /etc/os-release | grep VERSION= | sed -e 's:VERSION=::' -e 's/^.//' -e 's/.$//'"))
-
-	mArray.openmptcprouter["latest_version_omr"] = uci:get("openmptcprouter", "latest_versions", "omr") or ""
-	mArray.openmptcprouter["latest_version_vps"] = uci:get("openmptcprouter", "latest_versions", "vps") or ""
-	
-	mArray.openmptcprouter["service_addr"] = uci:get("shadowsocks-libev", "sss0", "server") or ""
-	mArray.openmptcprouter["local_addr"] = uci:get("network", "lan", "ipaddr")
-	mArray.openmptcprouter["server_mptcp"] = ""
-	-- dns
-	mArray.openmptcprouter["dns"] = false
-	local dns_test = sys.exec("dig openmptcprouter.com | grep 'ANSWER: 0'")
-	if dns_test == "" then
-		mArray.openmptcprouter["dns"] = true
-	end
-
-	mArray.openmptcprouter["ipv6"] = "disabled"
-	if uci:get("openmptcprouter","settings","disable_ipv6") ~= "1" then
-		mArray.openmptcprouter["ipv6"] = "enabled"
-	end
-
-	mArray.openmptcprouter["ss_addr"] = ""
-	--mArray.openmptcprouter["ss_addr6"] = ""
-	mArray.openmptcprouter["wan_addr"] = ""
-	mArray.openmptcprouter["wan_addr6"] = ""
-	local tracker_ip = ""
-	if mArray.openmptcprouter["dns"] == true then
-		-- wanaddr
-		--mArray.openmptcprouter["wan_addr"] = uci:get("openmptcprouter","omr","public_detected_ipv4") or ""
-		
-		if uci:get("openmptcprouter","settings","external_check") ~= "0" then
-			mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("wget -4 -qO- -T 2 http://ip.openmptcprouter.com"))
-			if mArray.openmptcprouter["wan_addr"] == "" then
-				mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("dig TXT +timeout=2 +short o-o.myaddr.l.google.com | awk -F'\"' '{print $2}'"))
-			end
-			if mArray.openmptcprouter["ipv6"] == "enabled" then
-				mArray.openmptcprouter["wan_addr6"] = uci:get("openmptcprouter","omr","public_detected_ipv6") or ""
-				if mArray.openmptcprouter["wan_addr6"] == "" then
-					mArray.openmptcprouter["wan_addr6"] = ut.trim(sys.exec("wget -6 -qO- -T 2 http://ipv6.openmptcprouter.com"))
-				end
-			end
-			mArray.openmptcprouter["external_check"] = true
-		else
-			mArray.openmptcprouter["external_check"] = false
-		end
-		-- shadowsocksaddr
-		mArray.openmptcprouter["ss_addr"] = uci:get("openmptcprouter","omr","detected_ss_ipv4") or ""
-		if mArray.openmptcprouter["ss_addr"] == "" then
-			tracker_ip = uci:get("shadowsocks-libev","tracker","local_address") or ""
-			if tracker_ip ~= "" then
-				local tracker_port = uci:get("shadowsocks-libev","tracker","local_port")
-				if uci:get("openmptcprouter","settings","external_check") ~= "0" then
-					mArray.openmptcprouter["ss_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 2 http://ip.openmptcprouter.com"))
-					--mArray.openmptcprouter["ss_addr6"] = sys.exec("curl -s -6 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ipv6.openmptcprouter.com")
-				end
+	if mArray ~= nil and mArray.openmptcprouter ~= nil then
+		mArray.openmptcprouter["remote_addr"] = luci.http.getenv("REMOTE_ADDR") or ""
+		mArray.openmptcprouter["remote_from_lease"] = false
+		local leases=dhcp_leases_common(4)
+		for _, value in pairs(leases) do
+			if value["ipaddr"] == mArray.openmptcprouter["remote_addr"] then
+				mArray.openmptcprouter["remote_from_lease"] = true
+				mArray.openmptcprouter["remote_hostname"] = value["hostname"]
 			end
 		end
 	end
-
-	mArray.openmptcprouter["remote_addr"] = luci.http.getenv("REMOTE_ADDR") or ""
-	mArray.openmptcprouter["remote_from_lease"] = false
-	local leases=tools.dhcp_leases()
-	for _, value in pairs(leases) do
-		if value["ipaddr"] == mArray.openmptcprouter["remote_addr"] then
-			mArray.openmptcprouter["remote_from_lease"] = true
-			mArray.openmptcprouter["remote_hostname"] = value["hostname"]
-		end
-	end
-
-	if  mArray.openmptcprouter["service_addr"] ~= "" and mArray.openmptcprouter["service_addr"] ~= "127.0.0.1" then
-		mArray.openmptcprouter["vps_status"] = "DOWN"
-	else
-		mArray.openmptcprouter["vps_status"] = "UP"
-	end
-
-	mArray.openmptcprouter["vps_admin"] = false
-	mArray.openmptcprouter["vps_admin_error_msg"] = "Not found"
-	-- Get VPS info
-	ucic:foreach("openmptcprouter", "server", function(s)
-		local serverip = uci:get("openmptcprouter",s[".name"],"ip") or ""
-		if serverip ~= "" then
-			mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter", s[".name"], "omr_version") or ""
-			mArray.openmptcprouter["vps_kernel"] = uci:get("openmptcprouter",s[".name"],"kernel") or ""
-			mArray.openmptcprouter["vps_machine"] = uci:get("openmptcprouter",s[".name"],"machine") or ""
-			local adminport = uci:get("openmptcprouter",s[".name"],"port") or "65500"
-			local token = uci:get("openmptcprouter",s[".name"],"token") or ""
-			if token ~= "" then
-				local vpsinfo_json = sys.exec('curl -4 --max-time 2 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ':' .. adminport .. '/status')
-				if vpsinfo_json ~= "" and vpsinfo_json ~= nil then
-					local status, vpsinfo = pcall(function() 
-						return json.decode(vpsinfo_json)
-					end)
-					if status and vpsinfo.vps ~= nil then
-						mArray.openmptcprouter["vps_loadavg"] = vpsinfo.vps.loadavg or ""
-						mArray.openmptcprouter["vps_uptime"] = vpsinfo.vps.uptime or ""
-						mArray.openmptcprouter["vps_mptcp"] = vpsinfo.vps.mptcp or ""
-						mArray.openmptcprouter["vps_admin"] = true
-						mArray.openmptcprouter["vps_status"] = "UP"
-						mArray.openmptcprouter["vps_admin_error_msg"] = ""
-					else
-						uci:set("openmptcprouter",s[".name"],"admin_error","1")
-						uci:delete("openmptcprouter",s[".name"],"token")
-						uci:save("openmptcprouter",s[".name"])
-						uci:commit("openmptcprouter",s[".name"])
-						mArray.openmptcprouter["vps_admin"] = false
-						mArray.openmptcprouter["vps_admin_error_msg"] = "Answer error"
-					end
-				else
-					mArray.openmptcprouter["vps_admin"] = false
-					mArray.openmptcprouter["vps_admin_error_msg"] = "No answer"
-				end
-			else
-				mArray.openmptcprouter["vps_admin"] = false
-				mArray.openmptcprouter["vps_admin_error_msg"] = "No token"
-			end
-		end
-	end)
-
-	-- Check openmptcprouter service are running
-	mArray.openmptcprouter["tun_service"] = false
-	mArray.openmptcprouter["tun_state"] = ""
-	mArray.openmptcprouter["tun6_state"] = ""
-	if string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?glorytun(-udp)?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?mlvpn?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?openvpn?$'"), "%d+") then
-		mArray.openmptcprouter["tun_service"] = true
-		mArray.openmptcprouter["tun_ip"] = get_ip("omrvpn")
-		local tun_dev = uci:get("network","omrvpn","ifname")
-		if tun_dev == "" then
-			tun_dev = get_device("omrvpn")
-		end
-		if tun_dev ~= "" then
-			local peer = get_gateway("omrvpn")
-			if peer == "" then
-				peer = ut.trim(sys.exec("ip -4 r list dev " .. tun_dev .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
-			end
-			if peer ~= "" then
-				local tunnel_ping_test = ut.trim(sys.exec("ping -w 1 -c 1 -I " .. tun_dev .. " " .. peer .. " | grep '100% packet loss'"))
-				if tunnel_ping_test == "" then
-					mArray.openmptcprouter["tun_state"] = "UP"
-				else
-					mArray.openmptcprouter["tun_state"] = "DOWN"
-				end
-				if mArray.openmptcprouter["ipv6"] == "enabled" then
-					local tunnel_ping6_test = ut.trim(sys.exec("ping6 -w 1 -c 1 fe80::a00:1%6in4-omr6in4 | grep '100% packet loss'"))
-					if tunnel_ping6_test == "" then
-						mArray.openmptcprouter["tun6_state"] = "UP"
-					else
-						mArray.openmptcprouter["tun6_state"] = "DOWN"
-					end
-				end
-			else
-				mArray.openmptcprouter["tun_state"] = "DOWN"
-				mArray.openmptcprouter["tun6_state"] = "DOWN"
-			end
-		end
-	end
-	
-	-- check Shadowsocks is running
-	mArray.openmptcprouter["socks_service"] = false
-	if string.find(sys.exec("/usr/bin/pgrep ss-redir"), "%d+") then
-		mArray.openmptcprouter["socks_service"] = true
-	end
-
-	mArray.openmptcprouter["socks_service_enabled"] = true
-	local ss_server = uci:get("shadowsocks-libev","sss0","disabled") or "0"
-	if ss_server == "1" then
-		mArray.openmptcprouter["socks_service_enabled"] = false
-	end
-	local ss_key = uci:get("shadowsocks-libev","sss0","key") or ""
-	mArray.openmptcprouter["socks_service_method"] = uci:get("shadowsocks-libev","sss0","method")
-	if ss_key == "" then
-		mArray.openmptcprouter["socks_service_key"] = false
-	else
-		mArray.openmptcprouter["socks_service_key"] = true
-	end
-
-	-- Add DHCP infos by parsing dnsmasq config file
-	mArray.openmptcprouter.dhcpd = {}
-	dnsmasq = ut.trim(sys.exec("cat /var/etc/dnsmasq.conf*"))
-	for itf, range_start, range_end, mask, leasetime in dnsmasq:gmatch("range=[%w,!:-]*set:(%w+),(%d+\.%d+\.%d+\.%d+),(%d+\.%d+\.%d+\.%d+),(%d+\.%d+\.%d+\.%d+),(%w+)") do
-		mArray.openmptcprouter.dhcpd[itf] = {}
-		mArray.openmptcprouter.dhcpd[itf].interface = itf
-		mArray.openmptcprouter.dhcpd[itf].range_start = range_start
-		mArray.openmptcprouter.dhcpd[itf].range_end = range_end
-		mArray.openmptcprouter.dhcpd[itf].netmask = mask
-		mArray.openmptcprouter.dhcpd[itf].leasetime = leasetime
-		mArray.openmptcprouter.dhcpd[itf].router = mArray.openmptcprouter["local_addr"]
-		mArray.openmptcprouter.dhcpd[itf].dns = mArray.openmptcprouter["local_addr"]
-	end
-	for itf, option, value in dnsmasq:gmatch("option=(%w+),([%w:-]+),(%d+\.%d+\.%d+\.%d+)") do
-		if mArray.openmptcprouter.dhcpd[itf] then
-			if option == "option:router" or option == "3" then
-				mArray.openmptcprouter.dhcpd[itf].router = value
-			end
-			if option == "option:dns-server" or option == "6" then
-				mArray.openmptcprouter.dhcpd[itf].dns = value
-			end
-		end
-	end
-
-	-- Parse mptcp kernel info
-	local mptcp = {}
-	local fullmesh = ut.trim(sys.exec("cat /proc/net/mptcp_fullmesh"))
-	for ind, addressId, backup, ipaddr in fullmesh:gmatch("(%d+), (%d+), (%d+), (%d+\.%d+\.%d+\.%d+)") do
-		mptcp[ipaddr] = {}
-		mptcp[ipaddr].index = ind
-		mptcp[ipaddr].id    = addressId
-		mptcp[ipaddr].backup= backup
-		mptcp[ipaddr].ipaddr= ipaddr
-	end
-
-	-- retrieve core temperature
-	--mArray.openmptcprouter["core_temp"] = sys.exec("cat /sys/devices/platform/coretemp.0/hwmon/hwmon0/temp2_input 2>/dev/null"):match("%d+")
-	mArray.openmptcprouter["loadavg"] = sys.exec("cat /proc/loadavg 2>/dev/null"):match("[%d%.]+ [%d%.]+ [%d%.]+")
-	mArray.openmptcprouter["uptime"] = sys.exec("cat /proc/uptime 2>/dev/null"):match("[%d%.]+")
-
-	mArray.openmptcprouter["fstype"] = sys.exec("cat /proc/mounts | awk '/\/dev\/root/ {print $3}' | tr -d '\n'")
-	if mArray.openmptcprouter["fstype"] == "ext4" then
-		if sys.exec("cat /proc/mounts | awk '/\/dev\/root/ {print $4}' | grep ro") == "" then
-			mArray.openmptcprouter["fsro"] = false
-		else
-			mArray.openmptcprouter["fsro"] = true
-		end
-	elseif mArray.openmptcprouter["fstype"] == "squashfs" then
-		if sys.exec("cat /proc/mounts | awk '/overlayfs/ {print $4}' | grep overlay") == "" then
-			mArray.openmptcprouter["fsro"] = true
-		else
-			mArray.openmptcprouter["fsro"] = false
-		end
-	end
-
-	-- overview status
-	mArray.wans = {}
-	mArray.tunnels = {}
-	allintf = {}
-
-	uci:foreach("network", "interface", function (section)
-	    local interface = section[".name"]
-	    local net = ntm:get_network(interface)
-	    local ipaddr = net:ipaddr() or ""
-	    local gateway = section["gateway"] or ""
-	    local multipath = section["multipath"]
-	    local enabled = section["auto"]
-
-	    --if not ipaddr or not gateway then return end
-	    -- Don't show if0 in the overview
-	    --if interface == "lo" then return end
-
-	    local ifname = get_device(interface)
-	    if ifname == "" then
-		ifname = section["ifname"] or ""
-	    end
-	    duplicateif = false
-	    if ifname ~= "" and ifname ~= nil then
-		if allintf[ifname] then
-		    connectivity = "ERROR"
-		    duplicateif = true
-		else
-		    allintf[ifname] = true
-		end
-	    end
-
-	    --if multipath == "off" and not ifname:match("^tun.*") then return end
-	    if multipath == "off" then return end
-	    
-	    if enabled == "0" then return end
-
-	    local connectivity
-
-	    if ifname ~= "" and ifname ~= nil then
-		    if fs.access("/sys/class/net/" .. ifname) then
-			    local multipath_state = ut.trim(sys.exec("multipath " .. ifname .. " | grep deactivated"))
-			    if multipath_state == "" then
-				connectivity = "OK"
-			    else
-				connectivity = "ERROR"
-			    end
-		    else
-			    connectivity = "ERROR"
-		    end
-	    else
-		    connectivity = "ERROR"
-	    end
-
-	    if ipaddr == "" and ifname ~= nil then
-		    ipaddr = ut.trim(sys.exec("ip -4 -br addr ls dev " .. ifname .. " | awk -F'[ /]+' '{print $3}' | tr -d '\n'"))
-	    end
-	    if ipaddr == "" and ifname ~= nil then
-		    ipaddr = ut.trim(sys.exec("ip -4 addr show dev " .. ifname .. " | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1 | tr -d '\n'"))
-	    end
-	    if ipaddr == "" then
-		    connectivity = "ERROR"
-	    end
-
-	    -- Detect WAN gateway status
-	    local gw_ping = "UP"
-	    if gateway == "" then
-		    gateway = get_gateway(interface)
-	    end
-	    if gateway == "" and ifname ~= nil and ifname ~= "" then
-		    if fs.access("/sys/class/net/" .. ifname) then
-			    gateway = ut.trim(sys.exec("ip -4 r list dev " .. ifname .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
-			    if gateway == "" then
-				gateway = ut.trim(sys.exec("ip -4 r list dev " .. ifname .. " | grep default | awk '{print $3}' | tr -d '\n'"))
-			    end
-		    end
-	    end
-	    if gateway ~= "" then
-		    local gw_ping_test = ut.trim(sys.exec("ping -w 1 -c 1 " .. gateway .. " | grep '100% packet loss'"))
-		    if gw_ping_test ~= "" then
-			    gw_ping = "DOWN"
-			    if connectivity == "OK" then
-				    connectivity = "WARNING"
-			    end
-		    end
-	    elseif gateway == "" then
-		    gw_ping = "DOWN"
-		    connectivity = "ERROR"
-	    end
-	    
-	    local latency = ""
-	    local server_ping = ""
-	    if connectivity ~= "ERROR" and ifname ~= "" and gateway ~= "" and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" then
-		    local serverip = mArray.openmptcprouter["service_addr"]
-		    if serverip == "127.0.0.1" then
-			    serverip = mArray.openmptcprouter["wan_addr"]
-		    end
-		    if serverip ~= "" then
-			    local server_ping_test = sys.exec("ping -w 1 -c 1 -I " .. ifname .. " " .. serverip)
-			    local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
-			    if server_ping_result ~= "" then
-				    server_ping = "DOWN"
-				    if connectivity == "OK" then
-					    connectivity = "WARNING"
-				    end
-			    else
-				    mArray.openmptcprouter["vps_status"] = "UP"
-				    server_ping = "UP"
-				    latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f5 | cut -d '.' -f1"))
-			    end
-		    end
-	    end
-
-	    local multipath_available
-	    if connectivity ~= "ERROR" and mArray.openmptcprouter["dns"] == true and ifname ~= nil and ifname ~= "" and gateway ~= "" and gw_ping == "UP" then
-		    -- Test if multipath can work on the connection
-		    local multipath_available_state = uci:get("openmptcprouter",interface,"mptcp_status") or ""
-		    if multipath_available_state == "" then
-			    --if mArray.openmptcprouter["service_addr"] ~= "" then
-			    --    multipath_available_state = ut.trim(sys.exec("omr-tracebox-mptcp " .. mArray.openmptcprouter["service_addr"] .. " " .. ifname .. " | grep 'MPTCP disabled'"))
-			    --else
-				    multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
-			    --end
-		    else
-			    multipath_available_state = ut.trim(sys.exec("echo '" .. multipath_available_state .. "' | grep 'MPTCP disabled'"))
-		    end
-		    if multipath_available_state == "" then
-			    multipath_available = "OK"
-		    else
-			    multipath_available_state_wan = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
-			    if multipath_available_state_wan == "" then
-				    multipath_available = "OK"
-				    if mArray.openmptcprouter["service_addr"] ~= "" and mArray.openmptcprouter["service_addr"] ~= "127.0.0.1" then
-					    mArray.openmptcprouter["server_mptcp"] = "disabled"
-				    end
-			    else
-				    multipath_available = "ERROR"
-				    connectivity = "WARNING"
-			    end
-		    end
-	    else
-		    multipath_available = "NO CHECK"
-	    end
-
-	    
-	    -- Detect if WAN get an IPv6
-	    local ipv6_discover = "NONE"
-	    if ifname ~= "" and ifname ~= nil and mArray.openmptcprouter["ipv6"] == "enabled" then
-		    local ipv6_result = _ipv6_discover(ifname)
-		    if type(ipv6_result) == "table" and #ipv6_result > 0 then
-			    local ipv6_addr_test
-			    for k,v in ipairs(ipv6_result) do
-				    if v.RecursiveDnsServer then
-					    if type(v.RecursiveDnsServer) ~= "table" then
-						    ipv6_addr_test = sys.exec("ip -6 addr | grep " .. v.RecursiveDnsServer)
-						    if ipv6_addr_test == "" then
-							    ipv6_discover = "DETECTED"
-							    if connectivity == "OK" then
-								    connectivity = "WARNING"
-							    end
-						    end
-					    end
-				    end
-			    end
-		    end
-	    end
-
-	    local publicIP = uci:get("openmptcprouter",interface,"publicip") or ""
-	    if ifname ~= nil and publicIP == "" and uci:get("openmptcprouter","settings","external_check") ~= "0" then
-		    publicIP = ut.trim(sys.exec("omr-ip-intf " .. ifname))
-	    end
-	    local whois = ""
-	    if publicIP ~= "" then
-		    whois = uci:get("openmptcprouter",interface,"asn") or ""
-		    if whois == "" and uci:get("openmptcprouter","settings","external_check") ~= "0" then
-			    --whois = ut.trim(sys.exec("whois " .. publicIP .. " | grep -i 'netname' | awk '{print $2}'"))
-			    whois = ut.trim(sys.exec("wget -4 -qO- -T 1 'http://api.iptoasn.com/v1/as/ip/" .. publicIP .. "' | jsonfilter -q -e '@.as_description'"))
-		    end
-	    end
-	    
-	    local mtu = ""
-	    if ifname ~= "" and ifname ~= nil then
-		    if fs.access("/sys/class/net/" .. ifname) then
-			    mtu = ut.trim(sys.exec("cat /sys/class/net/" .. ifname .. "/mtu | tr -d '\n'"))
-			    if mtu == "" and interface ~= nil then
-					mtu = uci:get("openmptcprouter",interface,"mtu") or ""
-			    end
-		    end
-	    end
-
-	    local data = {
-		label = section["label"] or interface,
-		name = interface,
-		link = net:adminlink(),
-		ifname = ifname,
-		ipaddr = ipaddr,
-		gateway = gateway,
-		multipath = section["multipath"],
-		status = connectivity,
-		wanip = publicIP,
-		latency = latency,
-		mtu = mtu,
-		whois = whois or "unknown",
-		qos = section["trafficcontrol"],
-		download = section["download"],
-		upload = section["upload"],
-		gw_ping = gw_ping,
-		server_ping = server_ping,
-		ipv6_discover = ipv6_discover,
-		multipath_available = multipath_available,
-		duplicateif = duplicateif,
-	    }
-
-	    if ifname ~= nil and ifname:match("^tun.*") then
-		    table.insert(mArray.tunnels, data);
-	    elseif ifname ~= nil and ifname:match("^mlvpn.*") then
-		    table.insert(mArray.tunnels, data);
-	    else
-		    table.insert(mArray.wans, data);
-	    end
-	end)
 
 	luci.http.prepare_content("application/json")
 	luci.http.write_json(mArray)
-end
-
--- This come from OverTheBox by OVH
--- Copyright 2015 OVH <OverTheBox@ovh.net>
--- Simon Lelievre (simon.lelievre@corp.ovh.com)
--- Sebastien Duponcheel <sebastien.duponcheel@ovh.net>
--- Under GPL3+
-function _ipv6_discover(interface)
-	local result = {}
-
-	--local ra6_list = (sys.exec("rdisc6 -nm " .. interface))
-	local ra6_list = (sys.exec("rdisc6 -n1 -r1 " .. interface))
-	-- dissect results
-	local lines = {}
-	local index = {}
-	ra6_list:gsub('[^\r\n]+', function(c)
-	    table.insert(lines, c)
-	    if c:match("Hop limit") then
-		    table.insert(index, #lines)
-	    end
-	end)
-	local ra6_result = {}
-	for k,v in ipairs(index) do
-		local istart = v
-		local iend = index[k+1] or #lines
-
-		local entry = {}
-		for i=istart,iend - 1 do
-			local level = lines[i]:find('%w')
-			local line = lines[i]:sub(level)
-
-			local param, value
-			if line:match('^from') then
-				param, value = line:match('(from)%s+(.*)$')
-			else
-				param, value = line:match('([^:]+):(.*)$')
-				-- Capitalize param name and remove spaces
-				param = param:gsub("(%a)([%w_']*)", function(first, rest) return first:upper()..rest:lower() end):gsub("[%s-]",'')
-				param = param:gsub("%.$", '')
-				-- Remove text between brackets, seconds and spaces
-				value = value:lower()
-				value = value:gsub("%(.*%)", '')
-				value = value:gsub("%s-seconds%s-", '')
-				value = value:gsub("^%s+", '')
-				value = value:gsub("%s+$", '')
-			end
-
-			if entry[param] == nil then
-				entry[param] = value
-			elseif type(entry[param]) == "table" then
-				table.insert(entry[param], value)
-			else
-				old = entry[param]
-				entry[param] = {}
-				table.insert(entry[param], old)
-				table.insert(entry[param], value)
-			end
-		end
-		table.insert(ra6_result, entry)
-	end
-	return ra6_result
-end
-
-function set_ipv6_state(disable_ipv6)
-	-- Disable/Enable IPv6 support
-	--luci.sys.exec("sysctl -qw net.ipv6.conf.all.disable_ipv6=%s" % disable_ipv6)
-	--luci.sys.exec("sed -i 's:^net.ipv6.conf.all.disable_ipv6=[0-9]*:net.ipv6.conf.all.disable_ipv6=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % disable_ipv6)
-	luci.sys.exec("sysctl -qw net.ipv6.conf.all.disable_ipv6=0")
-	luci.sys.exec("sed -i 's:^net.ipv6.conf.all.disable_ipv6=[0-9]*:net.ipv6.conf.all.disable_ipv6=0:' /etc/sysctl.d/zzz_openmptcprouter.conf" % disable_ipv6)
-
-	-- Disable/Enable IPv6 for firewall
-	ucic:set("firewall",ucic:get_first("firewall","defaults"),"disable_ipv6",disable_ipv6)
-	ucic:save("firewall")
-	ucic:commit("firewall")
-
-	-- Disable/Enable IPv6 in OpenMPTCProuter settings
-	ucic:set("openmptcprouter","settings","disable_ipv6",disable_ipv6)
-	ucic:commit("openmptcprouter")
-
-	-- Disable/Enable route announce of IPv6
-	if disable_ipv6 == "1" then
-		ucic:set("dhcp","lan","ra_default","0")
-		ucic:set("network","lan","ipv6","0")
-		--luci.sys.call("uci -q del network.lan.ipifaceid")
-	else
-	--	ucic:set("dhcp","lan","ra_default","1")
-		ucic:set("network","lan","ipv6","1")
-		ucic:set("network","lan","delegate","0")
-		--ucic:set("network","lan","ipifaceid","random")
-	end
-	ucic:save("network")
-	ucic:commit("network")
-
-	-- Disable/Enable IPv6 DHCP and change Shadowsocks listen address
-	if disable_ipv6 == "1" then
-		luci.sys.call("uci -q del dhcp.lan.dhcpv6")
-		luci.sys.call("uci -q del dhcp.lan.ra")
-		luci.sys.call("uci -q del dhcp.lan.ra_default")
-		luci.sys.call("uci -q del dhcp.lan.ra_management")
-		luci.sys.call("uci -q del dhcp.lan.ra_preference")
-		ucic:set("shadowsocks-libev","hi","local_address","0.0.0.0")
-	else
-		ucic:set("dhcp","lan","dhcpv6","server")
-		ucic:set("dhcp","lan","ra","server")
-		ucic:set("dhcp","lan","ra_default","1")
-		ucic:set("dhcp","lan","ra_preference","high")
-		ucic:set("dhcp","lan","ra_management","1")
-		ucic:set("shadowsocks-libev","hi","local_address","::")
-	end
-	ucic:save("dhcp")
-	ucic:commit("dhcp")
-	--if disable_ipv6 == "1" then
-	--	luci.sys.exec("/etc/init.d/odhcpd stop >/dev/null 2>&1")
-	--	luci.sys.exec("/etc/init.d/odhcpd disable >/dev/null 2>&1")
-	--else
-	--	luci.sys.exec("/etc/init.d/odhcpd start >/dev/null 2>&1")
-	--	luci.sys.exec("/etc/init.d/odhcpd enable >/dev/null 2>&1")
-	--end
 end

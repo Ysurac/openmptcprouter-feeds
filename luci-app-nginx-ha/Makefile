@@ -13,6 +13,7 @@ KCONFIG:=CONFIG_NGINX_STREAM_CORE_MODULE
 
 PKG_LICENSE:=MIT
 
-include ../luci/luci.mk
+#include ../luci/luci.mk
+include $(TOPDIR)/feeds/luci/luci.mk
 
 # call BuildPackage - OpenWrt buildroot signature

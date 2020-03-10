@@ -1,6 +1,6 @@
 #
 # Copyright (C) 2015 OVH
-# Copyright (C) 2018-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter project
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -10,10 +10,10 @@ include $(TOPDIR)/rules.mk
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/angt/glorytun.git
-PKG_SOURCE_VERSION:=db718d59426957eef89357d5b58ae59cae2f8c5d
+PKG_SOURCE_VERSION:=a9408e799ddbb74b5476fba70a495770322cd327
 PKG_NAME:=glorytun-udp
-PKG_VERSION:=0.1.1-$(PKG_SOURCE_VERSION)
-PKG_RELEASE:=22
+PKG_VERSION:=0.3.0-$(PKG_SOURCE_VERSION)
+PKG_RELEASE:=23
 
 PKG_FIXUP:=autoreconf
 
