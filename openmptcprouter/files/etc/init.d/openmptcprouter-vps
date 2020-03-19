@@ -513,6 +513,7 @@ _set_vpn_ip() {
 	vpnip_remote_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.localip')"
 	vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep via | grep -v default | grep -v / | grep -v metric | awk '{print $1}' | tr -d "\n")
 	[ -z "$vpnip_remote" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep kernel | awk '{print $1}' | tr -d "\n")
+	[ -z "$vpnip_remote" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep "proto static src" | awk '{print $3}' | tr -d "\n")
 	if [ "$vpnip_remote" != "" ] && [ "$vpnip_local" != "" ] && ([ "$vpnip_remote" != "$vpnip_remote_current" ] || [ "$vpnip_local" != "$vpnip_local_current" ]); then
 		settings='{"remoteip" : "'$vpnip_local'","localip" : "'$vpnip_remote'"}'
 		result=$(_set_json "vpnips" "$settings")
@@ -552,30 +553,36 @@ _set_client2client() {
 _vps_firewall_redirect_port() {
 	local src proto src_dport
 	config_get src $1 src
-	config_get proto $1 proto
+	config_get proto $1 proto "tcp udp"
 	config_get src_dport $1 src_dport
 	config_get family $1 family "ipv4"
 	[ "$src" = "vpn" ] && [ -n "$proto" ] && [ -n "$src_dport" ] && {
 		if [ "$proto" = "tcp udp" ]; then
 			if [ "$family" = "ipv4" ]; then
-				vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port tcp")
+				vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR $username redirect router $src_dport port tcp")
+				[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port tcp")
 			else
-				vpsfw6list=$(echo "$vpsfw6list" | grep -v "$port	# OMR redirect router $src_dport port tcp")
+				vpsfw6list=$(echo "$vpsfw6list" | grep -v "$port	# OMR $username redirect router $src_dport port tcp")
+				[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$port	# OMR redirect router $src_dport port tcp")
 			fi
 			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "tcp","fwtype" : "DNAT","ipproto" : "'$family'"}'
 			_set_json "shorewallopen" "$settings"
 			if [ "$family" = "ipv4" ]; then
-				vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port udp")
+				vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR $username redirect router $src_dport port udp")
+				[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port udp")
 			else
-				vpsfw6list=$(echo "$vpsfw6list" | grep -v "$port	# OMR redirect router $src_dport port udp")
+				vpsfw6list=$(echo "$vpsfw6list" | grep -v "$port	# OMR $username redirect router $src_dport port udp")
+				[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$port	# OMR redirect router $src_dport port udp")
 			fi
 			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "udp","fwtype" : "DNAT","ipproto" : "'$family'"}'
 			_set_json "shorewallopen" "$settings"
 		else
 			if [ "$family" = "ipv4" ]; then
-				vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port $proto")
+				vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR $username redirect router $src_dport port $proto")
+				[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$port	# OMR redirect router $src_dport port $proto")
 			else
-				vpsfw6list=$(echo "$vpsfw6list" | grep -v "$port	# OMR redirect router $src_dport port $proto")
+				vpsfw6list=$(echo "$vpsfw6list" | grep -v "$port	# OMR $username redirect router $src_dport port $proto")
+				[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$port	# OMR redirect router $src_dport port $proto")
 			fi
 			settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT","ipproto" : "'$family'"}'
 			_set_json "shorewallopen" "$settings"
@@ -609,6 +616,7 @@ _vps_firewall_close_port() {
 _set_vps_firewall() {
 	fwservername=$1
 	[ -z "$servername" ] && servername=$fwservername
+	[ -z "$fwservername" ] && fwservername=$servername
 	[ "$(uci -q get openmptcprouter.${fwservername}.nofwredirect)" = "1" ] && return
 	[ -z "$(uci -q get openmptcprouter.${fwservername}.username)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${fwservername}.password)" ] && return
@@ -623,6 +631,7 @@ _set_vps_firewall() {
 		EOF
 		return
 	}
+	username="$(uci -q get openmptcprouter.${fwservername}.username)"
 	settings='{"name" : "redirect router"}'
 	fw_list=$(_set_json "shorewalllist" "$settings")
 	vpsfwlist=$(echo $fw_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')
