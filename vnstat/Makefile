@@ -1,6 +1,6 @@
 #
 # Copyright (C) 2006-2014 OpenWrt.org
-# Copyright (C) 2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+# Copyright (C) 2019-2020 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -9,12 +9,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=vnstat
-PKG_VERSION:=2.4
-PKG_RELEASE:=2
+PKG_VERSION:=2.6
+PKG_RELEASE:=3
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=http://humdi.net/vnstat
-PKG_HASH:=a0955999abd56d5463d257ffdccc9b1e9ad9ea504de81e64ba4c197f1245abaa
+PKG_HASH:=89276e0a7281943edb554b874078278ad947dc312938a2451e03eb80679f7ff7
 PKG_MAINTAINER:=Ycarus <ycarus@zugaina.org>
 
 PKG_INSTALL:=1
@@ -60,6 +60,7 @@ endef
 define Package/vnstat/conffiles
 /etc/vnstat.conf
 /etc/config/vnstat
+/var/lib/vnstat.db
 endef
 
 define Build/Compile/vnstat
