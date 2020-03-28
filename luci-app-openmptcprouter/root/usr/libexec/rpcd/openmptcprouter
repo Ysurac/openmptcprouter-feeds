@@ -775,11 +775,17 @@ function interfaces_status()
 					end
 				else
 					mArray.openmptcprouter["vps_admin"] = false
-					mArray.openmptcprouter["vps_admin_error_msg"] = "No answer"
+					mArray.openmptcprouter["vps_admin_error_msg"] = "No result"
 				end
 			else
 				mArray.openmptcprouter["vps_admin"] = false
 				mArray.openmptcprouter["vps_admin_error_msg"] = "No token yet available"
+			end
+			if mArray.openmptcprouter["vps_admin"] == false then
+				local vpstest = sys.exec('curl -4 --max-time ' .. timeout .. ' -s -k https://' .. serverip .. ':' .. adminport .. '/')
+				if vpstest == "" then
+					mArray.openmptcprouter["vps_admin_error_msg"] = mArray.openmptcprouter["vps_admin_error_msg"] .. " - No API script answer"
+				end
 			end
 		end
 	end)
@@ -790,8 +796,8 @@ function interfaces_status()
 	end
 	-- Check openmptcprouter service are running
 	mArray.openmptcprouter["tun_service"] = false
-	mArray.openmptcprouter["tun_state"] = ""
-	mArray.openmptcprouter["tun6_state"] = ""
+	mArray.openmptcprouter["tun_state"] = "DOWN"
+	mArray.openmptcprouter["tun6_state"] = "DOWN"
 	if string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?glorytun(-udp)?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?dsvpn?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?mlvpn?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?openvpn?$'"), "%d+") then
 		mArray.openmptcprouter["tun_service"] = true
 		mArray.openmptcprouter["tun_ip"] = get_ip("omrvpn")
@@ -829,6 +835,26 @@ function interfaces_status()
 		end
 	elseif uci:get("openmptcprouter","settings","vpn") == "none" then
 		mArray.openmptcprouter["tun_service"] = true
+	end
+	
+	mArray.openmptcprouter["multi_vpn"] = false
+	if uci:get("openmptcprouter","settings","vpn") ~= "none" then
+		current_vpn = uci:get("openmptcprouter","settings","vpn")
+		if uci:get("glorytun","vpn","enable") == "1" and uci:get("glorytun","vpn","proto") == "tcp" and current_vpn ~= "glorytun_tcp" then
+			mArray.openmptcprouter["multi_vpn"] = true
+		end
+		if uci:get("glorytun","vpn","enable") == "1" and uci:get("glorytun","vpn","proto") == "udp" and current_vpn ~= "glorytun_udp" then
+			mArray.openmptcprouter["multi_vpn"] = true
+		end
+		if uci:get("dsvpn","vpn","enable") == "1" and current_vpn ~= "dsvpn" then
+			mArray.openmptcprouter["multi_vpn"] = true
+		end
+		if uci:get("mlvpn","general","enable") == "1" and current_vpn ~= "mlvpn" then
+			mArray.openmptcprouter["multi_vpn"] = true
+		end
+		if uci:get("openvpn","omr","enabled") == "1" and current_vpn ~= "openvpn" then
+			mArray.openmptcprouter["multi_vpn"] = true
+		end
 	end
 	
 	-- check Shadowsocks is running
