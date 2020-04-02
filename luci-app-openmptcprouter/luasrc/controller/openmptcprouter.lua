@@ -42,7 +42,7 @@ function wizard_add()
 	local add_server_name = luci.http.formvalue("add_server_name") or ""
 	if add_server ~= "" and add_server_name ~= "" then
 		ucic:set("openmptcprouter",add_server_name:gsub("[^%w_]+","_"),"server")
-		ucic:set("openmptcprouter",add_server_name:gsub("[^%w_]+","_"),"user","openmptcprouter")
+		ucic:set("openmptcprouter",add_server_name:gsub("[^%w_]+","_"),"username","openmptcprouter")
 		gostatus = false
 	end
 
