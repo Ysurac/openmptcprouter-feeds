@@ -49,7 +49,7 @@ return L.view.extend({
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
 
-		s = m.section(form.GridSection, 'ips', _('Ports destination'));
+		s = m.section(form.GridSection, 'dest_port', _('Ports destination'));
 		s.addremove = true;
 		s.anonymous = true;
 
@@ -70,7 +70,7 @@ return L.view.extend({
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
 
-		s = m.section(form.GridSection, 'mac', _('MAC-Address'));
+		s = m.section(form.GridSection, 'macs', _('MAC-Address'));
 		s.addremove = true;
 		s.anonymous = true;
 
