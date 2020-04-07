@@ -59,7 +59,7 @@ mptcp:value("on", translate("enabled"))
 mptcp:value("off", translate("disabled"))
 mptcp:value("master", translate("master"))
 mptcp:value("backup", translate("backup"))
-mptcp:value("handover", translate("handover"))
+--mptcp:value("handover", translate("handover"))
 mptcp.default = "off"
 
 
