@@ -471,6 +471,9 @@ function wizard_add()
 			luci.sys.call("/etc/init.d/shadowsocks rules_down >/dev/null 2>/dev/null")
 		end
 	else
+		if serversnb == 0 then
+			shadowsocks_disable = 1
+		end
 		ucic:set("shadowsocks-libev","sss0","key","")
 		ucic:set("shadowsocks-libev","sss0","disabled",shadowsocks_disable)
 		ucic:save("shadowsocks-libev")
