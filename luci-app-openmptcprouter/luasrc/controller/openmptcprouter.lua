@@ -473,6 +473,8 @@ function wizard_add()
 	else
 		if serversnb == 0 then
 			shadowsocks_disable = 1
+		else
+			shadowsocks_disable = 0
 		end
 		ucic:set("shadowsocks-libev","sss0","key","")
 		ucic:set("shadowsocks-libev","sss0","disabled",shadowsocks_disable)
@@ -594,7 +596,6 @@ function wizard_add()
 	--ucic:set("openmptcprouter","vps","username","openmptcprouter")
 	--ucic:set("openmptcprouter","vps","password",openmptcprouter_vps_key)
 	--ucic:set("openmptcprouter","vps","get_config","1")
-	local shadowsocks_disable = luci.http.formvalue("disableshadowsocks") or "0"
 	ucic:set("openmptcprouter","settings","shadowsocks_disable",shadowsocks_disable)
 	ucic:set("openmptcprouter","settings","vpn",default_vpn)
 	ucic:delete("openmptcprouter","settings","master_lcintf")
