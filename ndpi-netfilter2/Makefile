@@ -11,7 +11,7 @@ include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=ndpi-netfilter2
 PKG_RELEASE:=2
-PKG_REV:=0bbd591bd790530d55056b9da35797aab98fa93f
+PKG_REV:=7aa4c293f23d6ab1fac5574c8e9c486cb1ced93d
 PKG_VERSION:=3.2-$(PKG_REV)
 
 PKG_SOURCE_PROTO:=git
