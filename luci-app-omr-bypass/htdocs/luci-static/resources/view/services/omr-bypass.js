@@ -21,7 +21,7 @@ return L.view.extend({
 	render: function(hosts) {
 		var m, s, o;
 
-		m = new form.Map('omr-bypass', _('Bypass'));
+		m = new form.Map('omr-bypass', _('OMR-Bypass'));
 
 		s = m.section(form.GridSection, 'domains', _('Domains'));
 		s.addremove = true;
