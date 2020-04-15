@@ -35,7 +35,7 @@ MY_DEPENDS := \
     wireless-tools \
     libiwinfo-lua \
     ca-bundle ca-certificates libustream-openssl \
-    luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-base \
+    luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-theme-argon luci-base \
     luci-app-nginx-ha luci-app-omr-tracker luci-app-omr-dscp \
     luci-app-sqm sqm-scripts-extra \
     luci-app-vnstat2 omr-quota luci-app-omr-quota \
@@ -79,7 +79,8 @@ MY_DEPENDS := \
     !TARGET_mvebu:kmod-usb-net-huawei-cdc-ncm !TARGET_mvebu:kmod-usb-net-rndis !TARGET_mvebu:kmod-usb-net-cdc-ether !TARGET_mvebu:kmod-usb-net-ipheth !TARGET_mvebu:usbmuxd \
     kmod-rt2800-usb kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su \
     !TARGET_mvebu:luci-proto-qmi wpad-basic kmod-mt7601u kmod-rtl8187 \
-    wireguard luci-app-mlvpn mlvpn 464xlat !TARGET_mvebu:kmod-usb-net-smsc75xx kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-advanced-reboot luci-app-https-dns-proxy kmod-tcp-nanqinlang iptables-mod-ipopt igmpproxy ss
+    wireguard luci-app-mlvpn mlvpn 464xlat !TARGET_mvebu:kmod-usb-net-smsc75xx kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-advanced-reboot luci-app-https-dns-proxy kmod-tcp-nanqinlang iptables-mod-ipopt igmpproxy ss mptcpd
+# luci-theme-openwrt-2020
 #    softethervpn5-client softethervpn5-server
 
 #    luci-app-mlvpn ubond \
