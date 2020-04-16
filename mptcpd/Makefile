@@ -16,6 +16,7 @@ PKG_RELEASE:=1
 PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 
 PKG_FORTIFY_SOURCE:=2
+PKG_INSTALL:=1
 PKG_BUILD_PARALLEL:=1
 PKG_BUILD_DEPENDS:=!USE_GLIBC:argp-standalone
 
@@ -40,8 +41,13 @@ define Build/Compile
 endef
 
 define Package/$(PKG_NAME)/install
-	$(INSTALL_DIR) $(1)/usr/sbin
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/src/mptcpd $(1)/usr/sbin/$(PKG_NAME)
+	$(INSTALL_DIR) $(1)/usr/bin
+	$(CP) $(PKG_INSTALL_DIR)/usr/bin/mptcpd $(1)/usr/bin/mptcpd
+	$(INSTALL_DIR) $(1)/usr/include/mptcpd
+	$(CP) $(PKG_INSTALL_DIR)/usr/include/mptcpd/*.h $(1)/usr/include/
+	$(INSTALL_DIR) $(1)/usr/lib/mptcpd
+	$(CP) $(PKG_INSTALL_DIR)/usr/lib/* $(1)/usr/lib/
+	$(CP) $(PKG_INSTALL_DIR)/usr/lib/mptcpd/* $(1)/usr/lib/mptcpd/
 	$(INSTALL_DIR) $(1)/etc/mptcpd
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/etc/mptcpd.conf $(1)/etc/mptcpd/mptcpd.conf
 endef
