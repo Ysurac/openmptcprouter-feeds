@@ -115,12 +115,12 @@ set_server_all_routes() {
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "${OMR_TRACKER_INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath)
 	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath || echo "off")
-	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show $serverip | grep nexthop | grep $OMR_TRACKER_DEVICE_GATEWAY | grep $OMR_TRACKER_INTERFACE)" = "" ] && [ "$multipath_config_route" != "off" ]; then
+	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show $serverip | grep nexthop | grep $OMR_TRACKER_DEVICE_GATEWAY | grep $OMR_TRACKER_DEVICE)" = "" ] && [ "$multipath_config_route" != "off" ]; then
 		routesintf=""
 		config_load network
 		config_foreach set_routes_intf interface
 		[ -n "$routesintf" ] && {
-			_log "Set server $server ($serverip) default route $routesintf"
+			_log "Set server $server default route $serverip $routesintf"
 			ip route replace $serverip scope global $routesintf
 		}
 	fi
@@ -533,10 +533,23 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
 		fi
 	fi
-	if [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ] && [ -n "$(curl -s -m 1 -X GET http://$OMR_TRACKER_DEVICE_GATEWAY/api/webserver/SesTokInfo)" ]; then
-		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.manufacturer='huawei'
+	protocol="$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)"
+	if [ "$proto" = "qmi" ]; then
+		intfdata="$(omr-qmi $OMR_TRACKER_DEVICE all | tr -d '\n')"
+		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.operator=$(echo $intfdata | awk -F";" '{print $2}')
+		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.number=$(echo $intfdata | awk -F";" '{print $3}')
+		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state=$(echo $intfdata | awk -F";" '{print $4}')
+	elif [ "$proto" = "modemmanager" ]; then
+		intfdata="$(omr-modemmanager $OMR_TRACKER_DEVICE all)"
+		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.operator=$(echo $intfdata | awk -F";" '{print $2}')
+		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.number=$(echo $intfdata | awk -F";" '{print $3}')
+		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state=$(echo $intfdata | awk -F";" '{print $4}')
 	else
-		uci -q delete openmptcprouter.$OMR_TRACKER_INTERFACE.manufacturer
+		if [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ] && [ -n "$(curl -s -m 1 -X GET http://$OMR_TRACKER_DEVICE_GATEWAY/api/webserver/SesTokInfo)" ]; then
+			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.manufacturer='huawei'
+		else
+			uci -q delete openmptcprouter.$OMR_TRACKER_INTERFACE.manufacturer
+		fi
 	fi
 	if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ]; then
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(( $(date +"%s") - 3400 ))
