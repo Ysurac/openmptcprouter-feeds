@@ -167,6 +167,13 @@ _get_vps_config() {
 		EOF
 	fi
 
+	vpsinternet="$(echo "$vps_config" | jsonfilter -q -e '@.network.internet')"
+	if [ "$vpsinternet" = "false" ] && [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.settings.external_check='0'
+			commit openmptcprouter
+		EOF
+	fi
 
 	vps_kernel="$(echo "$vps_config" | jsonfilter -q -e '@.vps.kernel')"
 	vps_machine="$(echo "$vps_config" | jsonfilter -q -e '@.vps.machine')"
@@ -675,6 +682,15 @@ _set_config_from_vps() {
 	vps_lastchange="$(echo "$vps_config" | jsonfilter -q -e '@.vps.lastchange')"
 	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
 	[ -z "$user_permission" ] && user_permission="rw"
+
+	vpsinternet="$(echo "$vps_config" | jsonfilter -q -e '@.network.internet')"
+	if [ "$vpsinternet" = "false" ] && [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.settings.external_check='0'
+		EOF
+		logger -t "OMR-VPS" "OMR-Tracker restart..."
+		/etc/init.d/omr-tracker restart
+	fi
 
 	# Set current VPN
 	current_vpn="$(uci -q get openmptcprouter.settings.vpn)"
