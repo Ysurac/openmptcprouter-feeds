@@ -1,27 +1,29 @@
 #!/bin/sh
 MODEM_INTF=$1
 [ -z "$MODEM_INTF" ] && return
+INFO=$2
 SIGNAL_INFO=$(timeout 1 uqmi -d $MODEM_INTF --get-signal-info)
 [ -z "$SIGNAL_INFO" ] && return
-TYPE=$(echo $SIGNAL_INFO | jsonfilter -e '@.type')
+TYPE=$(echo $SIGNAL_INFO | jsonfilter -e '@.type' | tr -d '\n')
+PERCENT=""
 if [ "$TYPE" = "gsm" ]; then
-	RSSI=$(echo $SIGNAL_INFO | jsonfilter -e '@.rssi')
+	RSSI=$(echo $SIGNAL_INFO | jsonfilter -e '@.rssi' | tr -d '\n')
 	[ -z "$RSSI" ] && return
 	ASU=$(((RSSI + 113) / 2 ))
 	PERCENT=$((((ASU - 0) * 100) / ( 91 - 0 )))
-	echo $PERCENT
-fi
-if [ "$TYPE" = "umts" ]; then
-	RSCP=$(echo $SIGNAL_INFO | jsonfilter -e '@.rscp')
+elif [ "$TYPE" = "umts" ]; then
+	RSCP=$(echo $SIGNAL_INFO | jsonfilter -e '@.rscp' | tr -d '\n')
 	[ -z "$RSCP" ] && return
 	ASU=$((RSCP + 116))
 	PERCENT=$((((ASU - 0) * 100) / ( 91 - 0 )))
-	echo $PERCENT
-fi
-if [ "$TYPE" = "lte" ]; then
-	RSRP=$(echo $SIGNAL_INFO | jsonfilter -e '@.rsrp')
+elif [ "$TYPE" = "lte" ]; then
+	RSRP=$(echo $SIGNAL_INFO | jsonfilter -e '@.rsrp' | tr -d '\n')
 	[ -z "$RSRP" ] && return
 	ASU=$((RSRP + 140))
 	PERCENT=$((((ASU - 3) * 100) / ( 70 - 3 )))
-	echo $PERCENT
 fi
+[ -z "$INFO" ] && echo $PERCENT && return
+OPERATOR=$(timeout 1 uqmi -d $MODEM_INTF --get-serving-system | jsonfilter -e '@.plmn_description' | tr -d '\n')
+NUMBER=$(timeout 1 uqmi -d $MODEM_INTF --msisdn | jsonfilter -e '@' | tr -d '\n')
+STATE=$(timeout 1 uqmi -d $MODEM_INTF --get-data-status | jsonfilter -e '@' | tr -d '\n')
+[ "$INFO" = "all" ] && echo "$PERCENT;$OPERATOR;$NUMBER;$TATE"

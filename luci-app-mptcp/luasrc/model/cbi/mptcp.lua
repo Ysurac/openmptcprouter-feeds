@@ -23,14 +23,14 @@ mtcppm:value("default", translate("default"))
 mtcppm:value("fullmesh", translate("fullmesh"))
 mtcppm:value("ndiffports", translate("ndiffports"))
 mtcppm:value("binder", translate("binder"))
-if uname.release:sub(1,4) == "4.19" then
+if uname.release:sub(1,4) ~= "4.14" then
 	mtcppm:value("netlink", translate("Netlink"))
 end
 local mtcpsch = s:option(ListValue, "mptcp_scheduler", translate("Multipath TCP scheduler"))
 mtcpsch:value("default", translate("default"))
 mtcpsch:value("roundrobin", translate("round-robin"))
 mtcpsch:value("redundant", translate("redundant"))
-if uname.release:sub(1,4) == "4.19" then
+if uname.release:sub(1,4) ~= "4.14" then
 	mtcpsch:value("blest", translate("BLEST"))
 	mtcpsch:value("ecf", translate("ECF"))
 end
@@ -59,7 +59,7 @@ mptcp:value("on", translate("enabled"))
 mptcp:value("off", translate("disabled"))
 mptcp:value("master", translate("master"))
 mptcp:value("backup", translate("backup"))
-mptcp:value("handover", translate("handover"))
+--mptcp:value("handover", translate("handover"))
 mptcp.default = "off"
 
 

@@ -42,7 +42,7 @@ function wizard_add()
 	local add_server_name = luci.http.formvalue("add_server_name") or ""
 	if add_server ~= "" and add_server_name ~= "" then
 		ucic:set("openmptcprouter",add_server_name:gsub("[^%w_]+","_"),"server")
-		ucic:set("openmptcprouter",add_server_name:gsub("[^%w_]+","_"),"user","openmptcprouter")
+		ucic:set("openmptcprouter",add_server_name:gsub("[^%w_]+","_"),"username","openmptcprouter")
 		gostatus = false
 	end
 
@@ -196,6 +196,12 @@ function wizard_add()
 			ucic:delete("qos",intf)
 			ucic:save("qos")
 			ucic:commit("qos")
+			ucic:delete("openmptcprouter",intf)
+			ucic:save("openmptcprouter")
+			ucic:commit("openmptcprouter")
+			ucic:delete("macvlan",intf)
+			ucic:save("macvlan")
+			ucic:commit("macvlan")
 			if defif ~= nil and defif ~= "" then
 				luci.sys.call("uci -q del_list vnstat.@vnstat[-1].interface=" .. defif)
 			end
@@ -209,6 +215,7 @@ function wizard_add()
 	-- Set interfaces settings
 	local interfaces = luci.http.formvaluetable("intf")
 	for intf, _ in pairs(interfaces) do
+		local label = luci.http.formvalue("cbid.network.%s.label" % intf) or ""
 		local proto = luci.http.formvalue("cbid.network.%s.proto" % intf) or "static"
 		local ipaddr = luci.http.formvalue("cbid.network.%s.ipaddr" % intf) or ""
 		local netmask = luci.http.formvalue("cbid.network.%s.netmask" % intf) or ""
@@ -217,6 +224,7 @@ function wizard_add()
 		if proto ~= "other" then
 			ucic:set("network",intf,"proto",proto)
 		end
+		ucic:set("network",intf,"label",label)
 		ucic:set("network",intf,"ipaddr",ipaddr)
 		ucic:set("network",intf,"netmask",netmask)
 		ucic:set("network",intf,"gateway",gateway)
@@ -463,6 +471,11 @@ function wizard_add()
 			luci.sys.call("/etc/init.d/shadowsocks rules_down >/dev/null 2>/dev/null")
 		end
 	else
+		if serversnb == 0 then
+			shadowsocks_disable = 1
+		else
+			shadowsocks_disable = 0
+		end
 		ucic:set("shadowsocks-libev","sss0","key","")
 		ucic:set("shadowsocks-libev","sss0","disabled",shadowsocks_disable)
 		ucic:save("shadowsocks-libev")
@@ -583,7 +596,6 @@ function wizard_add()
 	--ucic:set("openmptcprouter","vps","username","openmptcprouter")
 	--ucic:set("openmptcprouter","vps","password",openmptcprouter_vps_key)
 	--ucic:set("openmptcprouter","vps","get_config","1")
-	local shadowsocks_disable = luci.http.formvalue("disableshadowsocks") or "0"
 	ucic:set("openmptcprouter","settings","shadowsocks_disable",shadowsocks_disable)
 	ucic:set("openmptcprouter","settings","vpn",default_vpn)
 	ucic:delete("openmptcprouter","settings","master_lcintf")
