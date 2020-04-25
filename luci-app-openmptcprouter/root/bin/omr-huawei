@@ -1,14 +1,47 @@
 #!/bin/sh
 MODEM_IP=`echo $1 | grep -E '^(192\.168|10\.|172\.1[6789]\.|172\.2[0-9]\.|172\.3[01]\.)'`
 [ -z "$MODEM_IP" ] && return
+INFO=$2
 SESTOK=$(curl -s -m 1 -X GET "http://$MODEM_IP/api/webserver/SesTokInfo")
 [ -z "$SESTOK" ] && return
 COOKIE=$(echo $SESTOK | sed -ne '/SesInfo/{s/.*<SesInfo>\(.*\)<\/SesInfo>.*/\1/p;q;}')
 COOKIE=$(echo $COOKIE | sed 's:SessionID=::')
 TOKEN=$(echo $SESTOK | sed -ne '/TokInfo/{s/.*<TokInfo>\(.*\)<\/TokInfo>.*/\1/p;q;}')
-curl -s -m 1 -X GET "http://$MODEM_IP/api/monitoring/status" -H "Cookie: SessionID=$COOKIE" -H "__RequestVerificationToken: $TOKEN" -H "Content-Type: text/xml" > /tmp/huawei-$1-status
-SIGNAL_ICON=$(cat /tmp/huawei-$1-status | grep SignalIcon | sed -e 's/<[^>]*>//g')
-MAX_SIGNAL=$(cat /tmp/huawei-$1-status | grep maxsignal | sed -e 's/<[^>]*>//g')
-if [ -n "$SIGNAL_ICON" ] && [ -n "$MAX_SIGNAL" ]; then
-        echo $((100 * ${SIGNAL_ICON} / ${MAX_SIGNAL}))
+tmpfile=$(mktemp)
+curl -s -m 1 -X GET "http://$MODEM_IP/api/monitoring/status" -H "Cookie: SessionID=$COOKIE" -H "__RequestVerificationToken: $TOKEN" -H "Content-Type: text/xml" > ${tmpfile}
+SIGNAL_STRENGTH=$(cat ${tmpfile} | grep SignalStrength | sed -e 's/<[^>]*>//g' | sed 's/[^\x00-\x7F]//g')
+if [ "$SIGNAL_STRENGTH" = "" ]; then
+	SIGNAL_ICON=$(cat ${tmpfile} | grep SignalIcon | sed -e 's/<[^>]*>//g' | sed 's/[^\x00-\x7F]//g')
+	MAX_SIGNAL=$(cat ${tmpfile} | grep maxsignal | sed -e 's/<[^>]*>//g' | sed 's/[^\x00-\x7F]//g')
+	if [ -n "$SIGNAL_ICON" ] && [ -n "$MAX_SIGNAL" ]; then
+	        PERCENT=$((100 * ${SIGNAL_ICON} / ${MAX_SIGNAL}))
+	fi
+else
+	echo "signal"
+	PERCENT=$SIGNAL_STRENGTH
 fi
+
+STATE=""
+CONNECTSTATE=$(cat ${tmpfile} | grep ConnectionStatus | sed -e 's/<[^>]*>//g' | sed 's/[^\x00-\x7F]//g')
+[ "$CONNECTSTATE" = "201" ] && STATE="connection failed, bandwidth exceeded"
+[ "$CONNECTSTATE" = "900" ] && STATE="connecting"
+[ "$CONNECTSTATE" = "901" ] && STATE="connected"
+[ "$CONNECTSTATE" = "902" ] && STATE="disconnected"
+[ "$CONNECTSTATE" = "903" ] && STATE="disconnecting"
+[ "$CONNECTSTATE" = "904" ] && STATE="connection failed or disabled"
+TYPE=""
+NETWORKTYPE=$(cat ${tmpfile} | grep CurrentNetworkType\> | sed -e 's/<[^>]*>//g' | sed 's/[^\x00-\x7F]//g' | tr -d "\n")
+[ "$NETWORKTYPE" = "2" ] || [ "$NETWORKTYPE" = "3" ] && TYPE="2g"
+[ "$NETWORKTYPE" = "4" ] || [ "$NETWORKTYPE" = "5" ] || [ "$NETWORKTYPE" = "6" ] || [ "$NETWORKTYPE" = "7" ] || [ "$NETWORKTYPE" = "8" ] || [ "$NETWORKTYPE" = "9" ] || [ "$NETWORKTYPE" = "17" ] || [ "$NETWORKTYPE" = "18" ] || [ "$NETWORKTYPE" = "41" ] || [ "$NETWORKTYPE" = "44" ] || [ "$NETWORKTYPE" = "45" ] || [ "$NETWORKTYPE" = "46" ] || [ "$NETWORKTYPE" = "64" ] || [ "$NETWORKTYPE" = "65" ] && TYPE="3g"
+[ "$NETWORKTYPE" = "19" ] || [ "$NETWORKTYPE" = "101" ] && TYPE="lte"
+rm -f ${tmpfile}
+OPERATOR=""
+if [ "$CONNECTSTATE" = "901" ]; then
+	tmpfile=$(mktemp)
+	curl -s -m 1 -X GET "http://$MODEM_IP/api/net/current-plmn" -H "Cookie: SessionID=$COOKIE" -H "__RequestVerificationToken: $TOKEN" -H "Content-Type: text/xml" > ${tmpfile}
+	OPERATOR=$(cat ${tmpfile} | grep FullName | sed -e 's/<[^>]*>//g' | sed 's/[^\x00-\x7F]//g')
+	rm -f ${tmpfile}
+fi
+NUMBER=""
+[ -z "$INFO" ] && echo "$PERCENT"
+[ "$INFO" = "all" ] && echo "$PERCENT;$OPERATOR;$NUMBER;$STATE;$TYPE"
