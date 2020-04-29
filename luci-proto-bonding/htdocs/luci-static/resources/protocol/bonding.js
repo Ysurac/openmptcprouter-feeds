@@ -2,24 +2,30 @@
 'require ui';
 'require uci';
 'require form';
+'require fs';
 'require network';
+'require tools.widgets as widgets';
+
 
 function getSelectableSlaves(section_id) {
 	var rv = [];
+	var NonUsableMac = /^(00:00:00:00:00:00|null)/;
 	var interfaces = uci.sections('network', 'interface');
 
 	return network.getDevices().then(function(devices) {
 		for (var i = 0; i < devices.length; i++) {
 			var in_use = false;
-			if (devices[i].ifname.match(/eth/)) {
+			var NotUsable = NonUsableMac.test(devices[i].getMAC());
+
+			// Only "real" interfaces for slaves needed
+			if (NotUsable == false) {
 				for (var j = 0; j < interfaces.length; j++) {
 					if (uci.get('network', interfaces[j]['.name'], 'proto') == 'bonding') {
-						var slaves = uci.get('network', interfaces[j]['.name'], 'slaves');
-						if (slaves != null) {
-							for (var k = 0; k < slaves.length; k++) {
-								if (devices[i].ifname == slaves[k] && interfaces[j]['.name'] != section_id) {
-									in_use = true;
-								}
+						var slaves = L.toArray(uci.get('network', interfaces[j]['.name'], 'slaves'));
+
+						for (var k = 0; k < slaves.length; k++) {
+							if (devices[i].ifname == slaves[k] && interfaces[j]['.name'] != section_id) {
+								in_use = true;
 							}
 						}
 					}
@@ -41,6 +47,21 @@ function validateEmpty(section, value) {
 	else {
 		return _('Expecting: non-empty value');
 	}
+}
+
+function updatePrimaries(section, value) {
+
+	var opt = this.map.lookupOption('slaves', section);
+	var selected_slaves = opt[0].formvalue(section);
+
+	var uielem = this.map.lookupOption('primary', section)[0].getUIElement(section);
+	uielem.clearChoices();
+
+	for (var i = 0; i < selected_slaves.length; i++) {
+		uielem.addChoices(selected_slaves[i], selected_slaves[i]);
+	}
+
+	return true;
 }
 
 function validate_arp_policy(section, value) {
@@ -80,8 +101,6 @@ function validate_arp_ip_targets(section, value) {
 
 function validate_primary_interface(section, value) {
 
-	var primary_valid = 'false';
-
 	var opt = this.map.lookupOption('bonding_policy', section);
 	var selected_policy = opt[0].formvalue(section);
 
@@ -92,17 +111,9 @@ function validate_primary_interface(section, value) {
 	var selected_primary = opt[0].formvalue(section);
 
 	if (selected_policy == 'active-backup' || selected_policy == 'balance-tlb' || selected_policy == 'balance-alb') {
-
-		for (var i = 0; i < selected_slaves.length; i++) {
-			if (selected_slaves[i] == selected_primary) {
-				primary_valid = 'true';
-			}
-		}
-
-		if (primary_valid == 'false') {
+		if (selected_slaves.filter(function(slave) { return slave == selected_primary }).length == 0)
 			return _('You must select a primary interface which is included in selected slave interfaces!');
-		}
-	}
+ 	}
 
 	return true;
 }
@@ -151,13 +162,14 @@ return network.registerProtocol('bonding', {
 				_('IPv4 address'),
 				_('The local IPv4 address'));
 		o.datatype = 'ip4addr';
-		o.validate = validateEmpty;
+		o.rmempty = false;
 
 		o = s.taboption('general', form.Value, 'netmask',
 				_('IPv4 netmask'),
 				_('The local IPv4 netmask'));
 		o.datatype = 'ip4addr';
 		o.validate = validateEmpty;
+		o.rmempty = false;
 		o.value("255.255.255.0");
 		o.value("255.255.0.0");
 		o.value("255.0.0.0");
@@ -165,7 +177,6 @@ return network.registerProtocol('bonding', {
 		o = s.taboption('advanced', form.MultiValue, 'slaves',
 				_('Slave Interfaces'),
 				_('Specifies which slave interfaces should be attached to this bonding interface'));
-
 		o.load = function(section_id) {
 			return getSelectableSlaves(section_id).then(L.bind(function(devices) {
 				for (var i = 0; i < devices.length; i++) {
@@ -178,19 +189,11 @@ return network.registerProtocol('bonding', {
 					return '';
 				}
 
-				var if_slaves = uci.get('network', section_id, 'slaves');
-
-				if (if_slaves != null) {
-					return if_slaves;
-				}
-
-				return;
+				return uci.get('network', section_id, 'slaves');
 			}, this));
 		};
-		o.cfgvalue = function(section_id) {
-			return uci.get('network', section_id, 'slaves');
-		};
-		o.validate = validateEmpty;
+		o.validate = updatePrimaries;
+		o.rmempty = false;
 		
 		o = s.taboption('advanced', form.ListValue, 'bonding_policy',
 				_('Bonding Policy'),
@@ -204,36 +207,16 @@ return network.registerProtocol('bonding', {
 		o.value('balance-tlb', _('Adaptive transmit load balancing (balance-tlb, 5)'));
 		o.value('balance-alb', _('Adaptive load balancing (balance-alb, 6)'));
 
-		o = s.taboption('advanced', form.ListValue, 'primary',
+		o = s.taboption('advanced', widgets.DeviceSelect, 'primary',
 				_('Primary Slave'),
 				_('Specifies which slave is the primary device. It will always be the active slave while it is available'));
 		o.depends('bonding_policy', 'active-backup');
 		o.depends('bonding_policy', 'balance-tlb');
 		o.depends('bonding_policy', 'balance-alb');
-
-		o.load = function(section_id) {
-			return getSelectableSlaves(section_id).then(L.bind(function(devices) {
-				for (var i = 0; i < devices.length; i++) {
-					this.value(devices[i], devices[i]);
-				}
-
-				if (devices.length == 0) {
-					this.placeholder = _('No more primaries available, can not save interface');
-					this.value('', '');
-					return '';
-				}
-
-				var primary = uci.get('network', section_id, 'primary');
-
-				if (primary != null) {
-					return primary;
-				}
-
-				return;
-			}, this));
-		};
-		o.cfgvalue = function(section_id) {
-			return uci.get('network', section_id, 'primary');
+		o.filter = function(section_id, value) {
+			// Never return anything as valid, as the valid possibilities
+			// will be set in the slaves validate function
+			return false;
 		};
 		o.validate = validate_primary_interface;
 
@@ -253,7 +236,7 @@ return network.registerProtocol('bonding', {
 				_('Specifies the minimum number of links that must be active before asserting carrier'));
 		o.datatype = 'uinteger';
 		o.default = 0;
-		o.validate = validateEmpty;
+		o.rmempty = false;
 		o.depends('bonding_policy', '802.3ad');
 
 		o = s.taboption('advanced', form.Value, 'ad_actor_sys_prio',
@@ -261,7 +244,7 @@ return network.registerProtocol('bonding', {
 				_('Specifies the system priority'));
 		o.datatype = 'range(1,65535)';
 		o.default = 65535;
-		o.validate = validateEmpty;
+		o.rmempty = false;
 		o.depends('bonding_policy', '802.3ad');
 
 		o = s.taboption('advanced', form.Value, 'ad_actor_system',
@@ -293,7 +276,7 @@ return network.registerProtocol('bonding', {
 				_("Specifies the number of packets to transmit through a slave before moving to the next one"));
 		o.datatype = 'range(0,65535)';
 		o.default = '1';
-		o.validate = validateEmpty;
+		o.rmempty = false;
 		o.depends('bonding_policy', 'balance-rr');
 
 		o = s.taboption('advanced', form.Value, 'lp_interval',
@@ -301,7 +284,7 @@ return network.registerProtocol('bonding', {
 				_("Specifies the number of seconds between instances where the bonding	driver sends learning packets to each slaves peer switch"));
 		o.datatype = 'range(1,2147483647)';
 		o.default = '1';
-		o.validate = validateEmpty;
+		o.rmempty = false;
 		o.depends('bonding_policy', 'balance-tlb');
 		o.depends('bonding_policy', 'balance-alb');
 
@@ -327,7 +310,7 @@ return network.registerProtocol('bonding', {
 				_("Specifies the number of peer notifications (gratuitous ARPs and unsolicited IPv6 Neighbor Advertisements) to be issued after a failover event"));
 		o.datatype = 'range(0,255)';
 		o.default = '1';
-		o.validate = validateEmpty;
+		o.rmempty = false;
 		o.depends('bonding_policy', 'active-backup');
 
 		o = s.taboption('advanced', form.ListValue, 'xmit_hash_policy',
@@ -350,7 +333,7 @@ return network.registerProtocol('bonding', {
 				_("Specifies the number of IGMP membership reports to be issued after a failover event in 200ms intervals"));
 		o.datatype = 'range(0,255)';
 		o.default = '1';
-		o.validate = validateEmpty;
+		o.rmempty = false;
 		o.depends('bonding_policy', 'balance-tlb');
 		o.depends('bonding_policy', 'balance-alb');
 
@@ -375,7 +358,7 @@ return network.registerProtocol('bonding', {
 				_("Specifies the ARP link monitoring frequency in milliseconds"));
 		o.datatype = 'uinteger';
 		o.default = '0';
-		o.validate = validateEmpty;
+		o.rmempty = false;
 		o.depends('link_monitoring', 'arp');
 
 		o = s.taboption('advanced', form.DynamicList, 'arp_ip_target',
@@ -412,7 +395,7 @@ return network.registerProtocol('bonding', {
 				_("Specifies the MII link monitoring frequency in milliseconds"));
 		o.datatype = 'uinteger';
 		o.default = '0';
-		o.validate = validateEmpty;
+		o.rmempty = false;
 		o.depends('link_monitoring', 'mii');
 
 		o = s.taboption('advanced', form.Value, 'downdelay',
@@ -420,7 +403,7 @@ return network.registerProtocol('bonding', {
 				_("Specifies the time in milliseconds to wait before disabling a slave after a link failure detection"));
 		o.datatype = 'uinteger';
 		o.default = '0';
-		o.validate = validateEmpty;
+		o.rmempty = false;
 		o.depends('link_monitoring', 'mii');
 
 		o = s.taboption('advanced', form.Value, 'updelay',
@@ -428,7 +411,7 @@ return network.registerProtocol('bonding', {
 				_("Specifies the time in milliseconds to wait before enabling a slave after a link recovery detection"));
 		o.datatype = 'uinteger';
 		o.default = '0';
-		o.validate = validateEmpty;
+		o.rmempty = false;
 		o.depends('link_monitoring', 'mii');
 
 		o = s.taboption('advanced', form.ListValue, 'use_carrier',
