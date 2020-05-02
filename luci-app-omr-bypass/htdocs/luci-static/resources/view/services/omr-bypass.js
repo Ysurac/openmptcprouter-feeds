@@ -62,13 +62,12 @@ return L.view.extend({
 		o = s.option(form.Value, 'dport', _('port'));
 		o.rmempty = false;
 
-		o = s.option(form.MultiValue, 'proto', _('protocol'));
+		o = s.option(form.ListValue, 'proto', _('protocol'));
 		o.default = 'tcp';
-		o.modalonly = true;
-		o.custom = true;
 		o.rmempty = false;
 		o.value('tcp');
 		o.value('udp');
+		o.value('icmp');
 
 		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
 		o.noaliases = true;
