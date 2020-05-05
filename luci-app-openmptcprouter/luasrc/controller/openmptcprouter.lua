@@ -449,12 +449,17 @@ function wizard_add()
 	local encryption = luci.http.formvalue("encryption")
 	if encryption == "none" then
 		ucic:set("shadowsocks-libev","sss0","method","none")
+		ucic:save("shadowsocks-libev")
 	elseif encryption == "aes-256-gcm" then
 		ucic:set("shadowsocks-libev","sss0","method","aes-256-gcm")
 		ucic:set("glorytun","vpn","chacha20","0")
+		ucic:save("glorytun")
+		ucic:save("shadowsocks-libev")
 	elseif encryption == "chacha20-ietf-poly1305" then
 		ucic:set("shadowsocks-libev","sss0","method","chacha20-ietf-poly1305")
 		ucic:set("glorytun","vpn","chacha20","1")
+		ucic:save("glorytun")
+		ucic:save("shadowsocks-libev")
 	end
 
 	-- Set ShadowSocks settings
@@ -605,6 +610,7 @@ function wizard_add()
 	-- Restart all
 	if gostatus == true then
 		luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/omr-tracker stop >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/mptcp restart >/dev/null 2>/dev/null")
 		if openmptcprouter_vps_key ~= "" then
 			luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
@@ -617,7 +623,7 @@ function wizard_add()
 		luci.sys.call("/etc/init.d/ubond restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/dsvpn restart >/dev/null 2>/dev/null")
-		luci.sys.call("/etc/init.d/omr-tracker restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/omr-tracker start >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/mptcpovervpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
@@ -683,6 +689,10 @@ function settings_add()
 	local disablegwping = luci.http.formvalue("disablegwping") or "0"
 	ucic:set("openmptcprouter","settings","disablegwping",disablegwping)
 
+	-- Enable/disable default gateway
+	local disabledefaultgw = luci.http.formvalue("disabledefaultgw") or "1"
+	ucic:set("openmptcprouter","settings","defaultgw",disabledefaultgw)
+
 	-- Enable/disable server ping
 	local disableserverping = luci.http.formvalue("disableserverping") or "0"
 	ucic:set("openmptcprouter","settings","disableserverping",disableserverping)
@@ -699,6 +709,18 @@ function settings_add()
 	end)
 	ucic:foreach("shadowsocks-libev", "ss_local", function (section)
 		ucic:set("shadowsocks-libev",section[".name"],"fast_open",fastopen)
+	end)
+
+	-- Enable/disable no delay
+	local nodelay = luci.http.formvalue("enablenodelay") or "1"
+	ucic:set("openmptcprouter","settings","enable_nodelay",nodelay)
+	luci.sys.exec("sysctl -w net.ipv4.tcp_low_latency=%s" % nodelay)
+	luci.sys.exec("sed -i 's:^net.ipv4.tcp_low_latency=[0-9]*:net.ipv4.tcp_low_latency=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % nodelay)
+	ucic:foreach("shadowsocks-libev", "ss_redir", function (section)
+		ucic:set("shadowsocks-libev",section[".name"],"no_delay",nodelay)
+	end)
+	ucic:foreach("shadowsocks-libev", "ss_local", function (section)
+		ucic:set("shadowsocks-libev",section[".name"],"no_delay",nodelay)
 	end)
 
 
