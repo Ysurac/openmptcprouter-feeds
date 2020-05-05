@@ -119,7 +119,7 @@ set_server_all_routes() {
 		routesintf=""
 		config_load network
 		config_foreach set_routes_intf interface
-		[ -n "$routesintf" ] && {
+		[ -n "$routesintf" ] && [ "$(echo $routesintf | grep $OMR_TRACKER_DEVICE_GATEWAY)" != "" ] && {
 			_log "Set server $server default route $serverip $routesintf"
 			ip route replace $serverip scope global $routesintf
 		}
@@ -250,7 +250,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		#fi
 	}
 
-	if [ "$default_gw" = "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; then
+	if ([ "$default_gw" = "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]) && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
 		config_load network
 		config_foreach set_route interface $OMR_TRACKER_INTERFACE
 	fi
@@ -271,8 +271,10 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		else
 			_log "$OMR_TRACKER_INTERFACE down because $OMR_TRACKER_STATUS_MSG"
 		fi
-		config_load network
-		config_foreach set_route interface $OMR_TRACKER_INTERFACE
+		if [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
+			config_load network
+			config_foreach set_route interface $OMR_TRACKER_INTERFACE
+		fi
 		if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.shadowsocks)" = "up" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q get shadowsocks-libev.hi2.mode)" = "tcp_and_udp" ]; then
 			_log "Tunnel down use ShadowSocks for UDP"
 			uci -q set shadowsocks-libev.ss_rules.redir_udp='hi2'
@@ -382,7 +384,7 @@ multipath_config=$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath")
 if [ "$multipath_config" = "master" ]; then
 	if ([ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]) && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(uci -q get openmptcprouter.settings.master)" != "balancing" ]; then
 		omrvpn_intf=$(uci -q get "network.omrvpn.ifname" || echo "tun")
-		if [ -n "$omrvpn_intf" ] && [ "$(ip route show default | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ]; then
+		if [ -n "$omrvpn_intf" ] && [ "$(ip route show default | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
 			_log "Master up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
 			ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
 		fi
@@ -394,7 +396,7 @@ if [ "$multipath_config" = "master" ]; then
 		fi
 		ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
 	fi
-	if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(ip route show default | grep weight)" = "" ]; then
+	if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(ip route show default | grep weight)" = "" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
 		omrvpn_intf=$(uci -q get "network.omrvpn.ifname" || echo "tun")
 		if [ -n "$omrvpn_intf" ] && [ "$(ip route show default | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ]; then
 			ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
@@ -619,11 +621,21 @@ if [ "$(pgrep glorytun)" = "" ] && [ "$(uci -q get glorytun.vpn.enabled)" = "1" 
 	/etc/init.d/glorytun-udp restart
 	sleep 5
 fi
-if [ "$(pgrep openvpn)" = "" ] && [ "$(uci -q get openvpn.omr.enabled)" = "1" ] && [ -f /etc/init.d/openvpn ]; then
-	_log "Can't find OpenVPN, restart it..."
-	/etc/init.d/openvpn restart
-	sleep 5
+
+if [ "$(pgrep openvpn)" = "" ] && [ -f /etc/init.d/openvpn ]; then
+	openvpn_enable=0
+	openvpn_enabled() {
+		[ "$(uci -q get openvpn.$1.enabled)" = "1" ] && openvpn_enable=1
+	}
+	config_load openvpn
+	config_foreach openvpn_enabled openvpn
+	if [ "$openvpn_enable" = "1" ]; then
+		_log "Can't find OpenVPN, restart it"
+		/etc/init.d/openvpn restart
+		sleep 5
+	fi
 fi
+
 if [ "$(pgrep mlvpn)" = "" ] && [ "$(uci -q get mlvpn.general.enable)" = "1" ] && [ -f /etc/init.d/mlvpn ]; then
 	_log "Can't find MLVPN, restart it..."
 	/etc/init.d/mlvpn restart
