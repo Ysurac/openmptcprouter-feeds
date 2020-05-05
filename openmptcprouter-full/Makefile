@@ -79,9 +79,10 @@ MY_DEPENDS := \
     !TARGET_mvebu:kmod-usb-net-huawei-cdc-ncm !TARGET_mvebu:kmod-usb-net-rndis !TARGET_mvebu:kmod-usb-net-cdc-ether !TARGET_mvebu:kmod-usb-net-ipheth !TARGET_mvebu:usbmuxd \
     kmod-rt2800-usb kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su \
     !TARGET_mvebu:luci-proto-qmi wpad-basic kmod-mt7601u kmod-rtl8187 \
-    wireguard luci-app-mlvpn mlvpn 464xlat !TARGET_mvebu:kmod-usb-net-smsc75xx kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-advanced-reboot luci-app-https-dns-proxy kmod-tcp-nanqinlang iptables-mod-ipopt igmpproxy ss mptcpd iptraf-ng \
+    wireguard luci-app-mlvpn mlvpn 464xlat !TARGET_mvebu:kmod-usb-net-smsc75xx kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-https-dns-proxy kmod-tcp-nanqinlang iptables-mod-ipopt igmpproxy ss mptcpd iptraf-ng \
     luci-app-acl block-mount blockd fstools luci-app-shutdown
-# luci-theme-openwrt-2020  luci-proto-bonding luci-app-statistics
+#     luci-theme-bootstrap luci-theme-openwrt-2020 luci-theme-openwrt luci-app-status
+#  luci-proto-bonding luci-app-statistics luci-proto-gre
 #    softethervpn5-client softethervpn5-server
 
 #    luci-app-mlvpn ubond \
