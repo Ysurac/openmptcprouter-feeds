@@ -354,13 +354,9 @@ function wizard_add()
 		local openmptcprouter_vps_key = luci.http.formvalue("%s.openmptcprouter_vps_key" % server) or ""
 		local openmptcprouter_vps_username = luci.http.formvalue("%s.openmptcprouter_vps_username" % server) or ""
 		local openmptcprouter_vps_disabled = luci.http.formvalue("%s.openmptcprouter_vps_disabled" % server) or ""
-		if openmptcprouter_vps_disabled == "1" then
-			disablednb = disablednb + 1
-		end
 		ucic:set("openmptcprouter",server,"server")
 		ucic:set("openmptcprouter",server,"username",openmptcprouter_vps_username)
 		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key)
-		ucic:set("openmptcprouter",server,"disabled",openmptcprouter_vps_disabled)
 		if master == server or (master == "" and serversnb == 0) then
 			ucic:set("openmptcprouter",server,"get_config","1")
 			ucic:set("openmptcprouter",server,"master","1")
@@ -370,12 +366,16 @@ function wizard_add()
 			ucic:set("openmptcprouter",server,"master","0")
 			ucic:set("openmptcprouter",server,"backup","1")
 		end
-		ucic:set("openmptcprouter",server,"ip",server_ip)
-		ucic:set("openmptcprouter",server,"port","65500")
-		ucic:save("openmptcprouter")
+		if openmptcprouter_vps_disabled == "1" then
+			disablednb = disablednb + 1
+		end
 		if server_ip ~= "" then
 			serversnb = serversnb + 1
 		end
+		ucic:set("openmptcprouter",server,"disabled",openmptcprouter_vps_disabled)
+		ucic:set("openmptcprouter",server,"ip",server_ip)
+		ucic:set("openmptcprouter",server,"port","65500")
+		ucic:save("openmptcprouter")
 	end
 
 	local ss_servers_nginx = {}
@@ -388,7 +388,7 @@ function wizard_add()
 		local master = luci.http.formvalue("master") or ""
 		local server_ip = luci.http.formvalue("%s.server_ip" % server) or ""
 		-- We have an IP, so set it everywhere
-		if server_ip ~= "" then
+		if server_ip ~= "" and luci.http.formvalue("%s.openmptcprouter_vps_disabled" % server) ~= "1" then
 			-- Check if we have more than one IP, in this case use Nginx HA
 			if serversnb > 1 then
 				if master == server then
