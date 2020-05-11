@@ -344,6 +344,7 @@ function wizard_add()
 
 	-- Retrieve all server settings
 	local serversnb = 0
+	local disablednb = 0
 	local servers = luci.http.formvaluetable("server")
 	for server, _ in pairs(servers) do
 		local server_ip = luci.http.formvalue("%s.server_ip" % server) or ""
@@ -352,9 +353,14 @@ function wizard_add()
 		-- OpenMPTCProuter VPS
 		local openmptcprouter_vps_key = luci.http.formvalue("%s.openmptcprouter_vps_key" % server) or ""
 		local openmptcprouter_vps_username = luci.http.formvalue("%s.openmptcprouter_vps_username" % server) or ""
+		local openmptcprouter_vps_disabled = luci.http.formvalue("%s.openmptcprouter_vps_disabled" % server) or ""
+		if openmptcprouter_vps_disabled == "1" then
+			disablednb = disablednb + 1
+		end
 		ucic:set("openmptcprouter",server,"server")
 		ucic:set("openmptcprouter",server,"username",openmptcprouter_vps_username)
 		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key)
+		ucic:set("openmptcprouter",server,"disabled",openmptcprouter_vps_disabled)
 		if master == server or (master == "" and serversnb == 0) then
 			ucic:set("openmptcprouter",server,"get_config","1")
 			ucic:set("openmptcprouter",server,"master","1")
@@ -465,6 +471,9 @@ function wizard_add()
 	-- Set ShadowSocks settings
 	local shadowsocks_key = luci.http.formvalue("shadowsocks_key")
 	local shadowsocks_disable = luci.http.formvalue("disableshadowsocks") or "0"
+	if disablednb == serversnb then
+		shadowsocks_disable = 1
+	end
 	if shadowsocks_key ~= "" then
 		ucic:set("shadowsocks-libev","sss0","key",shadowsocks_key)
 		--ucic:set("shadowsocks-libev","sss0","method","chacha20-ietf-poly1305")
@@ -489,7 +498,7 @@ function wizard_add()
 	end
 
 	-- Set Glorytun settings
-	if default_vpn:match("^glorytun.*") then
+	if default_vpn:match("^glorytun.*") and disablednb ~= serversnb then
 		ucic:set("glorytun","vpn","enable",1)
 	else
 		ucic:set("glorytun","vpn","enable",0)
@@ -523,7 +532,7 @@ function wizard_add()
 	ucic:commit("glorytun")
 
 	-- Set A Dead Simple VPN settings
-	if default_vpn == "dsvpn" then
+	if default_vpn == "dsvpn" and disablednb ~= serversnb  then
 		ucic:set("dsvpn","vpn","enable",1)
 	else
 		ucic:set("dsvpn","vpn","enable",0)
@@ -546,7 +555,7 @@ function wizard_add()
 	ucic:commit("dsvpn")
 
 	-- Set MLVPN settings
-	if default_vpn == "mlvpn" then
+	if default_vpn == "mlvpn" and disablednb ~= serversnb  then
 		ucic:set("mlvpn","general","enable",1)
 		ucic:set("network","omrvpn","proto","dhcp")
 	else
@@ -566,7 +575,7 @@ function wizard_add()
 	ucic:commit("mlvpn")
 
 	-- Set UBOND settings
-	if default_vpn == "ubond" then
+	if default_vpn == "ubond" and disablednb ~= serversnb  then
 		ucic:set("ubond","general","enable",1)
 		ucic:set("network","omrvpn","proto","dhcp")
 	else
@@ -585,7 +594,7 @@ function wizard_add()
 	ucic:save("ubond")
 	ucic:commit("ubond")
 
-	if default_vpn == "openvpn" then
+	if default_vpn == "openvpn" and disablednb ~= serversnb  then
 		ucic:set("openvpn","omr","enabled",1)
 		ucic:set("network","omrvpn","proto","none")
 	else
