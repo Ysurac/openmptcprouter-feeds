@@ -78,6 +78,29 @@ return L.view.extend({
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
 
+		s = m.section(form.GridSection, 'src_port', _('Ports source'));
+		s.addremove = true;
+		s.anonymous = true;
+
+		o = s.option(form.Value, 'sport', _('port'));
+		o.rmempty = false;
+
+		o = s.option(form.ListValue, 'proto', _('protocol'));
+		o.default = 'tcp';
+		o.rmempty = false;
+		o.value('tcp');
+		o.value('udp');
+		o.value('icmp');
+
+		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
+		o.noaliases = true;
+		o.noinactive = true;
+		o.nocreate    = true;
+		o.ucioption = 'dev';
+
+		o = s.option(form.Value, 'note', _('Note'));
+		o.rmempty = true;
+
 		s = m.section(form.GridSection, 'macs', _('MAC-Address'));
 		s.addremove = true;
 		s.anonymous = true;
