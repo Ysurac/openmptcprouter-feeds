@@ -306,6 +306,8 @@ function wizard_add()
 	ucic:set("openmptcprouter","settings","disable_ipv6",disableipv6)
 	--local ut = require "luci.util"
 	--local result = ut.ubus("openmptcprouter", "set_ipv6_state", { disable_ipv6 = disableipv6 })
+	local ula = luci.http.formvalue("ula") or ""
+	ucic:set("network","globals","ula_prefix",ula)
 
 	-- Get VPN set by default
 	local default_vpn = luci.http.formvalue("default_vpn") or "glorytun_tcp"
