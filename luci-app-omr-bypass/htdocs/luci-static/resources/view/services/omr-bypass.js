@@ -34,7 +34,6 @@ return L.view.extend({
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
-		o.ucioption = 'dev';
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -50,7 +49,6 @@ return L.view.extend({
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
-		o.ucioption = 'dev';
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -73,7 +71,6 @@ return L.view.extend({
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
-		o.ucioption = 'dev';
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -96,7 +93,6 @@ return L.view.extend({
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
-		o.ucioption = 'dev';
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -117,7 +113,6 @@ return L.view.extend({
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
-		o.ucioption = 'dev';
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -140,7 +135,6 @@ return L.view.extend({
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
-		o.ucioption = 'dev';
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -156,7 +150,6 @@ return L.view.extend({
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
-		o.ucioption = 'dev';
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -197,7 +190,6 @@ return L.view.extend({
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
-		o.ucioption = 'dev';
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
