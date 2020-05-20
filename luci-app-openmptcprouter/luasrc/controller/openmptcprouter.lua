@@ -167,6 +167,8 @@ function wizard_add()
 		ucic:set("sqm","wan" .. i,"verbosity","5")
 		ucic:set("sqm","wan" .. i,"download","0")
 		ucic:set("sqm","wan" .. i,"upload","0")
+		ucic:set("sqm","wan" .. i,"iqdisc_opts","autorate-ingress nat dual-dsthost")
+		ucic:set("sqm","wan" .. i,"eqdisc_opts","nat dual-srchost")
 		ucic:save("sqm")
 		ucic:commit("sqm")
 		
@@ -263,6 +265,8 @@ function wizard_add()
 			ucic:set("sqm",intf,"verbosity","5")
 			ucic:set("sqm",intf,"download","0")
 			ucic:set("sqm",intf,"upload","0")
+			ucic:set("sqm",intf,"iqdisc_opts","autorate-ingress nat dual-dsthost")
+			ucic:set("sqm",intf,"eqdisc_opts","nat dual-srchost")
 		end
 
 		if downloadspeed ~= "0" and uploadspeed ~= "0" and downloadspeed ~= "" and uploadspeed ~= "" then
@@ -281,6 +285,8 @@ function wizard_add()
 			ucic:set("qos",intf,"enabled","0")
 		end
 		if sqmenabled == "1" then
+			ucic:set("sqm",intf,"iqdisc_opts","autorate-ingress nat dual-dsthost")
+			ucic:set("sqm",intf,"eqdisc_opts","nat dual-srchost")
 			ucic:set("sqm",intf,"enabled","1")
 			ucic:set("qos",intf,"enabled","1")
 		else
@@ -395,45 +401,35 @@ function wizard_add()
 			if serversnb > 1 then
 				if master == server then
 					ss_ip=server_ip
-					table.insert(ss_servers_nginx,server_ip .. ":65101 max_fails=2 fail_timeout=20s")
-					table.insert(ss_servers_ha,server_ip .. ":65101 check")
-					if vpn_port ~= "" then
-						table.insert(vpn_servers,server_ip .. ":" .. vpn_port .. " max_fails=2 fail_timeout=20s")
-					end
-				else
-					table.insert(ss_servers_nginx,server_ip .. ":65101 backup")
-					table.insert(ss_servers_ha,server_ip .. ":65101 backup")
-					if vpn_port ~= "" then
-						table.insert(vpn_servers,server_ip .. ":" .. vpn_port .. " backup")
-					end
+					ucic:set("shadowsocks-libev","sss0","server",server_ip)
+					ucic:set("glorytun","vpn","host",server_ip)
+					ucic:set("dsvpn","vpn","host",server_ip)
+					ucic:set("mlvpn","general","host",server_ip)
+					ucic:set("ubond","general","host",server_ip)
+					luci.sys.call("uci -q del openvpn.omr.remote")
+					luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
+					ucic:set("qos","serverin","srchost",server_ip)
+					ucic:set("qos","serverout","dsthost",server_ip)
 				end
 				k = k + 1
-				ucic:set("nginx-ha","ShadowSocks","enable","1")
-				ucic:set("nginx-ha","VPN","enable","1")
-				ucic:set("nginx-ha","ShadowSocks","upstreams",ss_servers_nginx)
-				ucic:set("nginx-ha","VPN","upstreams",vpn_servers)
+				ucic:set("nginx-ha","ShadowSocks","enable","0")
+				ucic:set("nginx-ha","VPN","enable","0")
 				ucic:set("haproxy-tcp","general","enable","0")
-				ucic:set("haproxy-tcp","general","upstreams",ss_servers_ha)
 				ucic:set("openmptcprouter","settings","ha","1")
-				server_ip = "127.0.0.1"
-				--ucic:set("shadowsocks-libev","sss0","server",ss_ip)
 			else
 				ucic:set("openmptcprouter","settings","ha","0")
 				ucic:set("nginx-ha","ShadowSocks","enable","0")
 				ucic:set("nginx-ha","VPN","enable","0")
-				--ucic:set("shadowsocks-libev","sss0","server",server_ip)
-				--ucic:set("openmptcprouter","vps","ip",server_ip)
-				--ucic:save("openmptcprouter")
+				ucic:set("shadowsocks-libev","sss0","server",server_ip)
+				ucic:set("glorytun","vpn","host",server_ip)
+				ucic:set("dsvpn","vpn","host",server_ip)
+				ucic:set("mlvpn","general","host",server_ip)
+				ucic:set("ubond","general","host",server_ip)
+				luci.sys.call("uci -q del openvpn.omr.remote")
+				luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
+				ucic:set("qos","serverin","srchost",server_ip)
+				ucic:set("qos","serverout","dsthost",server_ip)
 			end
-			ucic:set("shadowsocks-libev","sss0","server",server_ip)
-			ucic:set("glorytun","vpn","host",server_ip)
-			ucic:set("dsvpn","vpn","host",server_ip)
-			ucic:set("mlvpn","general","host",server_ip)
-			ucic:set("ubond","general","host",server_ip)
-			luci.sys.call("uci -q del openvpn.omr.remote")
-			luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
-			ucic:set("qos","serverin","srchost",server_ip)
-			ucic:set("qos","serverout","dsthost",server_ip)
 		end
 	end
 

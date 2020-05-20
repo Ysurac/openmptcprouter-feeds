@@ -1,0 +1,125 @@
+#!/bin/sh
+# vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
+
+name=$0
+basename="$(basename $0)"
+
+_log() {
+	logger -p daemon.info -t "${basename}" "$@"
+}
+
+_ping_server() {
+	local host=$1
+	ret=$(ping \
+	    -w "$OMR_TRACKER_TIMEOUT" \
+	    -c 1 \
+	    -q \
+	    "${host}"
+	) && echo "$ret" | grep -sq " 0% packet loss" && {
+		server_ping=true
+	}
+}
+
+_check_server() {
+	local host=$1
+	local port=$2
+	local k=0
+	while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
+		ret=$(curl -4 \
+		    --max-time "$OMR_TRACKER_TIMEOUT" \
+		    -s \
+		    -k \
+		    "https://${host}:${port}/"
+		)
+		[ -n "$ret" ] && server_ping=true
+		k=$((k+1))
+		sleep "${intervaltries}"
+	done
+}
+
+_check_master() {
+	local name=$1
+	config_get master $1 master
+	config_get ip $1 ip
+	config_get port $1 port "65500"
+	[ "$master" = "1" ] && [ -n "$ip" ] && {
+		#_ping_server $ip
+		_check_server $ip $port
+		[ "$server_ping" = true ] && [ "$(uci -q get shadowsocks-libev.sss0.server | tr -d '\n')" != "$ip" ] && {
+			logger -t "OMR-Tracker-Server" "Master server up, set it back"
+			logger -t "OMR-Tracker-Server" "$(uci -q get shadowsocks-libev.sss0.server | tr -d '\n') - $ip"
+			uci -q batch <<-EOF >/dev/null
+				set shadowsocks-libev.sss0.server=$ip
+				commit shadowsocks-libev
+				set glorytun.vpn.host=$ip
+				commit glorytun
+				set dsvpn.vpn.host=$ip
+				commit dsvpn
+				set mlvpn.general.host=$ip
+				commit mlvpn
+				del openvpn.omr.remote
+				add_list openvpn.omr.remote=$ip
+				commit openvpn
+			EOF
+			/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null
+			/etc/init.d/glorytun restart >/dev/null 2>/dev/null
+			/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null
+			/etc/init.d/mlvpn restart >/dev/null 2>/dev/null
+			/etc/init.d/openvpn restart >/dev/null 2>/dev/null
+			/etc/init.d/dsvpn restart >/dev/null 2>/dev/null
+		}
+		break
+	}
+}
+
+_check_backup() {
+	local name=$1
+	config_get backup $1 backup
+	config_get ip $1 ip
+	config_get port $1 port
+	[ "$backup" = "1" ] && [ -n "$ip" ] && {
+		#_ping_server $ip
+		_check_server $ip $port
+	}
+	[ "$server_ping" = true ] && [ "$(uci -q get shadowsocks-libev.sss0.server | tr -d '\n')" = "$ip" ] && break
+	[ "$server_ping" = true ] && [ "$(uci -q get shadowsocks-libev.sss0.server | tr -d '\n')" != "$ip" ] && {
+		logger -t "OMR-Tracker-Server" "User backup server $1 ($ip)"
+		uci -q batch <<-EOF >/dev/null
+			set shadowsocks-libev.sss0.server=$ip
+			commit shadowsocks-libev
+			set glorytun.vpn.host=$ip
+			commit glorytun
+			set dsvpn.vpn.host=$ip
+			commit dsvpn
+			set mlvpn.general.host=$ip
+			commit mlvpn
+			del openvpn.omr.remote
+			add_list openvpn.omr.remote=$ip
+			commit openvpn
+		EOF
+		/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null
+		/etc/init.d/glorytun restart >/dev/null 2>/dev/null
+		/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null
+		/etc/init.d/mlvpn restart >/dev/null 2>/dev/null
+		/etc/init.d/openvpn restart >/dev/null 2>/dev/null
+		/etc/init.d/dsvpn restart >/dev/null 2>/dev/null
+		break
+	}
+}
+
+. /lib/functions.sh
+
+timeout=${OMR_TRACKER_TIMEOUT:-5}
+interval=${OMR_TRACKER_INTERVAL:-10}
+intervaltries=${OMR_TRACKER_INTERVAL_TRIES:-2}
+retry=${OMR_TRACKER_TRIES:-4}
+
+while true; do
+	server_ping=false
+	config_load openmptcprouter
+	config_foreach _check_master server
+	[ "$server_ping" = false ] && {
+		config_foreach _check_backup server
+	}
+	sleep "${interval}"
+done

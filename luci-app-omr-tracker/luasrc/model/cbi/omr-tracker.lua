@@ -41,6 +41,37 @@ o.default     = { "bing.com", "google.com" }
 o.rmempty     = false
 
 
+s = m:section(TypedSection, "server", translate("Server tracker Settings"), translate("Detect if Server is down and use defined backup server in this case."))
+s.anonymous   = true
+s.addremove = false
+
+local sdata = m:get('server')
+if not sdata then
+	m:set('server', nil, 'server')
+	m:set('server', 'enabled', "1")
+end
+
+o = s:option(Flag, "enabled", translate("Enable"), translate("When tracker is disabled, server failover is also disabled"))
+o.rmempty     = false
+
+o = s:option(Value, "timeout", translate("Timeout (s)"))
+o.placeholder = "1"
+o.default     = "1"
+o.datatype    = "range(1, 100)"
+o.rmempty     = false
+
+o = s:option(Value, "tries", translate("Tries"))
+o.placeholder = "4"
+o.default     = "4"
+o.datatype    = "range(1, 10)"
+o.rmempty     = false
+
+o = s:option(Value, "interval", translate("Retry interval (s)"))
+o.placeholder = "2"
+o.default     = "2"
+o.datatype    = "range(1, 100)"
+o.rmempty     = false
+
 s = m:section(TypedSection, "defaults", translate("Defaults Settings"), translate("OMR-Tracker detect when a connection is down and execute needed scripts"))
 s.anonymous   = true
 
