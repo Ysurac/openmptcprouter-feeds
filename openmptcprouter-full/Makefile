@@ -36,7 +36,7 @@ MY_DEPENDS := \
     libiwinfo-lua \
     ca-bundle ca-certificates libustream-openssl \
     luci-mod-admin-full luci-app-firewall luci-app-glorytun luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-theme-argon luci-base \
-    luci-app-nginx-ha luci-app-omr-tracker luci-app-omr-dscp \
+    luci-app-omr-tracker luci-app-omr-dscp \
     luci-app-sqm sqm-scripts-extra \
     luci-app-vnstat2 omr-quota luci-app-omr-quota \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail luci-app-upnp \
@@ -80,10 +80,10 @@ MY_DEPENDS := \
     kmod-rt2800-usb kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su \
     !TARGET_mvebu:luci-proto-qmi wpad-basic kmod-mt7601u kmod-rtl8187 \
     wireguard luci-app-mlvpn mlvpn 464xlat !TARGET_mvebu:kmod-usb-net-smsc75xx kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-https-dns-proxy kmod-tcp-nanqinlang iptables-mod-ipopt igmpproxy ss mptcpd iptraf-ng \
-    luci-app-acl block-mount blockd fstools luci-app-shutdown
+    luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp
 #     luci-theme-bootstrap luci-theme-openwrt-2020 luci-theme-openwrt luci-app-status
 #  luci-proto-bonding luci-app-statistics luci-proto-gre
-#    softethervpn5-client softethervpn5-server
+#    softethervpn5-client softethervpn5-server luci-app-nginx-ha
 
 #    luci-app-mlvpn ubond \
 #     kmod-ath9k kmod-ath9k-htc
