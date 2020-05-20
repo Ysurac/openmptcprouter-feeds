@@ -275,7 +275,7 @@ _get_vps_config() {
 		fi
 	fi
 	vpsip="$(uci -q get openmptcprouter.${servername}.ip)"
-	if [ "$(uci -q get shadowsocks-libev.sss0.server)" != "127.0.0.1" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "$vpsip" ]; then
+	if [ "$(uci -q get shadowsocks-libev.sss0.server)" != "127.0.0.1" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set shadowsocks-libev.sss0.server="$vpsip"
 			commit shadowsocks-libev
@@ -283,7 +283,7 @@ _get_vps_config() {
 		logger -t "OMR-VPS" "Restart shadowsocks..."
 		/etc/init.d/shadowsocks-libev restart
 	fi
-	if [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ] && [ "$(uci -q get openvpn.omr.remote)" != "$vpsip" ]; then
+	if [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ] && [ "$(uci -q get openvpn.omr.remote)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set openvpn.omr.remote="$vpsip"
 			commit openvpn
@@ -294,7 +294,7 @@ _get_vps_config() {
 	port="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.port')"
 	localip="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.client_ip')"
 	remoteip="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.host_ip')"
-	if ([ "$(uci -q get dsvpn.vpn.host)" != "127.0.0.1" ] && [ "$(uci -q get dsvpn.vpn.host)" != "$vpsip" ]) || [ "$(uci -q get dsvpn.vpn.port)" != "$port" ] || [ "$(uci -q get dsvpn.vpn.localip)" != "$localip" ] || [ "$(uci -q get dsvpn.vpn.remoteip)" != "$remoteip" ]; then
+	if ([ "$(uci -q get dsvpn.vpn.host)" != "127.0.0.1" ] && [ "$(uci -q get dsvpn.vpn.host)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]) || [ "$(uci -q get dsvpn.vpn.port)" != "$port" ] || [ "$(uci -q get dsvpn.vpn.localip)" != "$localip" ] || [ "$(uci -q get dsvpn.vpn.remoteip)" != "$remoteip" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set dsvpn.vpn.port=$port
 			set dsvpn.vpn.localip=$localip
@@ -306,7 +306,7 @@ _get_vps_config() {
 		/etc/init.d/dsvpn restart
 	fi
 
-	if [ "$(uci -q get mlvpn.general.host)" != "127.0.0.1" ] && [ "$(uci -q get mlvpn.general.host)" != "$vpsip" ] && [ -f /etc/init.d/mlvpn ]; then
+	if [ "$(uci -q get mlvpn.general.host)" != "127.0.0.1" ] && [ "$(uci -q get mlvpn.general.host)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ] && [ -f /etc/init.d/mlvpn ]; then
 		uci -q batch <<-EOF >/dev/null
 			set mlvpn.general=mlvpn
 			set mlvpn.general.host="$vpsip"
@@ -315,7 +315,7 @@ _get_vps_config() {
 		logger -t "OMR-VPS" "Restart MLVPN..."
 		/etc/init.d/mlvpn restart
 	fi
-	if [ "$(uci -q get glorytun.vpn.host)" != "127.0.0.1" ] && [ "$(uci -q get glorytun.vpn.host)" != "$vpsip" ]; then
+	if [ "$(uci -q get glorytun.vpn.host)" != "127.0.0.1" ] && [ "$(uci -q get glorytun.vpn.host)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set glorytun.vpn.host="$vpsip"
 		EOF
@@ -565,6 +565,11 @@ _vps_firewall_redirect_port() {
 	config_get src_dport $1 src_dport
 	config_get family $1 family "ipv4"
 	config_get enabled $1 enabled "1"
+	[ "$(echo $src_dport | cut -d'-' -f2)" -ge "65000" ] && {
+		logger -t "OMR-VPS" "You can't redirect ports >= 65000, they are needed by OpenMPTCProuter Server part"
+		uci -q delete firewall.$1
+		return
+	}
 	[ "$src" = "vpn" ] && [ -n "$proto" ] && [ -n "$src_dport" ] && [ "$enabled" != "0" ] && {
 		if [ "$proto" = "tcp udp" ]; then
 			checkfw=""
