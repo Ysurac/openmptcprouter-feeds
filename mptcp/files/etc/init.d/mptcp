@@ -274,11 +274,11 @@ interface_multipath_settings() {
 			[ "$mode" = "master" ] && {
 				ip -6 route replace default via $gateway6 dev $iface
 			}
-			[ "$mode" = "off" ] && {
-				ifconfig $iface txqueuelen 50 > /dev/null 2>&1
-			} || {
-				ifconfig $iface txqueuelen 100 > /dev/null 2>&1
-			}
+			#[ "$mode" = "off" ] && {
+			#	ifconfig $iface txqueuelen 50 > /dev/null 2>&1
+			#} || {
+			#	ifconfig $iface txqueuelen 100 > /dev/null 2>&1
+			#}
 		fi
 	fi
 }
@@ -355,6 +355,15 @@ start_service() {
 	. /lib/functions.sh
 	. /lib/functions/network.sh
 	global_multipath_settings
+
+	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep '3-model-b')" ] && [ "$(ip link show eth0 | grep UP)" = "" ] && {
+		# RPI 3 workaround no network at boot
+		ethtool eth0 > /dev/null 2>&1
+		ethtool -s eth0 autoneg off > /dev/null 2>&1
+		ip link set eth0 up > /dev/null 2>&1
+		ethtool -s eth0 autoneg on > /dev/null 2>&1
+	}
+
 	mptcpintf=""
 	master=""
 	config_load network
@@ -386,7 +395,7 @@ start_service() {
 	uci -q commit network
 	uci -q commit openmptcprouter
 	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && [ -z "$(ubus call system board | jsonfilter -e '@.board_name' | grep '4-model-b')" ] && {
-		ethtool --offload eth0 rx off tx off
+		ethtool --offload eth0 rx off tx off > /dev/null 2>&1
 	}
 }
 
