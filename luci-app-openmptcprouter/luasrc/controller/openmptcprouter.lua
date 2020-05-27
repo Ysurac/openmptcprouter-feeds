@@ -719,7 +719,7 @@ function settings_add()
 	end)
 
 	-- Enable/disable no delay
-	local nodelay = luci.http.formvalue("enablenodelay") or "1"
+	local nodelay = luci.http.formvalue("enablenodelay") or "0"
 	ucic:set("openmptcprouter","settings","enable_nodelay",nodelay)
 	luci.sys.exec("sysctl -w net.ipv4.tcp_low_latency=%s" % nodelay)
 	luci.sys.exec("sed -i 's:^net.ipv4.tcp_low_latency=[0-9]*:net.ipv4.tcp_low_latency=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % nodelay)
