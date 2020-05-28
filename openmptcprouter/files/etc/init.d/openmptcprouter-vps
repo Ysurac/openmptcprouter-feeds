@@ -280,16 +280,20 @@ _get_vps_config() {
 			set shadowsocks-libev.sss0.server="$vpsip"
 			commit shadowsocks-libev
 		EOF
-		logger -t "OMR-VPS" "Restart shadowsocks..."
-		/etc/init.d/shadowsocks-libev restart
+		if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" = "0" ]; then
+			logger -t "OMR-VPS" "Restart shadowsocks..."
+			/etc/init.d/shadowsocks-libev restart
+		fi
 	fi
 	if [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ] && [ "$(uci -q get openvpn.omr.remote)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set openvpn.omr.remote="$vpsip"
 			commit openvpn
 		EOF
-		logger -t "OMR-VPS" "Restart OpenVPN..."
-		/etc/init.d/openvpn restart
+		if [ "$(uci -q get openvpn.omr.enabled)" = "1" ]; then
+			logger -t "OMR-VPS" "Restart OpenVPN..."
+			/etc/init.d/openvpn restart
+		fi
 	fi
 	port="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.port')"
 	localip="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.client_ip')"
@@ -302,8 +306,10 @@ _get_vps_config() {
 			set dsvpn.vpn.host="$vpsip"
 			commit dsvpn
 		EOF
-		logger -t "OMR-VPS" "Restart DSVPN..."
-		/etc/init.d/dsvpn restart
+		if [ "$(uci -q get dsvpn.vpn.enable)" = "1" ]; then
+			logger -t "OMR-VPS" "Restart DSVPN..."
+			/etc/init.d/dsvpn restart
+		fi
 	fi
 
 	if [ "$(uci -q get mlvpn.general.host)" != "127.0.0.1" ] && [ "$(uci -q get mlvpn.general.host)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ] && [ -f /etc/init.d/mlvpn ]; then
@@ -312,8 +318,10 @@ _get_vps_config() {
 			set mlvpn.general.host="$vpsip"
 			commit mlvpn
 		EOF
-		logger -t "OMR-VPS" "Restart MLVPN..."
-		/etc/init.d/mlvpn restart
+		if [ "$(uci -q get mlvpn.general.enable)" = "1" ]; then
+			logger -t "OMR-VPS" "Restart MLVPN..."
+			/etc/init.d/mlvpn restart
+		fi
 	fi
 	if [ "$(uci -q get glorytun.vpn.host)" != "127.0.0.1" ] && [ "$(uci -q get glorytun.vpn.host)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		uci -q batch <<-EOF >/dev/null
@@ -323,12 +331,14 @@ _get_vps_config() {
 	fi
 
 	if [ "$glorytun_change" != "0" ]; then
-		logger -t "OMR-VPS" "Restart glorytun..."
 		uci -q batch <<-EOF >/dev/null
 			commit glorytun
 		EOF
-		/etc/init.d/glorytun restart >/dev/null 2>&1
-		/etc/init.d/glorytun-udp restart >/dev/null 2>&1
+		if [ "$(uci -q get glorytun.vpn.enable)" = "1" ]; then
+			logger -t "OMR-VPS" "Restart glorytun..."
+			/etc/init.d/glorytun restart >/dev/null 2>&1
+			/etc/init.d/glorytun-udp restart >/dev/null 2>&1
+		fi
 	fi
 }
 
@@ -524,7 +534,7 @@ _set_vpn_ip() {
 	ula="$(uci -q get network.globals.ula_prefix)"
 	ula_current="$(echo "$vps_config" | jsonfilter -q -e '@.ip6in4.ula')"
 	if [ "$vpnip_remote" != "" ] && [ "$vpnip_local" != "" ] && ([ "$vpnip_remote" != "$vpnip_remote_current" ] || [ "$vpnip_local" != "$vpnip_local_current" ] || [ "$ula" != "$ula_current" ]); then
-		settings='{"remoteip" : "'$vpnip_local'","localip" : "'$vpnip_remote'","ula" : "'$ula'"}'
+		settings='{"remoteip" : "'$vpnip_local'","localip" : "'$vpnip_remote'","ula" : ["'$ula'"]}'
 		result=$(_set_json "vpnips" "$settings")
 	fi
 }
@@ -708,7 +718,7 @@ _set_config_from_vps() {
 	[ -z "$vps_config" ] && return
 
 	logger -t "OMR-VPS" "Get config from VPS..."
-
+	noerror=1
 	# get VPS ip
 	vpsip="$(uci -q get openmptcprouter.${servername}.ip)"
 	vps_lastchange="$(echo "$vps_config" | jsonfilter -q -e '@.vps.lastchange')"
@@ -725,10 +735,10 @@ _set_config_from_vps() {
 	fi
 
 	ula="$(echo "$vps_config" | jsonfilter -q -e '@.ip6in4.ula')"
-	if [ -n "$ula" ]; then
-			uci -q batch <<-EOF >/dev/null
-			set network.globals.ula_prefix=$ula
-			EOF
+	if [ -n "$ula" ] && [[ "$ula" != *" "* ]]; then
+		uci -q batch <<-EOF >/dev/null
+		set network.globals.ula_prefix=$ula
+		EOF
 	fi
 
 	# Set current VPN
@@ -1032,10 +1042,12 @@ _set_config_from_vps() {
 			done
 		fi
 	fi
-	uci -q batch <<-EOF >/dev/null
-		set openmptcprouter.${servername}.get_config=0
-		commit openmptcprouter
-	EOF
+	if [ "$noerror" = "1" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.get_config=0
+			commit openmptcprouter
+		EOF
+	fi
 }
 
 _backup_send() {
