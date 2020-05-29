@@ -59,6 +59,7 @@ delete_server_default_route() {
 set_routes_intf() {
 	local multipath_config_route
 	local INTERFACE=$1
+	nbintf=$((nbintf+1))
 	multipath_config_route=$(uci -q get openmptcprouter.$INTERFACE.multipath)
 	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$INTERFACE.multipath || echo "off")
 	interface_if=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
@@ -79,7 +80,16 @@ set_routes_intf() {
 		fi
 		#if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ "$(ip route show $serverip | grep $interface_if)" = "" ]; then
 		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ]; then
-			routesintf="$routesintf nexthop via $interface_gw dev $interface_if weight 1"
+			if [ "$multipath_config_route" = "master" ]; then
+				weight=10
+			else
+				weight=1
+			fi
+			if [ "$multipath_config_route" = "backup" ]; then
+				routesintfbackup="$routesintf nexthop via $interface_gw dev $interface_if weight $weight"
+			else
+				routesintf="$routesintf nexthop via $interface_gw dev $interface_if weight $weight"
+			fi
 		fi
 	fi
 }
@@ -87,6 +97,7 @@ set_routes_intf() {
 set_route_balancing() {
 	local multipath_config_route interface_gw interface_if
 	INTERFACE=$1
+	nbintf=$((nbintf+1))
 	multipath_config_route=$(uci -q get openmptcprouter.$INTERFACE.multipath)
 	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$INTERFACE.multipath || echo "off")
 	interface_if=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
@@ -105,7 +116,20 @@ set_route_balancing() {
 			interface_gw=$(ubus call network.interface.${INTERFACE}_4 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 		fi
 		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ]; then
-			routesbalancing="$routesbalancing nexthop via $interface_gw dev $interface_if weight 1"
+			if [ "$(uci -q get network.$INTERFACE.weight)" != "" ]; then
+				weight=$(uci -q get network.$INTERFACE.weight)
+			elif [ "$(uci -q get openmtpcprouter.$INTERFACE.weight)" != "" ]; then
+				weight=$(uci -q get openmtpcprouter.$INTERFACE.weight)
+			elif [ "$multipath_config_route" = "master" ]; then
+				weight=2
+			else
+				weight=1
+			fi
+			if [ "$multipath_config_route" = "backup" ]; then
+				routesbalancingbackup="$routesbalancingbackup nexthop via $interface_gw dev $interface_if weight $weight"
+			else
+				routesbalancing="$routesbalancing nexthop via $interface_gw dev $interface_if weight $weight"
+			fi
 		fi
 	fi
 }
@@ -120,13 +144,19 @@ set_server_all_routes() {
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$interface_if" ] && interface_if=$(ifstatus "${OMR_TRACKER_INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	multipath_config_route=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath || echo "off")
-	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show $serverip | grep nexthop | grep $OMR_TRACKER_DEVICE_GATEWAY | grep $OMR_TRACKER_DEVICE)" = "" ] && [ "$multipath_config_route" != "off" ]; then
+	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$multipath_config_route" != "off" ]; then
 		routesintf=""
+		routesintfbackup=""
+		nbintf=0
 		config_load network
 		config_foreach set_routes_intf interface
-		[ -n "$routesintf" ] && [ "$(echo $routesintf | grep $OMR_TRACKER_DEVICE_GATEWAY | grep $OMR_TRACKER_DEVICE)" != "" ] && {
+		[ -n "$routesintf" ] && ([ "$nbintf" -gt "1" ] && [ "$(ip r show $serverip | tr -d '\t' | tr -d '\n')" != "$serverip $routesintf " ]) || ([ "$nbintf" = "1" ] && [ "$(ip r show $serverip | grep $OMR_TRACKER_INTERFACE)" = "" ]) && {
 			_log "Set server $server ($serverip) default route $serverip $routesintf"
 			ip route replace $serverip scope global $routesintf
+		}
+		[ -n "$routesintfbackup" ] && ([ "$nbintf" -gt "1" ] && [ "$(ip r show $serverip | tr -d '\t' | tr -d '\n')" != "$serverip $routesintfbackup " ]) || ([ "$nbintf" = "1" ] && [ "$(ip r show $serverip | grep $OMR_TRACKER_INTERFACE)" = "" ]) && {
+			_log "Set server $server ($serverip) default route $serverip $routesintf"
+			ip route replace $serverip scope global metric 999 $routesintf
 		}
 	fi
 }
@@ -261,9 +291,9 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		fi
 		config_load openmptcprouter
 		config_foreach del_server_route server
-		#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ]; then
-		#	config_foreach set_server_all_routes server
-		#fi
+		if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ]; then
+			config_foreach set_server_all_routes server
+		fi
 	}
 
 	if ([ "$default_gw" = "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]) && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
@@ -395,7 +425,8 @@ if [ "$OMR_TRACKER_PREV_STATUS" != "" ] && [ "$OMR_TRACKER_PREV_STATUS" != "$OMR
 	}
 	script_alert_up="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.script_alert_up)"
 	[ -n "$script_alert_up" ] && eval $script_alert_up
-
+fi
+if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.state)" != "up" ]; then
 	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='up'
 	uci -q commit openmptcprouter
 	dns_flush
@@ -423,11 +454,16 @@ if [ "$multipath_config" = "master" ]; then
 		if [ -n "$omrvpn_intf" ] && [ "$(ip route show default | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ]; then
 			ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
 			routesbalancing=""
+			routesbalancingbackup=""
 			config_load network
 			config_foreach set_route_balancing interface
-			[ -n "$routesbalancing" ] && {
+			[ -n "$routesbalancing" ] && ([ "$nbintf" -gt "1" ] && [ "$(ip r show default metric 0 | tr -d '\t' | tr -d '\n')" != "default via $routesbalancing " ]) || ([ "$nbintf" = "1" ] && [ "$(ip r show default metric 0 | grep $OMR_TRACKER_INTERFACE)" = "" ]) && {
 				_log "Set ip route replace default scope global $routesbalancing"
 				ip route replace default scope global $routesbalancing
+			}
+			[ -n "$routesbalancingbackup" ] && ([ "$nbintf" -gt "1" ] && [ "$(ip r show default metric 999 | tr -d '\t' | tr -d '\n')" != "default via $routesbalancingbackup " ]) || ([ "$nbintf" = "1" ] && [ "$(ip r show default metric 999 | grep $OMR_TRACKER_INTERFACE)" = "" ]) && {
+				_log "Set ip route replace default scope global $routesbalancingbackup"
+				ip route replace default scope global metric 999 $routesbalancingbackup
 			}
 		fi
 	fi
