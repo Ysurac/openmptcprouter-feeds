@@ -62,7 +62,7 @@ interface_multipath_settings() {
 		[ "$config" = "lan" ] && mode="off"
 		[ "$config" = "omrvpn" ] && mode="off"
 		[ "$config" = "omr6in4" ] && mode="off"
-		[ "$mode" = "" ] && mode="on"
+		[ "$mode" = "" ] && mode="off"
 		logger -t "MPTCP" "Multipath not defined for $config set to $mode"
 		uci -q set network.${config}.multipath="$mode"
 		uci -q set openmptcprouter.${config}.multipath="$mode"
@@ -74,10 +74,10 @@ interface_multipath_settings() {
 		uci -q set network.${config}.peerdns=0
 	}
 	[ "$mode" = "master" ] && {
-		mode="on"
 		# Force that only one interface is master
 		if [ "$master" != "" ]; then
 			logger -t "MPTCP" "Multipath master already set, disable master for $config"
+			mode="on"
 			config_set "$config" multipath "on"
 			uci -q set network.${config}.multipath="on"
 			uci -q set openmptcprouter.${config}.multipath="on"
@@ -274,11 +274,11 @@ interface_multipath_settings() {
 			[ "$mode" = "master" ] && {
 				ip -6 route replace default via $gateway6 dev $iface
 			}
-			[ "$mode" = "off" ] && {
-				ifconfig $iface txqueuelen 50 > /dev/null 2>&1
-			} || {
-				ifconfig $iface txqueuelen 100 > /dev/null 2>&1
-			}
+			#[ "$mode" = "off" ] && {
+			#	ifconfig $iface txqueuelen 50 > /dev/null 2>&1
+			#} || {
+			#	ifconfig $iface txqueuelen 100 > /dev/null 2>&1
+			#}
 		fi
 	fi
 }
@@ -355,6 +355,15 @@ start_service() {
 	. /lib/functions.sh
 	. /lib/functions/network.sh
 	global_multipath_settings
+
+	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep '3-model-b')" ] && [ "$(ip link show eth0 | grep UP)" = "" ] && {
+		# RPI 3 workaround no network at boot
+		ethtool eth0 > /dev/null 2>&1
+		ethtool -s eth0 autoneg off > /dev/null 2>&1
+		ip link set eth0 up > /dev/null 2>&1
+		ethtool -s eth0 autoneg on > /dev/null 2>&1
+	}
+
 	mptcpintf=""
 	master=""
 	config_load network
@@ -363,9 +372,12 @@ start_service() {
 	#config_foreach remove rule
 	#config_foreach remove rule6
 	[ -z "$intf" ] && [ -n "$(uci -q get network.@route[-1])" ] && {
-		logger -t "MPTCP" "Flush main table"
-		ip route flush table main
-		ip -6 route flush table main
+	#	logger -t "MPTCP" "Flush main table"
+	#	ip route flush table main
+	#	ip -6 route flush table main
+		logger -t "MPTCP" "Flush route cache"
+		ip route flush cache
+		ip -6 route flush cache
 	}
 	config_foreach interface_multipath_settings interface $intf
 	set_multipath
@@ -383,7 +395,7 @@ start_service() {
 	uci -q commit network
 	uci -q commit openmptcprouter
 	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && [ -z "$(ubus call system board | jsonfilter -e '@.board_name' | grep '4-model-b')" ] && {
-		ethtool --offload eth0 rx off tx off
+		ethtool --offload eth0 rx off tx off > /dev/null 2>&1
 	}
 }
 

@@ -46,12 +46,25 @@ _create_interface() {
 		_ifname=$1
 	}
 	config_get _masterifname "$1" ifname
-	uci batch <<-EOF
-		set network.$_ifname=interface
-		set network.$_ifname.type=macvlan
-		set network.$_ifname.proto=static
-		set network.$_ifname.masterintf=$_masterifname
-	EOF
+	[ "$1" != "$_ifname" ] && {
+		uci batch <<-EOF
+			delete macvlan.$1
+			set macvlan.$_ifname=macvlan
+			set macvlan.$_ifname.name=$_ifname
+			set macvlan.$_ifname.ifname=$_masterifname
+			commit macvlan
+		EOF
+	}
+	[ "$(uci -q get network.$_ifname.masterintf)" != "$_masterifname" ] && {
+		logger -t "MACVLAN" "Create interface $_ifname based on $_masterifname"
+		uci batch <<-EOF
+			set network.$_ifname=interface
+			set network.$_ifname.type=macvlan
+			set network.$_ifname.proto=static
+			set network.$_ifname.masterintf=$_masterifname
+			commit network
+		EOF
+	}
 }
 
 # Configuration by interface
@@ -67,6 +80,7 @@ _setup_interface() {
 	config_get _type "$1" type
 
 	[ "$_type" = "macvlan" ] && [ "$(uci -q get macvlan.$1)" = "" ] && {
+		logger -t "MACVLAN" "Delete $1"
 		uci -q batch <<-EOF
 			delete network.$1
 			delete network.$1_dev

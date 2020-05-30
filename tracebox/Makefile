@@ -1,3 +1,11 @@
+#
+# Copyright (C) 2018-2020 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter project
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+
+
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=tracebox
@@ -7,7 +15,7 @@ PKG_RELEASE:=2
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.bz2
 PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
 PKG_SOURCE_URL:=https://github.com/tracebox/tracebox.git
-PKG_MAINTAINER:=Gregory Detal <gregory.detal@uclouvain.be>
+PKG_MAINTAINER:=Ycarus <ycarus@zugaina.org>
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_VERSION:=v0.4.4

@@ -821,7 +821,8 @@ function interfaces_status()
 					mArray.openmptcprouter["tun_state"] = "DOWN"
 				end
 				if mArray.openmptcprouter["ipv6"] == "enabled" then
-					local tunnel_ping6_test = ut.trim(sys.exec("ping6 -w 1 -c 1 fe80::a00:1%6in4-omr6in4 | grep '100% packet loss'"))
+					local tunnel_ipv6_gw = uci:get("network","omr6in4","gateway")
+					local tunnel_ping6_test = ut.trim(sys.exec("ping6 -w 1 -c 1 " .. tunnel_ipv6_gw .. "%6in4-omr6in4 | grep '100% packet loss'"))
 					if tunnel_ping6_test == "" then
 						mArray.openmptcprouter["tun6_state"] = "UP"
 					else
@@ -1040,6 +1041,7 @@ function interfaces_status()
 	    local operator = ""
 	    local phonenumber = ""
 	    local donglestate = ""
+	    local networktype = ""
 	    if gateway ~= "" then
 		    if uci:get("openmptcprouter", "settings", "disablegwping") ~= "1" and connectivity ~= "ERROR" then
 			    local gw_ping_test = ut.trim(sys.exec("ping -w 1 -c 1 " .. gateway .. " | grep '100% packet loss'"))
@@ -1051,7 +1053,14 @@ function interfaces_status()
 			    end
 		    end
 		    if uci:get("openmptcprouter", interface, "manufacturer") == "huawei" then
-			    signal = sys.exec("omr-huawei " .. gateway .. " | tr -d '\n'")
+			    intfdata = ut.trim(sys.exec("omr-huawei " .. gateway .. " all"))
+			    if intfdata ~= "" then
+				    signal = ut.trim(sys.exec("echo '".. intfdata .. "' | awk -F';' '{print $1}'"))
+				    operator = ut.trim(sys.exec("echo '".. intfdata .. "' | awk -F';' '{print $2}'"))
+				    phonenumber = ut.trim(sys.exec("echo '".. intfdata .. "' | awk -F';' '{print $3}'"))
+				    donglestate = ut.trim(sys.exec("echo '".. intfdata .. "' | awk -F';' '{print $4}'"))
+				    networktype = ut.trim(sys.exec("echo '".. intfdata .. "' | awk -F';' '{print $5}'"))
+			    end
 		    end
 	    elseif gateway == "" then
 		    gw_ping = "DOWN"
@@ -1062,24 +1071,26 @@ function interfaces_status()
 		    local proto = section['proto']
 		    if proto == "qmi" then
 			    local device = section['device']
-			    intfdata = sys.exec("omr-qmi " .. device .. " | tr -d '\n'")
+			    intfdata = ut.trim(sys.exec("omr-qmi " .. device .. " all"))
 			    if intfdata ~= "" then
-				    signal = sys.exec("echo ".. intfdata .. " | awk -F';' '{print $1}' | tr -d '\n'")
-				    operator = sys.exec("echo ".. intfdata .. " | awk -F';' '{print $2}' | tr -d '\n'")
-				    phonenumber = sys.exec("echo ".. intfdata .. " | awk -F';' '{print $3}' | tr -d '\n'")
-				    donglestate = sys.exec("echo ".. intfdata .. " | awk -F';' '{print $4}' | tr -d '\n'")
+				    signal = ut.trim(sys.exec("echo '".. intfdata .. "' | awk -F';' '{print $1}'"))
+				    operator = ut.trim(sys.exec("echo '".. intfdata .. "' | awk -F';' '{print $2}'"))
+				    phonenumber = ut.trim(sys.exec("echo '".. intfdata .. "' | awk -F';' '{print $3}'"))
+				    donglestate = ut.trim(sys.exec("echo '".. intfdata .. "' | awk -F';' '{print $4}'"))
+				    networktype = ut.trim(sys.exec("echo '".. intfdata .. "' | awk -F';' '{print $5}'"))
 			    end
 		    elseif proto == "3g" then
 			    local device = section['device']
 			    signal = sys.exec("omr-3g " .. device .. " | tr -d '\n'")
 		    elseif proto == "modemmanager" then
 			    local device = section['device']
-			    intfdata = sys.exec("omr-modemmanager " .. device .. " | tr -d '\n'")
+			    intfdata = ut.trim(sys.exec("omr-modemmanager " .. device .. " all"))
 			    if intfdata ~= "" then
-				    signal = sys.exec("echo ".. intfdata .. " | awk -F';' '{print $1}' | tr -d '\n'")
-				    operator = sys.exec("echo ".. intfdata .. " | awk -F';' '{print $2}' | tr -d '\n'")
-				    phonenumber = sys.exec("echo ".. intfdata .. " | awk -F';' '{print $3}' | tr -d '\n'")
-				    donglestate = sys.exec("echo ".. intfdata .. " | awk -F';' '{print $4}' | tr -d '\n'")
+				    signal = ut.trim(sys.exec("echo '".. intfdata .. "' | awk -F';' '{print $1}'"))
+				    operator = ut.trim(sys.exec("echo '".. intfdata .. "' | awk -F';' '{print $2}'"))
+				    phonenumber = ut.trim(sys.exec("echo '".. intfdata .. "' | awk -F';' '{print $3}'"))
+				    donglestate = ut.trim(sys.exec("echo '".. intfdata .. "' | awk -F';' '{print $4}'"))
+				    networktype = ut.trim(sys.exec("echo '".. intfdata .. "' | awk -F';' '{print $5}'"))
 			    end
 		    end
 	    end
@@ -1108,11 +1119,12 @@ function interfaces_status()
 		    end
 	    end
 
-	    local multipath_available
+	    local multipath_available = ""
+	    local multipath_available_state = ""
 	    if connectivity ~= "ERROR" and mArray.openmptcprouter["dns"] == true and ifname ~= nil and ifname ~= "" and gateway ~= "" and gw_ping == "UP" then
 		    -- Test if multipath can work on the connection
-		    local multipath_available_state = uci:get("openmptcprouter",interface,"mptcp_status") or ""
-		    if multipath_available_state == "" then
+		    -- local multipath_available_state = uci:get("openmptcprouter",interface,"mptcp_status") or ""
+		    -- if multipath_available_state == "" then
 			    if mArray.openmptcprouter["external_check"] ~= false then
 			    --if mArray.openmptcprouter["service_addr"] ~= "" then
 			    --    multipath_available_state = ut.trim(sys.exec("omr-tracebox-mptcp " .. mArray.openmptcprouter["service_addr"] .. " " .. ifname .. " | grep 'MPTCP disabled'"))
@@ -1120,12 +1132,12 @@ function interfaces_status()
 				    multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
 			    --end
 			    end
-		    else
-			    multipath_available_state = ut.trim(sys.exec("echo '" .. multipath_available_state .. "' | grep 'MPTCP disabled'"))
-		    end
+		    -- else
+		    --    multipath_available_state = ut.trim(sys.exec("echo '" .. multipath_available_state .. "' | grep 'MPTCP disabled'"))
+		    -- end
 		    if multipath_available_state == "" then
 			    multipath_available = "OK"
-		    --else
+		    else
 		    --	    if mArray.openmptcprouter["external_check"] ~= false then
 		    --		    multipath_available_state_wan = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
 		    --		    if multipath_available_state_wan == "" then
@@ -1134,7 +1146,7 @@ function interfaces_status()
 		    --				    mArray.openmptcprouter["server_mptcp"] = "disabled"
 		    --			    end
 		    --		    else
-		    --			    multipath_available = "ERROR"
+		    	    multipath_available = "ERROR"
 		    --			    connectivity = "WARNING"
 		    --		    end
 		    --	    else
@@ -1198,6 +1210,12 @@ function interfaces_status()
 			    end
 		    end
 	    end
+	    local rx = ""
+	    local tx = ""
+	    if ifname ~= "" and ifname ~= nil then
+		    rx = ut.trim(sys.exec("devstatus " .. ifname .. " | jsonfilter -e '@.statistics.rx_bytes'"))
+		    tx = ut.trim(sys.exec("devstatus " .. ifname .. " | jsonfilter -e '@.statistics.tx_bytes'"))
+	    end
 	    local data = {
 		label = section["label"] or interface,
 		name = interface,
@@ -1224,6 +1242,9 @@ function interfaces_status()
 		operator = operator,
 		phonenumber = phonenumber,
 		donglestate = donglestate,
+		networktype = networktype,
+		rx = rx,
+		tx = tx,
 	    }
 	    if ifname ~= nil and ifname:match("^tun.*") then
 		    table.insert(mArray.tunnels, data);

@@ -27,11 +27,13 @@ return L.view.extend({
 		s.addremove = true;
 		s.anonymous = true;
 
-		o = s.option(form.Value, 'domain', _('Domain'));
+		o = s.option(form.Value, 'name', _('Domain'));
 		o.rmempty = false;
 
 		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
-		o.rmempty = false;
+		o.noaliases = true;
+		o.noinactive = true;
+		o.nocreate    = true;
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -43,8 +45,10 @@ return L.view.extend({
 		o = s.option(form.Value, 'ip', _('IP'));
 		o.rmempty = false;
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
-		o.rmempty = false;
+		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
+		o.noaliases = true;
+		o.noinactive = true;
+		o.nocreate    = true;
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -56,16 +60,39 @@ return L.view.extend({
 		o = s.option(form.Value, 'dport', _('port'));
 		o.rmempty = false;
 
-		o = s.option(form.MultiValue, 'proto', _('protocol'));
+		o = s.option(form.ListValue, 'proto', _('protocol'));
 		o.default = 'tcp';
-		o.modalonly = true;
-		o.custom = true;
 		o.rmempty = false;
 		o.value('tcp');
 		o.value('udp');
+		o.value('icmp');
 
 		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
+		o.noaliases = true;
+		o.noinactive = true;
+		o.nocreate    = true;
+
+		o = s.option(form.Value, 'note', _('Note'));
+		o.rmempty = true;
+
+		s = m.section(form.GridSection, 'src_port', _('Ports source'));
+		s.addremove = true;
+		s.anonymous = true;
+
+		o = s.option(form.Value, 'sport', _('port'));
 		o.rmempty = false;
+
+		o = s.option(form.ListValue, 'proto', _('protocol'));
+		o.default = 'tcp';
+		o.rmempty = false;
+		o.value('tcp');
+		o.value('udp');
+		o.value('icmp');
+
+		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
+		o.noaliases = true;
+		o.noinactive = true;
+		o.nocreate    = true;
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -83,7 +110,9 @@ return L.view.extend({
 		});
 
 		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
-		o.rmempty = false;
+		o.noaliases = true;
+		o.noinactive = true;
+		o.nocreate    = true;
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -103,7 +132,9 @@ return L.view.extend({
 		});
 
 		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
-		o.rmempty = false;
+		o.noaliases = true;
+		o.noinactive = true;
+		o.nocreate    = true;
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -116,7 +147,9 @@ return L.view.extend({
 		o.rmempty = false;
 
 		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
-		o.rmempty = false;
+		o.noaliases = true;
+		o.noinactive = true;
+		o.nocreate    = true;
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -154,7 +187,9 @@ return L.view.extend({
 		};
 
 		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
-		o.rmempty = false;
+		o.noaliases = true;
+		o.noinactive = true;
+		o.nocreate    = true;
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;

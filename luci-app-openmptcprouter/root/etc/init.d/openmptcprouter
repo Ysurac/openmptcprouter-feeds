@@ -7,6 +7,7 @@ START=5
 USE_PROCD=1
 
 omr_intf_del() {
+	[ -z "$1" ] && return
 	uci -q delete openmptcprouter.$1
 }
 
@@ -17,10 +18,6 @@ omr_intf_check() {
 omr_intf_set() {
 	config_get multipath "$1" multipath
 	config_get ifname "$1" ifname
-	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && [ -n "$(echo $ifname | grep usb)" ] && {
-		uci -q set openmptcprouter.settings.scaling_min_freq=800000
-		uci -q set openmptcprouter.settings.scaling_max_freq=800000
-	}
 	[ -z "$multipath" ] || [ "$multipath" = "off" ] && [ "$1" != "omrvpn" ] && [ "$1" != "glorytun" ] && return
 
 	uci -q set openmptcprouter.$1=interface
@@ -40,6 +37,12 @@ start_service() {
 	config_foreach omr_intf_check interface
 	config_load network
 	config_foreach omr_intf_set interface
+
+	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && {
+		# force CPU speed for RPI
+		uci -q set openmptcprouter.settings.scaling_min_freq=$(cat /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq | tr -d "\n")
+		uci -q set openmptcprouter.settings.scaling_max_freq=$(cat /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq | tr -d "\n")
+	}
 
 	config_load openmptcprouter
 	config_get scaling_min_freq settings scaling_min_freq
