@@ -21,7 +21,7 @@ return L.view.extend({
 	render: function(hosts) {
 		var m, s, o;
 
-		m = new form.Map('omr-bypass', _('OMR-Bypass'));
+		m = new form.Map('omr-bypass', _('OMR-Bypass'),_('OpenMPTCProuter IP must be used as DNS.'));
 
 		s = m.section(form.GridSection, 'domains', _('Domains'));
 		s.addremove = true;
