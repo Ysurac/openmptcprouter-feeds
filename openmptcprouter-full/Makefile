@@ -44,7 +44,7 @@ MY_DEPENDS := \
     luci-app-uhttpd \
     luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
     luci-app-openvpn \
-    luci-app-macvlan \
+    macvlan \
     shadowsocks-libev-ss-server shadowsocks-libev-ss-tunnel \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd ip6tables \
     speedtestc \
@@ -93,7 +93,8 @@ MY_DEPENDS := \
 #    lcd4linux-full
 #    kmod-spi-gpio-custom 
 
-OMR_SUPPORTED_LANGS := ca zh-cn en fr de el he hu it ja ms no pl pt-br pt ro ru es sv uk vi
+#OMR_SUPPORTED_LANGS := ar bg bn_BD ca en fi fr de el he hi hu it ja mr ms nb_NO pl pt_BR pt ro ru es sv uk vi zh_Hans zh_Hant
+OMR_SUPPORTED_LANGS := ar bg ca cs de en fi fr de el he hi hu it ja ko mr ms no pl pt-br pt ro ru es sk sv tr uk vi zh-cn zh-tw
 
 define Package/$(PKG_NAME)
 SECTION:=OMR
