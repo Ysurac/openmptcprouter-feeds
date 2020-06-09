@@ -124,8 +124,7 @@ function wizard_add()
 		ucic:set("openmptcprouter","wan" .. i,"interface")
 		if ointf ~= "" then
 			ucic:set("network","wan" .. i,"type","macvlan")
-			ucic:set("macvlan","wan" .. i,"macvlan")
-			ucic:set("macvlan","wan" .. i,"ifname",defif)
+			ucic:set("network","wan" .. i,"masterintf",defif)
 		end
 		ucic:set("network","wan" .. i,"ip4table","wan")
 		if multipath_master then
@@ -137,8 +136,6 @@ function wizard_add()
 		end
 		ucic:set("network","wan" .. i,"defaultroute","0")
 		ucic:reorder("network","wan" .. i, i + 2)
-		ucic:save("macvlan")
-		ucic:commit("macvlan")
 		ucic:save("network")
 		ucic:commit("network")
 		ucic:save("openmptcprouter")
@@ -201,9 +198,6 @@ function wizard_add()
 			ucic:delete("openmptcprouter",intf)
 			ucic:save("openmptcprouter")
 			ucic:commit("openmptcprouter")
-			ucic:delete("macvlan",intf)
-			ucic:save("macvlan")
-			ucic:commit("macvlan")
 			if defif ~= nil and defif ~= "" then
 				luci.sys.call("uci -q del_list vnstat.@vnstat[-1].interface=" .. defif)
 			end
@@ -269,21 +263,27 @@ function wizard_add()
 			ucic:set("sqm",intf,"eqdisc_opts","nat dual-srchost")
 		end
 
-		if downloadspeed ~= "0" and uploadspeed ~= "0" and downloadspeed ~= "" and uploadspeed ~= "" then
+		if downloadspeed ~= "0" and downloadspeed ~= "" then
 			ucic:set("network",intf,"downloadspeed",downloadspeed)
-			ucic:set("network",intf,"uploadspeed",uploadspeed)
 			ucic:set("sqm",intf,"download",math.ceil(downloadspeed*95/100))
-			ucic:set("sqm",intf,"upload",math.ceil(uploadspeed*95/100))
 			ucic:set("qos",intf,"download",math.ceil(downloadspeed*95/100))
-			ucic:set("qos",intf,"upload",math.ceil(uploadspeed*95/100))
 		else
 			ucic:set("sqm",intf,"download","0")
-			ucic:set("sqm",intf,"upload","0")
-			ucic:set("sqm",intf,"enabled","0")
 			ucic:set("qos",intf,"download","0")
+		end
+		if uploadspeed ~= "0" and uploadspeed ~= "" then
+			ucic:set("network",intf,"uploadspeed",uploadspeed)
+			ucic:set("sqm",intf,"upload",math.ceil(uploadspeed*95/100))
+			ucic:set("qos",intf,"upload",math.ceil(uploadspeed*95/100))
+		else
+			ucic:set("sqm",intf,"upload","0")
 			ucic:set("qos",intf,"upload","0")
+		end
+		if downloadspeed ~= "0" and downloadspeed ~= "" and uploadspeed ~= "0" and uploadspeed ~= "" then
+			ucic:set("sqm",intf,"enabled","0")
 			ucic:set("qos",intf,"enabled","0")
 		end
+
 		if sqmenabled == "1" then
 			ucic:set("sqm",intf,"iqdisc_opts","autorate-ingress nat dual-dsthost")
 			ucic:set("sqm",intf,"eqdisc_opts","nat dual-srchost")
