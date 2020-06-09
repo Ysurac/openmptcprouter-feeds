@@ -72,7 +72,7 @@ o.default     = "2"
 o.datatype    = "range(1, 100)"
 o.rmempty     = false
 
-s = m:section(TypedSection, "defaults", translate("Defaults Settings"), translate("OMR-Tracker detect when a connection is down and execute needed scripts"))
+s = m:section(TypedSection, "defaults", translate("Defaults Settings"), translate("OMR-Tracker create needed routes and detect when a connection is down or up"))
 s.anonymous   = true
 
 o = s:option(Flag, "enabled", translate("Enable"), translate("When tracker is disabled, connection failover is also disabled"))
