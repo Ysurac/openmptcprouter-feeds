@@ -370,7 +370,7 @@ return view.extend({
 		s.addModalOptions = function(s) {
 			var protoval = uci.get('network', s.section, 'proto'),
 			    protoclass = protoval ? network.getProtocol(protoval) : null,
-			    o, ifname_single, ifname_multi, proto_select, proto_switch, type, stp, igmp, ss, so;
+			    o, ifname_single, ifname_multi, ifname_master, proto_select, proto_switch, type, stp, igmp, ss, so;
 
 			if (!protoval)
 				return;
@@ -413,13 +413,20 @@ return view.extend({
 				o.modalonly = true;
 				o.default = o.enabled;
 
-				type = s.taboption('physical', form.Flag, 'type', _('Bridge interfaces'), _('Creates a bridge over specified interface(s)'));
-				type.modalonly = true;
-				type.disabled = '';
-				type.enabled = 'bridge';
+				type = s.taboption('physical', form.ListValue, 'type', _('Type'));
+				type.value('',_('Normal'));
+				type.value('bridge',_('Bridge'));
+				type.value('macvlan',_('MacVLAN'));
 				type.write = type.remove = function(section_id, value) {
 					var protocol = network.getProtocol(proto_select.formvalue(section_id)),
-					    ifnameopt = this.section.children.filter(function(o) { return o.option == (value ? 'ifname_multi' : 'ifname_single') })[0];
+					    ifnameopt = this.section.children.filter(function(o) { 
+						    if (value == 'bridge')
+							return o.option == 'ifname_multi';
+						    else if (value == 'macvlan')
+							return o.option == 'ifname_master';
+						    else
+							return o.option == 'ifname_single';
+					    })[0];
 
 					if (!protocol.isVirtual() && !this.isActive(section_id))
 						return;
@@ -452,7 +459,7 @@ return view.extend({
 					}
 
 					if (value)
-						uci.set('network', section_id, 'type', 'bridge');
+						uci.set('network', section_id, 'type', value);
 					else
 						uci.unset('network', section_id, 'type');
 				};
@@ -460,6 +467,21 @@ return view.extend({
 				stp = s.taboption('physical', form.Flag, 'stp', _('Enable <abbr title="Spanning Tree Protocol">STP</abbr>'), _('Enables the Spanning Tree Protocol on this bridge'));
 
 				igmp = s.taboption('physical', form.Flag, 'igmp_snooping', _('Enable <abbr title="Internet Group Management Protocol">IGMP</abbr> snooping'), _('Enables IGMP snooping on this bridge'));
+
+				ifname_master = s.taboption('physical', widgets.DeviceSelect, 'ifname_master', _('Base interface'));
+				ifname_master.nobridges = true;
+				ifname_master.noaliases = true;
+				ifname_master.optional = false;
+				ifname_master.modalonly = true;
+				ifname_master.network = ifc.getName();
+				//ifname_master.write = ifname_master.remove = function() {};
+				ifname_master.ucioption = 'masterintf';
+				//ifname_master.cfgvalue = function(section_id) {
+				//	return uci.get('network', section_id, 'masterintf');
+				//};
+				//ifname_master.write = function(section_id, value) {
+				//	uci.set('network', section_id, 'masterintf', value);
+				//};
 
 				ifname_single = s.taboption('physical', widgets.DeviceSelect, 'ifname_single', _('Interface'));
 				ifname_single.nobridges = ifc.isBridge();
@@ -536,6 +558,7 @@ return view.extend({
 						stp.depends({ type: 'bridge', proto: protocols[i].getProtocol() });
 						igmp.depends({ type: 'bridge', proto: protocols[i].getProtocol() });
 						ifname_single.depends({ type: '', proto: protocols[i].getProtocol() });
+						ifname_master.depends({ type: 'macvlan', proto: protocols[i].getProtocol() });
 						ifname_multi.depends({ type: 'bridge', proto: protocols[i].getProtocol() });
 					}
 				}
@@ -594,6 +617,13 @@ return view.extend({
 
 					so = ss.taboption('advanced', form.Flag, 'dynamicdhcp', _('Dynamic <abbr title="Dynamic Host Configuration Protocol">DHCP</abbr>'), _('Dynamically allocate DHCP addresses for clients. If disabled, only clients having static leases will be served.'));
 					so.default = so.enabled;
+					
+					so = ss.taboption('advanced', form.ListValue, 'multipath', _('Multipath setting'), _('Only one interface must be set as Master.'));
+					so.value('enabled',_('Enabled'));
+					so.value('disabled',_('Disabled'));
+					so.value('master',_('Master'));
+					so.value('backup',_('Backup'));
+					so.default = 'disabled';
 
 					ss.taboption('advanced', form.Flag, 'force', _('Force'), _('Force DHCP on this network even if another server is detected.'));
 
@@ -673,6 +703,7 @@ return view.extend({
 					case 'igmp_snooping':
 					case 'ifname_single':
 					case 'ifname_multi':
+					case 'ifname_master':
 					case '_dhcp':
 					case '_zone':
 					case '_switch_proto':
@@ -694,7 +725,7 @@ return view.extend({
 			var m2 = new form.Map('network'),
 			    s2 = m2.section(form.NamedSection, '_new_'),
 			    protocols = network.getProtocols(),
-			    proto, name, bridge, ifname_single, ifname_multi;
+			    proto, name, type, ifname_single, ifname_multi, ifname_master;
 
 			protocols.sort(function(a, b) {
 				return a.getProtocol() > b.getProtocol();
@@ -727,14 +758,18 @@ return view.extend({
 			proto = s2.option(form.ListValue, 'proto', _('Protocol'));
 			proto.validate = name.validate;
 
-			bridge = s2.option(form.Flag, 'type', _('Bridge interfaces'), _('Creates a bridge over specified interface(s)'));
-			bridge.modalonly = true;
-			bridge.disabled = '';
-			bridge.enabled = 'bridge';
+			type = s2.option(form.ListValue, 'type', _('Interface type'));
+			type.value('',_('Normal'));
+			type.value('bridge',_('Bridge'));
+			type.value('macvlan',_('MacVLAN'));
 
 			ifname_single = s2.option(widgets.DeviceSelect, 'ifname_single', _('Interface'));
 			ifname_single.noaliases = false;
 			ifname_single.optional = false;
+
+			ifname_master = s2.option(widgets.DeviceSelect, 'ifname_master', _('Base interface'));
+			ifname_master.noaliases = false;
+			ifname_master.optional = false;
 
 			ifname_multi = s2.option(widgets.DeviceSelect, 'ifname_multi', _('Interface'));
 			ifname_multi.nobridges = true;
@@ -747,9 +782,10 @@ return view.extend({
 				proto.value(protocols[i].getProtocol(), protocols[i].getI18n());
 
 				if (!protocols[i].isVirtual()) {
-					bridge.depends({ proto: protocols[i].getProtocol() });
+					type.depends({ proto: protocols[i].getProtocol() });
 					ifname_single.depends({ type: '', proto: protocols[i].getProtocol() });
 					ifname_multi.depends({ type: 'bridge', proto: protocols[i].getProtocol() });
+					ifname_master.depends({ type: 'macvlan', proto: protocols[i].getProtocol() });
 				}
 			}
 
@@ -790,6 +826,11 @@ return view.extend({
 										else if (ifname_multi.isActive('_new_')) {
 											uci.set('network', section_id, 'type', 'bridge');
 											uci.set('network', section_id, 'ifname', L.toArray(ifname_multi.formvalue('_new_')).join(' '));
+										}
+										else if (ifname_master.isActive('_new_')) {
+											uci.set('network', section_id, 'type', 'macvlan');
+											uci.set('network', section_id, 'ifname', section_id);
+											uci.set('network', section_id, 'masterintf', L.toArray(ifname_multi.formvalue('_new_')).join(' '));
 										}
 									}).then(L.bind(m.children[0].renderMoreOptionsModal, m.children[0], nameval));
 
