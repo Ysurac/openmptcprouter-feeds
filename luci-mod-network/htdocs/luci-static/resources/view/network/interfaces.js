@@ -563,6 +563,13 @@ return view.extend({
 					}
 				}
 
+				o = s.taboption('advanced', form.ListValue, 'multipath', _('Multipath setting'), _('Only one interface must be set as Master.'));
+				o.value('enabled',_('Enabled'));
+				o.value('disabled',_('Disabled'));
+				o.value('master',_('Master'));
+				o.value('backup',_('Backup'));
+				o.default = 'disabled';
+
 				if (L.hasSystemFeature('dnsmasq') || L.hasSystemFeature('odhcpd')) {
 					o = s.taboption('dhcp', form.SectionValue, '_dhcp', form.TypedSection, 'dhcp');
 					o.depends('proto', 'static');
@@ -617,13 +624,6 @@ return view.extend({
 
 					so = ss.taboption('advanced', form.Flag, 'dynamicdhcp', _('Dynamic <abbr title="Dynamic Host Configuration Protocol">DHCP</abbr>'), _('Dynamically allocate DHCP addresses for clients. If disabled, only clients having static leases will be served.'));
 					so.default = so.enabled;
-					
-					so = ss.taboption('advanced', form.ListValue, 'multipath', _('Multipath setting'), _('Only one interface must be set as Master.'));
-					so.value('enabled',_('Enabled'));
-					so.value('disabled',_('Disabled'));
-					so.value('master',_('Master'));
-					so.value('backup',_('Backup'));
-					so.default = 'disabled';
 
 					ss.taboption('advanced', form.Flag, 'force', _('Force'), _('Force DHCP on this network even if another server is detected.'));
 
