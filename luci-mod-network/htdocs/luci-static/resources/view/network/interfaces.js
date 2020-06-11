@@ -564,8 +564,8 @@ return view.extend({
 				}
 
 				o = s.taboption('advanced', form.ListValue, 'multipath', _('Multipath setting'), _('Only one interface must be set as Master.'));
-				o.value('enabled',_('Enabled'));
-				o.value('disabled',_('Disabled'));
+				o.value('on',_('Enabled'));
+				o.value('off',_('Disabled'));
 				o.value('master',_('Master'));
 				o.value('backup',_('Backup'));
 				o.default = 'disabled';
