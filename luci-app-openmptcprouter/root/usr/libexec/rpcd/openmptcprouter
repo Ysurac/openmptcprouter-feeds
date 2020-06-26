@@ -657,7 +657,8 @@ function interfaces_status()
 	mArray.openmptcprouter["omr_time"] = os.time()
 	-- dns
 	mArray.openmptcprouter["dns"] = false
-	local dns_test = sys.exec("dig openmptcprouter.com | grep 'ANSWER: 0'")
+	local timeout = uci:get("openmptcprouter","settings","status_getip_timeout") or "2"
+	local dns_test = sys.exec("dig +timeout=" .. timeout .. " openmptcprouter.com | grep 'ANSWER: 0'")
 	if dns_test == "" then
 		mArray.openmptcprouter["dns"] = true
 	end
@@ -679,7 +680,6 @@ function interfaces_status()
 		--mArray.openmptcprouter["wan_addr"] = uci:get("openmptcprouter","omr","public_detected_ipv4") or ""
 		
 		if uci:get("openmptcprouter","settings","external_check") ~= "0" and mArray.openmptcprouter["dns"] == true then
-			timeout = uci:get("openmptcprouter","settings","status_getip_timeout") or "2"
 			mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("wget -4 -qO- -T " .. timeout .. " " .. check_ipv4_website))
 			if mArray.openmptcprouter["wan_addr"] == "" then
 				mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("dig TXT +timeout=" .. timeout .. " +short o-o.myaddr.l.google.com @ns1.google.com | awk -F'\"' '{print $2}'"))
@@ -1123,35 +1123,13 @@ function interfaces_status()
 	    local multipath_available_state = ""
 	    if connectivity ~= "ERROR" and mArray.openmptcprouter["dns"] == true and ifname ~= nil and ifname ~= "" and gateway ~= "" and gw_ping == "UP" then
 		    -- Test if multipath can work on the connection
-		    -- local multipath_available_state = uci:get("openmptcprouter",interface,"mptcp_status") or ""
-		    -- if multipath_available_state == "" then
-			    if mArray.openmptcprouter["external_check"] ~= false then
-			    --if mArray.openmptcprouter["service_addr"] ~= "" then
-			    --    multipath_available_state = ut.trim(sys.exec("omr-tracebox-mptcp " .. mArray.openmptcprouter["service_addr"] .. " " .. ifname .. " | grep 'MPTCP disabled'"))
-			    --else
-				    multipath_available_state = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
-			    --end
-			    end
-		    -- else
-		    --    multipath_available_state = ut.trim(sys.exec("echo '" .. multipath_available_state .. "' | grep 'MPTCP disabled'"))
-		    -- end
+		    local multipath_available_state = uci:get("openmptcprouter",interface,"mptcp_status") or ""
 		    if multipath_available_state == "" then
+			    multipath_available = "NO CHECK"
+		    elseif multipath_available_state == "MPTCP enabled" then
 			    multipath_available = "OK"
 		    else
-		    --	    if mArray.openmptcprouter["external_check"] ~= false then
-		    --		    multipath_available_state_wan = ut.trim(sys.exec("omr-mptcp-intf " .. ifname .. " | grep 'Nay, Nay, Nay'"))
-		    --		    if multipath_available_state_wan == "" then
-		    --			    multipath_available = "OK"
-		    --			    if mArray.openmptcprouter["service_addr"] ~= "" and mArray.openmptcprouter["service_addr"] ~= "127.0.0.1" then
-		    --				    mArray.openmptcprouter["server_mptcp"] = "disabled"
-		    --			    end
-		    --		    else
 		    	    multipath_available = "ERROR"
-		    --			    connectivity = "WARNING"
-		    --		    end
-		    --	    else
-		    --		    multipath_available = "NO CHECK"
-		    --	    end
 		    end
 	    else
 		    multipath_available = "NO CHECK"
