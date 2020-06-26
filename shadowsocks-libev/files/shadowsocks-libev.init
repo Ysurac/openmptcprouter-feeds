@@ -145,40 +145,51 @@ ss_rules_cb() {
 
 ss_redir_ports() {
 	port=$(uci -q get shadowsocks-libev.$1.local_port)
-	if [ "$port" -lt "$min_ss_redir_ports" ]; then
-		min_ss_redir_ports=$port
-	fi
-	if [ "$port" -gt "$max_ss_redir_ports" ]; then
-		max_ss_redir_ports=$port
+	server=$(uci -q get shadowsocks-libev.$1.server)
+	if [ "$server" = "$2" ] || [ "$2" = "" ]; then
+		if [ "$port" -lt "$min_ss_redir_ports" ]; then
+			min_ss_redir_ports=$port
+		fi
+		if [ "$port" -gt "$max_ss_redir_ports" ]; then
+			max_ss_redir_ports=$port
+		fi
 	fi
 }
 
 ss_rules() {
-	local cfg="ss_rules"
+	local cfg="$1"
 	local bin="$ss_bindir/ss-rules"
 	local bin6="$ss_bindir/ss-rules6"
 	local cfgtype
+	local cfgrulesserver
 	local local_port_tcp local_port_udp
 	local local_port_tcp6 local_port_udp6
 	local args
+	local rule_name
+	if [ "$cfg" = "ss_rules" ]; then
+		rule_name="default"
+	else
+		rule_name="$(echo $cfg | sed 's/_rule//' | cut -c -7)"
+	fi
 
 	[ -x "$bin" ] || return 1
-	"$bin" -f
+	#"$bin" -f
 	[ -x "$bin6" ] || return 1
-	"$bin6" -f
+	#"$bin6" -f
 
 	config_get cfgtype "$cfg" TYPE
 	[ "$cfgtype" = ss_rules ] || return 1
 
+	config_get cfgrulesserver "$cfg" server
+
 	eval "$(validate_ss_rules_section "$cfg" ss_validate_mklocal)"
 	validate_ss_rules_section "$cfg" || return 1
 	[ "$disabled" = 0 ] || return 0
-
 	if [ "$ss_rules_redir_tcp_$redir_tcp" = "all" ]; then
 		min_ss_redir_ports="65535"
 		max_ss_redir_ports="0"
 		config_load shadowsocks-libev
-		config_foreach ss_redir_ports ss_redir
+		config_foreach ss_redir_ports ss_redir $cfgrulesserver
 		if [ "$min_ss_redir_ports" != "$max_ss_redir_ports" ]; then
 			all_ss_redir_ports=$min_ss_redir_ports-$max_ss_redir_ports
 		else
@@ -233,6 +244,7 @@ ss_rules_call() {
 			${src_ips_checkdst4:+--src-checkdst "$src_ips_checkdst4"} \
 			${ifnames:+--ifnames "$ifnames"} \
 			${ipt_args:+--ipt-extra "$ipt_args"} \
+			${cfg:+--rule-name "$rule_name"} \
 			$args \
 		|| "$bin" "$@" -f
 }
@@ -302,7 +314,7 @@ rules_up() {
 	for cfgtype in ss_redir; do
 		config_foreach ss_rules_restart "$cfgtype" "$cfgtype"
 	done
-	ss_rules
+	config_foreach ss_rules ss_rules
 	[ -f /etc/init.d/omr-bypass ] && {
 		logger -t "Shadowsocks" "Reload omr-bypass rules"
 		/etc/init.d/omr-bypass reload_rules
