@@ -394,6 +394,10 @@ return view.extend({
 				}, this);
 				o.write = function() {};
 
+				o = s.taboption('general', form.Value, 'label', _('Label'));
+				o.modalonly = true;
+				o.optional = true;
+
 				proto_select = s.taboption('general', form.ListValue, 'proto', _('Protocol'));
 				proto_select.modalonly = true;
 
