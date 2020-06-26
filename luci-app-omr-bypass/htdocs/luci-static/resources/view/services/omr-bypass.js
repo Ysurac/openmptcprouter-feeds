@@ -30,7 +30,7 @@ return L.view.extend({
 		o = s.option(form.Value, 'name', _('Domain'));
 		o.rmempty = false;
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
+		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
@@ -67,7 +67,7 @@ return L.view.extend({
 		o.value('udp');
 		o.value('icmp');
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
+		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
@@ -89,7 +89,7 @@ return L.view.extend({
 		o.value('udp');
 		o.value('icmp');
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
+		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
@@ -109,7 +109,7 @@ return L.view.extend({
 			o.value(mac, hint ? '%s (%s)'.format(mac, hint) : mac);
 		});
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
+		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
@@ -131,7 +131,7 @@ return L.view.extend({
 			}
 		});
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
+		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
@@ -146,7 +146,7 @@ return L.view.extend({
 		o = s.option(form.Value, 'asn', _('ASN'));
 		o.rmempty = false;
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
+		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
@@ -162,8 +162,8 @@ return L.view.extend({
 		o.rmempty = false;
 		o.load = function(section_id) {
 			return Promise.all([
-				fs.lines('/proc/net/xt_ndpi/proto'),
-				fs.lines('/proc/net/xt_ndpi/host_proto')
+				fs.read_direct('/proc/net/xt_ndpi/proto'),
+				fs.read_direct('/proc/net/xt_ndpi/host_proto')
 			]).then(L.bind(function(linesi) {
 				var proto = linesi[0],
 				    host = linesi[1],
@@ -178,7 +178,7 @@ return L.view.extend({
 					if (m && m[0] != "#Proto")
 					  name.push(m[0]);
 				}
-				name = Array.from(new Set(name)).sort();
+				name = Array.from(new Set(name)).sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); });
 				for (var i = 0; i < name.length; i++) {
 					this.value(name[i]);
 				}
@@ -186,7 +186,7 @@ return L.view.extend({
 			},this));
 		};
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
+		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
