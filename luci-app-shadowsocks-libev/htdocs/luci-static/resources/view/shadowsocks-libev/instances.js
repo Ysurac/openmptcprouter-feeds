@@ -74,6 +74,7 @@ return L.view.extend({
 				]).then(L.bind(function(res) {
 					s.tab('general', _('General Settings'));
 					s.tab('advanced', _('Advanced Settings'));
+					s.taboption('general', form.Value, 'label', _('Label'));
 					s.taboption('general', form.Flag, 'disabled', _('Disable'));
 					if (!res[0]) {
 						ss.option_install_package(s, 'general');

@@ -138,6 +138,8 @@ return L.Class.extend({
 			};
 		}
 
+		o = optfunc(form.Value, 'label', _('Label'));
+
 		o = optfunc(form.Value, 'server', _('Server'));
 		o.datatype = 'host';
 		o.size = 16;
