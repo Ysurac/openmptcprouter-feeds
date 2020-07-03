@@ -40,6 +40,9 @@ set_server_default_route() {
 	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath || echo "off")
 	if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric 1 | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ]; then
 		_log "Set server $server ($serverip) default route via $OMR_TRACKER_DEVICE_GATEWAY"
+		if [ "$(ip r show $serverip | grep nexthop)" != "" ]; then
+			ip r delete $serverip >/dev/null 2>&1
+		fi
 		ip route replace $serverip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric 1
 	fi
 }
@@ -159,6 +162,9 @@ set_server_all_routes() {
 		config_load network
 		config_foreach set_routes_intf interface
 		[ -n "$routesintf" ] && ([ "$nbintf" -gt "1" ] && [ "$(ip r show $serverip | tr -d '\t' | tr -d '\n')" != "$serverip $routesintf " ]) || ([ "$nbintf" = "1" ] && [ "$(ip r show $serverip | grep $OMR_TRACKER_DEVICE)" = "" ]) && {
+			while [ "$(ip r show $serverip | grep -v nexthop)" != "" ]; do
+				ip r del $serverip
+			done
 			_log "Set server $server ($serverip) default route $serverip $routesintf"
 			ip route replace $serverip scope global $routesintf
 		}
@@ -450,9 +456,9 @@ if [ "$multipath_config" = "master" ]; then
 			ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE
 		fi
 		config_load openmptcprouter
-		if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ]; then
-			config_foreach set_server_all_routes server
-		elif [ "$(uci -q get openmptcprouter.settings.master)" != "failover" ]; then
+		#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ]; then
+		#	config_foreach set_server_all_routes server
+		if [ "$(uci -q get openmptcprouter.settings.master)" != "failover" ]; then
 			config_foreach set_server_default_route server
 		fi
 		ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
