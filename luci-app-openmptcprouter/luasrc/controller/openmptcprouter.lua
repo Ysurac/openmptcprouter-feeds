@@ -453,15 +453,27 @@ function wizard_add()
 	local encryption = luci.http.formvalue("encryption")
 	if encryption == "none" then
 		ucic:set("shadowsocks-libev","sss0","method","none")
+		ucic:set("openvpn","omr","cipher","none")
 		ucic:save("shadowsocks-libev")
 	elseif encryption == "aes-256-gcm" then
 		ucic:set("shadowsocks-libev","sss0","method","aes-256-gcm")
 		ucic:set("glorytun","vpn","chacha20","0")
+		ucic:set("openvpn","omr","cipher","AES-256-GCM")
+		ucic:save("openvpn")
+		ucic:save("glorytun")
+		ucic:save("shadowsocks-libev")
+	elseif encryption == "aes-256-cfb" then
+		ucic:set("shadowsocks-libev","sss0","method","aes-256-cfb")
+		ucic:set("glorytun","vpn","chacha20","0")
+		ucic:set("openvpn","omr","cipher","AES-256-CFB")
+		ucic:save("openvpn")
 		ucic:save("glorytun")
 		ucic:save("shadowsocks-libev")
 	elseif encryption == "chacha20-ietf-poly1305" then
 		ucic:set("shadowsocks-libev","sss0","method","chacha20-ietf-poly1305")
 		ucic:set("glorytun","vpn","chacha20","1")
+		ucic:set("openvpn","omr","cipher","AES-256-CBC")
+		ucic:save("openvpn")
 		ucic:save("glorytun")
 		ucic:save("shadowsocks-libev")
 	end
