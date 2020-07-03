@@ -89,6 +89,26 @@ _set_glorytun_vps() {
 	fi
 }
 
+_set_openvpn_vps() {
+	local enabled port key
+	enabled="$(uci -q get openvpn.omr.enable)"
+	[ "$enabled" != "1" ] && echo "OpenVPN disabled" && return
+	port="$(uci -q get openvpn.omr.port)"
+	cipher="$(uci -q get openvpn.omr.cipher)"
+	local current_port current_cipher
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.port')"
+	current_cipher="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.cipher')"
+	if [ "$current_port" != "$port" ] || [ "$current_cipher" != "$cipher" ]; then
+		local settings
+		settings='{"port": '$port', "cipher": "'$cipher'"}'
+		echo $(_set_json "openvpn" "$settings")
+	else
+		echo 1
+	fi
+}
+
 _get_ss_redir() {
 	config_get cf_ebpf $1 ebpf
 	[ "$cf_ebpf" = "1" ] && ebpf="true"
@@ -1373,6 +1393,7 @@ _config_service() {
 		config_load shadowsocks-libev
 		config_foreach _set_ss_server_vps server
 		[ -z "$(_set_glorytun_vps)" ] && error=1
+		[ -z "$(_set_openvpn_vps)" ] && error=1
 		_set_vps_firewall
 	fi
 	_backup_list
