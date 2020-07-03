@@ -16,8 +16,17 @@ omr_intf_check() {
 }
 
 omr_intf_set() {
+	local device
+	local ifname
+	local multipath
 	config_get multipath "$1" multipath
 	config_get ifname "$1" ifname
+
+	[ -n "$ifname" ] && [ -L /sys/class/net/${ifname} ] && {
+		device=$(readlink -f /sys/class/net/${ifname})
+		[ "$(echo ${device} | grep virtual)" = "" ] && uci -q set network.$1.device="$device"
+	}
+
 	[ -z "$multipath" ] || [ "$multipath" = "off" ] && [ "$1" != "omrvpn" ] && [ "$1" != "glorytun" ] && return
 
 	uci -q set openmptcprouter.$1=interface
@@ -37,6 +46,8 @@ start_service() {
 	config_foreach omr_intf_check interface
 	config_load network
 	config_foreach omr_intf_set interface
+	uci -q commit network
+	uci -q commit openmptcprouter
 
 	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && {
 		# force CPU speed for RPI
@@ -45,24 +56,26 @@ start_service() {
 		uci -q set openmptcprouter.settings.scaling_governor='performance'
 	}
 
-	config_load openmptcprouter
-	config_get scaling_min_freq settings scaling_min_freq
-	[ -n "$scaling_min_freq" ] && {
-		for c in $(ls -d /sys/devices/system/cpu/cpufreq/policy[0-9]*); do
-			echo $scaling_min_freq > $c/scaling_min_freq
-		done
-	}
-	config_get scaling_max_freq settings scaling_max_freq
-	[ -n "$scaling_max_freq" ] && {
-		for c in $(ls -d /sys/devices/system/cpu/cpufreq/policy[0-9]*); do
-			echo $scaling_max_freq > $c/scaling_max_freq
-		done
-	}
-	config_get scaling_governor settings scaling_governor
-	[ -n "$scaling_governor" ] && {
-		for c in $(ls -d /sys/devices/system/cpu/cpufreq/policy[0-9]*); do
-			echo $scaling_governor > $c/scaling_governor
-		done
+	[ -d /sys/devices/system/cpu/cpufreq/policy0 ] && {
+		config_load openmptcprouter
+		config_get scaling_min_freq settings scaling_min_freq
+		[ -n "$scaling_min_freq" ] && {
+			for c in $(ls -d /sys/devices/system/cpu/cpufreq/policy[0-9]*); do
+				echo $scaling_min_freq > $c/scaling_min_freq
+			done
+		}
+		config_get scaling_max_freq settings scaling_max_freq
+		[ -n "$scaling_max_freq" ] && {
+			for c in $(ls -d /sys/devices/system/cpu/cpufreq/policy[0-9]*); do
+				echo $scaling_max_freq > $c/scaling_max_freq
+			done
+		}
+		config_get scaling_governor settings scaling_governor
+		[ -n "$scaling_governor" ] && {
+			for c in $(ls -d /sys/devices/system/cpu/cpufreq/policy[0-9]*); do
+				echo $scaling_governor > $c/scaling_governor
+			done
+		}
 	}
 	# remove sysctl already defined in /etc/sysctl.d/
 	sed -i -e '/tcp_fin_timeout/d' -e '/tcp_keepalive_time/d' -e '/nf_conntrack_max/d' -e '/tcp_syn_retries/d' -e '/tcp_fastopen/d' -e '/tcp_retries2/d' /etc/sysctl.conf
