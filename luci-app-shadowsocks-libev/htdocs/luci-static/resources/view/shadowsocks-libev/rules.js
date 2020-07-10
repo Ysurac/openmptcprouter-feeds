@@ -1,4 +1,5 @@
 'use strict';
+'require view';
 'require uci';
 'require fs';
 'require form';
@@ -40,23 +41,20 @@ return L.view.extend({
 
 		s = m.section(form.GridSection);
 		s.addremove = true;
+		s.addbtntitle = _('Add a new rule...');
 		s.cfgsections = function() {
 			return this.map.data.sections(this.map.config)
 			    .filter(function(s) { return cfgtypes.indexOf(s['.type']) !== -1; })
 			    .map(function(s) { return s['.name']; });
 		};
-
+		s.tab('general', _('General Settings'));
+		s.tab('src', _('Source Settings'));
+		s.tab('dst', _('Destination Settings'));
+		s.sectiontype = 'ss_rules';
+		
 		s.addModalOptions = function(s, section_id, ev) {
-			s.sectiontype = 'ss_rules';
-			s.tab('general', _('General Settings'));
-			s.tab('src', _('Source Settings'));
-			s.tab('dst', _('Destination Settings'));
-
 			s.taboption('general', form.Flag, 'disabled', _('Disable'));
-			if (!stats[1]) {
-				ss.option_install_package(s, 'general');
-			}
-			o = s.taboption('general', form.Value, 'label', _('Label'));
+			s.taboption('general', form.Value, 'label', _('Label'));
 			
 			//o = s.taboption('general', form.ListValue, 'server', _('server'));
 			//ss.values_serverlist(o, '');
@@ -116,18 +114,7 @@ return L.view.extend({
 				_('Default action for packets whose dst address do not match any of the dst ip list'));
 			ss.values_actions(o);
 
-			if (stats[0].type === 'file') {
-				o = s.taboption('dst', form.Flag, 'dst_forward_recentrst');
-			} else {
-				uci.set(conf, 'ss_rules', 'dst_forward_recentrst', '0');
-				o = s.taboption('dst', form.Button, '_install');
-				o.inputtitle = _('Install package iptables-mod-conntrack-extra');
-				o.inputstyle = 'apply';
-				o.onclick = function() {
-					window.open(L.url('admin/system/opkg') +
-						'?query=iptables-mod-conntrack-extra', '_blank', 'noopener');
-				}
-			}
+			o = s.taboption('dst', form.Flag, 'dst_forward_recentrst');
 			o.title = _('Forward recentrst');
 			o.description = _('Forward those packets whose dst have recently sent to us multiple tcp-rst');
 		};
@@ -143,12 +130,12 @@ return L.view.extend({
 			}
 			this.inputstyle = 'save';
 			return _('Enabled');
-		}
+		};
 		o.onclick = function(ev) {
 			var inputEl = ev.target.parentElement.nextElementSibling;
 			inputEl.value = ss.ucival_to_bool(inputEl.value) ? '0' : '1';
 			return this.map.save();
-		}
+		};
 		return m.render();
 	},
 });

@@ -1,4 +1,5 @@
 'use strict';
+'require baseclass';
 'require uci';
 'require form';
 'require network';
