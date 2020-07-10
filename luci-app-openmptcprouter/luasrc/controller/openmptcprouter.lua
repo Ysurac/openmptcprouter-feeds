@@ -703,7 +703,11 @@ function settings_add()
 	local externalcheck = luci.http.formvalue("externalcheck") or "1"
 	ucic:set("openmptcprouter","settings","external_check",externalcheck)
 
-	-- Enable/disable external check
+	-- Enable/disable debug
+	local debug = luci.http.formvalue("debug") or "0"
+	ucic:set("openmptcprouter","settings","debug",debug)
+
+	-- Enable/disable vnstat backup
 	local savevnstat = luci.http.formvalue("savevnstat") or "0"
 	luci.sys.exec("uci -q set vnstat.@vnstat[0].backup=%s" % savevnstat)
 	ucic:commit("vnstat")
