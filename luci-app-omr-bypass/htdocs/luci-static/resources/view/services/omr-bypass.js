@@ -162,8 +162,8 @@ return L.view.extend({
 		o.rmempty = false;
 		o.load = function(section_id) {
 			return Promise.all([
-				fs.read_direct('/proc/net/xt_ndpi/proto'),
-				fs.read_direct('/proc/net/xt_ndpi/host_proto')
+				fs.lines('/proc/net/xt_ndpi/proto'),
+				fs.lines('/proc/net/xt_ndpi/host_proto')
 			]).then(L.bind(function(linesi) {
 				var proto = linesi[0],
 				    host = linesi[1],
@@ -186,7 +186,7 @@ return L.view.extend({
 			},this));
 		};
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
+		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'));
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
