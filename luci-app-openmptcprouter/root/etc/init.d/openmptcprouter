@@ -21,8 +21,9 @@ omr_intf_set() {
 	local multipath
 	config_get multipath "$1" multipath
 	config_get ifname "$1" ifname
+	config_get proto "$1" proto
 
-	[ -n "$ifname" ] && [ -L /sys/class/net/${ifname} ] && {
+	[ -n "$ifname" ] && [ -L /sys/class/net/${ifname} ] && ([ "$proto" = "static" ] || [ "$proto" = "dhcp" ]) && {
 		device=$(readlink -f /sys/class/net/${ifname})
 		[ "$(echo ${device} | grep virtual)" = "" ] && uci -q set network.$1.device="$device"
 	}
@@ -48,13 +49,6 @@ start_service() {
 	config_foreach omr_intf_set interface
 	uci -q commit network
 	uci -q commit openmptcprouter
-
-	[ -n "$(ubus call system board | jsonfilter -e '@.board_name' | grep raspberry)" ] && {
-		# force CPU speed for RPI
-		uci -q set openmptcprouter.settings.scaling_min_freq=$(cat /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq | tr -d "\n")
-		uci -q set openmptcprouter.settings.scaling_max_freq=$(cat /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq | tr -d "\n")
-		uci -q set openmptcprouter.settings.scaling_governor='performance'
-	}
 
 	[ -d /sys/devices/system/cpu/cpufreq/policy0 ] && {
 		config_load openmptcprouter
