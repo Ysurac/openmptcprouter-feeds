@@ -223,10 +223,9 @@ del_server_route() {
 
 disable_pihole() {
 	local server=$1
-	if [ "$(uci -q get openmptcprouter.${server}.pihole)" = "1" ] && [ "$(uci -q get dhcp.@dnsmasq[0].server)" != "127.0.0.1#5353" ]; then
+	if [ "$(uci -q get openmptcprouter.${server}.pihole)" = "0" ] && [ "$(uci -q get dhcp.@dnsmasq[0].server)" != "/lan/ /use-application-dns.net/" ]; then
 		_log "Disable Pi-Hole..."
 		uci -q batch <<-EOF >/dev/null
-			delete dhcp.@dnsmasq[0].server
 			add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
 			commit dhcp
 		EOF
@@ -237,7 +236,7 @@ disable_pihole() {
 enable_pihole() {
 	local server=$1
 	nbserver=$((nbserver+1))
-	if [ "$(uci -q get openmptcprouter.${server}.pihole)" = "1" ] && [ "$(uci -q get dhcp.@dnsmasq[0].server)" = "127.0.0.1#5353" ]; then
+	if [ "$(uci -q get openmptcprouter.${server}.pihole)" = "1" ] && [ "$(uci -q get dhcp.@dnsmasq[0].server | grep '127.0.0.1#5353')" != "" ]; then
 		piholeenabled=$((piholeenabled+1))
 	fi
 }
@@ -305,6 +304,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		fi
 		config_load openmptcprouter
 		config_foreach del_server_route server
+		#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" != "mlvpn" ]; then
 		if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ]; then
 			config_foreach set_server_all_routes server
 		fi
@@ -350,6 +350,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		fi
 		config_load openmptcprouter
 		config_foreach disable_pihole server
+		#if [ "$(uci -q get openmptcprouter.settings.master)" != "balancing" ] || [ "$(uci -q get openmptcprouter.settings.vpn)" = "mlvpn" ]; then
 		if [ "$(uci -q get openmptcprouter.settings.master)" != "balancing" ]; then
 			config_foreach set_server_default_route server
 		fi
@@ -449,6 +450,7 @@ fi
 multipath_config=$(uci -q get "openmtpcprouter.$OMR_TRACKER_INTERFACE.multipath")
 [ -z "$multipath_config" ] && multipath_config=$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath" || echo "off")
 if [ "$multipath_config" = "master" ]; then
+	#if ([ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]) && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && ([ "$(uci -q get openmptcprouter.settings.master)" != "balancing" ] || [ "$(uci -q get openmptcprouter.settings.vpn)" = "mlvpn" ]); then
 	if ([ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]) && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(uci -q get openmptcprouter.settings.master)" != "balancing" ]; then
 		omrvpn_intf=$(uci -q get "network.omrvpn.ifname" || echo "tun")
 		if [ -n "$omrvpn_intf" ] && [ "$(ip route show default | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
@@ -463,6 +465,7 @@ if [ "$multipath_config" = "master" ]; then
 		fi
 		ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337
 	fi
+	#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(ip route show default | grep weight)" = "" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" != "mlvpn" ]; then
 	if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(ip route show default | grep weight)" = "" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
 		omrvpn_intf=$(uci -q get "network.omrvpn.ifname" || echo "tun")
 		if [ -n "$omrvpn_intf" ] && [ "$(ip route show default | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ]; then
@@ -494,6 +497,7 @@ fi
 
 if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
 	config_load openmptcprouter
+	#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" != "mlvpn" ]; then
 	if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ]; then
 		config_foreach set_server_all_routes server
 	elif [ "$(uci -q get openmptcprouter.settings.master)" != "failover" ]; then
@@ -533,7 +537,7 @@ fi
 
 # Save wan settings for status page
 if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(date +"%s") + $((30 + RANDOM % 31)) - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ] || [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.state)" = "down" ]; then
-	_log "Get status and settings for $OMR_TRACKER_INTERFACE..."
+	[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Get status and settings for $OMR_TRACKER_INTERFACE..."
 	if [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ]; then
 		local ipaddr="$(omr-ip-intf $OMR_TRACKER_DEVICE)"
 	else
@@ -642,10 +646,10 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 	fi
 	if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ]; then
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(( $(date +"%s") - 3400 ))
-		_log "Get status and settings for $OMR_TRACKER_INTERFACE... Failed"
+		[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Get status and settings for $OMR_TRACKER_INTERFACE... Failed"
 		uci -q commit openmptcprouter
 	else
-		_log "Get status and settings for $OMR_TRACKER_INTERFACE... Done"
+		[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Get status and settings for $OMR_TRACKER_INTERFACE... Done"
 		uci -q commit openmptcprouter
 		#/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1
 	fi
