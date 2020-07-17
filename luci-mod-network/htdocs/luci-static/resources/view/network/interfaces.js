@@ -76,6 +76,7 @@ function render_status(node, ifc, with_device) {
 	    macaddr = maindev ? maindev.getMAC() : null;
 
 	return L.itemlist(node, [
+		_('Label'), ifc.get('label'),
 		_('Protocol'), with_device ? null : (desc || '?'),
 		_('Device'),   with_device ? (maindev ? maindev.getShortName() : E('em', _('Not present'))) : null,
 		_('Uptime'),   (!changecount && ifc.isUp()) ? '%t'.format(ifc.getUptime()) : null,
