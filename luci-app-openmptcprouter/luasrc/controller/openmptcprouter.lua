@@ -350,6 +350,7 @@ function wizard_add()
 		ucic:commit("sqm")
 	end
 
+	local force_retrieve = luci.http.formvalue("forceretrieve") or ""
 	-- Retrieve all server settings
 	local serversnb = 0
 	local disablednb = 0
@@ -362,11 +363,10 @@ function wizard_add()
 		local openmptcprouter_vps_key = luci.http.formvalue("%s.openmptcprouter_vps_key" % server) or ""
 		local openmptcprouter_vps_username = luci.http.formvalue("%s.openmptcprouter_vps_username" % server) or ""
 		local openmptcprouter_vps_disabled = luci.http.formvalue("%s.openmptcprouter_vps_disabled" % server) or ""
-		ucic:set("openmptcprouter",server,"server")
-		ucic:set("openmptcprouter",server,"username",openmptcprouter_vps_username)
-		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key)
 		if master == server or (master == "" and serversnb == 0) then
-			ucic:set("openmptcprouter",server,"get_config","1")
+			if ucic:get("openmptcprouter",server,"password") == "" or ucic:get("openmptcprouter",server,"password") ~= openmptcprouter_vps_key or ucic:get("openmptcprouter",server,"username") ~= openmptcprouter_vps_username or force_retrieve ~= "" then
+				ucic:set("openmptcprouter",server,"get_config","1")
+			end
 			ucic:set("openmptcprouter",server,"master","1")
 			ucic:set("openmptcprouter",server,"backup","0")
 		else
@@ -380,6 +380,9 @@ function wizard_add()
 		if server_ip ~= "" then
 			serversnb = serversnb + 1
 		end
+		ucic:set("openmptcprouter",server,"server")
+		ucic:set("openmptcprouter",server,"username",openmptcprouter_vps_username)
+		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key)
 		ucic:set("openmptcprouter",server,"disabled",openmptcprouter_vps_disabled)
 		ucic:set("openmptcprouter",server,"ip",server_ip)
 		ucic:set("openmptcprouter",server,"port","65500")
