@@ -378,56 +378,55 @@ _get_gre_tunnel() {
 			peeraddr="$(echo $tunnel | jsonfilter -q -e '@.remote_ip')"
 			ipaddr="$(echo $tunnel | jsonfilter -q -e '@.local_ip')"
 			publicaddr="$(echo $tunnel | jsonfilter -q -e '@.public_ip')"
-			uci -q batch <<-EOF >/dev/null
-				set network.omrip${i}=interface
-				set network.omrip${i}.label="Tunnel for $publicaddr"
-				set network.omrip${i}.proto=gre
-				set network.omrip${i}.nohostroute='1'
-				set network.omrip${i}.ipv6='0'
-				set network.omrip${i}.defaultroute='0'
-				set network.omrip${i}.multipath='off'
-				set network.omrip${i}.peerdns='0'
-				set network.omrip${i}.ip4table='vpn'
-				set network.omrip${i}.peeraddr="$peeraddr"
-				set network.omrip${i}.ipaddr="$ipaddr"
-				commit network
-				add_list firewall.zone_vpn.network="omrip${i}"
-				commit firewall
-			EOF
+			if [ "$(uci -q get network.omrip${i}.peeraddr)" != "$peeraddr" ] || [ "$(uci -q get network.omrip${i}.ipaddr)" != "$ipaddr" ]; then
+				uci -q batch <<-EOF >/dev/null
+					set network.omrip${i}=interface
+					set network.omrip${i}.label="Tunnel for $publicaddr"
+					set network.omrip${i}.proto=gre
+					set network.omrip${i}.nohostroute='1'
+					set network.omrip${i}.ipv6='0'
+					set network.omrip${i}.defaultroute='0'
+					set network.omrip${i}.multipath='off'
+					set network.omrip${i}.peerdns='0'
+					set network.omrip${i}.ip4table='vpn'
+					set network.omrip${i}.peeraddr="$peeraddr"
+					set network.omrip${i}.ipaddr="$ipaddr"
+					commit network
+					add_list firewall.zone_vpn.network="omrip${i}"
+					commit firewall
+				EOF
 			
-			ssport="$(echo $tunnel | jsonfilter -q -e '@.shadowsocks_port')"
-			uci -q batch <<-EOF >/dev/null
-				set shadowsocks-libev.omrip${i}server=server
-				set shadowsocks-libev.omrip${i}server.label="Server with public IP $publicaddr"
-				set shadowsocks-libev.omrip${i}server.server_port="$ssport"
-				set shadowsocks-libev.omrip${i}server.method="$(uci -q get shadowsocks-libev.sss0.method)"
-				set shadowsocks-libev.omrip${i}server.key="$(uci -q get shadowsocks-libev.sss0.key)"
-				set shadowsocks-libev.omrip${i}=ss_redir
-				set shadowsocks-libev.omrip${i}.label="ss-redir for public IP $publicaddr"
-				set shadowsocks-libev.omrip${i}.server="omrip${i}server"
-				set shadowsocks-libev.omrip${i}.local_port="230$i"
-				set shadowsocks-libev.omrip${i}.mode='tcp_and_udp'
-				set shadowsocks-libev.omrip${i}.reuse_port='1'
-				set shadowsocks-libev.omrip${i}.mptcp='1'
-				set shadowsocks-libev.omrip${i}.ipv6_first='1'
-				set shadowsocks-libev.omrip${i}.timeout="$(uci -q get shadowsocks-libev.omrip${i}.timeout)"
-				set shadowsocks-libev.omrip${i}.fast_open="$(uci -q get shadowsocks-libev.omrip${i}.fast_open)"
-				set shadowsocks-libev.omrip${i}.no_delay="$(uci -q get shadowsocks-libev.omrip${i}.no_delay)"
-				set shadowsocks-libev.omrip${i}_rule=ss_rules
-				set shadowsocks-libev.omrip${i}_rule.label="Rules for public IP $publicaddr"
-				set shadowsocks-libev.omrip${i}_rule.server="omrip${i}server"
-				set shadowsocks-libev.omrip${i}_rule.disabled='1'
-				set shadowsocks-libev.omrip${i}_rule.src_default='forward'
-				set shadowsocks-libev.omrip${i}_rule.dst_default='forward'
-				set shadowsocks-libev.omrip${i}_rule.local_default='forward'
-				set shadowsocks-libev.omrip${i}_rule.redir_tcp="omrip${i}"
-				commit shadowsocks-libev
-			EOF
-			if [ "$(uci -q get shadowsocks-libev.omrip${i}server.disabled)" = "" ]; then
-				uci -q set shadowsocks-libev.omrip${i}server.disabled='1'
-			fi
-			if [ "$(uci -q get shadowsocks-libev.omrip${i}.local_address)" = "" ]; then
-				uci -q set shadowsocks-libev.omrip${i}.local_address='::'
+				ssport="$(echo $tunnel | jsonfilter -q -e '@.shadowsocks_port')"
+				uci -q batch <<-EOF >/dev/null
+					set shadowsocks-libev.omrip${i}server=server
+					set shadowsocks-libev.omrip${i}server.label="Server with public IP $publicaddr"
+					set shadowsocks-libev.omrip${i}server.server_port="$ssport"
+					set shadowsocks-libev.omrip${i}server.disabled="1"
+					set shadowsocks-libev.omrip${i}server.server="$(uci -q get shadowsocks-libev.sss0.server)"
+					set shadowsocks-libev.omrip${i}server.method="$(uci -q get shadowsocks-libev.sss0.method)"
+					set shadowsocks-libev.omrip${i}server.key="$(uci -q get shadowsocks-libev.sss0.key)"
+					set shadowsocks-libev.omrip${i}=ss_redir
+					set shadowsocks-libev.omrip${i}.label="ss-redir for public IP $publicaddr"
+					set shadowsocks-libev.omrip${i}.server="omrip${i}server"
+					set shadowsocks-libev.omrip${i}.local_port="230$i"
+					set shadowsocks-libev.omrip${i}.local_address="$(uci -q get shadowsocks-libev.hi.local_address)"
+					set shadowsocks-libev.omrip${i}.mode='tcp_and_udp'
+					set shadowsocks-libev.omrip${i}.reuse_port='1'
+					set shadowsocks-libev.omrip${i}.mptcp='1'
+					set shadowsocks-libev.omrip${i}.ipv6_first='1'
+					set shadowsocks-libev.omrip${i}.timeout="$(uci -q get shadowsocks-libev.hi.timeout)"
+					set shadowsocks-libev.omrip${i}.fast_open="$(uci -q get shadowsocks-libev.hi.fast_open)"
+					set shadowsocks-libev.omrip${i}.no_delay="$(uci -q get shadowsocks-libev.hi.no_delay)"
+					set shadowsocks-libev.omrip${i}_rule=ss_rules
+					set shadowsocks-libev.omrip${i}_rule.label="Rules for public IP $publicaddr"
+					set shadowsocks-libev.omrip${i}_rule.server="omrip${i}server"
+					set shadowsocks-libev.omrip${i}_rule.disabled='1'
+					set shadowsocks-libev.omrip${i}_rule.src_default='bypass'
+					set shadowsocks-libev.omrip${i}_rule.dst_default='bypass'
+					set shadowsocks-libev.omrip${i}_rule.local_default='bypass'
+					set shadowsocks-libev.omrip${i}_rule.redir_tcp="omrip${i}"
+					commit shadowsocks-libev
+				EOF
 			fi
 			i=$((i+1))
 		done
