@@ -31,8 +31,8 @@ jobs:
       - run:
           name: cache
           command: |
-            echo "cache 103 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
-            echo "cache 105 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+            echo "cache 104 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
+            echo "cache 106 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
 
       - restore_cache:
           keys:
@@ -94,8 +94,8 @@ jobs:
       - run:
           name: cache
           command: |
-            echo "cache 103 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
-            echo "cache 105 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+            echo "cache 104 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
+            echo "cache 106 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
 
       - restore_cache:
           keys:
@@ -155,8 +155,69 @@ jobs:
       - run:
           name: cache
           command: |
-            echo "cache 103 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
-            echo "cache 105 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+            echo "cache 104 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
+            echo "cache 106 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+
+      - restore_cache:
+          keys:
+            - cache-{{ checksum "/tmp/cache-version" }}
+            - cache-{{ checksum "/tmp/cache-target" }}
+
+      - run:
+          name: Build toolchain
+          no_output_timeout: 40m
+          command: |
+            git clone https://github.com/ysurac/openmptcprouter || true
+            cd openmptcprouter
+            git checkout ${CIRCLE_BRANCH:-$CIRCLE_TAG} || true
+            git pull || true
+            export OMR_PATH="$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/${CIRCLE_BRANCH:-$CIRCLE_TAG}"
+            export OMR_FEED_URL="$CIRCLE_REPOSITORY_URL"
+            export OMR_FEED_SRC="${CIRCLE_BRANCH:-$CIRCLE_TAG}"
+            pyenv global 3.5.2
+            sh build.sh prepare {tools,toolchain}/install -j2
+            echo -e "$OMR_PRIVKEY" > ~/openmptcprouter/$OMR_TARGET/source/key-build
+            echo -e "$OMR_PUBKEY" > ~/openmptcprouter/$OMR_TARGET/source/key-build.pub
+
+      - save_cache:
+          key: cache-{{ checksum "/tmp/cache-target" }}
+          paths:
+            - openmptcprouter
+
+      - run:
+          name: Build
+          no_output_timeout: 40m
+          command: make IGNORE_ERRORS=m -C ~/openmptcprouter/$OMR_TARGET/source package/{compile,install,index} target/compile -j2 package/compile -j2 target/install -j2
+
+      - run:
+          name: Deploy
+          command: |
+            ssh -p ${OMR_DEPLOY_PORT:-22} deploy@$OMR_DEPLOY_HOST mkdir -p deploy/${CIRCLE_BRANCH:-release}/${CIRCLE_TAG:-$OMR_KERNEL}/$OMR_TARGET
+            rsync -av --delete-after ~/openmptcprouter/$OMR_TARGET/source/bin/ -e "ssh -q -p ${OMR_DEPLOY_PORT:-22}" deploy@$OMR_DEPLOY_HOST:deploy/${CIRCLE_BRANCH:-release}/${CIRCLE_TAG:-$OMR_KERNEL}/$OMR_TARGET
+            rm -rf ~/openmptcprouter/$OMR_TARGET/source/bin
+
+      - save_cache:
+          key: cache-{{ checksum "/tmp/cache-version" }}
+          paths:
+            - openmptcprouter
+
+  build_espressobin:
+    machine:
+      image: ubuntu-1604:201903-01
+
+    environment:
+      - OMR_VERSION: $CIRCLE_TAG
+      - OMR_TARGET: espressobin
+      - OMR_KERNEL: 5.4
+
+    working_directory: ~/
+
+    steps:
+      - run:
+          name: cache
+          command: |
+            echo "cache 104 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
+            echo "cache 106 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
 
       - restore_cache:
           keys:
@@ -216,8 +277,8 @@ jobs:
       - run:
           name: cache
           command: |
-            echo "cache 103 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
-            echo "cache 105 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+            echo "cache 104 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
+            echo "cache 106 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
 
       - restore_cache:
           keys:
@@ -277,8 +338,8 @@ jobs:
       - run:
           name: cache
           command: |
-            echo "cache 103 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
-            echo "cache 105 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+            echo "cache 104 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
+            echo "cache 106 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
 
       - restore_cache:
           keys:
@@ -338,8 +399,8 @@ jobs:
       - run:
           name: cache
           command: |
-            echo "cache 103 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
-            echo "cache 105 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+            echo "cache 104 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
+            echo "cache 106 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
 
       - restore_cache:
           keys:
@@ -402,8 +463,8 @@ jobs:
       - run:
           name: cache
           command: |
-            echo "cache 103 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
-            echo "cache 105 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+            echo "cache 104 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
+            echo "cache 106 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
 
       - restore_cache:
           keys:
@@ -462,8 +523,8 @@ jobs:
       - run:
           name: cache
           command: |
-            echo "cache 103 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
-            echo "cache 105 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
+            echo "cache 104 $OMR_KERNEL $OMR_TARGET" > /tmp/cache-target
+            echo "cache 106 $OMR_KERNEL $OMR_TARGET $OMR_VERSION" > /tmp/cache-version
 
       - restore_cache:
           keys:
@@ -574,6 +635,15 @@ workflows:
               only: 
                 - develop
       - build_rpi3:
+          requires:
+            - prepare
+          filters:
+            tags:
+              only: /.*/
+            branches:
+              only: 
+                - develop
+      - build_espressobin:
           requires:
             - prepare
           filters:
