@@ -371,6 +371,8 @@ _get_gre_tunnel() {
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 	gre_tunnel_state="$(echo "$vps_config" | jsonfilter -q -e '@.gre_tunnel.enabled')"
+	vpnip_local="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.remoteip')"
+	vpnip_remote="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.localip')"
 	if [ "$gre_tunnel_state" = "true" ]; then
 		i=0
 		echo "$vps_config" | jsonfilter -q -e '@.gre_tunnel.config[*]' |
@@ -378,24 +380,38 @@ _get_gre_tunnel() {
 			peeraddr="$(echo $tunnel | jsonfilter -q -e '@.remote_ip')"
 			ipaddr="$(echo $tunnel | jsonfilter -q -e '@.local_ip')"
 			publicaddr="$(echo $tunnel | jsonfilter -q -e '@.public_ip')"
-			if [ "$(uci -q get network.omrip${i}.peeraddr)" != "$peeraddr" ] || [ "$(uci -q get network.omrip${i}.ipaddr)" != "$ipaddr" ]; then
+			if [ "$(uci -q get network.omrip${i}.peeraddr)" != "$peeraddr" ] || [ "$(uci -q get network.omrip${i}.ipaddr)" != "$ipaddr" ] || [ "$(uci -q get network.omrip${i}gre.ipaddr)" != "$vpnip_local" ]; then
 				uci -q batch <<-EOF >/dev/null
+					set network.omrip${i}gre=interface
+					set network.omrip${i}gre.label="GRE tunnel for $publicaddr"
+					set network.omrip${i}gre.proto=gre
+					set network.omrip${i}gre.nohostroute='1'
+					set network.omrip${i}gre.ipv6='0'
+					set network.omrip${i}gre.defaultroute='0'
+					set network.omrip${i}gre.multipath='off'
+					set network.omrip${i}gre.peerdns='0'
+					set network.omrip${i}gre.ip4table='vpn'
+					set network.omrip${i}gre.peeraddr="$publicaddr"
+					set network.omrip${i}gre.ipaddr="$vpnip_local"
 					set network.omrip${i}=interface
 					set network.omrip${i}.label="Tunnel for $publicaddr"
-					set network.omrip${i}.proto=gre
+					set network.omrip${i}.proto=static
 					set network.omrip${i}.nohostroute='1'
+					set network.omrip${i}.ifname="@omrip${i}"
 					set network.omrip${i}.ipv6='0'
 					set network.omrip${i}.defaultroute='0'
 					set network.omrip${i}.multipath='off'
 					set network.omrip${i}.peerdns='0'
 					set network.omrip${i}.ip4table='vpn'
-					set network.omrip${i}.peeraddr="$peeraddr"
+					set network.omrip${i}.gateway="$peeraddr"
 					set network.omrip${i}.ipaddr="$ipaddr"
+					set network.omrip${i}.netmask="255.255.255.252"
+					set network.omrip${i}.lookup="6670"
 					commit network
+					add_list firewall.zone_vpn.network="omrip${i}gre"
 					add_list firewall.zone_vpn.network="omrip${i}"
 					commit firewall
 				EOF
-			
 				ssport="$(echo $tunnel | jsonfilter -q -e '@.shadowsocks_port')"
 				uci -q batch <<-EOF >/dev/null
 					set shadowsocks-libev.omrip${i}server=server
@@ -792,7 +808,13 @@ _vps_firewall_close_port() {
 			[ -n "$line" ] && {
 				proto=$(echo $line | awk '{print $4}')
 				src_dport=$(echo $line | awk '{print $5}')
-				settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT"}'
+				source_port=$(echo $line | awk '{print $6}')
+				source_dip=$(echo $line | awk '{print $7}')
+				if [ "$source_port" = "-" ]; then
+					settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT","source_dip": "'$source_dip'"}'
+				else
+					settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT"}'
+				fi
 				_set_json "shorewallclose" "$settings"
 			}
 		done
@@ -802,7 +824,13 @@ _vps_firewall_close_port() {
 			[ -n "$line" ] && {
 				proto=$(echo $line | awk '{print $4}')
 				src_dport=$(echo $line | awk '{print $5}')
-				settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT","ipproto" : "ipv6"}'
+				source_port=$(echo $line | awk '{print $6}')
+				source_dip=$(echo $line | awk '{print $7}')
+				if [ "$source_port" = "-" ]; then
+					settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT","ipproto" : "ipv6","source_dip": "'$source_dip'"}'
+				else
+					settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","fwtype" : "DNAT","ipproto" : "ipv6"}'
+				fi
 				_set_json "shorewallclose" "$settings"
 			}
 		done
