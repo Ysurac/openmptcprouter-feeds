@@ -3,10 +3,47 @@
 
 _setup_rules() {
 	config_get lookup $1 lookup
-	[ -z "$(ip rule list fwmark 0x${lookup})" ] && {
+	[ -n "$lookup" ] && [ -z "$(ip rule list fwmark 0x${lookup})" ] && {
 		ip rule add fwmark 0x${lookup} table ${lookup} pref 2
 	}
 }
 
+_setup_routes() {
+	config_get lookup $1 lookup
+	config_get gateway $1 gateway
+	intf=$(ifstatus | jsonfilter -e '@.l3_device' | tr -d "\n")
+	ip route replace default via $gateway dev $intf table $lookup
+}
 config_load network
 config_foreach _setup_rules interface
+config_foreach _setup_routes interface
+
+_setup_fw() {
+	config_get src_ips_forward $1 src_ips_forward
+	config_get redir_tcp $1 redir_tcp
+	config_get ifnames $1 ifnames
+	lookup="$(uci -q get network.${redir_tcp}.lookup)"
+	rule=""
+	[ -n "$src_ips_forward" ] && rule="$rule -s $(echo "${src_ips_forward}" | sed 's/ /,/g')"
+	[ -n "$ifnames" ] && rule="$rule -i $(echo "${ifnames}" | sed 's/ /-i /g')"
+	if [ -n "$rule" ] && [ -n "$lookup" ]; then
+		iptables-save --counters | grep -v "0x${lookup}" | iptables-restore -w --counters
+		iptables-restore -w --wait=60 --noflush <<-EOF
+			*mangle
+			-A omr-gre-tunnel ${rule} -j MARK --set-mark 0x${lookup}
+			COMMIT
+		EOF
+	fi
+}
+
+if [ -z "$(iptables-save | grep omr-gre-tunnel)" ]; then
+	iptables-restore -w --wait=60  --noflush <<-EOF
+		*mangle
+		:omr-gre-tunnel -
+		-I PREROUTING 1 -m addrtype ! --dst-type LOCAL -j omr-gre-tunnel
+		COMMIT
+	EOF
+fi
+
+config_load shadowsocks-libev
+config_foreach _setup_fw ss_rules
