@@ -636,7 +636,7 @@ function wizard_add()
 		luci.sys.call("/etc/init.d/mptcp restart >/dev/null 2>/dev/null")
 		if openmptcprouter_vps_key ~= "" then
 			luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
-			os.execute("sleep 2")
+			luci.sys.call("sleep 2")
 		end
 		luci.sys.call("/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
