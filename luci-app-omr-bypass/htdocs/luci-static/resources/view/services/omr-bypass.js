@@ -26,6 +26,7 @@ return L.view.extend({
 		s = m.section(form.GridSection, 'domains', _('Domains'));
 		s.addremove = true;
 		s.anonymous = true;
+		s.nodescriptions = true;
 
 		o = s.option(form.Value, 'name', _('Domain'));
 		o.rmempty = false;
@@ -41,6 +42,7 @@ return L.view.extend({
 		s = m.section(form.GridSection, 'ips', _('IPs and Networks'));
 		s.addremove = true;
 		s.anonymous = true;
+		s.nodescriptions = true;
 
 		o = s.option(form.Value, 'ip', _('IP'));
 		o.rmempty = false;
@@ -56,6 +58,7 @@ return L.view.extend({
 		s = m.section(form.GridSection, 'dest_port', _('Ports destination'));
 		s.addremove = true;
 		s.anonymous = true;
+		s.nodescriptions = true;
 
 		o = s.option(form.Value, 'dport', _('port'));
 		o.rmempty = false;
@@ -78,6 +81,7 @@ return L.view.extend({
 		s = m.section(form.GridSection, 'src_port', _('Ports source'));
 		s.addremove = true;
 		s.anonymous = true;
+		s.nodescriptions = true;
 
 		o = s.option(form.Value, 'sport', _('port'));
 		o.rmempty = false;
@@ -100,6 +104,7 @@ return L.view.extend({
 		s = m.section(form.GridSection, 'macs', _('MAC-Address'));
 		s.addremove = true;
 		s.anonymous = true;
+		s.nodescriptions = true;
 
 		o = s.option(form.Value, 'mac', _('source MAC-Address'));
 		o.datatype = 'list(unique(macaddr))';
@@ -120,6 +125,7 @@ return L.view.extend({
 		s = m.section(form.GridSection, 'lan_ip', _('Source lan IP address or network'));
 		s.addremove = true;
 		s.anonymous = true;
+		s.nodescriptions = true;
 
 		o = s.option(form.Value, 'ip', _('IP Address'));
 		o.datatype = 'or(ip4addr,ip6addr)';
@@ -157,6 +163,7 @@ return L.view.extend({
 		s = m.section(form.GridSection, 'dpis', _('Protocols and services'));
 		s.addremove = true;
 		s.anonymous = true;
+		s.nodescriptions = true;
 
 		o = s.option(form.Value, 'proto', _('Protocol/Service'));
 		o.rmempty = false;
