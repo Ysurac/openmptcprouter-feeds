@@ -169,11 +169,11 @@ return L.view.extend({
 		o.rmempty = false;
 		o.load = function(section_id) {
 			return Promise.all([
-				fs.lines('/proc/net/xt_ndpi/proto'),
-				fs.lines('/proc/net/xt_ndpi/host_proto')
-			]).then(L.bind(function(linesi) {
-				var proto = linesi[0],
-				    host = linesi[1],
+				fs.read_direct('/proc/net/xt_ndpi/proto'),
+				fs.read_direct('/proc/net/xt_ndpi/host_proto')
+			]).then(L.bind(function(filesi) {
+				var proto = filesi[0].split(/\n/),
+				    host = filesi[1].split(/\n/),
 				    name = [];
 				for (var i = 0; i < proto.length; i++) {
 					var m = proto[i].split(/\s+/);
