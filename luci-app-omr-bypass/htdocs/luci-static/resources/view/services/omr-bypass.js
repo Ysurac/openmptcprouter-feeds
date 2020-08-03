@@ -183,9 +183,9 @@ return L.view.extend({
 				for (var i = 0; i < host.length; i++) {
 					var m = host[i].split(/:/);
 					if (m && m[0] != "#Proto")
-					  name.push(m[0]);
+					  name.push(m[0].toLowerCase());
 				}
-				name = Array.from(new Set(name)).sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); });
+				name = Array.from(new Set(name)).sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase())}).reduce(function(a, b){ if (a.slice(-1)[0] !== b) a.push(b);return a;},[]);
 				for (var i = 0; i < name.length; i++) {
 					this.value(name[i]);
 				}
