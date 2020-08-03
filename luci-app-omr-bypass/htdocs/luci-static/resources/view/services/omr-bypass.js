@@ -170,7 +170,7 @@ return L.view.extend({
 		o.load = function(section_id) {
 			return Promise.all([
 				fs.read_direct('/proc/net/xt_ndpi/proto'),
-                                fs.read_direct('/proc/net/xt_ndpi/host_proto')
+				fs.read_direct('/proc/net/xt_ndpi/host_proto')
 			]).then(L.bind(function(filesi) {
 				var proto = filesi[0].split(/\n/),
 				    host = filesi[1].split(/\n/),
