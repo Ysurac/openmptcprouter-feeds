@@ -937,7 +937,8 @@ end
 
 function interfaces_status()
 	local ut = require "luci.util"
-	local mArray = ut.ubus("openmptcprouter", "status", {}) or {_=0}
+	--local mArray = ut.ubus("openmptcprouter", "status", {}) or {_=0}
+	local mArray = luci.json.decode(ut.trim(sys.exec("/bin/ubus -t 600 -S call openmptcprouter status 2>/dev/null")))
 
 	if mArray ~= nil and mArray.openmptcprouter ~= nil then
 		mArray.openmptcprouter["remote_addr"] = luci.http.getenv("REMOTE_ADDR") or ""
