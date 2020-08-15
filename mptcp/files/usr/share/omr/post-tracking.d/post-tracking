@@ -162,7 +162,7 @@ set_server_all_routes() {
 		config_load network
 		config_foreach set_routes_intf interface
 		[ -n "$routesintf" ] && ([ "$nbintf" -gt "1" ] && [ "$(ip r show $serverip | tr -d '\t' | tr -d '\n')" != "$serverip $routesintf " ]) || ([ "$nbintf" = "1" ] && [ "$(ip r show $serverip | grep $OMR_TRACKER_DEVICE)" = "" ]) && {
-			while [ "$(ip r show $serverip | grep -v nexthop)" != "" ]; do
+			while [ "$(ip r show $serverip | grep -v nexthop | sed 's/ //g' | tr -d '\n')" != "$serverip" ]; do
 				ip r del $serverip
 			done
 			_log "Set server $server ($serverip) default route $serverip $routesintf"
@@ -527,7 +527,7 @@ fi
 		fi
 	fi
 }
-[ "$multipath_config" = "backup" ] && glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 backup rate auto rx 125000000 tx 125000000 > /dev/null 2>&1
+[ "$multipath_config" = "backup" ] && [ "$(pgrep glorytun-udp)" != "" ] && glorytun-udp path $OMR_TRACKER_DEVICE_IP dev tun0 backup rate auto rx 125000000 tx 125000000 > /dev/null 2>&1
 [ "$multipath_status" = "$multipath_config" ] || {
 	if [ "$(sysctl -n net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ]; then
 		_log "Multipath $OMR_TRACKER_DEVICE switched to $multipath_config"
@@ -622,7 +622,7 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
 	}
 	if [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get openmptcprouter.settings.external_check)" = "0" ]; then
-		if ping -c 1 $(uci -q get shadowsocks-libev.sss0.server) &> /dev/null; then
+		if ping -c 1 $(uci -q get shadowsocks-libev.sss0.server) 2>&1 >/dev/null; then
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
 		fi
 	fi
