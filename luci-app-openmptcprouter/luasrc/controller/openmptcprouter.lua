@@ -389,6 +389,24 @@ function wizard_add()
 		ucic:save("openmptcprouter")
 	end
 
+	-- Get Proxy set by default
+	local default_proxy = luci.http.formvalue("default_proxy") or "shadowsocks"
+	if default_proxy == "shadowsocks" and serversnb > 0 then
+		ucic:set("shadowsocks-libev","sss0","disabled","0")
+		ucic:set("v2ray","main","enabled","0")
+	elseif default_proxy == "v2ray" and serversnb > 0  then
+		ucic:set("shadowsocks-libev","sss0","disabled","1")
+		ucic:set("v2ray","main","enabled","1")
+	else
+		ucic:set("shadowsocks-libev","sss0","disabled","1")
+		ucic:set("v2ray","main","enabled","0")
+	end
+	ucic:set("openmptcprouter","settings","proxy",default_proxy)
+	ucic:save("openmptcprouter")
+	ucic:save("shadowsocks-libev")
+	ucic:save("v2ray")
+
+
 	local ss_servers_nginx = {}
 	local ss_servers_ha = {}
 	local vpn_servers = {}
@@ -409,6 +427,7 @@ function wizard_add()
 					ucic:set("dsvpn","vpn","host",server_ip)
 					ucic:set("mlvpn","general","host",server_ip)
 					ucic:set("ubond","general","host",server_ip)
+					ucic:set("v2ray","omrout","s_vmess_address",server_ip)
 					luci.sys.call("uci -q del openvpn.omr.remote")
 					luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
 					ucic:set("qos","serverin","srchost",server_ip)
@@ -428,6 +447,7 @@ function wizard_add()
 				ucic:set("dsvpn","vpn","host",server_ip)
 				ucic:set("mlvpn","general","host",server_ip)
 				ucic:set("ubond","general","host",server_ip)
+				ucic:set("v2ray","omrout","s_vmess_address",server_ip)
 				luci.sys.call("uci -q del openvpn.omr.remote")
 				luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
 				ucic:set("qos","serverin","srchost",server_ip)
@@ -444,6 +464,7 @@ function wizard_add()
 	--ucic:commit("openvpn")
 	ucic:save("mlvpn")
 	ucic:save("ubond")
+	ucic:save("v2ray")
 	--ucic:commit("mlvpn")
 	ucic:save("dsvpn")
 	--ucic:commit("dsvpn")
@@ -483,15 +504,15 @@ function wizard_add()
 
 	-- Set ShadowSocks settings
 	local shadowsocks_key = luci.http.formvalue("shadowsocks_key")
-	local shadowsocks_disable = luci.http.formvalue("disableshadowsocks") or "0"
-	if disablednb == serversnb then
-		shadowsocks_disable = 1
-	end
+	--local shadowsocks_disable = luci.http.formvalue("disableshadowsocks") or "0"
+	--if disablednb == serversnb then
+	--	shadowsocks_disable = 1
+	--end
 	if shadowsocks_key ~= "" then
 		ucic:set("shadowsocks-libev","sss0","key",shadowsocks_key)
 		--ucic:set("shadowsocks-libev","sss0","method","chacha20-ietf-poly1305")
 		--ucic:set("shadowsocks-libev","sss0","server_port","65101")
-		ucic:set("shadowsocks-libev","sss0","disabled",shadowsocks_disable)
+		--ucic:set("shadowsocks-libev","sss0","disabled",shadowsocks_disable)
 		ucic:save("shadowsocks-libev")
 		ucic:commit("shadowsocks-libev")
 		if shadowsocks_disable == "1" then
@@ -499,16 +520,18 @@ function wizard_add()
 		end
 	else
 		if serversnb == 0 then
-			shadowsocks_disable = 1
-		else
-			shadowsocks_disable = 0
+			ucic:set("shadowsocks-libev","sss0","disabled",shadowsocks_disable)
 		end
 		ucic:set("shadowsocks-libev","sss0","key","")
-		ucic:set("shadowsocks-libev","sss0","disabled",shadowsocks_disable)
 		ucic:save("shadowsocks-libev")
 		ucic:commit("shadowsocks-libev")
 		luci.sys.call("/etc/init.d/shadowsocks rules_down >/dev/null 2>/dev/null")
 	end
+	local v2ray_user = luci.http.formvalue("v2ray_user")
+	ucic:set("v2ray","omrout","s_vmess_user_id",v2ray_user)
+	ucic:save("v2ray")
+	ucic:commit("v2ray")
+
 
 	-- Set Glorytun settings
 	if default_vpn:match("^glorytun.*") and disablednb ~= serversnb then
@@ -615,6 +638,10 @@ function wizard_add()
 	end
 	ucic:save("openvpn")
 	ucic:commit("openvpn")
+
+	ucic:save("v2ray")
+	ucic:commit("v2ray")
+
 	ucic:save("network")
 	ucic:commit("network")
 
@@ -649,6 +676,7 @@ function wizard_add()
 		luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/mptcpovervpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/v2ray restart >/dev/null 2>/dev/null")
 		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/status"))
 	else
 		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/wizard"))
@@ -722,6 +750,10 @@ function settings_add()
 	-- Enable/disable default gateway
 	local disabledefaultgw = luci.http.formvalue("disabledefaultgw") or "1"
 	ucic:set("openmptcprouter","settings","defaultgw",disabledefaultgw)
+
+	-- Enable/disable tracebox
+	local tracebox = luci.http.formvalue("tracebox") or "1"
+	ucic:set("openmptcprouter","settings","tracebox",tracebox)
 
 	-- Enable/disable server ping
 	local disableserverping = luci.http.formvalue("disableserverping") or "0"
@@ -937,7 +969,8 @@ end
 
 function interfaces_status()
 	local ut = require "luci.util"
-	local mArray = ut.ubus("openmptcprouter", "status", {}) or {_=0}
+	--local mArray = ut.ubus("openmptcprouter", "status", {}) or {_=0}
+	local mArray = luci.json.decode(ut.trim(sys.exec("/bin/ubus -t 600 -S call openmptcprouter status 2>/dev/null")))
 
 	if mArray ~= nil and mArray.openmptcprouter ~= nil then
 		mArray.openmptcprouter["remote_addr"] = luci.http.getenv("REMOTE_ADDR") or ""
