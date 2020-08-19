@@ -573,7 +573,7 @@ return view.extend({
 				o.value('off',_('Disabled'));
 				o.value('master',_('Master'));
 				o.value('backup',_('Backup'));
-				o.default = 'disabled';
+				o.default = 'off';
 
 				if (L.hasSystemFeature('dnsmasq') || L.hasSystemFeature('odhcpd')) {
 					o = s.taboption('dhcp', form.SectionValue, '_dhcp', form.TypedSection, 'dhcp');

@@ -148,6 +148,7 @@ return L.view.extend({
 		s = m.section(form.GridSection, 'asns', _('ASN'));
 		s.addremove = true;
 		s.anonymous = true;
+		s.nodescriptions = true;
 
 		o = s.option(form.Value, 'asn', _('ASN'));
 		o.rmempty = false;
