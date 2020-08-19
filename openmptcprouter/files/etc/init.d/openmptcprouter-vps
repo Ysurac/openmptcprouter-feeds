@@ -32,7 +32,7 @@ _login() {
 _ping_server() {
 	server="$(uci -q get openmptcprouter.${servername}.ip)"
 	[ -z "$server" ] && server="$(uci -q get shadowsocks-libev.sss0.server)"
-	ret=$(ping -c 3 -w 3 -Q 184 $server) && echo "$ret" | grep -sq "bytes from" && return
+	ret=$(ping -c 3 -w 3 -Q 184 $server 2>&1) && echo "$ret" | grep -sq "bytes from" && return
 	false
 }
 
@@ -310,6 +310,16 @@ _get_vps_config() {
 			/etc/init.d/shadowsocks-libev restart
 		fi
 	fi
+	if [ "$(uci -q get v2ray.omrout.s_vmess_address)" != "127.0.0.1" ] && [ "$(uci -q get v2ray.omrout.s_vmess_address)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set v2ray.omrout.s_vmess_address="$vpsip"
+			commit v2ray
+		EOF
+		if [ "$(uci -q get v2ray.main.enabled)" = "1" ]; then
+			logger -t "OMR-VPS" "Restart V2Ray..."
+			/etc/init.d/v2ray restart
+		fi
+	fi
 	if [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ] && [ "$(uci -q get openvpn.omr.remote)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set openvpn.omr.remote="$vpsip"
@@ -584,11 +594,25 @@ _set_vpn_vps() {
 	local settings
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
-	vpn_current="$(echo "$vps_config" | jsonfilter -q -e '@.vps.current')"
+	vpn_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
 	vpn="$(uci -q get openmptcprouter.settings.vpn)"
 	if [ "$vpn_current" != "$vpn" ]; then
 		settings='{"vpn" : "'$vpn'"}'
 		echo $(_set_json "vpn" "$settings")
+	else
+		echo 1
+	fi
+}
+
+_set_proxy_vps() {
+	local settings
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	proxy_current="$(echo "$vps_config" | jsonfilter -q -e '@.proxy.current')"
+	proxy="$(uci -q get openmptcprouter.settings.proxy)"
+	if [ "$proxy_current" != "$proxy" ]; then
+		settings='{"proxy" : "'$proxy'"}'
+		echo $(_set_json "proxy" "$settings")
 	else
 		echo 1
 	fi
@@ -685,13 +709,14 @@ _vps_firewall_redirect_port() {
 	config_get enabled $1 enabled "1"
 	config_get src_dip $1 src_dip
 	config_get src_ip $1 src_ip
-	[ "$(echo $src_dport | cut -d'-' -f2)" -ge "65000" ] && {
+	if [ "$(echo $src_dport | cut -d'-' -f2)" -ge "65000" ]; then
 		logger -t "OMR-VPS" "You can't redirect ports >= 65000, they are needed by OpenMPTCProuter Server part"
-		uci -q delete firewall.$1
-		return
-	}
+		enabled="0"
+		#uci -q delete firewall.$1
+		#return
+	fi
 	[ "$src" = "vpn" ] && [ -n "$proto" ] && [ -n "$src_dport" ] && [ "$enabled" != "0" ] && {
-		if [ "$proto" = "tcp udp" ]; then
+		if [ "$proto" = "tcp udp" ] || [ "$proto" = "all" ]; then
 			checkfw=""
 			if [ "$family" = "ipv4" ]; then
 				if [ "$src_dip" = "" ]; then
@@ -956,6 +981,9 @@ _set_config_from_vps() {
 	# get VPS ip
 	vpsip="$(uci -q get openmptcprouter.${servername}.ip)"
 	vps_lastchange="$(echo "$vps_config" | jsonfilter -q -e '@.vps.lastchange')"
+	lastchange="$(uci -q get openmptcprouter.${servername}.lastchange)"
+	[ -z "$lastchange" ] && lastchange=0
+	#[ -n "$lastchange" ] && [ -n "$vps_lastchange" ] && [ "$lastchange" -gt "$vps_lastchange" ] && return
 	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
 	[ -z "$user_permission" ] && user_permission="rw"
 
@@ -977,11 +1005,23 @@ _set_config_from_vps() {
 
 	# Set current VPN
 	current_vpn="$(uci -q get openmptcprouter.settings.vpn)"
-	if [ -z "$current_vpn" ] || [ -n "$vps_lastchange" ] || [ "$user_permission" = "ro" ]; then
+	if [ -z "$current_vpn" ] || ([ -n "$vps_lastchange" ] && [ "$vps_lastchange" -gt "$lastchange" ]) || [ "$user_permission" = "ro" ]; then
 		current_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.current')"
 		if [ -n "$current_vpn" ]; then
 			uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.settings.vpn=${current_vpn}
+			commit openmptcprouter
+			EOF
+		fi
+	fi
+
+	# Set current Proxy
+	current_proxy="$(uci -q get openmptcprouter.settings.proxy)"
+	if [ -z "$current_proxy" ] || ([ -n "$vps_lastchange" ] && [ "$vps_lastchange" -gt "$lastchange" ]) || [ "$user_permission" = "ro" ]; then
+		current_proxy="$(echo "$vps_config" | jsonfilter -q -e '@.proxy.current')"
+		if [ -n "$current_proxy" ]; then
+			uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.settings.proxy=${current_proxy}
 			commit openmptcprouter
 			EOF
 		fi
@@ -1041,8 +1081,27 @@ _set_config_from_vps() {
 			config_foreach _set_ss_server server "server" $vpsip
 		fi
 		uci -q commit shadowsocks-libev
-		logger -t "OMR-VPS" "Shadowsocks restart..."
-		/etc/init.d/shadowsocks-libev restart >/dev/null 2>&1
+		if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ]; then
+			logger -t "OMR-VPS" "Shadowsocks restart..."
+			/etc/init.d/shadowsocks-libev restart >/dev/null 2>&1
+		fi
+	fi
+
+	# V2Ray settings
+	v2ray_key="$(echo "$vps_config" | jsonfilter -q -e '@.v2ray.config.key')"
+	#v2ray_port="$(echo "$vps_config" | jsonfilter -q -e '@.v2ray.config.port')"
+	v2ray_port="65228"
+	if ([ -n "$v2ray_key" ] && [ "$v2ray_key" != "$(uci -q get v2ray.omrout.s_vmess_user_id)" ]) || ([ -n "$v2ray_port" ] && [ "$v2ray_port" != "$(uci -q get v2ray.omrout.s_vmess.port)" ]); then
+		uci -q batch <<-EOF >/dev/null
+			set v2ray.omrout.s_vmess_user_id="$v2ray_key"
+			set v2ray.omrout.s_vmess_port="$v2ray_port"
+		EOF
+		if [ "$(uci -q get v2ray.omrout.s_vmess_address)" != "127.0.0.1" ]; then
+			uci -q set v2ray.omrout.s_vmess_address="$vpsip"
+		fi
+		uci -q commit v2ray
+		logger -t "OMR-VPS" "V2ray restart..."
+		/etc/init.d/v2ray restart >/dev/null 2>&1
 	fi
 
 	# Glorytun settings
@@ -1479,6 +1538,7 @@ _config_service() {
 		[ -z "$(_set_redirect_ports_from_vps $redirect_port)" ] && error=1
 		[ -z "$(_set_mptcp_vps)" ] && error=1
 		[ -z "$(_set_vpn_vps)" ] && error=1
+		[ -z "$(_set_proxy_vps)" ] && error=1
 	fi
 	[ "$(uci -q get shadowsocks-libev.sss0.key)" = "" ] && uci -q set openmptcprouter.${servername}.get_config=1
 	
@@ -1540,6 +1600,6 @@ start_service() {
 }
 
 service_triggers() {
-	procd_add_reload_trigger openmptcprouter shadowsocks-libev glorytun mlvpn openvpn network upnpd dsvpn
+	procd_add_reload_trigger openmptcprouter shadowsocks-libev glorytun mlvpn openvpn network upnpd dsvpn v2ray firewall
 	#procd_add_reload_trigger openmptcprouter shadowsocks-libev network upnpd
 }
