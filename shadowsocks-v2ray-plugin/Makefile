@@ -12,8 +12,10 @@ PKG_NAME:=v2ray-plugin
 PKG_MAINTAINER:=Ycarus
 
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_URL:=https://github.com/shadowsocks/v2ray-plugin.git
-PKG_SOURCE_VERSION:=63dd1bd821d85b95d06d3ea57772d2298caf5f65
+#PKG_SOURCE_URL:=https://github.com/shadowsocks/v2ray-plugin.git
+PKG_SOURCE_URL:=https://github.com/teddysun/v2ray-plugin.git
+#PKG_SOURCE_VERSION:=63a74bef9e9f639bc199255db9d452d96f01d11a
+PKG_SOURCE_VERSION:=339ce7c8442d171945b458469e3151473456b3a5
 
 PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_PARALLEL:=1
