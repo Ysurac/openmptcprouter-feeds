@@ -9,12 +9,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=v2ray-core
-PKG_VERSION:=4.22.1
+PKG_VERSION:=4.27.0
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/v2ray/v2ray-core/tar.gz/v$(PKG_VERSION)?
-PKG_HASH:=31c1934eeac3552c7ab68eac9dc3e964e05f3c743b3733b0b6a0159c495019d6
+PKG_HASH:=f6c903ce4f100c14cb4c0004fc27db5225fc5d3c2daa7fac46fe354150e778d3
 
 PKG_LICENSE:=MIT
 PKG_LICENSE_FILES:=LICENSE
@@ -285,6 +285,7 @@ define Package/v2ray-core/install
 	$(INSTALL_DIR) $(1)/usr/bin
 
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/v2ray $(1)/usr/bin
+	$(CP) ./files/* $(1)/
 
 ifneq ($(CONFIG_V2RAY_EXCLUDE_V2CTL),y)
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/v2ctl $(1)/usr/bin
