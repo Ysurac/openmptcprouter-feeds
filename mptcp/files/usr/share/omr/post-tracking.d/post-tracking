@@ -5,6 +5,8 @@ set_route() {
 	local multipath_config_route interface_gw interface_if
 	INTERFACE=$1
 	PREVINTERFACE=$2
+	SETDEFAULT=$3
+	[ -z "$SETDEFAULT" ] && SETDEFAULT="yes"
 	multipath_config_route=$(uci -q get openmptcprouter.$INTERFACE.multipath)
 	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$INTERFACE.multipath || echo "off")
 	interface_if=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
@@ -24,8 +26,8 @@ set_route() {
 		fi
 		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ]; then
 			_log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
-			ip route replace default scope global nexthop via $interface_gw dev $interface_if && SETROUTE=true
-			ip route replace default via $interface_gw dev $interface_if table 991337
+			[ "$SETDEFAULT" = "yes" ] && ip route replace default scope global nexthop via $interface_gw dev $interface_if
+			ip route replace default via $interface_gw dev $interface_if table 991337 && SETROUTE=true
 		fi
 	fi
 }
@@ -82,7 +84,6 @@ set_routes_intf() {
 		fi
 		#if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ "$(ip route show $serverip | grep $interface_if)" = "" ]; then
 		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ]; then
-			nbintf=$((nbintf+1))
 			if [ "$multipath_config_route" = "master" ]; then
 				weight=10
 			else
@@ -95,6 +96,7 @@ set_routes_intf() {
 					routesintfbackup="$routesintfbackup nexthop via $interface_gw dev $interface_if weight $weight"
 				fi
 			else
+				nbintf=$((nbintf+1))
 				if [ -z "$routesintf" ]; then
 					routesintf="nexthop via $interface_gw dev $interface_if weight $weight"
 				else
@@ -314,6 +316,9 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 	if ([ "$default_gw" = "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]) && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
 		config_load network
 		config_foreach set_route interface $OMR_TRACKER_INTERFACE
+	elif [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath)" = "master" ]; then
+		config_load network
+		config_foreach set_route interface $OMR_TRACKER_INTERFACE "no"
 	fi
 	mail_alert="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.mail_alert)"
 	[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
@@ -588,7 +593,7 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 			}
 		fi
 		local serverip=$(uci -q get shadowsocks-libev.sss0.server)
-		[ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ] && [ "$(pgrep tracebox)" = "" ] && {
+		[ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ] && [ "$(pgrep tracebox)" = "" ] && [ "$(uci -q get openmptcprouter.settings.tracebox)" != "0" ] && {
 			omrtracebox="$(omr-tracebox-mptcp $serverip $OMR_TRACKER_DEVICE)"
 			[ -n "$omrtracebox" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$omrtracebox"
 		}
