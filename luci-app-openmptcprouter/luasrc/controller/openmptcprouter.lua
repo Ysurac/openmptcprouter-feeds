@@ -221,9 +221,15 @@ function wizard_add()
 			ucic:set("network",intf,"proto",proto)
 		end
 		ucic:set("network",intf,"label",label)
-		ucic:set("network",intf,"ipaddr",ipaddr)
-		ucic:set("network",intf,"netmask",netmask)
-		ucic:set("network",intf,"gateway",gateway)
+		if ipaddr ~= "" then
+			ucic:set("network",intf,"ipaddr",ipaddr)
+			ucic:set("network",intf,"netmask",netmask)
+			ucic:set("network",intf,"gateway",gateway)
+		else
+			ucic:set("network",intf,"ipaddr","")
+			ucic:set("network",intf,"netmask","")
+			ucic:set("network",intf,"gateway","")
+		end
 
 		ucic:delete("openmptcprouter",intf,"lc")
 		ucic:save("openmptcprouter")
