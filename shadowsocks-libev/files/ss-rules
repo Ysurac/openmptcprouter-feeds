@@ -122,7 +122,7 @@ ss_rules_parse_args() {
 ss_rules_flush() {
 	local setname
 
-	iptables-save --counters | grep -v ss_rules_ | iptables-restore -w --counters
+	iptables-save --counters | grep -v ssr_ | iptables-restore -w --counters
 	while ip rule del fwmark 1 lookup 100 2>/dev/null; do true; done
 	ip route flush table 100 || true
 	for setname in $(ipset -n list | grep "ss_rules_"); do
@@ -181,20 +181,20 @@ ss_rules_iptchains_init_tcp() {
 	ss_rules_iptchains_init_ nat tcp
 
 	case "$o_local_default" in
-		checkdst) local_target=ss_rules_${rule}_dst ;;
-		forward) local_target=ss_rules_${rule}_forward ;;
+		checkdst) local_target=ssr_${rule}_dst ;;
+		forward) local_target=ssr_${rule}_forward ;;
 		bypass|*) return 0;;
 	esac
 
 	iptables-restore -w --noflush <<-EOF
 		*nat
-		:ss_rules_${rule}_local_out -
-		-I OUTPUT 1 -p tcp -j ss_rules_${rule}_local_out
-		-A ss_rules_${rule}_local_out -m set --match-set ss_rules_dst_bypass dst -j RETURN
-		-A ss_rules_${rule}_local_out -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
-		-A ss_rules_${rule}_local_out -m set --match-set ss_rules_dst_bypass_ dst -j RETURN
-		-A ss_rules_${rule}_local_out -m mark --mark 0x539 -j RETURN
-		-A ss_rules_${rule}_local_out -p tcp $o_ipt_extra -j $local_target -m comment --comment "local_default: $o_local_default"
+		:ssr_${rule}_local_out -
+		-I OUTPUT 1 -p tcp -j ssr_${rule}_local_out
+		-A ssr_${rule}_local_out -m set --match-set ss_rules_dst_bypass dst -j RETURN
+		-A ssr_${rule}_local_out -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
+		-A ssr_${rule}_local_out -m set --match-set ss_rules_dst_bypass_ dst -j RETURN
+		-A ssr_${rule}_local_out -m mark --mark 0x539 -j RETURN
+		-A ssr_${rule}_local_out -p tcp $o_ipt_extra -j $local_target -m comment --comment "local_default: $o_local_default"
 		COMMIT
 	EOF
 }
@@ -213,7 +213,7 @@ ss_rules_iptchains_init_() {
 
 	case "$proto" in
 		tcp)
-			forward_rules="-A ss_rules_${rule}_forward -p tcp -j REDIRECT --to-ports $o_redir_tcp_port"
+			forward_rules="-A ssr_${rule}_forward -p tcp -j REDIRECT --to-ports $o_redir_tcp_port"
 			if [ -n "$o_dst_forward_recentrst" ]; then
 				recentrst_mangle_rules="
 					*mangle
@@ -221,48 +221,48 @@ ss_rules_iptchains_init_() {
 					COMMIT
 				"
 				recentrst_addset_rules="
-					-A ss_rules_${rule}_dst -m recent --name ss_rules_recentrst --rcheck --rdest --seconds 3 --hitcount 3 -j SET --add-set ss_rules_dst_forward_recentrst_ dst --exist
-					-A ss_rules_${rule}_dst -m set --match-set ss_rules_dst_forward_recentrst_ dst -j ss_rules_${rule}_forward
+					-A ssr_${rule}_dst -m recent --name ss_rules_recentrst --rcheck --rdest --seconds 3 --hitcount 3 -j SET --add-set ss_rules_dst_forward_recentrst_ dst --exist
+					-A ssr_${rule}_dst -m set --match-set ss_rules_dst_forward_recentrst_ dst -j ssr_${rule}_forward
 				"
 			fi
 			;;
 		udp)
 			ip rule add fwmark 1 lookup 100
 			ip route add local default dev lo table 100
-			forward_rules="-A ss_rules_${rule}_forward -p udp -j TPROXY --on-port "$o_redir_udp_port" --tproxy-mark 0x01/0x01"
+			forward_rules="-A ssr_${rule}_forward -p udp -j TPROXY --on-port "$o_redir_udp_port" --tproxy-mark 0x01/0x01"
 			;;
 	esac
 	case "$o_src_default" in
-		forward) src_default_target=ss_rules_${rule}_forward ;;
-		checkdst) src_default_target=ss_rules_${rule}_dst ;;
+		forward) src_default_target=ssr_${rule}_forward ;;
+		checkdst) src_default_target=ssr_${rule}_dst ;;
 		bypass|*) src_default_target=RETURN ;;
 	esac
 	case "$o_dst_default" in
-		forward) dst_default_target=ss_rules_${rule}_forward ;;
+		forward) dst_default_target=ssr_${rule}_forward ;;
 		bypass|*) dst_default_target=RETURN ;;
 	esac
 	sed -e '/^\s*$/d' -e 's/^\s\+//' <<-EOF | iptables-restore -w --noflush
 		*$table
-		:ss_rules_${rule}_pre_src -
-		:ss_rules_${rule}_src -
-		:ss_rules_${rule}_dst -
-		:ss_rules_${rule}_forward -
+		:ssr_${rule}_pre_src -
+		:ssr_${rule}_src -
+		:ssr_${rule}_dst -
+		:ssr_${rule}_forward -
 		$(ss_rules_iptchains_mkprerules "$proto")
-		-A ss_rules_${rule}_pre_src -m set --match-set ss_rules_dst_bypass_ dst -j RETURN
-		-A ss_rules_${rule}_pre_src -m set --match-set ss_rules_dst_bypass_all dst -j MARK --set-mark 0x539
-		-A ss_rules_${rule}_pre_src -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
-		-A ss_rules_${rule}_pre_src -m set --match-set ss_rules_dst_bypass dst -j RETURN
-		-A ss_rules_${rule}_pre_src -m mark --mark 0x539 -j RETURN
-		-A ss_rules_${rule}_dst -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
-		-A ss_rules_${rule}_dst -m set --match-set ss_rules_dst_bypass dst -j RETURN
-		-A ss_rules_${rule}_pre_src -p $proto $o_ipt_extra -j ss_rules_${rule}_src
-		-A ss_rules_${rule}_src -m set --match-set ss_rules_src_bypass src -j RETURN
-		-A ss_rules_${rule}_src -m set --match-set ss_rules_src_forward src -j ss_rules_${rule}_forward
-		-A ss_rules_${rule}_src -m set --match-set ss_rules_src_checkdst src -j ss_rules_${rule}_dst
-		-A ss_rules_${rule}_src -j $src_default_target -m comment --comment "src_default: $o_src_default"
-		-A ss_rules_${rule}_dst -m set --match-set ss_rules_dst_forward dst -j ss_rules_${rule}_forward
+		-A ssr_${rule}_pre_src -m set --match-set ss_rules_dst_bypass_ dst -j RETURN
+		-A ssr_${rule}_pre_src -m set --match-set ss_rules_dst_bypass_all dst -j MARK --set-mark 0x539
+		-A ssr_${rule}_pre_src -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
+		-A ssr_${rule}_pre_src -m set --match-set ss_rules_dst_bypass dst -j RETURN
+		-A ssr_${rule}_pre_src -m mark --mark 0x539 -j RETURN
+		-A ssr_${rule}_dst -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
+		-A ssr_${rule}_dst -m set --match-set ss_rules_dst_bypass dst -j RETURN
+		-A ssr_${rule}_pre_src -p $proto $o_ipt_extra -j ssr_${rule}_src
+		-A ssr_${rule}_src -m set --match-set ss_rules_src_bypass src -j RETURN
+		-A ssr_${rule}_src -m set --match-set ss_rules_src_forward src -j ssr_${rule}_forward
+		-A ssr_${rule}_src -m set --match-set ss_rules_src_checkdst src -j ssr_${rule}_dst
+		-A ssr_${rule}_src -j $src_default_target -m comment --comment "src_default: $o_src_default"
+		-A ssr_${rule}_dst -m set --match-set ss_rules_dst_forward dst -j ssr_${rule}_forward
 		$recentrst_addset_rules
-		-A ss_rules_${rule}_dst -j $dst_default_target -m comment --comment "dst_default: $o_dst_default"
+		-A ssr_${rule}_dst -j $dst_default_target -m comment --comment "dst_default: $o_dst_default"
 		$forward_rules
 		COMMIT
 		$recentrst_mangle_rules
@@ -273,11 +273,11 @@ ss_rules_iptchains_mkprerules() {
 	local proto="$1"
 
 	if [ -z "$o_ifnames" ]; then
-		echo "-I PREROUTING 1 -p $proto -j ss_rules_${rule}_pre_src"
+		echo "-I PREROUTING 1 -p $proto -j ssr_${rule}_pre_src"
 	else
 		echo $o_ifnames \
 			| tr ' ' '\n' \
-			| sed "s/.*/-I PREROUTING 1 -i \\0 -p $proto -j ss_rules_${rule}_pre_src/"
+			| sed "s/.*/-I PREROUTING 1 -i \\0 -p $proto -j ssr_${rule}_pre_src/"
 	fi
 }
 

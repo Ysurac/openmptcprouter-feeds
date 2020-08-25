@@ -135,6 +135,11 @@ _bypass_lan_ip() {
 			-A omr-bypass -s $ip -j MARK --set-mark 0x539
 			COMMIT
 			EOF
+			iptables-restore -w --wait=60  --noflush <<-EOF
+			*mangle
+			-A omr-bypass-local -s $ip -j MARK --set-mark 0x539
+			COMMIT
+			EOF
 		elif [ "$valid_ip6" = "ok" ]; then
 			ip6tables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
@@ -147,6 +152,11 @@ _bypass_lan_ip() {
 			iptables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
 			-A omr-bypass -s $ip -j MARK --set-mark 0x539$intfid
+			COMMIT
+			EOF
+			iptables-restore -w --wait=60  --noflush <<-EOF
+			*mangle
+			-A omr-bypass-local -s $ip -j MARK --set-mark 0x539$intfid
 			COMMIT
 			EOF
 		elif [ "$valid_ip6" = "ok" ]; then
@@ -176,6 +186,11 @@ _bypass_dest_port() {
 		-A omr-bypass --protocol $proto --destination-port $dport -j MARK --set-mark 0x539
 		COMMIT
 		EOF
+		iptables-restore -w --wait=60  --noflush <<-EOF
+		*mangle
+		-A omr-bypass-local --protocol $proto --destination-port $dport -j MARK --set-mark 0x539
+		COMMIT
+		EOF
 		if [ "$disableipv6" != "1" ]; then
 			ip6tables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
@@ -187,6 +202,11 @@ _bypass_dest_port() {
 		iptables-restore -w --wait=60  --noflush <<-EOF
 		*mangle
 		-A omr-bypass --protocol $proto --destination-port $dport -j MARK --set-mark 0x539$intfid
+		COMMIT
+		EOF
+		iptables-restore -w --wait=60  --noflush <<-EOF
+		*mangle
+		-A omr-bypass-local --protocol $proto --destination-port $dport -j MARK --set-mark 0x539$intfid
 		COMMIT
 		EOF
 		if [ "$disableipv6" != "1" ]; then
@@ -216,6 +236,11 @@ _bypass_src_port() {
 		-A omr-bypass --protocol $proto --source-port $sport -j MARK --set-mark 0x539
 		COMMIT
 		EOF
+		iptables-restore -w --wait=60  --noflush <<-EOF
+		*mangle
+		-A omr-bypass-local --protocol $proto --source-port $sport -j MARK --set-mark 0x539
+		COMMIT
+		EOF
 		if [ "$disableipv6" != "1" ]; then
 			ip6tables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
@@ -227,6 +252,11 @@ _bypass_src_port() {
 		iptables-restore -w --wait=60  --noflush <<-EOF
 		*mangle
 		-A omr-bypass --protocol $proto --source-port $sport -j MARK --set-mark 0x539$intfid
+		COMMIT
+		EOF
+		iptables-restore -w --wait=60  --noflush <<-EOF
+		*mangle
+		-A omr-bypass-local --protocol $proto --source-port $sport -j MARK --set-mark 0x539$intfid
 		COMMIT
 		EOF
 		if [ "$disableipv6" != "1" ]; then
@@ -290,14 +320,15 @@ _bypass_proto() {
 _intf_rule_ss_rules() {
 	rule_name=$1
 	[ "$rule_name" = "ss_rules" ] && rule_name="def"
-	if [ "$(iptables --wait=40 -t nat -L -n | grep ss_rules_${rule_name}_pre_src)" != "" ] && [ "$(iptables --wait=40 -t nat -L -n | grep omr_dst_bypass_$intf)" = "" ]; then
+	if [ "$(iptables --wait=40 -t nat -L -n | grep ssr_${rule_name}_pre_src)" != "" ] && [ "$(iptables --wait=40 -t nat -L -n | grep omr_dst_bypass_$intf)" = "" ]; then
 		iptables-restore -w --wait=60 --noflush <<-EOF
 		*nat
-		-I ss_rules_${rule_name}_dst 1 -m set --match-set omr_dst_bypass_$intf dst -j RETURN
-		-I ss_rules_${rule_name}_local_out 1 -m set --match-set omr_dst_bypass_$intf dst -j RETURN
-		-I ss_rules_${rule_name}_local_out 2 -m mark --mark 0x539$count -j RETURN
-		-I ss_rules_${rule_name}_pre_src 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
-		-I ss_rules_${rule_name}_pre_src 2 -m mark --mark 0x539$count -j RETURN
+		-I ssr_${rule_name}_dst 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
+		-I ssr_${rule_name}_dst 1 -m mark --mark 0x539$count -j RETURN
+		-I ssr_${rule_name}_local_out 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
+		-I ssr_${rule_name}_local_out 2 -m mark --mark 0x539$count -j RETURN
+		-I ssr_${rule_name}_pre_src 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
+		-I ssr_${rule_name}_pre_src 2 -m mark --mark 0x539$count -j RETURN
 		COMMIT
 		EOF
 	fi
@@ -309,14 +340,15 @@ _intf_rule_ss_rules() {
 			COMMIT
 			EOF
 		fi
-		if [ "$(ip6tables --wait=40 -t nat -L | grep ss_rules6_${rule_name}_pre_src)" != "" ] && [ "$(ip6tables --wait=40 -t nat -L | grep omr6_dst_bypass_$intf)" = "" ]; then
+		if [ "$(ip6tables --wait=40 -t nat -L | grep ssr6_${rule_name}_pre_src)" != "" ] && [ "$(ip6tables --wait=40 -t nat -L | grep omr6_dst_bypass_$intf)" = "" ]; then
 			ip6tables-restore -w --wait=60 --noflush <<-EOF
 			*nat
-			-I ss_rules6_${rule_name}_dst 1 -m set --match-set omr6_dst_bypass_$intf dst -j RETURN
-			-I ss_rules6_${rule_name}_local_out 1 -m set --match-set omr6_dst_bypass_$intf dst -j RETURN
-			-I ss_rules6_${rule_name}_local_out 2 -m mark --mark 0x6539$count -j RETURN
-			-I ss_rules6_${rule_name}_pre_src 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
-			-I ss_rules6_${rule_name}_pre_src 2 -m mark --mark 0x6539$count -j RETURN
+			-I ssr6_${rule_name}_dst 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
+			-I ssr6_${rule_name}_dst 1 -m mark --mark 0x6539$count -j RETURN
+			-I ssr6_${rule_name}_local_out 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
+			-I ssr6_${rule_name}_local_out 2 -m mark --mark 0x6539$count -j RETURN
+			-I ssr6_${rule_name}_pre_src 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
+			-I ssr6_${rule_name}_pre_src 2 -m mark --mark 0x6539$count -j RETURN
 			COMMIT
 			EOF
 		fi
@@ -412,14 +444,15 @@ _bypass_omr_server() {
 _ss_rules_config() {
 	rule_name=$1
 	[ "$rule_name" = "ss_rules" ] && rule_name="def"
-	if [ "$(iptables --wait=40 -t nat -L -n | grep ss_rules_${rule_name}_pre_src)" != "" ] && [ "$(iptables --wait=40 -t nat -L -n | grep omr_dst_bypass_all)" = "" ]; then
+	if [ "$(iptables --wait=40 -t nat -L -n | grep ssr_${rule_name}_pre_src)" != "" ] && [ "$(iptables --wait=40 -t nat -L -n | grep omr_dst_bypass_all)" = "" ]; then
 		iptables-restore -w --wait=60 --noflush <<-EOF
 		*nat
-		-I ss_rules_${rule_name}_dst 1 -m set --match-set omr_dst_bypass_all dst -j RETURN
-		-I ss_rules_${rule_name}_local_out 1 -m set --match-set omr_dst_bypass_all dst -j RETURN
-		-I ss_rules_${rule_name}_local_out 2 -m mark --mark 0x539 -j RETURN
-		-I ss_rules_${rule_name}_pre_src 1 -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
-		-I ss_rules_${rule_name}_pre_src 2 -m mark --mark 0x539 -j RETURN
+		-I ssr_${rule_name}_dst 1 -m set --match-set omr_dst_bypass_all dst -j  MARK --set-mark 0x539
+		-I ssr_${rule_name}_dst 1 -m mark --mark 0x539 -j RETURN
+		-I ssr_${rule_name}_local_out 1 -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
+		-I ssr_${rule_name}_local_out 2 -m mark --mark 0x539 -j RETURN
+		-I ssr_${rule_name}_pre_src 1 -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
+		-I ssr_${rule_name}_pre_src 2 -m mark --mark 0x539 -j RETURN
 		COMMIT
 		EOF
 	fi
@@ -431,14 +464,15 @@ _ss_rules_config() {
 			COMMIT
 			EOF
 		fi
-		if [ "$(ip6tables --wait=40 -t nat -L | grep ss_rules6_${rule_name}_pre_src)" != "" ] && [ "$(ip6tables --wait=40 -t nat -L | grep omr6_dst_bypass_all)" = "" ]; then
+		if [ "$(ip6tables --wait=40 -t nat -L | grep ssr6_${rule_name}_pre_src)" != "" ] && [ "$(ip6tables --wait=40 -t nat -L | grep omr6_dst_bypass_all)" = "" ]; then
 			ip6tables-restore -w --wait=60 --noflush <<-EOF
 			*nat
-			-I ss_rules6_${rule_name}_dst 1 -m set --match-set omr6_dst_bypass_all dst -j RETURN
-			-I ss_rules6_${rule_name}_local_out 1 -m set --match-set omr6_dst_bypass_all dst -j RETURN
-			-I ss_rules6_${rule_name}_local_out 2 -m mark --mark 0x6539 -j RETURN
-			-I ss_rules6_${rule_name}_pre_src 1 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
-			-I ss_rules6_${rule_name}_pre_src 2 -m mark --mark 0x6539 -j RETURN
+			-I ssr6_${rule_name}_dst 1 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
+			-I ssr6_${rule_name}_dst 1 -m mark --mark 0x6539 -j RETURN
+			-I ssr6_${rule_name}_local_out 1 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
+			-I ssr6_${rule_name}_local_out 2 -m mark --mark 0x6539 -j RETURN
+			-I ssr6_${rule_name}_pre_src 1 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
+			-I ssr6_${rule_name}_pre_src 2 -m mark --mark 0x6539 -j RETURN
 			COMMIT
 			EOF
 		fi
@@ -473,7 +507,12 @@ start_service() {
 	*mangle
 	:omr-bypass -
 	-I PREROUTING -m addrtype ! --dst-type LOCAL -j omr-bypass
-	-I OUTPUT -m addrtype ! --dst-type LOCAL -j omr-bypass
+	COMMIT
+	EOF
+	iptables-restore -w --wait=60  --noflush <<-EOF
+	*mangle
+	:omr-bypass-local -
+	-I OUTPUT -m addrtype ! --dst-type LOCAL -j omr-bypass-local
 	COMMIT
 	EOF
 	if [ "$disableipv6" != "1" ]; then
@@ -482,7 +521,6 @@ start_service() {
 		*mangle
 		:omr-bypass6 -
 		-I PREROUTING -m addrtype ! --dst-type LOCAL -j omr-bypass6
-		-I OUTPUT -m addrtype ! --dst-type LOCAL -j omr-bypass6
 		COMMIT
 		EOF
 	fi
@@ -527,6 +565,11 @@ start_service() {
 		iptables-restore -w --wait=60 --noflush <<-EOF
 		*mangle
 		-A omr-bypass -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
+		COMMIT
+		EOF
+		iptables-restore -w --wait=60 --noflush <<-EOF
+		*mangle
+		-A omr-bypass-local -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
 		COMMIT
 		EOF
 	fi
