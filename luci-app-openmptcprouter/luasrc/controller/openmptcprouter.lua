@@ -749,7 +749,7 @@ function settings_add()
 
 	-- Enable/disable vnstat backup
 	local savevnstat = luci.http.formvalue("savevnstat") or "0"
-	luci.sys.exec("uci -q set vnstat.@vnstat[0].backup=%s" % savevnstat)
+	luci.sys.exec("uci -q set openmptcprouter.settings.vnstat_backup=%s" % savevnstat)
 	ucic:commit("vnstat")
 
 	-- Enable/disable gateway ping
