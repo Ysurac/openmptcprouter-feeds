@@ -178,7 +178,7 @@ return L.view.extend({
 				    name = [];
 				for (var i = 0; i < proto.length; i++) {
 					var m = proto[i].split(/\s+/);
-					if (m && m[0] != "#id")
+					if (m && m[0] != "#id" && m[1] != "disabled")
 					    name.push(m[2]);
 				}
 				for (var i = 0; i < host.length; i++) {
