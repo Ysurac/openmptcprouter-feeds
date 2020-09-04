@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018-2020 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 
 START=99
 STOP=10
@@ -324,7 +324,7 @@ _intf_rule_ss_rules() {
 		iptables-restore -w --wait=60 --noflush <<-EOF
 		*nat
 		-I ssr_${rule_name}_dst 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
-		-I ssr_${rule_name}_dst 1 -m mark --mark 0x539$count -j RETURN
+		-I ssr_${rule_name}_dst 2 -m mark --mark 0x539$count -j RETURN
 		-I ssr_${rule_name}_local_out 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
 		-I ssr_${rule_name}_local_out 2 -m mark --mark 0x539$count -j RETURN
 		-I ssr_${rule_name}_pre_src 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
@@ -344,7 +344,7 @@ _intf_rule_ss_rules() {
 			ip6tables-restore -w --wait=60 --noflush <<-EOF
 			*nat
 			-I ssr6_${rule_name}_dst 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
-			-I ssr6_${rule_name}_dst 1 -m mark --mark 0x6539$count -j RETURN
+			-I ssr6_${rule_name}_dst 2 -m mark --mark 0x6539$count -j RETURN
 			-I ssr6_${rule_name}_local_out 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
 			-I ssr6_${rule_name}_local_out 2 -m mark --mark 0x6539$count -j RETURN
 			-I ssr6_${rule_name}_pre_src 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
@@ -528,8 +528,10 @@ start_service() {
 	config_load network
 	config_foreach _intf_rule interface
 	local ndpi_rules=""
-	config_load openmptcprouter
-	config_foreach _bypass_omr_server server
+	if [ "$(uci -q get openmptcprouter.settings.bypass_servers)" = "1" ]; then
+		config_load openmptcprouter
+		config_foreach _bypass_omr_server server
+	fi
 	config_load omr-bypass
 	config_foreach _bypass_ip_set ips
 	config_foreach _bypass_mac macs
