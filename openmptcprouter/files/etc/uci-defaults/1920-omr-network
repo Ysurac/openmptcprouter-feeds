@@ -80,7 +80,9 @@ if [ "$(uci -q show network.lan | grep multipath)" != "" ]; then
 fi
 
 lanif="eth0"
-if [ -d /sys/class/net/lan0 -o -n "$(ip link | grep ' lan0')" ] && [ -d /sys/class/net/wan -o -n "$(ip link | grep ' wan@')" -o -n "$(ip link | grep ' wan:')" ]; then
+if [ "$(grep rockchip /etc/os-release)" != "" ]; then
+	lanif="eth1"
+elif [ -d /sys/class/net/lan0 -o -n "$(ip link | grep ' lan0')" ] && [ -d /sys/class/net/wan -o -n "$(ip link | grep ' wan@')" -o -n "$(ip link | grep ' wan:')" ]; then
 	lanif="wan"
 elif [ -d /sys/class/net/lan1 -o -n "$(ip link | grep ' lan1')" ] && [ -d /sys/class/net/wan -o -n "$(ip link | grep ' wan@')" -o -n "$(ip link | grep ' wan:')" ]; then
 	lanif="wan"
@@ -121,6 +123,7 @@ elif [ ! -d /sys/class/net/eth1 ] && [ -d /sys/class/net/eth0 ]; then
 	lanif="eth0"
 fi
 uci -q batch <<-EOF
+delete network.lan.type
 set network.lan=interface
 set network.lan.proto=static
 set network.lan.ipaddr=192.168.100.1
@@ -162,12 +165,16 @@ if ! grep -s -q "lan" /etc/iproute2/rt_tables; then
 fi
 uci -q set network.lan.ip4table='lan'
 
-
 #uci -q set "network.lan.ip6assign=64"
 
 # Create WAN interfaces
 if [ "$(uci -q show network.wan1 | grep multipath)" = "" ] && [ -z "$(uci -q get network.wan1.multipath)" ]; then
-	if [ "$(swconfig list 2>&1 | grep switch0)" != "" ]; then
+	if [ "$(grep rockchip /etc/os-release)" != "" ]; then
+		_setup_wan_interface wan1 eth0 master macvlan
+		_setup_wan_interface wan2 eth0 on macvlan
+		_setup_macvlan wan1
+		_setup_macvlan wan2
+	elif [ "$(swconfig list 2>&1 | grep switch0)" != "" ]; then
 		_setup_wan_interface wan1 eth0.1 master
 		_setup_wan_interface wan2 eth0.2 on
 		_setup_wan_interface wan3 eth0.3 on
