@@ -37,6 +37,7 @@ set_server_default_route() {
 	local server=$1
 	local serverip multipath_config_route
 	config_get serverip $server ip
+	[ -n "$serverip" ] && serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
 	config_get disabled $server disabled
 	[ "$disabled" = "1" ] && return
 	multipath_config_route=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath)
@@ -54,6 +55,7 @@ delete_server_default_route() {
 	local server=$1
 	local serverip
 	config_get serverip $server ip
+	[ -n "$serverip" ] && serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
 	config_get disabled $server disabled
 	[ "$disabled" = "1" ] && return
 	if [ "$serverip" != "" ] && [ "$(ip route show $serverip metric 1)" != "" ]; then
@@ -154,6 +156,7 @@ set_server_all_routes() {
 	local server=$1
 	local serverip multipath_config_route
 	config_get serverip $server ip
+	[ -n "$serverip" ] && serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
 	config_get disabled $server disabled
 	[ "$disabled" = "1" ] && return
 	interface_if=$(uci -q get network.$OMR_TRACKER_INTERFACE.ifname)
@@ -187,6 +190,7 @@ set_server_route() {
 	local server=$1
 	local serverip multipath_config_route
 	config_get serverip $server ip
+	[ -n "$serverip" ] && serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
 	config_get disabled $server disabled
 	[ "$disabled" = "1" ] && return
 	local metric=$2
@@ -216,6 +220,7 @@ del_server_route() {
 	local server=$1
 	local serverip
 	config_get serverip $server ip
+	[ -n "$serverip" ] && serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
 	[ -n "$serverip" ] && _log "Delete default route via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
 	local metric
 	metric=$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)
@@ -401,6 +406,7 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 	# Set VPN MTU
 	if [ -n "$OMR_TRACKER_LATENCY" ] && ([ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ]); then
 		local serverip=$(uci -q get shadowsocks-libev.sss0.server)
+		[ -n "$serverip" ] && serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
 		if [ "$serverip" = "192.168.1.3" ] || [ "$serverip" = "127.0.0.1" ]; then
 			serverip=""
 		fi
@@ -600,6 +606,7 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 			}
 		fi
 		local serverip=$(uci -q get shadowsocks-libev.sss0.server)
+		[ -n "$serverip" ] && serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
 		[ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ] && [ "$(pgrep tracebox)" = "" ] && [ "$(uci -q get openmptcprouter.settings.tracebox)" != "0" ] && {
 			omrtracebox="$(omr-tracebox-mptcp $serverip $OMR_TRACKER_DEVICE)"
 			[ -n "$omrtracebox" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$omrtracebox"
@@ -740,6 +747,12 @@ if [ "$(pgrep dsvpn)" = "" ] && [ "$(uci -q get dsvpn.vpn.enable)" = "1" ] && [ 
 	/etc/init.d/dsvpn restart
 	sleep 5
 fi
+if [ "$(pgrep v2ray)" = "" ] && [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ -f /etc/init.d/v2ray ]; then
+	_log "Can't find V2Ray, restart it..."
+	/etc/init.d/v2ray restart
+	sleep 5
+fi
+
 
 set_get_config() {
 	local server=$1
@@ -752,6 +765,12 @@ if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get
 	uci -q commit openmptcprouter
 fi
 if [ "$(uci -q get glorytun.vpn.enable)" = "1" ] && [ "$(uci -q get glorytun.vpn.key)" = "" ]; then
+	config_load openmptcprouter
+	config_foreach set_get_config server
+	uci -q commit openmptcprouter
+fi
+
+if [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ "$(uci -q get v2ray.omrout.s_vless_user_id)" = "" ]; then
 	config_load openmptcprouter
 	config_foreach set_get_config server
 	uci -q commit openmptcprouter
