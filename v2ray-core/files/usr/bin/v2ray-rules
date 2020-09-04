@@ -188,13 +188,13 @@ v2r_rules_iptchains_init_tcp() {
 
 	iptables-restore -w --noflush <<-EOF
 		*nat
-		:v2r_rules_${rule}_local_out -
-		-I OUTPUT 1 -p tcp -j v2r_rules_${rule}_local_out
-		-A v2r_rules_${rule}_local_out -m set --match-set ss_rules_dst_bypass dst -j RETURN
-		-A v2r_rules_${rule}_local_out -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
-		-A v2r_rules_${rule}_local_out -m set --match-set ss_rules_dst_bypass_ dst -j RETURN
-		-A v2r_rules_${rule}_local_out -m mark --mark 0x539 -j RETURN
-		-A v2r_rules_${rule}_local_out -p tcp $o_ipt_extra -j $local_target -m comment --comment "local_default: $o_local_default"
+		:v2r_${rule}_local_out -
+		-I OUTPUT 1 -p tcp -j v2r_${rule}_local_out
+		-A v2r_${rule}_local_out -m set --match-set ss_rules_dst_bypass dst -j RETURN
+		-A v2r_${rule}_local_out -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
+		-A v2r_${rule}_local_out -m set --match-set ss_rules_dst_bypass_ dst -j RETURN
+		-A v2r_${rule}_local_out -m mark --mark 0x539 -j RETURN
+		-A v2r_${rule}_local_out -p tcp $o_ipt_extra -j $local_target -m comment --comment "local_default: $o_local_default"
 		COMMIT
 	EOF
 }
@@ -213,56 +213,56 @@ v2r_rules_iptchains_init_() {
 
 	case "$proto" in
 		tcp)
-			forward_rules="-A v2r_rules_${rule}_forward -p tcp -j REDIRECT --to-ports $o_redir_tcp_port"
+			forward_rules="-A v2r_${rule}_forward -p tcp -j REDIRECT --to-ports $o_redir_tcp_port"
 			if [ -n "$o_dst_forward_recentrst" ]; then
 				recentrst_mangle_rules="
 					*mangle
-					-I PREROUTING 1 -p tcp -m tcp --tcp-flags RST RST -m recent --name v2r_rules_recentrst --set --rsource
+					-I PREROUTING 1 -p tcp -m tcp --tcp-flags RST RST -m recent --name v2r_recentrst --set --rsource
 					COMMIT
 				"
 				recentrst_addset_rules="
-					-A v2r_rules_${rule}_dst -m recent --name v2r_rules_recentrst --rcheck --rdest --seconds 3 --hitcount 3 -j SET --add-set ss_rules_dst_forward_recentrst_ dst --exist
-					-A v2r_rules_${rule}_dst -m set --match-set ss_rules_dst_forward_recentrst_ dst -j v2r_rules_${rule}_forward
+					-A v2r_${rule}_dst -m recent --name v2r_recentrst --rcheck --rdest --seconds 3 --hitcount 3 -j SET --add-set ss_rules_dst_forward_recentrst_ dst --exist
+					-A v2r_${rule}_dst -m set --match-set ss_rules_dst_forward_recentrst_ dst -j v2r_${rule}_forward
 				"
 			fi
 			;;
 		udp)
 			ip rule add fwmark 1 lookup 100
 			ip route add local default dev lo table 100
-			forward_rules="-A v2r_rules_${rule}_forward -p udp -j TPROXY --on-port "$o_redir_udp_port" --tproxy-mark 0x01/0x01"
+			forward_rules="-A v2r_${rule}_forward -p udp -j TPROXY --on-port "$o_redir_udp_port" --tproxy-mark 0x01/0x01"
 			;;
 	esac
 	case "$o_src_default" in
-		forward) src_default_target=v2r_rules_${rule}_forward ;;
-		checkdst) src_default_target=v2r_rules_${rule}_dst ;;
+		forward) src_default_target=v2r_${rule}_forward ;;
+		checkdst) src_default_target=v2r_${rule}_dst ;;
 		bypass|*) src_default_target=RETURN ;;
 	esac
 	case "$o_dst_default" in
-		forward) dst_default_target=v2r_rules_${rule}_forward ;;
+		forward) dst_default_target=v2r_${rule}_forward ;;
 		bypass|*) dst_default_target=RETURN ;;
 	esac
 	sed -e '/^\s*$/d' -e 's/^\s\+//' <<-EOF | iptables-restore -w --noflush
 		*$table
-		:v2r_rules_${rule}_pre_src -
-		:v2r_rules_${rule}_src -
-		:v2r_rules_${rule}_dst -
-		:v2r_rules_${rule}_forward -
+		:v2r_${rule}_pre_src -
+		:v2r_${rule}_src -
+		:v2r_${rule}_dst -
+		:v2r_${rule}_forward -
 		$(v2r_rules_iptchains_mkprerules "$proto")
-		-A v2r_rules_${rule}_pre_src -m set --match-set ss_rules_dst_bypass_ dst -j RETURN
-		-A v2r_rules_${rule}_pre_src -m set --match-set ss_rules_dst_bypass_all dst -j MARK --set-mark 0x539
-		-A v2r_rules_${rule}_pre_src -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
-		-A v2r_rules_${rule}_pre_src -m set --match-set ss_rules_dst_bypass dst -j RETURN
-		-A v2r_rules_${rule}_pre_src -m mark --mark 0x539 -j RETURN
-		-A v2r_rules_${rule}_dst -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
-		-A v2r_rules_${rule}_dst -m set --match-set ss_rules_dst_bypass dst -j RETURN
-		-A v2r_rules_${rule}_pre_src -p $proto $o_ipt_extra -j v2r_rules_${rule}_src
-		-A v2r_rules_${rule}_src -m set --match-set ss_rules_src_bypass src -j RETURN
-		-A v2r_rules_${rule}_src -m set --match-set ss_rules_src_forward src -j v2r_rules_${rule}_forward
-		-A v2r_rules_${rule}_src -m set --match-set ss_rules_src_checkdst src -j v2r_rules_${rule}_dst
-		-A v2r_rules_${rule}_src -j $src_default_target -m comment --comment "src_default: $o_src_default"
-		-A v2r_rules_${rule}_dst -m set --match-set ss_rules_dst_forward dst -j v2r_rules_${rule}_forward
+		-A v2r_${rule}_pre_src -m set --match-set ss_rules_dst_bypass_ dst -j RETURN
+		-A v2r_${rule}_pre_src -m set --match-set ss_rules_dst_bypass_all dst -j MARK --set-mark 0x539
+		-A v2r_${rule}_pre_src -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
+		-A v2r_${rule}_pre_src -m set --match-set ss_rules_dst_bypass dst -j RETURN
+		-A v2r_${rule}_pre_src -m mark --mark 0x539 -j RETURN
+		-A v2r_${rule}_dst -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
+		-A v2r_${rule}_dst -m set --match-set ss_rules_dst_bypass dst -j RETURN
+		-A v2r_${rule}_pre_src -p $proto $o_ipt_extra -j v2r_${rule}_src
+		-A v2r_${rule}_src -m set --match-set ss_rules_src_bypass src -j RETURN
+		-A v2r_${rule}_src -m set --match-set ss_rules_src_forward src -j v2r_${rule}_forward
+		-A v2r_${rule}_src -m set --match-set ss_rules_src_checkdst src -j v2r_${rule}_dst
+		-A v2r_${rule}_src -j $src_default_target -m comment --comment "src_default: $o_src_default"
+		-A v2r_${rule}_dst -m set --match-set ss_rules_dst_forward dst -j v2r_${rule}_forward
 		$recentrst_addset_rules
-		-A v2r_rules_${rule}_dst -j $dst_default_target -m comment --comment "dst_default: $o_dst_default"
+		-A v2r_${rule}_dst -j $dst_default_target -m comment --comment "dst_default: $o_dst_default"
 		$forward_rules
 		COMMIT
 		$recentrst_mangle_rules
@@ -273,11 +273,11 @@ v2r_rules_iptchains_mkprerules() {
 	local proto="$1"
 
 	if [ -z "$o_ifnames" ]; then
-		echo "-I PREROUTING 1 -p $proto -j v2r_rules_${rule}_pre_src"
+		echo "-I PREROUTING 1 -p $proto -j v2r_${rule}_pre_src"
 	else
 		echo $o_ifnames \
 			| tr ' ' '\n' \
-			| sed "s/.*/-I PREROUTING 1 -i \\0 -p $proto -j v2r_rules_${rule}_pre_src/"
+			| sed "s/.*/-I PREROUTING 1 -i \\0 -p $proto -j v2r_${rule}_pre_src/"
 	fi
 }
 

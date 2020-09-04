@@ -7,6 +7,7 @@
 
 START=99
 USE_PROCD=1
+EXTRA_COMMANDS="rules_up rules_down rules_exist"
 
 NAME=v2ray
 CONFIG_FOLDER=/var/etc/$NAME
@@ -278,7 +279,7 @@ inbound_section_validate() {
 		'ss_tls_allow_insecure_ciphers:bool:0' \
 		'ss_tls_disable_system_root:bool:0' \
 		'ss_tls_cert_usage:or("encipherment", "verify", "issue")' \
-		'ss_tls_cert_fiile:string' \
+		'ss_tls_cert_file:string' \
 		'ss_tls_key_file:string' \
 		'ss_tcp_header_type:or("none", "http")' \
 		'ss_tcp_header_request_version:string' \
@@ -364,7 +365,7 @@ outbound_section_validate() {
 		'ss_tls_allow_insecure_ciphers:bool:0' \
 		'ss_tls_disable_system_root:bool:0' \
 		'ss_tls_cert_usage:or("encipherment", "verify", "issue")' \
-		'ss_tls_cert_fiile:string' \
+		'ss_tls_cert_file:string' \
 		'ss_tls_key_file:string' \
 		'ss_tcp_header_type:or("none", "http")' \
 		'ss_tcp_header_request_version:string' \
@@ -410,7 +411,7 @@ add_v2ray_redirect_rules() {
 	local ipset_dst_direct="$IPSET_DST_DIRECT_V4"
 
 	test -n "$port" || return
-	logger -t "v2ray" "v2ray-rules -l ${port} -L ${port} -s $OUTBOUND_SERVERS_V4 --rule-name def --src-default forward --dst-default forward --local-default forward"
+	#logger -t "v2ray" "v2ray-rules -l ${port} -L ${port} -s $OUTBOUND_SERVERS_V4 --rule-name def --src-default forward --dst-default forward --local-default forward"
 	v2ray-rules -l ${port} -L ${port} -s $OUTBOUND_SERVERS_V4 --rule-name def --src-default forward --dst-default forward --local-default forward
 }
 
@@ -1076,10 +1077,10 @@ add_inbound_setting() {
 		json_add_boolean "disableSystemRoot" "$ss_tls_disable_system_root"
 
 		json_add_array "certificates"
-		if [ -n "$ss_tls_cert_fiile" ] ; then
+		if [ -n "$ss_tls_cert_file" ] ; then
 			json_add_object ""
 
-			json_add_string "certificateFile" "$ss_tls_cert_fiile"
+			json_add_string "certificateFile" "$ss_tls_cert_file"
 			json_add_string "keyFile" "$ss_tls_key_file"
 			test -n "$ss_tls_cert_usage" && \
 				json_add_string "usage" "$ss_tls_cert_usage"
@@ -1534,9 +1535,9 @@ add_outbound_setting() {
 		json_add_boolean "disableSystemRoot" "$ss_tls_disable_system_root"
 
 		json_add_array "certificates"
-		if [ -n "$ss_tls_cert_fiile" ] ; then
+		if [ -n "$ss_tls_cert_file" ] ; then
 			json_add_object ""
-			json_add_string "certificateFile" "$ss_tls_cert_fiile"
+			json_add_string "certificateFile" "$ss_tls_cert_file"
 			json_add_string "keyFile" "$ss_tls_key_file"
 			test -n "$ss_tls_cert_usage" && \
 				json_add_string "usage" "$ss_tls_cert_usage"
@@ -2067,6 +2068,44 @@ start_instance() {
 	procd_set_param stdout 1
 	procd_set_param pidfile "/var/run/${NAME}.${section}.pid"
 	procd_close_instance
+}
+
+rules_exist() {
+	[ -n "$(iptables -t nat -L -n | grep v2r)" ] && return 0
+	return 1
+}
+
+rules_up() {
+	rules_exist && return 0
+	enabled="0"
+	config_load v2ray
+	config_get enabled main enabled "0"
+	[ "$enabled" = "0" ] && return
+	logger -t "V2Ray" "Rules UP"
+	[ -x "$bin" ] && {
+		"$bin" >/dev/null 2>&1
+	}
+	local bin6="/usr/bin/v2ray-rules6"
+	[ -x "$bin6" ] && {
+		"$bin6" >/dev/null 2>&1
+	}
+	[ -f /etc/init.d/omr-bypass ] && {
+		logger -t "V2Ray" "Reload omr-bypass rules"
+		/etc/init.d/omr-bypass reload_rules
+	}
+}
+
+rules_down() {
+	rules_exist || return 0
+	logger -t "V2Ray" "Rules DOWN"
+	local bin="/usr/bin/v2ray-rules"
+	[ -x "$bin" ] && {
+		"$bin" -f >/dev/null 2>&1
+	}
+	local bin6="/usr/bin/v2ray-rules6"
+	[ -x "$bin6" ] && {
+		"$bin6" -f >/dev/null 2>&1
+	}
 }
 
 start_service() {
