@@ -50,7 +50,7 @@ nodns=0
 last=0
 nocontact=""
 uci -q set openmptcprouter.omr=router
-uci -q delete openmptcprouter.omr.shadowsocks=""
+uci -q delete openmptcprouter.omr.v2ray
 _get_ip
 
 while true; do
@@ -60,14 +60,14 @@ while true; do
 	}
 	if [ "$(curl -s -I -w %{http_code} --socks5 ${proxy} --max-time ${timeout} $host -o /dev/null)" != "000" ]; then
 		nocontact=""
-		[ "${last}" -ge "${retry}" ] || [ "$(uci -q get openmptcprouter.omr.shadowsocks)" = "" ] && {
-			_log "Shadowsocks is up (can contact via http ${host})"
-			uci -q set openmptcprouter.omr.shadowsocks="up"
+		[ "${last}" -ge "${retry}" ] || [ "$(uci -q get openmptcprouter.omr.v2ray)" = "" ] && {
+			_log "V2Ray is up (can contact via http ${host})"
+			uci -q set openmptcprouter.omr.v2ray="up"
 			uci -q commit openmptcprouter.omr
 		}
-		if [ -z "$(iptables -t nat -L -n | grep ss_rules)" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.disabled)" != "1" ]; then
-			_log "Reload Shadowsocks rules"
-			/etc/init.d/shadowsocks-libev rules_up 2> /dev/null
+		if [ -z "$(iptables -t nat -L -n | grep v2r)" ]; then
+			_log "Reload V2Ray rules"
+			/etc/init.d/v2ray rules_up 2> /dev/null
 			_get_ip
 		fi
 		[ "$(uci -q get openmptcprouter.omr.detected_public_ipv4)" = "" ] || ([ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.detected_public_ipv6)" = "" ]) && _get_ip
@@ -76,14 +76,14 @@ while true; do
 		last=$((last + 1 ))
 		[ -z "$nocontact" ] && nocontact="$host" || nocontact="$nocontact, $host"
 		[ "${last}" -ge "${retry}" ] && {
-			if [ -n "$(iptables -t nat -L -n | grep ssr)" ]; then
-				_log "Shadowsocks is down (can't contact via http ${nocontact})"
-				uci -q set openmptcprouter.omr.shadowsocks="down"
+			if [ -n "$(iptables -t nat -L -n | grep v2r)" ]; then
+				_log "V2Ray is down (can't contact via http ${nocontact})"
+				uci -q set openmptcprouter.omr.v2ray="down"
 				uci -q commit openmptcprouter.omr
-				/etc/init.d/shadowsocks-libev rules_down 2> /dev/null
+				/etc/init.d/v2ray rules_down 2> /dev/null
 				_get_ip
 				server_ping=false
-				server="$(uci -q get shadowsocks-libev.sss0.server)"
+				server="$(uci -q get v2ray.omrout.s_vless_address)"
 				_ping_server $server
 				if [ "$server_ping" = false ]; then
 					_log "Server ($server) seems down, no answer to ping"
