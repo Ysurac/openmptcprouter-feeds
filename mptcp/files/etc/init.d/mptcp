@@ -39,6 +39,13 @@ global_multipath_settings() {
 	[ -z "$mptcp_ndiffports_num_subflows" ] || sysctl -qw /sys/module/mptcp_ndiffports/parameters/num_subflows="$mptcp_ndiffports_num_subflows"
 }
 
+interface_macaddr_count() {
+	local intf="$1"
+	local dmacaddr="$2"
+	config_get macaddr "$intf" macaddr
+	[ "$macaddr" = "$dmacaddr" ] && nbmac=$((nbmac+1))
+}
+
 interface_multipath_settings() {
 	local mode iface proto
 	local config="$1"
@@ -87,6 +94,16 @@ interface_multipath_settings() {
 	}
 	uci -q set openmptcprouter.${config}="interface"
 	uci -q set openmptcprouter.${config}.multipath="$mode"
+
+	config_get macaddr "$config" macaddr ""
+	[ -n "$maccaddr" ] && {
+		nbmac=0
+		config_foreach interface_macaddr_count interface $macaddr
+		[ "$nbmac" != "1" ] && {
+			logger -t "MPTCP" "Duplicate MAC saved, removing"
+			uci -q delete network.${config}.macaddr
+		}
+	}
 
 	[ "$enabled" = "0" ] && return 0
 	[ -n "$intf" ] && [ "$iface" != "$intf" ] && return 0
