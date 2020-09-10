@@ -125,7 +125,7 @@ end
 		    <div>
 			<input type="text" class="cbi-section-create-name" id="cbi.cts.omr-bypass.server." name="add_server_name" data-type="uciname" data-optional="true" />
 		    </div>
-		    <input class="cbi-button cbi-button-add" type="submit" onclick="this.form.cbi_state='add-section'; return true" name="add_server" value="<%:Add server%>" />
+		    <input class="cbi-button cbi-button-add" type="submit" onclick="this.form.cbi_state='add-section'; return true" name="add_server" value="<%:Add a new server%>" />
 		</div>
 	    </div>
 	</fieldset>
@@ -310,7 +310,7 @@ end
 				<% elseif vpn == "dsvpn" then %>
 					<% if nixio.fs.access("/usr/sbin/dsvpn") then %><option value="dsvpn" <% if uci:get("dsvpn","vpn","enable") == "1" then %>selected="selected"<% end %>>A Dead Simple VPN</option><% end %>
 				<% elseif vpn == "mlvpn" then %>
-					<% if nixio.fs.access("/usr/sbin/mlvpn") then %><!--<option value="mlvpn" <% if uci:get("mlvpn","general","enable") == "1" then %>selected="selected"<% end %>>MLVPN</option>--><% end %>
+					<% if nixio.fs.access("/usr/sbin/mlvpn") then %><option value="mlvpn" <% if uci:get("mlvpn","general","enable") == "1" then %>selected="selected"<% end %>>MLVPN</option><% end %>
 				<% elseif vpn == "ubond" then %>
 					<% if nixio.fs.access("/usr/sbin/ubond") then %><option value="ubond" <% if uci:get("ubond","general","enable") == "1" then %>selected="selected"<% end %>>UBOND</option><% end %>
 				<% elseif vpn == "openvpn" then %>
@@ -326,7 +326,7 @@ end
 			<% if nixio.fs.access("/usr/sbin/glorytun") then %><option value="glorytun_tcp" <% if uci:get("glorytun","vpn","enable") == "1" and uci:get("glorytun","vpn","proto") == "tcp" then %>selected="selected"<% end %>>Glorytun TCP</option><% end %>
 			<% if nixio.fs.access("/usr/sbin/glorytun-udp") then %><option value="glorytun_udp" <% if uci:get("glorytun","vpn","enable") == "1" and uci:get("glorytun","vpn","proto") == "udp" then %>selected="selected"<% end %>>Glorytun UDP</option><% end %>
 			<% if nixio.fs.access("/usr/sbin/dsvpn") then %><option value="dsvpn" <% if uci:get("dsvpn","vpn","enable") == "1" then %>selected="selected"<% end %>>A Dead Simple VPN</option><% end %>
-			<% if nixio.fs.access("/usr/sbin/mlvpn") then %><!--<option value="mlvpn" <% if uci:get("mlvpn","general","enable") == "1" then %>selected="selected"<% end %>>MLVPN</option>--><% end %>
+			<% if nixio.fs.access("/usr/sbin/mlvpn") then %><option value="mlvpn" <% if uci:get("mlvpn","general","enable") == "1" then %>selected="selected"<% end %>>MLVPN</option><% end %>
 			<% if nixio.fs.access("/usr/sbin/ubond") then %><option value="ubond" <% if uci:get("ubond","general","enable") == "1" then %>selected="selected"<% end %>>UBOND</option><% end %>
 			<% if nixio.fs.access("/usr/sbin/openvpn") then %><option value="openvpn" <% if uci:get("openvpn","omr","enabled") == "1" then %>selected="selected"<% end %>>OpenVPN</option><% end %>
 			<option value="none" <% if uci:get("openmptcprouter","settings","vpn") == "none" then %>selected="selected"<% end %>>None</option>
@@ -369,13 +369,52 @@ end
 			</div>
 		    </div>
 		</div>
-		<div class="cbi-value" id="cbi-network-<%=ifname%>-proto" data-index="2">
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-type" data-index="2">
+		    <label class="cbi-value-title"><%:Type%></label>
+		    <div class="cbi-value-field">
+			<select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.type" name="cbid.network.<%=ifname%>.type" size="1">
+			    <option id="cbid.network.<%=ifname%>.type-normal" value="normal"><%:Normal%></option>
+			    <option id="cbid.network.<%=ifname%>.type-macvlan" value="macvlan"<% if uci:get("network",ifname,"type") == "macvlan" then %> selected="selected"<% end %>><%:MacVLAN%></option>
+			    <option id="cbid.network.<%=ifname%>.type-bridge" value="bridge"<% if uci:get("network",ifname,"type") == "bridge" then %> selected="selected"<% end %>><%:Bridge%></option>
+			</select>
+			<br />
+			<div class="cbi-value-description">
+			    <%:Choose MacVLAN if you want to create a virtual interface based on a physical interface.%>
+			</div>
+		    </div>
+		</div>
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-masterintf" data-depends="[{&#34;cbid.network.<%=ifname%>.type&#34;:&#34;macvlan&#34;}]" data-index="3">
+		    <label class="cbi-value-title"><%:Physical interface%></label>
+		    <div class="cbi-value-field">
+			    <select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.masterintf" name="cbid.network.<%=ifname%>.masterintf" size="1">
+			<%
+			    for _, ifacea in ipairs(ifaces) do
+				if not (ifacea == "lo" or ifacea == "6in4-omr6in4" or ifacea:match("^ifb.*") or ifacea:match("^sit.*") or ifacea:match("^gre.*") or ifacea:match("^ip6.*") or ifacea:match("^teql.*") or ifacea:match("^erspan.*") or ifacea:match("^tun.*")) and device_notvirtual(ifacea) then
+			%>
+			<option value="<%=ifacea%>"<% if uci:get("network",ifname,"masterintf") == ifacea then %> selected="selected"<% end %>><%=ifacea%></option>
+			<%
+				end
+			    end
+			%>
+			    </select>
+			<br />
+			<div class="cbi-value-description">
+			    <%:Choose physical interface.%>
+			</div>
+		    </div>
+		</div>
+
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-proto" data-depends="[{&#34;cbid.network.<%=ifname%>.type&#34;:&#34;normal&#34;},{&#34;cbid.network.<%=ifname%>.type&#34;:&#34;bridge&#34;}]" data-index="3">
 		    <label class="cbi-value-title"><%:Protocol%></label>
 		    <div class="cbi-value-field">
+			<% findproto = 0 %>
 			<select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.proto" name="cbid.network.<%=ifname%>.proto" size="1">
-			    <option id="cbid.network.<%=ifname%>.proto-static" value="static"<% if uci:get("network",ifname,"proto") == "static" then %> selected="selected"<% end %>><%:Static address%></option>
-			    <option id="cbid.network.<%=ifname%>.proto-dhcp" value="dhcp"<% if uci:get("network",ifname,"proto") == "dhcp" then %> selected="selected"<% end %>><%:DHCP%></option>
-			    <option id="cbid.network.<%=ifname%>.proto-other" value="other"<% if uci:get("network",ifname,"proto") ~= "static" and uci:get("network",ifname,"proto") ~= "dhcp" then %> selected="selected"<% end %>><%:Other%></option>
+			    <option id="cbid.network.<%=ifname%>.proto-static" value="static"<% if uci:get("network",ifname,"proto") == "static" then findproto = 1 %> selected="selected"<% end %>><%:Static address%></option>
+			    <option id="cbid.network.<%=ifname%>.proto-dhcp" value="dhcp"<% if uci:get("network",ifname,"proto") == "dhcp" then findproto = 1  %> selected="selected"<% end %>><%:DHCP%></option>
+			    <option id="cbid.network.<%=ifname%>.proto-modemmanager" value="modemmanager"<% if uci:get("network",ifname,"proto") == "modemmanager" then findproto = 1  %> selected="selected"<% end %>><%:ModemManager%></option>
+			    <option id="cbid.network.<%=ifname%>.proto-ncm" value="ncm"<% if uci:get("network",ifname,"proto") == "ncm" then findproto = 1  %> selected="selected"<% end %>><%:NCM%></option>
+			    <option id="cbid.network.<%=ifname%>.proto-qmi" value="qmi"<% if uci:get("network",ifname,"proto") == "qmi" then findproto = 1  %> selected="selected"<% end %>><%:QMI%></option>
+			    <option id="cbid.network.<%=ifname%>.proto-other" value="other"<% if uci:get("network",ifname,"proto") ~= nil and findproto ~= "1" then %> selected="selected"<% end %>><%:Other%></option>
 			</select>
 			<br />
 			<div class="cbi-value-description">
@@ -383,7 +422,34 @@ end
 			</div>
 		    </div>
 		</div>
-		<div class="cbi-value" id="cbi-network-<%=ifname%>-address" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;static&#34;}]" data-index="3">
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-intf" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;static&#34;},{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;dhcp&#34;}]" data-index="4">
+		    <label class="cbi-value-title"><%:Physical interface%></label>
+		    <div class="cbi-value-field">
+			    <select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.intf" name="cbid.network.<%=ifname%>.intf" size="1">
+			<%
+			    iffind=0
+			    for _, ifacea in ipairs(ifaces) do
+				if not (ifacea == "lo" or ifacea == "6in4-omr6in4" or ifacea:match("^ifb.*") or ifacea:match("^sit.*") or ifacea:match("^gre.*") or ifacea:match("^ip6.*") or ifacea:match("^teql.*") or ifacea:match("^erspan.*") or ifacea:match("^tun.*")) and device_notvirtual(ifacea) then
+			%>
+			<option value="<%=ifacea%>"<% if uci:get("network",ifname,"ifname") == ifacea then iffind = 1 %> selected="selected"<% end %>><%=ifacea%></option>
+			<%
+				end
+			    end
+			    if iffinf == 0 and uci:get("network",ifname,"ifname") ~= nil then
+			%>
+				<option value="<%=uci:get("network",ifname,"ifname")%>" selected="selected"><%=uci:get("network",ifname,"ifname")%></option>
+			<%
+			    end
+			%>
+			    </select>
+			<br />
+			<div class="cbi-value-description">
+			    <%:Choose physical interface.%>
+			</div>
+		    </div>
+		</div>
+
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-address" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;static&#34;},{&#34;cbid.network.<%=ifname%>.type&#34;:&#34;macvlan&#34;}]" data-index="5">
 		    <label class="cbi-value-title"><%:IPv4 address%></label>
 		    <div class="cbi-value-field">
 			<input type="text" id="cbid.network.<%=ifname%>.ipaddr" name="cbid.network.<%=ifname%>.ipaddr" class="cbi-input-text" value="<%=uci:get("network",ifname,"ipaddr")%>" data-type="ip4addr">
@@ -393,13 +459,13 @@ end
 			</div>
 		    </div>
 		</div>
-		<div class="cbi-value" id="cbi-network-<%=ifname%>-netmask" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;static&#34;}]" data-index="4">
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-netmask" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;static&#34;},{&#34;cbid.network.<%=ifname%>.type&#34;:&#34;macvlan&#34;}]" data-index="6">
 		    <label class="cbi-value-title"><%:IPv4 netmask%></label>
 		    <div class="cbi-value-field">
 			<input type="text" id="cbid.network.<%=ifname%>.netmask" name="cbid.network.<%=ifname%>.netmask" class="cbi-input-text" value="<%=uci:get("network",ifname,"netmask") or "255.255.255.0"%>" data-type="ip4addr">
 		    </div>
 		</div>
-		<div class="cbi-value" id="cbi-network-<%=ifname%>-gateway" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;static&#34;}]" data-index="5">
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-gateway" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;static&#34;},{&#34;cbid.network.<%=ifname%>.type&#34;:&#34;macvlan&#34;}]" data-index="7">
 		    <label class="cbi-value-title"><%:IPv4 gateway%></label>
 		    <div class="cbi-value-field">
 			<input type="text" id="cbid.network.<%=ifname%>.gateway" name="cbid.network.<%=ifname%>.gateway" class="cbi-input-text" value="<%=uci:get("network",ifname,"gateway")%>" data-type="ip4addr">
@@ -409,6 +475,91 @@ end
 			</div>
 		    </div>
 		</div>
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-device" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;ncm&#34;}]" data-index="5">
+		    <label class="cbi-value-title"><%:Device%></label>
+		    <div class="cbi-value-field">
+			    <select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.device" name="cbid.network.<%=ifname%>.device" size="1">
+			<%
+			    iffind=0
+			    iftty = nixio.fs.glob("/dev/ttyUSB*")
+			    for tty in iftty do
+			%>
+			<option value="<%=tty%>"<% if uci:get("network",ifname,"device") == tty then iffind = 1 %> selected="selected"<% end %>><%=tty%></option>
+			<%
+			    end
+			    iftty = nixio.fs.glob("/dev/cdc-wdm*")
+			    for tty in iftty do
+			%>
+			<option value="<%=tty%>"<% if uci:get("network",ifname,"device") == tty then iffind = 1 %> selected="selected"<% end %>><%=tty%></option>
+			<%
+			    end
+			    if iffinf == 0 and uci:get("network",ifname,"device") ~= nil then
+			%>
+				<option value="<%=uci:get("network",ifname,"device")%>" selected="selected"><%=uci:get("network",ifname,"device")%></option>
+			<%
+			    end
+			%>
+			    </select>
+		    </div>
+		</div>
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-device" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;qmi&#34;}]" data-index="5">
+		    <label class="cbi-value-title"><%:Device%></label>
+		    <div class="cbi-value-field">
+			    <select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.device" name="cbid.network.<%=ifname%>.device" size="1">
+			<%
+			    iffind=0
+			    iftty = nixio.fs.glob("/dev/cdc-wdm*")
+			    for tty in iftty do
+			%>
+			<option value="<%=tty%>"<% if uci:get("network",ifname,"device") == tty then iffind = 1 %> selected="selected"<% end %>><%=tty%></option>
+			<%
+			    end
+			    if iffinf == 0 and uci:get("network",ifname,"device") ~= nil then
+			%>
+				<option value="<%=uci:get("network",ifname,"device")%>" selected="selected"><%=uci:get("network",ifname,"device")%></option>
+			<%
+			    end
+			%>
+			    </select>
+		    </div>
+		</div>
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-device" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;modemmanager&#34;}]" data-index="5">
+		    <label class="cbi-value-title"><%:Device%></label>
+		    <div class="cbi-value-field">
+			    <select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.device" name="cbid.network.<%=ifname%>.device" size="1">
+			<%
+			    iffind=0
+			    iftty = luci.sys.exec("/usr/bin/mmcli -L")
+			    for listtty in iftty:gmatch("([^\r\n]*)[\r\n]") do
+				modemid = luci.sys.exec("echo '" .. listtty .. "' | awk -F' ' '{print $1}' | awk -F/ '{print $6}'")
+				modeminfo = luci.sys.exec("/usr/bin/mmcli -m " .. modemid .. " --output-keyvalue")
+				tty = luci.sys.exec("echo '" .. modeminfo .. "' | grep 'modem.generic.device ' | awk -F': ' '{print $2}'")
+			%>
+			<option value="<%=tty%>"<% if uci:get("network",ifname,"device") == tty then iffind = 1 %> selected="selected"<% end %>><%=tty%></option>
+			<%
+			    end
+			    if iffinf == 0 and uci:get("network",ifname,"device") ~= nil then
+			%>
+				<option value="<%=uci:get("network",ifname,"device")%>" selected="selected"><%=uci:get("network",ifname,"device")%></option>
+			<%
+			    end
+			%>
+			    </select>
+		    </div>
+		</div>
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-apn" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;ncm&#34;},{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;qmi&#34;},{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;modemmanager&#34;}]" data-index="6">
+		    <label class="cbi-value-title"><%:APN%></label>
+		    <div class="cbi-value-field">
+			<input type="text" id="cbid.network.<%=ifname%>.apn" name="cbid.network.<%=ifname%>.apn" class="cbi-input-text" value="<%=uci:get("network",ifname,"apn")%>">
+		    </div>
+		</div>
+		<div class="cbi-value" id="cbi-network-<%=ifname%>-pincode" data-depends="[{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;ncm&#34;},{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;qmi&#34;},{&#34;cbid.network.<%=ifname%>.proto&#34;:&#34;modemmanager&#34;}]" data-index="7">
+		    <label class="cbi-value-title"><%:PIN code%></label>
+		    <div class="cbi-value-field">
+			<input type="text" id="cbid.network.<%=ifname%>.pincode" name="cbid.network.<%=ifname%>.pincode" class="cbi-input-text" value="<%=uci:get("network",ifname,"pincode")%>">
+		    </div>
+		</div>
+
 		<%
 			local download = "0"
 			local upload = "0"
@@ -424,7 +575,7 @@ end
 				end
 			end
 		%>
-		<div class="cbi-value" data-index="6">
+		<div class="cbi-value" data-index="8">
 		    <label class="cbi-value-title"><%:MPTCP over VPN%></label>
 		    <div class="cbi-value-field">
 			<input class="cbi-input-checkbox" type="checkbox" name="multipathvpn.<%=ifname%>.enabled" value="1" <% if uci:get("openmptcprouter",ifname,"multipathvpn") == "1" then %>checked<% end %> />
@@ -434,7 +585,7 @@ end
 			</div>
 		    </div>
 		</div>
-		<div class="cbi-value" data-index="7">
+		<div class="cbi-value" data-index="9">
 		    <label class="cbi-value-title"><%:Enable SQM%></label>
 		    <div class="cbi-value-field">
 			<input class="cbi-input-checkbox" type="checkbox" name="cbid.sqm.<%=ifname%>.enabled" value="1" <% if uci:get("sqm",ifname,"enabled") == "1" then %>checked<% end %> />
@@ -444,7 +595,7 @@ end
 			</div>
 		    </div>
 		</div>
-		<div class="cbi-value" data-index="8">
+		<div class="cbi-value" data-index="10">
 		    <label class="cbi-value-title"><%:Download speed (Kb/s)%></label>
 		    <div class="cbi-value-field">
 			<input type="text" name="cbid.sqm.<%=ifname%>.download" class="cbi-input-text" value="<%=download%>" data-type="uinteger">
@@ -460,7 +611,7 @@ end
 			-->
 		    </div>
 		</div>
-		<div class="cbi-value" data-index="9">
+		<div class="cbi-value" data-index="11">
 		    <label class="cbi-value-title"><%:Upload speed (Kb/s)%></label>
 		    <div class="cbi-value-field">
 			<input type="text" name="cbid.sqm.<%=ifname%>.upload" class="cbi-input-text" value="<%=upload%>" data-type="uinteger">
@@ -486,7 +637,7 @@ end
 		<select class="cbi-section-create-name" name="add_interface_ifname">
 			<%
 			    for _, ifacea in ipairs(ifaces) do
-				if not (ifacea == "lo" or ifacea == "6in4-omr6in4" or ifacea:match("^ifb.*") or ifacea:match("^sit.*") or ifacea:match("^gre.*") or ifacea:match("^ip6.*") or ifacea:match("^teql.*")) and device_notvirtual(ifacea) then
+				if not (ifacea == "lo" or ifacea == "6in4-omr6in4" or ifacea:match("^ifb.*") or ifacea:match("^sit.*") or ifacea:match("^gre.*") or ifacea:match("^ip6.*") or ifacea:match("^teql.*") or ifacea:match("^erspan.*")) and device_notvirtual(ifacea) then
 			%>
 			<option value="<%=ifacea%>"><%=ifacea%></option>
 			<%

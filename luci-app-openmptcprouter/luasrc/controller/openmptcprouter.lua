@@ -213,13 +213,33 @@ function wizard_add()
 	for intf, _ in pairs(interfaces) do
 		local label = luci.http.formvalue("cbid.network.%s.label" % intf) or ""
 		local proto = luci.http.formvalue("cbid.network.%s.proto" % intf) or "static"
+		local typeintf = luci.http.formvalue("cbid.network.%s.type" % intf) or ""
+		local masterintf = luci.http.formvalue("cbid.network.%s.masterintf" % intf) or ""
+		local ifname = luci.http.formvalue("cbid.network.%s.intf" % intf) or ""
+		local device = luci.http.formvalue("cbid.network.%s.device" % intf) or ""
 		local ipaddr = luci.http.formvalue("cbid.network.%s.ipaddr" % intf) or ""
 		local netmask = luci.http.formvalue("cbid.network.%s.netmask" % intf) or ""
 		local gateway = luci.http.formvalue("cbid.network.%s.gateway" % intf) or ""
+		local apn = luci.http.formvalue("cbid.network.%s.apn" % intf) or ""
+		local pincode = luci.http.formvalue("cbid.network.%s.pincode" % intf) or ""
 		local sqmenabled = luci.http.formvalue("cbid.sqm.%s.enabled" % intf) or "0"
+		if typeintf == "normal" then
+			typeintf = ""
+		end
+		ucic:set("network",intf,"type",typeintf)
+		if typeintf == "macvlan" then
+			ucic:set("network",intf,"type","macvlan")
+			ucic:set("network",intf,"masterintf",masterintf)
+		elseif typeintf == "" and (proto == "static" or proto == "dhcp" ) then
+			ucic:set("network",intf,"ifname",ifname)
+		elseif typeintf == "" and (proto == "ncm" or proto == "qmi" or proto == "modemmanager") then
+			ucic:set("network",intf,"device",device)
+		end
 		if proto ~= "other" then
 			ucic:set("network",intf,"proto",proto)
 		end
+		ucic:set("network",intf,"apn",apn)
+		ucic:set("network",intf,"pincode",pincode)
 		ucic:set("network",intf,"label",label)
 		if ipaddr ~= "" then
 			ucic:set("network",intf,"ipaddr",ipaddr)
