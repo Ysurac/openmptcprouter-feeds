@@ -25,7 +25,7 @@ omr_intf_set() {
 	config_get proto "$1" proto
 	devicename=$(echo "$device" | cut -d'/' -f3)
 
-	if [ -n "$ifname" ] && [ -L /sys/class/net/${ifname} ]; then
+	if [ -n "$ifname" ] && [ -f /sys/class/net/${ifname}/device/uevent ]; then
 		devicepath=$(readlink -f /sys/class/net/${ifname})
 		if [ -n "$devicepath" ] && [ "$(echo ${devicepath} | grep virtual)" = "" ]; then
 			uci -q set network.$1.modalias="$(cat /sys/class/net/${ifname}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')"
@@ -34,12 +34,9 @@ omr_intf_set() {
 			uci -q delete network.$1.device
 			uci -q delete network.$1.modalias
 		fi
-	elif [ -n "$device" ] && [ -L /sys/bus/usb-serial/devices/${devicename} ]; then
-		devicepath=$(readlink -f /sys/bus/usb-serial/devices/${devicename})
-		[ -n "$devicepath" ] && {
-			uci -q set network.$1.modalias="$(cat /sys/bus/usb-serial/devices/${devicename}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')"
-			uci -q set network.$1.product="$(cat /sys/bus/usb-serial/devices/${devicename}/device/uevent | grep PRODUCT | cut -d '=' -f2 | tr -d '\n')"
-		}
+	elif [ -n "$device" ] && [ -f /sys/bus/usb-serial/devices/${devicename}/device/uevent ]; then
+		uci -q set network.$1.modalias="$(cat /sys/bus/usb-serial/devices/${devicename}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')"
+		uci -q set network.$1.product="$(cat /sys/bus/usb-serial/devices/${devicename}/device/uevent | grep PRODUCT | cut -d '=' -f2 | tr -d '\n')"
 	fi
 
 	[ -z "$multipath" ] || [ "$multipath" = "off" ] && [ "$1" != "omrvpn" ] && [ "$1" != "glorytun" ] && return
