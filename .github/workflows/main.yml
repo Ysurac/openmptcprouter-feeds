@@ -2,9 +2,9 @@ name: Build OpenMPTCProuter
 on: [push]
 
 env:
-  REPO_URL: https://github.com/ysurac/openmptcprouter
-  REPO_BRANCH: develop
-  OMR_TARGET: x86_64
+  REPO_URL: 'https://github.com/ysurac/openmptcprouter'
+  OMR_TARGET: 'x86_64'
+  OMR_KERNEL: '5.4'
 
 jobs:
   build:
@@ -12,6 +12,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    - name: Branch name
+      id: branch_name
+      run: |
+        echo ::set-output name=SOURCE_NAME::${GITHUB_REF#refs/*/}
+        echo ::set-output name=SOURCE_BRANCH::${GITHUB_REF#refs/heads/}
+        echo ::set-output name=SOURCE_TAG::${GITHUB_REF#refs/tags/}
     - name: Prepare
       run: |
         sudo apt-get update
@@ -19,18 +25,23 @@ jobs:
     - name: Clone source code
       env: 
         REPO_URL: https://github.com/ysurac/openmptcprouter
-        REPO_BRANCH: develop
+        SOURCE_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
+        SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
       run: |
-        git clone --depth 1 $REPO_URL -b $REPO_BRANCH openmptcprouter
+        git clone --depth 1 $REPO_URL openmptcprouter
+        cd openmptcprouter
+        git checkout ${SOURCE_BRANCH:-$SOURCE_TAG}
+        git pull
     - name: Build toolchain
       working-directory: ./openmptcprouter
       env:
         OMR_FEED_URL: https://github.com/ysurac/openmptcprouter-feeds
-        OMR_FEED_SRC: develop
+        SOURCE_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
+        SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
       run: |
-        sh build.sh prepare {tools,toolchain}/install -j$(nproc)
-        #echo -e "$OMR_PRIVKEY" > /home/runner/work/openmptcprouter-feeds/openmptcprouter-feeds/openmptcprouter/${{ env.OMR_TARGET }}/source/key-build
-        #echo -e "$OMR_PUBKEY" > /home/runner/work/openmptcprouter-feeds/openmptcprouter-feeds/openmptcprouter/${{ env.OMR_TARGET }}/source/key-build.pub
+        OMR_FEED_SRC="${SOURCE_BRANCH:-$SOURCE_TAG}" sh build.sh prepare {tools,toolchain}/install -j$(nproc)
+        #echo -e "${{ secrets.OMR_PRIVKEY }}" > $OMR_TARGET/source/key-build
+        #echo -e "${{ secrets.OMR_PUBKEY }}" > $OMR_TARGET/source/key-build.pub
     - name: Build packages
       working-directory: ./openmptcprouter
       run: |
@@ -39,4 +50,30 @@ jobs:
       working-directory: ./openmptcprouter
       run: |
         make IGNORE_ERRORS=m -C $OMR_TARGET/source target/install -j$(nproc)
+    - name: Deploy - Create directory
+      uses: fifsky/ssh-action@master
+      env:
+          SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
+          SOURCE_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
+          SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
+      with:
+        command: |
+          mkdir -p deploy/${SOURCE_BRANCH:-release}/${SOURCE_TAG:-$OMR_KERNEL}/${OMR_TARGET}
+        host: ${{ secrets.OMR_DEPLOY_HOST }}
+        user: deploy
+        port: ${{ secrets.OMR_DEPLOY_PORT }}
+        key: ${{ secrets.PRIVATE_KEY }}
+    - name: Deploy - Upload via rsync
+      uses: trendyminds/github-actions-rsync@master
+      with:
+        RSYNC_OPTIONS: -av --delete-after
+        RSYNC_TARGET: deploy/${SOURCE_BRANCH:-release}/${SOURCE_TAG:-$OMR_KERNEL}/${OMR_TARGET}
+        RSYNC_SOURCE: ./openmptcprouter/${OMR_TARGET}/source/bin/
+      env:
+        SSH_PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+        SSH_USERNAME: deploy
+        SSH_HOSTNAME: ${{ secrets.OMR_DEPLOY_HOST }}
+        SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
+        SOURCE_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
+        SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
       
