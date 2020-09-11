@@ -25,13 +25,12 @@ jobs:
     - name: Clone source code
       env: 
         REPO_URL: https://github.com/ysurac/openmptcprouter
-        SOURCE_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
-        SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
+        SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
       run: |
         git clone --depth 1 $REPO_URL openmptcprouter
         cd openmptcprouter
-        if [ "$SOURCE_BRANCH" != "Test-Github-Actions" ]; then
-          git checkout ${SOURCE_BRANCH:-$SOURCE_TAG}
+        if [ "$SOURCE_NAME" != "Test-Github-Actions" ] && [ "$SOURCE_NAME" != "develop" ]; then
+          git checkout master
         else
           git checkout develop
         fi
@@ -40,10 +39,9 @@ jobs:
       working-directory: ./openmptcprouter
       env:
         OMR_FEED_URL: https://github.com/ysurac/openmptcprouter-feeds
-        SOURCE_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
-        SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
+        SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
       run: |
-        OMR_FEED_SRC="${SOURCE_BRANCH:-$SOURCE_TAG}" sh build.sh prepare {tools,toolchain}/install -j$(nproc)
+        OMR_FEED_SRC="${SOURCE_NAME}" sh build.sh prepare {tools,toolchain}/install -j$(nproc)
         #echo -e "${{ secrets.OMR_PRIVKEY }}" > $OMR_TARGET/source/key-build
         #echo -e "${{ secrets.OMR_PUBKEY }}" > $OMR_TARGET/source/key-build.pub
     - name: Build packages
@@ -54,7 +52,8 @@ jobs:
       working-directory: ./openmptcprouter
       run: |
         make IGNORE_ERRORS=m -C $OMR_TARGET/source target/install -j$(nproc)
-    - name: Deploy - Create directory
+    - if: steps.branch_name.outputs.SOURCE_BRANCH == ''
+      name: Deploy - Create directory
       uses: fifsky/ssh-action@master
       env:
           SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
@@ -62,16 +61,31 @@ jobs:
           SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
       with:
         command: |
-          mkdir -p deploy/${{env.SOURCE_BRANCH:-release}}/${{env.SOURCE_TAG:-$OMR_KERNEL}}/${{env.OMR_TARGET}}
+          mkdir -p deploy/release/${{env.SOURCE_TAG}}/${{env.OMR_TARGET}}
         host: ${{ secrets.OMR_DEPLOY_HOST }}
         user: deploy
         port: ${{ secrets.OMR_DEPLOY_PORT }}
         key: ${{ secrets.PRIVATE_KEY }}
-    - name: Deploy - Upload via rsync
+    - if: steps.branch_name.outputs.SOURCE_BRANCH != ''
+      name: Deploy - Create directory
+      uses: fifsky/ssh-action@master
+      env:
+          SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
+          SOURCE_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
+          SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
+      with:
+        command: |
+          mkdir -p deploy/${{env.SOURCE_BRANCH}}/${{env.OMR_KERNEL}}/${{env.OMR_TARGET}}
+        host: ${{ secrets.OMR_DEPLOY_HOST }}
+        user: deploy
+        port: ${{ secrets.OMR_DEPLOY_PORT }}
+        key: ${{ secrets.PRIVATE_KEY }}
+    - if: steps.branch_name.outputs.SOURCE_BRANCH == ''
+      name: Deploy - Upload via rsync
       uses: frankfoerster/github-actions-rsync@master
       with:
         RSYNC_OPTIONS: -av --delete-after
-        RSYNC_TARGET: deploy/${{env.SOURCE_BRANCH:-release}}/${{env.SOURCE_TAG:-$env.OMR_KERNEL}}/${{env.OMR_TARGET}}
+        RSYNC_TARGET: deploy/release/${{env.SOURCE_TAG}}/${{env.OMR_TARGET}}
         RSYNC_SOURCE: ./openmptcprouter/${{env.OMR_TARGET}}/source/bin/
       env:
         SSH_PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
@@ -80,4 +94,17 @@ jobs:
         SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
         SOURCE_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
         SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
-      
+    - if: steps.branch_name.outputs.SOURCE_BRANCH != ''
+      name: Deploy - Upload via rsync
+      uses: frankfoerster/github-actions-rsync@master
+      with:
+        RSYNC_OPTIONS: -av --delete-after
+        RSYNC_TARGET: deploy/${{env.SOURCE_BRANCH}}/${{env.OMR_KERNEL}}/${{env.OMR_TARGET}}
+        RSYNC_SOURCE: ./openmptcprouter/${{env.OMR_TARGET}}/source/bin/
+      env:
+        SSH_PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+        SSH_USERNAME: deploy
+        SSH_HOSTNAME: ${{ secrets.OMR_DEPLOY_HOST }}
+        SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
+        SOURCE_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
+        SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}     
