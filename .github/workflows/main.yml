@@ -19,17 +19,23 @@ jobs:
         REPO_URL: https://github.com/ysurac/openmptcprouter
         REPO_BRANCH: develop
       run: |
-        git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
+        git clone --depth 1 $REPO_URL -b $REPO_BRANCH openmptcprouter
     - name: Build toolchain
+      working-directory: /openmptcprouter
       env:
         OMR_TARGET: ${{matrix.OMR_TARGET}}
+        OMR_FEED_URL: https://github.com/ysurac/openmptcprouter-feeds
+        OMR_FEED_SRC: develop
       run: |
-        cd openmptcprouter
-        git checkout develop || true
-        git pull || true
-        export OMR_FEED_URL="https://github.com/ysurac/openmptcprouter-feeds"
-        export OMR_FEED_SRC="develop"
-        sh build.sh -j$(nproc)
+        sh build.sh prepare {tools,toolchain}/install -j$(nproc)
         #echo -e "$OMR_PRIVKEY" > /home/runner/work/openmptcprouter-feeds/openmptcprouter-feeds/openmptcprouter/${{ env.OMR_TARGET }}/source/key-build
         #echo -e "$OMR_PUBKEY" > /home/runner/work/openmptcprouter-feeds/openmptcprouter-feeds/openmptcprouter/${{ env.OMR_TARGET }}/source/key-build.pub
+    - name: Build packages
+      working-directory: /openmptcprouter
+      run: |
+        make IGNORE_ERRORS=m package/{compile,install,index} -j$(nproc)
+    - name: Build image
+      working-directory: /openmptcprouter
+      run: |
+        make IGNORE_ERRORS=m target/install -j$(nproc)
       
