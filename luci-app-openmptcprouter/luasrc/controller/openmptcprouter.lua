@@ -741,6 +741,16 @@ function settings_add()
 	luci.sys.exec("sysctl -w net.ipv4.tcp_syn_retries=%s" % tcp_syn_retries)
 	luci.sys.exec("sed -i 's:^net.ipv4.tcp_syn_retries=[0-9]*:net.ipv4.tcp_syn_retries=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_syn_retries)
 
+	-- Set tcp_retries1
+	local tcp_retries1 = luci.http.formvalue("tcp_retries1")
+	luci.sys.exec("sysctl -w net.ipv4.tcp_retries1=%s" % tcp_retries1)
+	luci.sys.exec("sed -i 's:^net.ipv4.tcp_retries1=[0-9]*:net.ipv4.tcp_retries1=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_retries1)
+
+	-- Set tcp_retries2
+	local tcp_retries2 = luci.http.formvalue("tcp_retries2")
+	luci.sys.exec("sysctl -w net.ipv4.tcp_retries2=%s" % tcp_retries2)
+	luci.sys.exec("sed -i 's:^net.ipv4.tcp_retries2=[0-9]*:net.ipv4.tcp_retries2=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_retries2)
+
 	--local tcp_retries2 = luci.http.formvalue("tcp_retries2")
 	--luci.sys.exec("sysctl -w net.ipv4.tcp_retries2=%s" % tcp_retries2)
 	--luci.sys.exec("sed -i 's:^net.ipv4.tcp_retries2=[0-9]*:net.ipv4.tcp_retries2=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_retries2)
