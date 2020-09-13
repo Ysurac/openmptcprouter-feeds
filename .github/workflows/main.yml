@@ -3,12 +3,13 @@ on: [push]
 
 env:
   REPO_URL: 'https://github.com/ysurac/openmptcprouter'
-  OMR_TARGET: 'x86_64'
   OMR_KERNEL: '5.4'
 
 jobs:
   build:
-
+    strategy:
+      matrix:
+        OMR_TARGET: [bpi-r2, p2w_r619ac, rpi2, rpi4, wrt32x, espressobin, r2s, rpi3, wrt3200acm, x86, x86_64]  
     runs-on: ubuntu-latest
 
     steps:
@@ -40,23 +41,28 @@ jobs:
       env:
         OMR_FEED_URL: https://github.com/ysurac/openmptcprouter-feeds
         SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
+        OMR_TARGET: ${{ matrix.OMR_TARGET }}
       run: |
         OMR_FEED_SRC="${SOURCE_NAME}" sh build.sh prepare {tools,toolchain}/install -j$(nproc)
         #echo -e "${{ secrets.OMR_PRIVKEY }}" > $OMR_TARGET/source/key-build
         #echo -e "${{ secrets.OMR_PUBKEY }}" > $OMR_TARGET/source/key-build.pub
     - name: Build packages
       working-directory: ./openmptcprouter
+      env:
+        OMR_TARGET: ${{ matrix.OMR_TARGET }}
       run: |
         make IGNORE_ERRORS=m -C $OMR_TARGET/source package/{compile,install,index} -j$(nproc)
     - name: Build image
       working-directory: ./openmptcprouter
+      env:
+        OMR_TARGET: ${{ matrix.OMR_TARGET }}
       run: |
         make IGNORE_ERRORS=m -C $OMR_TARGET/source target/install -j$(nproc)
     - name: Upload artifacts
       uses: actions/upload-artifact@v2
       with:
-        name: ${{ env.OMR_TARGET }}
-        path: ./openmptcprouter/${{ env.OMR_TARGET }}/source/bin
+        name: ${{ matrix.OMR_TARGET }}
+        path: ./openmptcprouter/${{ matrix.OMR_TARGET }}/source/bin
     - if: steps.branch_name.outputs.SOURCE_BRANCH == ''
       name: Deploy - Create directory
       uses: fifsky/ssh-action@master
@@ -66,7 +72,7 @@ jobs:
           SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
       with:
         command: |
-          mkdir -p deploy/release/${{env.SOURCE_TAG}}/${{env.OMR_TARGET}}
+          mkdir -p deploy/release/${{env.SOURCE_TAG}}/${{matrix.OMR_TARGET}}
         host: ${{ secrets.OMR_DEPLOY_HOST }}
         user: deploy
         port: ${{ secrets.OMR_DEPLOY_PORT }}
@@ -80,7 +86,7 @@ jobs:
           SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
       with:
         command: |
-          mkdir -p deploy/${{env.SOURCE_BRANCH}}/${{env.OMR_KERNEL}}/${{env.OMR_TARGET}}
+          mkdir -p deploy/${{env.SOURCE_BRANCH}}/${{env.OMR_KERNEL}}/${{matrix.OMR_TARGET}}
         host: ${{ secrets.OMR_DEPLOY_HOST }}
         user: deploy
         port: ${{ secrets.OMR_DEPLOY_PORT }}
@@ -90,8 +96,8 @@ jobs:
       uses: burnett01/rsync-deployments@4.1
       with:
         switches: -av --delete-after
-        remote_path: deploy/release/${{env.SOURCE_TAG}}/${{env.OMR_TARGET}}
-        path: ./openmptcprouter/${{env.OMR_TARGET}}/source/bin/
+        remote_path: deploy/release/${{env.SOURCE_TAG}}/${{matrix.OMR_TARGET}}
+        path: ./openmptcprouter/${{matrix.OMR_TARGET}}/source/bin/
         remote_key: ${{ secrets.PRIVATE_KEY }}
         remote_user: deploy
         remote_host: ${{ secrets.OMR_DEPLOY_HOST }}
@@ -105,8 +111,8 @@ jobs:
       uses: burnett01/rsync-deployments@4.1
       with:
         switches: -av --delete-after
-        remote_path: deploy/${{env.SOURCE_BRANCH}}/${{env.OMR_KERNEL}}/${{env.OMR_TARGET}}
-        path: ./openmptcprouter/${{env.OMR_TARGET}}/source/bin/
+        remote_path: deploy/${{env.SOURCE_BRANCH}}/${{env.OMR_KERNEL}}/${{matrix.OMR_TARGET}}
+        path: ./openmptcprouter/${{matrix.OMR_TARGET}}/source/bin/
         remote_key: ${{ secrets.PRIVATE_KEY }}
         remote_user: deploy
         remote_host: ${{ secrets.OMR_DEPLOY_HOST }}
