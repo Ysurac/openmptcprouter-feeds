@@ -25,6 +25,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install build-essential asciidoc binutils bzip2 gawk gettext git libncurses5-dev libz-dev patch unzip zlib1g-dev lib32gcc1 libc6-dev-i386 subversion flex uglifyjs git-core gcc-multilib p7zip p7zip-full msmtp libssl-dev texinfo libglib2.0-dev xmlto qemu-utils upx libelf-dev autoconf automake libtool autopoint device-tree-compiler
     - name: Clone source code
+      working-directory: ../../
       env: 
         REPO_URL: https://github.com/ysurac/openmptcprouter
         SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
@@ -38,7 +39,7 @@ jobs:
         fi
         git pull
     - name: Build toolchain
-      working-directory: ./omr
+      working-directory: ../../omr
       env:
         OMR_FEED_URL: https://github.com/ysurac/openmptcprouter-feeds
         SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
@@ -48,13 +49,13 @@ jobs:
         #echo -e "${{ secrets.OMR_PRIVKEY }}" > $OMR_TARGET/source/key-build
         #echo -e "${{ secrets.OMR_PUBKEY }}" > $OMR_TARGET/source/key-build.pub
     - name: Build packages
-      working-directory: ./omr
+      working-directory: ../../omr
       env:
         OMR_TARGET: ${{ matrix.OMR_TARGET }}
       run: |
         make IGNORE_ERRORS=m -C $OMR_TARGET/source package/{compile,install,index} -j$(nproc) || make IGNORE_ERRORS=m -C $OMR_TARGET/source package/{compile,install,index} -j1 V=s
     - name: Build image
-      working-directory: ./omr
+      working-directory: ../../omr
       env:
         OMR_TARGET: ${{ matrix.OMR_TARGET }}
       run: |
@@ -63,7 +64,7 @@ jobs:
       uses: actions/upload-artifact@v2
       with:
         name: ${{ matrix.OMR_TARGET }}
-        path: ./omr/${{ matrix.OMR_TARGET }}/source/bin
+        path: ../../omr/${{ matrix.OMR_TARGET }}/source/bin
     - if: steps.branch_name.outputs.SOURCE_BRANCH == ''
       name: Deploy - Create directory
       uses: fifsky/ssh-action@master
@@ -98,7 +99,7 @@ jobs:
       with:
         switches: -av --delete-after
         remote_path: deploy/release/${{env.SOURCE_TAG}}/${{matrix.OMR_TARGET}}
-        path: ./omr/${{matrix.OMR_TARGET}}/source/bin/
+        path: ../../omr/${{matrix.OMR_TARGET}}/source/bin/
         remote_key: ${{ secrets.PRIVATE_KEY }}
         remote_user: deploy
         remote_host: ${{ secrets.OMR_DEPLOY_HOST }}
@@ -113,7 +114,7 @@ jobs:
       with:
         switches: -av --delete-after
         remote_path: deploy/${{env.SOURCE_BRANCH}}/${{env.OMR_KERNEL}}/${{matrix.OMR_TARGET}}
-        path: ./omr/${{matrix.OMR_TARGET}}/source/bin/
+        path: ../../omr/${{matrix.OMR_TARGET}}/source/bin/
         remote_key: ${{ secrets.PRIVATE_KEY }}
         remote_user: deploy
         remote_host: ${{ secrets.OMR_DEPLOY_HOST }}
