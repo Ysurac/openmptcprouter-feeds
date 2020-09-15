@@ -40,6 +40,7 @@ jobs:
           git checkout develop
         fi
         git pull
+        pwd
     - name: Build toolchain
       working-directory: ../../omr
       env:
@@ -67,7 +68,7 @@ jobs:
       with:
         name: ${{ matrix.OMR_TARGET }}
         path: /home/runner/work/omr/${{ matrix.OMR_TARGET }}/source/bin
-    - if: steps.branch_name.outputs.SOURCE_BRANCH == ''
+    - if: steps.branch_name.outputs.SOURCE_BRANCH == '' && github.event.schedule.user.login == 'ysurac'
       name: Deploy - Create directory
       uses: fifsky/ssh-action@master
       env:
@@ -81,7 +82,7 @@ jobs:
         user: deploy
         port: ${{ secrets.OMR_DEPLOY_PORT }}
         key: ${{ secrets.PRIVATE_KEY }}
-    - if: steps.branch_name.outputs.SOURCE_BRANCH != ''
+    - if: steps.branch_name.outputs.SOURCE_BRANCH != '' && github.event.schedule.user.login == 'ysurac'
       name: Deploy - Create directory
       uses: fifsky/ssh-action@master
       env:
@@ -95,35 +96,34 @@ jobs:
         user: deploy
         port: ${{ secrets.OMR_DEPLOY_PORT }}
         key: ${{ secrets.PRIVATE_KEY }}
-    - if: steps.branch_name.outputs.SOURCE_BRANCH == ''
+    - if: steps.branch_name.outputs.SOURCE_BRANCH == '' && github.event.schedule.user.login == 'ysurac'
       name: Deploy - Upload via rsync
-      uses: burnett01/rsync-deployments@4.1
-      with:
-        switches: -av --delete-after
-        remote_path: deploy/release/${{env.SOURCE_TAG}}/${{matrix.OMR_TARGET}}
-        path: ../../home/runner/work/omr/${{matrix.OMR_TARGET}}/source/bin/
-        remote_key: ${{ secrets.PRIVATE_KEY }}
-        remote_user: deploy
-        remote_host: ${{ secrets.OMR_DEPLOY_HOST }}
-        remote_port: ${{ secrets.OMR_DEPLOY_PORT }}
+      uses: up9cloud/action-rsync@master
       env:
+        ARGS: -av --delete-after
+        TARGET: deploy/release/${{steps.branch_name.outputs.SOURCE_TAG}}/${{matrix.OMR_TARGET}}
+        SOURCE: /home/runner/work/omr/${{matrix.OMR_TARGET}}/source/bin/
+        KEY: ${{ secrets.PRIVATE_KEY }}
+        USER: deploy
+        HOST: ${{ secrets.OMR_DEPLOY_HOST }}
+        PORT: ${{ secrets.OMR_DEPLOY_PORT }}
         SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
         SOURCE_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
         SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
         GITHUB_WORKSPACE: ${{ steps.branch_name.outputs.WORKSPACE }}
-    - if: steps.branch_name.outputs.SOURCE_BRANCH != ''
+    - if: steps.branch_name.outputs.SOURCE_BRANCH != '' && github.event.schedule.user.login == 'ysurac'
       name: Deploy - Upload via rsync
-      uses: burnett01/rsync-deployments@4.1
-      with:
-        switches: -av --delete-after
-        remote_path: deploy/${{env.SOURCE_BRANCH}}/${{env.OMR_KERNEL}}/${{matrix.OMR_TARGET}}
-        path: ../../home/runner/work/omr/${{matrix.OMR_TARGET}}/source/bin/
-        remote_key: ${{ secrets.PRIVATE_KEY }}
-        remote_user: deploy
-        remote_host: ${{ secrets.OMR_DEPLOY_HOST }}
-        remote_port: ${{ secrets.OMR_DEPLOY_PORT }}
+      uses: up9cloud/action-rsync@master
       env:
+        ARGS: -av --delete-after
+        TARGET: deploy/${{ steps.branch_name.outputs.SOURCE_BRANCH }}/${{env.OMR_KERNEL}}/${{matrix.OMR_TARGET}}
+        SOURCE: /home/runner/work/omr/${{matrix.OMR_TARGET}}/source/bin/
+        KEY: ${{ secrets.PRIVATE_KEY }}
+        USER: deploy
+        HOST: ${{ secrets.OMR_DEPLOY_HOST }}
+        PORT: ${{ secrets.OMR_DEPLOY_PORT }}
         SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
         SOURCE_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
         SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
         GITHUB_WORKSPACE: ${{ steps.branch_name.outputs.WORKSPACE }}
+
