@@ -222,6 +222,11 @@ function wizard_add()
 		local gateway = luci.http.formvalue("cbid.network.%s.gateway" % intf) or ""
 		local apn = luci.http.formvalue("cbid.network.%s.apn" % intf) or ""
 		local pincode = luci.http.formvalue("cbid.network.%s.pincode" % intf) or ""
+		local delay = luci.http.formvalue("cbid.network.%s.delay" % intf) or ""
+		local username = luci.http.formvalue("cbid.network.%s.username" % intf) or ""
+		local password = luci.http.formvalue("cbid.network.%s.password" % intf) or ""
+		local auth = luci.http.formvalue("cbid.network.%s.auth" % intf) or ""
+		local mode = luci.http.formvalue("cbid.network.%s.mode" % intf) or ""
 		local sqmenabled = luci.http.formvalue("cbid.sqm.%s.enabled" % intf) or "0"
 		if typeintf == "normal" then
 			typeintf = ""
@@ -240,7 +245,14 @@ function wizard_add()
 		end
 		ucic:set("network",intf,"apn",apn)
 		ucic:set("network",intf,"pincode",pincode)
+		ucic:set("network",intf,"delay",delay)
+		ucic:set("network",intf,"username",username)
+		ucic:set("network",intf,"password",password)
+		ucic:set("network",intf,"auth",auth)
+		ucic:set("network",intf,"mode",mode)
 		ucic:set("network",intf,"label",label)
+		ucic:set("network",intf,"defaultroute",0)
+		ucic:set("network",intf,"peerdns",0)
 		if ipaddr ~= "" then
 			ucic:set("network",intf,"ipaddr",ipaddr)
 			ucic:set("network",intf,"netmask",netmask)
