@@ -94,6 +94,7 @@ set_routes_intf() {
 				weight=1
 			fi
 			if [ "$multipath_config_route" = "backup" ]; then
+				nbintfb=$((nbintfb+1))
 				if [ -z "$routesintfbackup" ]; then
 					routesintfbackup="nexthop via $interface_gw dev $interface_if weight $weight"
 				else
@@ -133,7 +134,6 @@ set_route_balancing() {
 			interface_gw=$(ubus call network.interface.${INTERFACE}_4 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 		fi
 		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ]; then
-			nbintf=$((nbintf+1))
 			if [ "$(uci -q get network.$INTERFACE.weight)" != "" ]; then
 				weight=$(uci -q get network.$INTERFACE.weight)
 			elif [ "$(uci -q get openmtpcprouter.$INTERFACE.weight)" != "" ]; then
@@ -144,8 +144,10 @@ set_route_balancing() {
 				weight=1
 			fi
 			if [ "$multipath_config_route" = "backup" ]; then
+				nbintfb=$((nbintfb+1))
 				routesbalancingbackup="$routesbalancingbackup nexthop via $interface_gw dev $interface_if weight $weight"
 			else
+				nbintf=$((nbintf+1))
 				routesbalancing="$routesbalancing nexthop via $interface_gw dev $interface_if weight $weight"
 			fi
 		fi
@@ -168,18 +170,21 @@ set_server_all_routes() {
 		routesintf=""
 		routesintfbackup=""
 		nbintf=0
+		nbintfb=0
 		config_load network
 		config_foreach set_routes_intf interface
-		[ -n "$routesintf" ] && ([ "$nbintf" -gt "1" ] && [ "$(ip r show $serverip | tr -d '\t' | tr -d '\n')" != "$serverip $routesintf " ]) || ([ "$nbintf" = "1" ] && [ "$(ip r show $serverip | grep $OMR_TRACKER_DEVICE)" = "" ]) && {
+		uintf="$(echo $routesintf | awk '{print $5}')"
+		uintfb="$(echo $routesintfbackup | awk '{print $5}')"
+		[ -n "$routesintf" ] && ([ "$nbintf" -gt "1" ] && [ "$(ip r show $serverip metric 0 | tr -d '\t' | tr -d '\n')" != "$serverip $routesintf " ]) || ([ "$nbintf" = "1" ] && [ "$(ip r show $serverip metric 0 | grep $uintf)" = "" ]) && {
 			while [ "$(ip r show $serverip | grep -v nexthop | sed 's/ //g' | tr -d '\n')" != "$serverip" ] && [ "$(ip r show $serverip | grep -v nexthop | sed 's/ //g' | tr -d '\n')" != "" ]; do
 				ip r del $serverip
 			done
-			_log "Set server $server ($serverip) default route $serverip $routesintf"
+			_log "Set server $server ($serverip) default route $serverip $routesintf nbintf $nbintf"
 			ip route replace $serverip scope global $routesintf
 		}
-		[ -n "$routesintfbackup" ] && ([ "$nbintf" -gt "1" ] && [ "$(ip r show $serverip | tr -d '\t' | tr -d '\n')" != "$serverip $routesintfbackup " ]) || ([ "$nbintf" = "1" ] && [ "$(ip r show $serverip | grep $OMR_TRACKER_DEVICE)" = "" ]) && {
-			_log "Set server $server ($serverip) default route $serverip $routesintf"
-			ip route replace $serverip scope global metric 999 $routesintf
+		[ -n "$routesintfbackup" ] && ([ "$nbintfb" -gt "1" ] && [ "$(ip r show $serverip metric 999 | tr -d '\t' | tr -d '\n')" != "$serverip $routesintfbackup " ]) || ([ "$nbintfb" = "1" ] && [ "$(ip r show $serverip metric 999 | grep $uintfb)" = "" ]) && {
+			_log "Set server $server ($serverip) backup default route $serverip $routesintfbackup nbintfb $nbintfb $OMR_TRACKER_DEVICE $uintfb"
+			ip route replace $serverip scope global metric 999 $routesintfbackup
 		}
 	fi
 }
