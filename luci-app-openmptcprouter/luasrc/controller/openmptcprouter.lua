@@ -763,10 +763,11 @@ function settings_add()
 	luci.sys.exec("sysctl -w net.ipv4.tcp_retries2=%s" % tcp_retries2)
 	luci.sys.exec("sed -i 's:^net.ipv4.tcp_retries2=[0-9]*:net.ipv4.tcp_retries2=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_retries2)
 
-	--local tcp_retries2 = luci.http.formvalue("tcp_retries2")
-	--luci.sys.exec("sysctl -w net.ipv4.tcp_retries2=%s" % tcp_retries2)
-	--luci.sys.exec("sed -i 's:^net.ipv4.tcp_retries2=[0-9]*:net.ipv4.tcp_retries2=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_retries2)
-	
+	-- Set ip_default_ttl
+	local ip_default_ttl = luci.http.formvalue("ip_default_ttl")
+	luci.sys.exec("sysctl -w net.ipv4.ip_default_ttl=%s" % ip_default_ttl)
+	luci.sys.exec("sed -i 's:^net.ipv4.ip_default_ttl=[0-9]*:net.ipv4.ip_default_ttl=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % ip_default_ttl)
+
 	-- Set tcp_fastopen
 	local tcp_fastopen = luci.http.formvalue("tcp_fastopen")
 	local disablefastopen = luci.http.formvalue("disablefastopen") or "0"
