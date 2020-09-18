@@ -165,3 +165,7 @@ This is used to bypass a protocol
 
 # License
 [![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2FYsurac%2Fopenmptcprouter-feeds.svg?type=large)](https://app.fossa.io/projects/git%2Bgithub.com%2FYsurac%2Fopenmptcprouter-feeds?ref=badge_large)
+
+## Translation status
+
+[![Translation status](https://weblate.openmptcprouter.com/widgets/omr/-/multi-auto.svg)](https://weblate.openmptcprouter.com/engage/omr/?utm_source=widget)
