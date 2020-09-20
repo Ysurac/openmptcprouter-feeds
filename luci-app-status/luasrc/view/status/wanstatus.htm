@@ -1,0 +1,1662 @@
+<%
+-- Copyright 2015 OVH (OverTheBox@ovh.net)
+-- Simon Lelievre (simon.lelievre@corp.ovh.com)
+-- Sebastien Duponcheel (sebastien.duponcheel@ovh.net)
+--
+-- This file is part of OverTheBox for OpenWrt.
+--
+--    OverTheBox is free software: you can redistribute it and/or modify
+--    it under the terms of the GNU General Public License as published by
+--    the Free Software Foundation, either version 3 of the License, or
+--    (at your option) any later version.
+--
+--    OverTheBox is distributed in the hope that it will be useful,
+--    but WITHOUT ANY WARRANTY; without even the implied warranty of
+--    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+--    GNU General Public License for more details.
+--
+--    You should have received a copy of the GNU General Public License
+--    along with OverTheBox.  If not, see (http://www.gnu.org/licenses/)
+-%>
+<%
+-- Copyright 2018 Ycarus (Yannick Chabanois) ycarus@zugaina.org
+--
+-- Small changes to make this work with OpenMPTCProuter
+-- New features: 
+-- * DNS detection
+-- * IPv6 route received
+-- * latest version available
+-- * MPTCP server status
+-- * Server status, errors,icon,...
+-- * Many tests
+-%>
+<%-
+    local ntm = require "luci.model.network".init()
+    local uci = require "luci.model.uci".cursor()
+
+    function get_device(interface)
+	local dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
+	if dump and dump['l3_device'] ~= "" then
+	    return dump['l3_device']
+	else
+	    return interface
+	end
+    end
+
+    local dev
+    local devices = { "all" }
+    for _, dev in ipairs(ntm:get_networks()) do
+	--if dev ~= "lo" and not ntm:ignore_interface(dev) then
+	    local multipath = uci:get("network", dev:name(), "multipath")
+	    if multipath == "on" or multipath == "master" or multipath == "backup" or multipath == "handover" then
+		devices[#devices+1] = dev:name()
+	    end
+	--end
+    end
+
+    local curifname = luci.http.formvalue("dev") or "all"
+-%>
+<%+header%>
+<link rel="stylesheet" type="text/css" href="<%=resource%>/status/css/wanstatus.css?v=git-20"/>
+<script type="text/javascript" src="<%=resource%>/seedrandom.js?v=git-20"></script>
+<script type="text/javascript" src="<%=resource%>/cbi.js?v=git-20"></script>
+<script type="text/javascript">//<![CDATA[
+	var anonymize = false;
+	function getCookieValue(a) {
+		var b = document.cookie.match('(^|;)\\s*' + a + '\\s*=\\s*([^;]+)');
+		return b ? b.pop() : '';
+	}
+	function testPrivateIP(ip) {
+		if ( (/^(10)\.(.*)\.(.*)\.(.*)$/.test(ip)) || (/^(172)\.(1[6-9]|2[0-9]|3[0-1])\.(.*)\.(.*)$/.test(ip)) || (/^(192)\.(168)\.(.*)\.(.*)$/.test(ip)) ){
+			return true;
+		} else {
+			return false;
+		}
+	}
+	XHR.poll(20, '/cgi-bin/luci/admin/system/status/interfaces_status', null,
+		function(x, mArray)
+		{
+			var status = document.getElementById('openmptcprouter_status');
+			var temp = '<figure class="tree">';
+			temp += '<ul>';
+			if (mArray !== null && mArray.openmptcprouter)
+			{
+				anonymize=getCookieValue("anonymize");
+				if (anonymize == "true")
+				{
+					mArray.openmptcprouter.wan_addr=replaceLastNChars(mArray.openmptcprouter.wan_addr,"x",6);
+					mArray.openmptcprouter.wan_addr6=replaceLastNChars(mArray.openmptcprouter.wan_addr6,"x",10);
+					mArray.openmptcprouter.service_addr=replaceLastNChars(mArray.openmptcprouter.service_addr,"x",6);
+					document.getElementById("anon").checked = true;
+				}
+				temp += '<li class="remote-from-lease">';
+				temp += '<a href="#">';
+
+				var equipmentIcon = '<img src="<%=resource%>/computer.png" />';
+				if (mArray.openmptcprouter.remote_addr)
+				{
+					if (mArray.openmptcprouter.remote_from_lease == false)
+					{
+						var title = String.format("%s (%s)",'You', mArray.openmptcprouter.remote_addr);
+						var statusMessageClass = "warning";
+						var statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
+						var statusMessage = _('Your IP was not leased by this router');
+					} else {
+						var title = String.format('<br /><strong>%s (%s)</strong>', mArray.openmptcprouter.remote_hostname ? mArray.openmptcprouter.remote_hostname : _('You'), mArray.openmptcprouter.remote_addr)
+						var statusMessageClass = "";
+						var statusIcon = "<%=resource%>/openmptcprouter/images/statusOK.png";
+						var statusMessage = "";
+					}
+				} else {
+					var title = String.format('<br /><strong>%s</strong>', _('Clients'))
+					var statusMessageClass = "";
+					var statusIcon = "<%=resource%>/openmptcprouter/images/statusOK.png";
+					var statusMessage = "";
+				}
+				var content = "";
+
+				temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
+				temp += '</a>';
+
+				temp += '<li id="networkRootNode"><table><tr><td><table>';
+				if (mArray.wans)
+				{
+					temp += '<tr class="space"><td></td></tr>';
+					for( var j = 1; j < mArray.wans.length; j++ )
+					{
+						temp += '<tr class="spaceline"><td></td></tr>';
+					}
+				}
+				temp += '<tr><td></td></tr><tr><td><a href="#" id="omr">';
+				var equipmentIcon = '<img src="<%=resource%>/overthebox.png" style:"top: 0px;" />';
+				var title = String.format("%s (%s)", mArray.openmptcprouter.hostname, mArray.openmptcprouter.local_addr);
+				var statusMessageClass = "";
+				var statusIcon = "<%=resource%>/openmptcprouter/images/statusOK.png";
+				var statusMessage = "";
+				var content = "";
+
+				if (mArray.openmptcprouter.version)
+				{
+					//content += "Version " + mArray.openmptcprouter.version.replace(/\"/g,'');
+					content += "Version " + mArray.openmptcprouter.version;
+					if (mArray.openmptcprouter.latest_version_omr != mArray.openmptcprouter.version && mArray.openmptcprouter.latest_version_omr != "")
+					{
+						content += "<br><i>(" + _('Latest available version') + " " + mArray.openmptcprouter.latest_version_omr + ")</i>";
+					}
+					content += "<br />";
+				}
+				if (mArray.openmptcprouter.loadavg)
+				{
+					content += _('Load:') + " " + mArray.openmptcprouter.loadavg;
+					content += "<br />";
+				}
+				if (mArray.openmptcprouter.core_temp)
+				{
+					content += _('Core temp:') + " " + (mArray.openmptcprouter.core_temp / 1000).toFixed(1) + " &#176;";
+					content += "<br />";
+				}
+				if (mArray.openmptcprouter.uptime)
+				{
+					var date = new Date(null);
+					content += _('Uptime:') + " " + String.format('%t', mArray.openmptcprouter.uptime);
+					content += "<br />";
+				}
+				if (mArray.openmptcprouter.dhcpd)
+				{
+					for ( dhcpd in mArray.openmptcprouter.dhcpd )
+					{
+						var dhcp = mArray.openmptcprouter.dhcpd[dhcpd];
+						content += String.format('<span style="text-transform:capitalize;">%s</span> %s %s<br />', dhcp.interface, _('address:') ,dhcp.router);
+						content += String.format('<span style="text-transform:capitalize;">%s</span> %s %s - %s<br />', dhcp.interface, _('range:'), dhcp.range_start, dhcp.range_end);
+					}
+				}
+
+				if (mArray.openmptcprouter.socks_service_enabled == true && mArray.openmptcprouter.service_addr != "") 
+				{
+					if (mArray.openmptcprouter.socks_service == false)
+					{
+						statusMessage += _('ShadowSocks is not running');
+						if (mArray.openmptcprouter.socks_service_key == false && mArray.openmptcprouter.socks_service_method !== "none")
+						{
+							statusMessage += ' <i>(' + _('empty key') + ')</i>';
+						}
+						statusMessage += '<br/>';
+					}
+				}
+				if (mArray.openmptcprouter.fsro == true)
+				{
+					statusMessage += _('Filesystem is readonly') + '<br/>';
+				}
+				if (mArray.openmptcprouter.multi_vpn == true)
+				{
+					statusMessage += _('More than one default VPN is enabled') + '<br/>';
+				}
+				if (mArray.openmptcprouter.tun_service == false && mArray.openmptcprouter.service_addr != "")
+				{
+					statusMessage += _('VPN is not running') + '<br/>';
+				}
+				if (mArray.openmptcprouter.dns == false)
+				{
+					statusMessage += _('DNS issue: can\'t resolve hostname') + '<br/>';
+				}
+
+				if(statusMessage !== "")
+				{
+					statusMessageClass = "error";
+					statusIcon = "<%=resource%>/openmptcprouter/images/statusError.png";
+				} else if (mArray.openmptcprouter.service_addr != "")
+				{
+					if (mArray.openmptcprouter.socks_service_enabled == false)
+					{
+						statusMessage += _('ShadowSocks is DISABLED') + '<br/>';
+					} 
+					if (mArray.openmptcprouter.tun_state == "DOWN")
+					{
+						statusMessage += _('VPN tunnel DOWN') + '<br/>';
+					}
+					if (mArray.openmptcprouter.ipv6 == "enabled")
+					{
+						if (mArray.openmptcprouter.tun6_state == "DOWN")
+						{
+							statusMessage += _('VPN IPv6 tunnel DOWN') + '<br/>';
+						} else if (mArray.openmptcprouter.wan_addr6 == '')
+						{
+							statusMessage += _('No IPv6 access') + '<br/>';
+						}
+					}
+					if (statusMessage !== "")
+					{
+						statusMessageClass = "warning";
+						statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
+					}
+				}
+				temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
+				temp += '</a>';
+				temp += '</td></tr>';
+				temp += '<tr><td><div class="vertdash" ></div></td></tr>';
+				temp += '<tr><td>';
+				temp += '<a href="<%=url('admin/network/network')%>" id="omr-vps">';
+				var statusIcon = "<%=resource%>/openmptcprouter/images/statusOK.png";
+				var equipmentIcon = '<img src="<%=resource%>/server.png" />';
+				content = "";
+				statusMessage = "";
+				if (mArray.openmptcprouter.wan_addr == mArray.openmptcprouter.service_addr && mArray.openmptcprouter.wan_addr != "")
+				{
+					var title = String.format("%s (%s)", mArray.openmptcprouter.vps_hostname, mArray.openmptcprouter.wan_addr);
+				} else if (mArray.openmptcprouter.wan_addr != "" && mArray.openmptcprouter.service_addr == "127.0.0.1")
+				{
+					var title = String.format("%s (%s)", mArray.openmptcprouter.vps_hostname, mArray.openmptcprouter.wan_addr);
+				} else if (mArray.openmptcprouter.wan_addr != "")
+				{
+					var title = String.format("%s (%s)", _('Direct output'), mArray.openmptcprouter.wan_addr);
+					statusMessageClass = "warning";
+					statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
+				} else if (mArray.openmptcprouter.ss_addr != "" && mArray.openmptcprouter.vps_status != "DOWN")
+				{
+					var title = String.format("%s (%s)", mArray.openmptcprouter.vps_hostname, mArray.openmptcprouter.ss_addr);
+				} else if (mArray.openmptcprouter.external_check == false) {
+					var title = String.format("%s ?", mArray.openmptcprouter.vps_hostname);
+				} else {
+					var title = _('No output');
+					statusMessage += _('No output') + '<br/>';
+				}
+				if (mArray.openmptcprouter.wan_addr == "" && mArray.openmptcprouter.ss_addr == "" && mArray.openmptcprouter.external_check == true)
+				{
+					statusMessage += _('No VPS IP address, No WAN IP address') + '<br/>';
+				}
+				if (mArray.openmptcprouter.service_addr !== "" && mArray.openmptcprouter.wan_addr !== "" && mArray.openmptcprouter.vps_status == "DOWN")
+				{
+					statusMessage += _('Can\'t access and use server part') + '<br/>';
+				}
+				if (statusMessage !== "")
+				{
+					statusMessageClass = "error";
+					statusIcon = "<%=resource%>/openmptcprouter/images/statusError.png";
+				}
+				if (mArray.openmptcprouter.service_addr == "")
+				{
+					statusMessage += _('No server defined') + '<br/>';
+				} else {
+					if (mArray.openmptcprouter.vps_status == "DOWN")
+					{
+						statusMessage += _('Can\'t ping server') + '<br/>';
+					} else if (mArray.openmptcprouter.socks_service_enabled == true && mArray.openmptcprouter.ss_addr == "" && mArray.openmptcprouter.external_check == true)
+					{
+						statusMessage += _('Can\'t get public IP address from ShadowSocks') + '<br/>';
+					} else if (mArray.openmptcprouter.wan_addr == "" && mArray.openmptcprouter.external_check == true)
+					{
+						statusMessage += _('No WAN IP address detected in less than 1 second') + '<br/>';
+					}
+					if (mArray.openmptcprouter.vps_admin == false)
+					{
+						statusMessage += _('Can\'t contact Server Admin Script');
+						if (mArray.openmptcprouter.vps_admin_error_msg !== "")
+						{
+							statusMessage += ' <i>(' + mArray.openmptcprouter.vps_admin_error_msg + ')</i>';
+						}
+						statusMessage += '<br/>';
+					} 
+					if (mArray.openmptcprouter.vps_mptcp == "0")
+					{
+						statusMessage += _('MPTCP is not enabled on the server') + '<br/>';
+					} 
+					if (mArray.openmptcprouter.vps_time_accurate == false)
+					{
+						statusMessage += _('Big time difference between the server and the router') + '<br/>';
+					}
+				}
+				if (statusMessage !== "" && statusMessageClass !== "error")
+				{
+					statusMessageClass = "warning";
+					statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
+				}
+				if (mArray.openmptcprouter.vps_omr_version)
+				{
+					content += _('Version') + " " + mArray.openmptcprouter.vps_omr_version;
+					if (mArray.openmptcprouter.vps_kernel)
+					{
+						content += " " + mArray.openmptcprouter.vps_kernel;
+					}
+					if (mArray.openmptcprouter.latest_version_vps !== mArray.openmptcprouter.vps_omr_version && mArray.openmptcprouter.latest_version_vps !== "")
+					{
+						content += "<br><i>(" + _('Latest available version') + " " + mArray.openmptcprouter.latest_version_vps + ")</i>";
+					}
+					content += "<br />";
+				}
+				if (mArray.openmptcprouter.vps_loadavg)
+				{
+					content += _('Load:') + " " + mArray.openmptcprouter.vps_loadavg;
+					content += "<br />";
+				}
+				if (mArray.openmptcprouter.vps_uptime)
+				{
+					var date = new Date(null);
+					content += _('Uptime:') + " " + String.format('%t', mArray.openmptcprouter.vps_uptime);
+					content += "<br />";
+				}
+				if (mArray.openmptcprouter.server_mptcp == "disabled")
+				{
+					statusMessage += _('MPTCP may not be enabled on the server') + '<br/>';
+					statusMessageClass = "warning";
+					statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
+				}
+				if (mArray.openmptcprouter.wan_addr6)
+				{
+					content += _('IPv6:') + " " + mArray.openmptcprouter.wan_addr6;
+					content += '<br />';
+				}
+				content += '<br />';
+
+				temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
+				temp += '</a></td></tr></table>';
+				temp += '</td>';
+			}
+			if (mArray !== null && (mArray.wans || mArray.tunnels))
+			{
+				temp += '<td><ul>';
+				var master = 0;
+				for( var i = 0; i < mArray.wans.length; i++ )
+				{
+					// Get link color
+					mArray.wans[i].color = stringToColour(mArray.wans[i].name)
+					// Mwan status infos and colors
+					var stat = '';
+					var cssc = '';
+					switch (mArray.wans[i].status)
+					{
+						case 'OK':
+							stat = 'Online';
+							cssc = 'rgb(144, 240, 144)';
+							statusIcon = "<%=resource%>/openmptcprouter/images/statusOK.png";
+							statusMessageClass = "";
+							statusMessage = "";
+							break;
+						case 'ERROR':
+							stat = 'Offline';
+							cssc = 'rgb(240, 144, 144)';
+							statusIcon = "<%=resource%>/openmptcprouter/images/statusError.png";
+							statusMessageClass = "error";
+							statusMessage = "";
+							break;
+						default:
+							stat = 'Unknown';
+							cssc = 'rgb(144, 240, 144)';
+							statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
+							statusMessageClass = "warning";
+							statusMessage = "";
+					}
+					// Populate info
+					var wanip   = mArray.wans[i].wanip;
+					if (anonymize == "true" && testPrivateIP(wanip) == false)
+					{
+						wanip=replaceLastNChars(wanip,"x",6);
+					}
+					var ipaddr   = mArray.wans[i].ipaddr;
+					if (anonymize == "true" && testPrivateIP(ipaddr) == false)
+					{
+						ipaddr=replaceLastNChars(ipaddr,"x",6);
+					}
+					var whois   = mArray.wans[i].whois;
+					var signal   = mArray.wans[i].signal;
+					var multipath = mArray.wans[i].multipath;
+					if(multipath == 'master')
+					{
+						master++;
+					}
+					var latency = mArray.wans[i].latency;
+					var mtu = mArray.wans[i].mtu;
+					var operator = mArray.wans[i].operator;
+					var phonenumber = mArray.wans[i].phonenumber;
+					var donglestate = mArray.wans[i].donglestate;
+					var networktype = mArray.wans[i].networktype;
+					var gateway = mArray.wans[i].gateway;
+					if (anonymize == "true" && testPrivateIP(gateway) == false)
+					{
+						gateway=replaceLastNChars(gateway,"x",6);
+					}
+					var gw_ping = mArray.wans[i].gw_ping;
+					var server_ping = mArray.wans[i].server_ping;
+					var ipv6_discover = mArray.wans[i].ipv6_discover;
+					var multipath_available = mArray.wans[i].multipath_available;
+					var multipath_state = mArray.wans[i].multipath_state;
+					var duplicateif = mArray.wans[i].duplicateif;
+					// Generate template
+					if(mArray.openmptcprouter.remote_from_lease == true && mArray.wans.length == 1)
+					{
+						temp += String.format('<li class="subnode-only-child"><a href="%q">', mArray.wans[i].link);
+					} else {
+						temp += String.format('<li><a href="%q">', mArray.wans[i].link);
+					}
+
+					var equipmentIcon = String.format('<embed id="modem_%s" onload="setColorSVG(\'modem_%s\', \'%s\')" src="<%=resource%>/modem.svg" />', mArray.wans[i].name, mArray.wans[i].name, mArray.wans[i].color);
+					if (mArray.wans[i].gateway !== "")
+					{
+						var title = mArray.wans[i].label + " (" + gateway + ")";
+					} else {
+						var title = mArray.wans[i].label;
+					}
+					var content = "";
+					if(ipaddr !== '')
+					{
+						content += String.format('%s <strong>%s</strong><br />',_('ip address:'), ipaddr);
+					}
+					if(wanip !== '')
+					{
+						content += String.format('%s <strong>%s</strong><br />',_('wan address:'), wanip);
+					}
+					if(whois !== '')
+					{
+						content += String.format('%s %s<br />',_('whois:'), whois);
+					}
+					if(latency !== '')
+					{
+						content += String.format('%s %s ms<br />',_('latency:'), latency);
+					}
+					if(mtu !== '')
+					{
+						content += String.format('%s %s<br />',_('mtu:'), mtu);
+					}
+					if (operator !== '')
+					{
+						content += String.format('%s %s<br />',_('operator:'), operator);
+					}
+					if (phonenumber !== '' && anonymize !== 'true')
+					{
+						content += String.format('%s %s<br />',_('phone number:'), phonenumber);
+					}
+					if (donglestate !== '')
+					{
+						content += String.format('%s %s<br />',_('state:'), donglestate);
+					}
+
+					if(signal !== '')
+					{
+						if (signal <= 0)
+							title += ' <img src="/luci-static/resources/icons/signal-0.png" />';
+						else if (signal < 25)
+							title += ' <img src="/luci-static/resources/icons/signal-0-25.png" />';
+						else if (signal < 50)
+							title += ' <img src="/luci-static/resources/icons/signal-25-50.png" />';
+						else if (signal < 75)
+							title += ' <img src="/luci-static/resources/icons/signal-50-75.png" />';
+						else 
+							title += ' <img src="/luci-static/resources/icons/signal-75-100.png" />';
+					}
+					if (networktype !== '')
+					{
+						title += String.format(' <i>%s</i>',networktype);
+					}
+					if(ipaddr == '')
+					{
+						statusMessage += _('No IP defined') + '<br />';
+					}
+					if(gateway == '')
+					{
+						statusMessage += _('No gateway defined') + '<br />';
+					} else if(gw_ping == 'DOWN')
+					{
+						statusMessage += _('Gateway DOWN') + '<br />';
+					} else if(multipath_available == 'ERROR')
+					{
+						statusMessage += _('Multipath seems to be blocked on the connection') + '<br />';
+					}
+					if(server_ping == 'DOWN' && mArray.openmptcprouter.service_addr !== "")
+					{
+						statusMessage += _('No Server ping response after 1 second') + '<br />';
+					}
+					if (stat == 'Offline' && ipaddr != '' && ipaddr == mArray.wans[i].gateway)
+					{
+						statusMessage += _('Wan IP and gateway are identical') + '<br />';
+						statusMessageClass = "error";
+					}
+					if(multipath == 'master') 
+					{
+						if (master > 1)
+						{
+							statusMessage += _('Multipath master already defined') + '<br />';
+							statusMessageClass = "error";
+						}
+						if(multipath_state !== 'on' && multipath_state !== '')
+						{
+							statusMessage += _('Multipath current state is ') + multipath_state + '<br />';
+							statusMessageClass = "error";
+						}
+					} else {
+						if(multipath !== multipath_state && multipath_state !== '')
+						{
+							statusMessage += _('Multipath current state is ') + multipath_state + '<br />';
+							statusMessageClass = "error";
+						}
+					}
+					if(duplicateif)
+					{
+						statusMessage += _('Network interface duplicated') + '<br />';
+						statusMessageClass = "error";
+					}
+					if(ipv6_discover == 'DETECTED')
+					{
+						statusMessage += _('IPv6 route received') + '<br />'
+					}
+					content += String.format('multipath: %s<br />',multipath);
+					if(mArray.wans[i].qos && mArray.wans[i].download > 0 && mArray.wans[i].upload > 0)
+					{
+						content += String.format('%s %s/%s kbps (%s)',_('traffic control:'), mArray.wans[i].download, mArray.wans[i].upload, mArray.wans[i].qos)
+					}
+					temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
+
+					temp += '</a></li>';
+				}
+				for( var i = 0; i < mArray.tunnels.length; i++ )
+				{
+					// Get link color
+					mArray.tunnels[i].color = stringToColour(mArray.tunnels[i].name)
+					// Mwan status infos and colors
+					var stat = '';
+					var cssc = '';
+					switch (mArray.tunnels[i].status)
+					{
+						case 'OK':
+							stat = 'Online';
+							cssc = 'rgb(144, 240, 144)';
+							statusIcon = "<%=resource%>/openmptcprouter/images/statusOK.png";
+							statusMessageClass = "";
+							statusMessage = "";
+							break;
+						case 'ERROR':
+							stat = 'Offline';
+							cssc = 'rgb(240, 144, 144)';
+							statusIcon = "<%=resource%>/openmptcprouter/images/statusError.png";
+							statusMessageClass = "error";
+							statusMessage = "";
+							break;
+						default:
+							stat = 'Unknown';
+							cssc = 'rgb(144, 240, 144)';
+							statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
+							statusMessageClass = "warning";
+							statusMessage = "";
+					}
+					// Populate info
+					var wanip   = mArray.tunnels[i].wanip;
+					if (anonymize == "true" && testPrivateIP(wanip) == false)
+					{
+						wanip=replaceLastNChars(wanip,"x",6);
+					}
+					var ipaddr   = mArray.tunnels[i].ipaddr;
+					if (anonymize == "true" && testPrivateIP(ipaddr) == false)
+					{
+						ipaddr=replaceLastNChars(ipaddr,"x",6);
+					}
+					var whois   = mArray.tunnels[i].whois;
+					var multipath = mArray.tunnels[i].multipath;
+					if(multipath == 'master')
+					{
+						master++;
+					}
+					var latency = mArray.tunnels[i].latency;
+					var mtu = mArray.tunnels[i].mtu;
+					var gateway = mArray.tunnels[i].gateway;
+					if (anonymize == "true" && testPrivateIP(gateway) == false)
+					{
+						gateway=replaceLastNChars(gateway,"x",6);
+					}
+					var gw_ping = mArray.tunnels[i].gw_ping;
+					var server_ping = mArray.tunnels[i].server_ping;
+					var ipv6_discover = mArray.tunnels[i].ipv6_discover;
+					var multipath_available = mArray.tunnels[i].multipath_available;
+					var multipath_state = mArray.tunnels[i].multipath_state;
+					var duplicateif = mArray.tunnels[i].duplicateif;
+					// Generate template
+					if(mArray.openmptcprouter.remote_from_lease == true && mArray.tunnels.length == 1)
+					{
+						temp += String.format('<li class="subnode-only-child"><a href="%q">', mArray.tunnels[i].link);
+					} else {
+						temp += String.format('<li><a href="%q">', mArray.tunnels[i].link);
+					}
+
+					var equipmentIcon = String.format('<embed id="modem_%s" onload="setColorSVG(\'modem_%s\', \'%s\')" src="<%=resource%>/modem.svg" />', mArray.tunnels[i].name, mArray.tunnels[i].name, mArray.tunnels[i].color);
+					if (mArray.tunnels[i].gateway !== "")
+					{
+						var title = mArray.tunnels[i].label + " (" + gateway + ")";
+					} else {
+						var title = mArray.tunnels[i].label;
+					}
+					var content = "";
+					if(ipaddr !== '')
+					{
+						content += String.format('%s <strong>%s</strong><br />',_('ip address:'), ipaddr);
+					}
+					if(wanip !== '')
+					{
+						content += String.format('%s <strong>%s</strong><br />',_('wan address:'), wanip);
+					}
+					if(whois !== '')
+					{
+						content += String.format('%s %s<br />',_('whois:'), whois);
+					}
+					if(latency !== '')
+					{
+						content += String.format('%s %s ms<br />',_('latency:'), latency);
+					}
+					if(mtu !== '')
+					{
+						content += String.format('%s %s<br />',_('mtu:'), mtu);
+					}
+					if(ipaddr == '')
+					{
+						statusMessage += _('No IP defined') + '<br />'
+					}
+					if(gateway == '')
+					{
+						statusMessage += _('No gateway defined') + '<br />'
+					} else if(gw_ping == 'DOWN')
+					{
+						statusMessage += _('Gateway DOWN') + '<br />'
+					} else if(multipath_available == 'ERROR')
+					{
+						statusMessage += _('Multipath seems to be blocked on the connection') + '<br />'
+					}
+					if(server_ping == 'DOWN')
+					{
+						statusMessage += _('No Server ping response after 1 second') + '<br />'
+					}
+					if (stat == 'Offline' && ipaddr != '' && ipaddr == mArray.tunnels[i].gateway)
+					{
+						statusMessage += _('Wan IP and gateway are identical') + '<br />';
+						statusMessageClass = "error";
+					}
+					if(multipath == 'master') 
+					{
+						if (master > 1)
+						{
+							statusMessage += _('Multipath master already defined') + '<br />';
+							statusMessageClass = "error";
+						}
+						if(multipath_state !== 'on' && multipath_state !== '')
+						{
+							statusMessage += _('Multipath current state is ') + multipath_state + '<br />';
+							statusMessageClass = "error";
+						}
+					} else {
+						if(multipath !== multipath_state && multipath_state !== '')
+						{
+							statusMessage += _('Multipath current state is ') + multipath_state + '<br />';
+							statusMessageClass = "error";
+						}
+					}
+					if(duplicateif)
+					{
+						statusMessage += _('Network interface duplicated') + '<br />';
+						statusMessageClass = "error";
+					}
+					if(ipv6_discover == 'DETECTED')
+					{
+						statusMessage += _('IPv6 route received') + '<br />'
+					}
+					content += String.format('multipath: %s<br />',multipath);
+					if(mArray.tunnels[i].qos && mArray.tunnels[i].download > 0 && mArray.tunnels[i].upload > 0)
+					{
+						content += String.format('%s %s/%s kbps (%s)',_('traffic control:'), mArray.tunnels[i].download, mArray.tunnels[i].upload, mArray.tunnels[i].qos)
+					}
+					temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
+
+					temp += '</a></li>';
+				}
+				temp += '</ul></td>';
+				temp += '</tr></table>';
+			}
+			if (mArray === null) {
+			    temp += _('No data');
+			}
+			temp += '</li>';
+			// Close tree
+			temp += '</ul>';
+			temp += '</figure>';
+			status.innerHTML = temp;
+		}
+	);
+
+	function setColorSVG(embed_id, color)
+	{
+		var embed = document.getElementById(embed_id);
+		try {
+			svg = embed.getSVGDocument ? embed.getSVGDocument() : embed.contentDocument;
+		}
+		catch(e) {
+			svg = document.embeds[embed_id].getSVGDocument();
+		}
+		if(svg)
+		{
+			var back = svg.getElementById('backgound_modem');
+			back.setAttribute('style', 'fill: ' + color + ';fill-opacity:0.6;');
+		}
+	}
+
+	function getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass, statusMessage, content)
+	{
+		return String.format('<div class="network-node">' +
+						'<div class="equipment-icon">%s</div>' +
+						'<div class="status-icon"><img src="%s" /></div>' +
+						'<div class="info">' +
+							'<div class="title">%s</div>' +
+							'<div class="status-message %s">%s</div>' +
+							'<div class="content">%s</div>' +
+							'<div class="clear"></div>' +
+						'</div>' +
+						'<div class="clear"></div>' +
+					'</div>',
+					equipmentIcon, statusIcon, title, statusMessageClass, statusMessage, content);
+	}
+
+	function stringToColour(str) {
+		if(str == "wan1")
+			return "BlueViolet";
+		if(str == "wan2")
+			return "DeepSkyBlue";
+		if(str == "wan3")
+			return "LightGreen";
+		if(str == "wan4")
+			return "PowderBlue";
+		if(str == "wan5")
+			return "PaleGreen";
+		if(str == "wan6")
+			return "YellowGreen";
+		if(str == "wan7")
+			return "SeaGreen";
+		if(str == "wan8")
+			return "SteelBlue";
+
+		// Generate a color folowing the name
+		Math.seedrandom(str);
+		var rand = Math.random() * Math.pow(255,3);
+		Math.seedrandom(); // don't leave a non-random seed in the generator
+		for (var i = 0, colour = "#"; i < 3; colour += ("00" + ((rand >> i++ * 8) & 0xFF).toString(16)).slice(-2));
+		return colour;
+	}
+
+	function setAnonymize(data)
+	{
+		document.cookie="anonymize=" + data.checked + "; path=/cgi-bin/luci/";
+		location.reload();
+	}
+
+	var replaceLastNChars = function(str, replace, num) {
+		if (str == "") return str;
+		return str.slice(0, -num) + Array(num + 1).join(replace);
+	};
+//]]></script>
+
+<script type="text/javascript">//<![CDATA[
+
+	function stringToColour(str) {
+		if(str == "wan")
+			return "FireBrick";
+		if(str == "wan1")
+			return "DeepSkyBlue";
+		if(str == "wan2")
+			return "SeaGreen";
+		if(str == "wan3")
+			return "PaleGreen";
+		if(str == "wan4")
+			return "PowderBlue";
+		if(str == "wan5")
+			return "Salmon";
+		if(str == "wan6")
+			return "LightGreen";
+		if(str == "wan7")
+			return "PaleTurquoise";
+		// Generate a color folowing the name
+		Math.seedrandom(str);
+		var rand = Math.random() * Math.pow(255,3);
+		Math.seedrandom(); // don't leave a non-random seed in the generator
+		for (var i = 0, colour = "#"; i < 3; colour += ("00" + ((rand >> i++ * 8) & 0xFF).toString(16)).slice(-2));
+		return colour;
+	}
+
+	function bandwidth_label(bytes, br)
+	{
+		var uby = '<%:kB/s%>';
+		var kby = (bytes / 1024);
+
+		if (kby >= 1024)
+		{
+			uby = '<%:MB/s%>';
+			kby = kby / 1024;
+		}
+
+		var ubi = '<%:kbit/s%>';
+		var kbi = (bytes * 8 / 1024);
+
+		if (kbi >= 1024)
+		{
+			ubi = '<%:Mbit/s%>';
+			kbi = kbi / 1024;
+		}
+
+		return String.format("%f %s%s(%f %s)",
+			kbi.toFixed(2), ubi,
+			br ? '<br />' : ' ',
+			kby.toFixed(2), uby
+		);
+	}
+
+	/* Smoother */
+	function simple_moving_averager(name, period) {
+		var nums = {}
+		nums[name] = [];
+		return function(num) {
+			nums[name].push(num);
+			if (nums[name].length > period)
+				nums[name].splice(0,1);  // remove the first element of the array
+			var sum = 0;
+			for (var i in nums[name])
+				sum += nums[name][i];
+			var n = period;
+			if (nums[name].length < period)
+				n = nums[name].length;
+			return(sum/n);
+		}
+	}
+
+<% if curifname == "all" then %>
+	var all = true;
+	var bwxhr = new XHR();
+
+	var Gdn;
+	var Gup;
+
+	var TIME = 0;
+	var RXB  = 1;
+	var RXP  = 2;
+	var TXB  = 3;
+	var TXP  = 4;
+
+	var width  = 760;
+	var height = 300;
+	var step   = 5;
+
+	var data_wanted = Math.floor(width / step);
+
+	var data_fill   = 0;
+	var data_stamp  = 0;
+
+	var label_25;
+	var label_50;
+	var label_75;
+
+	var label_scale;
+
+	var def;
+	var dntopline;
+	var uptopline;
+	var dnPolygons 	= {};
+	var dndata	= {};
+        var upPolygons 	= {};
+	var updata  	= {};
+
+	/* wait for SVG */
+	window.setTimeout(
+		function() {
+			var dnsvg = document.getElementById('dnsvg');
+                        var upsvg = document.getElementById('upsvg');
+
+			try {
+				Gdn = dnsvg.getSVGDocument ? dnsvg.getSVGDocument() : dnsvg.contentDocument;
+                                Gup = upsvg.getSVGDocument ? upsvg.getSVGDocument() : upsvg.contentDocument;
+			}
+			catch(e) {
+				Gdn = document.embeds['dnsvg'].getSVGDocument();
+				Gup = document.embeds['upsvg'].getSVGDocument();
+			}
+
+			if (!Gdn || !Gup)
+			{
+				window.setTimeout(arguments.callee, 1000);
+			}
+			else
+			{
+				/* find sizes */
+				width       = dnsvg.offsetWidth  - 2;
+				height      = dnsvg.offsetHeight - 2;
+				data_wanted = Math.ceil(width / step);
+
+				/* prefill datasets
+				for (var i = 0; i < data_wanted; i++)
+				{
+					data_tx[i] = 0;
+				}
+				*/
+
+				/* find svg elements */
+				labeldn_25 = Gdn.getElementById('label_25');
+				labeldn_50 = Gdn.getElementById('label_50');
+				labeldn_75 = Gdn.getElementById('label_75');
+
+				labelup_25 = Gup.getElementById('label_25');
+				labelup_50 = Gup.getElementById('label_50');
+				labelup_75 = Gup.getElementById('label_75');
+
+				labeldn_scale   = document.getElementById('dnscale');
+				labelup_scale   = document.getElementById('upscale');
+
+				/* plot horizontal time interval lines */
+				for (var i = width % (step * 60); i < width; i += step * 60)
+				{
+					var linedn = Gdn.createElementNS('http://www.w3.org/2000/svg', 'line');
+						linedn.setAttribute('x1', i);
+						linedn.setAttribute('y1', 0);
+						linedn.setAttribute('x2', i);
+						linedn.setAttribute('y2', '100%');
+						linedn.setAttribute('style', 'stroke:black;stroke-width:0.3');
+
+					var textdn = Gdn.createElementNS('http://www.w3.org/2000/svg', 'text');
+						textdn.setAttribute('x', i + 5);
+						textdn.setAttribute('y', 15);
+						textdn.setAttribute('style', 'fill:#999999; font-size:9pt');
+						textdn.appendChild(Gdn.createTextNode(Math.round((width - i) / step / 60) + 'm'));
+
+					labeldn_25.parentNode.appendChild(linedn);
+					labeldn_25.parentNode.appendChild(textdn);
+
+					var lineup = Gup.createElementNS('http://www.w3.org/2000/svg', 'line');
+						lineup.setAttribute('x1', i);
+						lineup.setAttribute('y1', 0);
+						lineup.setAttribute('x2', i);
+						lineup.setAttribute('y2', '100%');
+						lineup.setAttribute('style', 'stroke:black;stroke-width:0.1');
+
+					var textup = Gup.createElementNS('http://www.w3.org/2000/svg', 'text');
+						textup.setAttribute('x', i + 5);
+						textup.setAttribute('y', 15);
+						textup.setAttribute('style', 'fill:#999999; font-size:9pt');
+						textup.appendChild(Gup.createTextNode(Math.round((width - i) / step / 60) + 'm'));
+
+					labelup_25.parentNode.appendChild(lineup);
+					labelup_25.parentNode.appendChild(textup);
+				}
+
+				labeldn_scale.innerHTML = String.format('<%:(%d minutes window, %d seconds interval)%>', 3, data_wanted / 60);
+				labelup_scale.innerHTML = String.format('<%:(%d minutes window, %d seconds interval)%>', 3, data_wanted / 60);
+
+				/* render datasets, start update interval */
+				XHR.poll(3, '<%=build_url("admin/system/status/multipath_bandwidth", all)%>', null,
+					function(x, dataarray)
+					{
+						var data_max_dnl   = 0;
+						var data_max_upl   = 0;
+						var data_scale_dnl = 0;
+						var data_scale_upl = 0;
+
+						var data_rx_avg = 0;
+						var data_tx_avg = 0;
+
+						var data_rx_peak = 0;
+						var data_tx_peak = 0;
+
+						var data = {};
+
+						for(var itf in dataarray)
+						{
+							// convert json string to json object
+							data[itf] = JSON.parse(dataarray[itf]);
+							// Create lines for each interfaces
+							var color = stringToColour(itf);
+							if(typeof dnPolygons[itf] != "object")
+							{
+								// Create a new polygon to draw the bandwith
+								var dnline = Gdn.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+								dnline.setAttributeNS(null, 'id', 'rx_' + itf);
+								dnline.setAttributeNS(null, 'style', 'fill:' + color + ';fill-opacity:0.4;stroke:black;stroke-width:0.1');
+								Gdn.getElementById('rx').parentNode.appendChild(dnline);
+
+								dnPolygons[itf] = Gdn.getElementById('rx_' + itf);
+								/* prefill datasets */
+								dndata[itf] = [ ];
+								for (var i = 0; i < data_wanted; i++)
+								{
+									dndata[itf][i] = 0;
+								}
+								
+								// Create legend for this connextion
+								var table = document.getElementById('download_stats');
+								var tr = table.insertRow();
+								tr.setAttribute('id', itf + '_download');
+								// Create cells of the table
+								var itflabel = tr.insertCell(0);
+								// Crete itf legend
+								var strong = document.createElement('strong')
+								strong.appendChild(document.createTextNode(itf));
+								strong.setAttribute('style', 'border-bottom:2px solid ' + color);
+								itflabel.appendChild(strong);
+								// Create label for stats
+								tr.insertCell(1).appendChild(document.createTextNode('<%:Current:%>'));
+								var itfcur   = tr.insertCell(2);
+								itfcur.setAttribute('id', itf + '_download_cur');
+								itfcur.appendChild(document.createTextNode('<%:Current:%> 0 <%:kbit/s%> (0 <%:kB/s%>)'));
+								tr.insertCell(3).appendChild(document.createTextNode('<%:Average:%>'));
+								var itfavg   = tr.insertCell(4);
+								itfavg.setAttribute('id', itf + '_download_avg');
+								itfavg.appendChild(document.createTextNode('<%:Average:%> 0 <%:kbit/s%> (0 <%:kB/s%>)'));
+								tr.insertCell(5).appendChild(document.createTextNode('<%:Peak:%>'));
+								var itfpeak  = tr.insertCell(6);
+								itfpeak.setAttribute('id', itf + '_download_peak');
+								itfpeak.appendChild(document.createTextNode('<%:Peak:%> 0 <%:kbit/s%> (0 <%:kB/s%>)'));
+								
+							}
+							if(typeof upPolygons[itf] != "object")
+							{
+								var upline = Gup.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+								upline.setAttributeNS(null, 'id', 'tx_' + itf);
+								upline.setAttributeNS(null, 'style', 'fill:' + color + ';fill-opacity:0.4;stroke:black;stroke-width:0.1');
+								Gup.getElementById('tx').parentNode.appendChild(upline);
+
+								upPolygons[itf] = Gup.getElementById('tx_' + itf);
+								/* prefill datasets */
+								updata[itf] = [ ];
+								for (var i = 0; i < data_wanted; i++)
+								{
+									updata[itf][i] = 0;
+								}
+								
+								// Create legend for this connextion
+								var table = document.getElementById('upload_stats');
+								var tr = table.insertRow();
+								tr.setAttribute('id', itf + '_upload');
+								// Create cells of the table
+								var itflabel = tr.insertCell(0);
+								// Create itf legend
+								var strong = document.createElement('strong')
+								strong.appendChild(document.createTextNode(itf));
+								strong.setAttribute('style', 'border-bottom:2px solid ' + color);
+								itflabel.appendChild(strong);
+								// Create label for stats
+								tr.insertCell(1).appendChild(document.createTextNode('<%:Current:%>'));
+								var itfcur   = tr.insertCell(2);
+								itfcur.setAttribute('id', itf + '_upload_cur');
+								itfcur.appendChild(document.createTextNode('0 <%:kbit/s%> (0 <%:kB/s%>)'));
+								tr.insertCell(3).appendChild(document.createTextNode('<%:Average:%>'));
+								var itfavg   = tr.insertCell(4);
+								itfavg.setAttribute('id', itf + '_upload_avg');
+								itfavg.appendChild(document.createTextNode('0 <%:kbit/s%> (0 <%:kB/s%>)'));
+								tr.insertCell(5).appendChild(document.createTextNode('<%:Peak:%>'));
+								var itfpeak  = tr.insertCell(6);
+								itfpeak.setAttribute('id', itf + '_upload_peak');
+								itfpeak.appendChild(document.createTextNode('0 <%:kbit/s%> (0 <%:kB/s%>)'));
+                                                                
+							}
+						}
+
+						var dnsma = {};
+						var upsma = {};
+						for (var itf in data)
+						{
+							if(!dnsma[itf])
+							{
+								dnsma[itf] = simple_moving_averager('down_'+itf, 15);
+							}
+							if(!upsma[itf])
+							{
+								upsma[itf] = simple_moving_averager('up_'+itf, 15);
+							}
+							for (var i = data_stamp ? 0 : 1; i < data[itf].length; i++)
+							{
+								/* skip overlapping entries */
+								if (data[itf][i][TIME] <= data_stamp)
+									continue;
+
+								/* normalize difference against time interval */
+								if (i > 0)
+								{
+									var time_delta = data[itf][i][TIME] - data[itf][i-1][TIME];
+									if (time_delta)
+									{
+										dndata[itf].push(dnsma[itf]((data[itf][i][RXB] - data[itf][i-1][RXB]) / time_delta));
+										updata[itf].push(upsma[itf]((data[itf][i][TXB] - data[itf][i-1][TXB]) / time_delta));
+									}
+								}
+							}
+							/* cut off outdated entries */
+							dndata[itf] = dndata[itf].slice(dndata[itf].length - data_wanted, dndata[itf].length);
+							updata[itf] = updata[itf].slice(updata[itf].length - data_wanted, updata[itf].length);
+						}
+						/* remember current timestamp, calculate horizontal scale */
+						for (var itf in data)
+						{
+							for (var i = 0; i < data[itf].length; i++)
+								data_stamp = Math.max(data_stamp, data[itf][data[itf].length-1][TIME]);
+						}
+
+						var el = Gdn.getElementById('rx').parentNode;
+
+						// intialize upline and downline datas for download and upload
+						var uplineDnl 	= { };
+						var downlineDnl	= { };
+						var uplineUpl   = { };
+						var downlineUpl = { };
+						// fetch upline and downline datas
+						var toadditf = [ ];
+						for (var itf in data)
+						{
+							uplineDnl[itf] 	= [ ];
+							downlineDnl[itf]= [ ];
+							uplineUpl[itf]  = [ ];
+							downlineUpl[itf]= [ ];
+							// build point sets
+							var data_tx_avg;
+							var data_rx_avg;
+							var data_rx_peak = 0;
+							var data_tx_peak = 0;
+							for (var i = 0; i < dndata[itf].length; i++)
+							{
+								var rx_bot=0;
+								var tx_bot=0;
+								for(var j=0; j < toadditf.length; j++)
+								{
+									rx_bot += dndata[toadditf[j]][i];
+									tx_bot += updata[toadditf[j]][i];
+								}
+								// set upline of the interface
+								uplineDnl[itf][i] = dndata[itf][i] + rx_bot;
+								data_rx_peak = Math.max(data_rx_peak, dndata[itf][i]);
+								data_max_dnl = Math.max(data_max_dnl, uplineDnl[itf][i]);
+								uplineUpl[itf][i] = updata[itf][i] + tx_bot;
+								data_tx_peak = Math.max(data_tx_peak, updata[itf][i]);
+								data_max_upl = Math.max(data_max_upl, uplineUpl[itf][i]);
+								if (i > 0)
+								{
+									data_rx_avg = (data_rx_avg + dndata[itf][i]) / 2;
+									data_tx_avg = (data_tx_avg + updata[itf][i]) / 2;
+								}
+								else
+								{
+									data_rx_avg = dndata[itf][i];
+									data_tx_avg = updata[itf][i];
+								}
+								if(toadditf.length)
+								{
+									downlineDnl[itf][i] = uplineDnl[toadditf[toadditf.length-1]][i];
+									downlineUpl[itf][i] = uplineUpl[toadditf[toadditf.length-1]][i];
+								}
+							}
+							
+							toadditf.push(itf);
+							
+							// Update stats labels
+							if(document.getElementById(itf + '_download_cur'))
+							{
+								var label = document.getElementById(itf + '_download_cur');
+								label.innerHTML = bandwidth_label(dndata[itf][dndata[itf].length-1], true);
+							}
+							if(document.getElementById(itf + '_upload_cur'))
+							{
+								var label = document.getElementById(itf + '_upload_cur');
+								label.innerHTML = bandwidth_label(updata[itf][updata[itf].length-1], true);
+							}
+							if(label = document.getElementById(itf + '_download_avg'))
+							{
+								label.innerHTML = bandwidth_label(data_rx_avg, true);
+							}
+							if(label = document.getElementById(itf + '_upload_avg'))
+							{
+								label.innerHTML = bandwidth_label(data_tx_avg, true);
+							}
+							if(document.getElementById(itf + '_download_peak'))
+							{
+								var label = document.getElementById(itf + '_download_peak');
+								label.innerHTML = bandwidth_label(data_rx_peak, true);
+							}
+							if(document.getElementById(itf + '_upload_peak'))
+							{
+								var label = document.getElementById(itf + '_upload_peak');
+								label.innerHTML = bandwidth_label(data_tx_peak, true);
+							}
+						}
+						data_scale_upl = height / (data_max_upl * 1.1);
+						data_scale_dnl = height / (data_max_dnl * 1.1);
+
+						for (var itf in uplineDnl)
+						{
+							var y_rx = 0;
+							var y_tx = 0;
+
+							/* plot data */
+							var pt_rx = '0,' + height;
+							var pt_tx = '0,' + height;
+
+							// draw polygon	
+							for (var i = 0; i < uplineDnl[itf].length; i++)
+							{
+								var x = i * step;
+
+								y_rx = height - Math.floor((uplineDnl[itf][i]) * data_scale_dnl);
+								y_tx = height - Math.floor((uplineUpl[itf][i]) * data_scale_upl);
+
+								pt_rx += ' ' + x + ',' + y_rx;
+								pt_tx += ' ' + x + ',' + y_tx;
+							}
+							// draw last tangant point in upline graph
+							pt_rx += ' ' + width + ',' + y_rx;
+							pt_rx += ' ' + width + ',' + height;
+
+							pt_tx += ' ' + width + ',' + y_tx;
+							pt_tx += ' ' + width + ',' + height;
+
+							for (var i = downlineDnl[itf].length - 1; i >= 0; i--)
+							{
+								var x = i * step;
+
+								y_rx = height - Math.floor((downlineDnl[itf][i] - 10) * data_scale_dnl);
+								y_tx = height - Math.floor((downlineUpl[itf][i] - 10) * data_scale_upl);
+								// recreate tangant point in bottom line graph
+								if(i == downlineDnl[itf].length - 1)
+								{
+									pt_rx += ' ' + width + ',' + height;
+									pt_rx += ' ' + width + ',' + y_rx;
+
+									pt_tx += ' ' + width + ',' + height;
+									pt_tx += ' ' + width + ',' + y_tx;
+								}
+
+								pt_rx += ' ' + x + ',' + y_rx;
+								pt_tx += ' ' + x + ',' + y_tx;
+							}
+							// go back to right bottom corner to correctly fill polyline
+							pt_tx += ' ' + 0 + ',' + height;
+							pt_tx += ' ' + width + ',' + height;
+							pt_rx += ' ' + 0 + ',' + height;
+							pt_rx += ' ' + width + ',' + height;
+
+							// Draw polygon
+							dnPolygons[itf].setAttribute('points', pt_rx);
+							upPolygons[itf].setAttribute('points', pt_tx);
+
+							labeldn_25.firstChild.data = bandwidth_label(1.1 * 0.25 * data_max_dnl);
+							labeldn_50.firstChild.data = bandwidth_label(1.1 * 0.50 * data_max_dnl);
+							labeldn_75.firstChild.data = bandwidth_label(1.1 * 0.75 * data_max_dnl);
+
+                                                        labelup_25.firstChild.data = bandwidth_label(1.1 * 0.25 * data_max_upl);
+                                                        labelup_50.firstChild.data = bandwidth_label(1.1 * 0.50 * data_max_upl);
+                                                        labelup_75.firstChild.data = bandwidth_label(1.1 * 0.75 * data_max_upl);
+						}
+						/* now draw top line */
+						var keys = Object.keys(uplineDnl);
+						if (keys.length)
+						{
+							var itf = keys[keys.length - 1];
+							if (typeof dntopline != "object")
+							{
+								dntopline = Gdn.getElementById('rx');
+								dntopline.setAttributeNS(null, 'style', 'stroke:DimGray;stroke-width:1;stroke-linecap="round";fill:;fill-opacity:0;');
+								/* Move line on top */
+								var father = dntopline.parentNode;
+								father.removeChild(dntopline);
+								father.appendChild(dntopline);
+							}
+							if (typeof uptopline != "object")
+							{
+								uptopline = Gup.getElementById('tx');
+								uptopline.setAttributeNS(null, 'style', 'stroke:DimGray;stroke-width:1;stroke-linecap="round";fill:;fill-opacity:0;');
+								/* Move line on top */
+								var father = uptopline.parentNode;
+								father.removeChild(uptopline);
+								father.appendChild(uptopline);
+							}
+                                                        var y_rx = 0;
+                                                        var y_tx = 0;
+
+                                                        /* plot data */
+                                                        var pt_rx = '0,' + height;
+                                                        var pt_tx = '0,' + height;
+
+                                                        // draw polygon
+                                                        for (var i = 0; i < uplineDnl[itf].length; i++)
+                                                        {
+                                                                var x = i * step;
+
+                                                                y_rx = height - Math.floor((uplineDnl[itf][i]) * data_scale_dnl);
+                                                                y_tx = height - Math.floor((uplineUpl[itf][i]) * data_scale_upl);
+
+                                                                pt_rx += ' ' + x + ',' + y_rx;
+								pt_tx += ' ' + x + ',' + y_tx;
+							}
+							// draw last tangant point in upline graph
+							pt_rx += ' ' + width + ',' + y_rx;
+							pt_rx += ' ' + width + ',' + height;
+
+							pt_tx += ' ' + width + ',' + y_tx;
+							pt_tx += ' ' + width + ',' + height;
+
+							dntopline.setAttribute('points', pt_rx);
+							uptopline.setAttribute('points', pt_tx);
+						}
+					}
+				);
+				//XHR.run();
+		            }
+	                }, 1000
+<% else %>
+	var bwxhr = new XHR();
+
+	var G;
+	var TIME = 0;
+	var RXB  = 1;
+	var RXP  = 2;
+	var TXB  = 3;
+	var TXP  = 4;
+
+	var width  = 760;
+	var height = 300;
+	var step   = 5;
+
+	var data_wanted = Math.floor(width / step);
+	var data_fill   = 0;
+	var data_stamp  = 0;
+
+	var data_rx = [ ];
+	var data_tx = [ ];
+
+	var line_rx;
+	var line_tx;
+
+	var label_25;
+	var label_50;
+	var label_75;
+
+	var label_rx_cur;
+	var label_rx_avg;
+	var label_rx_peak;
+
+	var label_tx_cur;
+	var label_tx_avg;
+	var label_tx_peak;
+
+	var label_scale;
+
+
+	function bandwidth_label(bytes, br)
+	{
+		var uby = '<%:kB/s%>';
+		var kby = (bytes / 1024);
+
+		if (kby >= 1024)
+		{
+			uby = '<%:MB/s%>';
+			kby = kby / 1024;
+		}
+
+		var ubi = '<%:kbit/s%>';
+		var kbi = (bytes * 8 / 1024);
+
+		if (kbi >= 1024)
+		{
+			ubi = '<%:Mbit/s%>';
+			kbi = kbi / 1024;
+		}
+
+		return String.format("%f %s%s(%f %s)",
+			kbi.toFixed(2), ubi,
+			br ? '<br />' : ' ',
+			kby.toFixed(2), uby
+		);
+	}
+
+	/* wait for SVG */
+	window.setTimeout(
+		function() {
+			var svg = document.getElementById('bwsvg');
+
+			try {
+				G = svg.getSVGDocument
+					? svg.getSVGDocument() : svg.contentDocument;
+			}
+			catch(e) {
+				G = document.embeds['bwsvg'].getSVGDocument();
+			}
+
+			if (!G)
+			{
+				window.setTimeout(arguments.callee, 1000);
+			}
+			else
+			{
+				/* find sizes */
+				width       = svg.offsetWidth  - 2;
+				height      = svg.offsetHeight - 2;
+				data_wanted = Math.ceil(width / step);
+
+				/* prefill datasets */
+				for (var i = 0; i < data_wanted; i++)
+				{
+					data_rx[i] = 0;
+					data_tx[i] = 0;
+				}
+
+				/* find svg elements */
+				line_rx = G.getElementById('rx');
+				line_tx = G.getElementById('tx');
+
+				label_25 = G.getElementById('label_25');
+				label_50 = G.getElementById('label_50');
+				label_75 = G.getElementById('label_75');
+
+				label_rx_cur  = document.getElementById('rx_bw_cur');
+				label_rx_avg  = document.getElementById('rx_bw_avg');
+				label_rx_peak = document.getElementById('rx_bw_peak');
+
+				label_tx_cur  = document.getElementById('tx_bw_cur');
+				label_tx_avg  = document.getElementById('tx_bw_avg');
+				label_tx_peak = document.getElementById('tx_bw_peak');
+
+				label_scale   = document.getElementById('scale');
+
+				/* plot horizontal time interval lines */
+				for (var i = width % (step * 60); i < width; i += step * 60)
+				{
+					var line = G.createElementNS('http://www.w3.org/2000/svg', 'line');
+						line.setAttribute('x1', i);
+						line.setAttribute('y1', 0);
+						line.setAttribute('x2', i);
+						line.setAttribute('y2', '100%');
+						line.setAttribute('style', 'stroke:black;stroke-width:0.1');
+
+					var text = G.createElementNS('http://www.w3.org/2000/svg', 'text');
+						text.setAttribute('x', i + 5);
+						text.setAttribute('y', 15);
+						text.setAttribute('style', 'fill:#999999; font-size:9pt');
+						text.appendChild(G.createTextNode(Math.round((width - i) / step / 60) + 'm'));
+
+					label_25.parentNode.appendChild(line);
+					label_25.parentNode.appendChild(text);
+				}
+
+				label_scale.innerHTML = String.format('<%:(%d minute window, %d second interval)%>', data_wanted / 60, 3);
+
+				/* render datasets, start update interval */
+				XHR.poll(3, '<%=build_url("admin/system/status/interface_bandwidth", curifname)%>', null,
+					function(x, data)
+					{
+						var data_max   = 0;
+						var data_scale = 0;
+
+						var data_rx_avg = 0;
+						var data_tx_avg = 0;
+
+						var data_rx_peak = 0;
+						var data_tx_peak = 0;
+
+						for (var i = data_stamp ? 0 : 1; i < data.length; i++)
+						{
+							/* skip overlapping entries */
+							if (data[i][TIME] <= data_stamp)
+								continue;
+
+							/* normalize difference against time interval */
+							if (i > 0)
+							{
+								var time_delta = data[i][TIME] - data[i-1][TIME];
+								if (time_delta)
+								{
+									data_rx.push((data[i][RXB] - data[i-1][RXB]) / time_delta);
+									data_tx.push((data[i][TXB] - data[i-1][TXB]) / time_delta);
+								}
+							}
+						}
+
+						/* cut off outdated entries */
+						data_rx = data_rx.slice(data_rx.length - data_wanted, data_rx.length);
+						data_tx = data_tx.slice(data_tx.length - data_wanted, data_tx.length);
+
+						/* find peak */
+						for (var i = 0; i < data_rx.length; i++)
+						{
+							data_max = Math.max(data_max, data_rx[i]);
+							data_max = Math.max(data_max, data_tx[i]);
+
+							data_rx_peak = Math.max(data_rx_peak, data_rx[i]);
+							data_tx_peak = Math.max(data_tx_peak, data_tx[i]);
+
+							data_rx_avg += data_rx[i];
+							data_tx_avg += data_tx[i];
+						}
+						data_rx_avg = (data_rx_avg / Math.max(data_rx.length, 1));
+						data_tx_avg = (data_tx_avg / Math.max(data_tx.length, 1));
+
+						var size = Math.floor(Math.log2(data_max)),
+						    div = Math.pow(2, size - (size % 10)),
+						    mult = data_max / div,
+						    mult = (mult < 5) ? 2 : ((mult < 50) ? 10 : ((mult < 500) ? 100 : 1000));
+
+						data_max = data_max + (mult * div) - (data_max % (mult * div));
+
+						/* remember current timestamp, calculate horizontal scale */
+						data_stamp = data[data.length-1][TIME];
+						data_scale = height / data_max;
+
+
+						/* plot data */
+						var pt_rx = '0,' + height;
+						var pt_tx = '0,' + height;
+
+						var y_rx = 0;
+						var y_tx = 0;
+
+						for (var i = 0; i < data_rx.length; i++)
+						{
+							var x = i * step;
+
+							y_rx = height - Math.floor(data_rx[i] * data_scale);
+							y_tx = height - Math.floor(data_tx[i] * data_scale);
+
+							pt_rx += ' ' + x + ',' + y_rx;
+							pt_tx += ' ' + x + ',' + y_tx;
+						}
+
+						pt_rx += ' ' + width + ',' + y_rx + ' ' + width + ',' + height;
+						pt_tx += ' ' + width + ',' + y_tx + ' ' + width + ',' + height;
+
+
+						line_rx.setAttribute('points', pt_rx);
+						line_tx.setAttribute('points', pt_tx);
+
+						label_25.firstChild.data = bandwidth_label(0.25 * data_max);
+						label_50.firstChild.data = bandwidth_label(0.50 * data_max);
+						label_75.firstChild.data = bandwidth_label(0.75 * data_max);
+
+						label_rx_cur.innerHTML = bandwidth_label(data_rx[data_rx.length-1], true);
+						label_tx_cur.innerHTML = bandwidth_label(data_tx[data_tx.length-1], true);
+
+						label_rx_avg.innerHTML = bandwidth_label(data_rx_avg, true);
+						label_tx_avg.innerHTML = bandwidth_label(data_tx_avg, true);
+
+						label_rx_peak.innerHTML = bandwidth_label(data_rx_peak, true);
+						label_tx_peak.innerHTML = bandwidth_label(data_tx_peak, true);
+					}
+				);
+				XHR.run();
+			}
+		}, 2000
+<% end %>
+	);
+// Set 1h reload page timer because of suspected SVG graph memmory leak
+window.setTimeout(function()
+{ 
+    if (activating == false)
+	location.reload(true) 
+}, 3600000)
+//]]></script>
+<h2><%:Network overview%></h2>
+<fieldset id="interface_field" class="cbi-section">
+	<!--	<legend><%:Network overview%></legen> -->
+	<div id="openmptcprouter_status"><img src="<%=resource%>/spinner.gif" /></div>
+</fieldset>
+<form class="inline">
+	<div class="cbi-map">
+		<h3>Settings</h3>
+		<fieldset class="cbi-section">
+			<div class="cbi-value">
+				<label class="cbi-value-title">Anonymize public IPs</label>
+				<div class="cbi-value-field">
+					<input type="checkbox" name="anon" id="anon" class="cbi-input-checkbox" value="1" onclick="setAnonymize(this)" \>
+				</div>
+			</div>
+		</fieldset>
+	</div>
+</form>
+
+<h2><a id="content" name="content"><%:Realtime Traffic%></a></h2>
+
+<ul class="cbi-tabmenu">
+    <% for _, dev in ipairs(devices) do 
+	local ifname = get_device(dev)
+    %>
+	
+	<li class="cbi-tab<%= ifname == curifname and "" or "-disabled" %>"><a href="?dev=<%=pcdata(get_device(dev))%>"><%=pcdata(dev)%></a></li>
+    <% end %>
+</ul>
+
+<% if curifname == "all" then %>
+
+<strong><%:Download:%></strong>
+<embed id="dnsvg" style="width:100%; height:300px; border:1px solid #000000; background-color:#FFFFFF" src="<%=resource%>/bandwidth.svg" />
+<div style="text-align:right"><small id="dnscale">-</small></div>
+<table style="width:100%; table-layout:fixed" cellspacing="5" id="download_stats">
+</table>
+
+<strong><%:Upload:%></strong>
+<embed id="upsvg" style="width:100%; height:300px; border:1px solid #000000; background-color:#FFFFFF" src="<%=resource%>/bandwidth.svg" />
+<div style="text-align:right"><small id="upscale">-</small></div>
+<table style="width:100%; table-layout:fixed" cellspacing="5" id="upload_stats">
+</table>
+<br />
+
+<% else %>
+
+<embed id="bwsvg" style="width:100%; height:300px; border:1px solid #000000; background-color:#FFFFFF" src="<%=resource%>/bandwidth.svg" />
+<div style="text-align:right"><small id="scale">-</small></div>
+<br />
+
+<table style="width:100%; table-layout:fixed" cellspacing="5">
+    <tr>
+	<td style="text-align:right; vertical-align:top"><strong style="border-bottom:2px solid blue"><%:Inbound:%></strong></td>
+	<td id="rx_bw_cur">0 <%:kbit/s%><br />(0 <%:kB/s%>)</td>
+
+	<td style="text-align:right; vertical-align:top"><strong><%:Average:%></strong></td>
+	<td id="rx_bw_avg">0 <%:kbit/s%><br />(0 <%:kB/s%>)</td>
+
+	<td style="text-align:right; vertical-align:top"><strong><%:Peak:%></strong></td>
+	<td id="rx_bw_peak">0 <%:kbit/s%><br />(0 <%:kB/s%>)</td>
+    </tr>
+    <tr>
+	<td style="text-align:right; vertical-align:top"><strong style="border-bottom:2px solid green"><%:Outbound:%></strong></td>
+	<td id="tx_bw_cur">0 <%:kbit/s%><br />(0 <%:kB/s%>)</td>
+
+	<td style="text-align:right; vertical-align:top"><strong><%:Average:%></strong></td>
+	<td id="tx_bw_avg">0 <%:kbit/s%><br />(0 <%:kB/s%>)</td>
+
+	<td style="text-align:right; vertical-align:top"><strong><%:Peak:%></strong></td>
+	<td id="tx_bw_peak">0 <%:kbit/s%><br />(0 <%:kB/s%>)</td>
+    </tr>
+</table>
+
+<% end %>
+<%+footer%>
