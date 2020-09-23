@@ -344,6 +344,11 @@ return baseclass.extend({
 				value: datestr
 			},
 
+			load: {
+				title: _('Load Average'),
+				value: Array.isArray(systeminfo.load) ? '%.2f, %.2f, %.2f'.format(systeminfo.load[0] / 65535.0,systeminfo.load[1] / 65535.0,systeminfo.load[2] / 65535.0) : null
+			},
+
 			kernel: {
 				title: _('Kernel Version'),
 				value: boardinfo.kernel
