@@ -228,6 +228,8 @@ function wizard_add()
 		local auth = luci.http.formvalue("cbid.network.%s.auth" % intf) or ""
 		local mode = luci.http.formvalue("cbid.network.%s.mode" % intf) or ""
 		local sqmenabled = luci.http.formvalue("cbid.sqm.%s.enabled" % intf) or "0"
+		local multipath = luci.http.formvalue("cbid.sqm.%s.multipath" % intf) or "on"
+		local lan = luci.http.formvalue("cbid.sqm.%s.lan" % intf) or "0"
 		if typeintf == "normal" then
 			typeintf = ""
 		end
@@ -251,6 +253,11 @@ function wizard_add()
 		ucic:set("network",intf,"auth",auth)
 		ucic:set("network",intf,"mode",mode)
 		ucic:set("network",intf,"label",label)
+		if lan == "1" then
+			ucic:set("network",intf,"multipath","off")
+		else
+			ucic:set("network",intf,"multipath",multipath)
+		end
 		ucic:set("network",intf,"defaultroute",0)
 		ucic:set("network",intf,"peerdns",0)
 		if ipaddr ~= "" then

@@ -55,12 +55,16 @@ interface_multipath_settings() {
 	config_get enabled "$config" auto "1"
 	config_get iface "$config" ifname
 	[ -z "$iface" ] && iface=$(ifstatus "$config" | jsonfilter -q -e '@["l3_device"]')
-	count=$(($count+1))
-	id=$count
+	if [ "$(uci -q get openmptcprouter.${config}.metric)" = "" ]; then
+		count=$(($count+1))
+	else
+		count="$(uci -q get openmptcprouter.${config}.metric)"
+	fi
 	config_set "$config" metric $count
 	uci -q set network.${config}.metric=$count
 	uci -q set openmptcprouter.${config}.metric=$count
 	config_get mode "$config" multipath
+	id=$count
 	[ "$mode" = "" ] && {
 		mode="$(uci -q get openmptcprouter.${config}.multipath)"
 		[ -n "$mode" ] && uci -q set network.${config}.multipath="$mode"
@@ -108,7 +112,8 @@ interface_multipath_settings() {
 	[ "$enabled" = "0" ] && return 0
 	[ -n "$intf" ] && [ "$iface" != "$intf" ] && return 0
 	[ -z "$iface" ] && return 0
-	[ "$config" = "omrvpn" ] && return 0
+	#[ "$config" = "omrvpn" ] && return 0
+	[ "$config" = "omrvpn" ] && mode="off"
 	[ -n "$(ifconfig | grep $iface)" ] || return 0
 	[ "$(echo $iface | grep _dev)" != "" ] && return 0
 	
