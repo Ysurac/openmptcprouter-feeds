@@ -230,16 +230,18 @@ function wizard_add()
 		local sqmenabled = luci.http.formvalue("cbid.sqm.%s.enabled" % intf) or "0"
 		local multipath = luci.http.formvalue("cbid.sqm.%s.multipath" % intf) or "on"
 		local lan = luci.http.formvalue("cbid.sqm.%s.lan" % intf) or "0"
-		if typeintf == "normal" then
-			typeintf = ""
+		if typeintf ~= "" then
+			if typeintf == "normal" then
+				typeintf = ""
+			end
+			ucic:set("network",intf,"type",typeintf)
 		end
-		ucic:set("network",intf,"type",typeintf)
-		if typeintf == "macvlan" then
+		if typeintf == "macvlan" and masterintf ~= "" then
 			ucic:set("network",intf,"type","macvlan")
 			ucic:set("network",intf,"masterintf",masterintf)
-		elseif typeintf == "" and (proto == "static" or proto == "dhcp" ) then
+		elseif typeintf == "" and ifname ~= "" and (proto == "static" or proto == "dhcp" ) then
 			ucic:set("network",intf,"ifname",ifname)
-		elseif typeintf == "" and (proto == "ncm" or proto == "qmi" or proto == "modemmanager") then
+		elseif typeintf == "" and device ~= "" and (proto == "ncm" or proto == "qmi" or proto == "modemmanager") then
 			ucic:set("network",intf,"device",device)
 		end
 		if proto ~= "other" then
