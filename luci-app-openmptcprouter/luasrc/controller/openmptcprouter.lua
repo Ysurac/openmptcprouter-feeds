@@ -259,6 +259,7 @@ function wizard_add()
 			ucic:set("network",intf,"multipath","off")
 		else
 			ucic:set("network",intf,"multipath",multipath)
+			ucic:set("openmptcprouter",intf,"multipath",multipath)
 		end
 		ucic:set("network",intf,"defaultroute",0)
 		ucic:set("network",intf,"peerdns",0)
