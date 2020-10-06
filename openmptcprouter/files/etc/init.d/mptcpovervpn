@@ -21,7 +21,7 @@ mptcp_over_vpn() {
 			logger -t "MPTCPoverVPN" "Enable MPTCP over VPN for ${interface}"
 			id=$(uci -q get network.${interface}.metric)
 			remoteip=""
-			config_load_openmptcprouter
+			config_load openmptcprouter
 			config_foreach _getremoteip server
 			localip=$(ubus call network.interface.$interface status | jsonfilter -e '@["ipv4-address"][0].address' | tr -d "\n")
 			[ -z "$(uci -q get openmptcprouter.ovpn${interface}.multipath)" ] && multipath=$(uci -q get network.${interface}.multipath)
@@ -63,6 +63,13 @@ mptcp_over_vpn() {
 				commit openmptcprouter
 				add_list firewall.zone_vpn.network="ovpn${interface}"
 				commit firewall
+			EOF
+		else
+			uci -q batch <<-EOF >/dev/null
+				set network.${interface}.multipath='off'
+				commit network
+				set openmptcprouter.${interface}.multipath="off"
+				commit openmptcprouter
 			EOF
 		fi
 	elif [ "$(uci -q get openmptcprouter.ovpn${interface})" != "" ]; then
