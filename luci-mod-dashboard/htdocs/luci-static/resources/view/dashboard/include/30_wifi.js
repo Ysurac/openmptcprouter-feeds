@@ -130,11 +130,13 @@ return baseclass.extend({
 			container_devices_list.appendChild(container_devices_item);
 		}
 
-		container_devices.appendChild(container_devices_list);
-		container_box.appendChild(E('hr'));
-		container_box.appendChild(container_devices);
-		container_box.appendChild(container_devices_list);
-		container_wapper.appendChild(container_box);
+		if (this.params.wifi.devices.length > 0) {
+			container_devices.appendChild(container_devices_list);
+			container_box.appendChild(E('hr'));
+			container_box.appendChild(container_devices);
+			container_box.appendChild(container_devices_list);
+			container_wapper.appendChild(container_box);
+		}
 
 		return container_wapper;
 	},
