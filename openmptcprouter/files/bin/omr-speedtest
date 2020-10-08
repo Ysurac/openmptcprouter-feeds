@@ -1,0 +1,35 @@
+#!/bin/sh
+INTERFACE="$1"
+echo "Download server list..."
+wget -q -O /tmp/speedtest.lst http://c.speedtest.net/speedtest-servers-static.php
+bestuploadurl=""
+besthost=""
+bestpinghost=""
+bestping="999"
+echo "Select best server..."
+while read line; do
+	if [ "$(echo $line | grep url)" != "" ]; then
+		pinghost=$(echo $line | awk -F'"' '{print $18}' | cut -d: -f1)
+		host=$(echo $line | awk -F'"' '{print $18}')
+		uploadurl=$(echo $line | awk -F'"' '{print $2}')
+		ping=$(ping -c1 -w1 $pinghost | cut -d "/" -s -f5 | cut -d "." -f1)
+		echo -n "."
+		if [ -n "$ping" ] && [ "$ping" -lt "$bestping" ]; then
+			bestping=$ping
+			bestuploadurl=$uploadurl
+			besthost=$host
+			bestpinghost=$pinghost
+		fi
+	fi
+done < /tmp/speedtest.lst
+echo
+echo "Done: url: $bestuploadurl - host: $besthost - ping: $bestping"
+echo "Download test:"
+if [ -z "$INTERFACE" ]; then
+	curl -4 $besthost/speedtest/random7000x7000.jpg >/dev/null || echo
+else
+	hostip=$(dig +short $bestpinghost | tr -d "\n")
+	ipset add ss_rules_dst_bypass_all $hostip
+	curl -4 --interface $INTERFACE $besthost/speedtest/random7000x7000.jpg >/dev/null || echo
+	ipset del ss_rules_dst_bypass_all $hostip
+fi

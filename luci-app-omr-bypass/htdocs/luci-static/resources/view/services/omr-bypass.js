@@ -218,7 +218,7 @@ return L.view.extend({
 			},this));
 		};
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
+		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used (or an other interface if master is down).'));
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
