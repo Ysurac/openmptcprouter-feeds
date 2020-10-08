@@ -72,11 +72,12 @@ function multipath_bandwidth()
 			end
 			if multipath == "on" or multipath == "master" or multipath == "backup" or multipath == "handover" then
 				local bwc = luci.sys.exec("luci-bwc -i %q 2>/dev/null" % dev) or ""
+				local bwc = luci.sys.exec("luci-bwc -i %q 2>/dev/null" % dev) or ""
 				if bwc ~= nil then
 					--result[dev] = "[" .. string.gsub(bwc, '[\r\n]', '') .. "]"
 					result[intname] = "[" .. string.gsub(bwc, '[\r\n]', '') .. "]"
 				else
-					result[dev] = "[]"
+					result[intname] = "[]"
 				end
 			end
 		end
@@ -95,28 +96,26 @@ function multipath_bandwidth()
 		value=(string.gsub(value, "^%[%[", ""))
 		value=(string.gsub(value, "%]%]", ""))
 		local temp1 = string.split(value, "],")
-		res[key][1]=temp1[1]
-		for i=2,60 do
-			res[key][i]={}
-			if temp1[i] ~= "" and temp1[i] ~= nil then
+		if temp1[2] ~= nil then
+			res[key][1]=temp1[1]
+			for i=2,60 do
+				res[key][i]={}
 				res[key][i]=(string.gsub(temp1[i], "%[", " "))
-			else
-				res[key][i]="0,0,0,0,0"
 			end
-		end
-		for i=1,60 do
-			res[key][i] = string.split(res[key][i], ",")
-			for j=1,5 do
-				if "string"== type(res[key][i][j]) then
-					res[key][i][j]= tonumber(res[key][i][j])
-				end
-				if "string"==type(res["total"][i][j]) then
-					res["total"][i][j]= tonumber(res["total"][i][j])
-				end
-				if j ==1 then
-					res["total"][i][j] = res[key][i][j]
-				else
-					res["total"][i][j] = res["total"][i][j] + res[key][i][j]
+			for i=1,60 do
+				res[key][i] = string.split(res[key][i], ",")
+				for j=1,5 do
+					if "string"== type(res[key][i][j]) then
+						res[key][i][j]= tonumber(res[key][i][j])
+					end
+					if "string"==type(res["total"][i][j]) then
+						res["total"][i][j]= tonumber(res["total"][i][j])
+					end
+					if j ==1 then
+						res["total"][i][j] = res[key][i][j]
+					else
+						res["total"][i][j] = res["total"][i][j] + res[key][i][j]
+					end
 				end
 			end
 		end

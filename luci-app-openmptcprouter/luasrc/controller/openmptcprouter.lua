@@ -228,8 +228,8 @@ function wizard_add()
 		local auth = luci.http.formvalue("cbid.network.%s.auth" % intf) or ""
 		local mode = luci.http.formvalue("cbid.network.%s.mode" % intf) or ""
 		local sqmenabled = luci.http.formvalue("cbid.sqm.%s.enabled" % intf) or "0"
-		local multipath = luci.http.formvalue("cbid.sqm.%s.multipath" % intf) or "on"
-		local lan = luci.http.formvalue("cbid.sqm.%s.lan" % intf) or "0"
+		local multipath = luci.http.formvalue("cbid.network.%s.multipath" % intf) or "on"
+		local lan = luci.http.formvalue("cbid.network.%s.lan" % intf) or "0"
 		if typeintf ~= "" then
 			if typeintf == "normal" then
 				typeintf = ""
@@ -259,6 +259,7 @@ function wizard_add()
 			ucic:set("network",intf,"multipath","off")
 		else
 			ucic:set("network",intf,"multipath",multipath)
+			ucic:set("openmptcprouter",intf,"multipath",multipath)
 		end
 		ucic:set("network",intf,"defaultroute",0)
 		ucic:set("network",intf,"peerdns",0)
@@ -713,10 +714,10 @@ function wizard_add()
 		luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/omr-tracker stop >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/mptcp restart >/dev/null 2>/dev/null")
-		if openmptcprouter_vps_key ~= "" then
-			luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
-			luci.sys.call("sleep 2")
-		end
+		--if openmptcprouter_vps_key ~= "" then
+		--	luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
+		--	luci.sys.call("sleep 2")
+		--end
 		luci.sys.call("/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")

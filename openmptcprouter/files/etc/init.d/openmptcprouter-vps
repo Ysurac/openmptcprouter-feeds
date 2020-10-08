@@ -714,6 +714,8 @@ _vps_firewall_redirect_port() {
 	config_get family $1 family "ipv4"
 	config_get enabled $1 enabled "1"
 	config_get src_dip $1 src_dip
+	config_get dest_ip $1 dest_ip
+	config_get dest_port $1 dest_port
 	config_get src_ip $1 src_ip
 	if [ "$(echo $src_dport | cut -d'-' -f2)" -ge "65000" ]; then
 		logger -t "OMR-VPS" "You can't redirect ports >= 65000, they are needed by OpenMPTCProuter Server part"
@@ -731,7 +733,10 @@ _vps_firewall_redirect_port() {
 					checkfw=$(echo "$vpsfwlist" | grep "$src_dport	# OMR $username redirect router $src_dport port $protoi")
 				else
 					comment=""
-					[ -n "$src_dip" ] && comment=" to $src_dip"
+					[ -n "$src_dip" ] && {
+						comment=" to $src_dip"
+						iptables-save --counters | sed "s:-d $src_dip/32::g" | iptables-restore -w
+					}
 					[ -n "$src_ip" ] && comment=" from $src_ip"
 					checkfw=$(echo "$vpsfwlist" | grep "# OMR $username redirect router $src_dport port $protoi${comment}")
 				fi
@@ -843,6 +848,7 @@ _set_vps_firewall() {
 	vpsfw6list=$(echo $fw6_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')
 	config_load firewall
 	config_foreach _vps_firewall_redirect_port redirect
+	config_foreach _vps_firewall_redirect_port rule
 	[ -n "$vpsfwlist" ] || [ -n "$vpsfw6list" ] && {
 		logger -t "OMR-VPS" "Remove old firewall rules"
 		_vps_firewall_close_port
@@ -1326,7 +1332,7 @@ _backup_get_and_apply() {
 	backup_sha256sum="$(echo "$vps_backup" | jsonfilter -q -e '@.sha256sum')"
 	[ -n "$backup_data" ] && {
 		echo $backup_data | base64 -d > /tmp/backup.tar.gz
-		sysupgrade -t /tmp/backup.tar.gz
+		sysupgrade -r /tmp/backup.tar.gz
 	}
 }
 
