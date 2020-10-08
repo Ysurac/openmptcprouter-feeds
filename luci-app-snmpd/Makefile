@@ -6,7 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI SNMPD Interface
-LUCI_DEPENDS:=+snmpd
+LUCI_DEPENDS:=+snmpd +snmptrapd +snmp-utils +snmp-mibs
 
 PKG_LICENSE:=GPLv3
 
