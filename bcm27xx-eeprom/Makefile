@@ -21,7 +21,7 @@ TAR_CMD=$(HOST_TAR) -C $(1) $(TAR_OPTIONS)
 define Package/bcm27xx-eeprom
   SECTION:=utils
   CATEGORY:=Utilities
-  DEPENDS:=bcm27xx-userland +blkid +pciutils +python3-light
+  DEPENDS:=bcm27xx-userland +blkid +pciutils +python3-light +coreutils-od
   TITLE:=BCM27xx EEPROM tools
 endef
 
