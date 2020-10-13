@@ -100,7 +100,9 @@ function multipath_bandwidth()
 			res[key][1]=temp1[1]
 			for i=2,60 do
 				res[key][i]={}
-				res[key][i]=(string.gsub(temp1[i], "%[", " "))
+				if temp1[i] ~= nil then
+					res[key][i]=(string.gsub(temp1[i], "%[", " "))
+				end
 			end
 			for i=1,60 do
 				res[key][i] = string.split(res[key][i], ",")

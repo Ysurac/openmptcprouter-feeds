@@ -79,7 +79,7 @@ MY_DEPENDS := \
     kmod-rt2800-usb kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su \
     !TARGET_mvebu:luci-proto-qmi wpad-basic kmod-mt7601u kmod-rtl8187 \
     luci-app-mlvpn mlvpn 464xlat !TARGET_mvebu:kmod-usb-net-smsc75xx kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-https-dns-proxy kmod-tcp-nanqinlang iptables-mod-ipopt igmpproxy ss iptraf-ng \
-    luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre tcptraceroute luci-proto-mbim kmod-rtl8xxxu kmod-ath9k-htc luci-app-ttyd luci-mod-dashboard (TARGET_x86||TARGET_x86_64):rtl8192eu-firmware (TARGET_x86||TARGET_x86_64):r8169-firmware (TARGET_x86||TARGET_x86_64):rtl8188eu-firmware (TARGET_x86||TARGET_x86_64):rtl8192ce-firmware (TARGET_x86||TARGET_x86_64):rtl8192cu-firmware kmod-usb2
+    luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre tcptraceroute luci-proto-mbim kmod-rtl8xxxu kmod-ath9k-htc luci-app-ttyd luci-mod-dashboard (TARGET_x86||TARGET_x86_64):rtl8192eu-firmware kmod-usb2
 #     luci-theme-bootstrap luci-theme-openwrt-2020 luci-theme-openwrt luci-app-status
 #  luci-proto-bonding luci-app-statistics luci-proto-gre
 #    softethervpn5-client softethervpn5-server luci-app-nginx-ha
@@ -94,7 +94,7 @@ MY_DEPENDS := \
 
 #OMR_SUPPORTED_LANGS := ar bg bn_BD ca en fi fr de el he hi hu it ja mr ms nb_NO pl pt_BR pt ro ru es sv uk vi zh_Hans zh_Hant
 #OMR_SUPPORTED_LANGS := ar bg ca cs de en fi fr de el he hi hu it ja ko mr ms no oc pl pt-br pt ro ru es sk sv tr uk vi zh-cn zh-tw
-OMR_SUPPORTED_LANGS := ar bg ca cs de en fi fr de el he hi hu it ja ko mr ms no pl pt-br pt ro ru es sk sv tr uk vi zh-cn zh-tw
+OMR_SUPPORTED_LANGS := ar bg ca cs de en fi fr de el he hi hu it ja ko mr ms no pl pt-br pt ro ru es sk sv tr uk vi zh-cn zh-tw oc
 
 define Package/$(PKG_NAME)
 SECTION:=OMR
