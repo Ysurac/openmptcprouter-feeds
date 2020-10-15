@@ -411,8 +411,12 @@ add_v2ray_redirect_rules() {
 	local ipset_dst_direct="$IPSET_DST_DIRECT_V4"
 
 	test -n "$port" || return
-	#logger -t "v2ray" "v2ray-rules -l ${port} -L ${port} -s $OUTBOUND_SERVERS_V4 --rule-name def --src-default forward --dst-default forward --local-default forward"
+	logger -t "v2ray" "v2ray-rules -l ${port} -L ${port} -s $OUTBOUND_SERVERS_V4 --rule-name def --src-default forward --dst-default forward --local-default forward"
 	v2ray-rules -l ${port} -L ${port} -s $OUTBOUND_SERVERS_V4 --rule-name def --src-default forward --dst-default forward --local-default forward
+	logger -t "v2ray" "v2ray-rules2 -l $((port+1)) -L $((port+1)) -s $OUTBOUND_SERVERS_V6 --rule-name def --src-default forward --dst-default forward --local-default forward"
+	v2ray-rules6 -l $((port+1)) -L $((port+1)) --rule-name def --src-default forward --dst-default forward --local-default forward
+	logger -t "V2Ray" "Reload omr-bypass rules"
+	/etc/init.d/omr-bypass reload_rules
 }
 
 init_rules_for_listfile() {
@@ -1268,18 +1272,18 @@ add_inbound_setting() {
 
 	json_add_object "sockopt"
 
-	if [ -n "$port" ] && [ "x$port" = "x$TRANSPARENT_PROXY_PORT" ] ; then
-		if [ "x$TRANSPARENT_PROXY_USE_TPROXY" = "x1" ] ; then
-			json_add_string "tproxy" "tproxy"
-		else
-			json_add_string "tproxy" "redirect"
-		fi
-	else
+#	if [ -n "$port" ] && [ "x$port" = "x$TRANSPARENT_PROXY_PORT" ] ; then
+#		if [ "x$TRANSPARENT_PROXY_USE_TPROXY" = "x1" ] ; then
+#			json_add_string "tproxy" "tproxy"
+#		else
+#			json_add_string "tproxy" "redirect"
+#		fi
+#	else
 		test -n "$ss_sockopt_tcp_fast_open" && \
 			json_add_boolean "tcpFastOpen" "$ss_sockopt_tcp_fast_open"
 		test -n "$ss_sockopt_tproxy" && \
 			json_add_string "tproxy" "$ss_sockopt_tproxy"
-	fi
+#	fi
 
 	json_close_object # sockopt
 
@@ -2082,10 +2086,11 @@ rules_up() {
 	config_get enabled main enabled "0"
 	[ "$enabled" = "0" ] && return
 	logger -t "V2Ray" "Rules UP"
+	#local bin="/usr/bin/v2ray-rules"
 	[ -x "$bin" ] && {
 		"$bin" >/dev/null 2>&1
 	}
-	local bin6="/usr/bin/v2ray-rules6"
+	#local bin6="/usr/bin/v2ray-rules6"
 	[ -x "$bin6" ] && {
 		"$bin6" >/dev/null 2>&1
 	}
@@ -2122,6 +2127,7 @@ start_service() {
 
 	setup_transparent_proxy
 	gracefully_restart_dnsmasq
+	rules_up
 
 	unset OUTBOUND_SERVERS_V4 \
 		OUTBOUND_SERVERS_V6 \
@@ -2138,8 +2144,8 @@ stop_service() {
 	fi
 
 	clear_transparent_proxy
+	rules_down
 	gracefully_restart_dnsmasq
-
 	test -d "$CONFIG_FOLDER" && rm -rf "$CONFIG_FOLDER"
 }
 
