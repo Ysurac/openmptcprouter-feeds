@@ -40,7 +40,7 @@ if [ -z "$(uci -q get v2ray.main)" ]; then
 		set v2ray.main_transparent_proxy.redirect_udp='1'
 		set v2ray.main_transparent_proxy.redirect_port='1897'
 		set v2ray.omrout=outbound
-		set v2ray.omrout.alias='out'
+		set v2ray.omrout.tag='out'
 		set v2ray.omrout.protocol='vless'
 		set v2ray.omrout.s_vmess_address=''
 		set v2ray.omrout.s_vmess_port='65228'
@@ -62,7 +62,7 @@ if [ -z "$(uci -q get v2ray.main)" ]; then
 		set v2ray.omrout.ss_tls_key_file='/etc/luci-uploads/client.key'
 		set v2ray.omrout.mux_concurrency='8'
 		set v2ray.omr=inbound
-		set v2ray.omr.alias='V2RayServer'
+		set v2ray.omr.tag='omrtunnel'
 		set v2ray.omr.listen='0.0.0.0'
 		set v2ray.omr.port='1897'
 		set v2ray.omr.protocol='dokodemo-door'
@@ -72,7 +72,7 @@ if [ -z "$(uci -q get v2ray.main)" ]; then
 		set v2ray.omr.ss_sockopt_tcp_fast_open='1'
 		set v2ray.omr.s_dokodemo_door_follow_redirect='1'
 		set v2ray.omr6=inbound
-		set v2ray.omr6.alias='V2RayServer'
+		set v2ray.omr6.tag='omrtunnel6'
 		set v2ray.omr6.listen='::'
 		set v2ray.omr6.port='1898'
 		set v2ray.omr6.protocol='dokodemo-door'
@@ -100,6 +100,29 @@ if [ "$(uci -q get firewall.v2ray)" = "" ]; then
 		set firewall.v2ray.path=/etc/firewall.v2ray
 		set firewall.v2ray.reload=1
 		commit firewall
+	EOF
+fi
+
+if [ "$(uci -q get v2ray.omrreverse)" = "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		set v2ray.omrbridge=reverse
+		set v2ray.omrbridge.enabled=1
+		set v2ray.omrbridge.bridges='omrbridge|omr.lan'
+		commit v2ray
+	EOF
+fi
+if [ "$(uci -q get v2ray.omrrouting)" = "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		set v2ray.omrrouting=routing_rule
+		set v2ray.omrrouting.type='field'
+		set v2ray.omrrouting.inbound_tag='omrbridge'
+		set v2ray.omrrouting.outbound_tag='omrtunnel'
+		set v2ray.omrrouting.domain='full:omr.lan'
+		set v2ray.omrroutingo=routing_rule
+		set v2ray.omrroutingo.type='field'
+		set v2ray.omrroutingo.inbound_tag='omrbridge'
+		set v2ray.omrroutingo.outbound_tag='out'
+		commit v2ray
 	EOF
 fi
 
