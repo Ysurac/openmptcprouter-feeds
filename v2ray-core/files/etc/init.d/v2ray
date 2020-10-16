@@ -411,12 +411,14 @@ add_v2ray_redirect_rules() {
 	local ipset_dst_direct="$IPSET_DST_DIRECT_V4"
 
 	test -n "$port" || return
-	logger -t "v2ray" "v2ray-rules -l ${port} -L ${port} -s $OUTBOUND_SERVERS_V4 --rule-name def --src-default forward --dst-default forward --local-default forward"
+
+	# This part need a rewrite
 	v2ray-rules -l ${port} -L ${port} -s $OUTBOUND_SERVERS_V4 --rule-name def --src-default forward --dst-default forward --local-default forward
-	logger -t "v2ray" "v2ray-rules2 -l $((port+1)) -L $((port+1)) -s $OUTBOUND_SERVERS_V6 --rule-name def --src-default forward --dst-default forward --local-default forward"
 	v2ray-rules6 -l $((port+1)) -L $((port+1)) --rule-name def --src-default forward --dst-default forward --local-default forward
-	logger -t "V2Ray" "Reload omr-bypass rules"
-	/etc/init.d/omr-bypass reload_rules
+	[ -f /etc/init.d/omr-bypass ] && {
+		logger -t "V2Ray" "Reload omr-bypass rules"
+		/etc/init.d/omr-bypass reload_rules
+	}
 }
 
 init_rules_for_listfile() {
@@ -2075,7 +2077,7 @@ start_instance() {
 }
 
 rules_exist() {
-	[ -n "$(iptables -t nat -L -n | grep v2r)" ] && return 0
+	[ -n "$(iptables -t nat -L -n | grep v2r_)" ] && return 0
 	return 1
 }
 
@@ -2085,19 +2087,9 @@ rules_up() {
 	config_load v2ray
 	config_get enabled main enabled "0"
 	[ "$enabled" = "0" ] && return
+	OUTBOUND_SERVERS_V4="$(uci -q get v2ray.omrout.s_vless_address)"
 	logger -t "V2Ray" "Rules UP"
-	#local bin="/usr/bin/v2ray-rules"
-	[ -x "$bin" ] && {
-		"$bin" >/dev/null 2>&1
-	}
-	#local bin6="/usr/bin/v2ray-rules6"
-	[ -x "$bin6" ] && {
-		"$bin6" >/dev/null 2>&1
-	}
-	[ -f /etc/init.d/omr-bypass ] && {
-		logger -t "V2Ray" "Reload omr-bypass rules"
-		/etc/init.d/omr-bypass reload_rules
-	}
+	add_v2ray_redirect_rules
 }
 
 rules_down() {
