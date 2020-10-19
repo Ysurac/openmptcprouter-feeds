@@ -114,9 +114,15 @@ function multipath_bandwidth()
 						res["total"][i][j]= tonumber(res["total"][i][j])
 					end
 					if j ==1 then
-						res["total"][i][j] = res[key][i][j]
+						if res[key][i][j] ~= nil then
+							res["total"][i][j] = res[key][i][j]
+						else
+							res["total"][i][j] = 0
+						end
 					else
-						res["total"][i][j] = res["total"][i][j] + res[key][i][j]
+						if res[key][i][j] ~= nil then
+							res["total"][i][j] = res["total"][i][j] + res[key][i][j]
+						end
 					end
 				end
 			end
