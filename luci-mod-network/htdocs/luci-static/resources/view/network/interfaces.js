@@ -575,6 +575,10 @@ return view.extend({
 				o.value('backup',_('Backup'));
 				o.default = 'off';
 
+				o = s.taboption('advanced', form.Value, 'addlatency', _('Additional latency'));
+				o.datatype = 'uinteger';
+				o.default = '0';
+
 				if (L.hasSystemFeature('dnsmasq') || L.hasSystemFeature('odhcpd')) {
 					o = s.taboption('dhcp', form.SectionValue, '_dhcp', form.TypedSection, 'dhcp');
 					o.depends('proto', 'static');
