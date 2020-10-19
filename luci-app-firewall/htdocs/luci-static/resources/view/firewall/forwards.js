@@ -281,6 +281,12 @@ return view.extend({
 		fwtool.addLimitOption(s);
 		fwtool.addLimitBurstOption(s);
 
+		o = s.taboption('advanced', form.Flag, 'v2ray', _('Use V2Ray'),
+			_('Forwards ports from server using V2Ray proxy (if enabled) instead of VPN'));
+		o.modalonly = true;
+		o.editable = true;
+		o.depends({ src: 'vpn', '!contains': true });
+
 		o = s.taboption('advanced', form.Value, 'extra', _('Extra arguments'),
 			_('Passes additional arguments to iptables. Use with care!'));
 		o.modalonly = true;
