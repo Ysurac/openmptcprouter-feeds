@@ -17,8 +17,6 @@ if [ -z "$(uci -q get v2ray.main)" ]; then
 		set v2ray.main_dns=dns
 		set v2ray.main_dns.hosts='example.com|127.0.0.1'
 		set v2ray.main_dns.enabled='0'
-		set v2ray.main_routing=routing
-		set v2ray.main_routing.domain_strategy='IPOnDemand'
 		set v2ray.main_policy=policy
 		set v2ray.main_policy.enabled='1'
 		set v2ray.main_policy.levels='policy_level_0'
@@ -29,10 +27,6 @@ if [ -z "$(uci -q get v2ray.main)" ]; then
 		set v2ray.policy_level_0.uplink_only='0'
 		set v2ray.policy_level_0.downlink_only='0'
 		set v2ray.policy_level_0.buffer_size='512'
-		set v2ray.main_reverse=reverse
-		set v2ray.main_reverse.enabled='0'
-		set v2ray.main_reverse.bridges='bridge|test.v2ray.com'
-		set v2ray.main_reverse.portals='portal|test.v2ray.com'
 		set v2ray.main_transparent_proxy=transparent_proxy
 		set v2ray.main_transparent_proxy.proxy_mode='default'
 		set v2ray.main_transparent_proxy.apnic_delegated_mirror='apnic'
@@ -40,7 +34,7 @@ if [ -z "$(uci -q get v2ray.main)" ]; then
 		set v2ray.main_transparent_proxy.redirect_udp='1'
 		set v2ray.main_transparent_proxy.redirect_port='1897'
 		set v2ray.omrout=outbound
-		set v2ray.omrout.tag='out'
+		set v2ray.omrout.tag='omrout_tunnel'
 		set v2ray.omrout.protocol='vless'
 		set v2ray.omrout.s_vmess_address=''
 		set v2ray.omrout.s_vmess_port='65228'
@@ -88,11 +82,14 @@ if [ -z "$(uci -q get v2ray.main)" ]; then
 		set v2ray.omrtest.s_socks_auth='noauth'
 		set v2ray.omrtest.s_socks_udp='1'
 		set v2ray.omrtest.s_socks_ip='127.0.0.1'
-		set v2ray.omrtest.s_socks_userlevel='0
+		set v2ray.omrtest.s_socks_userlevel='0'
 		commit v2ray
 	EOF
 fi
-uci -q set v2ray.omr.listen='::'
+uci -q batch <<-EOF >/dev/null
+	set v2ray.omr.listen='::'
+	commit v2ray
+EOF
 
 if [ "$(uci -q get firewall.v2ray)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
@@ -103,25 +100,33 @@ if [ "$(uci -q get firewall.v2ray)" = "" ]; then
 	EOF
 fi
 
-if [ "$(uci -q get v2ray.omrreverse)" = "" ]; then
+if [ "$(uci -q get v2ray.main_reverse.bridges | grep omrbridge)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
-		set v2ray.omrbridge=reverse
-		set v2ray.omrbridge.enabled=1
-		set v2ray.omrbridge.bridges='omrbridge|omr.lan'
+		set v2ray.main_reverse=reverse
+		set v2ray.main_reverse.enabled=1
+		set v2ray.main_reverse.bridges='omrbridge|omr.lan'
 		commit v2ray
 	EOF
 fi
 if [ "$(uci -q get v2ray.omrrouting)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
+		set v2ray.omrexit=outbound
+		set v2ray.omrexit.protocol='freedom'
+		set v2ray.omrexit.tag='out'
+		add_list v2ray.main.outbounds=omrexit
 		set v2ray.omrrouting=routing_rule
 		set v2ray.omrrouting.type='field'
 		set v2ray.omrrouting.inbound_tag='omrbridge'
-		set v2ray.omrrouting.outbound_tag='omrtunnel'
+		set v2ray.omrrouting.outbound_tag='omrout_tunnel'
 		set v2ray.omrrouting.domain='full:omr.lan'
 		set v2ray.omrroutingo=routing_rule
 		set v2ray.omrroutingo.type='field'
 		set v2ray.omrroutingo.inbound_tag='omrbridge'
 		set v2ray.omrroutingo.outbound_tag='out'
+		set v2ray.main_routing=routing
+		set v2ray.main_routing.enabled=1
+		set v2ray.main_routing.rules='omrrouting'
+		add_list v2ray.main_routing.rules='omrroutingo'
 		commit v2ray
 	EOF
 fi
