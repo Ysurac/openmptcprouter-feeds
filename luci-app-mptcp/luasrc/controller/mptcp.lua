@@ -58,6 +58,7 @@ function multipath_bandwidth()
 
 	uci:foreach("network", "interface", function(s)
 		local intname = s[".name"]
+		local label = s["label"]
 		local dev = get_device(intname)
 		if dev == "" then
 			dev = get_device(s["ifname"])
@@ -75,9 +76,17 @@ function multipath_bandwidth()
 				local bwc = luci.sys.exec("luci-bwc -i %q 2>/dev/null" % dev) or ""
 				if bwc ~= nil then
 					--result[dev] = "[" .. string.gsub(bwc, '[\r\n]', '') .. "]"
-					result[intname] = "[" .. string.gsub(bwc, '[\r\n]', '') .. "]"
+					if label ~= nil then
+						result[intname .. " (" .. label .. ")" ] = "[" .. string.gsub(bwc, '[\r\n]', '') .. "]"
+					else
+						result[intname] = "[" .. string.gsub(bwc, '[\r\n]', '') .. "]"
+					end
 				else
-					result[intname] = "[]"
+					if label ~= nil then
+						result[intname .. " (" .. label .. ")" ] = "[]"
+					else
+						result[intname] = "[]"
+					end
 				end
 			end
 		end
