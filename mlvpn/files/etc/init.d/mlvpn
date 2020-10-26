@@ -1,20 +1,9 @@
 #!/bin/sh /etc/rc.common
 
 START=88
-USE_PROCD=1
+SERVICE_DAEMONIZE=1
+#SERVICE_SIG="KILL"
 
-validate_section() {
-	uci_validate_section mlvpn mlvpn ${1} \
-		'enable:bool:0'                   \
-		'timeout:uinteger:30'             \
-		'mode:string:client'              \
-		'password:string'                 \
-		'reorder_buffer_size:uinteger:64' \
-		'loss_tolerence:uinteger:30'      \
-		'interface_name:string:mlvpn0'    \
-		'host:host'                       \
-		'firstport:port'
-}
 
 interface_multipath_settings() {
 	local mode port
@@ -28,26 +17,30 @@ interface_multipath_settings() {
 	config_get ifname "$config" ifname
 	[ -z "$ifname" ] && ifname=$(ifstatus "$config" | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$ifname" ] && return 1
+	addr=$(ifstatus ${config} | jsonfilter -q -e '@["ipv4-address"][0].address')
 	count=$(($count+1))
 	port=$((firstport+count))
 	cat >> /tmp/etc/${interface_name}.conf <<-EOF
 
-	[${id}]
-	bindhost = "${ifname}"
+	[${config}]
+	bindhost = "${addr}"
 	bindport = "${port}"
 	remotehost = "${host}"
 	remoteport = "${port}"
 	EOF
 }
 
-start_service() {
+start() {
 	local enable timeout mode password reorder_buffer_size interface_name host firstport loss_tolerence
-	validate_section "general" || {
-		_err "validation failed"
-		return 1
-	}
-	
-	[ "${enable}" = "1" ] || return 1
+	[ "$(uci -q get mlvpn.general.enable)" = "1" ] || return 1
+	interface_name="$(uci -q get mlvpn.general.interface_name)"
+	timeout="$(uci -q get mlvpn.general.timeout)"
+	mode="$(uci -q get mlvpn.general.mode)"
+	password="$(uci -q get mlvpn.general.password)"
+	reorder_buffer_size="$(uci -q get mlvpn.general.reorder_buffer_size)"
+	loss_tolerence="$(uci -q get mlvpn.general.loss_tolerence)"
+	host="$(uci -q get mlvpn.general.host)"
+	firstport="$(uci -q get mlvpn.general.firstport)"
 	
 	if [ "$(uci -q get network.omrvpn)" != "${interface_name}" ]; then
 		uci -q set network.omrvpn.ifname=${interface_name}
@@ -60,9 +53,9 @@ start_service() {
 	mode = "${mode}"
 	interface_name = "${interface_name}"
 	timeout = ${timeout}
-	reorder_buffer = yes
+	#reorder_buffer = yes
 	reorder_buffer_size = ${reorder_buffer_size}
-	loss_tolerence = ${loss_tolerence}
+	#loss_tolerence = ${loss_tolerence}
 	password = "${password}"
 	mtu = 1452
 	EOF
@@ -72,14 +65,9 @@ start_service() {
 	config_foreach interface_multipath_settings interface
 
 	chmod 0600 "/tmp/etc/${interface_name}.conf"
-	procd_open_instance
-	procd_set_param command /usr/sbin/mlvpn --config "/tmp/etc/${interface_name}.conf" --user nobody
-	procd_set_param file "/tmp/etc/${interface_name}.conf"
-	#procd_set_param reload_signal SIGHUP
-	procd_set_param respawn 0 30 5
-	procd_close_instance
+	service_start /usr/sbin/mlvpn -c /tmp/etc/${interface_name}.conf --user nobody
 }
 
-service_triggers() {
-	procd_add_reload_trigger mlvpn network
+stop() {
+	service_stop /usr/sbin/mlvpn
 }

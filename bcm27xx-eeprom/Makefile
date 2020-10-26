@@ -1,12 +1,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=bcm27xx-eeprom
-PKG_VERSION:=1a44b1330805663c292de8ce818065bbe9f2e130
+PKG_VERSION:=1a099a5a9de4cbd71a68afaa6421fd3b9cf3ef2e
 PKG_RELEASE:=2
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/raspberrypi/rpi-eeprom/tar.gz/$(PKG_VERSION)?
-PKG_HASH:=d18573a4026578ed20cd7e3ac7df029dbef7fd271729a60cd80abae2235eca25
+PKG_HASH:=c991a69fb92f60fb03cb0d0d482dafd162ae1ad0fb279509d9e2489055891ac3
 
 PKG_LICENSE:=BSD-3-Clause Custom
 PKG_LICENSE_FILES:=LICENSE
@@ -21,7 +21,7 @@ TAR_CMD=$(HOST_TAR) -C $(1) $(TAR_OPTIONS)
 define Package/bcm27xx-eeprom
   SECTION:=utils
   CATEGORY:=Utilities
-  DEPENDS:=bcm27xx-userland +blkid +pciutils +python3-light
+  DEPENDS:=bcm27xx-userland +blkid +pciutils +python3-light +coreutils-od
   TITLE:=BCM27xx EEPROM tools
 endef
 

@@ -1,6 +1,6 @@
 #
 # Based on package from https://github.com/openwrt-develop/ndpi-netfilter/
-# Copyright (C) 2018-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018-2020 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -11,7 +11,7 @@ include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=ndpi-netfilter2
 PKG_RELEASE:=2
-PKG_REV:=77d882638232fb9236123b50b9aac8bccc409ed9
+PKG_REV:=86eaa857129cdd63152ebcd483366706e28089cc
 PKG_VERSION:=3.2-$(PKG_REV)
 
 PKG_SOURCE_PROTO:=git

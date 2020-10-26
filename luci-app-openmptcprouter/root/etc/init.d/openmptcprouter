@@ -21,12 +21,39 @@ omr_intf_set() {
 	local multipath
 	config_get multipath "$1" multipath
 	config_get ifname "$1" ifname
+	config_get device "$1" device
 	config_get proto "$1" proto
+	config_get addlatency "$1" addlatency "0"
+	devicename=$(echo "$device" | cut -d'/' -f3)
 
-	[ -n "$ifname" ] && [ -L /sys/class/net/${ifname} ] && ([ "$proto" = "static" ] || [ "$proto" = "dhcp" ]) && {
-		device=$(readlink -f /sys/class/net/${ifname})
-		[ "$(echo ${device} | grep virtual)" = "" ] && uci -q set network.$1.device="$device"
-	}
+	[ -z "$ifname" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
+
+	if [ -n "$ifname" ]; then
+		if [ "$addlatency" = "0" ] && [ "$(tc qdisc show $ifname | grep delay)" != "" ]; then
+			tc qdisc del dev ${ifname} root netem
+		fi
+		if [ "$addlatency" != "0" ]; then
+			if [ "$(tc qdisc show $ifname | grep delay)" != "" ]; then
+				tc qdisc add dev ${ifname} root netem delay ${addlatency}ms
+			elif [ "$(tc qdisc show $ifname | awk '/delay/ { print $10 }' | sed 's/ms//')" != "$addlatency" ]; then
+				tc qdisc replace dev ${ifname} root netem delay ${addlatency}ms
+			fi
+		fi
+	fi
+
+	if [ -n "$ifname" ] && [ -f /sys/class/net/${ifname}/device/uevent ]; then
+		devicepath=$(readlink -f /sys/class/net/${ifname})
+		if [ -n "$devicepath" ] && [ "$(echo ${devicepath} | grep virtual)" = "" ]; then
+			uci -q set network.$1.modalias="$(cat /sys/class/net/${ifname}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')"
+			uci -q set network.$1.product="$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT | cut -d '=' -f2 | tr -d '\n')"
+		elif [ -n "$devicepath" ] && [ "$(echo ${devicepath} | grep virtual)" != "" ]; then
+			uci -q delete network.$1.device
+			uci -q delete network.$1.modalias
+		fi
+	elif [ -n "$device" ] && [ -f /sys/bus/usb-serial/devices/${devicename}/device/uevent ]; then
+		uci -q set network.$1.modalias="$(cat /sys/bus/usb-serial/devices/${devicename}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')"
+		uci -q set network.$1.product="$(cat /sys/bus/usb-serial/devices/${devicename}/device/uevent | grep PRODUCT | cut -d '=' -f2 | tr -d '\n')"
+	fi
 
 	[ -z "$multipath" ] || [ "$multipath" = "off" ] && [ "$1" != "omrvpn" ] && [ "$1" != "glorytun" ] && return
 
@@ -41,7 +68,7 @@ omr_intf_set() {
 }
 
 start_service() {
-	local scaling_min_freq scaling_max_freq
+	local scaling_min_freq scaling_max_freq scaling_governor
 
 	config_load openmptcprouter
 	config_foreach omr_intf_check interface
@@ -72,8 +99,8 @@ start_service() {
 		}
 	}
 	# remove sysctl already defined in /etc/sysctl.d/
-	sed -i -e '/tcp_fin_timeout/d' -e '/tcp_keepalive_time/d' -e '/nf_conntrack_max/d' -e '/tcp_syn_retries/d' -e '/tcp_fastopen/d' -e '/tcp_retries2/d' /etc/sysctl.conf
-	sed -i -e '/tcp_fin_timeout/d' -e '/tcp_keepalive_time/d' -e '/nf_conntrack_max/d' -e '/tcp_syn_retries/d' -e '/tcp_fastopen/d' -e '/tcp_retries2/d' /etc/sysctl.d/10-default.conf
+	sed -i -e '/tcp_fin_timeout/d' -e '/tcp_keepalive_time/d' -e '/nf_conntrack_max/d' -e '/tcp_syn_retries/d' -e '/tcp_fastopen/d' -e '/tcp_retries2/d' -e '/tcp_retries1/d' -e '/ip_default_ttl/d' /etc/sysctl.conf
+	sed -i -e '/tcp_fin_timeout/d' -e '/tcp_keepalive_time/d' -e '/nf_conntrack_max/d' -e '/tcp_syn_retries/d' -e '/tcp_fastopen/d' -e '/tcp_retries2/d' -e '/tcp_retries1/d' -e '/ip_default_ttl/d' /etc/sysctl.d/10-default.conf
 }
 
 reload_service() {

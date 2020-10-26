@@ -241,38 +241,44 @@ while true; do
 							config_foreach _ping_server server $OMR_TRACKER_DEVICE
 						fi
 						if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST" ]; then
-							OMR_TRACKER_HOST=$(resolveip -4 $OMR_TRACKER_HOST | tr -d "\n")
-							if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]; then
-								# Check if route is not used
-								while ! ip route add $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP > /dev/null 2>&1
-								do
-									logger -t "omr-tracker" "Can't create route to $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP. waiting..."
-									sleep 2
-									ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2>&1
-									_restart
-								done
-							fi
-							if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
-								_ping "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE" "yes"
-								statusb=$?
-							elif [ "$OMR_TRACKER_TYPE" = "httping" ]; then
-								_httping "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE_IP" "yes"
-								statusb=$?
-							elif [ "$OMR_TRACKER_TYPE" = "dns" ]; then
-								_dns "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE_IP" "yes"
-								statusb=$?
-							fi
-							ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2>&1
-							if $(exit $statusb); then
+							OMR_TRACKER_HOST=$(resolveip -4 -t 5 $OMR_TRACKER_HOST | head -n 1 | tr -d "\n")
+							if [ -n "$OMR_TRACKER_HOST" ]; then
+								if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]; then
+									# Check if route is not used
+									while ! ip route add $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP > /dev/null 2>&1
+									do
+										logger -t "omr-tracker" "Can't create route to $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP. waiting..."
+										sleep 2
+										ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2>&1
+										_restart
+									done
+								fi
+								if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
+									_ping "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE" "yes"
+									statusb=$?
+								elif [ "$OMR_TRACKER_TYPE" = "httping" ]; then
+									_httping "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE_IP" "yes"
+									statusb=$?
+								elif [ "$OMR_TRACKER_TYPE" = "dns" ]; then
+									_dns "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE_IP" "yes"
+									statusb=$?
+								fi
+								ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2>&1
+								if $(exit $statusb); then
+									OMR_TRACKER_STATUS_MSG=""
+									OMR_TRACKER_STATUS="OK"
+									break
+								else
+									if [ "$OMR_TRACKER_LIST_HOSTS" = "" ]; then
+										OMR_TRACKER_LIST_HOSTS="$OMR_TRACKER_HOST"
+									else
+										OMR_TRACKER_LIST_HOSTS="$OMR_TRACKER_LIST_HOSTS,$OMR_TRACKER_HOST"
+									fi
+								fi
+							else
 								OMR_TRACKER_STATUS_MSG=""
 								OMR_TRACKER_STATUS="OK"
 								break
-							else
-								if [ "$OMR_TRACKER_LIST_HOSTS" = "" ]; then
-									OMR_TRACKER_LIST_HOSTS="$OMR_TRACKER_HOST"
-								else
-									OMR_TRACKER_LIST_HOSTS="$OMR_TRACKER_LIST_HOSTS,$OMR_TRACKER_HOST"
-								fi
 							fi
 						else
 							OMR_TRACKER_STATUS_MSG=""

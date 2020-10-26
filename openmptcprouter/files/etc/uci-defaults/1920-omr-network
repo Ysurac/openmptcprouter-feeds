@@ -80,14 +80,15 @@ if [ "$(uci -q show network.lan | grep multipath)" != "" ]; then
 fi
 
 lanif="eth0"
-if [ -d /sys/class/net/lan0 -o -n "$(ip link | grep ' lan0')" ] && [ -d /sys/class/net/wan -o -n "$(ip link | grep ' wan@')" -o -n "$(ip link | grep ' wan:')" ]; then
+if [ "$(grep rockchip /etc/os-release)" != "" ]; then
+	lanif="eth1"
+elif [ -d /sys/class/net/lan0 -o -n "$(ip link | grep ' lan0')" ] && [ -d /sys/class/net/wan -o -n "$(ip link | grep ' wan@')" -o -n "$(ip link | grep ' wan:')" ]; then
 	lanif="wan"
 elif [ -d /sys/class/net/lan1 -o -n "$(ip link | grep ' lan1')" ] && [ -d /sys/class/net/wan -o -n "$(ip link | grep ' wan@')" -o -n "$(ip link | grep ' wan:')" ]; then
 	lanif="wan"
 elif [ -d /sys/class/net/lan ] || [ -n "$(ip link | grep ' lan')" ]; then
 	lanif="lan"
-elif [ "$(swconfig list 2>&1 | grep switch0)" != "" ]; then
-#	lanif="eth1.2"
+elif [ "$(swconfig list 2>&1 | grep switch0)" != "" ] && [ -d '/sys/class/net/eth1.5' ]; then
 	lanif="eth1.5"
 	uci -q batch <<-EOF
 	set network.@switch_vlan[0]=switch_vlan
@@ -95,7 +96,7 @@ elif [ "$(swconfig list 2>&1 | grep switch0)" != "" ]; then
 	set network.@switch_vlan[0].vlan=1
 	set network.@switch_vlan[0].vid=1
 	set network.@switch_vlan[0].ports='3 5t'
-	set network.@switch_vlan[1]=switch_vlan
+	add network switch_vlan
 	set network.@switch_vlan[1].device='switch0'
 	set network.@switch_vlan[1].vlan=2
 	set network.@switch_vlan[1].vid=2
@@ -116,8 +117,13 @@ elif [ "$(swconfig list 2>&1 | grep switch0)" != "" ]; then
 	set network.@switch_vlan[4].vid=5
 	set network.@switch_vlan[4].ports='4 6t'
 	EOF
+elif [ "$(swconfig list 2>&1 | grep switch0)" != "" ] && [ -d /sys/class/net/eth1 ]; then
+	lanif="eth1"
+elif [ ! -d /sys/class/net/eth1 ] && [ -d /sys/class/net/eth0 ]; then
+	lanif="eth0"
 fi
 uci -q batch <<-EOF
+delete network.lan.type
 set network.lan=interface
 set network.lan.proto=static
 set network.lan.ipaddr=192.168.100.1
@@ -159,12 +165,16 @@ if ! grep -s -q "lan" /etc/iproute2/rt_tables; then
 fi
 uci -q set network.lan.ip4table='lan'
 
-
 #uci -q set "network.lan.ip6assign=64"
 
 # Create WAN interfaces
 if [ "$(uci -q show network.wan1 | grep multipath)" = "" ] && [ -z "$(uci -q get network.wan1.multipath)" ]; then
-	if [ "$(swconfig list 2>&1 | grep switch0)" != "" ]; then
+	if [ "$(grep rockchip /etc/os-release)" != "" ]; then
+		_setup_wan_interface wan1 eth0 master macvlan
+		_setup_wan_interface wan2 eth0 on macvlan
+		_setup_macvlan wan1
+		_setup_macvlan wan2
+	elif [ "$(swconfig list 2>&1 | grep switch0)" != "" ]; then
 		_setup_wan_interface wan1 eth0.1 master
 		_setup_wan_interface wan2 eth0.2 on
 		_setup_wan_interface wan3 eth0.3 on
@@ -244,9 +254,21 @@ if [ "$(uci -q show network.wan1 | grep multipath)" = "" ] && [ -z "$(uci -q get
 			_setup_wan_interface wan2 eth2 on
 			if [ -d /sys/class/net/eth3 ] || [ -n "$(ip link | grep ' eth3:')" ]; then
 				_setup_wan_interface wan3 eth3 on
-				if [ -d /sys/class/net/eth4 ] || [ -n "$(ip link | grep ' eth4:')" ]; then
+			fi
+			if [ -d /sys/class/net/eth4 ] || [ -n "$(ip link | grep ' eth4:')" ]; then
 				_setup_wan_interface wan4 eth4 on
-				fi
+			fi
+			if [ -d /sys/class/net/eth5 ] || [ -n "$(ip link | grep ' eth5:')" ]; then
+				_setup_wan_interface wan5 eth5 on
+			fi
+			if [ -d /sys/class/net/eth6 ] || [ -n "$(ip link | grep ' eth6:')" ]; then
+				_setup_wan_interface wan6 eth6 on
+			fi
+			if [ -d /sys/class/net/eth7 ] || [ -n "$(ip link | grep ' eth7:')" ]; then
+				_setup_wan_interface wan7 eth7 on
+			fi
+			if [ -d /sys/class/net/eth8 ] || [ -n "$(ip link | grep ' eth8:')" ]; then
+				_setup_wan_interface wan8 eth8 on
 			fi
 		else
 			_setup_wan_interface wan1 eth1 master macvlan
@@ -254,6 +276,9 @@ if [ "$(uci -q show network.wan1 | grep multipath)" = "" ] && [ -z "$(uci -q get
 			_setup_macvlan wan1
 			_setup_macvlan wan2
 		fi
+	elif [ -d /sys/class/net/eth0.1 ] && [ -d /sys/class/net/eth0.2 ]; then
+		_setup_wan_interface wan1 eth0.1 master
+		_setup_wan_interface wan2 eth0.2 on
 	else
 		_setup_wan_interface wan1 eth0 master macvlan
 		_setup_wan_interface wan2 eth0 on macvlan

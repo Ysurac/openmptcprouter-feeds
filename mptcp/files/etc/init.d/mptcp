@@ -39,6 +39,13 @@ global_multipath_settings() {
 	[ -z "$mptcp_ndiffports_num_subflows" ] || sysctl -qw /sys/module/mptcp_ndiffports/parameters/num_subflows="$mptcp_ndiffports_num_subflows"
 }
 
+interface_macaddr_count() {
+	local intf="$1"
+	local dmacaddr="$2"
+	config_get macaddr "$intf" macaddr
+	[ "$macaddr" = "$dmacaddr" ] && nbmac=$((nbmac+1))
+}
+
 interface_multipath_settings() {
 	local mode iface proto
 	local config="$1"
@@ -48,12 +55,16 @@ interface_multipath_settings() {
 	config_get enabled "$config" auto "1"
 	config_get iface "$config" ifname
 	[ -z "$iface" ] && iface=$(ifstatus "$config" | jsonfilter -q -e '@["l3_device"]')
-	count=$(($count+1))
-	id=$count
+	if [ "$(uci -q get openmptcprouter.${config}.metric)" = "" ]; then
+		count=$(($count+1))
+	else
+		count="$(uci -q get openmptcprouter.${config}.metric)"
+	fi
 	config_set "$config" metric $count
 	uci -q set network.${config}.metric=$count
 	uci -q set openmptcprouter.${config}.metric=$count
 	config_get mode "$config" multipath
+	id=$count
 	[ "$mode" = "" ] && {
 		mode="$(uci -q get openmptcprouter.${config}.multipath)"
 		[ -n "$mode" ] && uci -q set network.${config}.multipath="$mode"
@@ -88,10 +99,21 @@ interface_multipath_settings() {
 	uci -q set openmptcprouter.${config}="interface"
 	uci -q set openmptcprouter.${config}.multipath="$mode"
 
+	config_get macaddr "$config" macaddr ""
+	[ -n "$maccaddr" ] && {
+		nbmac=0
+		config_foreach interface_macaddr_count interface $macaddr
+		[ "$nbmac" != "1" ] && {
+			logger -t "MPTCP" "Duplicate MAC saved, removing"
+			uci -q delete network.${config}.macaddr
+		}
+	}
+
 	[ "$enabled" = "0" ] && return 0
 	[ -n "$intf" ] && [ "$iface" != "$intf" ] && return 0
 	[ -z "$iface" ] && return 0
-	[ "$config" = "omrvpn" ] && return 0
+	#[ "$config" = "omrvpn" ] && return 0
+	[ "$config" = "omrvpn" ] && mode="off"
 	[ -n "$(ifconfig | grep $iface)" ] || return 0
 	[ "$(echo $iface | grep _dev)" != "" ] && return 0
 	
@@ -119,7 +141,7 @@ interface_multipath_settings() {
 		config_get netmask $config netmask
 		[ -n "$ipaddr" ] && [ -n "$netmask" ] && netmask=`ipcalc.sh $ipaddr $netmask | sed -n '/PREFIX=/{;s/.*=//;s/ .*//;p;}'`
 		[ -n "$îpaddr" ] && [ -n "$netmask" ] && network=`ipcalc.sh $ipaddr $netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
-	else
+	elif [ "$proto" != "gre" ]; then
 		network_get_ipaddr ipaddr $config
 		[ -z "$ipaddr" ] && ipaddr=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
 		network_get_gateway gateway $config true

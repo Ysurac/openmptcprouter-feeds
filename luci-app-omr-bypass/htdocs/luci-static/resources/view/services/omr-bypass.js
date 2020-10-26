@@ -28,6 +28,9 @@ return L.view.extend({
 		s.anonymous = true;
 		s.nodescriptions = true;
 
+		o = s.option(form.Flag, 'enabled', _('Enabled'));
+		o.default = o.enabled;
+
 		o = s.option(form.Value, 'name', _('Domain'));
 		o.rmempty = false;
 
@@ -44,6 +47,9 @@ return L.view.extend({
 		s.anonymous = true;
 		s.nodescriptions = true;
 
+		o = s.option(form.Flag, 'enabled', _('Enabled'));
+		o.default = o.enabled;
+
 		o = s.option(form.Value, 'ip', _('IP'));
 		o.rmempty = false;
 
@@ -59,6 +65,9 @@ return L.view.extend({
 		s.addremove = true;
 		s.anonymous = true;
 		s.nodescriptions = true;
+
+		o = s.option(form.Flag, 'enabled', _('Enabled'));
+		o.default = o.enabled;
 
 		o = s.option(form.Value, 'dport', _('port'));
 		o.rmempty = false;
@@ -83,6 +92,9 @@ return L.view.extend({
 		s.anonymous = true;
 		s.nodescriptions = true;
 
+		o = s.option(form.Flag, 'enabled', _('Enabled'));
+		o.default = o.enabled;
+
 		o = s.option(form.Value, 'sport', _('port'));
 		o.rmempty = false;
 
@@ -106,6 +118,9 @@ return L.view.extend({
 		s.anonymous = true;
 		s.nodescriptions = true;
 
+		o = s.option(form.Flag, 'enabled', _('Enabled'));
+		o.default = o.enabled;
+
 		o = s.option(form.Value, 'mac', _('source MAC-Address'));
 		o.datatype = 'list(unique(macaddr))';
 		o.rmempty = false;
@@ -126,6 +141,9 @@ return L.view.extend({
 		s.addremove = true;
 		s.anonymous = true;
 		s.nodescriptions = true;
+
+		o = s.option(form.Flag, 'enabled', _('Enabled'));
+		o.default = o.enabled;
 
 		o = s.option(form.Value, 'ip', _('IP Address'));
 		o.datatype = 'or(ip4addr,ip6addr)';
@@ -150,6 +168,9 @@ return L.view.extend({
 		s.anonymous = true;
 		s.nodescriptions = true;
 
+		o = s.option(form.Flag, 'enabled', _('Enabled'));
+		o.default = o.enabled;
+
 		o = s.option(form.Value, 'asn', _('ASN'));
 		o.rmempty = false;
 
@@ -166,6 +187,9 @@ return L.view.extend({
 		s.anonymous = true;
 		s.nodescriptions = true;
 
+		o = s.option(form.Flag, 'enabled', _('Enabled'));
+		o.default = o.enabled;
+
 		o = s.option(form.Value, 'proto', _('Protocol/Service'));
 		o.rmempty = false;
 		o.load = function(section_id) {
@@ -178,7 +202,7 @@ return L.view.extend({
 				    name = [];
 				for (var i = 0; i < proto.length; i++) {
 					var m = proto[i].split(/\s+/);
-					if (m && m[0] != "#id")
+					if (m && m[0] != "#id" && m[1] != "disabled")
 					    name.push(m[2]);
 				}
 				for (var i = 0; i < host.length; i++) {
@@ -194,7 +218,7 @@ return L.view.extend({
 			},this));
 		};
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
+		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used (or an other interface if master is down).'));
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
