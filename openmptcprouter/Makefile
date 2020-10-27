@@ -14,7 +14,8 @@ PKG_RELEASE:=1
 include $(INCLUDE_DIR)/package.mk
 
 MY_DEPENDS := \
-    omr-tracker
+    omr-tracker \
+    bc
 
 define Package/$(PKG_NAME)
 SECTION:=OMR
