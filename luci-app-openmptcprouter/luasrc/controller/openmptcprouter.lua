@@ -93,7 +93,7 @@ function wizard_add()
 		ucic:foreach("network", "interface", function(s)
 			local sectionname = s[".name"]
 			if sectionname:match("^wan(%d+)$") then
-				i = i + 1
+				i = tonumber(string.match(sectionname, '(%d+)$')) + 1
 			end
 			if ucic:get("network",sectionname,"multipath") == "master" then
 				multipath_master = true
