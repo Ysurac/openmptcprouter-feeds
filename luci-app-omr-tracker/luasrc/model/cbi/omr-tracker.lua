@@ -4,14 +4,14 @@ local m, s, o
 
 m = Map("omr-tracker", translate("OMR-Tracker"))
 
-s = m:section(TypedSection, "shadowsocks", translate("ShadowSocks tracker Settings"), translate("Detect if ShadowSocks is down and stop traffic redirection over it."))
+s = m:section(TypedSection, "proxy", translate("Proxy tracker Settings"), translate("Detect if Proxy is down and stop traffic redirection over it."))
 s.anonymous   = true
 s.addremove = false
 
-local sdata = m:get('shadowsocks')
+local sdata = m:get('proxy')
 if not sdata then
-	m:set('shadowsocks', nil, 'shadowsocks')
-	m:set('shadowsocks', 'enabled', "1")
+	m:set('proxy', nil, 'proxy')
+	m:set('proxy', 'enabled', "1")
 end
 
 o = s:option(Flag, "enabled", translate("Enable"), translate("When tracker is disabled, connection failover is also disabled"))

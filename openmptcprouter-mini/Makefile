@@ -40,7 +40,7 @@ MY_DEPENDS := \
     luci-app-sqm sqm-scripts-extra \
     luci-app-vnstat2 omr-quota luci-app-omr-quota \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail luci-app-upnp \
-    luci-app-wol luci-app-opkg \
+    luci-app-opkg \
     luci-app-uhttpd \
     luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
     luci-app-openvpn \

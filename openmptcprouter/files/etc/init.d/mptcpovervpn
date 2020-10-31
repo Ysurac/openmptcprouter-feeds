@@ -16,12 +16,27 @@ mptcp_over_vpn() {
 	local interface=$1
 	nbintf=$(($nbintf+1))
 	if [ "$(uci -q get openmptcprouter.${interface}.multipathvpn)" = "1" ]; then
+		if [ "$(uci -q get network.${interface})" = "" ]; then
+			uci -q batch <<-EOF >/dev/null
+				delete openmptcprouter.${interface}
+				delete network.ovpn${interface}
+				delete openvpn.${interface}
+				commit openvpn
+				delete openmptcprouter.${interface}
+				delete openmptcprouter.ovpn${interface}
+				commit openmptcprouter
+				commit network
+				del_list firewall.zone_vpn.network="ovpn${interface}"
+				commit firewall
+			EOF
+			return
+		fi
 		nbintfvpn=$(($nbintfvpn+1))
 		if [ "$(uci -q get network.ovpn${interface})" = "" ]; then
 			logger -t "MPTCPoverVPN" "Enable MPTCP over VPN for ${interface}"
 			id=$(uci -q get network.${interface}.metric)
 			remoteip=""
-			config_load_openmptcprouter
+			config_load openmptcprouter
 			config_foreach _getremoteip server
 			localip=$(ubus call network.interface.$interface status | jsonfilter -e '@["ipv4-address"][0].address' | tr -d "\n")
 			[ -z "$(uci -q get openmptcprouter.ovpn${interface}.multipath)" ] && multipath=$(uci -q get network.${interface}.multipath)
@@ -64,6 +79,13 @@ mptcp_over_vpn() {
 				add_list firewall.zone_vpn.network="ovpn${interface}"
 				commit firewall
 			EOF
+		else
+			uci -q batch <<-EOF >/dev/null
+				set network.${interface}.multipath='off'
+				commit network
+				set openmptcprouter.${interface}.multipath="off"
+				commit openmptcprouter
+			EOF
 		fi
 	elif [ "$(uci -q get openmptcprouter.ovpn${interface})" != "" ]; then
 		logger -t "MPTCPoverVPN" "Disable MPTCP over VPN for ${interface}"
@@ -82,6 +104,21 @@ mptcp_over_vpn() {
 			del_list firewall.zone_vpn.network="ovpn${interface}"
 			commit firewall
 		EOF
+	elif [ "$(uci -q get openmptcprouter.${interface}.vpn)" = "1" ]; then
+		intf="$(echo ${interface} | sed 's/ovpn//g')"
+		if [ -n "$intf" ] && [ "$intf" != "$interface" ] && [ "$(uci -q get network.${intf})" = "" ]; then
+			uci -q batch <<-EOF >/dev/null
+				delete network.${interface}
+				delete openvpn.${intf}
+				commit openvpn
+				delete openmptcprouter.${intf}
+				delete openmptcprouter.${interface}
+				commit openmptcprouter
+				commit network
+				del_list firewall.zone_vpn.network="${interface}"
+				commit firewall
+			EOF
+		fi
 	fi
 }
 

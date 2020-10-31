@@ -706,6 +706,9 @@ function interfaces_status()
 				end
 			end
 		end
+		if mArray.openmptcprouter["service_addr"] ~= "" then
+			mArray.openmptcprouter["service_addr_ip"] = ut.trim(sys.exec("resolveip -4 -t 1 " .. mArray.openmptcprouter["service_addr"] .. " | head -n 1"))
+		end
 	end
 
 	if  mArray.openmptcprouter["service_addr"] ~= "" and mArray.openmptcprouter["service_addr"] ~= "127.0.0.1" then
@@ -784,6 +787,17 @@ function interfaces_status()
 					else
 						mArray.openmptcprouter["ss_traffic"] = "0"
 					end
+					if status and vpsinfo.v2ray ~= nil then
+						mArray.openmptcprouter["v2ray_traffic_rx"] = vpsinfo.v2ray.rx or "0"
+						mArray.openmptcprouter["v2ray_traffic_tx"] = vpsinfo.v2ray.tx or "0"
+						mArray.openmptcprouter["v2ray_traffic"] = mArray.openmptcprouter["v2ray_traffic_tx"] + mArray.openmptcprouter["v2ray_traffic_rx"]
+					else
+						mArray.openmptcprouter["v2ray_traffic_rx"] = "0"
+						mArray.openmptcprouter["v2ray_traffic_tx"] = "0"
+						mArray.openmptcprouter["v2ray_traffic"] = "0"
+					end
+					mArray.openmptcprouter["proxy_traffic"] = mArray.openmptcprouter["ss_traffic"] + mArray.openmptcprouter["v2ray_traffic"]
+					mArray.openmptcprouter["total_traffic"] = mArray.openmptcprouter["proxy_traffic"] + mArray.openmptcprouter["vpn_traffic"]
 				else
 					mArray.openmptcprouter["vps_admin"] = false
 					mArray.openmptcprouter["vps_admin_error_msg"] = "No result"
@@ -870,22 +884,32 @@ function interfaces_status()
 	end
 	
 	-- check Shadowsocks is running
-	mArray.openmptcprouter["socks_service"] = false
+	mArray.openmptcprouter["shadowsocks_service"] = false
 	if string.find(sys.exec("/usr/bin/pgrep ss-redir"), "%d+") then
-		mArray.openmptcprouter["socks_service"] = true
+		mArray.openmptcprouter["shadowsocks_service"] = true
 	end
 
-	mArray.openmptcprouter["socks_service_enabled"] = true
+	mArray.openmptcprouter["shadowsocks_enabled"] = true
 	local ss_server = uci:get("shadowsocks-libev","sss0","disabled") or "0"
 	if ss_server == "1" then
-		mArray.openmptcprouter["socks_service_enabled"] = false
+		mArray.openmptcprouter["shadowsocks_enabled"] = false
+	end
+	-- check V2Ray is running
+	mArray.openmptcprouter["v2ray_service"] = false
+	if string.find(sys.exec("/usr/bin/pgrep v2ray"), "%d+") then
+		mArray.openmptcprouter["v2ray_service"] = true
+	end
+	mArray.openmptcprouter["v2ray_enabled"] = false
+	local v2ray = uci:get("v2ray","main","enabled") or "0"
+	if v2ray == "1" then
+		mArray.openmptcprouter["v2ray_enabled"] = true
 	end
 	local ss_key = uci:get("shadowsocks-libev","sss0","key") or ""
-	mArray.openmptcprouter["socks_service_method"] = uci:get("shadowsocks-libev","sss0","method")
+	mArray.openmptcprouter["shadowsocks_service_method"] = uci:get("shadowsocks-libev","sss0","method")
 	if ss_key == "" then
-		mArray.openmptcprouter["socks_service_key"] = false
+		mArray.openmptcprouter["shadowsocks_service_key"] = false
 	else
-		mArray.openmptcprouter["socks_service_key"] = true
+		mArray.openmptcprouter["shadowsocks_service_key"] = true
 	end
 
 	-- Add DHCP infos by parsing dnsmasq config file
@@ -1174,12 +1198,12 @@ function interfaces_status()
 	    if connectivity ~= "ERROR" then
 		    if ifname ~= nil and ifname:match("^tun.*") and interface:match("^ovpn.*") then
 			    publicIP = uci:get("openmptcprouter",interface:sub(5),"publicip") or ""
-			    if ifname ~= nil and publicIP == "" and mArray.openmptcprouter["external_check"] ~= false then
+			    if ifname ~= nil and publicIP == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] == true then
 				    publicIP = ut.trim(sys.exec("omr-ip-intf " .. get_device(interface:sub(5))))
 			    end
 		    else
 			    publicIP = uci:get("openmptcprouter",interface,"publicip") or ""
-			    if ifname ~= nil and publicIP == "" and mArray.openmptcprouter["external_check"] ~= false then
+			    if ifname ~= nil and publicIP == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] == true then
 				    publicIP = ut.trim(sys.exec("omr-ip-intf " .. ifname))
 			    end
 		    end
