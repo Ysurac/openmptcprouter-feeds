@@ -17,6 +17,7 @@ set_shadowsocks_address() {
 set_ipv6_state() {
 	local disable_ipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
 	[ -z "$disable_ipv6" ] && disable_ipv6="1"
+	previous=$(sysctl -qn net.ipv6.conf.all.disable_ipv6 | tr -d "\n")
 	sysctl -qw net.ipv6.conf.all.disable_ipv6=$disable_ipv6
 	sed -i "s:^net.ipv6.conf.all.disable_ipv6=[0-9]*:net.ipv6.conf.all.disable_ipv6=$disable_ipv6:" /etc/sysctl.d/zzz_openmptcprouter.conf
 
@@ -47,9 +48,22 @@ set_ipv6_state() {
 			set dhcp.lan.ra_default="1"
 			set dhcp.lan.ra_preference="high"
 			set dhcp.lan.ra_management="1"
+			set dhcp.lan.ra_flags='managed-config'
+			set dhcp.lan.ra_slaac='1'
+			add_list dhcp.lan.ra_flags='other-config'
 			set network.lan.ipv6="1"
 			set network.lan.delegate="0"
 		EOF
+		if [ "$(network.lan.ip6assign)" = "" ]; then
+			uci -q set network.lan.ip6assign='60'
+		fi
+		if [ "$(uci -q get network.globals.ula_prefix)" = "" ]; then
+			r1=$(dd if=/dev/urandom bs=1 count=1 |hexdump -e '1/1 "%02x"')
+			r2=$(dd if=/dev/urandom bs=2 count=1 |hexdump -e '2/1 "%02x"')
+			r3=$(dd if=/dev/urandom bs=2 count=1 |hexdump -e '2/1 "%02x"')
+			uci -q set network.globals.ula_prefix=fd$r1:$r2:$r3::/48
+		fi
+		
 		config_load shadowsocks-libev
 		config_foreach set_shadowsocks_address ss_redir "::"
 	fi
@@ -59,6 +73,9 @@ set_ipv6_state() {
 		commit shadowsocks-libev
 	EOF
 	/etc/init.d/odhcpd restart
+	if [ "$previous" != "$disable_ipv6" ]; then
+		env -i /bin/ubus call network reload
+	fi
 }
 
 
