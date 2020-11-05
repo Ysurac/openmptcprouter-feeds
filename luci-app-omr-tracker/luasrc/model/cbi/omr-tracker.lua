@@ -35,6 +35,12 @@ o.default     = "2"
 o.datatype    = "range(1, 100)"
 o.rmempty     = false
 
+o = s:option(Value, "wait_test", translate("Wait after a failed test (s)"))
+o.placeholder = "0"
+o.default     = "0"
+o.datatype    = "range(0, 100)"
+o.rmempty     = false
+
 o = s:option(DynamicList, "hosts", translate("Hosts"), translate("IPs or domains must be available over http"))
 o.placeholder = "bing.com"
 o.default     = { "bing.com", "google.com" }
@@ -72,6 +78,12 @@ o.default     = "2"
 o.datatype    = "range(1, 100)"
 o.rmempty     = false
 
+o = s:option(Value, "wait_test", translate("Wait after a failed test (s)"))
+o.placeholder = "0"
+o.default     = "0"
+o.datatype    = "range(0, 100)"
+o.rmempty     = false
+
 s = m:section(TypedSection, "defaults", translate("Defaults Settings"), translate("OMR-Tracker create needed routes and detect when a connection is down or up"))
 s.anonymous   = true
 
@@ -94,6 +106,12 @@ o = s:option(Value, "interval", translate("Retry interval (s)"))
 o.placeholder = "2"
 o.default     = "2"
 o.datatype    = "range(1, 100)"
+o.rmempty     = false
+
+o = s:option(Value, "wait_test", translate("Wait after a failed test (s)"))
+o.placeholder = "0"
+o.default     = "0"
+o.datatype    = "range(0, 100)"
 o.rmempty     = false
 
 o = s:option(ListValue, "type", translate("Type"), translate("Always ping gateway, then test connection by ping, httping or dns. None mode only ping gateway."))
@@ -144,6 +162,12 @@ o = s:option(Value, "interval", translate("Retry interval (s)"))
 o.placeholder = "2"
 o.default     = "2"
 o.datatype    = "range(1, 100)"
+o.rmempty     = false
+
+o = s:option(Value, "wait_test", translate("Wait after a failed test (s)"))
+o.placeholder = "0"
+o.default     = "0"
+o.datatype    = "range(0, 100)"
 o.rmempty     = false
 
 o = s:option(ListValue, "type", translate("Type"), translate("Always ping gateway, then test connection by ping, httping or dns. None mode only ping gateway."))
