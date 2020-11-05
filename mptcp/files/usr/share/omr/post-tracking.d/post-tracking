@@ -276,6 +276,7 @@ dns_flush() {
 
 # Get the current multipath status
 multipath_status="off"
+[ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] && multipath $OMR_TRACKER_DEVICE off 2>&1 >/dev/null
 if [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
 	case "$(multipath "$OMR_TRACKER_DEVICE")" in
 		*default*)      multipath_status="on"       ;;
@@ -432,27 +433,31 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 		fi
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE="interface"
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency="$OMR_TRACKER_LATENCY"
-		if [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.mtu)" ]; then
-			mtu=$(uci -q get network.$OMR_TRACKER_INTERFACE.mtu)
-			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
-			ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
-			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
-		elif [ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.mtu)" ]; then
-			if [ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ]; then 
-				local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP $serverip)
-				#local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP 8.8.8.8)
-				[ -n "$mtu" ] && {
-					uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
-					ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
-					uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
-				}
+		if [ "$(uci -q get glorytun.vpn.enable)" != "1" ]; then
+			if [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.mtu)" ]; then
+				mtu=$(uci -q get network.$OMR_TRACKER_INTERFACE.mtu)
+				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
+				ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
+				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+			elif [ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.mtu)" ]; then
+				if [ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ]; then 
+					local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP $serverip)
+					#local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP 8.8.8.8)
+					[ -n "$mtu" ] && {
+						uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
+						ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
+						uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+					}
+				else
+					local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP 1.1.1.1)
+					[ -n "$mtu" ] && {
+						uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
+						ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
+						uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+					}
+				fi
 			else
-				local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP 1.1.1.1)
-				[ -n "$mtu" ] && {
-					uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
-					ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
-					uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
-				}
+				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
 			fi
 		else
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
@@ -845,6 +850,11 @@ if [ -n "$(logread | tail -n 2 | grep 'Ring expansion failed')" ]; then
 	echo 1 > /sys/bus/pci/devices/0000:00:00.0/remove
 	sleep 2
 	echo 1 > /sys/bus/pci/rescan
+fi
+
+if [ "$(iptables-save | grep omr-bypass)" = "" ]; then
+	_log "Can't find omr-bypass rules, restart omr-bypass..."
+	/etc/init.d/omr-bypass
 fi
 
 if [ "$(pgrep openmptcprouter-vps)" = "" ] && ([ "$(uci -q show openmptcprouter | grep get_config=\'1\')" != "" ] || [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" != "" ]); then

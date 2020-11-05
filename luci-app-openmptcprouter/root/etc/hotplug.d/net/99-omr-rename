@@ -16,22 +16,23 @@ _set_intf_name() {
 	config_get ifname $intfname ifname
 	[ -n "$modalias" ] && {
 		if [ -f /sys/class/net/${INTERFACE}/device/uevent ]; then
-			#chk_modalias="$(cat /sys/class/net/${INTERFACE}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')"
 			chk_modalias=$MODALIAS
-			logger -t "OMR-Rename" "dir: $i - modalias: $modalias - chk_modalias: $chk_modalias - ifname: $ifname - INTERFACE: $INTERFACE"
-			if [ "$modalias" = "$chk_modalias" ] && [ "$INTERFACE" != "$ifname" ]; then
-				logger -t "OMR-Rename" "Rename ${INTERFACE} to ${ifname}"
-				existif=0
-				ip link set ${INTERFACE} down
-				[ "$(ip link show ${ifname} 2>/dev/null)" != "" ] && {
-					ip link set ${ifname} name ${ifname}tmp
-					existif=1
-				}
-				ip link set ${INTERFACE} name ${ifname}
-				ip link set ${ifname} up
-				[ "$existif" = "1" ] && ip link set ${ifname}tmp ${$INTERFACE}
-			fi
-		elif [ -f /dev/${DEVICE_NAME} ] && [ "$modalias" = "$MODALIAS" ]; then
+			[ -z "$chk_modalias" ] && chk_modalias="$(cat /sys/class/net/${INTERFACE}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')"
+			if [ -n "$chk_modalias" ]; then
+				logger -t "OMR-Rename" "dir: $i - modalias: $modalias - chk_modalias: $chk_modalias - ifname: $ifname - INTERFACE: $INTERFACE"
+				if [ "$modalias" = "$chk_modalias" ] && [ "$INTERFACE" != "$ifname" ]; then
+					logger -t "OMR-Rename" "Rename ${INTERFACE} to ${ifname}"
+					existif=0
+					ip link set ${INTERFACE} down
+					[ "$(ip link show ${ifname} 2>/dev/null)" != "" ] && {
+						ip link set ${ifname} name ${ifname}tmp
+						existif=1
+					}
+					ip link set ${INTERFACE} name ${ifname}
+					ip link set ${ifname} up
+					[ "$existif" = "1" ] && ip link set ${ifname}tmp ${$INTERFACE}
+				fi
+		elif [ -f /dev/${DEVICE_NAME} ] && [ -n "$MODALIAS" ] && [ "$modalias" = "$MODALIAS" ]; then
 			if [ "$device" != "/dev/${DEVICE_NAME}" ]; then
 				ln -s /dev/${DEVICE_NAME} /dev/$intfname
 				uci -q set network.${intfname}.device="/dev/${intfname}"
