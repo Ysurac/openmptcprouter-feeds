@@ -441,10 +441,10 @@ function wizard_add()
 
 	-- Get Proxy set by default
 	local default_proxy = luci.http.formvalue("default_proxy") or "shadowsocks"
-	if default_proxy == "shadowsocks" and serversnb > 0 then
+	if default_proxy == "shadowsocks" and serversnb > 0 and serversnb > disablednb then
 		ucic:set("shadowsocks-libev","sss0","disabled","0")
 		ucic:set("v2ray","main","enabled","0")
-	elseif default_proxy == "v2ray" and serversnb > 0  then
+	elseif default_proxy == "v2ray" and serversnb > 0 and serversnb > disablednb then
 		ucic:set("shadowsocks-libev","sss0","disabled","1")
 		ucic:set("v2ray","main","enabled","1")
 	else

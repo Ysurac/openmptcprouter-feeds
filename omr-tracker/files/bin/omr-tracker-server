@@ -42,7 +42,8 @@ _check_master() {
 	config_get master $1 master
 	config_get ip $1 ip
 	config_get port $1 port "65500"
-	[ "$master" = "1" ] && [ -n "$ip" ] && {
+	config_get disabled $1 disabled
+	[ "$master" = "1" ] && [ -n "$ip" ] && [ "$disabled" != "1" ] && {
 		#_ping_server $ip
 		_check_server $ip $port
 		[ "$server_ping" = true ] && [ "$(uci -q get shadowsocks-libev.sss0.server | tr -d '\n')" != "$ip" ] && {
@@ -81,37 +82,39 @@ _check_backup() {
 	config_get backup $1 backup
 	config_get ip $1 ip
 	config_get port $1 port
-	[ "$backup" = "1" ] && [ -n "$ip" ] && {
+	config_get disabled $1 disabled
+	[ "$backup" = "1" ] && [ -n "$ip" ] && [ "$disabled" != "1" ] && {
 		#_ping_server $ip
 		_check_server $ip $port
-	}
-	[ "$server_ping" = true ] && [ "$(uci -q get shadowsocks-libev.sss0.server | tr -d '\n')" = "$ip" ] && break
-	[ "$server_ping" = true ] && [ "$(uci -q get shadowsocks-libev.sss0.server | tr -d '\n')" != "$ip" ] && {
-		logger -t "OMR-Tracker-Server" "User backup server $1 ($ip)"
-		uci -q batch <<-EOF >/dev/null
-			set shadowsocks-libev.sss0.server=$ip
-			commit shadowsocks-libev
-			set v2ray.omrout.s_vmess_address=$ip
-			set v2ray.omrout.s_vless_address=$ip
-			commit v2ray
-			set glorytun.vpn.host=$ip
-			commit glorytun
-			set dsvpn.vpn.host=$ip
-			commit dsvpn
-			set mlvpn.general.host=$ip
-			commit mlvpn
-			del openvpn.omr.remote
-			add_list openvpn.omr.remote=$ip
-			commit openvpn
-		EOF
-		/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null
-		/etc/init.d/v2ray restart >/dev/null 2>/dev/null
-		/etc/init.d/glorytun restart >/dev/null 2>/dev/null
-		/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null
-		/etc/init.d/mlvpn restart >/dev/null 2>/dev/null
-		/etc/init.d/openvpn restart >/dev/null 2>/dev/null
-		/etc/init.d/dsvpn restart >/dev/null 2>/dev/null
-		break
+		[ "$server_ping" = true ] && [ "$(uci -q get shadowsocks-libev.sss0.server | tr -d '\n')" = "$ip" ] && break
+		[ "$server_ping" = true ] && [ "$(uci -q get shadowsocks-libev.sss0.server | tr -d '\n')" != "$ip" ] && {
+			logger -t "OMR-Tracker-Server" "User backup server $1 ($ip)"
+			uci -q batch <<-EOF >/dev/null
+				set shadowsocks-libev.sss0.server=$ip
+				commit shadowsocks-libev
+				set v2ray.omrout.s_vmess_address=$ip
+				set v2ray.omrout.s_vless_address=$ip
+				commit v2ray
+				set glorytun.vpn.host=$ip
+				commit glorytun
+				set dsvpn.vpn.host=$ip
+				commit dsvpn
+				set mlvpn.general.host=$ip
+				commit mlvpn
+				del openvpn.omr.remote
+				add_list openvpn.omr.remote=$ip
+				commit openvpn
+			EOF
+			/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null
+			/etc/init.d/v2ray restart >/dev/null 2>/dev/null
+			/etc/init.d/glorytun restart >/dev/null 2>/dev/null
+			/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null
+			/etc/init.d/mlvpn restart >/dev/null 2>/dev/null
+			/etc/init.d/openvpn restart >/dev/null 2>/dev/null
+			/etc/init.d/dsvpn restart >/dev/null 2>/dev/null
+			sleep $waittest
+			break
+		}
 	}
 }
 
@@ -121,6 +124,7 @@ timeout=${OMR_TRACKER_TIMEOUT:-5}
 interval=${OMR_TRACKER_INTERVAL:-10}
 intervaltries=${OMR_TRACKER_INTERVAL_TRIES:-2}
 retry=${OMR_TRACKER_TRIES:-4}
+waittest=${OMR_TRACKER_WAIT_TEST:-0}
 
 while true; do
 	server_ping=false

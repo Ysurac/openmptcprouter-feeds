@@ -13,7 +13,7 @@
 
 _validate_section() {
 	local tmp_hosts=$hosts tmp_timeout=$timeout tmp_tries=$tries
-	local tmp_interval=$interval tmp_interval_tries=$interval_tries tmp_options=$options tmp_type=$type tmp_enabled=$enabled
+	local tmp_interval=$interval tmp_interval_tries=$interval_tries tmp_options=$options tmp_type=$type tmp_enabled=$enabled tmp_wait_test=$wait_test
 
 	uci_validate_section omr-tracker "$1" "$2" \
 		'hosts:list(host)'  \
@@ -21,6 +21,7 @@ _validate_section() {
 		'tries:uinteger'    \
 		'interval:uinteger' \
 		'interval_tries:uinteger' \
+		'wait_test:uinteger' \
 		'type:string:undef'  \
 		'enabled:bool:1'    \
 		'options:string'
@@ -30,6 +31,7 @@ _validate_section() {
 	[ -z "$tries"    ] && tries=$tmp_tries
 	[ -z "$interval" ] && interval=$tmp_interval
 	[ -z "$interval_tries" ] && interval_tries=$tmp_interval_tries
+	[ -z "$wait_test" ] && wait_test=$tmp_wait_test
 	[ -z "$options"  ] && options=$tmp_options
 	[ "$type" = "undef" ] && type=${tmp_type:-ping}
 	[ -z "$enabled"  ] && enabled=$tmp_enabled
@@ -40,7 +42,7 @@ _launch_tracker() {
 		loopback|lan*|if0*) return;;
 	esac
 
-	local hosts timeout tries interval interval_tries options type enabled
+	local hosts timeout tries interval interval_tries options type enabled wait_test
 	_validate_section "defaults" "defaults"
 	_validate_section "interface" "$1"
 
@@ -71,6 +73,7 @@ _launch_tracker() {
 	procd_append_param env "OMR_TRACKER_DEVICE=$ifname"
 	procd_append_param env "OMR_TRACKER_DEVICE_GATEWAY=$gateway"
 	procd_append_param env "OMR_TRACKER_TYPE=$type"
+	procd_append_param env "OMR_TRACKER_WAIT_TEST=$wait_test"
 	procd_set_param limits nofile="51200 51200"
 	procd_set_param respawn 0 10 0
 	procd_set_param stderr 1
@@ -78,7 +81,7 @@ _launch_tracker() {
 }
 
 _launch_server_tracker() {
-	local hosts timeout tries interval interval_tries options type enabled
+	local hosts timeout tries interval interval_tries options type enabled wait_test
 	_validate_section "defaults" "defaults"
 	_validate_section "server" "server"
 
@@ -92,6 +95,7 @@ _launch_server_tracker() {
 	procd_append_param env "OMR_TRACKER_TRIES=$tries"
 	procd_append_param env "OMR_TRACKER_INTERVAL=$interval"
 	procd_append_param env "OMR_TRACKER_INTERVAL_TRIES=$interval_tries"
+	procd_append_param env "OMR_TRACKER_WAIT_TEST=$wait_test"
 	procd_set_param limits nofile="51200 51200"
 	procd_set_param respawn 0 10 0
 	procd_set_param stderr 1
@@ -139,7 +143,7 @@ _initialize_shadowsocks_tracker() {
 }
 
 _launch_shadowsocks_tracker() {
-	local hosts timeout tries interval local_port enabled server
+	local hosts timeout tries interval local_port enabled server wait_test
 	
 	[ "$1" = "tracker" ] || return
 	
@@ -161,6 +165,7 @@ _launch_shadowsocks_tracker() {
 	procd_append_param env "OMR_TRACKER_TRIES=$tries"
 	procd_append_param env "OMR_TRACKER_INTERVAL=$interval"
 	procd_append_param env "OMR_TRACKER_PROXY=127.0.0.1:$local_port"
+	procd_append_param env "OMR_TRACKER_WAIT_TEST=$wait_test"
 	procd_set_param limits nofile="51200 51200"
 	procd_set_param respawn 0 10 0
 	procd_set_param stderr 1
@@ -168,7 +173,7 @@ _launch_shadowsocks_tracker() {
 }
 
 _launch_v2ray_tracker() {
-	local hosts timeout tries interval local_port enabled server
+	local hosts timeout tries interval local_port enabled server wait_test
 	
 	_validate_section "proxy" "proxy"
 	[ "$enabled" = "0" ] || [ -z "$hosts" ] && return
@@ -181,6 +186,7 @@ _launch_v2ray_tracker() {
 	procd_append_param env "OMR_TRACKER_TRIES=$tries"
 	procd_append_param env "OMR_TRACKER_INTERVAL=$interval"
 	procd_append_param env "OMR_TRACKER_PROXY=127.0.0.1:1111"
+	procd_append_param env "OMR_TRACKER_WAIT_TEST=$wait_test"
 	procd_set_param limits nofile="51200 51200"
 	procd_set_param respawn 0 10 0
 	procd_set_param stderr 1
