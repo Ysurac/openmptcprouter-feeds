@@ -17,9 +17,11 @@ set_shadowsocks_address() {
 set_ipv6_state() {
 	local disable_ipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
 	[ -z "$disable_ipv6" ] && disable_ipv6="1"
-	previous=$(sysctl -qn net.ipv6.conf.all.disable_ipv6 | tr -d "\n")
-	sysctl -qw net.ipv6.conf.all.disable_ipv6=$disable_ipv6
-	sed -i "s:^net.ipv6.conf.all.disable_ipv6=[0-9]*:net.ipv6.conf.all.disable_ipv6=$disable_ipv6:" /etc/sysctl.d/zzz_openmptcprouter.conf
+	#previous=$(sysctl -qn net.ipv6.conf.all.disable_ipv6 | tr -d "\n")
+	previous="$(uci get network.lan.ipv6)"
+	#sysctl -qw net.ipv6.conf.all.disable_ipv6=$disable_ipv6
+	#sed -i "s:^net.ipv6.conf.all.disable_ipv6=[0-9]*:net.ipv6.conf.all.disable_ipv6=$disable_ipv6:" /etc/sysctl.d/zzz_openmptcprouter.conf
+	sed -i "s:^net.ipv6.conf.all.disable_ipv6=[0-9]*::" /etc/sysctl.d/zzz_openmptcprouter.conf
 
 	uci -q batch <<-EOF >/dev/null
 		set firewall.@defaults[0].disable_ipv6=$disable_ipv6
@@ -82,14 +84,14 @@ set_ipv6_state() {
 		commit shadowsocks-libev
 	EOF
 	/etc/init.d/odhcpd restart
-	if [ "$previous" != "$disable_ipv6" ]; then
+	if [ "$previous" != "1" ]; then
 		env -i /bin/ubus call network reload
 	fi
 }
 
 
 start_service() {
-	[ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "$(sysctl -n net.ipv6.conf.all.disable_ipv6)" ] && set_ipv6_state
+	[ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(uci -q get network.lan.ipv6)" != "1" ] && set_ipv6_state
 	[ "$(uci -q get openmptcprouter.settings.disable_ipv6)" = "1" ] && {
 		ifdown omr6in4
 		return
