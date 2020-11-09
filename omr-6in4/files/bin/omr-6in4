@@ -22,7 +22,7 @@ while true; do
 		[ -z "$peer" ] && peer=$(ip -4 r list dev $iface | grep via | grep -v default | grep -v metric | grep -v / | awk '{print $1; exit}' | tr -d "\n")
 		[ -z "$peer" ] && peer=$(ip -4 r list dev $iface | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d "\n")
 		[ -n "$addr" ] && [ -n "$peer" ] && {
-			if [ "$addr" != "$(uci -q get network.omr6in4.ipaddr)" ] || [ "$peer" != "$(uci -q get network.omr6in4.peeraddr)" ] || [ "$(ip -6 route show default)" = "" ]; then
+			if [ "$addr" != "$(uci -q get network.omr6in4.ipaddr)" ] || [ "$peer" != "$(uci -q get network.omr6in4.peeraddr)" ] || [ "$(ip -6 route show default | grep via)" = "" ]; then
 				logger -t "omr6in4" "Set network for OMR 6in4 to local $addr peer $peer"
 				uci -q batch <<-EOF
 					set network.omr6in4.ipaddr=$addr
@@ -30,7 +30,7 @@ while true; do
 					commit network
 				EOF
 				if [ -n "$(ip tunnel | grep omr6in4)" ]; then
-					ip tunnel change "6in4-omr6in4" mode sit local ${addr} remote ${peer} > /dev/null 2>&1
+					ip tunnel change "6in4-omr6in4" mode sit local ${addr} remote ${peer} ttl 64 > /dev/null 2>&1
 				else
 					ifup omr6in4 > /dev/null 2>&1
 				fi
