@@ -56,12 +56,12 @@ _bypass_domain() {
 		domain=$(echo $domain | sed 's:^\.::')
 		#logger -t "omr-bypass" "Get IPs of $domain..."
 		if [ -z $RELOAD ]; then
-			resolve=$(dig a +timeout=1 +nocmd +noall +answer $domain | awk '{print $5}')
+			resolve=$(dig a +timeout=1 +tries=1 +nocmd +noall +answer $domain | awk '{print $5}')
 			for ip in $resolve; do
 				_bypass_ip $ip $intf
 			done
-			if [ "$disableipv6" != "1" ]; then
-				resolve=$(dig aaaa +timeout=1 +nocmd +noall +answer $domain | awk '{print $5}')
+			if [ "$disableipv6" = "0" ]; then
+				resolve=$(dig aaaa +timeout=1 +tries=1 +nocmd +noall +answer $domain | awk '{print $5}')
 				for ip in $resolve; do
 					_bypass_ip $ip $intf
 				done
@@ -100,7 +100,7 @@ _bypass_mac() {
 		-A omr-bypass -m mac --mac-source $mac -j MARK --set-mark 0x539
 		COMMIT
 		EOF
-		if [ "$disableipv6" != "1" ]; then
+		if [ "$disableipv6" = "0" ]; then
 			ip6tables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
 			-A omr-bypass6 -m mac --mac-source $mac -j MARK --set-mark 0x6539
@@ -113,7 +113,7 @@ _bypass_mac() {
 		-A omr-bypass -m mac --mac-source $mac -j MARK --set-mark 0x539$intfid
 		COMMIT
 		EOF
-		if [ "$disableipv6" != "1" ]; then
+		if [ "$disableipv6" = "0" ]; then
 			ip6tables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
 			-A omr-bypass6 -m mac --mac-source $mac -j MARK --set-mark 0x6539$intfid
@@ -205,7 +205,7 @@ _bypass_dest_port() {
 		-A omr-bypass-local --protocol $proto --destination-port $dport -j MARK --set-mark 0x539
 		COMMIT
 		EOF
-		if [ "$disableipv6" != "1" ]; then
+		if [ "$disableipv6" = "0" ]; then
 			ip6tables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
 			-A omr-bypass6 --protocol $proto --destination-port $dport -j MARK --set-mark 0x6539
@@ -223,7 +223,7 @@ _bypass_dest_port() {
 		-A omr-bypass-local --protocol $proto --destination-port $dport -j MARK --set-mark 0x539$intfid
 		COMMIT
 		EOF
-		if [ "$disableipv6" != "1" ]; then
+		if [ "$disableipv6" = "0" ]; then
 			ip6tables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
 			-A omr-bypass6 --protocol $proto --destination-port $dport -j MARK --set-mark 0x6539$intfid
@@ -260,7 +260,7 @@ _bypass_src_port() {
 		-A omr-bypass-local --protocol $proto --source-port $sport -j MARK --set-mark 0x539
 		COMMIT
 		EOF
-		if [ "$disableipv6" != "1" ]; then
+		if [ "$disableipv6" = "0" ]; then
 			ip6tables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
 			-A omr-bypass6 --protocol $proto --source-port $sport -j MARK --set-mark 0x6539
@@ -278,7 +278,7 @@ _bypass_src_port() {
 		-A omr-bypass-local --protocol $proto --source-port $sport -j MARK --set-mark 0x539$intfid
 		COMMIT
 		EOF
-		if [ "$disableipv6" != "1" ]; then
+		if [ "$disableipv6" = "0" ]; then
 			ip6tables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
 			-A omr-bypass6 --protocol $proto --source-port $sport -j MARK --set-mark 0x6539$intfid
@@ -306,7 +306,7 @@ _bypass_proto() {
 		-A omr-bypass-dpi -m ndpi --proto $proto -j MARK --set-mark 0x539
 		COMMIT
 		EOF
-		if [ "$disableipv6" != "1" ]; then
+		if [ "$disableipv6" = "0" ]; then
 			ip6tables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
 			-A omr-bypass6-dpi -m ndpi --proto $proto -j MARK --set-mark 0x6539
@@ -319,7 +319,7 @@ _bypass_proto() {
 		-A omr-bypass-dpi -m ndpi --proto $proto -j MARK --set-mark 0x539$intfid
 		COMMIT
 		EOF
-		if [ "$disableipv6" != "1" ]; then
+		if [ "$disableipv6" = "0" ]; then
 			ip6tables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
 			-A omr-bypass6-dpi -m ndpi --proto $proto -j MARK --set-mark 0x6539$intfid
@@ -333,7 +333,22 @@ _bypass_proto() {
 	if [ -n "$domains" ]; then
 		for domain in $domains; do
 			if [ -n "$domain" ]; then
-				_bypass_domain $domain $intf
+				domain="$(echo $domain | sed 's/^\.//')"
+				if [ "$(echo $domain | grep '\.$')" != "" ]; then
+					tlds=`curl --max-time 4 -s -k https://data.iana.org/TLD/tlds-alpha-by-domain.txt`
+					if [ -n "tlds" ]; then
+						i=0
+						for tld in $tlds; do
+							i=$((i+1))
+							tld="$(echo $tld | awk '{print tolower($0)}')"
+							if [ "$i" -gt "11" ] && [ "$(dig a +timeout=1 +tries=1 +retry=1 +nocmd +noall +answer ${domain}${tld})" != "" ]; then
+								_bypass_domain ${domain}${tld} $intf
+							fi
+						done
+					fi
+				else
+					_bypass_domain $domain $intf
+				fi
 			fi
 		done
 	fi
@@ -354,7 +369,7 @@ _intf_rule_ss_rules() {
 		COMMIT
 		EOF
 	fi
-	if [ "$disableipv6" != "1" ]; then
+	if [ "$disableipv6" = "0" ]; then
 		if [ "$(ip6tables --wait=40 -t mangle -L -n | grep omr6_dst_bypass_$intf)" = "" ]; then
 			ip6tables-restore -w --wait=60 --noflush <<-EOF
 			*mangle
@@ -393,7 +408,7 @@ _intf_rule_v2ray_rules() {
 		COMMIT
 		EOF
 	fi
-	if [ "$disableipv6" != "1" ]; then
+	if [ "$disableipv6" = "0" ]; then
 		if [ "$(ip6tables --wait=40 -t mangle -L -n | grep omr6_dst_bypass_$intf)" = "" ]; then
 			ip6tables-restore -w --wait=60 --noflush <<-EOF
 			*mangle
@@ -524,7 +539,7 @@ _ss_rules_config() {
 		COMMIT
 		EOF
 	fi
-	if [ "$disableipv6" != "1" ]; then
+	if [ "$disableipv6" = "0" ]; then
 		if [ "$(ip6tables --wait=40 -t mangle -L -n | grep 'match-set omr6_dst_bypass_all dst MARK set')" = "" ]; then
 			ip6tables-restore -w --wait=60 --noflush <<-EOF
 			*mangle
@@ -563,7 +578,7 @@ _v2ray_rules_config() {
 		COMMIT
 		EOF
 	fi
-	if [ "$disableipv6" != "1" ]; then
+	if [ "$disableipv6" = "0" ]; then
 		if [ "$(ip6tables --wait=40 -t mangle -L -n | grep 'match-set omr6_dst_bypass_all dst MARK set')" = "" ]; then
 			ip6tables-restore -w --wait=60 --noflush <<-EOF
 			*mangle
@@ -622,7 +637,7 @@ start_service() {
 	-I OUTPUT -m addrtype ! --dst-type LOCAL -j omr-bypass-local
 	COMMIT
 	EOF
-	if [ "$disableipv6" != "1" ]; then
+	if [ "$disableipv6" = "0" ]; then
 		ip6tables-save --counters | grep -v omr-bypass6 | ip6tables-restore -w --counters
 		ip6tables-restore -w --wait=60  --noflush <<-EOF
 		*mangle
@@ -696,7 +711,7 @@ start_service() {
 	-A POSTROUTING -m addrtype --dst-type LOCAL -j omr-bypass-dpi
 	COMMIT
 	EOF
-	if [ "$disableipv6" != "1" ]; then
+	if [ "$disableipv6" = "0" ]; then
 		ip6tables-save --counters | grep -v omr-bypass6-dpi | ip6tables-restore -w --counters
 		ip6tables-restore -w --wait=60  --noflush <<-EOF
 		*mangle
