@@ -44,6 +44,11 @@ set_ipv6_state() {
 		EOF
 		config_load shadowsocks-libev
 		config_foreach set_shadowsocks_address ss_redir "0.0.0.0"
+		uci -q batch <<-EOF >/dev/null
+			commit network
+			commit dhcp
+			commit shadowsocks-libev
+		EOF
 	else
 		logger -t "omr-6in4" "Enable IPv6"
 		uci -q batch <<-EOF >/dev/null
@@ -57,14 +62,9 @@ set_ipv6_state() {
 			add_list dhcp.lan.ra_flags='other-config'
 			set network.lan.ipv6="1"
 			set network.lan.delegate="0"
+			set network.omr6in4.force_link=1
+			delete network.omr6in4.auto
 		EOF
-		if [ "$(uci -q get v2ray.main.inbounds | grep omr6)" = "" ]; then
-			uci -q batch <<-EOF >/dev/null
-				add_list v2ray.main.inbounds="omr6"
-				commit v2ray
-			EOF
-		fi
-		
 		if [ "$(network.lan.ip6assign)" = "" ]; then
 			uci -q set network.lan.ip6assign='60'
 		fi
@@ -77,12 +77,20 @@ set_ipv6_state() {
 		
 		config_load shadowsocks-libev
 		config_foreach set_shadowsocks_address ss_redir "::"
+		uci -q batch <<-EOF >/dev/null
+			commit network
+			commit dhcp
+			commit shadowsocks-libev
+		EOF
+		/etc/init.d/shadowsocks-libev restart
+		if [ "$(uci -q get v2ray.main.inbounds | grep omr6)" = "" ]; then
+			uci -q batch <<-EOF >/dev/null
+				add_list v2ray.main.inbounds="omr6"
+				commit v2ray
+			EOF
+			/etc/init.d/v2ray restart
+		fi
 	fi
-	uci -q batch <<-EOF >/dev/null
-		commit network
-		commit dhcp
-		commit shadowsocks-libev
-	EOF
 	/etc/init.d/odhcpd restart
 	if [ "$previous" != "1" ]; then
 		env -i /bin/ubus call network reload
@@ -98,6 +106,7 @@ start_service() {
 	}
 	[ "$(ifstatus omr6in4 | jsonfilter -e '@.up' | tr -d '\n')" != "true" ] && ifup omr6in4
 	multipath 6in4-omr6in4 off 2>&1 >/dev/null
+
 	procd_open_instance
 	# shellcheck disable=SC2086
 	procd_set_param command /bin/omr-6in4
