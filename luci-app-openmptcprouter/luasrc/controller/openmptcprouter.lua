@@ -218,7 +218,9 @@ function wizard_add()
 		local typeintf = luci.http.formvalue("cbid.network.%s.type" % intf) or ""
 		local masterintf = luci.http.formvalue("cbid.network.%s.masterintf" % intf) or ""
 		local ifname = luci.http.formvalue("cbid.network.%s.intf" % intf) or ""
-		local device = luci.http.formvalue("cbid.network.%s.device" % intf) or ""
+		local device_ncm = luci.http.formvalue("cbid.network.%s.device.ncm" % intf) or ""
+		local device_qmi = luci.http.formvalue("cbid.network.%s.device.qmi" % intf) or ""
+		local device_modemmanager = luci.http.formvalue("cbid.network.%s.device.modemmanager" % intf) or ""
 		local ipaddr = luci.http.formvalue("cbid.network.%s.ipaddr" % intf) or ""
 		local netmask = luci.http.formvalue("cbid.network.%s.netmask" % intf) or ""
 		local gateway = luci.http.formvalue("cbid.network.%s.gateway" % intf) or ""
@@ -243,8 +245,12 @@ function wizard_add()
 			ucic:set("network",intf,"masterintf",masterintf)
 		elseif typeintf == "" and ifname ~= "" and (proto == "static" or proto == "dhcp" ) then
 			ucic:set("network",intf,"ifname",ifname)
-		elseif typeintf == "" and device ~= "" and (proto == "ncm" or proto == "qmi" or proto == "modemmanager") then
-			ucic:set("network",intf,"device",device)
+		elseif typeintf == "" and device ~= "" and proto == "ncm" then
+			ucic:set("network",intf,"device",device_ncm)
+		elseif typeintf == "" and device ~= "" and proto == "qmi" then
+			ucic:set("network",intf,"device",device_qmi)
+		elseif typeintf == "" and device ~= "" and proto == "modemmanager" then
+			ucic:set("network",intf,"device",device_manager)
 		end
 		if proto ~= "other" then
 			ucic:set("network",intf,"proto",proto)
