@@ -448,14 +448,26 @@ function wizard_add()
 	-- Get Proxy set by default
 	local default_proxy = luci.http.formvalue("default_proxy") or "shadowsocks"
 	if default_proxy == "shadowsocks" and serversnb > 0 and serversnb > disablednb then
-		ucic:set("shadowsocks-libev","sss0","disabled","0")
+		--ucic:set("shadowsocks-libev","sss0","disabled","0")
 		ucic:set("v2ray","main","enabled","0")
+		ucic:foreach("shadowsocks-libev", "server", function(s)
+			local sectionname = s[".name"]
+			ucic:set("shadowsocks-libev",sectionname,"disabled","0")
+		end)
 	elseif default_proxy == "v2ray" and serversnb > 0 and serversnb > disablednb then
-		ucic:set("shadowsocks-libev","sss0","disabled","1")
+		--ucic:set("shadowsocks-libev","sss0","disabled","1")
 		ucic:set("v2ray","main","enabled","1")
+		ucic:foreach("shadowsocks-libev", "server", function(s)
+			local sectionname = s[".name"]
+			ucic:set("shadowsocks-libev",sectionname,"disabled","1")
+		end)
 	else
-		ucic:set("shadowsocks-libev","sss0","disabled","1")
+		--ucic:set("shadowsocks-libev","sss0","disabled","1")
 		ucic:set("v2ray","main","enabled","0")
+		ucic:foreach("shadowsocks-libev", "server", function(s)
+			local sectionname = s[".name"]
+			ucic:set("shadowsocks-libev",sectionname,"disabled","1")
+		end)
 	end
 	ucic:set("openmptcprouter","settings","proxy",default_proxy)
 	ucic:save("openmptcprouter")
@@ -719,6 +731,7 @@ function wizard_add()
 
 	-- Restart all
 	if gostatus == true then
+		luci.sys.call("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
 		luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/omr-tracker stop >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/mptcp restart >/dev/null 2>/dev/null")
