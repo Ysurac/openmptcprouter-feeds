@@ -813,7 +813,8 @@ function settings_add()
 	
 	-- Disable IPv6
 	local disable_ipv6 = luci.http.formvalue("enableipv6") or "1"
-	local dump = require("luci.util").ubus("openmptcprouter", "disableipv6", { disable_ipv6 = tonumber(disable_ipv6)})
+	ucic:set("openmptcprouter","settings","disable_ipv6",disable_ipv6)
+	--local dump = require("luci.util").ubus("openmptcprouter", "disableipv6", { disable_ipv6 = tonumber(disable_ipv6)})
 
 	-- Enable/disable external check
 	local externalcheck = luci.http.formvalue("externalcheck") or "1"
@@ -910,6 +911,7 @@ function settings_add()
 
 	-- Apply all settings
 	luci.sys.call("/etc/init.d/openmptcprouter restart >/dev/null 2>/dev/null")
+	luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
 
 	-- Done, redirect
 	luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/settings"))
