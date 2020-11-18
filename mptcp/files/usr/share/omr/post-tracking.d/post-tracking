@@ -247,10 +247,12 @@ disable_pihole() {
 	if [ -n "$(uci -q get dhcp.@dnsmasq[0].server | grep '#53' | grep '10.2')" ]; then
 		_log "Disable Pi-Hole..."
 		uci -q del_list dhcp.@dnsmasq[0].server="$(uci -q get dhcp.@dnsmasq[0].server | tr ' ' '\n' | grep '#53' | grep '10.2')"
-		uci -q batch <<-EOF >/dev/null
-			add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
-			commit dhcp
-		EOF
+		if [ -z "$(uci -q get dhcp.@dnsmasq[0].server | grep '127.0.0.1#5353')" ]; then
+			uci -q batch <<-EOF >/dev/null
+				add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+				commit dhcp
+			EOF
+		fi
 		/etc/init.d/dnsmasq restart
 	fi
 }
@@ -727,7 +729,12 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 	else
 		[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Get status and settings for $OMR_TRACKER_INTERFACE... Done"
 		uci -q commit openmptcprouter
-		#/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1
+		if [ "$(pgrep openmptcprouter-vps)" = "" ] && ( [ "$(uci -q get openmptcprouter.settings.apilc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.settings.apilc))) -gt 3600 ] ); then
+			_log "Check API configuration..."
+			/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1
+			uci -q set openmptcprouter.settings.apilc=$(date +"%s")
+			_log "Check API configuration... Done"
+		fi
 	fi
 	dns_flush
 fi
