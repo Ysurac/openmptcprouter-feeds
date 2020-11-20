@@ -470,17 +470,13 @@ reload_service() {
 	return 0
 }
 
-add_interface_trigger() {
-	local interface ignore
-
-	config_get interface "$1" interface
-	config_get_bool ignore "$1" ignore 0
-
-	[ -n "$interface" -a $ignore -eq 0 ] && procd_add_interface_trigger "interface.*" "$interface" /etc/init.d/mptcp reload
-}
+service_triggers_load_interface() { is_supported_interface "$1" && ifaces="${ifaces}${1} "; }
 
 service_triggers() {
+	local ifaces n
+	config_load network; config_foreach service_triggers_load_interface 'interface';
 	procd_add_reload_trigger "network"
-	config_load network
-	config_foreach add_interface_trigger interface
+	procd_open_trigger
+		for n in $ifaces; do procd_add_reload_interface_trigger "$n"; procd_add_interface_trigger "interface.*" "$n" /etc/init.d/mptcp reload; done;
+	procd_close_trigger
 }
