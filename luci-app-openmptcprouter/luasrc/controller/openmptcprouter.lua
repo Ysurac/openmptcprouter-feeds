@@ -8,20 +8,19 @@ local ipc = require "luci.ip"
 module("luci.controller.openmptcprouter", package.seeall)
 
 function index()
---	entry({"admin", "openmptcprouter"}, firstchild(), _("OpenMPTCProuter"), 19).index = true
---	entry({"admin", "openmptcprouter", "wizard"}, template("openmptcprouter/wizard"), _("Wizard"), 1).leaf = true
---	entry({"admin", "openmptcprouter", "wizard_add"}, post("wizard_add")).leaf = true
-	entry({"admin", "system", "openmptcprouter"}, alias("admin", "system", "openmptcprouter", "wizard"), _("OpenMPTCProuter"), 1)
-	entry({"admin", "system", "openmptcprouter", "wizard"}, template("openmptcprouter/wizard"), _("Settings Wizard"), 1)
-	entry({"admin", "system", "openmptcprouter", "wizard_add"}, post("wizard_add"))
-	entry({"admin", "system", "openmptcprouter", "status"}, template("openmptcprouter/wanstatus"), _("Status"), 2).leaf = true
-	entry({"admin", "system", "openmptcprouter", "interfaces_status"}, call("interfaces_status")).leaf = true
-	entry({"admin", "system", "openmptcprouter", "settings"}, template("openmptcprouter/settings"), _("Advanced Settings"), 3).leaf = true
-	entry({"admin", "system", "openmptcprouter", "settings_add"}, post("settings_add"))
-	entry({"admin", "system", "openmptcprouter", "update_vps"}, post("update_vps"))
-	entry({"admin", "system", "openmptcprouter", "backup"}, template("openmptcprouter/backup"), _("Backup on server"), 3).leaf = true
-	entry({"admin", "system", "openmptcprouter", "backupgr"}, post("backupgr"))
-	entry({"admin", "system", "openmptcprouter", "debug"}, template("openmptcprouter/debug"), _("Show all settings"), 5).leaf = true
+	local ucic  = luci.model.uci.cursor()
+	menuentry = ucic:get("openmptcprouter","settings","menu") pr "OpenMPTCProuter"
+	entry({"admin", "system", menuentry:lower()}, alias("admin", "system", menuentry:lower(), "wizard"), _(menuentry), 1)
+	entry({"admin", "system", menuentry:lower(), "wizard"}, template("openmptcprouter/wizard"), _("Settings Wizard"), 1)
+	entry({"admin", "system", menuentry:lower(), "wizard_add"}, post("wizard_add"))
+	entry({"admin", "system", menuentry:lower(), "status"}, template("openmptcprouter/wanstatus"), _("Status"), 2).leaf = true
+	entry({"admin", "system", menuentry:lower(), "interfaces_status"}, call("interfaces_status")).leaf = true
+	entry({"admin", "system", menuentry:lower(), "settings"}, template("openmptcprouter/settings"), _("Advanced Settings"), 3).leaf = true
+	entry({"admin", "system", menuentry:lower(), "settings_add"}, post("settings_add"))
+	entry({"admin", "system", menuentry:lower(), "update_vps"}, post("update_vps"))
+	entry({"admin", "system", menuentry:lower(), "backup"}, template("openmptcprouter/backup"), _("Backup on server"), 3).leaf = true
+	entry({"admin", "system", menuentry:lower(), "backupgr"}, post("backupgr"))
+	entry({"admin", "system", menuentry:lower(), "debug"}, template("openmptcprouter/debug"), _("Show all settings"), 5).leaf = true
 end
 
 function interface_from_device(dev)
@@ -730,6 +729,7 @@ function wizard_add()
 	ucic:commit("openmptcprouter")
 
 	-- Restart all
+	menuentry = ucic:get("openmptcprouter","settings","menu") or "openmptcprouter"
 	if gostatus == true then
 		luci.sys.call("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
 		luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
@@ -751,9 +751,9 @@ function wizard_add()
 		luci.sys.call("/etc/init.d/mptcpovervpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/v2ray restart >/dev/null 2>/dev/null")
-		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/status"))
+		luci.http.redirect(luci.dispatcher.build_url("admin/system/" .. menuentry:lower() .. "/status"))
 	else
-		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/wizard"))
+		luci.http.redirect(luci.dispatcher.build_url("admin/system/" .. menuentry:lower() .. "/wizard"))
 	end
 	return
 end
@@ -914,7 +914,8 @@ function settings_add()
 	luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
 
 	-- Done, redirect
-	luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/settings"))
+	menuentry = ucic:get("openmptcprouter","settings","menu") or "openmptcprouter"
+	luci.http.redirect(luci.dispatcher.build_url("admin/system/" .. menuentry:lower() .. "/settings"))
 	return
 end
 
@@ -937,7 +938,8 @@ function backupgr()
 	if send_backup ~= "" then
 		luci.sys.call("/etc/init.d/openmptcprouter-vps backup_send >/dev/null 2>/dev/null")
 	end
-	luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/backup"))
+	menuentry = ucic:get("openmptcprouter","settings","menu") or "openmptcprouter"
+	luci.http.redirect(luci.dispatcher.build_url("admin/system/" .. menuentry:lower() .. "/backup"))
 	return
 end
 
