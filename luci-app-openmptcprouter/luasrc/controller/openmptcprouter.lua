@@ -9,7 +9,7 @@ module("luci.controller.openmptcprouter", package.seeall)
 
 function index()
 	local ucic  = luci.model.uci.cursor()
-	menuentry = ucic:get("openmptcprouter","settings","menu") pr "OpenMPTCProuter"
+	menuentry = ucic:get("openmptcprouter","settings","menu") or "OpenMPTCProuter"
 	entry({"admin", "system", menuentry:lower()}, alias("admin", "system", menuentry:lower(), "wizard"), _(menuentry), 1)
 	entry({"admin", "system", menuentry:lower(), "wizard"}, template("openmptcprouter/wizard"), _("Settings Wizard"), 1)
 	entry({"admin", "system", menuentry:lower(), "wizard_add"}, post("wizard_add"))
