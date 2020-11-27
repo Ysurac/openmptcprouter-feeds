@@ -6,7 +6,7 @@ START=99
 
 USE_PROCD=1
 
-EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall"
+EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key"
 
 _parse_result() {
 	result=$("echo $1 | jsonfilter -q -e '@.result'")
@@ -114,6 +114,27 @@ _set_openvpn_vps() {
 	fi
 }
 
+get_openvpn_key() {
+	servername=$2
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	openvpn_client_key="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.client_key')"
+	[ -n "$openvpn_client_key" ] && {
+		echo $openvpn_client_key | base64 -d > /etc/luci-uploads/client.key
+	}
+	openvpn_client_crt="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.client_crt')"
+	[ -n "$openvpn_client_crt" ] && {
+		echo $openvpn_client_crt | base64 -d > /etc/luci-uploads/client.crt
+	}
+	openvpn_client_ca="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.client_ca')"
+	[ -n "$openvpn_client_ca" ] && {
+		echo $openvpn_client_ca | base64 -d > /etc/luci-uploads/ca.crt
+	}
+	[ -n "$openvpn_client_key" ] && [ -n "$openvpn_client_crt" ] && [ -n "$openvpn_client_ca" ] && {
+		/etc/init.d/openvpn restart
+	}
+}
+
 _get_ss_redir() {
 	config_get cf_ebpf $1 ebpf
 	[ "$cf_ebpf" = "1" ] && ebpf="true"
@@ -166,7 +187,7 @@ _set_ss_server_vps() {
 	if [ "$current_obfs_plugin" != "$obfs_plugin" ] || [ "$current_obfs_type" != "$obfs_type" ] || [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_key" != "$key" ] || [ "$current_ebpf" != "$ebpf" ] || [ "$current_obfs" != "$obfs" ] || [ "$current_fast_open" != "$fast_open" ] || [ "$current_no_delay" != "$no_delay" ]; then
 		local settings
 		settings='{"port": '$port',"method":"'$method'","fast_open":'$fast_open',"reuse_port":true,"no_delay":'$no_delay',"mptcp":true,"key":"'$key'","ebpf":'$ebpf',"obfs":'$obfs',"obfs_plugin":"'$obfs_plugin'","obfs_type":"'$obfs_type'"}'
-		echo $(_set_json "shadowsocks" "$settings")
+		_set_json "shadowsocks" "$settings"
 	fi
 }
 
@@ -906,7 +927,7 @@ _set_vps_firewall() {
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
-		logger -t "OMR-VPS" "Can't get token, try later"
+		logger -t "OMR-VPS" "Can't get ${fwservername} token, try later"
 		uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.${fwservername}.admin_error=1
 		EOF
@@ -967,7 +988,7 @@ _set_config_from_vps() {
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 
-	logger -t "OMR-VPS" "Get config from VPS..."
+	logger -t "OMR-VPS" "Get config from server ${servername}..."
 	noerror=1
 	# get VPS ip
 	vpsip="$(uci -q get openmptcprouter.${servername}.ip)"
@@ -1371,7 +1392,7 @@ _backup_send() {
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
-		logger -t "OMR-VPS" "Can't get token, try later"
+		logger -t "OMR-VPS" "Can't get ${servername} token, try later"
 		uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
@@ -1412,7 +1433,7 @@ _backup_get_and_apply() {
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
-		logger -t "OMR-VPS" "Can't get token, try later"
+		logger -t "OMR-VPS" "Can't get ${servername} token, try later"
 		uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
@@ -1446,7 +1467,7 @@ _backup_list() {
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
-		logger -t "OMR-VPS" "Can't get token, try later"
+		logger -t "OMR-VPS" "Can't get ${servername} token, try later"
 		uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
@@ -1483,6 +1504,7 @@ _config_service() {
 	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.ip)" ] && return
+	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
 	token=""
 	vps_config=""
 	_login
@@ -1491,9 +1513,9 @@ _config_service() {
 		_ping_server
 		status=$?
 		if $(exit $status); then
-			reason="can ping server"
+			reason="can ping server ${servername}"
 		else
-			reason="can't ping server"
+			reason="can't ping server ${servername}"
 		fi
 		port="$(uci -q get openmptcprouter.${servername}.port)"
 		server="$(uci -q get openmptcprouter.${servername}.ip)"
@@ -1505,19 +1527,21 @@ _config_service() {
 		if [ "$(uci -q get openmptcprouter.${servername}.username)" != "openmptcprouter" ]; then
 			reason="$reason, custom username"
 		fi
-		logger -t "OMR-VPS" "Can't get token, try later ($reason)"
+		logger -t "OMR-VPS" "Can't get ${servername} token, try later ($reason)"
 		uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
 		return
 	}
 	error=0
-	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && {
+	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && [ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] && {
 		_set_config_from_vps
 		_get_gre_tunnel
 	}
 
-	_get_vps_config
+	[ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] && {
+		_get_vps_config
+	}
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
