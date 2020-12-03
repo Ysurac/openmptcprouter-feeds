@@ -24,7 +24,9 @@ validate_section() {
 		'port:port'           \
 		'dev:string'          \
 		'localip:host'        \
-		'remoteip:host'
+		'remoteip:host'       \
+		'mode:string:client'  \
+		'externalip:string:auto'
 }
 
 start_instance() {
@@ -39,7 +41,8 @@ start_instance() {
 
 	[ -n "${key}" ] || return 1
 	[ "${key}" != "secretkey" ] || return 1
-	[ -n "${port}" ] || return 1
+	[ -z "${host}" ] && host="auto"
+	[ -z "${port}" ] && port="auto"
 	[ -n "${dev}" ] || return 1
 
 	echo "${key}" > /tmp/${PROG_NAME}-${1}.key
@@ -57,14 +60,15 @@ start_instance() {
 
 	procd_open_instance
 
-	procd_set_param command ${PROG} client \
+	procd_set_param command ${PROG} ${mode} \
 		/tmp/${PROG_NAME}-${1}.key \
 		$host \
 		$port \
 		$dev  \
 		${localip:+$localip} \
-		${remoteip:+$remoteip} \
-		$(ip r get $host | awk '{print $3}' | tr -d "\n")
+		${remoteip:+$remoteip}
+	[ "$mode" = "client" ] && procd_append_param command $(ip r get $host | awk '{print $3}' | tr -d "\n")
+	[ "$mode" = "server" ] && procd_append_param command externalip
 
 
 	procd_set_param respawn 0 30 5
