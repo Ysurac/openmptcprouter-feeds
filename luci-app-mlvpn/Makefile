@@ -1,12 +1,12 @@
 #
-# Copyright (C) 2018-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018-2020 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 #
 #
 
 include $(TOPDIR)/rules.mk
 
-LUCI_TITLE:=LuCI Support for MLVPN
-LUCI_DEPENDS:=+mlvpn
+LUCI_TITLE:=LuCI Interface to Glorytun TCP
+LUCI_DEPENDS:=+glorytun
 
 PKG_LICENSE:=GPLv3
 
