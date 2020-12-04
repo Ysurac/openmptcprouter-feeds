@@ -71,6 +71,7 @@ function wizard_add()
 		if nbserver == 1 and server_ip ~= "" and server_ip ~= nil then
 			ucic:set("shadowsocks-libev","sss0","server",server_ip)
 			ucic:set("glorytun","vpn","host",server_ip)
+			ucic:set("glorytun-udp","vpn","host",server_ip)
 			ucic:set("dsvpn","vpn","host",server_ip)
 			ucic:set("mlvpn","general","host",server_ip)
 			ucic:set("ubond","general","host",server_ip)
@@ -491,6 +492,7 @@ function wizard_add()
 					ss_ip=server_ip
 					ucic:set("shadowsocks-libev","sss0","server",server_ip)
 					ucic:set("glorytun","vpn","host",server_ip)
+					ucic:set("glorytun-udp","vpn","host",server_ip)
 					ucic:set("dsvpn","vpn","host",server_ip)
 					ucic:set("mlvpn","general","host",server_ip)
 					ucic:set("ubond","general","host",server_ip)
@@ -512,6 +514,7 @@ function wizard_add()
 				ucic:set("nginx-ha","VPN","enable","0")
 				ucic:set("shadowsocks-libev","sss0","server",server_ip)
 				ucic:set("glorytun","vpn","host",server_ip)
+				ucic:set("glorytun-udp","vpn","host",server_ip)
 				ucic:set("dsvpn","vpn","host",server_ip)
 				ucic:set("mlvpn","general","host",server_ip)
 				ucic:set("ubond","general","host",server_ip)
@@ -538,6 +541,7 @@ function wizard_add()
 	ucic:save("dsvpn")
 	--ucic:commit("dsvpn")
 	ucic:save("glorytun")
+	ucic:save("glorytun-udp")
 	--ucic:commit("glorytun")
 	ucic:save("shadowsocks-libev")
 	--ucic:commit("shadowsocks-libev")
@@ -552,24 +556,28 @@ function wizard_add()
 	elseif encryption == "aes-256-gcm" then
 		ucic:set("shadowsocks-libev","sss0","method","aes-256-gcm")
 		ucic:set("glorytun","vpn","chacha20","0")
+		ucic:set("glorytun-udp","vpn","chacha","0")
 		ucic:set("openvpn","omr","cipher","AES-256-GCM")
 		ucic:set("v2ray","omrout","s_vmess_user_security","aes-128-gcm")
 		ucic:set("v2ray","omrout","s_vless_user_security","aes-128-gcm")
 	elseif encryption == "aes-256-cfb" then
 		ucic:set("shadowsocks-libev","sss0","method","aes-256-cfb")
 		ucic:set("glorytun","vpn","chacha20","0")
+		ucic:set("glorytun-udp","vpn","chacha","0")
 		ucic:set("openvpn","omr","cipher","AES-256-CFB")
 		ucic:set("v2ray","omrout","s_vmess_user_security","aes-128-gcm")
 		ucic:set("v2ray","omrout","s_vless_user_security","aes-128-gcm")
 	elseif encryption == "chacha20-ietf-poly1305" then
 		ucic:set("shadowsocks-libev","sss0","method","chacha20-ietf-poly1305")
 		ucic:set("glorytun","vpn","chacha20","1")
+		ucic:set("glorytun-udp","vpn","chacha","1")
 		ucic:set("openvpn","omr","cipher","AES-256-CBC")
 		ucic:set("v2ray","omrout","s_vmess_user_security","chacha20-poly1305")
 		ucic:set("v2ray","omrout","s_vless_user_security","chacha20-poly1305")
 	end
 	ucic:save("openvpn")
 	ucic:save("glorytun")
+	ucic:save("glorytun-udp")
 	ucic:save("shadowsocks-libev")
 	ucic:save("v2ray")
 
@@ -606,7 +614,7 @@ function wizard_add()
 
 
 	-- Set Glorytun settings
-	if default_vpn:match("^glorytun.*") and disablednb ~= serversnb then
+	if default_vpn:match("glorytun_tcp") and disablednb ~= serversnb then
 		ucic:set("glorytun","vpn","enable",1)
 	else
 		ucic:set("glorytun","vpn","enable",0)
@@ -617,13 +625,7 @@ function wizard_add()
 		ucic:set("glorytun","vpn","port","65001")
 		ucic:set("glorytun","vpn","key",glorytun_key)
 		ucic:set("glorytun","vpn","mptcp",1)
-		if default_vpn == "glorytun_udp" then
-			ucic:set("glorytun","vpn","proto","udp")
-			ucic:set("glorytun","vpn","localip","10.255.254.2")
-			ucic:set("glorytun","vpn","remoteip","10.255.254.1")
-			ucic:set("network","omr6in4","ipaddr","10.255.254.2")
-			ucic:set("network","omr6in4","peeraddr","10.255.254.1")
-		else
+		if default_vpn == "glorytun_tcp" then
 			ucic:set("glorytun","vpn","proto","tcp")
 			ucic:set("glorytun","vpn","localip","10.255.255.2")
 			ucic:set("glorytun","vpn","remoteip","10.255.255.1")
@@ -638,6 +640,29 @@ function wizard_add()
 	end
 	ucic:save("glorytun")
 	ucic:commit("glorytun")
+
+	if default_vpn:match("glorytun_udp") and disablednb ~= serversnb then
+		ucic:set("glorytun-udp","vpn","enable",1)
+	else
+		ucic:set("glorytun-udp","vpn","enable",0)
+	end
+
+	local glorytun_key = luci.http.formvalue("glorytun_key")
+	if glorytun_key ~= "" then
+		ucic:set("glorytun-udp","vpn","port","65001")
+		ucic:set("glorytun-udp","vpn","key",glorytun_key)
+		if default_vpn == "glorytun_udp" then
+			ucic:set("glorytun-udp","vpn","localip","10.255.254.2")
+			ucic:set("glorytun-udp","vpn","remoteip","10.255.254.1")
+			ucic:set("network","omr6in4","ipaddr","10.255.254.2")
+			ucic:set("network","omr6in4","peeraddr","10.255.254.1")
+		end
+		ucic:set("network","omrvpn","proto","none")
+	else
+		ucic:set("glorytun-udp","vpn","key","")
+	end
+	ucic:save("glorytun-udp")
+	ucic:commit("glorytun-udp")
 
 	-- Set A Dead Simple VPN settings
 	if default_vpn == "dsvpn" and disablednb ~= serversnb  then
@@ -844,6 +869,10 @@ function settings_add()
 	-- Enable/disable server ping
 	local disableserverping = luci.http.formvalue("disableserverping") or "0"
 	ucic:set("openmptcprouter","settings","disableserverping",disableserverping)
+
+	-- Enable/disable shadowsocks upd
+	local shadowsocksudp = luci.http.formvalue("shadowsocksudp") or "0"
+	ucic:set("openmptcprouter","settings","shadowsocksudp",shadowsocksudp)
 
 	-- Enable/disable fast open
 	local disablefastopen = luci.http.formvalue("disablefastopen") or "0"

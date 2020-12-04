@@ -371,7 +371,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || [ "$interface_up" != "true" ]; then
 			config_load network
 			config_foreach set_route interface $OMR_TRACKER_INTERFACE
 		fi
-		if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.shadowsocks)" = "up" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q get shadowsocks-libev.hi2.mode)" = "tcp_and_udp" ] && [ "$(uci -q get shadowsocks-libev.sss0.obfs)" != "1" ]; then
+		if [ "$(uci -q get openmptcprouter.settings.shadowsocksudp)" = "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.shadowsocks)" = "up" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q get shadowsocks-libev.hi2.mode)" = "tcp_and_udp" ] && [ "$(uci -q get shadowsocks-libev.sss0.obfs)" != "1" ]; then
 			_log "Tunnel down use ShadowSocks for UDP"
 			uci -q set shadowsocks-libev.ss_rules.redir_udp='hi2'
 			if /etc/init.d/shadowsocks-libev rules_exist ; then
@@ -390,6 +390,9 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || [ "$interface_up" != "true" ]; then
 		if [ "$(uci -q get glorytun.vpn.enable)" = "1" ]; then
 			_log "Glorytun VPN down, restart it"
 			/etc/init.d/glorytun restart
+		fi
+		if [ "$(uci -q get glorytun-udp.vpn.enable)" = "1" ]; then
+			_log "Glorytun UDP VPN down, restart it"
 			/etc/init.d/glorytun-udp restart
 		fi
 		config_load openmptcprouter
@@ -438,7 +441,7 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 		fi
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE="interface"
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency="$OMR_TRACKER_LATENCY"
-		if [ "$(uci -q get glorytun.vpn.enable)" != "1" ]; then
+		if [ "$(uci -q get glorytun.vpn.enable)" != "1" ] || [ "$(uci -q get glorytun-udp.vpn.enable)" != "1" ]; then
 			if [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.mtu)" ]; then
 				mtu=$(uci -q get network.$OMR_TRACKER_INTERFACE.mtu)
 				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
@@ -576,13 +579,13 @@ if [ "$multipath_config" = "on" ] || [ "$multipath_config" = "backup" ]; then
 	[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" != "1" ] && [ "$multipath_config" = "backup" ] && [ "$(pgrep glorytun-udp)" != "" ] && gtudpst="backup"
 	if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep glorytun-udp)" != "" ] && [ "$(glorytun-udp path | grep $OMR_TRACKER_DEVICE_IP)" = "" ]; then
 		if [ "$download" != "0" ] && [ "$download" != "" ] && [ "$upload" != "0" ] && [ "$upload" != "" ]; then
-			if [ "$(uci -q get glorytun.vpn.rateauto)" = "1" ]; then
+			if [ "$(uci -q get glorytun-udp.vpn.rateauto)" = "1" ]; then
 				glorytun-udp path addr $OMR_TRACKER_DEVICE_IP dev tun0 set up rate auto tx $((upload*1000/8)) rx $((download*1000/8)) > /dev/null 2>&1
 			else
 				glorytun-udp path addr $OMR_TRACKER_DEVICE_IP dev tun0 set up rate fixed tx $((upload*1000/8)) rx $((download*1000/8)) > /dev/null 2>&1
 			fi
 		else
-			if [ "$(uci -q get glorytun.vpn.rateauto)" = "1" ]; then
+			if [ "$(uci -q get glorytun-udp.vpn.rateauto)" = "1" ]; then
 				glorytun-udp path addr $OMR_TRACKER_DEVICE_IP dev tun0 set up rate auto tx 12500000 rx 12500000 > /dev/null 2>&1
 			else
 				glorytun-udp path addr $OMR_TRACKER_DEVICE_IP dev tun0 set up rate fixed tx 12500000 rx 12500000 > /dev/null 2>&1
@@ -665,7 +668,7 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 		[ -n "$asn" ] && {
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.asn="$asn"
 		}
-		if [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$(uci -q get glorytun.vpn.enable)" != "1" ]; then
+		if [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$(uci -q get glorytun.vpn.enable)" != "1" ] && [ "$(uci -q get glorytun-udp.vpn.enable)" != "1" ]; then
 			if [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.mtu)" ]; then
 				mtu=$(uci -q get network.$OMR_TRACKER_INTERFACE.mtu)
 				[ -n "$mtu" ] && {
@@ -775,6 +778,10 @@ fi
 if [ "$(pgrep glorytun)" = "" ] && [ "$(uci -q get glorytun.vpn.enable)" = "1" ] && [ -f /etc/init.d/glorytun ] && [ "$(uci -q get glorytun.vpn.key)" != "" ]; then
 	_log "Can't find Glorytun, restart it..."
 	/etc/init.d/glorytun restart
+	sleep 5
+fi
+if [ "$(pgrep glorytun-udp)" = "" ] && [ "$(uci -q get glorytun-usp.vpn.enable)" = "1" ] && [ -f /etc/init.d/glorytun-udp ] && [ "$(uci -q get glorytun-udp.vpn.key)" != "" ]; then
+	_log "Can't find Glorytun UDP, restart it..."
 	/etc/init.d/glorytun-udp restart
 	sleep 5
 fi
