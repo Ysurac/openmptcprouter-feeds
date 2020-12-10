@@ -9,12 +9,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=v2ray-core
-PKG_VERSION:=4.28.2
+PKG_VERSION:=4.31.0
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/v2ray/v2ray-core/tar.gz/v$(PKG_VERSION)?
-PKG_HASH:=13d985f7c1d5eb8fa991562eb4b815cb73c15f67f91e36b36b3cf5901529243e
+PKG_HASH:=4e475c700863320b92689cb36ef993133e9c799375bbfc4a2811da2283c3673f
 
 PKG_LICENSE:=MIT
 PKG_LICENSE_FILES:=LICENSE
@@ -67,7 +67,7 @@ define Package/v2ray-core
   SECTION:=net
   CATEGORY:=Network
   SUBMENU:=Project V
-  DEPENDS:=$(GO_ARCH_DEPENDS) +ca-bundle
+  DEPENDS:=$(GO_ARCH_DEPENDS) +ca-bundle +protobuf
 endef
 
 define Package/v2ray-core/config
