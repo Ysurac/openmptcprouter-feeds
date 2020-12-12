@@ -631,8 +631,8 @@ function wizard_add()
 			ucic:set("glorytun","vpn","remoteip","10.255.255.1")
 			ucic:set("network","omr6in4","ipaddr","10.255.255.2")
 			ucic:set("network","omr6in4","peeraddr","10.255.255.1")
+			ucic:set("network","omrvpn","proto","none")
 		end
-		ucic:set("network","omrvpn","proto","none")
 	else
 		ucic:set("glorytun","vpn","key","")
 		--ucic:set("glorytun","vpn","enable",0)
@@ -656,8 +656,8 @@ function wizard_add()
 			ucic:set("glorytun-udp","vpn","remoteip","10.255.254.1")
 			ucic:set("network","omr6in4","ipaddr","10.255.254.2")
 			ucic:set("network","omr6in4","peeraddr","10.255.254.1")
+			ucic:set("network","omrvpn","proto","none")
 		end
-		ucic:set("network","omrvpn","proto","none")
 	else
 		ucic:set("glorytun-udp","vpn","key","")
 	end
@@ -677,9 +677,11 @@ function wizard_add()
 		ucic:set("dsvpn","vpn","key",dsvpn_key)
 		ucic:set("dsvpn","vpn","localip","10.255.251.2")
 		ucic:set("dsvpn","vpn","remoteip","10.255.251.1")
-		ucic:set("network","omr6in4","ipaddr","10.255.251.2")
-		ucic:set("network","omr6in4","peeraddr","10.255.251.1")
-		ucic:set("network","omrvpn","proto","none")
+		if default_vpn == "dsvpn" then
+			ucic:set("network","omr6in4","ipaddr","10.255.251.2")
+			ucic:set("network","omr6in4","peeraddr","10.255.251.1")
+			ucic:set("network","omrvpn","proto","none")
+		end
 	else
 		ucic:set("dsvpn","vpn","key","")
 		--ucic:set("dsvpn","vpn","enable",0)
@@ -770,6 +772,7 @@ function wizard_add()
 		luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
 		--luci.sys.call("/etc/init.d/ubond restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/openvpnbonding restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/dsvpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/omr-tracker start >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
