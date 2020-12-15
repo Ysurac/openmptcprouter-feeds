@@ -31,6 +31,9 @@ return L.view.extend({
 		o = s.option(form.Flag, 'enable', _('Enabled'));
 		o.default = o.enabled;
 
+		o = s.option(form.Value, 'label', _('Label'));
+		o.rmempty = true;
+
 		o = s.option(form.ListValue, 'mode', _('Mode'));
 		o.value('client',_('Client'));
 		o.value('server',_('Server'));
@@ -57,9 +60,6 @@ return L.view.extend({
 		o = s.option(form.Value, 'remoteip', _('Remote IP'));
 		o.datatype = 'or(ip4addr,ip6addr)';
 		o.rmempty = false;
-
-		o = s.option(form.Value, 'label', _('Label'));
-		o.rmempty = true;
 
 		return m.render();
 	}
