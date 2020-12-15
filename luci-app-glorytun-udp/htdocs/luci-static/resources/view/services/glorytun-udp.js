@@ -42,6 +42,10 @@ return L.view.extend({
 		o = s.taboption('general', form.Flag, 'enable', _('Enabled'));
 		o.default = o.enabled;
 
+		o = s.taboption('general',form.Value, 'label', _('Label'));
+		o.rmempty = true;
+
+
 		o = s.taboption('general', form.ListValue, 'mode', _('Mode'));
 		o.value('to',_('Client'));
 		o.value('from',_('Server'));
@@ -95,9 +99,6 @@ return L.view.extend({
 		o = s.taboption('advanced', form.Flag, 'auto', _('Dynamic rate detection'));
 		o.rmempty = false;
 		o.modalonly = true;
-
-		o = s.taboption('general',form.Value, 'label', _('Label'));
-		o.rmempty = true;
 
 		return m.render();
 	}
