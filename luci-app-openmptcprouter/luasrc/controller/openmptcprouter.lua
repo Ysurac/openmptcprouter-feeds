@@ -8,20 +8,19 @@ local ipc = require "luci.ip"
 module("luci.controller.openmptcprouter", package.seeall)
 
 function index()
---	entry({"admin", "openmptcprouter"}, firstchild(), _("OpenMPTCProuter"), 19).index = true
---	entry({"admin", "openmptcprouter", "wizard"}, template("openmptcprouter/wizard"), _("Wizard"), 1).leaf = true
---	entry({"admin", "openmptcprouter", "wizard_add"}, post("wizard_add")).leaf = true
-	entry({"admin", "system", "openmptcprouter"}, alias("admin", "system", "openmptcprouter", "wizard"), _("OpenMPTCProuter"), 1)
-	entry({"admin", "system", "openmptcprouter", "wizard"}, template("openmptcprouter/wizard"), _("Settings Wizard"), 1)
-	entry({"admin", "system", "openmptcprouter", "wizard_add"}, post("wizard_add"))
-	entry({"admin", "system", "openmptcprouter", "status"}, template("openmptcprouter/wanstatus"), _("Status"), 2).leaf = true
-	entry({"admin", "system", "openmptcprouter", "interfaces_status"}, call("interfaces_status")).leaf = true
-	entry({"admin", "system", "openmptcprouter", "settings"}, template("openmptcprouter/settings"), _("Advanced Settings"), 3).leaf = true
-	entry({"admin", "system", "openmptcprouter", "settings_add"}, post("settings_add"))
-	entry({"admin", "system", "openmptcprouter", "update_vps"}, post("update_vps"))
-	entry({"admin", "system", "openmptcprouter", "backup"}, template("openmptcprouter/backup"), _("Backup on server"), 3).leaf = true
-	entry({"admin", "system", "openmptcprouter", "backupgr"}, post("backupgr"))
-	entry({"admin", "system", "openmptcprouter", "debug"}, template("openmptcprouter/debug"), _("Show all settings"), 5).leaf = true
+	local ucic  = luci.model.uci.cursor()
+	menuentry = ucic:get("openmptcprouter","settings","menu") or "OpenMPTCProuter"
+	entry({"admin", "system", menuentry:lower()}, alias("admin", "system", menuentry:lower(), "wizard"), _(menuentry), 1)
+	entry({"admin", "system", menuentry:lower(), "wizard"}, template("openmptcprouter/wizard"), _("Settings Wizard"), 1)
+	entry({"admin", "system", menuentry:lower(), "wizard_add"}, post("wizard_add"))
+	entry({"admin", "system", menuentry:lower(), "status"}, template("openmptcprouter/wanstatus"), _("Status"), 2).leaf = true
+	entry({"admin", "system", menuentry:lower(), "interfaces_status"}, call("interfaces_status")).leaf = true
+	entry({"admin", "system", menuentry:lower(), "settings"}, template("openmptcprouter/settings"), _("Advanced Settings"), 3).leaf = true
+	entry({"admin", "system", menuentry:lower(), "settings_add"}, post("settings_add"))
+	entry({"admin", "system", menuentry:lower(), "update_vps"}, post("update_vps"))
+	entry({"admin", "system", menuentry:lower(), "backup"}, template("openmptcprouter/backup"), _("Backup on server"), 3).leaf = true
+	entry({"admin", "system", menuentry:lower(), "backupgr"}, post("backupgr"))
+	entry({"admin", "system", menuentry:lower(), "debug"}, template("openmptcprouter/debug"), _("Show all settings"), 5).leaf = true
 end
 
 function interface_from_device(dev)
@@ -72,6 +71,7 @@ function wizard_add()
 		if nbserver == 1 and server_ip ~= "" and server_ip ~= nil then
 			ucic:set("shadowsocks-libev","sss0","server",server_ip)
 			ucic:set("glorytun","vpn","host",server_ip)
+			ucic:set("glorytun-udp","vpn","host",server_ip)
 			ucic:set("dsvpn","vpn","host",server_ip)
 			ucic:set("mlvpn","general","host",server_ip)
 			ucic:set("ubond","general","host",server_ip)
@@ -448,14 +448,26 @@ function wizard_add()
 	-- Get Proxy set by default
 	local default_proxy = luci.http.formvalue("default_proxy") or "shadowsocks"
 	if default_proxy == "shadowsocks" and serversnb > 0 and serversnb > disablednb then
-		ucic:set("shadowsocks-libev","sss0","disabled","0")
+		--ucic:set("shadowsocks-libev","sss0","disabled","0")
 		ucic:set("v2ray","main","enabled","0")
+		ucic:foreach("shadowsocks-libev", "server", function(s)
+			local sectionname = s[".name"]
+			ucic:set("shadowsocks-libev",sectionname,"disabled","0")
+		end)
 	elseif default_proxy == "v2ray" and serversnb > 0 and serversnb > disablednb then
-		ucic:set("shadowsocks-libev","sss0","disabled","1")
+		--ucic:set("shadowsocks-libev","sss0","disabled","1")
 		ucic:set("v2ray","main","enabled","1")
+		ucic:foreach("shadowsocks-libev", "server", function(s)
+			local sectionname = s[".name"]
+			ucic:set("shadowsocks-libev",sectionname,"disabled","1")
+		end)
 	else
-		ucic:set("shadowsocks-libev","sss0","disabled","1")
+		--ucic:set("shadowsocks-libev","sss0","disabled","1")
 		ucic:set("v2ray","main","enabled","0")
+		ucic:foreach("shadowsocks-libev", "server", function(s)
+			local sectionname = s[".name"]
+			ucic:set("shadowsocks-libev",sectionname,"disabled","1")
+		end)
 	end
 	ucic:set("openmptcprouter","settings","proxy",default_proxy)
 	ucic:save("openmptcprouter")
@@ -480,6 +492,7 @@ function wizard_add()
 					ss_ip=server_ip
 					ucic:set("shadowsocks-libev","sss0","server",server_ip)
 					ucic:set("glorytun","vpn","host",server_ip)
+					ucic:set("glorytun-udp","vpn","host",server_ip)
 					ucic:set("dsvpn","vpn","host",server_ip)
 					ucic:set("mlvpn","general","host",server_ip)
 					ucic:set("ubond","general","host",server_ip)
@@ -501,6 +514,7 @@ function wizard_add()
 				ucic:set("nginx-ha","VPN","enable","0")
 				ucic:set("shadowsocks-libev","sss0","server",server_ip)
 				ucic:set("glorytun","vpn","host",server_ip)
+				ucic:set("glorytun-udp","vpn","host",server_ip)
 				ucic:set("dsvpn","vpn","host",server_ip)
 				ucic:set("mlvpn","general","host",server_ip)
 				ucic:set("ubond","general","host",server_ip)
@@ -527,6 +541,7 @@ function wizard_add()
 	ucic:save("dsvpn")
 	--ucic:commit("dsvpn")
 	ucic:save("glorytun")
+	ucic:save("glorytun-udp")
 	--ucic:commit("glorytun")
 	ucic:save("shadowsocks-libev")
 	--ucic:commit("shadowsocks-libev")
@@ -541,24 +556,28 @@ function wizard_add()
 	elseif encryption == "aes-256-gcm" then
 		ucic:set("shadowsocks-libev","sss0","method","aes-256-gcm")
 		ucic:set("glorytun","vpn","chacha20","0")
+		ucic:set("glorytun-udp","vpn","chacha","0")
 		ucic:set("openvpn","omr","cipher","AES-256-GCM")
 		ucic:set("v2ray","omrout","s_vmess_user_security","aes-128-gcm")
 		ucic:set("v2ray","omrout","s_vless_user_security","aes-128-gcm")
 	elseif encryption == "aes-256-cfb" then
 		ucic:set("shadowsocks-libev","sss0","method","aes-256-cfb")
 		ucic:set("glorytun","vpn","chacha20","0")
+		ucic:set("glorytun-udp","vpn","chacha","0")
 		ucic:set("openvpn","omr","cipher","AES-256-CFB")
 		ucic:set("v2ray","omrout","s_vmess_user_security","aes-128-gcm")
 		ucic:set("v2ray","omrout","s_vless_user_security","aes-128-gcm")
 	elseif encryption == "chacha20-ietf-poly1305" then
 		ucic:set("shadowsocks-libev","sss0","method","chacha20-ietf-poly1305")
 		ucic:set("glorytun","vpn","chacha20","1")
+		ucic:set("glorytun-udp","vpn","chacha","1")
 		ucic:set("openvpn","omr","cipher","AES-256-CBC")
 		ucic:set("v2ray","omrout","s_vmess_user_security","chacha20-poly1305")
 		ucic:set("v2ray","omrout","s_vless_user_security","chacha20-poly1305")
 	end
 	ucic:save("openvpn")
 	ucic:save("glorytun")
+	ucic:save("glorytun-udp")
 	ucic:save("shadowsocks-libev")
 	ucic:save("v2ray")
 
@@ -595,7 +614,7 @@ function wizard_add()
 
 
 	-- Set Glorytun settings
-	if default_vpn:match("^glorytun.*") and disablednb ~= serversnb then
+	if default_vpn:match("glorytun_tcp") and disablednb ~= serversnb then
 		ucic:set("glorytun","vpn","enable",1)
 	else
 		ucic:set("glorytun","vpn","enable",0)
@@ -606,20 +625,14 @@ function wizard_add()
 		ucic:set("glorytun","vpn","port","65001")
 		ucic:set("glorytun","vpn","key",glorytun_key)
 		ucic:set("glorytun","vpn","mptcp",1)
-		if default_vpn == "glorytun_udp" then
-			ucic:set("glorytun","vpn","proto","udp")
-			ucic:set("glorytun","vpn","localip","10.255.254.2")
-			ucic:set("glorytun","vpn","remoteip","10.255.254.1")
-			ucic:set("network","omr6in4","ipaddr","10.255.254.2")
-			ucic:set("network","omr6in4","peeraddr","10.255.254.1")
-		else
+		if default_vpn == "glorytun_tcp" then
 			ucic:set("glorytun","vpn","proto","tcp")
 			ucic:set("glorytun","vpn","localip","10.255.255.2")
 			ucic:set("glorytun","vpn","remoteip","10.255.255.1")
 			ucic:set("network","omr6in4","ipaddr","10.255.255.2")
 			ucic:set("network","omr6in4","peeraddr","10.255.255.1")
+			ucic:set("network","omrvpn","proto","none")
 		end
-		ucic:set("network","omrvpn","proto","none")
 	else
 		ucic:set("glorytun","vpn","key","")
 		--ucic:set("glorytun","vpn","enable",0)
@@ -627,6 +640,29 @@ function wizard_add()
 	end
 	ucic:save("glorytun")
 	ucic:commit("glorytun")
+
+	if default_vpn:match("glorytun_udp") and disablednb ~= serversnb then
+		ucic:set("glorytun-udp","vpn","enable",1)
+	else
+		ucic:set("glorytun-udp","vpn","enable",0)
+	end
+
+	local glorytun_key = luci.http.formvalue("glorytun_key")
+	if glorytun_key ~= "" then
+		ucic:set("glorytun-udp","vpn","port","65001")
+		ucic:set("glorytun-udp","vpn","key",glorytun_key)
+		if default_vpn == "glorytun_udp" then
+			ucic:set("glorytun-udp","vpn","localip","10.255.254.2")
+			ucic:set("glorytun-udp","vpn","remoteip","10.255.254.1")
+			ucic:set("network","omr6in4","ipaddr","10.255.254.2")
+			ucic:set("network","omr6in4","peeraddr","10.255.254.1")
+			ucic:set("network","omrvpn","proto","none")
+		end
+	else
+		ucic:set("glorytun-udp","vpn","key","")
+	end
+	ucic:save("glorytun-udp")
+	ucic:commit("glorytun-udp")
 
 	-- Set A Dead Simple VPN settings
 	if default_vpn == "dsvpn" and disablednb ~= serversnb  then
@@ -641,9 +677,11 @@ function wizard_add()
 		ucic:set("dsvpn","vpn","key",dsvpn_key)
 		ucic:set("dsvpn","vpn","localip","10.255.251.2")
 		ucic:set("dsvpn","vpn","remoteip","10.255.251.1")
-		ucic:set("network","omr6in4","ipaddr","10.255.251.2")
-		ucic:set("network","omr6in4","peeraddr","10.255.251.1")
-		ucic:set("network","omrvpn","proto","none")
+		if default_vpn == "dsvpn" then
+			ucic:set("network","omr6in4","ipaddr","10.255.251.2")
+			ucic:set("network","omr6in4","peeraddr","10.255.251.1")
+			ucic:set("network","omrvpn","proto","none")
+		end
 	else
 		ucic:set("dsvpn","vpn","key","")
 		--ucic:set("dsvpn","vpn","enable",0)
@@ -718,7 +756,9 @@ function wizard_add()
 	ucic:commit("openmptcprouter")
 
 	-- Restart all
+	menuentry = ucic:get("openmptcprouter","settings","menu") or "openmptcprouter"
 	if gostatus == true then
+		luci.sys.call("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
 		luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/omr-tracker stop >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/mptcp restart >/dev/null 2>/dev/null")
@@ -732,15 +772,16 @@ function wizard_add()
 		luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
 		--luci.sys.call("/etc/init.d/ubond restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/openvpnbonding restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/dsvpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/omr-tracker start >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/mptcpovervpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/v2ray restart >/dev/null 2>/dev/null")
-		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/status"))
+		luci.http.redirect(luci.dispatcher.build_url("admin/system/" .. menuentry:lower() .. "/status"))
 	else
-		luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/wizard"))
+		luci.http.redirect(luci.dispatcher.build_url("admin/system/" .. menuentry:lower() .. "/wizard"))
 	end
 	return
 end
@@ -800,7 +841,8 @@ function settings_add()
 	
 	-- Disable IPv6
 	local disable_ipv6 = luci.http.formvalue("enableipv6") or "1"
-	local dump = require("luci.util").ubus("openmptcprouter", "disableipv6", { disable_ipv6 = tonumber(disable_ipv6)})
+	ucic:set("openmptcprouter","settings","disable_ipv6",disable_ipv6)
+	--local dump = require("luci.util").ubus("openmptcprouter", "disableipv6", { disable_ipv6 = tonumber(disable_ipv6)})
 
 	-- Enable/disable external check
 	local externalcheck = luci.http.formvalue("externalcheck") or "1"
@@ -830,6 +872,10 @@ function settings_add()
 	-- Enable/disable server ping
 	local disableserverping = luci.http.formvalue("disableserverping") or "0"
 	ucic:set("openmptcprouter","settings","disableserverping",disableserverping)
+
+	-- Enable/disable shadowsocks upd
+	local shadowsocksudp = luci.http.formvalue("shadowsocksudp") or "0"
+	ucic:set("openmptcprouter","settings","shadowsocksudp",shadowsocksudp)
 
 	-- Enable/disable fast open
 	local disablefastopen = luci.http.formvalue("disablefastopen") or "0"
@@ -897,9 +943,11 @@ function settings_add()
 
 	-- Apply all settings
 	luci.sys.call("/etc/init.d/openmptcprouter restart >/dev/null 2>/dev/null")
+	luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
 
 	-- Done, redirect
-	luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/settings"))
+	menuentry = ucic:get("openmptcprouter","settings","menu") or "openmptcprouter"
+	luci.http.redirect(luci.dispatcher.build_url("admin/system/" .. menuentry:lower() .. "/settings"))
 	return
 end
 
@@ -922,7 +970,8 @@ function backupgr()
 	if send_backup ~= "" then
 		luci.sys.call("/etc/init.d/openmptcprouter-vps backup_send >/dev/null 2>/dev/null")
 	end
-	luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/backup"))
+	menuentry = ucic:get("openmptcprouter","settings","menu") or "openmptcprouter"
+	luci.http.redirect(luci.dispatcher.build_url("admin/system/" .. menuentry:lower() .. "/backup"))
 	return
 end
 

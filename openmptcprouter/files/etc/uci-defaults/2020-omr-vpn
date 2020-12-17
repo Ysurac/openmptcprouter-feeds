@@ -24,6 +24,13 @@ if [ "$(uci -q get glorytun.vpn.localip)" = "10.0.0.2" ]; then
 	EOF
 fi
 
+if [ "$(uci -q get network.omrvpn.txqueuelen)" = "1000" ]; then
+	uci -q batch <<-EOF >/dev/null
+		set network.omrvpn.txqueuelen=100
+		commit network
+	EOF
+fi
+
 if [ "$(uci -q get openvpn.omr.proto)" != "tcp-client" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set openvpn.omr=openvpn
@@ -67,11 +74,18 @@ if [ "$(uci -q get dsvpn.vpn)" = "" ]; then
 		set dsvpn.vpn.port=65011
 		set dsvpn.vpn.localip=10.255.251.2
 		set dsvpn.vpn.remoteip=10.255.251.1
+		set dsvpn.vpn.mode=client
 		set dsvpn.vpn.enable=0
 		commit dsvpn
 	EOF
 fi
 
+if [ "$(uci -q get dsvpn.vpn.mode)" = "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		set dsvpn.vpn.mode=client
+		commit dsvpn
+	EOF
+fi
 
 if [ "$(uci -q show firewall | grep omrvpn)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
@@ -93,6 +107,12 @@ if [ "$(uci -q get ucitrack.@network[-1].affects | grep glorytun)" = "" ]; then
 		commit ucitrack
 	EOF
 fi
+if [ "$(uci -q get ucitrack.@network[-1].affects | grep glorytun-udp)" = "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		add_list ucitrack.@network[-1].affects="glorytun-udp"
+		commit ucitrack
+	EOF
+fi
 if [ "$(uci -q get ucitrack.@network[-1].affects | grep dsvpn)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
 		add_list ucitrack.@network[-1].affects="dsvpn"
@@ -105,6 +125,28 @@ if [ "$(uci -q get ucitrack.@glorytun[-1].affects | grep openmptcprouter-vps)" =
 		commit ucitrack
 	EOF
 fi
+if [ "$(uci -q get ucitrack.@glorytun-udp[-1].affects | grep openmptcprouter-vps)" = "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		add_list ucitrack.@glorytun-udp[-1].affects="openmptcprouter-vps"
+		commit ucitrack
+	EOF
+fi
+
+if [ "$(uci -q get glorytun-udp.vpn.key)" = "" ] && [ "$(uci -q get glorytun.vpn.key)" != "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		set glorytun-udp.vpn.key=$(uci -q get glorytun.vpn.key)
+		set glorytun-udp.vpn.host=$(uci -q get glorytun.vpn.host)
+	EOF
+	if [ "$(uci -q get glorytun-udp.vpn.proto)" = "udp" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set glorytun-udp.vpn.enable=1
+			set glorytun.vpn.enable=0
+			commit glorytun
+		EOF
+	fi
+	uci -q commit glorytun-udp
+fi
+
 
 
 rm -f /tmp/luci-indexcache

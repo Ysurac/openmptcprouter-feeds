@@ -48,13 +48,29 @@ interface_macaddr_count() {
 
 interface_max_metric() {
 	local config="$1"
-	config_get metric "$config" metric
-	if [ "$metric" = "$count" ]; then
-		count=$((count+1))
-		config_set "$config" metric $count
-	fi
-	if [ "$metric" -gt "$count" ]; then
-		count=$metric
+	if [ "$1" != "omrvpn" ] && [ "$1" != "omr6in4" ]; then
+		config_get metric "$config" metric
+		if [ "$metric" = "$count" ]; then
+			count=$((count+1))
+			config_set "$config" metric $count
+		fi
+		if [ "$metric" -gt "$count" ]; then
+			count=$metric
+		fi
+	elif [ "$1" = "omrvpn" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set network.${config}.metric=1200
+			commit network
+			set openmptcprouter.${config}.metric=1200
+			commit openmptcprouter
+		EOF
+	elif [ "$1" = "omr6in4" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set network.${config}.metric=1201
+			commit network
+			set openmptcprouter.${config}.metric=1201
+			commit openmptcprouter
+		EOF
 	fi
 }
 
@@ -306,6 +322,7 @@ interface_multipath_settings() {
 				EOF
 			else
 				ip -6 rule add from $ip6addr table 6$id pref 0
+				ip -6 route replace $network6/$netmask6 dev $iface scope link metric 6$id
 				ip -6 route replace $network6/$netmask6 dev $iface scope link table 6$id
 				ip -6 route replace default via $gateway6 dev $iface table 6$id
 				ip -6 route replace default via $gateway6 dev $iface metric $id
@@ -454,17 +471,13 @@ reload_service() {
 	return 0
 }
 
-add_interface_trigger() {
-	local interface ignore
-
-	config_get interface "$1" interface
-	config_get_bool ignore "$1" ignore 0
-
-	[ -n "$interface" -a $ignore -eq 0 ] && procd_add_interface_trigger "interface.*" "$interface" /etc/init.d/mptcp reload
-}
+service_triggers_load_interface() { ifaces="${ifaces}${1} "; }
 
 service_triggers() {
+	local ifaces n
+	config_load network; config_foreach service_triggers_load_interface 'interface';
 	procd_add_reload_trigger "network"
-	config_load network
-	config_foreach add_interface_trigger interface
+	procd_open_trigger
+		for n in $ifaces; do procd_add_reload_interface_trigger "$n"; procd_add_interface_trigger "interface.*" "$n" /etc/init.d/mptcp reload; done;
+	procd_close_trigger
 }
