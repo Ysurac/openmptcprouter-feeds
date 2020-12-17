@@ -756,7 +756,8 @@ _set_client2client() {
 }
 
 _vps_firewall_redirect_port() {
-	local src proto src_dport
+	local src proto src_dport section
+	section=$1
 	config_get src $1 src
 	config_get proto $1 proto "tcp udp"
 	config_get src_dport $1 src_dport
@@ -767,6 +768,14 @@ _vps_firewall_redirect_port() {
 	config_get dest_port $1 dest_port
 	config_get src_ip $1 src_ip
 	config_get v2ray $1 v2ray "0"
+	config_get dmz $1 dmz "0"
+	if [ "$dmz" = "1" ] && [ "$src_dport" != "2-64999" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set firewall.${section}.src_dport='2-64999'
+			commit firewall
+		EOF
+		src_dport='2-64999'
+	fi
 	if [ -n "$src_dport" ] && [ "$(echo $src_dport | cut -d'-' -f2)" -ge "65000" ]; then
 		logger -t "OMR-VPS" "You can't redirect ports >= 65000, they are needed by OpenMPTCProuter Server part"
 		enabled="0"
