@@ -96,7 +96,7 @@ return L.view.extend({
 		o.rmempty = false;
 		o.modalonly = true;
 
-		o = s.taboption('advanced', form.Flag, 'auto', _('Dynamic rate detection'));
+		o = s.taboption('advanced', form.Flag, 'rateauto', _('Dynamic rate detection'));
 		o.rmempty = false;
 		o.modalonly = true;
 
