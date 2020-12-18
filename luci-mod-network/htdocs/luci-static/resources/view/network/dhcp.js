@@ -491,7 +491,8 @@ return view.extend({
 		so.datatype = 'or(ip4addr,"ignore")';
 		so.rmempty = true;
 
-		so = ss.option(form.Value, 'leasetime', _('Lease time'));
+		so = ss.option(form.Value, 'leasetime', _('Lease time'), _('The lease time is in seconds, or minutes (eg 45m) or hours (eg 1h) or "infinite"'));
+		so.placeholder = '12h';
 		so.rmempty = true;
 
 		so = ss.option(form.Value, 'duid', _('<abbr title="The DHCP Unique Identifier">DUID</abbr>'));
