@@ -396,6 +396,9 @@ function wizard_add()
 		vpn_port = 65301
 		vpn_intf = "tun0"
 		ucic:set("network","omrvpn","proto","dhcp")
+	elseif default_vpn == "openvpn_bonding" then
+		vpn_intf = "bonding-omrvpn"
+		ucic:set("network","omrvpn","proto","bonding")
 	end
 	if vpn_intf ~= "" then
 		ucic:set("network","omrvpn","ifname",vpn_intf)
