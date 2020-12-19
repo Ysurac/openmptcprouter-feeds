@@ -163,8 +163,10 @@ return view.extend({
 			var name = uci.get('firewall', section_id, 'name'),
 			    cfgvalue = this.cfgvalue(section_id);
 
+			/*
 			if (typeof(cfgvalue) == 'string' && Array.isArray(formvalue) && (cfgvalue == formvalue.join(' ')))
 				return;
+			*/
 
 			var tasks = [ firewall.getZone(name) ];
 
