@@ -1,11 +1,11 @@
 #
-# Copyright (C) 2018-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+# Copyright (C) 2018-2020 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 #
 #
 
 include $(TOPDIR)/rules.mk
 
-LUCI_TITLE:=LuCI Support for DSVPN
+LUCI_TITLE:=LuCI Interface to DSVPN
 LUCI_DEPENDS:=+dsvpn
 
 PKG_LICENSE:=GPLv3

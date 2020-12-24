@@ -163,8 +163,10 @@ return view.extend({
 			var name = uci.get('firewall', section_id, 'name'),
 			    cfgvalue = this.cfgvalue(section_id);
 
+			/*
 			if (typeof(cfgvalue) == 'string' && Array.isArray(formvalue) && (cfgvalue == formvalue.join(' ')))
 				return;
+			*/
 
 			var tasks = [ firewall.getZone(name) ];
 
@@ -177,9 +179,11 @@ return view.extend({
 				}
 
 			return Promise.all(tasks).then(function(zone_networks) {
-				if (zone_networks[0])
+				if (zone_networks[0]) {
+					zone_networks[0].clearNetworks();
 					for (var i = 1; i < zone_networks.length; i++)
 						zone_networks[0].addNetwork(zone_networks[i].getName());
+				}
 			});
 		};
 

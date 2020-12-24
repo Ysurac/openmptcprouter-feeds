@@ -1,0 +1,103 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2020 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+# Released under GPL 3. See LICENSE for the full terms.
+
+{
+	START=70
+	STOP=10
+	USE_PROCD=1
+}
+
+_getremoteip() {
+	[ "$(uci -q get openmptcprouter.$1.master)" = "1" ] && remoteip=$(uci -q get openmptcprouter.$1.ip)
+}
+
+_openvpnbonding() {
+	local interface=$1
+	if [ "$(uci -q get openmptcprouter.${interface}.multipath)" = "master" ] || [ "$(uci -q get openmptcprouter.${interface}.multipath)" = "on" ]; then
+		nbintf=$(($nbintf+1))
+		remoteip=""
+		config_load openmptcprouter
+		config_foreach _getremoteip server
+		if [ -n "$remoteip" ]; then
+			localip=$(ubus call network.interface.$interface status | jsonfilter -e '@["ipv4-address"][0].address' | tr -d "\n")
+			uci -q batch <<-EOF >/dev/null
+				set openvpn.omr_bonding_${interface}=openvpn
+				set openvpn.omr_bonding_${interface}.dev="bond${interface}"
+				set openvpn.omr_bonding_${interface}.dev_type="tap"
+				set openvpn.omr_bonding_${interface}.cipher='AES-256-CBC'
+				set openvpn.omr_bonding_${interface}.port="6535${nbintf}"
+				set openvpn.omr_bonding_${interface}.remote="${remoteip}"
+				set openvpn.omr_bonding_${interface}.local="${localip}"
+				set openvpn.omr_bonding_${interface}.lport='0'
+				set openvpn.omr_bonding_${interface}.ncp_disable='1'
+				set openvpn.omr_bonding_${interface}.auth_nocache='1'
+				set openvpn.omr_bonding_${interface}.proto='udp'
+				set openvpn.omr_bonding_${interface}.client='1'
+				set openvpn.omr_bonding_${interface}.tls_client='1'
+				set openvpn.omr_bonding_${interface}.enabled='1'
+				set openvpn.omr_bonding_${interface}.persist_tun='1'
+				set openvpn.omr_bonding_${interface}.key='/etc/luci-uploads/client.key'
+				set openvpn.omr_bonding_${interface}.cert='/etc/luci-uploads/client.crt'
+				set openvpn.omr_bonding_${interface}.ca='/etc/luci-uploads/ca.crt'
+				commit openvpn
+			EOF
+			if [ "$(uci -q get network.omrvpn.slaves | grep bond${interface})" = "" ]; then
+				uci -q add_list network.omrvpn.slaves="bond${interface}"
+			fi
+			/etc/init.d/openvpn start omr_bonding_${interface}
+			ip link set bond${interface} master bonding-omrvpn
+		fi
+	fi
+}
+
+_disable_openvpnbonding()
+{
+	name=$1
+	if [ "$(echo $name | grep omr_bonding)" != "" ]; then
+		uci -q set openvpn.${name}.enabled='0'
+	fi
+}
+
+start_service()
+{
+	if [ "$(uci -q get openmptcprouter.settings.vpn)" = "openvpn_bonding" ]; then
+		nbintf=0
+		uci -q batch <<-EOF >/dev/null
+			set network.omrvpn.proto='bonding'
+			set network.omrvpn.bonding_policy='balance-rr'
+			set network.omrvpn.packets_per_slave='1'
+			set network.omrvpn.xmit_hash_policy='layer2'
+			set network.omrvpn.all_slaves_active='0'
+			set network.omrvpn.netmask='255.255.255.0'
+			set network.omrvpn.ipaddr='10.255.248.2'
+			set network.omrvpn.link_monitoring='mii'
+			set network.omrvpn.miimon='10'
+			set network.omrvpn.downdelay='100'
+			set network.omrvpn.updelay='20'
+			set network.omrvpn.use_carrier='1'
+			set network.omrvpn.mtu='1440'
+			set network.omrvpn.ifname= 'bonding-omrvpn'
+			set network.omrvpn.force_link='1'
+			commit network
+		EOF
+		if [ "$(ip link show bonding-omrvpn)" = "" ]; then
+			/etc/init.d/network restart
+			sleep 10
+		fi
+		config_load openmptcprouter
+		config_foreach _openvpnbonding interface
+		ip link set bonding-omrvpn up
+		uci -q batch <<-EOF >/dev/null
+			commit network
+		EOF
+	else
+		config_load openvpn
+		config_foreach _disable_openvpnbonding
+		uci -q commit openvpn
+	fi
+}
+
+service_triggers() {
+	procd_add_reload_trigger "openvpn" "network"
+}
