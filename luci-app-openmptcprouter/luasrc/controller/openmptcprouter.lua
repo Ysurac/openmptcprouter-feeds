@@ -864,6 +864,10 @@ function settings_add()
 	local disablegwping = luci.http.formvalue("disablegwping") or "0"
 	ucic:set("openmptcprouter","settings","disablegwping",disablegwping)
 
+	-- Enable/disable renaming intf
+	local disableintfrename = luci.http.formvalue("disableintfrename") or "0"
+	ucic:set("openmptcprouter","settings","disableintfrename",disableintfrename)
+
 	-- Enable/disable default gateway
 	local disabledefaultgw = luci.http.formvalue("disabledefaultgw") or "1"
 	ucic:set("openmptcprouter","settings","defaultgw",disabledefaultgw)
