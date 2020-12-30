@@ -74,7 +74,7 @@ MY_DEPENDS := \
     kmod-usb-dwc3-qcom kmod-gpio-button-hotplug kmod-hwmon-gpiofan kmod-i2c-gpio kmod-i2c-mux-gpio kmod-input-gpio-encoder \
     kmod-input-gpio-keys kmod-input-gpio-keys-polled kmod-leds-gpio kmod-ledtrig-gpio kmod-gpio-beeper kmod-gpio-button-hotplug \
     kmod-gpio-dev kmod-pps-gpio kmod-ledtrig-activity kmod-ledtrig-default-on kmod-ledtrig-heartbeat kmod-ledtrig-netdev \
-    kmod-ledtrig-oneshot kmod-ledtrig-timer kmod-ledtrig-transient \
+    kmod-ledtrig-oneshot kmod-ledtrig-timer kmod-ledtrig-transient kmod-usb-ledtrig-usbport kmod-usb2 \
     luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre
 
 OMR_SUPPORTED_LANGS := en
