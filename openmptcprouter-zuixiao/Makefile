@@ -7,7 +7,7 @@
 
 include $(TOPDIR)/rules.mk
 
-PKG_NAME:=openmptcprouter-mini
+PKG_NAME:=openmptcprouter-zuixiao
 PKG_VERSION:=0.1
 PKG_RELEASE:=1
 
@@ -87,11 +87,11 @@ define Package/$(PKG_NAME)
 SECTION:=OMR
 CATEGORY:=OpenMPTCProuter
 DEPENDS:=$(foreach p,$(MY_DEPENDS),+$(p)) $(foreach lang,$(OMR_SUPPORTED_LANGS),+LUCI_LANG_$(lang):luci-i18n-base-$(lang))
-TITLE:=OpenMPTCProuter Mini Package
+TITLE:=OpenMPTCProuter zuixiao Package
 endef
 
 define Package/$(PKG_NAME)/description
-OpenMPTCProuter Mini package
+OpenMPTCProuter zuixiao package
 endef
 
 define Build/Compile
