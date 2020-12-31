@@ -7,7 +7,7 @@
 
 include $(TOPDIR)/rules.mk
 
-PKG_NAME:=openmptcprouter-zuixiao
+PKG_NAME:=openmptcprouter-mini
 PKG_VERSION:=0.1
 PKG_RELEASE:=1
 
@@ -17,6 +17,7 @@ MY_DEPENDS := \
     mptcp       \
     unbound-daemon unbound-control unbound-anchor \
     netifd      \
+    luci-app-dsvpn \
     mc          \
     f2fs-tools \
     openmptcprouter \
@@ -35,12 +36,14 @@ MY_DEPENDS := \
     libiwinfo-lua \
     ca-bundle ca-certificates libustream-openssl \
     luci-mod-admin-full luci-app-firewall luci-app-glorytun-tcp luci-app-glorytun-udp luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-base \
-    luci-app-omr-tracker \
-    luci-app-vnstat2 \
-    luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-upnp \
+    luci-app-omr-tracker luci-app-omr-dscp \
+    luci-app-sqm sqm-scripts-extra \
+    luci-app-vnstat2 omr-quota luci-app-omr-quota \
+    luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail luci-app-upnp \
     luci-app-opkg \
     luci-app-uhttpd \
     luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
+    luci-app-openvpn \
     macvlan \
     shadowsocks-libev-ss-server shadowsocks-libev-ss-tunnel \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd ip6tables \
@@ -69,8 +72,9 @@ MY_DEPENDS := \
     !TARGET_mvebu:kmod-usb-serial !TARGET_mvebu:kmod-usb-serial-option !TARGET_mvebu:kmod-usb-serial-wwan !TARGET_mvebu:usb-modeswitch !TARGET_mvebu:uqmi \
     !TARGET_mvebu:umbim !TARGET_mvebu:kmod-mii !TARGET_mvebu:kmod-usb-net !TARGET_mvebu:kmod-usb-wdm !TARGET_mvebu:kmod-usb-net-qmi-wwan !TARGET_mvebu:kmod-usb-net-cdc-mbim !TARGET_mvebu:umbim \
     !TARGET_mvebu:kmod-usb-net-huawei-cdc-ncm !TARGET_mvebu:kmod-usb-net-rndis !TARGET_mvebu:kmod-usb-net-cdc-ether !TARGET_mvebu:kmod-usb-net-ipheth !TARGET_mvebu:usbmuxd \
-    !TARGET_mvebu:luci-proto-qmi wpad-basic \
-    464xlat !TARGET_mvebu:kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-https-dns-proxy kmod-tcp-nanqinlang iptables-mod-ipopt ss \
+    kmod-rt2800-usb kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su \
+    !TARGET_mvebu:luci-proto-qmi wpad-basic kmod-mt7601u kmod-rtl8187 \
+    luci-app-mlvpn mlvpn 464xlat !TARGET_mvebu:kmod-usb-net-smsc75xx kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-https-dns-proxy kmod-tcp-nanqinlang iptables-mod-ipopt ss \
     kmod-usb-dwc3-qcom kmod-gpio-button-hotplug kmod-hwmon-gpiofan kmod-i2c-gpio kmod-i2c-mux-gpio kmod-input-gpio-encoder \
     kmod-input-gpio-keys kmod-input-gpio-keys-polled kmod-leds-gpio kmod-ledtrig-gpio kmod-gpio-beeper kmod-gpio-button-hotplug \
     kmod-gpio-dev kmod-pps-gpio kmod-ledtrig-activity kmod-ledtrig-default-on kmod-ledtrig-heartbeat kmod-ledtrig-netdev \
@@ -83,11 +87,11 @@ define Package/$(PKG_NAME)
 SECTION:=OMR
 CATEGORY:=OpenMPTCProuter
 DEPENDS:=$(foreach p,$(MY_DEPENDS),+$(p)) $(foreach lang,$(OMR_SUPPORTED_LANGS),+LUCI_LANG_$(lang):luci-i18n-base-$(lang))
-TITLE:=OpenMPTCProuter zuixiao Package
+TITLE:=OpenMPTCProuter Mini Package
 endef
 
 define Package/$(PKG_NAME)/description
-OpenMPTCProuter zuixiao package
+OpenMPTCProuter Mini package
 endef
 
 define Build/Compile
