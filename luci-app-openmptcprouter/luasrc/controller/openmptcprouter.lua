@@ -179,6 +179,7 @@ function wizard_add()
 		luci.sys.call("uci -q commit firewall")
 
 		luci.sys.call("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
 		gostatus = false
 	end
 
