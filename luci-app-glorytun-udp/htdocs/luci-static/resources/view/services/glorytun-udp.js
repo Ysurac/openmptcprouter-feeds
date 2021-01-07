@@ -40,6 +40,7 @@ return L.view.extend({
 		s.tab('advanced', _('Advanced Settings'));
 
 		o = s.taboption('general', form.Flag, 'enable', _('Enabled'));
+		o.default = o.enabled;
 
 		o = s.taboption('general',form.Value, 'label', _('Label'));
 		o.rmempty = true;
@@ -73,9 +74,11 @@ return L.view.extend({
 		o.rmempty = false;
 
 		o = s.taboption('advanced', form.Flag, 'persist', _('Persist'), _('Keep the tunnel device after exiting'));
+		o.default = o.enabled;
 		o.modalonly = true;
 
 		o = s.taboption('advanced', form.Flag, 'chacha', _('chacha'), _('Force fallback cipher'));
+		o.default = o.enabled;
 		o.modalonly = true;
 
 		o = s.taboption('advanced', form.Value, 'kxtimeout', _('Key rotation timeout'));

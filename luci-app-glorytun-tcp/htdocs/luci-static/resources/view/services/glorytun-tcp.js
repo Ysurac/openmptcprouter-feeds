@@ -32,6 +32,7 @@ return L.view.extend({
 		s.tab('advanced', _('Advanced Settings'));
 
 		o = s.taboption('general', form.Flag, 'enable', _('Enabled'));
+		o.default = o.enabled;
 
 		o = s.taboption('general',form.Value, 'label', _('Label'));
 		o.rmempty = true;
@@ -64,9 +65,11 @@ return L.view.extend({
 		o.rmempty = false;
 
 		o = s.taboption('advanced', form.Flag, 'mptcp', _('MPTCP'));
+		o.default = o.enabled;
 		o.modalonly = true;
 
 		o = s.taboption('advanced', form.Flag, 'chacha20', _('chacha'), _('Force fallback cipher'));
+		o.default = o.enabled;
 		o.modalonly = true;
 
 		o = s.taboption('advanced', form.Value, 'timeout', _('Timeout'));
@@ -75,6 +78,7 @@ return L.view.extend({
 		o.modalonly = true;
 
 		o = s.taboption('advanced', form.Flag, 'multiqueue', _('Multiqueue'));
+		o.default = o.enabled;
 		o.rmempty = false;
 		o.modalonly = true;
 
