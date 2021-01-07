@@ -116,14 +116,14 @@ function add_interface(add_interface_ifname)
 	ucic:save("sqm")
 	ucic:commit("sqm")
 
-	luci.sys.call("uci -q add_list vnstat.@vnstat[-1].interface=" .. wanif)
-	luci.sys.call("uci -q commit vnstat")
+	sys.exec("uci -q add_list vnstat.@vnstat[-1].interface=" .. wanif)
+	sys.exec("uci -q commit vnstat")
 
 	-- Dirty way to add new interface to firewall...
-	luci.sys.call("uci -q add_list firewall.@zone[1].network=wan" .. i)
-	luci.sys.call("uci -q commit firewall")
+	sys.exec("uci -q add_list firewall.@zone[1].network=wan" .. i)
+	sys.exec("uci -q commit firewall")
 
-	luci.sys.call("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
 end
 
 function remove_interface(intf)
@@ -140,11 +140,11 @@ function remove_interface(intf)
 	ucic:save("qos")
 	ucic:commit("qos")
 	if defif ~= nil and defif ~= "" then
-		luci.sys.call("uci -q del_list vnstat.@vnstat[-1].interface=" .. defif)
+		sys.exec("uci -q del_list vnstat.@vnstat[-1].interface=" .. defif)
 	end
-	luci.sys.call("uci -q commit vnstat")
-	luci.sys.call("uci -q del_list firewall.@zone[1].network=" .. intf)
-	luci.sys.call("uci -q commit firewall")
+	sys.exec("uci -q commit vnstat")
+	sys.exec("uci -q del_list firewall.@zone[1].network=" .. intf)
+	sys.exec("uci -q commit firewall")
 end
 
 function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspeed,uploadspeed)
@@ -321,24 +321,30 @@ function server_settings(server,server_ip,openmptcprouter_vps_key)
 	ucic:set("openmptcprouter",server,"ip",server_ip)
 	ucic:set("openmptcprouter",server,"port","65500")
 	ucic:save("openmptcprouter")
-	ucic:set("shadowsocks-libev","sss0","server",server_ip)
-	ucic:set("glorytun","vpn","host",server_ip)
-	ucic:set("dsvpn","vpn","host",server_ip)
-	ucic:set("mlvpn","general","host",server_ip)
-	luci.sys.call("uci -q del openvpn.omr.remote")
-	luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
-	ucic:set("qos","serverin","srchost",server_ip)
-	ucic:set("qos","serverout","dsthost",server_ip)
-	ucic:save("qos")
-	ucic:commit("qos")
-	ucic:save("mlvpn")
-	ucic:commit("mlvpn")
-	ucic:save("dsvpn")
-	ucic:commit("dsvpn")
-	ucic:save("glorytun")
-	ucic:commit("glorytun")
-	ucic:save("shadowsocks-libev")
-	ucic:commit("shadowsocks-libev")
+	if ucic:get("openmptcprouter",server,"master") == "1" then
+		ucic:set("shadowsocks-libev","sss0","server",server_ip)
+		ucic:set("glorytun","vpn","host",server_ip)
+		ucic:set("dsvpn","vpn","host",server_ip)
+		ucic:set("mlvpn","general","host",server_ip)
+		sys.exec("uci -q del openvpn.omr.remote")
+		sys.exec("uci -q add_list openvpn.omr.remote=" .. server_ip)
+		ucic:set("qos","serverin","srchost",server_ip)
+		ucic:set("qos","serverout","dsthost",server_ip)
+		ucic:set("v2ray","omrout","s_vmess_address",server_ip)
+		ucic:set("v2ray","omrout","s_vless_address",server_ip)
+		ucic:save("qos")
+		ucic:commit("qos")
+		ucic:save("mlvpn")
+		ucic:commit("mlvpn")
+		ucic:save("dsvpn")
+		ucic:commit("dsvpn")
+		ucic:save("v2ray")
+		ucic:commit("v2ray")
+		ucic:save("glorytun")
+		ucic:commit("glorytun")
+		ucic:save("shadowsocks-libev")
+		ucic:commit("shadowsocks-libev")
+	end
 end
 
 function set_shadowsocks(shadowsocks_key)
@@ -404,18 +410,22 @@ end
 
 function restart_all()
 	-- Restart all
-	luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/mptcp restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
-	os.execute("sleep 2")
-	luci.sys.call("/etc/init.d/v2ray restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
-	--luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/omr-tracker restart >/dev/null 2>/dev/null")
-	luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
+	sys.exec("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/omr-tracker stop >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/mptcp restart >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/openvpnbonding restart >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/dsvpn restart >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/omr-tracker start >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/mptcpovervpn restart >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/v2ray restart >/dev/null 2>/dev/null")
 end
 
 function redirectports(server,redirect_ports)
@@ -425,26 +435,26 @@ end
 
 function tcpkeepalivetime(tcp_keepalive_time)
 	-- Set tcp_keepalive_time
-	luci.sys.exec("sysctl -w net.ipv4.tcp_keepalive_time=%s" % tcp_keepalive_time)
-	luci.sys.exec("sed -i 's:^net.ipv4.tcp_keepalive_time=[0-9]*:net.ipv4.tcp_keepalive_time=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_keepalive_time)
+	sys.exec("sysctl -w net.ipv4.tcp_keepalive_time=%s" % tcp_keepalive_time)
+	sys.exec("sed -i 's:^net.ipv4.tcp_keepalive_time=[0-9]*:net.ipv4.tcp_keepalive_time=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_keepalive_time)
 end
 
 function tcpfintimeout(tcp_fin_timeout)
 	-- Set tcp_fin_timeout
-	luci.sys.exec("sysctl -w net.ipv4.tcp_fin_timeout=%s" % tcp_fin_timeout)
-	luci.sys.exec("sed -i 's:^net.ipv4.tcp_fin_timeout=[0-9]*:net.ipv4.tcp_fin_timeout=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_fin_timeout)
+	sys.exec("sysctl -w net.ipv4.tcp_fin_timeout=%s" % tcp_fin_timeout)
+	sys.exec("sed -i 's:^net.ipv4.tcp_fin_timeout=[0-9]*:net.ipv4.tcp_fin_timeout=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_fin_timeout)
 end
 
 function tcpsynretries(tcp_syn_retries)
 	-- Set tcp_syn_retries
-	luci.sys.exec("sysctl -w net.ipv4.tcp_syn_retries=%s" % tcp_syn_retries)
-	luci.sys.exec("sed -i 's:^net.ipv4.tcp_syn_retries=[0-9]*:net.ipv4.tcp_syn_retries=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_syn_retries)
+	sys.exec("sysctl -w net.ipv4.tcp_syn_retries=%s" % tcp_syn_retries)
+	sys.exec("sed -i 's:^net.ipv4.tcp_syn_retries=[0-9]*:net.ipv4.tcp_syn_retries=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_syn_retries)
 end
 
 function tcpfastopen(tcp_fastopen)
 	-- Set tcp_fastopen
-	luci.sys.exec("sysctl -w net.ipv4.tcp_fastopen=%s" % tcp_fastopen)
-	luci.sys.exec("sed -i 's:^net.ipv4.tcp_fastopen=[0-3]*:net.ipv4.tcp_fastopen=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_fastopen)
+	sys.exec("sysctl -w net.ipv4.tcp_fastopen=%s" % tcp_fastopen)
+	sys.exec("sed -i 's:^net.ipv4.tcp_fastopen=[0-3]*:net.ipv4.tcp_fastopen=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_fastopen)
 end
 
 function disableipv6(disable_ipv6)
@@ -452,7 +462,7 @@ function disableipv6(disable_ipv6)
 	ucic:set("openmptcprouter","settings","disable_ipv6",disable_ipv6)
 	ucic:save("openmptcprouter")
 	ucic:commit("openmptcprouter")
-	luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
 end
 
 function externalcheck(externalcheck)
@@ -463,7 +473,7 @@ end
 
 function savevnstat(savevnstat)
 	-- Enable/disable save vnstat
-	luci.sys.exec("uci -q set vnstat.@vnstat[0].backup=%s" % savevnstat)
+	sys.exec("uci -q set vnstat.@vnstat[0].backup=%s" % savevnstat)
 	ucic:commit("vnstat")
 end
 
@@ -522,17 +532,17 @@ end
 
 function update_vps()
 	-- Update VPS
-	ucic:foreach("openmptcprouter", "server", function(s)
-		local serverip = ucic:get("openmptcprouter",s[".name"],"ip")
-		local adminport = ucic:get("openmptcprouter",s[".name"],"port") or "65500"
-		local token = ucic:get("openmptcprouter",s[".name"],"token") or ""
+	local vpsgettoken = sys.exec("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
+	ucic:foreach("openmptcprouter", "server", function(section)
+		local servername = section[".name"]
+		local serverip = section["ip"] or ""
+		local adminport = section["port"] or "65500"
+		local token = section["token"] or ""
 		if token ~= "" then
-			sys.exec('curl -4 --max-time 20 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ":" .. adminport .. "/update")
-			luci.sys.call("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
-			luci.http.redirect(luci.dispatcher.build_url("admin/system/openmptcprouter/status"))
-			return
+			local updatevps = sys.exec('curl -4 --max-time 20 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ":" .. adminport .. "/update")
 		end
 	end)
+	local vpsgettoken = sys.exec("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
 end
 
 function get_ip(interface)
