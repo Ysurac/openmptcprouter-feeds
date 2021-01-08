@@ -56,8 +56,13 @@ omr_intf_set() {
 	elif [ "$type" != "macvlan" ] &&  [ -n "$device" ] && [ -f /sys/bus/usb-serial/devices/${devicename}/device/uevent ] && [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT)" != "" ]; then
 		uci -q set network.$1.modalias="$(cat /sys/bus/usb-serial/devices/${devicename}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')"
 		uci -q set network.$1.product="$(cat /sys/bus/usb-serial/devices/${devicename}/device/uevent | grep PRODUCT | cut -d '=' -f2 | tr -d '\n')"
+	else
+		uci -q delete network.$1.modalias
+		uci -q delete network.$1.product
 	fi
+}
 
+omr_set_settings() {
 	[ -z "$multipath" ] || [ "$multipath" = "off" ] && [ "$1" != "omrvpn" ] && [ "$1" != "glorytun" ] && return
 
 	uci -q set openmptcprouter.$1=interface
@@ -76,7 +81,7 @@ start_service() {
 	config_load openmptcprouter
 	config_foreach omr_intf_check interface
 	config_load network
-	config_foreach omr_intf_set interface
+	config_foreach omr_set_settings interface
 	uci -q commit network
 	uci -q commit openmptcprouter
 
@@ -112,7 +117,13 @@ start_service() {
 		EOF
 		/etc/init.d/rpcd restart 2>&1 >/dev/null
 	fi
+}
 
+stop_service() {
+	config_load network
+	config_foreach omr_intf_set interface
+	uci -q commit network
+	uci -q commit openmptcprouter
 }
 
 reload_service() {
