@@ -8,6 +8,8 @@ USE_PROCD=1
 
 EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key"
 
+. /usr/lib/unbound/iptools.sh
+
 _parse_result() {
 	result=$("echo $1 | jsonfilter -q -e '@.result'")
 	echo $result
@@ -22,7 +24,13 @@ _login() {
 	serverport="$(uci -q get openmptcprouter.${servername}.port)"
 	if [ -z "$token" ]; then
 		#auth=`curl --max-time 10 -s -k -H "Content-Type: application/json" -X POST -d '{"username":"'$username'","password":"'$password'"}' https://$server:$serverport/login`
-		auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://$server:$serverport/token`
+		resolve="$(resolveip $server)"
+		valid_ip6=$(valid_subnet6 $server)
+		if [ "$resolve" != "$server" ] || [ "$valid_ip6" != "ok" ]; then
+			auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://$server:$serverport/token`
+		else
+			auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://[$server]:$serverport/token`
+		fi
 		[ -z "$auth" ] && return
 		token="$(echo "$auth" | jsonfilter -q -e '@.access_token')"
 		uci -q set openmptcprouter.${servername}.token="$token"
@@ -41,7 +49,13 @@ _get_json() {
 	route=$1
 	[ -z "$token" ] && _login
 	[ -n "$token" ] && {
-		result=`curl --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://$server:$serverport/$route`
+		resolve="$(resolveip $server)"
+		valid_ip6=$(valid_subnet6 $server)
+		if [ "$resolve" != "$server" ] || [ "$valid_ip6" != "ok" ]; then
+			result=`curl --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://$server:$serverport/$route`
+		else
+			result=`curl --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://[$server]:$serverport/$route`
+		fi
 		echo $result
 	} || {
 		echo ''
@@ -54,7 +68,13 @@ _set_json() {
 	settings="$2"
 	[ -z "$token" ] && _login
 	[ -n "$token" ] && {
-		result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
+		resolve="$(resolveip $server)"
+		valid_ip6=$(valid_subnet6 $server)
+		if [ "$resolve" != "$server" ] || [ "$valid_ip6" != "ok" ]; then
+			result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
+		else
+			result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://[$server]:$serverport/$route`
+		fi
 		echo $result
 	} || {
 		echo ''
@@ -449,6 +469,7 @@ _get_gre_tunnel() {
 					set network.omrip${i}gre.defaultroute='0'
 					set network.omrip${i}gre.multipath='off'
 					set network.omrip${i}gre.peerdns='0'
+					set network.omrip${i}gre.ttl='255'
 					set network.omrip${i}gre.ip4table='vpn'
 					set network.omrip${i}gre.peeraddr="$publicaddr"
 					set network.omrip${i}gre.ipaddr="$vpnip_local"
@@ -1453,7 +1474,7 @@ _backup_send() {
 		EOF
 		return
 	}
-	sysupgrade -b /tmp/backup.tar.gz
+	sysupgrade -k -b /tmp/backup.tar.gz
 	backup_data="$(cat /tmp/backup.tar.gz | base64 | tr -d '\n')"
 	backup_sha256sum="$(sha256sum /tmp/backup.tar.gz | awk '{print $1}')"
 	[ -n "$backup_data" ] && {
@@ -1574,10 +1595,20 @@ _config_service() {
 		fi
 		port="$(uci -q get openmptcprouter.${servername}.port)"
 		server="$(uci -q get openmptcprouter.${servername}.ip)"
-		if [ "$(curl -k -m 3 https://${server}:${port}/)" = "" ]; then
-			reason="$reason, no server API answer"
+		resolve="$(resolveip $server)"
+		valid_ip6=$(valid_subnet6 $server)
+		if [ "$resolve" != "$server" ] || [ "$valid_ip6" != "ok" ]; then
+			if [ "$(curl -k -m 3 https://${server}:${port}/)" = "" ]; then
+				reason="$reason, no server API answer"
+			else
+				reason="$reason, server API answer"
+			fi
 		else
-			reason="$reason, server API answer"
+			if [ "$(curl -k -m 3 https://[${server}]:${port}/)" = "" ]; then
+				reason="$reason, no server API answer"
+			else
+				reason="$reason, server API answer"
+			fi
 		fi
 		if [ "$(uci -q get openmptcprouter.${servername}.username)" != "openmptcprouter" ]; then
 			reason="$reason, custom username"
@@ -1706,6 +1737,9 @@ start_service() {
 	uci -q batch <<-EOF >/dev/null
 		commit openmptcprouter
 	EOF
+	if [ "$(ps w | grep sysupgrade)" = "" ]; then
+		/etc/init.d/sysupgrade restart
+	fi
 }
 
 service_triggers() {

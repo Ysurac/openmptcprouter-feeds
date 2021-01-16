@@ -11,12 +11,15 @@
 	USE_PROCD=1
 }
 
+. /usr/lib/unbound/iptools.sh
+
 _validate_section() {
-	local tmp_hosts=$hosts tmp_timeout=$timeout tmp_tries=$tries
+	local tmp_hosts=$hosts tmp_hosts6=$hosts6 tmp_timeout=$timeout tmp_tries=$tries
 	local tmp_interval=$interval tmp_interval_tries=$interval_tries tmp_options=$options tmp_type=$type tmp_enabled=$enabled tmp_wait_test=$wait_test
 
 	uci_validate_section omr-tracker "$1" "$2" \
 		'hosts:list(host)'  \
+		'hosts6:list(host6)'  \
 		'timeout:uinteger'  \
 		'tries:uinteger'    \
 		'interval:uinteger' \
@@ -27,6 +30,7 @@ _validate_section() {
 		'options:string'
 
 	[ -z "$hosts"    ] && hosts=$tmp_hosts
+	[ -z "$hosts6"    ] && hosts6=$tmp_hosts6
 	[ -z "$timeout"  ] && timeout=$tmp_timeout
 	[ -z "$tries"    ] && tries=$tmp_tries
 	[ -z "$interval" ] && interval=$tmp_interval
@@ -42,7 +46,7 @@ _launch_tracker() {
 		loopback|lan*|if0*) return;;
 	esac
 
-	local hosts timeout tries interval interval_tries options type enabled wait_test
+	local hosts hosts6 timeout tries interval interval_tries options type enabled wait_test
 	_validate_section "defaults" "defaults"
 	_validate_section "interface" "$1"
 
@@ -65,6 +69,7 @@ _launch_tracker() {
 	# shellcheck disable=SC2086
 	procd_set_param command /bin/omr-tracker "$1" $options
 	procd_append_param env "OMR_TRACKER_HOSTS=$hosts"
+	procd_append_param env "OMR_TRACKER_HOSTS6=$hosts6"
 	procd_append_param env "OMR_TRACKER_TIMEOUT=$timeout"
 	procd_append_param env "OMR_TRACKER_TRIES=$tries"
 	procd_append_param env "OMR_TRACKER_INTERVAL=$interval"
