@@ -58,7 +58,7 @@ set_route6() {
 		if [ -z "$interface_gw" ]; then
 			interface_gw=$(ubus call network.interface.${INTERFACE}_6 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
 		fi
-		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ -n "$(echo $interface_gw | grep :)" ]; then
+		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ -n "$(echo $interface_gw | grep ':')" ]; then
 			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
 			[ "$SETDEFAULT" = "yes" ] && ip -6 route replace default scope global nexthop via $interface_gw dev $interface_if
 			ip -6 route replace default via $interface_gw dev $interface_if table 991337 && SETROUTE=true
@@ -697,7 +697,7 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
 				ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
 				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
-			elif [ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.mtu)" ]; then
+			elif [ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.mtu)" ] && [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
 				if [ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ]; then 
 					local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP $serverip)
 					#local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP 8.8.8.8)
@@ -866,7 +866,7 @@ if [ "$multipath_config" = "on" ] || [ "$multipath_config" = "backup" ]; then
 	fi
 	gtudpst="up"
 	[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" != "1" ] && [ "$multipath_config" = "backup" ] && [ "$(pgrep glorytun-udp)" != "" ] && gtudpst="backup"
-	if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep glorytun-udp)" != "" ] && [ "$(glorytun-udp path | grep $OMR_TRACKER_DEVICE_IP)" = "" ] && [ "$OMR_TRACKER_DEVICE_IP" != "" ]; then
+	if [ "$OMR_TRACKER_DEVICE_IP" != "" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep glorytun-udp)" != "" ] && [ "$(glorytun-udp path | grep $OMR_TRACKER_DEVICE_IP)" = "" ]; then
 		if [ "$download" != "0" ] && [ "$download" != "" ] && [ "$upload" != "0" ] && [ "$upload" != "" ]; then
 			if [ "$(uci -q get glorytun-udp.vpn.rateauto)" = "1" ]; then
 				glorytun-udp path addr $OMR_TRACKER_DEVICE_IP dev tun0 set up rate auto tx $((upload*1000/8)) rx $((download*1000/8)) pref 1 > /dev/null 2>&1
@@ -881,7 +881,7 @@ if [ "$multipath_config" = "on" ] || [ "$multipath_config" = "backup" ]; then
 			fi
 		fi
 	fi
-	if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep glorytun-udp)" != "" ] && [ "$(glorytun-udp path | grep $OMR_TRACKER_DEVICE_IP6)" = "" ] && [ "$OMR_TRACKER_DEVICE_IP6" != "" ]; then
+	if [ "$OMR_TRACKER_DEVICE_IP6" != "" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep glorytun-udp)" != "" ] && [ "$(glorytun-udp path | grep $OMR_TRACKER_DEVICE_IP6)" = "" ]; then
 		if [ "$download" != "0" ] && [ "$download" != "" ] && [ "$upload" != "0" ] && [ "$upload" != "" ]; then
 			if [ "$(uci -q get glorytun-udp.vpn.rateauto)" = "1" ]; then
 				glorytun-udp path addr $OMR_TRACKER_DEVICE_IP6 dev tun0 set up rate auto tx $((upload*1000/8)) rx $((download*1000/8)) pref 1 > /dev/null 2>&1
@@ -899,7 +899,10 @@ if [ "$multipath_config" = "on" ] || [ "$multipath_config" = "backup" ]; then
 #	if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep glorytun-udp)" != "" ] && [ "$(glorytun-udp set | grep 'kxtimeout 7d')" = "" ]; then
 #		glorytun-udp set dev tun0 kxtimeout 7d > /dev/null 2>&1
 #	fi
-	[ "$multipath_config" = "backup" ] && [ "$(pgrep glorytun-udp)" != "" ] && glorytun-udp path addr $OMR_TRACKER_DEVICE_IP dev tun0 set pref 125 > /dev/null 2>&1
+	[ "$multipath_config" = "backup" ] && [ "$(pgrep glorytun-udp)" != "" ] && {
+		[ -n "$OMR_TRACKER_DEVICE_IP" ] && glorytun-udp path addr $OMR_TRACKER_DEVICE_IP dev tun0 set pref 125 > /dev/null 2>&1
+		[ -n "$OMR_TRACKER_DEVICE_IP6" ] && glorytun-udp path addr $OMR_TRACKER_DEVICE_IP6 dev tun0 set pref 125 > /dev/null 2>&1
+	}
 fi
 [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" != "1" ] && {
 	[ "$multipath_status" = "$multipath_config" ] || {
@@ -966,7 +969,7 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 		local serverip=$(uci -q get shadowsocks-libev.sss0.server)
 		[ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ] && [ "$(pgrep tracebox)" = "" ] && [ "$(uci -q get openmptcprouter.settings.tracebox)" != "0" ] && {
 			omrtracebox="$(omr-tracebox-mptcp $serverip $OMR_TRACKER_DEVICE)"
-			[ -n "$omrtracebox" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$omrtracebox"
+			[ -n "$omrtracebox" ] && [ -z "$(echo $omrtracebox | grep error)" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$omrtracebox"
 		}
 		[ -n "$ipaddr" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.publicip="$ipaddr"
 		[ -n "$OMR_TRACKER_LATENCY" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency="$OMR_TRACKER_LATENCY"
@@ -980,7 +983,7 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 					uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
 					ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
 				}
-			else
+			elif [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
 				[ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ] && {
 					local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP $serverip)
 					[ -n "$mtu" ] && {
@@ -1018,7 +1021,7 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 		local serverip=$(uci -q get shadowsocks-libev.sss0.server)
 		[ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ] && [ "$(pgrep tracebox)" = "" ] && [ "$(uci -q get openmptcprouter.settings.tracebox)" != "0" ] && {
 			omrtracebox="$(omr-tracebox-mptcp $serverip $OMR_TRACKER_DEVICE)"
-			[ -n "$omrtracebox" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$omrtracebox"
+			[ -n "$omrtracebox" ] && [ -z "$(echo $omrtracebox | grep error)" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$omrtracebox"
 		}
 		[ -n "$ipaddr" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.publicip6="$ip6addr"
 		[ -n "$OMR_TRACKER_LATENCY" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency="$OMR_TRACKER_LATENCY"
@@ -1032,7 +1035,7 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 					uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
 					ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
 				}
-			else
+			elif [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
 				[ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ] && {
 					local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP $serverip)
 					[ -n "$mtu" ] && {
