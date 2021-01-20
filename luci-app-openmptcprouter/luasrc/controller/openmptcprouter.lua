@@ -223,8 +223,10 @@ function wizard_add()
 		local device_qmi = luci.http.formvalue("cbid.network.%s.device.qmi" % intf) or ""
 		local device_modemmanager = luci.http.formvalue("cbid.network.%s.device.modemmanager" % intf) or ""
 		local ipaddr = luci.http.formvalue("cbid.network.%s.ipaddr" % intf) or ""
+		local ip6addr = luci.http.formvalue("cbid.network.%s.ip6addr" % intf) or ""
 		local netmask = luci.http.formvalue("cbid.network.%s.netmask" % intf) or ""
 		local gateway = luci.http.formvalue("cbid.network.%s.gateway" % intf) or ""
+		local ip6gw = luci.http.formvalue("cbid.network.%s.ip6gw" % intf) or ""
 		local apn = luci.http.formvalue("cbid.network.%s.apn" % intf) or ""
 		local pincode = luci.http.formvalue("cbid.network.%s.pincode" % intf) or ""
 		local delay = luci.http.formvalue("cbid.network.%s.delay" % intf) or ""
@@ -280,6 +282,13 @@ function wizard_add()
 			ucic:set("network",intf,"ipaddr","")
 			ucic:set("network",intf,"netmask","")
 			ucic:set("network",intf,"gateway","")
+		end
+		if ip6addr ~= "" then
+			ucic:set("network",intf,"ip6addr",ip6addr)
+			ucic:set("network",intf,"ip6gw",ip6gw)
+		else
+			ucic:set("network",intf,"ip6addr","")
+			ucic:set("network",intf,"ip6gw","")
 		end
 
 		ucic:delete("openmptcprouter",intf,"lc")
