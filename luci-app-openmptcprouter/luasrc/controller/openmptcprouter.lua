@@ -425,7 +425,8 @@ function wizard_add()
 	local disablednb = 0
 	local servers = luci.http.formvaluetable("server")
 	for server, _ in pairs(servers) do
-		local server_ip = luci.http.formvalue("%s.server_ip" % server) or ""
+		local server_ip = {}
+		server_ip[1] = luci.http.formvalue("%s.server_ip" % server) or ""
 		local master = luci.http.formvalue("master") or ""
 
 		-- OpenMPTCProuter VPS
@@ -453,7 +454,7 @@ function wizard_add()
 		ucic:set("openmptcprouter",server,"username",openmptcprouter_vps_username)
 		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key)
 		ucic:set("openmptcprouter",server,"disabled",openmptcprouter_vps_disabled)
-		ucic:set("openmptcprouter",server,"ip",server_ip)
+		ucic:set_list("openmptcprouter",server,"ip",server_ip)
 		ucic:set("openmptcprouter",server,"port","65500")
 		ucic:save("openmptcprouter")
 	end
