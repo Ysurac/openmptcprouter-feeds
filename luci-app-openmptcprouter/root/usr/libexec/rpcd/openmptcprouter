@@ -547,7 +547,7 @@ end
 
 function get_rootfs()
 	local rootfs = {}
-	rootfs['format'] = ut.trim(sys.exec("mount | awk 'NR==1{print $5}'"))
+	rootfs['format'] = luci.util.trim(sys.exec("mount | awk 'NR==1{print $5}'"))
 	return rootfs
 end
 
@@ -837,102 +837,105 @@ function interfaces_status()
 	mArray.openmptcprouter["vps_hostname"] = "Server"
 	-- Get VPS info
 	ucic:foreach("openmptcprouter", "server", function(s)
-		local serverip = uci:get("openmptcprouter",s[".name"],"ip") or ""
+		local serverips = uci:get("openmptcprouter",s[".name"],"ip") or { "" }
 		local master = uci:get("openmptcprouter",s[".name"],"master") or "1"
-		if serverip ~= "" and (master == "1" or mArray.openmptcprouter["wan_addr"] == serverip or mArray.openmptcprouter["wan_addr6"] == serverip) then
-			mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter", s[".name"], "omr_version") or ""
-			mArray.openmptcprouter["vps_kernel"] = uci:get("openmptcprouter",s[".name"],"kernel") or ""
-			mArray.openmptcprouter["vps_machine"] = uci:get("openmptcprouter",s[".name"],"machine") or ""
-			timeout = uci:get("openmptcprouter","settings","status_vps_timeout") or "2"
-			if uci:get("openmptcprouter",s[".name"],"admin_error") == "1" then
-				mArray.openmptcprouter["vps_admin_error"] = true
-			end
-			local adminport = uci:get("openmptcprouter",s[".name"],"port") or "65500"
-			local token = uci:get("openmptcprouter",s[".name"],"token") or ""
-			if token ~= "" then
-				local vpsinfo_json = ""
-				if mArray.openmptcprouter["service_addr_ip"] ~= "" then
-					vpsinfo_json = sys.exec('curl --max-time ' .. timeout .. ' -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ':' .. adminport .. '/status')
+		for key, value in pairs(serverips) do
+			serverip = value
+			if serverip ~= "" and (master == "1" or mArray.openmptcprouter["wan_addr"] == serverip or mArray.openmptcprouter["wan_addr6"] == serverip) and mArray.openmptcprouter["vps_admin"] == false then
+				mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter", s[".name"], "omr_version") or ""
+				mArray.openmptcprouter["vps_kernel"] = uci:get("openmptcprouter",s[".name"],"kernel") or ""
+				mArray.openmptcprouter["vps_machine"] = uci:get("openmptcprouter",s[".name"],"machine") or ""
+				timeout = uci:get("openmptcprouter","settings","status_vps_timeout") or "2"
+				if uci:get("openmptcprouter",s[".name"],"admin_error") == "1" then
+					mArray.openmptcprouter["vps_admin_error"] = true
 				end
-				if mArray.openmptcprouter["service_addr_ip6"] ~= "" then
-					vpsinfo_json = sys.exec('curl --max-time ' .. timeout .. ' -s -k -H "Authorization: Bearer ' .. token .. '" https://[' .. serverip .. ']:' .. adminport .. '/status')
-				end
-				if vpsinfo_json ~= "" and vpsinfo_json ~= nil then
-					local status, vpsinfo = pcall(function() 
-						return json.decode(vpsinfo_json)
-					end)
-					if status and vpsinfo.vps ~= nil then
-						mArray.openmptcprouter["vps_loadavg"] = vpsinfo.vps.loadavg or ""
-						mArray.openmptcprouter["vps_uptime"] = vpsinfo.vps.uptime or ""
-						mArray.openmptcprouter["vps_mptcp"] = vpsinfo.vps.mptcp.enabled or ""
-						mArray.openmptcprouter["vps_hostname"] = vpsinfo.vps.hostname or ""
-						mArray.openmptcprouter["vps_time"] = vpsinfo.vps.time or ""
-						if vpsinfo.vps.kernel ~= nil then
-							mArray.openmptcprouter["vps_kernel"] = vpsinfo.vps.kernel or ""
-						end
-						if vpsinfo.vps.omr_version ~= nil then
-							mArray.openmptcprouter["vps_omr_version"] = vpsinfo.vps.omr_version or ""
-						end
-						if vpsinfo.vps.time ~= "" then
-							if math.abs(os.time() - vpsinfo.vps.time) > 10 then
-								mArray.openmptcprouter["vps_time_accurate"] = false
-							else
-								mArray.openmptcprouter["vps_time_accurate"] = true
+				local adminport = uci:get("openmptcprouter",s[".name"],"port") or "65500"
+				local token = uci:get("openmptcprouter",s[".name"],"token") or ""
+				if token ~= "" then
+					local vpsinfo_json = ""
+					if mArray.openmptcprouter["service_addr_ip"] ~= "" then
+						vpsinfo_json = sys.exec('curl --max-time ' .. timeout .. ' -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ':' .. adminport .. '/status')
+					end
+					if mArray.openmptcprouter["service_addr_ip6"] ~= "" then
+						vpsinfo_json = sys.exec('curl --max-time ' .. timeout .. ' -s -k -H "Authorization: Bearer ' .. token .. '" https://[' .. serverip .. ']:' .. adminport .. '/status')
+		    			end
+	    				if vpsinfo_json ~= "" and vpsinfo_json ~= nil then
+						local status, vpsinfo = pcall(function() 
+							return json.decode(vpsinfo_json)
+						end)
+						if status and vpsinfo.vps ~= nil then
+							mArray.openmptcprouter["vps_loadavg"] = vpsinfo.vps.loadavg or ""
+							mArray.openmptcprouter["vps_uptime"] = vpsinfo.vps.uptime or ""
+							mArray.openmptcprouter["vps_mptcp"] = vpsinfo.vps.mptcp.enabled or ""
+							mArray.openmptcprouter["vps_hostname"] = vpsinfo.vps.hostname or ""
+							mArray.openmptcprouter["vps_time"] = vpsinfo.vps.time or ""
+							if vpsinfo.vps.kernel ~= nil then
+								mArray.openmptcprouter["vps_kernel"] = vpsinfo.vps.kernel or ""
 							end
+							if vpsinfo.vps.omr_version ~= nil then
+								mArray.openmptcprouter["vps_omr_version"] = vpsinfo.vps.omr_version or ""
+							end
+							if vpsinfo.vps.time ~= "" then
+								if math.abs(os.time() - vpsinfo.vps.time) > 10 then
+									mArray.openmptcprouter["vps_time_accurate"] = false
+								else
+									mArray.openmptcprouter["vps_time_accurate"] = true
+								end
+							end
+							mArray.openmptcprouter["vps_admin"] = true
+							mArray.openmptcprouter["vps_status"] = "UP"
+							mArray.openmptcprouter["vps_admin_error_msg"] = ""
+						else
+							uci:set("openmptcprouter",s[".name"],"admin_error","1")
+							mArray.openmptcprouter["vps_admin_error"] = true
+							uci:delete("openmptcprouter",s[".name"],"token")
+							uci:save("openmptcprouter",s[".name"])
+							uci:commit("openmptcprouter",s[".name"])
+							mArray.openmptcprouter["vps_admin"] = false
+							mArray.openmptcprouter["vps_admin_error_msg"] = "Answer error"
 						end
-						mArray.openmptcprouter["vps_admin"] = true
-						mArray.openmptcprouter["vps_status"] = "UP"
-						mArray.openmptcprouter["vps_admin_error_msg"] = ""
+						if status and vpsinfo.vpn ~= nil then
+							mArray.openmptcprouter["vpn_traffic_rx"] = vpsinfo.vpn.rx or "0"
+							mArray.openmptcprouter["vpn_traffic_tx"] = vpsinfo.vpn.tx or "0"
+							mArray.openmptcprouter["vpn_traffic"] = mArray.openmptcprouter["vpn_traffic_tx"] + mArray.openmptcprouter["vpn_traffic_rx"]
+						else
+							mArray.openmptcprouter["vpn_traffic_rx"] = "0"
+							mArray.openmptcprouter["vpn_traffic_tx"] = "0"
+							mArray.openmptcprouter["vpn_traffic"] = "0"
+						end
+						if status and vpsinfo.shadowsocks ~= nil then
+							mArray.openmptcprouter["ss_traffic"] = vpsinfo.shadowsocks.traffic or "0"
+						else
+							mArray.openmptcprouter["ss_traffic"] = "0"
+						end
+						if status and vpsinfo.v2ray ~= nil then
+							mArray.openmptcprouter["v2ray_traffic_rx"] = vpsinfo.v2ray.rx or "0"
+							mArray.openmptcprouter["v2ray_traffic_tx"] = vpsinfo.v2ray.tx or "0"
+							mArray.openmptcprouter["v2ray_traffic"] = mArray.openmptcprouter["v2ray_traffic_tx"] + mArray.openmptcprouter["v2ray_traffic_rx"]
+						else
+							mArray.openmptcprouter["v2ray_traffic_rx"] = "0"
+							mArray.openmptcprouter["v2ray_traffic_tx"] = "0"
+							mArray.openmptcprouter["v2ray_traffic"] = "0"
+						end
+						mArray.openmptcprouter["proxy_traffic"] = mArray.openmptcprouter["ss_traffic"] + mArray.openmptcprouter["v2ray_traffic"]
+						mArray.openmptcprouter["total_traffic"] = mArray.openmptcprouter["proxy_traffic"] + mArray.openmptcprouter["vpn_traffic"]
 					else
-						uci:set("openmptcprouter",s[".name"],"admin_error","1")
-						mArray.openmptcprouter["vps_admin_error"] = true
-						uci:delete("openmptcprouter",s[".name"],"token")
-						uci:save("openmptcprouter",s[".name"])
-						uci:commit("openmptcprouter",s[".name"])
 						mArray.openmptcprouter["vps_admin"] = false
-						mArray.openmptcprouter["vps_admin_error_msg"] = "Answer error"
+						mArray.openmptcprouter["vps_admin_error_msg"] = "No result"
 					end
-					if status and vpsinfo.vpn ~= nil then
-						mArray.openmptcprouter["vpn_traffic_rx"] = vpsinfo.vpn.rx or "0"
-						mArray.openmptcprouter["vpn_traffic_tx"] = vpsinfo.vpn.tx or "0"
-						mArray.openmptcprouter["vpn_traffic"] = mArray.openmptcprouter["vpn_traffic_tx"] + mArray.openmptcprouter["vpn_traffic_rx"]
-					else
-						mArray.openmptcprouter["vpn_traffic_rx"] = "0"
-						mArray.openmptcprouter["vpn_traffic_tx"] = "0"
-						mArray.openmptcprouter["vpn_traffic"] = "0"
-					end
-					if status and vpsinfo.shadowsocks ~= nil then
-						mArray.openmptcprouter["ss_traffic"] = vpsinfo.shadowsocks.traffic or "0"
-					else
-						mArray.openmptcprouter["ss_traffic"] = "0"
-					end
-					if status and vpsinfo.v2ray ~= nil then
-						mArray.openmptcprouter["v2ray_traffic_rx"] = vpsinfo.v2ray.rx or "0"
-						mArray.openmptcprouter["v2ray_traffic_tx"] = vpsinfo.v2ray.tx or "0"
-						mArray.openmptcprouter["v2ray_traffic"] = mArray.openmptcprouter["v2ray_traffic_tx"] + mArray.openmptcprouter["v2ray_traffic_rx"]
-					else
-						mArray.openmptcprouter["v2ray_traffic_rx"] = "0"
-						mArray.openmptcprouter["v2ray_traffic_tx"] = "0"
-						mArray.openmptcprouter["v2ray_traffic"] = "0"
-					end
-					mArray.openmptcprouter["proxy_traffic"] = mArray.openmptcprouter["ss_traffic"] + mArray.openmptcprouter["v2ray_traffic"]
-					mArray.openmptcprouter["total_traffic"] = mArray.openmptcprouter["proxy_traffic"] + mArray.openmptcprouter["vpn_traffic"]
 				else
 					mArray.openmptcprouter["vps_admin"] = false
-					mArray.openmptcprouter["vps_admin_error_msg"] = "No result"
+					mArray.openmptcprouter["vps_admin_error_msg"] = "No token yet available"
 				end
-			else
-				mArray.openmptcprouter["vps_admin"] = false
-				mArray.openmptcprouter["vps_admin_error_msg"] = "No token yet available"
-			end
-			if mArray.openmptcprouter["vps_admin"] == false then
-				if mArray.openmptcprouter["service_addr_ip"] ~= "" then
-					local vpstest = sys.exec('curl --max-time ' .. timeout .. ' -s -k https://' .. serverip .. ':' .. adminport .. '/')
-				elseif mArray.openmptcprouter["service_addr_ip6"] ~= "" then
-					local vpstest = sys.exec('curl --max-time ' .. timeout .. ' -s -k https://[' .. serverip .. ']:' .. adminport .. '/')
-				end
-				if vpstest == "" then
-					mArray.openmptcprouter["vps_admin_error_msg"] = mArray.openmptcprouter["vps_admin_error_msg"] .. " - No API script answer"
+				if mArray.openmptcprouter["vps_admin"] == false then
+					if mArray.openmptcprouter["service_addr_ip"] ~= "" then
+						local vpstest = sys.exec('curl --max-time ' .. timeout .. ' -s -k https://' .. serverip .. ':' .. adminport .. '/')
+					elseif mArray.openmptcprouter["service_addr_ip6"] ~= "" then
+						local vpstest = sys.exec('curl --max-time ' .. timeout .. ' -s -k https://[' .. serverip .. ']:' .. adminport .. '/')
+					end
+					if vpstest == "" then
+						mArray.openmptcprouter["vps_admin_error_msg"] = mArray.openmptcprouter["vps_admin_error_msg"] .. " - No API script answer"
+					end
 				end
 			end
 		end

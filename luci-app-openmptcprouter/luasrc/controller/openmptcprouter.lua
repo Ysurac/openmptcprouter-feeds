@@ -447,7 +447,7 @@ function wizard_add()
 		if openmptcprouter_vps_disabled == "1" then
 			disablednb = disablednb + 1
 		end
-		if server_ip ~= "" then
+		if server_ip[1] ~= "" then
 			serversnb = serversnb + 1
 		end
 		ucic:set("openmptcprouter",server,"server")
