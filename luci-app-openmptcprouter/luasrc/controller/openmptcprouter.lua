@@ -223,8 +223,10 @@ function wizard_add()
 		local device_qmi = luci.http.formvalue("cbid.network.%s.device.qmi" % intf) or ""
 		local device_modemmanager = luci.http.formvalue("cbid.network.%s.device.modemmanager" % intf) or ""
 		local ipaddr = luci.http.formvalue("cbid.network.%s.ipaddr" % intf) or ""
+		local ip6addr = luci.http.formvalue("cbid.network.%s.ip6addr" % intf) or ""
 		local netmask = luci.http.formvalue("cbid.network.%s.netmask" % intf) or ""
 		local gateway = luci.http.formvalue("cbid.network.%s.gateway" % intf) or ""
+		local ip6gw = luci.http.formvalue("cbid.network.%s.ip6gw" % intf) or ""
 		local apn = luci.http.formvalue("cbid.network.%s.apn" % intf) or ""
 		local pincode = luci.http.formvalue("cbid.network.%s.pincode" % intf) or ""
 		local delay = luci.http.formvalue("cbid.network.%s.delay" % intf) or ""
@@ -280,6 +282,13 @@ function wizard_add()
 			ucic:set("network",intf,"ipaddr","")
 			ucic:set("network",intf,"netmask","")
 			ucic:set("network",intf,"gateway","")
+		end
+		if ip6addr ~= "" then
+			ucic:set("network",intf,"ip6addr",ip6addr)
+			ucic:set("network",intf,"ip6gw",ip6gw)
+		else
+			ucic:set("network",intf,"ip6addr","")
+			ucic:set("network",intf,"ip6gw","")
 		end
 
 		ucic:delete("openmptcprouter",intf,"lc")
@@ -416,7 +425,8 @@ function wizard_add()
 	local disablednb = 0
 	local servers = luci.http.formvaluetable("server")
 	for server, _ in pairs(servers) do
-		local server_ip = luci.http.formvalue("%s.server_ip" % server) or ""
+		local server_ip = {}
+		server_ip[1] = luci.http.formvalue("%s.server_ip" % server) or ""
 		local master = luci.http.formvalue("master") or ""
 
 		-- OpenMPTCProuter VPS
@@ -437,14 +447,14 @@ function wizard_add()
 		if openmptcprouter_vps_disabled == "1" then
 			disablednb = disablednb + 1
 		end
-		if server_ip ~= "" then
+		if server_ip[1] ~= "" then
 			serversnb = serversnb + 1
 		end
 		ucic:set("openmptcprouter",server,"server")
 		ucic:set("openmptcprouter",server,"username",openmptcprouter_vps_username)
 		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key)
 		ucic:set("openmptcprouter",server,"disabled",openmptcprouter_vps_disabled)
-		ucic:set("openmptcprouter",server,"ip",server_ip)
+		ucic:set_list("openmptcprouter",server,"ip",server_ip)
 		ucic:set("openmptcprouter",server,"port","65500")
 		ucic:save("openmptcprouter")
 	end

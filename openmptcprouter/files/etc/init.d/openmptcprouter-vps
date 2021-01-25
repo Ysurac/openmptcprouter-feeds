@@ -8,6 +8,8 @@ USE_PROCD=1
 
 EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key"
 
+. /usr/lib/unbound/iptools.sh
+
 _parse_result() {
 	result=$("echo $1 | jsonfilter -q -e '@.result'")
 	echo $result
@@ -15,23 +17,34 @@ _parse_result() {
 
 _login() {
 	local username password auth
-	server="$(uci -q get openmptcprouter.${servername}.ip)"
-	[ -z "$server" ] && server="$(uci -q get shadowsocks-libev.sss0.server)"
+	#server="$(uci -q get openmptcprouter.${servername}.ip)"
+	#[ -z "$server" ] && server="$(uci -q get shadowsocks-libev.sss0.server)"
 	username="$(uci -q get openmptcprouter.${servername}.username)"
 	password="$(uci -q get openmptcprouter.${servername}.password)"
 	serverport="$(uci -q get openmptcprouter.${servername}.port)"
+	#[ -z "$server" ] && server="$(uci -q get openmptcprouter.${servername}.ip)"
 	if [ -z "$token" ]; then
-		#auth=`curl --max-time 10 -s -k -H "Content-Type: application/json" -X POST -d '{"username":"'$username'","password":"'$password'"}' https://$server:$serverport/login`
-		auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://$server:$serverport/token`
-		[ -z "$auth" ] && return
-		token="$(echo "$auth" | jsonfilter -q -e '@.access_token')"
-		uci -q set openmptcprouter.${servername}.token="$token"
+		login_on_server() {
+			server=$1
+			#auth=`curl --max-time 10 -s -k -H "Content-Type: application/json" -X POST -d '{"username":"'$username'","password":"'$password'"}' https://$server:$serverport/login`
+			resolve="$(resolveip $server)"
+			valid_ip6=$(valid_subnet6 $server)
+			if [ "$resolve" != "$server" ] || [ "$valid_ip6" != "ok" ]; then
+				auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://$server:$serverport/token`
+			else
+				auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://[$server]:$serverport/token`
+			fi
+			[ -z "$auth" ] && return
+			token="$(echo "$auth" | jsonfilter -q -e '@.access_token')"
+			uci -q set openmptcprouter.${servername}.token="$token"
+		}
+		config_load openmptcprouter
+		config_list_foreach ${servername} ip login_on_server
 	fi
 }
 
 _ping_server() {
-	server="$(uci -q get openmptcprouter.${servername}.ip)"
-	[ -z "$server" ] && server="$(uci -q get shadowsocks-libev.sss0.server)"
+	server="$1"
 	ret=$(ping -c 3 -w 3 -Q 184 $server 2>&1) && echo "$ret" | grep -sq "bytes from" && return
 	false
 }
@@ -41,7 +54,13 @@ _get_json() {
 	route=$1
 	[ -z "$token" ] && _login
 	[ -n "$token" ] && {
-		result=`curl --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://$server:$serverport/$route`
+		resolve="$(resolveip $server)"
+		valid_ip6=$(valid_subnet6 $server)
+		if [ "$resolve" != "$server" ] || [ "$valid_ip6" != "ok" ]; then
+			result=`curl --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://$server:$serverport/$route`
+		else
+			result=`curl --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://[$server]:$serverport/$route`
+		fi
 		echo $result
 	} || {
 		echo ''
@@ -54,7 +73,13 @@ _set_json() {
 	settings="$2"
 	[ -z "$token" ] && _login
 	[ -n "$token" ] && {
-		result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
+		resolve="$(resolveip $server)"
+		valid_ip6=$(valid_subnet6 $server)
+		if [ "$resolve" != "$server" ] || [ "$valid_ip6" != "ok" ]; then
+			result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
+		else
+			result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://[$server]:$serverport/$route`
+		fi
 		echo $result
 	} || {
 		echo ''
@@ -449,6 +474,7 @@ _get_gre_tunnel() {
 					set network.omrip${i}gre.defaultroute='0'
 					set network.omrip${i}gre.multipath='off'
 					set network.omrip${i}gre.peerdns='0'
+					set network.omrip${i}gre.ttl='255'
 					set network.omrip${i}gre.ip4table='vpn'
 					set network.omrip${i}gre.peeraddr="$publicaddr"
 					set network.omrip${i}gre.ipaddr="$vpnip_local"
@@ -1068,7 +1094,7 @@ _set_config_from_vps() {
 					set shadowsocks-libev.sss0.disabled=0
 					commit shadowsocks-libev
 					set v2ray.main.enabled=0
-					commit shadowsocks-libev
+					commit v2ray
 					set openmptcprouter.settings.shadowsocks_disable=0
 					commit openmptcprouter
 				EOF
@@ -1077,7 +1103,7 @@ _set_config_from_vps() {
 					set shadowsocks-libev.sss0.disabled=1
 					commit shadowsocks-libev
 					set v2ray.main.enabled=1
-					commit shadowsocks-libev
+					commit v2ray
 					set openmptcprouter.settings.shadowsocks_disable=1
 					commit openmptcprouter
 				EOF
@@ -1086,7 +1112,7 @@ _set_config_from_vps() {
 					set shadowsocks-libev.sss0.disabled=1
 					commit shadowsocks-libev
 					set v2ray.main.enabled=0
-					commit shadowsocks-libev
+					commit v2ray
 					set openmptcprouter.settings.shadowsocks_disable=1
 					commit openmptcprouter
 				EOF
@@ -1453,7 +1479,7 @@ _backup_send() {
 		EOF
 		return
 	}
-	sysupgrade -b /tmp/backup.tar.gz
+	sysupgrade -k -b /tmp/backup.tar.gz
 	backup_data="$(cat /tmp/backup.tar.gz | base64 | tr -d '\n')"
 	backup_sha256sum="$(sha256sum /tmp/backup.tar.gz | awk '{print $1}')"
 	[ -n "$backup_data" ] && {
@@ -1565,20 +1591,36 @@ _config_service() {
 	_login
 	[ -z "$token" ] && {
 		reason=""
-		_ping_server
-		status=$?
-		if $(exit $status); then
-			reason="can ping server ${servername}"
-		else
-			reason="can't ping server ${servername}"
-		fi
+		test_ping() {
+			_ping_server $1
+			status=$?
+			if $(exit $status); then
+				reason="can ping server ${servername} on $1"
+			else
+				reason="can't ping server ${servername} on $1"
+			fi
+		}
+		config_list_foreach "${servername}" ip test_ping
 		port="$(uci -q get openmptcprouter.${servername}.port)"
-		server="$(uci -q get openmptcprouter.${servername}.ip)"
-		if [ "$(curl -k -m 3 https://${server}:${port}/)" = "" ]; then
-			reason="$reason, no server API answer"
-		else
-			reason="$reason, server API answer"
-		fi
+		api_test() {
+			server="$1"
+			resolve="$(resolveip $server)"
+			valid_ip6=$(valid_subnet6 $server)
+			if [ "$resolve" != "$server" ] || [ "$valid_ip6" != "ok" ]; then
+				if [ "$(curl -k -m 3 https://${server}:${port}/)" = "" ]; then
+					reason="$reason, no server API answer on $1"
+				else
+					reason="$reason, server API answer on $1"
+				fi
+			else
+				if [ "$(curl -k -m 3 https://[${server}]:${port}/)" = "" ]; then
+					reason="$reason, no server API answer on $1"
+				else
+					reason="$reason, server API answer on $1"
+				fi
+			fi
+		}
+		config_list_foreach "${servername}" ip api_test
 		if [ "$(uci -q get openmptcprouter.${servername}.username)" != "openmptcprouter" ]; then
 			reason="$reason, custom username"
 		fi
@@ -1706,6 +1748,9 @@ start_service() {
 	uci -q batch <<-EOF >/dev/null
 		commit openmptcprouter
 	EOF
+	if [ "$(ps w | grep sysupgrade)" = "" ]; then
+		/etc/init.d/sysupgrade restart
+	fi
 }
 
 service_triggers() {
