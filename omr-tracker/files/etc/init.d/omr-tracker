@@ -11,12 +11,15 @@
 	USE_PROCD=1
 }
 
+. /usr/lib/unbound/iptools.sh
+
 _validate_section() {
-	local tmp_hosts=$hosts tmp_timeout=$timeout tmp_tries=$tries
+	local tmp_hosts=$hosts tmp_hosts6=$hosts6 tmp_timeout=$timeout tmp_tries=$tries
 	local tmp_interval=$interval tmp_interval_tries=$interval_tries tmp_options=$options tmp_type=$type tmp_enabled=$enabled tmp_wait_test=$wait_test
 
 	uci_validate_section omr-tracker "$1" "$2" \
 		'hosts:list(host)'  \
+		'hosts6:list(host6)'  \
 		'timeout:uinteger'  \
 		'tries:uinteger'    \
 		'interval:uinteger' \
@@ -27,6 +30,7 @@ _validate_section() {
 		'options:string'
 
 	[ -z "$hosts"    ] && hosts=$tmp_hosts
+	[ -z "$hosts6"    ] && hosts6=$tmp_hosts6
 	[ -z "$timeout"  ] && timeout=$tmp_timeout
 	[ -z "$tries"    ] && tries=$tmp_tries
 	[ -z "$interval" ] && interval=$tmp_interval
@@ -42,7 +46,7 @@ _launch_tracker() {
 		loopback|lan*|if0*) return;;
 	esac
 
-	local hosts timeout tries interval interval_tries options type enabled wait_test
+	local hosts hosts6 timeout tries interval interval_tries options type enabled wait_test
 	_validate_section "defaults" "defaults"
 	_validate_section "interface" "$1"
 
@@ -65,6 +69,7 @@ _launch_tracker() {
 	# shellcheck disable=SC2086
 	procd_set_param command /bin/omr-tracker "$1" $options
 	procd_append_param env "OMR_TRACKER_HOSTS=$hosts"
+	procd_append_param env "OMR_TRACKER_HOSTS6=$hosts6"
 	procd_append_param env "OMR_TRACKER_TIMEOUT=$timeout"
 	procd_append_param env "OMR_TRACKER_TRIES=$tries"
 	procd_append_param env "OMR_TRACKER_INTERVAL=$interval"
@@ -127,48 +132,45 @@ _launch_gre_tracker() {
 
 _initialize_shadowsocks_tracker() {
 	local redir_tcp server tracker_server
-	config_get redir_tcp ss_rules redir_tcp
-	config_get tracker_server "tracker" server
-	if [ "$redir_tcp" != "all" ]; then
-		config_get server $redir_tcp server
-	elif [ "$tracker_server" != "" ]; then
-		server=$tracker_server
-	else
-		server="sss0"
-	fi
+	server=$1
+	
+	[ -n "$(echo $server | grep sss)" ] || return
+	
+	#redir_tcp=$(uci -q get shadowsocks-libev.ss_rules.redir_tcp)
+	#config_get tracker_server ss_rules server
 	config_get ss_disabled $server disabled 0
-	[ -z "$tracker_server" ] && {
+	[ -z "$(uci -q get shadowsocks-libev.tracker_${server})" ] && [ "$ss_disabled" != "1" ] && {
 		logger -t "omr-tracker" "Create ShadowSock tracker ss_local..."
 		uci -q batch <<-EOF >/dev/null
-		    set shadowsocks-libev.tracker=ss_local
-		    set shadowsocks-libev.tracker.server=$server
-		    set shadowsocks-libev.tracker.local_address="127.0.0.1"
-		    set shadowsocks-libev.tracker.local_port=1111
-		    set shadowsocks-libev.tracker.mode=tcp_and_udp
-		    set shadowsocks-libev.tracker.timeout=600
-		    set shadowsocks-libev.tracker.fast_open=1
-		    set shadowsocks-libev.tracker.syslog=0
-		    set shadowsocks-libev.tracker.reuse_port=1
-		    set shadowsocks-libev.tracker.mptcp=1
-		    set shadowsocks-libev.tracker.verbose=0
+		    set shadowsocks-libev.tracker_${server}=ss_local
+		    set shadowsocks-libev.tracker_${server}.server=$server
+		    set shadowsocks-libev.tracker_${server}.local_address="127.0.0.1"
+		    set shadowsocks-libev.tracker_${server}.local_port=1111
+		    set shadowsocks-libev.tracker_${server}.mode=tcp_and_udp
+		    set shadowsocks-libev.tracker_${server}.timeout=600
+		    set shadowsocks-libev.tracker_${server}.fast_open=1
+		    set shadowsocks-libev.tracker_${server}.syslog=0
+		    set shadowsocks-libev.tracker_${server}.reuse_port=1
+		    set shadowsocks-libev.tracker_${server}.mptcp=1
+		    set shadowsocks-libev.tracker_${server}.verbose=0
 		    commit shadowsocks-libev
 		EOF
 		/etc/init.d/shadowsocks-libev restart
 	}
-	[ -n "$tracker_server" ] && [ "$server" = "$tracker_server" ] || {
-		logger -t "omr-tracker" "Set ShadowSock tracker to current server ($tracker_server -> $server)..."
-		uci -q batch <<-EOF >/dev/null
-		    set shadowsocks-libev.tracker.server=$server
-		    commit shadowsocks-libev
-		EOF
-		/etc/init.d/shadowsocks-libev restart
-	}
+#	[ -n "$tracker_server" ] && [ "$server" = "$tracker_server" ] || {
+#		logger -t "omr-tracker" "Set ShadowSock tracker to current server ($tracker_server -> $server)..."
+#		uci -q batch <<-EOF >/dev/null
+#		    set shadowsocks-libev.tracker.server=$server
+#		    commit shadowsocks-libev
+#		EOF
+#		/etc/init.d/shadowsocks-libev restart
+#	}
 }
 
 _launch_shadowsocks_tracker() {
 	local hosts timeout tries interval local_port enabled server wait_test
 	
-	[ "$1" = "tracker" ] || return
+	[ "$(echo $1 | grep tracker)" != "" ] || return
 	
 	_validate_section "proxy" "proxy"
 	
@@ -189,6 +191,7 @@ _launch_shadowsocks_tracker() {
 	procd_append_param env "OMR_TRACKER_INTERVAL=$interval"
 	procd_append_param env "OMR_TRACKER_PROXY=127.0.0.1:$local_port"
 	procd_append_param env "OMR_TRACKER_WAIT_TEST=$wait_test"
+	procd_append_param env "OMR_TRACKER_SERVER=$server"
 	procd_set_param limits nofile="51200 51200"
 	procd_set_param respawn 0 10 0
 	procd_set_param stderr 1
@@ -230,7 +233,7 @@ start_service() {
 	local ss_disabled
 	logger -t "omr-tracker" "Launching..."
 	config_load shadowsocks-libev
-	_initialize_shadowsocks_tracker
+	config_foreach _initialize_shadowsocks_tracker server
 
 	config_load network
 	config_foreach _launch_tracker interface
