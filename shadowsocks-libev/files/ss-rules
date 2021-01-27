@@ -1,7 +1,7 @@
 #!/bin/sh -e
 #
 # Copyright (C) 2017 Yousong Zhou <yszhou4tech@gmail.com>
-# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018-2021 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 #
 # The design idea was derived from ss-rules by Jian Chang <aa65535@live.com>
 #
@@ -135,7 +135,7 @@ ss_rules_ipset_init() {
 		create ssr_${rule}_src_bypass hash:net hashsize 64
 		create ssr_${rule}_src_forward hash:net hashsize 64
 		create ssr_${rule}_src_checkdst hash:net hashsize 64
-		create ssr_rules_dst_bypass_all hash:net hashsize 64
+		create ss_rules_dst_bypass_all hash:net hashsize 64
 		create ssr_${rule}_dst_bypass hash:net hashsize 64
 		create ssr_${rule}_dst_bypass_ hash:net hashsize 64
 		create ssr_${rule}_dst_forward hash:net hashsize 64
@@ -187,18 +187,19 @@ ss_rules_iptchains_init_tcp() {
 		forward) local_target=ssr_${rule}_forward ;;
 		bypass|*) return 0;;
 	esac
-
-	iptables-restore -w --noflush <<-EOF
-		*nat
-		:ssr_${rule}_local_out -
-		-I OUTPUT 1 -p tcp -j ssr_${rule}_local_out
-		-A ssr_${rule}_local_out -m set --match-set ssr_${rule}_dst_bypass dst -j RETURN
-		-A ssr_${rule}_local_out -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
-		-A ssr_${rule}_local_out -m set --match-set ssr_${rule}_dst_bypass_ dst -j RETURN
-		-A ssr_${rule}_local_out -m mark --mark 0x539 -j RETURN
-		-A ssr_${rule}_local_out -p tcp $o_ipt_extra -j $local_target -m comment --comment "local_default: $o_local_default"
-		COMMIT
-	EOF
+	if [ "$(iptables -t nat -L ssr_${rule}_local_out | grep ssr_${rule}_dst_bypass)" = "" ]; then
+		iptables-restore -w --noflush <<-EOF
+			*nat
+			:ssr_${rule}_local_out -
+			-I OUTPUT 1 -p tcp -j ssr_${rule}_local_out
+			-A ssr_${rule}_local_out -m set --match-set ssr_${rule}_dst_bypass dst -j RETURN
+			-A ssr_${rule}_local_out -m set --match-set ss_rules_dst_bypass_all dst -j RETURN
+			-A ssr_${rule}_local_out -m set --match-set ssr_${rule}_dst_bypass_ dst -j RETURN
+			-A ssr_${rule}_local_out -m mark --mark 0x539 -j RETURN
+			-A ssr_${rule}_local_out -p tcp $o_ipt_extra -j $local_target -m comment --comment "local_default: $o_local_default"
+			COMMIT
+		EOF
+	fi
 }
 
 ss_rules_iptchains_init_udp() {
