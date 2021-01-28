@@ -1115,6 +1115,7 @@ function interfaces_status()
 	    local gateway6 = section["ip6gw"] or ""
 	    local multipath = section["multipath"]
 	    local enabled = section["auto"]
+	    local proto = section["proto"] or ""
 
 	    --if not ipaddr or not gateway then return end
 	    -- Don't show if0 in the overview
@@ -1130,7 +1131,7 @@ function interfaces_status()
 	    
 	    duplicateif = false
 	    if ifname ~= "" and ifname ~= nil then
-		if allintf[ifname] then
+		if allintf[ifname] and not section["ifname"]:match("^@.*") then
 		    connectivity = "ERROR"
 		    duplicateif = true
 		else
@@ -1144,10 +1145,10 @@ function interfaces_status()
 	    if enabled == "0" then return end
 
 	    local connectivity = "OK"
-	    if ipaddr == "" and ifname ~= nil and ifname ~= "" then
+	    if ipaddr == "" and ifname ~= nil and ifname ~= "" and proto ~= "dhcpv6" then
 		    ipaddr = ut.trim(sys.exec("ip -4 -br addr ls dev " .. ifname .. " | awk -F'[ /]+' '{print $3}' | tr -d '\n'"))
 	    end
-	    if ipaddr == "" and ifname ~= nil and ifname ~= "" then
+	    if ipaddr == "" and ifname ~= nil and ifname ~= "" and proto ~= "dhcpv6" then
 		    ipaddr = ut.trim(sys.exec("ip -4 addr show dev " .. ifname .. " | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1 | tr -d '\n'"))
 	    end
 	    if ip6addr == "" and ifname ~= nil and ifname ~= "" then
@@ -1195,14 +1196,16 @@ function interfaces_status()
 	    local gw_ping = "UP"
 	    local gw_ping6 = "UP"
 	    if ifname ~= nil and not (ifname:match("^tun.*") or interface:match("^ovpn.*")) then
-		gateway = ut.trim(sys.exec("ip -4 r list dev " .. ifname .. " | grep via | grep -v default | grep -v metric | awk '{print $1}' | tr -d '\n'"))
+	        if proto ~= "dhcpv6" then
+			gateway = ut.trim(sys.exec("ip -4 r list dev " .. ifname .. " | grep via | grep -v default | grep -v metric | awk '{print $1}' | tr -d '\n'"))
+		end
 		gateway6 = ut.trim(sys.exec("ip -6 r list dev " .. ifname .. " | grep via | grep -v default | grep -v metric | awk '{print $1}' | tr -d '\n'"))
 	    end
 
-	    if gateway == "" then
+	    if gateway == "" and proto ~= "dhcpv6" then
 		    gateway = get_gateway(interface)
 	    end
-	    if gateway == "" and ifname ~= nil and ifname ~= "" then
+	    if gateway == "" and ifname ~= nil and ifname ~= "" and proto ~= "dhcpv6" then
 		    if fs.access("/sys/class/net/" .. ifname) then
 			    gateway = ut.trim(sys.exec("ip -4 r list dev " .. ifname .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
 			    if gateway == "" then
@@ -1263,7 +1266,7 @@ function interfaces_status()
 	    end
 	    
 	    if ifname ~= "" and ifname ~= nil then
-		    local proto = section['proto']
+		    --local proto = section['proto']
 		    if proto == "qmi" then
 			    local device = section['device']
 			    intfdata = ut.trim(sys.exec("omr-qmi " .. device .. " all"))
@@ -1438,6 +1441,7 @@ function interfaces_status()
 		phonenumber = phonenumber,
 		donglestate = donglestate,
 		networktype = networktype,
+		proto = proto,
 		rx = rx,
 		tx = tx,
 	    }
