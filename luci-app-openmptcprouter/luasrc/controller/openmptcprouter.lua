@@ -66,7 +66,8 @@ function wizard_add()
 		ucic:foreach("openmptcprouter", "server", function(s)
 			local servername = s[".name"]
 			nbserver = nbserver + 1
-			server_ip = ucic:get("openmptcprouter",servername,"ip")
+			server_ips = ucic:get_list("openmptcprouter",servername,"ip")
+			server_ip = server_ips[1]
 		end)
 		if nbserver == 1 and server_ip ~= "" and server_ip ~= nil then
 			ucic:set("shadowsocks-libev","sss0","server",server_ip)
@@ -425,8 +426,14 @@ function wizard_add()
 	local disablednb = 0
 	local servers = luci.http.formvaluetable("server")
 	for server, _ in pairs(servers) do
-		local server_ip = {}
-		server_ip[1] = luci.http.formvalue("%s.server_ip" % server) or ""
+		local serverips = luci.http.formvaluetable("%s.serverip" % server) or {}
+		local aserverips = {}
+		for _, ip in pairs(serverips) do
+			if ip ~= "" and ip ~= nil then
+				table.insert(aserverips,ip)
+			end
+		end
+
 		local master = luci.http.formvalue("master") or ""
 
 		-- OpenMPTCProuter VPS
@@ -447,14 +454,14 @@ function wizard_add()
 		if openmptcprouter_vps_disabled == "1" then
 			disablednb = disablednb + 1
 		end
-		if server_ip[1] ~= "" then
+		if next(aserverips) ~= nil then
 			serversnb = serversnb + 1
 		end
 		ucic:set("openmptcprouter",server,"server")
 		ucic:set("openmptcprouter",server,"username",openmptcprouter_vps_username)
 		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key)
 		ucic:set("openmptcprouter",server,"disabled",openmptcprouter_vps_disabled)
-		ucic:set_list("openmptcprouter",server,"ip",server_ip)
+		ucic:set_list("openmptcprouter",server,"ip",aserverips)
 		ucic:set("openmptcprouter",server,"port","65500")
 		ucic:save("openmptcprouter")
 	end
@@ -488,6 +495,13 @@ function wizard_add()
 	ucic:save("shadowsocks-libev")
 	ucic:save("v2ray")
 
+	ucic:foreach("shadowsocks-libev","server", function(s)
+		local sectionname = s[".name"]
+		if sectionname:match("^sss.*") then
+			ucic:delete("shadowsocks-libev",sectionname,"ip")
+			ucic:set("shadowsocks-libev",sectionname,"disabled","1")
+		end
+	end)
 
 	local ss_servers_nginx = {}
 	local ss_servers_ha = {}
@@ -497,14 +511,20 @@ function wizard_add()
 
 	for server, _ in pairs(servers) do
 		local master = luci.http.formvalue("master") or ""
-		local server_ip = luci.http.formvalue("%s.server_ip" % server) or ""
+		local server_ips = luci.http.formvaluetable("%s.serverip" % server) or {}
+		local server_ip = ""
+		for _, ip in pairs(server_ips) do
+			if server_ip == "" and ip ~= "" and ip ~= nil then
+				server_ip=ip
+			end
+		end
 		-- We have an IP, so set it everywhere
-		if server_ip ~= "" and luci.http.formvalue("%s.openmptcprouter_vps_disabled" % server) ~= "1" then
+		if server_ip ~= "" and server_ip ~= nil and luci.http.formvalue("%s.openmptcprouter_vps_disabled" % server) ~= "1" then
 			-- Check if we have more than one IP, in this case use Nginx HA
 			if serversnb > 1 then
 				if master == server then
 					ss_ip=server_ip
-					ucic:set("shadowsocks-libev","sss0","server",server_ip)
+					--ucic:set("shadowsocks-libev","sss0","server",server_ip)
 					ucic:set("glorytun","vpn","host",server_ip)
 					ucic:set("glorytun-udp","vpn","host",server_ip)
 					ucic:set("dsvpn","vpn","host",server_ip)
@@ -516,6 +536,14 @@ function wizard_add()
 					luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
 					ucic:set("qos","serverin","srchost",server_ip)
 					ucic:set("qos","serverout","dsthost",server_ip)
+					local nbip = 0
+					for _, ssip in pairs(server_ips) do
+						ucic:set("shadowsocks-libev","sss" .. nbip,"server",ssip)
+						if default_proxy == "shadowsocks" then
+							ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","0")
+						end
+						nbip = nbip + 1
+					end
 				end
 				k = k + 1
 				ucic:set("nginx-ha","ShadowSocks","enable","0")
@@ -526,7 +554,7 @@ function wizard_add()
 				ucic:set("openmptcprouter","settings","ha","0")
 				ucic:set("nginx-ha","ShadowSocks","enable","0")
 				ucic:set("nginx-ha","VPN","enable","0")
-				ucic:set("shadowsocks-libev","sss0","server",server_ip)
+				--ucic:set("shadowsocks-libev","sss0","server",server_ip)
 				ucic:set("glorytun","vpn","host",server_ip)
 				ucic:set("glorytun-udp","vpn","host",server_ip)
 				ucic:set("dsvpn","vpn","host",server_ip)
@@ -538,6 +566,14 @@ function wizard_add()
 				luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
 				ucic:set("qos","serverin","srchost",server_ip)
 				ucic:set("qos","serverout","dsthost",server_ip)
+				local nbip = 0
+				for _, ssip in pairs(server_ips) do
+					ucic:set("shadowsocks-libev","sss" .. nbip,"server",ssip)
+					if default_proxy == "shadowsocks" then
+						ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","0")
+					end
+					nbip = nbip + 1
+				end
 			end
 		end
 	end

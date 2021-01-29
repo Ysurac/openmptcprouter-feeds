@@ -362,10 +362,11 @@ _get_vps_config() {
 			fi
 		fi
 	fi
-	vpsip="$(uci -q get openmptcprouter.${servername}.ip)"
+	vpsip="$(uci -q get openmptcprouter.${servername}.ip | awk '{print $1}')"
 	if [ "$(uci -q get shadowsocks-libev.sss0.server)" != "127.0.0.1" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		config_foreach _set_ss_server server "server" $vpsip
 		uci -q batch <<-EOF >/dev/null
+			set shadowsocks-libev.sss0.server="$vpsip"
 			commit shadowsocks-libev
 		EOF
 		if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" = "0" ]; then
@@ -1033,7 +1034,9 @@ _set_ss_server() {
 	elif [ "$value" = "false" ]; then
 		value=0
 	fi
-	[ "$(echo $1 | grep omr)" != "" ] && uci -q set shadowsocks-libev.$1.$option=$value
+	if [ "$(echo $1 | grep omr)" != "" ] || [ "$(echo $1 | grep sss)" ]; then 
+		uci -q set shadowsocks-libev.$1.$option=$value
+	fi
 }
 
 _set_config_from_vps() {
@@ -1044,7 +1047,7 @@ _set_config_from_vps() {
 	logger -t "OMR-VPS" "Get config from server ${servername}..."
 	noerror=1
 	# get VPS ip
-	vpsip="$(uci -q get openmptcprouter.${servername}.ip)"
+	vpsip="$(uci -q get openmptcprouter.${servername}.ip | awk '{print $1}')"
 	vps_lastchange="$(echo "$vps_config" | jsonfilter -q -e '@.vps.lastchange')"
 	lastchange="$(uci -q get openmptcprouter.${servername}.lastchange)"
 	[ -z "$lastchange" ] && lastchange=0
