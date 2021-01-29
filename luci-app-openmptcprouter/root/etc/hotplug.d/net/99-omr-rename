@@ -20,17 +20,22 @@ _set_intf_name() {
 	fi
 	[ -n "$modalias" ] && {
 		if [ -f /sys/class/net/${INTERFACE}/device/uevent ]; then
+			mac=""
+			if [ -f /sys/class/net/${INTERFACE}/address ]; then
+				mac="$(cat /sys/class/net/${INTERFACE}/address | tr -d '\n')"
+			fi
 			chk_modalias=$MODALIAS
 			[ -z "$chk_modalias" ] && chk_modalias="$(cat /sys/class/net/${INTERFACE}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')"
 			if [ -n "$chk_modalias" ]; then
+				chk_modalias="${chk_modalias}-${mac}"
 				logger -t "OMR-Rename" "modalias: $modalias - chk_modalias: $chk_modalias - ifname: $ifname - INTERFACE: $INTERFACE"
 				if [ "$modalias" = "$chk_modalias" ] && [ "$INTERFACE" != "$ifname" ]; then
 					logger -t "OMR-Rename" "Rename ${INTERFACE} to ${ifname}"
-					existif=0
+					existif="0"
 					ip link set ${INTERFACE} down 2>&1 >/dev/null
 					[ "$(ip link show ${ifname} 2>/dev/null)" != "" ] && {
 						ip link set ${ifname} name ${ifname}tmp 2>&1 >/dev/null
-						existif=1
+						existif="1"
 					}
 					ip link set ${INTERFACE} name ${ifname} 2>&1 >/dev/null
 					ip link set ${ifname} up 2>&1 >/dev/null
@@ -48,10 +53,10 @@ _set_intf_name() {
 		logger -t "OMR-Rename" "device: $device - devpath: $DEVPATH - ifname: $ifname - INTERFACE: $INTERFACE"
 		logger -t "OMR-Rename" "Rename ${INTERFACE} to ${ifname}"
 		ip link set ${INTERFACE} down 2>&1 >/dev/null
-		existif=0
+		existif="0"
 		[ "$(ip link show ${ifname} 2>/dev/null)" != "" ] && {
 			ip link set ${ifname} name ${ifname}tmp 2>&1 >/dev/null
-			existif=1
+			existif="1"
 		}
 		ip link set ${INTERFACE} name ${ifname} 2>&1 >/dev/null
 		ip link set ${ifname} up 2>&1 >/dev/null
@@ -62,5 +67,5 @@ _set_intf_name() {
 if [ "$(uci -q get openmptcprouter.settings.disableintfrename)" != "1" ]; then
 	config_load network
 	config_foreach _set_intf_name interface
-	config_foreach _set_intf_name interface
+#	config_foreach _set_intf_name interface
 fi
