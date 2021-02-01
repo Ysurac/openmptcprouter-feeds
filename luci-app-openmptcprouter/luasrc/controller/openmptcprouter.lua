@@ -246,7 +246,7 @@ function wizard_add()
 			ucic:set("network",intf,"type",typeintf)
 		end
 		if vlan ~= "" then
-			ifname=ifname .. '.' .. vlan
+			ifname = ifname .. '.' .. vlan
 		end
 		if typeintf == "macvlan" and masterintf ~= "" then
 			ucic:set("network",intf,"type","macvlan")
@@ -905,6 +905,9 @@ function settings_add()
 	-- Enable/disable debug
 	local debug = luci.http.formvalue("debug") or "0"
 	ucic:set("openmptcprouter","settings","debug",debug)
+	ucic:foreach("shadowsocks-libev", "ss_redir", function (section)
+		ucic:set("shadowsocks-libev",section[".name"],"verbose",debug)
+	end)
 
 	-- Enable/disable vnstat backup
 	local savevnstat = luci.http.formvalue("savevnstat") or "0"
