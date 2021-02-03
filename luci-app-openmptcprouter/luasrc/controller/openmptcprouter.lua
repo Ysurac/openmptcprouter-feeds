@@ -220,6 +220,7 @@ function wizard_add()
 		local typeintf = luci.http.formvalue("cbid.network.%s.type" % intf) or ""
 		local masterintf = luci.http.formvalue("cbid.network.%s.masterintf" % intf) or ""
 		local ifname = luci.http.formvalue("cbid.network.%s.intf" % intf) or ""
+		local vlan = luci.http.formvalue("cbid.network.%s.vlan" % intf) or ""
 		local device_ncm = luci.http.formvalue("cbid.network.%s.device.ncm" % intf) or ""
 		local device_qmi = luci.http.formvalue("cbid.network.%s.device.qmi" % intf) or ""
 		local device_modemmanager = luci.http.formvalue("cbid.network.%s.device.modemmanager" % intf) or ""
@@ -243,6 +244,9 @@ function wizard_add()
 				typeintf = ""
 			end
 			ucic:set("network",intf,"type",typeintf)
+		end
+		if vlan ~= "" then
+			ifname = ifname .. '.' .. vlan
 		end
 		if typeintf == "macvlan" and masterintf ~= "" then
 			ucic:set("network",intf,"type","macvlan")
@@ -901,6 +905,9 @@ function settings_add()
 	-- Enable/disable debug
 	local debug = luci.http.formvalue("debug") or "0"
 	ucic:set("openmptcprouter","settings","debug",debug)
+	ucic:foreach("shadowsocks-libev", "ss_redir", function (section)
+		ucic:set("shadowsocks-libev",section[".name"],"verbose",debug)
+	end)
 
 	-- Enable/disable vnstat backup
 	local savevnstat = luci.http.formvalue("savevnstat") or "0"
