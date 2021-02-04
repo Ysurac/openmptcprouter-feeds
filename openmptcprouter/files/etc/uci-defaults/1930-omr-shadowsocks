@@ -1,6 +1,13 @@
 #!/bin/sh
 # Copyright (C) 2020 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter project
 
+if [ "$(uci -q get shadowsocks-libev.hi)" != ""; then
+	uci -q batch <<-EOF >/dev/null
+		rename shadowsocks-libev.hi="hi1"
+		commit shadowsocks-libev
+	EOF
+fi
+
 if [ "$(uci -q get openmptcprouter.latest_versions)" = "" ]; then
 	NBCPU=$(grep -c '^processor' /proc/cpuinfo | tr -d "\n")
 	if [ "$NBCPU" -gt 2 ]; then
@@ -26,24 +33,16 @@ if [ "$(uci -q get openmptcprouter.latest_versions)" = "" ]; then
 		fi
 	fi
 
-	if [ "$(uci -q get shadowsocks-libev.hi.timeout)" != "1000" ]; then
-		uci -q batch <<-EOF > /dev/null
-			set shadowsocks-libev.hi.timeout=1000
-			commit shadowsocks-libev
-		EOF
-		for c in $(seq 2 $NBCPU); do
+	if [ "$(uci -q get shadowsocks-libev.hi1.timeout)" != "1000" ]; then
+		for c in $(seq 1 $NBCPU); do
 			uci -q batch <<-EOF > /dev/null
 				set shadowsocks-libev.hi$c.timeout=1000
 				commit shadowsocks-libev
 			EOF
 		done
 	fi
-	if [ "$(uci -q get shadowsocks-libev.hi.mode)" != "tcp" ]; then
-		uci -q batch <<-EOF > /dev/null
-			set shadowsocks-libev.hi.mode=tcp_and_udp
-			commit shadowsocks-libev
-		EOF
-		for c in $(seq 2 $NBCPU); do
+	if [ "$(uci -q get shadowsocks-libev.hi1.mode)" != "tcp" ]; then
+		for c in $(seq 1 $NBCPU); do
 			uci -q batch <<-EOF > /dev/null
 				set shadowsocks-libev.hi$c.mode=tcp_and_udp
 				commit shadowsocks-libev
@@ -51,12 +50,16 @@ if [ "$(uci -q get openmptcprouter.latest_versions)" = "" ]; then
 		done
 	fi
 fi
+
 if [ "$(uci -q get shadowsocks-libev.hi3)" != "" ]; then
-	port=1101
-	for c in $(seq 3 2 $NBCPU); do
+	port=1100
+	for c in $(seq 1 2 $NBCPU); do
 		uci -q batch <<-EOF >/dev/null
 			set shadowsocks-libev.hi$c.local_port=$port
+			set shadowsocks-libev.hi$c.server=sss0
 			set shadowsocks-libev.hi$((c+1)).local_port=$port
+				set shadowsocks-libev.hi$((c+1)).local_address="::"
+			set shadowsocks-libev.hi$((c+1)).server=sss1
 			commit shadowsocks-libev
 		EOF
 		port=$((port+1))
@@ -70,9 +73,9 @@ fi
 if [ "$(uci -q get shadowsocks-libev.hi.obfs)" = "1" ]; then
 	uci -q batch <<-EOF > /dev/null
 		set shadowsocks-libev.sss0.obfs=1
-		set shadowsocks-libev.sss0.obfs_plugin="$(uci -q get shadowsocks-libev.hi.obfs_plugin)"
-		set shadowsocks-libev.sss0.obfs_host="$(uci -q get shadowsocks-libev.hi.obfs_host)"
-		set shadowsocks-libev.sss0.obfs_type="$(uci -q get shadowsocks-libev.hi.obfs_type)"
+		set shadowsocks-libev.sss0.obfs_plugin="$(uci -q get shadowsocks-libev.hi1.obfs_plugin)"
+		set shadowsocks-libev.sss0.obfs_host="$(uci -q get shadowsocks-libev.hi1.obfs_host)"
+		set shadowsocks-libev.sss0.obfs_type="$(uci -q get shadowsocks-libev.hi1.obfs_type)"
 		commit shadowsocks-libev
 	EOF
 fi
@@ -85,10 +88,21 @@ if [ "$(uci -q get shadowsocks-libev.ss_rules.server)" = "" ]; then
 fi
 
 
-if [ "$(uci -q get ucitrack.@shadowsocks-libev[*1].affects | grep openmptcprouter-vps)" = "" ]; then
+if [ "$(uci -q get ucitrack.@shadowsocks-libev[-1].affects | grep openmptcprouter-vps)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
 		add_list ucitrack.@shadowsocks-libev[-1].affects="openmptcprouter-vps"
 		commit ucitrack
+	EOF
+fi
+
+if [ "$(uci -q get shadowsocks-libev.sss1)" = "" ]; then
+	uci -q batch <<-EOF > /dev/null
+		set shadowsocks-libev.sss1=server
+		set shadowsocks-libev.sss1.server_port='65101'
+		set shadowsocks-libev.sss1.method='chacha20-ietf-poly1305'
+		set shadowsocks-libev.sss1.obfs='0'
+		set shadowsocks-libev.sss1.disabled='1'
+		commit shadowsocks-libev
 	EOF
 fi
 
