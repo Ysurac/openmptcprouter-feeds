@@ -477,7 +477,9 @@ function wizard_add()
 		ucic:set("v2ray","main","enabled","0")
 		ucic:foreach("shadowsocks-libev", "server", function(s)
 			local sectionname = s[".name"]
-			ucic:set("shadowsocks-libev",sectionname,"disabled","0")
+			if sectionname:match("^sss.*") then
+				ucic:set("shadowsocks-libev",sectionname,"disabled","0")
+			end
 		end)
 	elseif default_proxy == "v2ray" and serversnb > 0 and serversnb > disablednb then
 		--ucic:set("shadowsocks-libev","sss0","disabled","1")
@@ -543,7 +545,7 @@ function wizard_add()
 					local nbip = 0
 					for _, ssip in pairs(server_ips) do
 						ucic:set("shadowsocks-libev","sss" .. nbip,"server",ssip)
-						if default_proxy == "shadowsocks" then
+						if default_proxy == "shadowsocks" and serversnb > disablednb then
 							ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","0")
 						end
 						nbip = nbip + 1
@@ -573,7 +575,7 @@ function wizard_add()
 				local nbip = 0
 				for _, ssip in pairs(server_ips) do
 					ucic:set("shadowsocks-libev","sss" .. nbip,"server",ssip)
-					if default_proxy == "shadowsocks" then
+					if default_proxy == "shadowsocks" and serversnb > disablednb then
 						ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","0")
 					end
 					nbip = nbip + 1
