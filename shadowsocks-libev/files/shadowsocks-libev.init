@@ -308,6 +308,7 @@ start_service() {
 	# Add rule to match traffic marked by firewall for bypass
 	ip rule add prio 1 fwmark 0x539 lookup 991337 > /dev/null 2>&1
 	rules_up
+	[ -f /etc/firewall.gre-tunnel ] && sh /etc/firewall.gre-tunnel > /dev/null 2>&1
 }
 
 stop_service() {
@@ -320,7 +321,7 @@ reload_service() {
 }
 
 rules_exist() {
-	[ -n "$(iptables -t nat -L -n | grep ssr)" ] && return 0
+	[ -n "$(iptables-save | grep 'A ssr')" ] && return 0
 	return 1
 }
 
@@ -347,6 +348,7 @@ rules_up() {
 		config_foreach ss_rules_restart "$cfgtype" "$cfgtype"
 	done
 	config_foreach ss_rules ss_rules
+	[ -z "$(iptables-save | grep :ssr)" ] && logger -t "Shadowsocks" "Rules not applied"
 	[ -f /etc/init.d/omr-bypass ] && {
 		logger -t "Shadowsocks" "Reload omr-bypass rules"
 		/etc/init.d/omr-bypass reload_rules

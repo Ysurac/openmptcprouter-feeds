@@ -50,6 +50,7 @@ MY_DEPENDS := \
     speedtestc \
     iftop \
     htop \
+    nano \
     tcpdump \
     ethtool \
     iputils-ping \
