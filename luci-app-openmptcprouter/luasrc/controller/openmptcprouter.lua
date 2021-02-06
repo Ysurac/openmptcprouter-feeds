@@ -251,7 +251,7 @@ function wizard_add()
 		if typeintf == "macvlan" and masterintf ~= "" then
 			ucic:set("network",intf,"type","macvlan")
 			ucic:set("network",intf,"masterintf",masterintf)
-		elseif typeintf == "" and ifname ~= "" and (proto == "static" or proto == "dhcp" ) then
+		elseif typeintf == "" and ifname ~= "" and (proto == "static" or proto == "dhcp" or proto == "dhcpv6") then
 			ucic:set("network",intf,"ifname",ifname)
 		elseif typeintf == "" and device ~= "" and proto == "ncm" then
 			ucic:set("network",intf,"device",device_ncm)
@@ -294,6 +294,11 @@ function wizard_add()
 		else
 			ucic:set("network",intf,"ip6addr","")
 			ucic:set("network",intf,"ip6gw","")
+		end
+		
+		if proto == "dhcpv6" then
+			ucic:set("network",intf,"reqaddress","try")
+			ucic:set("network",intf,"reqprefix","auto")
 		end
 
 		ucic:delete("openmptcprouter",intf,"lc")
@@ -437,6 +442,11 @@ function wizard_add()
 				table.insert(aserverips,ip)
 			end
 		end
+		if disableipv6 == "1" then
+			if table.getn(aserverips) == 2 then
+				table.remove(aserverips, 2)
+			end
+		end
 
 		local master = luci.http.formvalue("master") or ""
 
@@ -477,7 +487,9 @@ function wizard_add()
 		ucic:set("v2ray","main","enabled","0")
 		ucic:foreach("shadowsocks-libev", "server", function(s)
 			local sectionname = s[".name"]
-			ucic:set("shadowsocks-libev",sectionname,"disabled","0")
+			if sectionname:match("^sss.*") then
+				ucic:set("shadowsocks-libev",sectionname,"disabled","0")
+			end
 		end)
 	elseif default_proxy == "v2ray" and serversnb > 0 and serversnb > disablednb then
 		--ucic:set("shadowsocks-libev","sss0","disabled","1")
@@ -543,8 +555,11 @@ function wizard_add()
 					local nbip = 0
 					for _, ssip in pairs(server_ips) do
 						ucic:set("shadowsocks-libev","sss" .. nbip,"server",ssip)
-						if default_proxy == "shadowsocks" then
+						if default_proxy == "shadowsocks" and serversnb > disablednb then
 							ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","0")
+						end
+						if disableipv6 == "1" and nbip > 0 then
+							break
 						end
 						nbip = nbip + 1
 					end
@@ -573,10 +588,13 @@ function wizard_add()
 				local nbip = 0
 				for _, ssip in pairs(server_ips) do
 					ucic:set("shadowsocks-libev","sss" .. nbip,"server",ssip)
-					if default_proxy == "shadowsocks" then
+					if default_proxy == "shadowsocks" and serversnb > disablednb then
 						ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","0")
 					end
 					nbip = nbip + 1
+					if disableipv6 == "1" and nbip > 0 then
+						break
+					end
 				end
 			end
 		end
