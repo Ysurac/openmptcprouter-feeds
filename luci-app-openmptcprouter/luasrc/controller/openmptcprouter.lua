@@ -36,6 +36,15 @@ end
 
 function wizard_add()
 	local gostatus = true
+	
+	-- Force WAN zone firewall members to be a list
+	local fwwan = sys.exec("uci -q get firewall.@zone[1].network")
+	luci.sys.call("uci -q delete firewall.@zone[1].network")
+	for interface in fwwan:gmatch("%S+") do
+		luci.sys.call("uci -q add_list firewall.@zone[1].network=" .. interface)
+	end
+	ucic:save("firewall")
+	
 	-- Add new server
 	local add_server = luci.http.formvalue("add_server") or ""
 	local add_server_name = luci.http.formvalue("add_server_name") or ""
@@ -190,7 +199,9 @@ function wizard_add()
 		for intf, _ in pairs(delete_intf) do
 			local defif = ucic:get("network",intf,"ifname")
 			ucic:delete("network",intf)
-			ucic:delete("network",intf .. "_dev")
+			if ucic:get("network",intf .. "_dev") ~= "" then
+				ucic:delete("network",intf .. "_dev")
+			end
 			ucic:save("network")
 			ucic:commit("network")
 			ucic:delete("sqm",intf)
