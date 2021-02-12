@@ -309,7 +309,9 @@ function wizard_add()
 		
 		if proto == "dhcpv6" then
 			ucic:set("network",intf,"reqaddress","try")
-			ucic:set("network",intf,"reqprefix","auto")
+			ucic:set("network",intf,"reqprefix","no")
+			ucic:set("network",intf,"iface_map","0")
+			ucic:set("network",intf,"ipv6","1")
 		end
 
 		ucic:delete("openmptcprouter",intf,"lc")
