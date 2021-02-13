@@ -804,6 +804,9 @@ _vps_firewall_redirect_port() {
 	config_get src_ip $1 src_ip
 	config_get v2ray $1 v2ray "0"
 	config_get dmz $1 dmz "0"
+	if [ -z "$src_dport" ] && [ -n "$dest_port" ]; then
+		src_dport=$dest_port
+	fi
 	if [ "$dmz" = "1" ] && [ "$src_dport" != "2-64999" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set firewall.${section}.src_dport='2-64999'
@@ -971,6 +974,15 @@ _vps_firewall_close_port() {
 }
 
 _set_vps_firewall() {
+	fw3 -q print | grep 'vpn.* -d' |
+	while IFS=$"\n" read -r c; do
+		eval $(echo $c | sed 's/iptables/iptables -w/' | sed 's/-A/-D/') 2>&1 >/dev/null
+		newrule=$(echo $c | sed 's/iptables/iptables -w/' | sed -E -e 's/ -d ([^ ])*//' -e 's/ -s ([^ ])*//')
+		eval $(echo $newrule | sed 's/-A/-D/') || true
+		eval $newrule
+	done
+	#'
+
 	fwservername=$1
 	[ -z "$servername" ] && servername=$fwservername
 	[ -z "$fwservername" ] && fwservername=$servername
@@ -1005,13 +1017,6 @@ _set_vps_firewall() {
 }
 
 set_vps_firewall() {
-	fw3 -q print | grep 'vpn.* -d' |
-	while IFS=$"\n" read -r c; do
-		eval $(echo $c | sed 's/-A/-D/') 2>&1 >/dev/null
-		newrule=$(echo $c | sed -E -e 's/ -d ([^ ])*//' -e 's/ -s ([^ ])*//')
-		eval $(echo $newrule | sed 's/-A/-C/') || eval $newrule
-	done
-	#'
 	config_load openmptcprouter
 	config_foreach _set_vps_firewall server
 }
