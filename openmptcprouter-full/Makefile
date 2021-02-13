@@ -50,7 +50,6 @@ MY_DEPENDS := \
     speedtestc \
     iftop \
     htop \
-    nano \
     tcpdump \
     ethtool \
     iputils-ping \
@@ -81,7 +80,7 @@ MY_DEPENDS := \
     !TARGET_mvebu:luci-proto-qmi wpad-basic kmod-mt7601u kmod-rtl8187 \
     luci-app-mlvpn mlvpn 464xlat !TARGET_mvebu:kmod-usb-net-smsc75xx kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-https-dns-proxy kmod-tcp-nanqinlang (TARGET_x86_64||aarch64):kmod-tcp-bbr2 iptables-mod-ipopt igmpproxy ss iptraf-ng \
     luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre tcptraceroute luci-proto-mbim kmod-rtl8xxxu kmod-ath9k-htc luci-app-ttyd luci-mod-dashboard (TARGET_x86||TARGET_x86_64):rtl8192eu-firmware kmod-usb2 libustream-wolfssl (TARGET_x86||TARGET_x86_64):kmod-ixgbevf \
-    hwinfo (TARGET_x86||TARGET_x86_64):dmidecode luci-app-packet-capture kmod-bonding luci-proto-bonding luci-app-sysupgrade
+    hwinfo (TARGET_x86||TARGET_x86_64):dmidecode luci-app-packet-capture kmod-bonding luci-proto-bonding
 #     luci-theme-bootstrap luci-theme-openwrt-2020 luci-theme-openwrt luci-app-status
 #  luci-proto-bonding luci-app-statistics luci-proto-gre
 #    softethervpn5-client softethervpn5-server luci-app-nginx-ha

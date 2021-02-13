@@ -27,12 +27,7 @@ _get_ip() {
 		[ -z "$check_ipv4_website" ] && check_ipv4_website="http://ip.openmptcprouter.com"
 		check_ipv6_website="$(uci -q get openmptcprouter.settings.check_ipv6_website)"
 		[ -z "$check_ipv6_website" ] && check_ipv6_website="http://ipv6.openmptcprouter.com"
-		public_ipv4="$(curl -s -4 -m 3 $check_ipv4_website)"
-		uci -q set openmptcprouter.omr.detected_public_ipv4="${public_ipv4}"
-		[ -n "$public_ipv4" ] && {
-			uci -q set upnpd.config.external_ip="${public_ipv4}"
-			uci -q commit upnpd
-		}
+		uci -q set openmptcprouter.omr.detected_public_ipv4="$(curl -s -4 -m 3 $check_ipv4_website)"
 		if [ "$(uci -q get openmptcprouter.omr.shadowsocks)" != "down" ]; then
 			uci -q set openmptcprouter.omr.detected_ss_ipv4="$(curl -s -4 --socks5 "${proxy}" --max-time 3 $check_ipv4_website)"
 		else
@@ -54,7 +49,6 @@ retry=${OMR_TRACKER_TRIES:-4}
 proxy=${OMR_TRACKER_PROXY:-127.0.0.1:1111}
 hosts=${OMR_TRACKER_HOSTS:-1.1.1.1 1.0.0.1}
 wait_test=${OMR_TRACKER_WAIT_TEST:-0}
-server=${OMR_TRACKER_SERVER:-sss0}
 
 nodns=0
 
@@ -71,12 +65,12 @@ while true; do
 	}
 	if [ "$(curl -s -I -w %{http_code} --socks5 ${proxy} --max-time ${timeout} $host -o /dev/null)" != "000" ]; then
 		nocontact=""
-		[ "${last}" -ge "${retry}" ] || [ "$(uci -q get openmptcprouter.omr.ss_${server})" = "" ] && {
-			_log "Shadowsocks ${server} is up (can contact via http ${host})"
-			uci -q set openmptcprouter.omr.ss_${server}="up"
+		[ "${last}" -ge "${retry}" ] || [ "$(uci -q get openmptcprouter.omr.shadowsocks)" = "" ] && {
+			_log "Shadowsocks is up (can contact via http ${host})"
+			uci -q set openmptcprouter.omr.shadowsocks="up"
 			uci -q commit openmptcprouter.omr
 		}
-		if [ -z "$(iptables-save | grep :ssr)" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.disabled)" != "1" ]; then
+		if [ -z "$(iptables -t nat -L -n | grep ss_rules)" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.disabled)" != "1" ]; then
 			_log "Reload Shadowsocks rules"
 			/etc/init.d/shadowsocks-libev rules_up 2> /dev/null
 			_get_ip
@@ -87,17 +81,17 @@ while true; do
 		last=$((last + 1 ))
 		[ -z "$nocontact" ] && nocontact="$host" || nocontact="$nocontact, $host"
 		[ "${last}" -ge "${retry}" ] && {
-			if [ -n "$(iptables -w -t nat -L -n | grep ssr)" ]; then
-				_log "Shadowsocks ${server} is down (can't contact via http ${nocontact})"
-				uci -q set openmptcprouter.omr.ss_${server}="down"
+			if [ -n "$(iptables -t nat -L -n | grep ssr)" ]; then
+				_log "Shadowsocks is down (can't contact via http ${nocontact})"
+				uci -q set openmptcprouter.omr.shadowsocks="down"
 				uci -q commit openmptcprouter.omr
-				[ "$(uci show openmptcprouter.omr | grep ss | grep up)" = "" ] && /etc/init.d/shadowsocks-libev rules_down 2> /dev/null
+				/etc/init.d/shadowsocks-libev rules_down 2> /dev/null
 				_get_ip
 				server_ping=false
-				serverip="$(uci -q get shadowsocks-libev.${server}.server)"
-				_ping_server $serverip
+				server="$(uci -q get shadowsocks-libev.sss0.server)"
+				_ping_server $server
 				if [ "$server_ping" = false ]; then
-					_log "Server $server ($serverip) seems down, no answer to ping"
+					_log "Server ($server) seems down, no answer to ping"
 				fi
 				sleep $wait_test
 			fi

@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# Copyright (C) 2018-2021 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 # Released under GPL 3. See LICENSE for the full terms.
 
 START=5
@@ -18,42 +18,6 @@ omr_intf_check() {
 omr_intf_set() {
 	local device
 	local ifname
-	config_get ifname "$1" ifname
-	config_get device "$1" device
-	config_get type "$1" type
-
-	[ -z "$ifname" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
-
-	if [ "$type" != "macvlan" ] && [ -n "$ifname" ] && [ -f /sys/class/net/${ifname}/device/uevent ]; then
-		devicepath=$(readlink -f /sys/class/net/${ifname})
-		if [ -n "$devicepath" ] && [ "$(echo ${devicepath} | grep virtual)" = "" ] && [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT)" != "" ] && [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PCI_SLOT_NAME)" = "" ]; then
-			mac=""
-			if [ -f /sys/class/net/${ifname}/address ]; then
-				mac="$(cat /sys/class/net/${ifname}/address | tr -d '\n')"
-			fi
-			uci -q set network.$1.modalias="$(cat /sys/class/net/${ifname}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')-$mac"
-			uci -q set network.$1.product="$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT | cut -d '=' -f2 | tr -d '\n')"
-		elif [ -n "$devicepath" ] && ([ "$(echo ${devicepath} | grep virtual)" != "" ] || [ "$(echo ${devicepath} | grep virtual)" = "" ] && [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT)" = "" ] || [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PCI_SLOT_NAME)" != "" ] || [ "$(cat /sys/class/net/${ifname}tmp/device/uevent)" != "" ]); then
-			uci -q delete network.$1.device
-			uci -q delete network.$1.modalias
-			uci -q delete network.$1.product
-		fi
-	elif [ "$type" != "macvlan" ] &&  [ -n "$device" ] && [ -f /sys/bus/usb-serial/devices/${devicename}/device/uevent ] && [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT)" != "" ]; then
-		mac=""
-		if [ -f /sys/class/net/${ifname}/address ]; then
-			mac="$(cat /sys/class/net/${ifname}/address | tr -d '\n')"
-		fi
-		uci -q set network.$1.modalias="$(cat /sys/bus/usb-serial/devices/${devicename}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')-$mac"
-		uci -q set network.$1.product="$(cat /sys/bus/usb-serial/devices/${devicename}/device/uevent | grep PRODUCT | cut -d '=' -f2 | tr -d '\n')"
-	else
-		uci -q delete network.$1.modalias
-		uci -q delete network.$1.product
-	fi
-}
-
-omr_set_settings() {
-	local device
-	local ifname
 	local multipath
 	config_get multipath "$1" multipath
 	config_get ifname "$1" ifname
@@ -61,30 +25,12 @@ omr_set_settings() {
 	config_get proto "$1" proto
 	config_get type "$1" type
 	config_get addlatency "$1" addlatency
-	[ -z "$multipath" ] || [ "$multipath" = "off" ] && [ "$1" != "omrvpn" ] && [ "$1" != "glorytun" ] && return
-
-	uci -q set openmptcprouter.$1=interface
-	uci -q set openmptcprouter.$1.multipath="$multipath"
-	config_get disable_ipv6 settings disable_ipv6 "0"
-	if [ "$proto" != "dhcpv6" ] && ([ "$disable_ipv6" = "1" ] || [ "$1" != "omr6in4" ]); then
-		uci -q set network.$1.ipv6=0
-	else
-		uci -q set network.$1.ipv6=1
-	fi
-
 	[ -z "$addlatency" ] && addlatency=0
 	devicename=$(echo "$device" | cut -d'/' -f3)
 
 	[ -z "$ifname" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
 
 	if [ -n "$ifname" ]; then
-		if [ "$proto" = "dhcpv6" ]; then
-			# Change interface name for sysctl in case of VLAN (eth0.2 => eth0/2)
-			ifnamesys=$(echo $ifname | sed 's:\.:/:')
-			sysctl -qw net.ipv6.conf.${ifnamesys}.disable_ipv6=0
-			sysctl -qw net.ipv6.conf.${ifnamesys}.accept_ra=1
-		fi
-
 		if [ "$addlatency" = "0" ] && [ "$(tc qdisc show dev $ifname | grep delay)" != "" ]; then
 			tc qdisc del dev ${ifname} root netem
 		fi
@@ -97,6 +43,31 @@ omr_set_settings() {
 		fi
 	fi
 
+	if [ "$type" != "macvlan" ] && [ -n "$ifname" ] && [ -f /sys/class/net/${ifname}/device/uevent ]; then
+		devicepath=$(readlink -f /sys/class/net/${ifname})
+		if [ -n "$devicepath" ] && [ "$(echo ${devicepath} | grep virtual)" = "" ] && [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT)" != "" ] && [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PCI_SLOT_NAME)" = "" ]; then
+			uci -q set network.$1.modalias="$(cat /sys/class/net/${ifname}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')"
+			uci -q set network.$1.product="$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT | cut -d '=' -f2 | tr -d '\n')"
+		elif [ -n "$devicepath" ] && ([ "$(echo ${devicepath} | grep virtual)" != "" ] || [ "$(echo ${devicepath} | grep virtual)" = "" ] && [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT)" = "" ] || [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PCI_SLOT_NAME)" != "" ] || [ "$(cat /sys/class/net/${ifname}tmp/device/uevent)" != "" ]); then
+			uci -q delete network.$1.device
+			uci -q delete network.$1.modalias
+			uci -q delete network.$1.product
+		fi
+	elif [ "$type" != "macvlan" ] &&  [ -n "$device" ] && [ -f /sys/bus/usb-serial/devices/${devicename}/device/uevent ] && [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT)" != "" ]; then
+		uci -q set network.$1.modalias="$(cat /sys/bus/usb-serial/devices/${devicename}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')"
+		uci -q set network.$1.product="$(cat /sys/bus/usb-serial/devices/${devicename}/device/uevent | grep PRODUCT | cut -d '=' -f2 | tr -d '\n')"
+	fi
+
+	[ -z "$multipath" ] || [ "$multipath" = "off" ] && [ "$1" != "omrvpn" ] && [ "$1" != "glorytun" ] && return
+
+	uci -q set openmptcprouter.$1=interface
+	uci -q set openmptcprouter.$1.multipath="$multipath"
+	config_get disable_ipv6 settings disable_ipv6 "0"
+	if [ "$disable_ipv6" = "1" ] || [ "$1" != "omr6in4" ]; then
+		uci -q set network.$1.ipv6=0
+	else
+		uci -q set network.$1.ipv6=1
+	fi
 }
 
 start_service() {
@@ -105,7 +76,7 @@ start_service() {
 	config_load openmptcprouter
 	config_foreach omr_intf_check interface
 	config_load network
-	config_foreach omr_set_settings interface
+	config_foreach omr_intf_set interface
 	uci -q commit network
 	uci -q commit openmptcprouter
 
@@ -141,13 +112,7 @@ start_service() {
 		EOF
 		/etc/init.d/rpcd restart 2>&1 >/dev/null
 	fi
-}
 
-stop_service() {
-	config_load network
-	config_foreach omr_intf_set interface
-	uci -q commit network
-	uci -q commit openmptcprouter
 }
 
 reload_service() {

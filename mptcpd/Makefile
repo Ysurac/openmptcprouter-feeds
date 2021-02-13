@@ -8,10 +8,10 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mptcpd
-PKG_VERSION:=0.5.1
+PKG_VERSION:=0.4
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://github.com/intel/mptcpd/releases/download/v$(PKG_VERSION)
-PKG_HASH:=0ee4418880f20a1a2eff5c54c26185a75092cb44cbabe0fa3f25a2c5886459e7
+PKG_HASH:=459c45ba86ea574f1ad7a062a9914474ca650229b97375017bd46d0732f985ba
 PKG_RELEASE:=1
 PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 

@@ -36,16 +36,14 @@ function create_helper_text()
 end
 
 function get_provider_name(value)
-	if value ~= nil then
-		for filename in fs.dir(providers_dir) do
-			local p_func = loadfile(providers_dir .. filename)
-			setfenv(p_func, { _ = i18n.translate })
-			local p = p_func()
-			value = value:gsub('[%p%c%s]', '')
-			p.url_match = p.resolver_url:gsub('[%p%c%s]', '')
-			if value:match(p.url_match) then
-				return p.label
-			end
+	for filename in fs.dir(providers_dir) do
+		local p_func = loadfile(providers_dir .. filename)
+		setfenv(p_func, { _ = i18n.translate })
+		local p = p_func()
+		value = value:gsub('[%p%c%s]', '')
+		p.url_match = p.resolver_url:gsub('[%p%c%s]', '')
+		if value:match(p.url_match) then
+			return p.label
 		end
 	end
 	return translate("Unknown Provider")

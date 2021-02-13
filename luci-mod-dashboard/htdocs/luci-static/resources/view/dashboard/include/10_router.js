@@ -368,7 +368,7 @@ return baseclass.extend({
 
 			release: {
 				title: _('Firmware Version'),
-				value: boardinfo.release.description ? boardinfo.release.description : null
+				value: boardinfo.release.description
 			}
 		};
 

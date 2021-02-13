@@ -18,7 +18,7 @@ mtcpck:value(0, translate("disable"))
 local mtcpck = s:option(ListValue, "mptcp_debug", translate("Multipath Debug"))
 mtcpck:value(1, translate("enable"))
 mtcpck:value(0, translate("disable"))
-local mtcppm = s:option(ListValue, "mptcp_path_manager", translate("Multipath TCP path-manager"), translate("Default is fullmesh"))
+local mtcppm = s:option(ListValue, "mptcp_path_manager", translate("Multipath TCP path-manager"))
 mtcppm:value("default", translate("default"))
 mtcppm:value("fullmesh", translate("fullmesh"))
 mtcppm:value("ndiffports", translate("ndiffports"))
@@ -38,7 +38,7 @@ local mtcpsyn = s:option(Value, "mptcp_syn_retries", translate("Multipath TCP SY
 mtcpsyn.datatype = "uinteger"
 mtcpsyn.rmempty = false
 local congestion = s:option(ListValue, "congestion", translate("Congestion Control"),translate("Default is bbr"))
-local availablecong = sys.exec("sysctl -n net.ipv4.tcp_available_congestion_control | xargs -n1 | sort | xargs")
+local availablecong = sys.exec("sysctl net.ipv4.tcp_available_congestion_control | awk -F'= ' '{print $NF}'")
 for cong in string.gmatch(availablecong, "[^%s]+") do
 	congestion:value(cong, translate(cong))
 end

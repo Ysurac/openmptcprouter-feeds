@@ -5,7 +5,6 @@
 [ -n "$1" ] || exit
 
 . /lib/functions.sh
-. /usr/lib/unbound/iptools.sh
 
 # retrieve args
 OMR_TRACKER_INTERFACE="$1"
@@ -14,20 +13,16 @@ shift
 # export vars
 export OMR_TRACKER_INTERFACE
 export OMR_TRACKER_HOST
-export OMR_TRACKER_HOST6
 export OMR_TRACKER_TIMEOUT
 export OMR_TRACKER_STATUS
 export OMR_TRACKER_STATUS_MSG
 export OMR_TRACKER_PREV_STATUS
 export OMR_TRACKER_DEVICE
 export OMR_TRACKER_DEVICE_IP
-export OMR_TRACKER_DEVICE_IP6
 export OMR_TRACKER_DEVICE_GATEWAY
-export OMR_TRACKER_DEVICE_GATEWAY6
 
 dscp=56   # set DSCP CS7 (56) in outgoing packets
 initial_hosts="$OMR_TRACKER_HOSTS"
-initial_hosts6="$OMR_TRACKER_HOSTS6"
 initial_timeout="$OMR_TRACKER_TIMEOUT"
 wait_test=${OMR_TRACKER_WAIT_TEST:-0}
 
@@ -64,13 +59,8 @@ _update_rto() {
 
 _restart() {
 	OMR_TRACKER_HOST="${OMR_TRACKER_HOSTS%% *}"
-	OMR_TRACKER_HOST6="${OMR_TRACKER_HOSTS6%% *}"
 	[ "$OMR_TRACKER_HOST" = "$OMR_TRACKER_HOSTS" ] || {
 		OMR_TRACKER_HOSTS="${OMR_TRACKER_HOSTS#* } $OMR_TRACKER_HOST"
-		_init_rto
-	}
-	[ "$OMR_TRACKER_HOST6" = "$OMR_TRACKER_HOSTS6" ] || {
-		OMR_TRACKER_HOSTS6="${OMR_TRACKER_HOSTS6#* } $OMR_TRACKER_HOST6"
 		_init_rto
 	}
 }
@@ -180,14 +170,12 @@ OMR_TRACKER_PREV_STATUS=""
 while true; do
 	# setup tracker variables
 	OMR_TRACKER_DEVICE_IP=
-	OMR_TRACKER_DEVICE_IP6=
 	OMR_TRACKER_STATUS="ERROR"
 	OMR_TRACKER_STATUS_MSG=""
 	OMR_TRACKER_LATENCY=
 	#OMR_TRACKER_TIMEOUT=$((rto / 1000 + (rto % 1000 ? 1 : 0)))
 	OMR_TRACKER_LIST_HOSTS=""
 	OMR_TRACKER_DEVICE_GATEWAY=
-	OMR_TRACKER_DEVICE_GATEWAY6=
 	serverip_ping=false
 
 	if [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
@@ -197,10 +185,6 @@ while true; do
 			if [ -z "$OMR_TRACKER_DEVICE_IP" ]; then
 				OMR_TRACKER_DEVICE_IP=$(ip -4 addr show dev "$OMR_TRACKER_DEVICE" | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1)
 			fi
-			#OMR_TRACKER_DEVICE_IP6=$(ip -6 -br addr ls dev "$OMR_TRACKER_DEVICE" | awk -F'[ /]+' '{print $3}')
-			#if [ -z "$OMR_TRACKER_DEVICE_IP6" ]; then
-				OMR_TRACKER_DEVICE_IP6=$(ip -6 addr show dev "$OMR_TRACKER_DEVICE" | grep -v 'inet6 f' | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1)
-			#fi
 			#OMR_TRACKER_DEVICE_IP=$(ubus call network.interface.$OMR_TRACKER_INTERFACE status | jsonfilter -e '@["ipv4-address"][0].address' | tr -d "\n")
 			#if [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
 			#	OMR_TRACKER_DEVICE_GATEWAY=$(ip -4 r list dev "$OMR_TRACKER_DEVICE" | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
@@ -234,15 +218,6 @@ while true; do
 			fi
 			if [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
 				OMR_TRACKER_DEVICE_GATEWAY=$(ip -4 r list dev "$OMR_TRACKER_DEVICE" | grep kernel | awk '/proto kernel/ {print $1}' | tr -d "\n")
-			fi
-			if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
-				OMR_TRACKER_DEVICE_GATEWAY6=$(uci -q get "network.$OMR_TRACKER_INTERFACE.ip6gw")
-			fi
-			if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
-				OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.${OMR_TRACKER_INTERFACE} status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${OMR_TRACKER_DEVICE_IP6}\"].nexthop" | tr -d "\n")
-			fi
-			if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
-				OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.$OMR_TRACKER_INTERFACE status | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
 			fi
 
 			# execute specific tracker
@@ -329,89 +304,6 @@ while true; do
 					sleep "$OMR_TRACKER_INTERVAL_TRIES"
 				done
 			fi
-			if [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
-				# setup loop variable
-				tries="$OMR_TRACKER_TRIES"
-				# loop until tries attempts have been reached
-				while [ "$tries" -gt 0 ]; do
-					#if [ -n "$OMR_TRACKER_DEVICE_ROUTE" ]; then
-					#	_ping "$OMR_TRACKER_DEVICE_ROUTE" "$OMR_TRACKER_DEVICE" "no"
-					#	status=$?
-					#else
-						_ping "$OMR_TRACKER_DEVICE_GATEWAY6" "$OMR_TRACKER_DEVICE" "no"
-						status=$?
-					#fi
-					if $(exit $status) && [ "$OMR_TRACKER_TYPE" = "none" ]; then
-						OMR_TRACKER_STATUS_MSG=""
-						OMR_TRACKER_STATUS="OK"
-						break
-					elif [ "$OMR_TRACKER_TYPE" != "none" ]; then
-						if ! $(exit $status); then
-							OMR_TRACKER_STATUS_MSG="gateway6 down"
-						fi
-						serverip_ping=false
-						if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
-							config_load openmptcprouter
-							config_foreach _ping_server server $OMR_TRACKER_DEVICE
-						fi
-						if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST6" ]; then
-							OMR_TRACKER_HOST6=$(resolveip -6 -t 5 $OMR_TRACKER_HOST6 | head -n 1 | tr -d "\n")
-							if [ -n "$OMR_TRACKER_HOST6" ]; then
-								if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]; then
-									# Check if route is not used
-									while ! ip -6 route add $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6 > /dev/null 2>&1
-									do
-										logger -t "omr-tracker" "Can't create route to $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6. waiting..."
-										sleep 2
-										ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP6" > /dev/null 2>&1
-										_restart
-									done
-								fi
-								if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
-									_ping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE" "yes"
-									statusb=$?
-								elif [ "$OMR_TRACKER_TYPE" = "httping" ]; then
-									_httping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP" "yes"
-									statusb=$?
-								elif [ "$OMR_TRACKER_TYPE" = "dns" ]; then
-									_dns "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP" "yes"
-									statusb=$?
-								fi
-								ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP6" > /dev/null 2>&1
-								if $(exit $statusb); then
-									OMR_TRACKER_STATUS_MSG=""
-									OMR_TRACKER_STATUS="OK"
-									break
-								else
-									if [ "$OMR_TRACKER_LIST_HOSTS6" = "" ]; then
-										OMR_TRACKER_LIST_HOSTS="$OMR_TRACKER_HOST6"
-									else
-										OMR_TRACKER_LIST_HOSTS6="$OMR_TRACKER_LIST_HOSTS6,$OMR_TRACKER_HOST6"
-									fi
-								fi
-							else
-								OMR_TRACKER_STATUS_MSG=""
-								OMR_TRACKER_STATUS="OK"
-								break
-							fi
-						else
-							OMR_TRACKER_STATUS_MSG=""
-							OMR_TRACKER_STATUS="OK"
-							break
-						fi
-					elif ! $(exit $status); then
-						OMR_TRACKER_STATUS_MSG="gateway down"
-					fi
-					tries=$((tries - 1))
-					#_restart
-					OMR_TRACKER_HOST6="${OMR_TRACKER_HOSTS6%% *}"
-					[ "$OMR_TRACKER_HOST6" = "$OMR_TRACKER_HOSTS6" ] || {
-						OMR_TRACKER_HOSTS6="${OMR_TRACKER_HOSTS6#* } $OMR_TRACKER_HOST6"
-					}
-					#OMR_TRACKER_TIMEOUT=$((OMR_TRACKER_TIMEOUT * 2))
-					sleep "$OMR_TRACKER_INTERVAL_TRIES"
-				done
-			fi
 		else
 			OMR_TRACKER_STATUS_MSG="link down"
 		fi
@@ -422,13 +314,6 @@ while true; do
 			OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP error ($OMR_TRACKER_LIST_HOSTS)"
 		else
 			OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG and $OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP error ($OMR_TRACKER_LIST_HOSTS)"
-		fi
-	fi
-	if [ "$OMR_TRACKER_LIST_HOSTS6" != "" ]; then
-		if [ "$OMR_TRACKER_STATUS_MSG" = "" ]; then
-			OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP error ($OMR_TRACKER_LIST_HOSTS6)"
-		else
-			OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG and $OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP error ($OMR_TRACKER_LIST_HOSTS6)"
 		fi
 	fi
 

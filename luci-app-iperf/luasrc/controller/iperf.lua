@@ -40,7 +40,7 @@ function run_test(server,proto,mode,updown,omit,parallel,transmit,bitrate)
 	end
 	local port = t[ math.random( #t ) ]
 	if password ~= "" then
-		iperf = io.popen("omr-iperf %s -P %s -%s -O %s -t %s -J -Z %s" % {server,parallel,ipv,omit,transmit,options})
+		iperf = io.popen("omr-iperf -P %s -%s -O %s -t %s -J -Z %s" % {parallel,ipv,omit,transmit,options})
 	else
 		iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -t %s -J -Z %s" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit,options})
 	end

@@ -1,7 +1,7 @@
 #!/bin/sh -e
 #
 # Copyright (C) 2017 Yousong Zhou <yszhou4tech@gmail.com>
-# Copyright (C) 2018-2021 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018-2020 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 #
 # The design idea was derived from ss-rules by Jian Chang <aa65535@live.com>
 #
@@ -108,28 +108,28 @@ v2ray_rules6_flush() {
 	ip6tables-save --counters | grep -v v2r6_ | ip6tables-restore -w --counters
 	while ip -f inet6 rule del fwmark 1 lookup 100 2>/dev/null; do true; done
 	ip -f inet6 route flush table 100 || true
-	for setname in $(ipset -n list | grep "ssr6_${rule}"); do
+	for setname in $(ipset -n list | grep "ss_rules6_"); do
 		ipset destroy "$setname" 2>/dev/null || true
 	done
 }
 
 v2ray_rules6_ipset_init() {
 	ipset --exist restore <<-EOF
-		create ssr6_${rule}_src_bypass hash:net family inet6 hashsize 64
-		create ssr6_${rule}_src_forward hash:net family inet6 hashsize 64
-		create ssr6_${rule}_src_checkdst hash:net family inet6 hashsize 64
-		create ssr6_${rule}_dst_bypass hash:net family inet6 hashsize 64
+		create ss_rules6_src_bypass hash:net family inet6 hashsize 64
+		create ss_rules6_src_forward hash:net family inet6 hashsize 64
+		create ss_rules6_src_checkdst hash:net family inet6 hashsize 64
+		create ss_rules6_dst_bypass hash:net family inet6 hashsize 64
 		create ss_rules6_dst_bypass_all hash:net family inet6 hashsize 64
-		create ssr6_${rule}_dst_bypass_ hash:net family inet6 hashsize 64
-		create ssr6_${rule}_dst_forward hash:net family inet6 hashsize 64
+		create ss_rules6_dst_bypass_ hash:net family inet6 hashsize 64
+		create ss_rules6_dst_forward hash:net family inet6 hashsize 64
 		create ss_rules6_dst_forward_recrst_ hash:ip family inet6 hashsize 64 timeout 3600
-		$(v2ray_rules6_ipset_mkadd ssr6_${rule}_dst_bypass_ "$o_dst_bypass_ $o_remote_servers")
+		$(v2ray_rules6_ipset_mkadd ss_rules6_dst_bypass_ "$o_dst_bypass_ $o_remote_servers")
 		$(v2ray_rules6_ipset_mkadd ss_rules6_dst_bypass_all "$o_dst_bypass $(cat "$o_dst_bypass_file" 2>/dev/null | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}')")
-		$(v2ray_rules6_ipset_mkadd ssr6_${rule}_dst_bypass "$o_dst_bypass $(cat "$o_dst_bypass_file" 2>/dev/null | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}')")
-		$(v2ray_rules6_ipset_mkadd ssr6_${rule}_src_bypass "$o_src_bypass")
-		$(v2ray_rules6_ipset_mkadd ssr6_${rule}_src_forward "$o_src_forward")
-		$(v2ray_rules6_ipset_mkadd ssr6_${rule}_src_checkdst "$o_src_checkdst")
-		$(v2ray_rules6_ipset_mkadd ssr6_${rule}_dst_forward "$o_dst_forward $(cat "$o_dst_forward_file" 2>/dev/null | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}')")
+		$(v2ray_rules6_ipset_mkadd ss_rules6_dst_bypass "$o_dst_bypass $(cat "$o_dst_bypass_file" 2>/dev/null | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}')")
+		$(v2ray_rules6_ipset_mkadd ss_rules6_src_bypass "$o_src_bypass")
+		$(v2ray_rules6_ipset_mkadd ss_rules6_src_forward "$o_src_forward")
+		$(v2ray_rules6_ipset_mkadd ss_rules6_src_checkdst "$o_src_checkdst")
+		$(v2ray_rules6_ipset_mkadd ss_rules6_dst_forward "$o_dst_forward $(cat "$o_dst_forward_file" 2>/dev/null | grep -o '\([0-9a-fA-F]\{0,4\}:\)\{1,7\}[0-9a-fA-F]\{0,4\}')")
 	EOF
 }
 
@@ -240,20 +240,20 @@ v2ray_rules6_iptchains_init_() {
 		:v2r6_${rule}_forward -
 		$(v2ray_rules6_iptchains_mkprerules "udp")
 		$(v2ray_rules6_iptchains_mkprerules "tcp")
-		-A v2r6_${rule}_pre_src -m set --match-set ssr6_${rule}_dst_bypass_ dst -j RETURN
+		-A v2r6_${rule}_pre_src -m set --match-set ss_rules6_dst_bypass_ dst -j RETURN
 		-A v2r6_${rule}_pre_src -m set --match-set ss_rules6_dst_bypass_all dst -j MARK --set-mark 0x6539
 		-A v2r6_${rule}_pre_src -m set --match-set ss_rules6_dst_bypass_all dst -j RETURN
-		-A v2r6_${rule}_pre_src -m set --match-set ssr6_${rule}_dst_bypass dst -j RETURN
+		-A v2r6_${rule}_pre_src -m set --match-set ss_rules6_dst_bypass dst -j RETURN
 		-A v2r6_${rule}_pre_src -m mark --mark 0x6539 -j RETURN
 		-A v2r6_${rule}_dst -m set --match-set ss_rules6_dst_bypass_all dst -j RETURN
-		-A v2r6_${rule}_dst -m set --match-set ssr6_${rule}_dst_bypass dst -j RETURN
+		-A v2r6_${rule}_dst -m set --match-set ss_rules6_dst_bypass dst -j RETURN
 		-A v2r6_${rule}_pre_src -p tcp $o_ipt_extra -j v2r6_${rule}_src
 		-A v2r6_${rule}_pre_src -p udp $o_ipt_extra -j v2r6_${rule}_src
-		-A v2r6_${rule}_src -m set --match-set ssr6_${rule}_src_bypass src -j RETURN
-		-A v2r6_${rule}_src -m set --match-set ssr6_${rule}_src_forward src -j v2r6_${rule}_forward
-		-A v2r6_${rule}_src -m set --match-set ssr6_${rule}_src_checkdst src -j v2r6_${rule}_dst
+		-A v2r6_${rule}_src -m set --match-set ss_rules6_src_bypass src -j RETURN
+		-A v2r6_${rule}_src -m set --match-set ss_rules6_src_forward src -j v2r6_${rule}_forward
+		-A v2r6_${rule}_src -m set --match-set ss_rules6_src_checkdst src -j v2r6_${rule}_dst
 		-A v2r6_${rule}_src -j $src_default_target -m comment --comment "src_default: $o_src_default"
-		-A v2r6_${rule}_dst -m set --match-set ssr6_${rule}_dst_forward dst -j v2r6_${rule}_forward
+		-A v2r6_${rule}_dst -m set --match-set ss_rules6_dst_forward dst -j v2r6_${rule}_forward
 		$recentrst_addset_rules
 		-A v2r6_${rule}_dst -j $dst_default_target -m comment --comment "dst_default: $o_dst_default"
 		$forward_rules
