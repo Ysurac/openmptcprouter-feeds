@@ -635,11 +635,13 @@ function wizard_add()
 	local encryption = luci.http.formvalue("encryption")
 	if encryption == "none" then
 		ucic:set("shadowsocks-libev","sss0","method","none")
+		ucic:set("shadowsocks-libev","sss1","method","none")
 		ucic:set("openvpn","omr","cipher","none")
 		ucic:set("v2ray","omrout","s_vmess_user_security","none")
 		ucic:set("v2ray","omrout","s_vless_user_security","none")
 	elseif encryption == "aes-256-gcm" then
 		ucic:set("shadowsocks-libev","sss0","method","aes-256-gcm")
+		ucic:set("shadowsocks-libev","sss1","method","aes-256-gcm")
 		ucic:set("glorytun","vpn","chacha20","0")
 		ucic:set("glorytun-udp","vpn","chacha","0")
 		ucic:set("openvpn","omr","cipher","AES-256-GCM")
@@ -647,6 +649,7 @@ function wizard_add()
 		ucic:set("v2ray","omrout","s_vless_user_security","aes-128-gcm")
 	elseif encryption == "aes-256-cfb" then
 		ucic:set("shadowsocks-libev","sss0","method","aes-256-cfb")
+		ucic:set("shadowsocks-libev","sss1","method","aes-256-cfb")
 		ucic:set("glorytun","vpn","chacha20","0")
 		ucic:set("glorytun-udp","vpn","chacha","0")
 		ucic:set("openvpn","omr","cipher","AES-256-CFB")
@@ -654,6 +657,7 @@ function wizard_add()
 		ucic:set("v2ray","omrout","s_vless_user_security","aes-128-gcm")
 	elseif encryption == "chacha20-ietf-poly1305" then
 		ucic:set("shadowsocks-libev","sss0","method","chacha20-ietf-poly1305")
+		ucic:set("shadowsocks-libev","sss1","method","chacha20-ietf-poly1305")
 		ucic:set("glorytun","vpn","chacha20","1")
 		ucic:set("glorytun-udp","vpn","chacha","1")
 		ucic:set("openvpn","omr","cipher","AES-256-CBC")
@@ -674,6 +678,7 @@ function wizard_add()
 	--end
 	if shadowsocks_key ~= "" then
 		ucic:set("shadowsocks-libev","sss0","key",shadowsocks_key)
+		ucic:set("shadowsocks-libev","sss1","key",shadowsocks_key)
 		--ucic:set("shadowsocks-libev","sss0","method","chacha20-ietf-poly1305")
 		--ucic:set("shadowsocks-libev","sss0","server_port","65101")
 		--ucic:set("shadowsocks-libev","sss0","disabled",shadowsocks_disable)
@@ -685,8 +690,10 @@ function wizard_add()
 	else
 		if serversnb == 0 then
 			ucic:set("shadowsocks-libev","sss0","disabled",shadowsocks_disable)
+			ucic:set("shadowsocks-libev","sss1","disabled",shadowsocks_disable)
 		end
 		ucic:set("shadowsocks-libev","sss0","key","")
+		ucic:set("shadowsocks-libev","sss1","key","")
 		ucic:save("shadowsocks-libev")
 		ucic:commit("shadowsocks-libev")
 		luci.sys.call("/etc/init.d/shadowsocks rules_down >/dev/null 2>/dev/null")
@@ -965,7 +972,7 @@ function settings_add()
 	local disableserverping = luci.http.formvalue("disableserverping") or "0"
 	ucic:set("openmptcprouter","settings","disableserverping",disableserverping)
 
-	-- Enable/disable shadowsocks upd
+	-- Enable/disable shadowsocks udp
 	local shadowsocksudp = luci.http.formvalue("shadowsocksudp") or "0"
 	ucic:set("openmptcprouter","settings","shadowsocksudp",shadowsocksudp)
 
