@@ -240,6 +240,7 @@ function wizard_add()
 		local netmask = luci.http.formvalue("cbid.network.%s.netmask" % intf) or ""
 		local gateway = luci.http.formvalue("cbid.network.%s.gateway" % intf) or ""
 		local ip6gw = luci.http.formvalue("cbid.network.%s.ip6gw" % intf) or ""
+		local ipv6 = luci.http.formvalue("cbid.network.%s.ipv6" % intf) or "0"
 		local apn = luci.http.formvalue("cbid.network.%s.apn" % intf) or ""
 		local pincode = luci.http.formvalue("cbid.network.%s.pincode" % intf) or ""
 		local delay = luci.http.formvalue("cbid.network.%s.delay" % intf) or ""
@@ -282,6 +283,7 @@ function wizard_add()
 		ucic:set("network",intf,"auth",auth)
 		ucic:set("network",intf,"mode",mode)
 		ucic:set("network",intf,"label",label)
+		ucic:set("network",intf,"ipv6",ipv6)
 		if lan == "1" then
 			ucic:set("network",intf,"multipath","off")
 		else
@@ -1077,7 +1079,13 @@ end
 function get_device(interface)
 	local dump = require("luci.util").ubus("network.interface.%s" % interface, "status", {})
 	if dump ~= nil then
-		return dump['l3_device']
+		if dump['l3_device'] ~= nil then
+			return dump['l3_device']
+		elseif dump['device'] ~= nil then
+			return dump['device']
+		else
+			return ""
+		end
 	else
 		return ""
 	end

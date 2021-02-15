@@ -60,25 +60,25 @@ omr_set_settings() {
 	config_get device "$1" device
 	config_get proto "$1" proto
 	config_get type "$1" type
+	config_get ipv6 "$1" ipv6
 	config_get addlatency "$1" addlatency
 	[ -z "$multipath" ] || [ "$multipath" = "off" ] && [ "$1" != "omrvpn" ] && [ "$1" != "glorytun" ] && return
 
 	uci -q set openmptcprouter.$1=interface
 	uci -q set openmptcprouter.$1.multipath="$multipath"
 	config_get disable_ipv6 settings disable_ipv6 "0"
-	if [ "$proto" != "dhcpv6" ] && ([ "$disable_ipv6" = "1" ] || [ "$1" != "omr6in4" ]); then
+	if [ "$disable_ipv6" = "1" ]; then
 		uci -q set network.$1.ipv6=0
-	else
-		uci -q set network.$1.ipv6=1
 	fi
 
 	[ -z "$addlatency" ] && addlatency=0
 	devicename=$(echo "$device" | cut -d'/' -f3)
 
 	[ -z "$ifname" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
+	[ -n "$(echo $ifname | grep '@')" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["device"]')
 
 	if [ -n "$ifname" ]; then
-		if [ "$proto" = "dhcpv6" ]; then
+		if [ "$proto" = "dhcpv6" ] || [ "$ipv6" = "1" ]; then
 			# Change interface name for sysctl in case of VLAN (eth0.2 => eth0/2)
 			ifnamesys=$(echo $ifname | sed 's:\.:/:')
 			sysctl -qw net.ipv6.conf.${ifnamesys}.disable_ipv6=0
