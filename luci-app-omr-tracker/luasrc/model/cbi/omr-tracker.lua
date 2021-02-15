@@ -132,6 +132,11 @@ o.placeholder = "4.2.2.1"
 o.default     = { "4.2.2.1", "8.8.8.8" }
 o.rmempty     = false
 
+o = s:option(DynamicList, "hosts6", translate("Hosts IPv6"),translate("Must be IPs and not domains"))
+o.placeholder = "2001:4860:4860::8844"
+o.default     = { "2001:4860:4860::8888", "2001:4860:4860::8844" }
+o.rmempty     = false
+
 s = m:section(TypedSection, "interface", translate("Interfaces"))
 s.template_addremove = "omr-tracker/cbi-select-add"
 s.addremove = true
