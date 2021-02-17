@@ -313,6 +313,8 @@ function wizard_add()
 			ucic:set("network",intf,"reqaddress","try")
 			ucic:set("network",intf,"reqprefix","no")
 			ucic:set("network",intf,"iface_map","0")
+			ucic:set("network",intf,"iface_dslite","0")
+			ucic:set("network",intf,"iface_464xlate","0")
 			ucic:set("network",intf,"ipv6","1")
 		end
 
