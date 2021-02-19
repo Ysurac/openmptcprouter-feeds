@@ -87,16 +87,45 @@ _post_tracking() {
 }
 
 _ping_server() {
-	local serverip=$(uci -q get openmptcprouter.$1.ip)
+	local servername=$1
+	local disabled=$(uci -q get openmptcprouter.$1.disabled)
 	local device=$2
-	if [ -n "$serverip" ] && [ -n "$device" ]; then
-		_ping $serverip $device "yes"
-		statusp=$?
-		if $(exit $statusp); then
-			serverip_ping=true
-		fi
-	else
-		serverip_ping=false
+	if [ -n "$device" ] && [ "$disabled" != "1" ]; then
+		check_ping() {
+			serverip=$1
+			if [ -n "$serverip" ]; then
+				_ping $serverip $device "yes"
+				statusp=$?
+				if $(exit $statusp); then
+					serverip_ping=true
+					break
+				fi
+			fi
+		}
+		config_load openmptcprouter
+		config_list_foreach ${servername} ip check_ping
+	fi
+}
+
+_httping_server() {
+	local servername=$1
+	local disabled=$(uci -q get openmptcprouter.$1.disabled)
+	local port=$(uci -q get openmptcprouter.$1.port)
+	local device=$2
+	if [ -n "$device" ] && [ "$disabled" != "1" ]; then
+		check_ping() {
+			serverip=$1
+			if [ -n "$serverip" ]; then
+				_httping "${serverip}:${port}" $device "yes" true
+				statusp=$?
+				if $(exit $statusp); then
+					serverip_ping=true
+					break
+				fi
+			fi
+		}
+		config_load openmptcprouter
+		config_list_foreach ${servername} ip check_ping
 	fi
 }
 
@@ -138,18 +167,34 @@ _httping() {
 	local host=$1
 	local deviceip=$2
 	local localip=$3
-	ret=$(httping "${host}" \
-		-y "${deviceip}" \
-		-t "$OMR_TRACKER_TIMEOUT" \
-		-c 1 \
-		-q
-	) && echo "$ret" | grep -sq "1 ok" && {
-		if [ "$localip" = "yes" ]; then
-			OMR_TRACKER_LATENCY=$(echo "$ret" | cut -d "/" -s -f5 | cut -d "." -f1)
-			_update_rto "$OMR_TRACKER_LATENCY"
-		fi
-		return
-	}
+	local https=$4
+	if [ -z "$https" ] || [ "$https" = false ]; then
+		ret=$(httping "${host}" \
+			-y "${deviceip}" \
+			-t "$OMR_TRACKER_TIMEOUT" \
+			-c 1 \
+			-q
+		) && echo "$ret" | grep -sq "1 ok" && {
+			if [ "$localip" = "yes" ]; then
+				OMR_TRACKER_LATENCY=$(echo "$ret" | cut -d "/" -s -f5 | cut -d "." -f1)
+				_update_rto "$OMR_TRACKER_LATENCY"
+			fi
+			return
+		}
+	else
+		ret=$(httping -l "${host}" \
+			-y "${deviceip}" \
+			-t "$OMR_TRACKER_TIMEOUT" \
+			-c 1 \
+			-q
+		) && echo "$ret" | grep -sq "1 ok" && {
+			if [ "$localip" = "yes" ]; then
+				OMR_TRACKER_LATENCY=$(echo "$ret" | cut -d "/" -s -f5 | cut -d "." -f1)
+				_update_rto "$OMR_TRACKER_LATENCY"
+			fi
+			return
+		}
+	fi
 	false
 }
 
@@ -283,6 +328,10 @@ while true; do
 							config_load openmptcprouter
 							config_foreach _ping_server server $OMR_TRACKER_DEVICE
 						fi
+						if [ "$OMR_TRACKER_TYPE" = "httping" ]; then
+							config_load openmptcprouter
+							config_foreach _httping_server server $OMR_TRACKER_DEVICE
+						fi
 						if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST" ]; then
 							OMR_TRACKER_HOST=$(resolveip -4 -t 5 $OMR_TRACKER_HOST | head -n 1 | tr -d "\n")
 							if [ -n "$OMR_TRACKER_HOST" ]; then
@@ -366,6 +415,11 @@ while true; do
 							config_load openmptcprouter
 							config_foreach _ping_server server $OMR_TRACKER_DEVICE
 						fi
+						if [ "$OMR_TRACKER_TYPE" = "httping" ]; then
+							config_load openmptcprouter
+							config_foreach _httping_server server $OMR_TRACKER_DEVICE
+						fi
+
 						if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST6" ]; then
 							OMR_TRACKER_HOST6=$(resolveip -6 -t 5 $OMR_TRACKER_HOST6 | head -n 1 | tr -d "\n")
 							if [ -n "$OMR_TRACKER_HOST6" ]; then
