@@ -17,6 +17,8 @@ function index()
 	entry({"admin", "network", "mptcp", "mptcp_fullmesh_data"}, post("mptcp_fullmesh_data")).leaf = true
 	entry({"admin", "network", "mptcp", "mptcp_connections"}, template("mptcp/mptcp_connections"), _("Established connections"), 6).leaf = true
 	entry({"admin", "network", "mptcp", "mptcp_connections_data"}, post("mptcp_connections_data")).leaf = true
+	entry({"admin", "network", "mptcp", "mptcp_monitor"}, template("mptcp/mptcp_monitor"), _("MPTCP monitoring"), 6).leaf = true
+	entry({"admin", "network", "mptcp", "mptcp_monitor_data"}, post("mptcp_monitor_data")).leaf = true
 end
 
 function interface_bandwidth(iface)
@@ -195,6 +197,21 @@ function mptcp_fullmesh_data()
 	luci.http.prepare_content("text/plain")
 	local fullmesh
 	fullmesh = io.popen("multipath -f")
+	if fullmesh then
+		while true do
+			local ln = fullmesh:read("*l")
+			if not ln then break end
+			luci.http.write(ln)
+			luci.http.write("\n")
+		end
+	end
+	return
+end
+
+function mptcp_monitor_data()
+	luci.http.prepare_content("text/plain")
+	local fullmesh
+	fullmesh = io.popen("cat /proc/net/mptcp_net/snmp")
 	if fullmesh then
 		while true do
 			local ln = fullmesh:read("*l")

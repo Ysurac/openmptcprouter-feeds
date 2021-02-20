@@ -206,12 +206,28 @@ set_routes_intf6() {
 	#multipath_current_config=$(multipath $interface_if | grep 'deactivated')
 	interface_current_config=$(uci -q get openmptcprouter.$INTERFACE.state || echo "up")
 	if [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ] && [ "$interface_if" != "" ] && [ "$interface_up" = "true" ]; then
-		interface_gw="$(uci -q get network.$INTERFACE.gateway)"
+		interface_gw="$(uci -q get network.$INTERFACE.ip6gw)"
+		interface_ip6="$(uci -q get network.$INTERFACE.ip6)"
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${interface_ip6}\"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${interface_ip6}/64\"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${interface_ip6}/56\"].nexthop' | tr -d "\n")
+		fi
 		if [ -z "$interface_gw" ]; then
 			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
 		fi
 		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.nexthop="::"].target' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
 			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.nexthop="::"].target' | tr -d "\n")
 		fi
 		if [ -z "$interface_gw" ]; then
 			interface_gw=$(ubus call network.interface.${INTERFACE}_6 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
@@ -300,11 +316,27 @@ set_route_balancing6() {
 	interface_current_config=$(uci -q get openmptcprouter.$INTERFACE.state || echo "up")
 	if [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ] && [ "$interface_up" = "true" ]; then
 		interface_gw="$(uci -q get network.$INTERFACE.gateway)"
+		interface_ip6="$(uci -q get network.$INTERFACE.ip6)"
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${interface_ip6}\"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${interface_ip6}/64\"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${interface_ip6}/56\"].nexthop' | tr -d "\n")
+		fi
 		if [ -z "$interface_gw" ]; then
 			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
 		fi
 		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.nexthop="::"].target' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
 			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.nexthop="::"].target' | tr -d "\n")
 		fi
 		if [ -z "$interface_gw" ]; then
 			interface_gw=$(ubus call network.interface.${INTERFACE}_6 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
@@ -355,15 +387,15 @@ set_server_all_routes() {
 			config_foreach set_routes_intf interface
 			uintf="$(echo $routesintf | awk '{print $5}')"
 			uintfb="$(echo $routesintfbackup | awk '{print $5}')"
-			if [ -n "$routesintf" ] && ([ "$nbintf" -gt "1" ] && [ "$(ip r show $serverip metric 0 | tr -d '\t' | tr -d '\n')" != "$serverip $routesintf " ]) || ([ "$nbintf" = "1" ] && [ "$(ip r show $serverip metric 0 | grep $uintf)" = "" ]); then
+			if [ -n "$routesintf" ] && ([ "$nbintf" -gt "1" ] && [ "$(ip r show $serverip metric 0 | tr -d '\t' | tr -d '\n')" != "$serverip $routesintf " ]) || ([ "$nbintf" = "1" ] && [ -n "$uintf" ] && [ "$(ip r show $serverip metric 1 | grep $uintf)" = "" ]); then
 				while [ "$(ip r show $serverip | grep -v nexthop | sed 's/ //g' | tr -d '\n')" != "$serverip" ] && [ "$(ip r show $serverip | grep -v nexthop | sed 's/ //g' | tr -d '\n')" != "" ]; do
 					ip r del $serverip
 				done
 				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server $server ($serverip) default route $serverip $routesintf"
-				ip route replace $serverip scope global $routesintf
-				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "New server route is $(ip r show $serverip metric 0 | tr -d '\t' | tr -d '\n')"
+				ip route replace $serverip scope global metric 1 $routesintf
+				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "New server route is $(ip r show $serverip metric 1 | tr -d '\t' | tr -d '\n')"
 			fi
-			if [ -n "$routesintfbackup" ] && ([ "$nbintfb" -gt "1" ] && [ "$(ip r show $serverip metric 999 | tr -d '\t' | tr -d '\n')" != "$serverip $routesintfbackup " ]) || ([ "$nbintfb" = "1" ] && [ "$(ip r show $serverip metric 999 | grep $uintfb)" = "" ]); then
+			if [ -n "$routesintfbackup" ] && ([ "$nbintfb" -gt "1" ] && [ "$(ip r show $serverip metric 999 | tr -d '\t' | tr -d '\n')" != "$serverip $routesintfbackup " ]) || ([ "$nbintfb" = "1" ] && [ -n "$uintfb" ] && [ "$(ip r show $serverip metric 999 | grep $uintfb)" = "" ]); then
 				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server $server ($serverip) backup default route $serverip $routesintfbackup nbintfb $nbintfb $OMR_TRACKER_DEVICE"
 				ip route replace $serverip scope global metric 999 $routesintfbackup
 			fi
@@ -394,20 +426,20 @@ set_server_all_routes6() {
 			nbintf6=0
 			nbintfb6=0
 			config_load network
-			config_foreach set_routes_intf interface
-			uintf="$(echo $routesintf | awk '{print $5}')"
-			uintfb="$(echo $routesintfbackup | awk '{print $5}')"
-			if [ -n "$routesintf" ] && ([ "$nbintf6" -gt "1" ] && [ "$(ip -6 r show $serverip metric 0 | tr -d '\t' | tr -d '\n')" != "$serverip $routesintf " ]) || ([ "$nbintf6" = "1" ] && [ "$(ip -6 r show $serverip metric 0 | grep $uintf)" = "" ]); then
+			config_foreach set_routes_intf6 interface
+			uintf="$(echo $routesintf6 | awk '{print $5}')"
+			uintfb="$(echo $routesintfbackup6 | awk '{print $5}')"
+			if [ -n "$routesintf6" ] && ([ "$nbintf6" -gt "1" ] && [ "$(ip -6 r show $serverip metric 0 | tr -d '\t' | tr -d '\n')" != "$serverip $routesintf6 " ]) || ([ "$nbintf6" = "1" ] && [ -n "$uintf" ] && [ "$(ip -6 r show $serverip metric 1 | grep $uintf)" = "" ]); then
 				while [ "$(ip -6 r show $serverip | grep -v nexthop | sed 's/ //g' | tr -d '\n')" != "$serverip" ] && [ "$(ip -6 r show $serverip | grep -v nexthop | sed 's/ //g' | tr -d '\n')" != "" ]; do
 					ip -6 r del $serverip
 				done
-				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server $server ($serverip) default route $serverip $routesintf"
-				ip -6 route replace $serverip scope global $routesintf
-				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "New server route is $(ip -6 r show $serverip metric 0 | tr -d '\t' | tr -d '\n')"
+				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server $server ($serverip) default route $serverip $routesintf6"
+				ip -6 route replace $serverip scope global metric 1 $routesintf6
+				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "New server route is $(ip -6 r show $serverip metric 1 | tr -d '\t' | tr -d '\n')"
 			fi
-			if [ -n "$routesintfbackup" ] && ([ "$nbintfb6" -gt "1" ] && [ "$(ip -6 r show $serverip metric 999 | tr -d '\t' | tr -d '\n')" != "$serverip $routesintfbackup " ]) || ([ "$nbintfb6" = "1" ] && [ "$(ip -6 r show $serverip metric 999 | grep $uintfb)" = "" ]); then
-				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server $server ($serverip) backup default route $serverip $routesintfbackup nbintfb $nbintfb6 $OMR_TRACKER_DEVICE"
-				ip -6 route replace $serverip scope global metric 999 $routesintfbackup
+			if [ -n "$routesintfbackup6" ] && ([ "$nbintfb6" -gt "1" ] && [ "$(ip -6 r show $serverip metric 999 | tr -d '\t' | tr -d '\n')" != "$serverip $routesintfbackup6 " ]) || ([ "$nbintfb6" = "1" ] && [ -n "$uintfb" ] && [ "$(ip -6 r show $serverip metric 999 | grep $uintfb)" = "" ]); then
+				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server $server ($serverip) backup default route $serverip $routesintfbackup6 nbintfb $nbintfb6 $OMR_TRACKER_DEVICE"
+				ip -6 route replace $serverip scope global metric 999 $routesintfbackup6
 			fi
 		fi
 	}
