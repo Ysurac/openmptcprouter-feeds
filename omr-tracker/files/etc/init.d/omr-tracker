@@ -19,7 +19,7 @@ _validate_section() {
 
 	uci_validate_section omr-tracker "$1" "$2" \
 		'hosts:list(host)'  \
-		'hosts6:list(host6)'  \
+		'hosts6:list(host)'  \
 		'timeout:uinteger'  \
 		'tries:uinteger'    \
 		'interval:uinteger' \
@@ -46,7 +46,7 @@ _launch_tracker() {
 		loopback|lan*|if0*) return;;
 	esac
 
-	local hosts hosts6 timeout tries interval interval_tries options type enabled wait_test
+	local hosts hosts6 timeout tries interval interval_tries options type enabled wait_test ipv6 proto
 	_validate_section "defaults" "defaults"
 	_validate_section "interface" "$1"
 
@@ -59,6 +59,8 @@ _launch_tracker() {
 	config_get multipath "$1" multipath
 	config_get ifenabled "$1" auto
 	config_get gateway "$1" gateway
+	config_get ipv6 "$1" ipv6
+	config_get proto "$1" proto
 
 	[ -z "$ifname" ] || [ -z "$multipath" ] || [ "$multipath" = "off" ] && [ "$1" != "glorytun" ] && [ "$1" != "omrvpn" ] && [ "$( uci -q get openmptcprouter.$1.multipathvpn)" != "1" ] && return
 	[ "${ifenabled}" = "0" ] && return
@@ -79,6 +81,8 @@ _launch_tracker() {
 	procd_append_param env "OMR_TRACKER_DEVICE=$ifname"
 	procd_append_param env "OMR_TRACKER_DEVICE_GATEWAY=$gateway"
 	procd_append_param env "OMR_TRACKER_TYPE=$type"
+	procd_append_param env "OMR_TRACKER_IPV6=$ipv6"
+	procd_append_param env "OMR_TRACKER_PROTO=$proto"
 	procd_append_param env "OMR_TRACKER_WAIT_TEST=$wait_test"
 	procd_set_param limits nofile="51200 51200"
 	procd_set_param respawn 0 10 0
