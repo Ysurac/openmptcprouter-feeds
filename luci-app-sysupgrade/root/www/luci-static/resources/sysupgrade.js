@@ -98,7 +98,7 @@ function setup_ready() {
             upgrade_check();
         } else {
             show("#upgrade_button");
-            show("#server_div");
+            //show("#server_div");
             $("#server").value = data.url;
         }
     }

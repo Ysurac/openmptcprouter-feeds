@@ -7,7 +7,7 @@
  *  Have a bug? Please create an issue here on GitHub!
  *      https://github.com/jerrykuku/luci-theme-argon/issues
  *
- *  luci-theme-material: 
+ *  luci-theme-material:
  *      Copyright 2015 Lutty Yang <lutty@wcan.in>
  *		https://github.com/LuttyYang/luci-theme-material/
  *
@@ -89,6 +89,11 @@ document.addEventListener('luci-loaded', function(ev) {
 	$(".main > .main-left > .nav > .slide > .menu").click(function () {
 		var ul = $(this).next(".slide-menu");
 		var menu = $(this);
+		$(".main > .main-left > .nav > .slide > .menu").each(function () {
+			var ulNode = $(this);
+			ulNode.removeClass("active");
+			ulNode.next(".slide-menu").stop(true).slideUp("fast")
+		});
 		if (!ul.is(":visible")) {
 			menu.addClass("active");
 			ul.addClass("active");

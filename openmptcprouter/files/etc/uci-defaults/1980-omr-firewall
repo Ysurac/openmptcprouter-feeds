@@ -15,6 +15,21 @@ if [ "$(uci -q get firewall.@zone[2].name)" = "vpn" ]; then
 	EOF
 fi
 
+if [ "$(uci -q get firewall.@zone[1].name)" = "wan" ]; then
+	uci -q batch <<-EOF >/dev/null
+		rename firewall.@zone[1]="zone_wan"
+		del_list firewall.zone_wan.network="wan"
+		del_list firewall.zone_wan.network="wan6"
+		commit firewall
+	EOF
+fi
+if [ "$(uci -q get firewall.@zone[0].name)" = "lan" ]; then
+	uci -q batch <<-EOF >/dev/null
+		rename firewall.@zone[0]="zone_lan"
+		commit firewall
+	EOF
+fi
+
 if [ "$(uci -q get firewall.zone_vpn)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set firewall.zone_vpn=zone
@@ -91,12 +106,12 @@ if [ "$(uci -q show firewall | grep ICMPv6-Lan-to-OMR)" = "" ]; then
 	EOF
 fi
 uci -q batch <<-EOF >/dev/null
-	del_list firewall.wan.masq_dest='!10.0.0.0/8'
-	del_list firewall.wan.masq_dest='!172.16.0.0/12'
-	del_list firewall.wan.masq_dest='!192.168.0.0/16'
-	add_list firewall.wan.masq_dest='!10.0.0.0/8'
-	add_list firewall.wan.masq_dest='!172.16.0.0/12'
-	add_list firewall.wan.masq_dest='!192.168.0.0/16'
+	del_list firewall.zone_wan.masq_dest='!10.0.0.0/8'
+	del_list firewall.zone_wan.masq_dest='!172.16.0.0/12'
+	del_list firewall.zone_wan.masq_dest='!192.168.0.0/16'
+	add_list firewall.zone_wan.masq_dest='!10.0.0.0/8'
+	add_list firewall.zone_wan.masq_dest='!172.16.0.0/12'
+	add_list firewall.zone_wan.masq_dest='!192.168.0.0/16'
 EOF
 if [ "$(ubus call system board | jsonfilter -e '@.board_name')" = "bananapi,bpi-r2" ] || [ "$(ubus call system board | jsonfilter -e '@.board_name' | grep -i wrt)" != "" ]; then
 	uci -q batch <<-EOF >/dev/null
@@ -124,7 +139,7 @@ if [ "$(uci -q get firewall.gre_tunnel)" = "" ]; then
 fi
 if [ "$(uci -q get firewall.fwlantovpn)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
-		set firewall.@zone[0].auto_helper='0'
+		set firewall.zone_lan.auto_helper='0'
 		set firewall.fwlantovpn=forwarding
 		set firewall.fwlantovpn.src='lan'
 		set firewall.fwlantovpn.dest='vpn'
@@ -187,10 +202,10 @@ if [ "$(uci -q get firewall.allowdhcpv6546)" = "" ]; then
 fi
 
 # Fix firewall config from some old config
-allintf=$(uci -q get firewall.@zone[1].network)
-uci -q del firewall.@zone[1].network
+allintf=$(uci -q get firewall.zone_wan.network)
+uci -q del firewall.zone_wan.network
 for intf in $allintf; do
-	uci -q add_list firewall.@zone[1].network=$intf
+	uci -q add_list firewall.zone_wan.network=$intf
 done
 allintf=$(uci -q get firewall.zone_vpn.network)
 uci -q del firewall.zone_vpn.network
@@ -199,8 +214,9 @@ for intf in $allintf; do
 done
 
 uci -q batch <<-EOF >/dev/null
-	set firewall.@zone[0].mtu_fix='1'
+	set firewall.zone_lan.mtu_fix='1'
 	set firewall.zone_vpn.mtu_fix='1'
+	set firewall.@include[0].reload='1'
 	commit firewall
 EOF
 
