@@ -38,10 +38,10 @@ function wizard_add()
 	local gostatus = true
 	
 	-- Force WAN zone firewall members to be a list
-	local fwwan = sys.exec("uci -q get firewall.@zone[1].network")
-	luci.sys.call("uci -q delete firewall.@zone[1].network")
+	local fwwan = sys.exec("uci -q get firewall.zone_wan.network")
+	luci.sys.call("uci -q delete firewall.zone_wan.network")
 	for interface in fwwan:gmatch("%S+") do
-		luci.sys.call("uci -q add_list firewall.@zone[1].network=" .. interface)
+		luci.sys.call("uci -q add_list firewall.zone_wan.network=" .. interface)
 	end
 	ucic:save("firewall")
 	
@@ -185,7 +185,7 @@ function wizard_add()
 		luci.sys.call("uci -q commit vnstat")
 
 		-- Dirty way to add new interface to firewall...
-		luci.sys.call("uci -q add_list firewall.@zone[1].network=wan" .. i)
+		luci.sys.call("uci -q add_list firewall.zone_wan.network=wan" .. i)
 		luci.sys.call("uci -q commit firewall")
 
 		luci.sys.call("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
@@ -217,7 +217,7 @@ function wizard_add()
 				luci.sys.call("uci -q del_list vnstat.@vnstat[-1].interface=" .. defif)
 			end
 			luci.sys.call("uci -q commit vnstat")
-			luci.sys.call("uci -q del_list firewall.@zone[1].network=" .. intf)
+			luci.sys.call("uci -q del_list firewall.zone_wan.network=" .. intf)
 			luci.sys.call("uci -q commit firewall")
 			gostatus = false
 		end
