@@ -497,6 +497,11 @@ function wizard_add()
 		ucic:save("openmptcprouter")
 	end
 
+	-- Get VPN used for MPTCP over VPN
+	local mptcpovervpn_vpn = luci.http.formvalue("mptcpovervpn_vpn") or "wireguard"
+	ucic:set("openmptcprouter","settings","mptcpovervpn",mptcpovervpn_vpn)
+	ucic:save("openmptcprouter")
+
 	-- Get Proxy set by default
 	local default_proxy = luci.http.formvalue("default_proxy") or "shadowsocks"
 	if default_proxy == "shadowsocks" and serversnb > 0 and serversnb > disablednb then

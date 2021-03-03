@@ -9,7 +9,10 @@
 }
 
 _getremoteip() {
-	[ "$(uci -q get openmptcprouter.$1.master)" = "1" ] && remoteip=$(uci -q get openmptcprouter.$1.ip | awk '{print $1}')
+	[ "$(uci -q get openmptcprouter.$1.master)" = "1" ] && {
+		remoteip=$(uci -q get openmptcprouter.$1.ip | awk '{print $1}')
+		wg_server_key=$(uci -q get openmptcprouter.$1.wgkey)
+	}
 }
 
 mptcp_over_vpn() {
@@ -20,19 +23,22 @@ mptcp_over_vpn() {
 			uci -q batch <<-EOF >/dev/null
 				delete openmptcprouter.${interface}
 				delete network.ovpn${interface}
+				delete network.wg${interface}
 				delete openvpn.${interface}
 				commit openvpn
 				delete openmptcprouter.${interface}
 				delete openmptcprouter.ovpn${interface}
+				delete openmptcprouter.wg${interface}
 				commit openmptcprouter
 				commit network
 				del_list firewall.zone_vpn.network="ovpn${interface}"
+				del_list firewall.zone_vpn.network="wg${interface}"
 				commit firewall
 			EOF
 			return
 		fi
 		nbintfvpn=$(($nbintfvpn+1))
-		if [ "$(uci -q get network.ovpn${interface})" = "" ]; then
+		if [ "$(uci -q get network.ovpn${interface})" = "" ] && [ "$vpn" = "openvpn" ]; then
 			logger -t "MPTCPoverVPN" "Enable MPTCP over VPN for ${interface}"
 			id=$(uci -q get network.${interface}.metric)
 			remoteip=""
@@ -43,42 +49,108 @@ mptcp_over_vpn() {
 			[ -n "$(uci -q get openmptcprouter.ovpn${interface}.multipath)" ] && multipath=$(uci -q get openmptcprouter.ovpn${interface}.multipath)
 			[ -z "$multipath" ] && multipath="on"
 			uci -q batch <<-EOF >/dev/null
-				set network.ovpn${interface}=interface
-				set network.ovpn${interface}.ifname="tun${id}"
-				set network.ovpn${interface}.defaultroute='0'
-				set network.ovpn${interface}.peerdns='0'
-				set network.ovpn${interface}.proto='none'
-				set network.ovpn${interface}.ip4table='wan'
-				set network.ovpn${interface}.multipath="${multipath}"
-				set network.${interface}.multipath='off'
-				commit network
-				set openvpn.${interface}=openvpn
-				set openvpn.${interface}.dev="tun${id}"
-				set openvpn.${interface}.cipher='AES-256-CBC'
-				set openvpn.${interface}.port='65301'
-				set openvpn.${interface}.remote="${remoteip}"
-				set openvpn.${interface}.local="${localip}"
-				set openvpn.${interface}.lport='0'
-				set openvpn.${interface}.ncp_disable='1'
-				set openvpn.${interface}.auth_nocache='1'
-				set openvpn.${interface}.proto='udp'
-				set openvpn.${interface}.client='1'
-				set openvpn.${interface}.enabled='1'
-				set openvpn.${interface}.allow_recursive_routing='1'
-				set openvpn.${interface}.key='/etc/luci-uploads/client.key'
-				set openvpn.${interface}.cert='/etc/luci-uploads/client.crt'
-				set openvpn.${interface}.ca='/etc/luci-uploads/ca.crt'
-				commit openvpn
-				set openmptcprouter.${interface}.multipath="off"
-				set openmptcprouter.${interface}.multipathvpn="1"
-				set openmptcprouter.ovpn${interface}="interface"
-				set openmptcprouter.ovpn${interface}.multipath="${multipath}"
-				set openmptcprouter.ovpn${interface}.vpn="1"
-				set openmptcprouter.ovpn${interface}.baseintf="${interface}"
+				delete network.wg${interface}
+				delete openmptcprouter.wg${interface}
 				commit openmptcprouter
-				add_list firewall.zone_vpn.network="ovpn${interface}"
+				commit network
+				del_list firewall.zone_vpn.network="wg${interface}"
 				commit firewall
 			EOF
+
+				uci -q batch <<-EOF >/dev/null
+					set network.ovpn${interface}=interface
+					set network.ovpn${interface}.ifname="tun${id}"
+					set network.ovpn${interface}.defaultroute='0'
+					set network.ovpn${interface}.peerdns='0'
+					set network.ovpn${interface}.proto='none'
+					set network.ovpn${interface}.ip4table='wan'
+					set network.ovpn${interface}.multipath="${multipath}"
+					set network.${interface}.multipath='off'
+					commit network
+					set openvpn.${interface}=openvpn
+					set openvpn.${interface}.dev="tun${id}"
+					set openvpn.${interface}.cipher='AES-256-CBC'
+					set openvpn.${interface}.port='65301'
+					set openvpn.${interface}.remote="${remoteip}"
+					set openvpn.${interface}.local="${localip}"
+					set openvpn.${interface}.lport='0'
+					set openvpn.${interface}.ncp_disable='1'
+					set openvpn.${interface}.auth_nocache='1'
+					set openvpn.${interface}.proto='udp'
+					set openvpn.${interface}.client='1'
+					set openvpn.${interface}.enabled='1'
+					set openvpn.${interface}.allow_recursive_routing='1'
+					set openvpn.${interface}.key='/etc/luci-uploads/client.key'
+					set openvpn.${interface}.cert='/etc/luci-uploads/client.crt'
+					set openvpn.${interface}.ca='/etc/luci-uploads/ca.crt'
+					commit openvpn
+					set openmptcprouter.${interface}.multipath="off"
+					set openmptcprouter.${interface}.multipathvpn="1"
+					set openmptcprouter.ovpn${interface}="interface"
+					set openmptcprouter.ovpn${interface}.multipath="${multipath}"
+					set openmptcprouter.ovpn${interface}.vpn="1"
+					set openmptcprouter.ovpn${interface}.baseintf="${interface}"
+					commit openmptcprouter
+					add_list firewall.zone_vpn.network="ovpn${interface}"
+					commit firewall
+				EOF
+		elif [ "$(uci -q get network.wg${interface})" = "" ] && [ "$vpn" = "wireguard" ]; then
+			logger -t "MPTCPoverVPN" "Enable MPTCP over VPN for ${interface}"
+			id=$(uci -q get network.${interface}.metric)
+			remoteip=""
+			wg_server_key=""
+			config_load openmptcprouter
+			config_foreach _getremoteip server
+			metric=$(uci -q get network.${interface}.metric)
+			[ -z "$(uci -q get openmptcprouter.wg${interface}.multipath)" ] && multipath=$(uci -q get network.${interface}.multipath)
+			[ -n "$(uci -q get openmptcprouter.wg${interface}.multipath)" ] && multipath=$(uci -q get openmptcprouter.wg${interface}.multipath)
+			[ -z "$multipath" ] && multipath="on"
+				private_key=$(wg genkey | tr -d "\n")
+				public_key=$(echo $private_key | wg pubkey | tr -d "\n")
+			uci -q batch <<-EOF >/dev/null
+				delete network.ovpn${interface}
+				delete openvpn.${interface}
+				commit openvpn
+				delete openmptcprouter.ovpn${interface}
+				commit openmptcprouter
+				commit network
+				del_list firewall.zone_vpn.network="ovpn${interface}"
+				commit firewall
+			EOF
+
+				uci -q batch <<-EOF >/dev/null
+					set network.wg${interface}=interface
+					set network.wg${interface}.nohostroute='1'
+					set network.wg${interface}.proto='wireguard'
+					set network.wg${interface}.fwmark="0x539${metric}"
+					del_list network.wg${interface}.addresses
+					add_list network.wg${interface}.addresses='10.255.247.${metric}/24'
+					set network.wg${interface}.private_key="${private_key}"
+					set network.wg${interface}.gateway="10.255.247.1"
+					set network.wg${interface}.public_key="${public_key}"
+					set network.wg${interface}.multipath="${multipath}"
+					set network.${interface}.multipath='off'
+					add network wireguard_wg${interface}
+					set network.@wireguard_wg${interface}[0]=wireguard_wg${interface}
+					set network.@wireguard_wg${interface}[0].description="Wireguard on ${interface}"
+					set network.@wireguard_wg${interface}[0].endpoint_host="${remoteip}"
+					set network.@wireguard_wg${interface}[0].endpoint_port="65311"
+					set network.@wireguard_wg${interface}[0].persistent_keepalive="28"
+					del_list network.@wireguard_wg${interface}[0].allowed_ips
+					add_list network.@wireguard_wg${interface}[0].allowed_ips="0.0.0.0/0"
+					set network.@wireguard_wg${interface}[0].public_key="${wg_server_key}"
+					commit network
+					set openmptcprouter.${interface}.multipath="off"
+					set openmptcprouter.${interface}.multipathvpn="1"
+					set openmptcprouter.wg${interface}="interface"
+					set openmptcprouter.wg${interface}.multipath="${multipath}"
+					set openmptcprouter.wg${interface}.vpn="1"
+					set openmptcprouter.wg${interface}.baseintf="${interface}"
+					commit openmptcprouter
+					add_list firewall.zone_vpn.network="wg${interface}"
+					commit firewall
+				EOF
+			ubus call network reload 2>&1 >/dev/null
 		else
 			uci -q batch <<-EOF >/dev/null
 				set network.${interface}.multipath='off'
@@ -92,6 +164,7 @@ mptcp_over_vpn() {
 		multipath=$(uci -q get openmptcprouter.ovpn${interface}.multipath)
 		[ -z "$multipath" ] && multipath="on"
 		uci -q batch <<-EOF >/dev/null
+			delete network.wg${interface}
 			delete network.ovpn${interface}
 			delete openvpn.${interface}
 			commit openvpn
@@ -99,13 +172,16 @@ mptcp_over_vpn() {
 			set network.${interface}.multipath="${multipath}"
 			set openmptcprouter.${interface}.multipathvpn="0"
 			delete openmptcprouter.ovpn${interface}
+			delete openmptcprouter.wg${interface}
 			commit openmptcprouter
 			commit network
 			del_list firewall.zone_vpn.network="ovpn${interface}"
+			del_list firewall.zone_vpn.network="wg${interface}"
 			commit firewall
 		EOF
 	elif [ "$(uci -q get openmptcprouter.${interface}.vpn)" = "1" ]; then
 		intf="$(echo ${interface} | sed 's/ovpn//g')"
+		[ "$intf" = "$interface" ] && intf="$(echo ${interface} | sed 's/wg//g')"
 		if [ -n "$intf" ] && [ "$intf" != "$interface" ] && [ "$(uci -q get network.${intf})" = "" ]; then
 			uci -q batch <<-EOF >/dev/null
 				delete network.${interface}
@@ -126,6 +202,8 @@ start_service()
 {
 	nbintf=0
 	nbintfvpn=0
+	vpn="$(uci -q get openmptcprouter.settings.mptcpovervpn)"
+	[ -z "$vpn" ] && vpn="openvpn"
 	config_load openmptcprouter
 	config_foreach mptcp_over_vpn interface
 	if [ "$nbintf" = "$nbintfvpn" ] &&  [ "$nbintf" != "0" ]; then
