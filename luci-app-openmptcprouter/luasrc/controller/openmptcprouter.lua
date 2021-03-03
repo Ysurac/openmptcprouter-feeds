@@ -272,6 +272,9 @@ function wizard_add()
 		elseif typeintf == "" and device ~= "" and proto == "modemmanager" then
 			ucic:set("network",intf,"device",device_manager)
 		end
+		if proto == "pppoe" then
+			ucic:set("network",intf,"pppd_options","persist maxfail 0")
+		end
 		if proto ~= "other" then
 			ucic:set("network",intf,"proto",proto)
 		end
