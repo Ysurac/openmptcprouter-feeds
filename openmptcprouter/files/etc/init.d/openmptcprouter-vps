@@ -140,6 +140,29 @@ _set_openvpn_vps() {
 	fi
 }
 
+_set_wireguard_vps() {
+	local enabled port key
+	ipskey=""
+	_get_wg_ipskey() {
+		local interface=$1
+		proto=$(uci -q get network.${interface}.proto)
+		if [ "$proto" = "wireguard" ]; then
+			ip="$(uci -q get network.${interface}.addresses)"
+			key="$(uci -q get network.${interface}.public_key)"
+			if [ -z "$ipskey" ]; then
+				ipskey='{"ip": "'$ip'", "key": "'$key'"}'
+			else
+				ipskey=$ipskey',{"ip": "'$ip'", "key": "'$key'"}'
+			fi
+		fi
+	}
+	config_load network
+	config_foreach _get_wg_ipskey interface
+	local settings
+	settings='{"peers": ['$ipskey']}'
+	echo $(_set_json "wireguard" "$settings")
+}
+
 get_openvpn_key() {
 	servername=$2
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
@@ -728,14 +751,28 @@ _set_wan_ip() {
 	fi
 }
 
+_get_lan_ip() {
+	local intf=$1
+	if [ "$(uci -q get firewall.zone_lan.network | grep $intf)" != "" ]; then
+		lanip="$(uci -q get network.${intf}.ipaddr)/$(uci -q get network.${intf}.netmask)"
+		if [ "$lanip" != "/" ]; then
+			if [ -z "$lanips" ]; then
+				lanips='"'${lanip}'"'
+			else
+				lanips='"'$lanips'" "'${lanip}'"'
+			fi
+		fi
+	fi
+}
+
 _set_lan_ip() {
 	local settings
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
-	lanip_current="$(echo "$vps_config" | jsonfilter -q -e '@.lan.ips')"
-	lanips="$(uci -q get network.lan.ipaddr)/$(uci -q get network.lan.netmask)"
-	if [ "$lanips" != "/" ] && [ "$lanip_current" != "$lanips" ]; then
-		settings='{"lanips" : ["'$lanips'"]}'
+	#lanip_current="$(echo "$vps_config" | jsonfilter -q -e '@.lan.ips')"
+	#if [ "$lanips" != "" ] && [ "$lanip_current" != "$lanips" ]; then
+	if [ "$lanips" != "" ]; then
+		settings='{"lanips" : ['$lanips']}'
 		result=$(_set_json "lan" "$settings")
 	fi
 }
@@ -814,6 +851,7 @@ _vps_firewall_redirect_port() {
 		EOF
 		src_dport='2-64999'
 	fi
+	[ -n "$src_dport" ] && src_dport=$(echo $src_dport | sed 's/:/-/')
 	if [ -n "$src_dport" ] && [ "$(echo $src_dport | cut -d'-' -f2)" -ge "65000" ]; then
 		logger -t "OMR-VPS" "You can't redirect ports >= 65000, they are needed by OpenMPTCProuter Server part"
 		enabled="0"
@@ -1371,6 +1409,12 @@ _set_config_from_vps() {
 		set openmptcprouter.${servername}.redirect_ports=$redirect
 	EOF
 
+	# Wireguard settings
+	wireguard_key="$(echo "$vps_config" | jsonfilter -q -e '@.wireguard.key')"
+	uci -q batch <<-EOF >/dev/null
+		set openmptcprouter.${servername}.wgkey=$wireguard_key
+	EOF
+
 	# MPTCP settings
 	mptcp_path_manager="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.path_manager')"
 	mptcp_scheduler="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.scheduler')"
@@ -1684,6 +1728,7 @@ _config_service() {
 		[ -z "$(_set_glorytun_vps)" ] && error=1
 		[ -z "$(_set_openvpn_vps)" ] && error=1
 		_set_vps_firewall
+		_set_wireguard_vps
 	fi
 	_backup_list
 	redirect_port="0"
@@ -1700,9 +1745,11 @@ _config_service() {
 	
 	#_set_pihole
 	[ -n "$wanips" ] && _set_wan_ip
-	_set_lan_ip
 	_set_vpn_ip
 	config_load network
+	lanips=""
+	config_foreach _get_lan_ip interface
+	_set_lan_ip
 	config_foreach _delete_client2client route
 	if [ "$(uci -q get openmptcprouter.settings.vpn)" != "openvpn" ] && [ "$(echo "$vps_config" | jsonfilter -q -e '@.client2client.enabled')" == "true" ]; then
 		_set_client2client
