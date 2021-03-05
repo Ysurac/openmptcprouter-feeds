@@ -511,7 +511,7 @@ return view.extend({
 
 					var new_ifnames = L.toArray(value);
 
-					if (value == undefined)
+					if (value == null)
 						return;
 
 					old_ifnames.sort();
