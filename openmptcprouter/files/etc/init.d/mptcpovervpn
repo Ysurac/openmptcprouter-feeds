@@ -24,6 +24,7 @@ mptcp_over_vpn() {
 				delete openmptcprouter.${interface}
 				delete network.ovpn${interface}
 				delete network.wg${interface}
+				delete network.@wireguard_wg${interface}[0]
 				delete openvpn.${interface}
 				commit openvpn
 				delete openmptcprouter.${interface}
@@ -159,12 +160,13 @@ mptcp_over_vpn() {
 				commit openmptcprouter
 			EOF
 		fi
-	elif [ "$(uci -q get openmptcprouter.ovpn${interface})" != "" ]; then
+	elif [ "$(uci -q get openmptcprouter.ovpn${interface})" != "" ] || [ "$(uci -q get network.wg${interface})" != "" ]; then
 		logger -t "MPTCPoverVPN" "Disable MPTCP over VPN for ${interface}"
 		multipath=$(uci -q get openmptcprouter.ovpn${interface}.multipath)
 		[ -z "$multipath" ] && multipath="on"
 		uci -q batch <<-EOF >/dev/null
 			delete network.wg${interface}
+			delete network.@wireguard_wg${interface}[0]
 			delete network.ovpn${interface}
 			delete openvpn.${interface}
 			commit openvpn
@@ -185,9 +187,11 @@ mptcp_over_vpn() {
 		if [ -n "$intf" ] && [ "$intf" != "$interface" ] && [ "$(uci -q get network.${intf})" = "" ]; then
 			uci -q batch <<-EOF >/dev/null
 				delete network.${interface}
-				delete openvpn.${intf}
+				delete network.@wireguard_${interface}[0]
+				delete openvpn.ovpn${intf}
 				commit openvpn
 				delete openmptcprouter.${intf}
+				delete openmptcprouter.ovpn${intf}
 				delete openmptcprouter.${interface}
 				commit openmptcprouter
 				commit network
