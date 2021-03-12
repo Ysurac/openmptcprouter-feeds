@@ -213,7 +213,10 @@ return baseclass.extend({
 			if (data.openmptcprouter.wan_addr) this.params.omrvps.internet.v4.addrsv4.value = data.openmptcprouter.wan_addr || [ '-'];
 			if (data.openmptcprouter.wan_addr6) this.params.omrvps.internet.v6.addrsv6.value = data.openmptcprouter.wan_addr6 || [ '-'];
 			if (data.openmptcprouter.vps_kernel) this.params.omrvps.vps.version.value = data.openmptcprouter.vps_kernel + ' ' + data.openmptcprouter.vps_omr_version || [ '-'];
-			if (data.openmptcprouter.vps_loadavg) this.params.omrvps.vps.load.value = data.openmptcprouter.vps_loadavg || [ '-'];
+			if (data.openmptcprouter.vps_loadavg) {
+				var vps_loadavg = data.openmptcprouter.vps_loadavg.split(" ");
+				this.params.omrvps.vps.load.value = '%s, %s, %s'.format(vps_loadavg[0],vps_loadavg[1],vps_loadavg[2]);
+			}
 			if (data.openmptcprouter.vps_uptime) this.params.omrvps.vps.uptime.value = String.format('%t', data.openmptcprouter.vps_uptime) || [ '-'];
 			if (data.openmptcprouter.proxy_traffic) this.params.omrvps.vps.trafficproxy.value = this.formatBytes(data.openmptcprouter.proxy_traffic) || [ '-'];
 			if (data.openmptcprouter.vpn_traffic) this.params.omrvps.vps.trafficvpn.value = this.formatBytes(data.openmptcprouter.vpn_traffic) || [ '-'];
