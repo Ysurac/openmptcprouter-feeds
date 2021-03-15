@@ -118,12 +118,8 @@ function multipath_bandwidth()
 			for i=1,60 do
 				res[key][i] = string.split(res[key][i], ",")
 				for j=1,5 do
-					if "string"== type(res[key][i][j]) then
-						res[key][i][j]= tonumber(res[key][i][j])
-					end
-					if "string"==type(res["total"][i][j]) then
-						res["total"][i][j]= tonumber(res["total"][i][j])
-					end
+					res[key][i][j]= tonumber(res[key][i][j])
+					res["total"][i][j]= tonumber(res["total"][i][j])
 					if j ==1 then
 						if res[key][i][j] ~= nil then
 							res["total"][i][j] = res[key][i][j]
