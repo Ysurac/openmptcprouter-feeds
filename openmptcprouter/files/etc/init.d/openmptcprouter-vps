@@ -128,13 +128,39 @@ _set_openvpn_vps() {
 	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.client_key')"
 	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.port')"
 	current_cipher="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.cipher')"
-	if [ "$curent_key" != "$key" ]; then
+	if [ "$current_key" != "$key" ]; then
 		uci -q set openmptcprouter.${servername}.get_config="1"
 	fi
 	if [ "$current_port" != "$port" ] || [ "$current_cipher" != "$cipher" ]; then
 		local settings
 		settings='{"port": '$port', "cipher": "'$cipher'"}'
 		echo $(_set_json "openvpn" "$settings")
+	else
+		echo 1
+	fi
+}
+
+_set_mlvpn_vps() {
+	local enabled port key
+	enabled="$(uci -q get mlvpn.general.enable)"
+	[ "$enabled" != "1" ] && echo "MLVPN disabled" && return
+	timeout="$(uci -q get mlvpn.general.timeout)"
+	reorder_buffer_size="$(uci -q get mlvpn.general.reorder_buffer_size)"
+	loss_tolerence="$(uci -q get mlvpn.general.loss_tolerence)"
+	password="$(uci -q get mlvpn.general.password)"
+	cleartext_data="$(uci -q get mlvpn.general.cleartext_data)"
+	local current_timeout current_reorder_buffer_size current_loss_tolerence current_password current_cleartext_data
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	current_timeout="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.timeout')"
+	current_reorder_buffer_size="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.reorder_buffer_size')"
+	current_loss_tolerence="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.loss_tolerence')"
+	current_password="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.key')"
+	current_cleartext_data="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.cleartext_data')"
+	if [ "$current_timeout" != "$timeout" ] || [ "$current_reorder_buffer_size" != "$reorder_buffer_size" ] || [ "$current_loss_tolerence" != "$loss_tolerence" ] || [ "$current_password" != "$password" ] || [ "$current_cleartext_data" != "$cleartext_data" ]; then
+		local settings
+		settings='{"timeout": '$timeout', "reorder_buffer_size": "'$reorder_buffer_size'", "loss_tolerence": "'$loss_tolerence'", "password": "'$password'", "cleartext_data": "'$cleartext_data'"}'
+		echo $(_set_json "mlvpn" "$settings")
 	else
 		echo 1
 	fi
@@ -1729,6 +1755,7 @@ _config_service() {
 		_set_v2ray_server_vps
 		[ -z "$(_set_glorytun_vps)" ] && error=1
 		[ -z "$(_set_openvpn_vps)" ] && error=1
+		[ -z "$(_set_mlvpn_vps)" ] && error=1
 		_set_vps_firewall
 		_set_wireguard_vps
 	fi
