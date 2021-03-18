@@ -583,10 +583,15 @@ function wizard_add()
 						if default_proxy == "shadowsocks" and serversnb > disablednb then
 							ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","0")
 						end
+						nbip = nbip + 1
 						if disableipv6 == "1" and nbip > 0 then
+							ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","1")
 							break
 						end
-						nbip = nbip + 1
+					end
+					if nbip == 1 then
+						--ucic:set("shadowsocks-libev","sss" .. nbip,"server",server_ip)
+						ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","1")
 					end
 				end
 				k = k + 1
@@ -620,6 +625,10 @@ function wizard_add()
 					if disableipv6 == "1" and nbip > 0 then
 						break
 					end
+				end
+				if nbip == 1 then
+				--	ucic:set("shadowsocks-libev","sss" .. nbip,"server",server_ip)
+					ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","1")
 				end
 			end
 		end
