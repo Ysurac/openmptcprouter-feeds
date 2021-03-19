@@ -8,6 +8,7 @@ include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=Support for ModemManager
 LUCI_DEPENDS:=+modemmanager
+PKG_VERSION:=omr-202103
 
 include $(TOPDIR)/feeds/luci/luci.mk
 
