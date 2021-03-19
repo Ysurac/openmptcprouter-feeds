@@ -11,6 +11,7 @@ LUCI_DESCRIPTION:=Provides Web UI for DNS Over HTTPS Proxy
 LUCI_DEPENDS:=+luci-compat +luci-mod-admin-full +https-dns-proxy
 LUCI_PKGARCH:=all
 PKG_RELEASE:=3
+PKG_VERSION:=omr-202103
 
 include $(TOPDIR)/feeds/luci/luci.mk
 
