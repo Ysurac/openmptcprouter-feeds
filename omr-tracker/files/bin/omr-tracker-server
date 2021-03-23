@@ -57,6 +57,7 @@ _check_master() {
 	local name=$1
 	local count=0
 	local countips=0
+	local changes="0"
 	config_get master $1 master
 	config_get ip $1 ip
 	config_get port $1 port "65500"
@@ -69,10 +70,10 @@ _check_master() {
 			if [ "$server_ping" = true ]; then
 				if [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ]; then
 					logger -t "OMR-Tracker-Server" "Master server ${name} up ($ip), set it back"
+					changes="1"
 					#logger -t "OMR-Tracker-Server" "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n') - $ip"
 					uci -q batch <<-EOF >/dev/null
 						set shadowsocks-libev.sss${count}.server=$ip
-						commit shadowsocks-libev
 					EOF
 					if [ "$count" -eq "0" ]; then
 						uci -q batch <<-EOF >/dev/null
@@ -97,7 +98,6 @@ _check_master() {
 						/etc/init.d/openvpn restart >/dev/null 2>/dev/null
 						/etc/init.d/dsvpn restart >/dev/null 2>/dev/null
 					fi
-					/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null
 				fi
 				config_load shadowsocks-libev
 				config_foreach _enable_redir ss_redir
@@ -109,6 +109,14 @@ _check_master() {
 			countips=$((countips+1))
 		}
 		config_list_foreach $1 ip set_ip
+		#if [ "$server_ping" = true ] && [ "$countips" = "1" ]; then
+		#	uci -q batch <<-EOF >/dev/null
+		#		set shadowsocks-libev.sss${count}.server=$ip
+		#	EOF
+		#	config_foreach _enable_redir ss_redir
+		#fi
+		uci -q commit shadowsocks-libev
+		[ "$changes" = "1" ] && /etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null
 		break
 	}
 }
@@ -117,6 +125,7 @@ _check_backup() {
 	local name=$1
 	local count=0
 	local countips=0
+	local changes="0"
 	config_get backup $1 backup
 	config_get ip $1 ip
 	config_get port $1 port
@@ -129,9 +138,9 @@ _check_backup() {
 			if [ "$server_ping" = true ]; then
 				if [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ]; then
 					logger -t "OMR-Tracker-Server" "Use backup server $1 ($ip)"
+					changes="1"
 					uci -q batch <<-EOF >/dev/null
 						set shadowsocks-libev.sss${count}.server=$ip
-						commit shadowsocks-libev
 					EOF
 					if [ "$count" -eq "0" ]; then
 						uci -q batch <<-EOF >/dev/null
@@ -156,7 +165,6 @@ _check_backup() {
 						/etc/init.d/openvpn restart >/dev/null 2>/dev/null
 						/etc/init.d/dsvpn restart >/dev/null 2>/dev/null
 					fi
-					/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null
 					sleep $waittest
 				fi
 				config_load shadowsocks-libev
@@ -169,7 +177,14 @@ _check_backup() {
 			countips=$((countips+1))
 		}
 		config_list_foreach $1 ip set_ip
+		#if [ "$server_ping" = true ] && [ "$countips" = "1" ]; then
+		#	uci -q batch <<-EOF >/dev/null
+		#		set shadowsocks-libev.sss${count}.server=$ip
+		#	EOF
+		#	config_foreach _enable_redir ss_redir
+		#fi
 		uci -q commit shadowsocks-libev
+		[ "$changes" = "1" ] && /etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null
 		[ "$server_ping" = true ] && break
 	}
 }
