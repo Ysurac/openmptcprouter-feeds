@@ -120,6 +120,13 @@ o:value("httping","httping")
 o:value("dns","dns")
 o:value("none","none")
 
+o = s:option(Flag, "server_http_test", translate("Server http test"), translate("Check if connection work with http by sending a request to server"))
+o.optional    = false
+o.rmempty     = false
+o.default     = true
+o.disabled    = 0
+o.enabled     = 1
+
 o = s:option(Flag, "mail_alert", translate("Mail alert"), translate("Send a mail when connection state change"))
 o.optional    = false
 o.rmempty     = false
@@ -180,6 +187,13 @@ o:value("ping","ping")
 o:value("httping","httping")
 o:value("dns","dns")
 o:value("none","none")
+
+o = s:option(Flag, "server_http_test", translate("Server http test"), translate("Check if connection work with http by sending a request to server"))
+o.optional    = false
+o.rmempty     = false
+o.default     = true
+o.disabled    = 0
+o.enabled     = 1
 
 o = s:option(Flag, "mail_alert", translate("Mail alert"), translate("Send a mail when connection status change. You need to configure e-mail settings <a href=\"/cgi-bin/luci/admin/services/mail\">here</a>."))
 o.optional    = false

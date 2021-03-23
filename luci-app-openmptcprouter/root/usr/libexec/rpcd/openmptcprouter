@@ -836,6 +836,7 @@ function interfaces_status()
 
 	mArray.openmptcprouter["vps_hostname"] = "Server"
 	-- Get VPS info
+	local adminport = ""
 	ucic:foreach("openmptcprouter", "server", function(s)
 		local serverips = uci:get("openmptcprouter",s[".name"],"ip") or { "" }
 		local master = uci:get("openmptcprouter",s[".name"],"master") or "1"
@@ -849,7 +850,7 @@ function interfaces_status()
 				if uci:get("openmptcprouter",s[".name"],"admin_error") == "1" then
 					mArray.openmptcprouter["vps_admin_error"] = true
 				end
-				local adminport = uci:get("openmptcprouter",s[".name"],"port") or "65500"
+				adminport = uci:get("openmptcprouter",s[".name"],"port") or "65500"
 				local token = uci:get("openmptcprouter",s[".name"],"token") or ""
 				if token ~= "" then
 					local vpsinfo_json = ""
@@ -1120,6 +1121,7 @@ function interfaces_status()
 	    local ipv6 = section["ipv6"] or "0"
 	    local mac = section ["macaddr"] or ""
 	    local itype = section ["type"] or ""
+	    local state = section ["state"] or ""
 
 	    --if not ipaddr or not gateway then return end
 	    -- Don't show if0 in the overview
@@ -1325,6 +1327,7 @@ function interfaces_status()
 
 	    local latency = ""
 	    local server_ping = ""
+	    local server_http = ""
 	    --if connectivity ~= "ERROR" and ifname ~= "" and gateway ~= "" and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" and ipaddr ~= "" then
 	    if ifname ~= "" and (gateway ~= "" or gateway6 ~= "") and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" and (ipaddr ~= "" or ip6addr ~= "") and connectivity ~= "ERROR" then
 		    local serverip = mArray.openmptcprouter["service_addr"]
@@ -1343,6 +1346,40 @@ function interfaces_status()
 				    mArray.openmptcprouter["vps_status"] = "UP"
 				    server_ping = "UP"
 				    latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f5 | cut -d '.' -f1"))
+			    end
+		    end
+		    
+		    if adminport == "" then
+			    adminport = "65500"
+		    end
+		    if server_ping == "UP" and uci:get("openmptcprouter", "settings", "disableserverhttptest") ~= "1" and ipaddr ~= "" and adminport ~= "" then
+			    local server_http_result = ""
+			    local server_http_test = ""
+			    if mArray.openmptcprouter["service_addr_ip"] ~= "" then
+				    server_http_test = sys.exec("httping -l " .. mArray.openmptcprouter["service_addr_ip"] .. ":" .. adminport .. " -y " .. ipaddr .. " -t 1 -c 1")
+				    server_http_result = ut.trim(sys.exec("echo '" .. server_http_test .. "' | grep '100.00% failed'"))
+				    if server_http_result ~= "" then
+					    server_http = "DOWN"
+					    if connectivity == "OK" then
+						    connectivity = "WARNING"
+					    end
+				    end
+			    end
+			    if mArray.openmptcprouter["service_addr_ip6"] ~= "" then
+				    server_http_test = sys.exec("httping -l [" .. mArray.openmptcprouter["service_addr_ip6"] .. "]:" .. adminport .. " -y " .. ipaddr .. " -t 1 -c 1")
+				    server_http_result = ut.trim(sys.exec("echo '" .. server_http_test .. "' | grep '100.00% failed'"))
+				    if server_http_result ~= "" then
+					    server_http = "DOWN"
+					    if connectivity == "OK" then
+						    connectivity = "WARNING"
+					    end
+				    end
+			    end
+			    if server_http_result ~= "" then
+				    server_http = "DOWN"
+				    if connectivity == "OK" then
+					    connectivity = "WARNING"
+				    end
 			    end
 		    end
 	    end
@@ -1443,6 +1480,11 @@ function interfaces_status()
 		    rx = ut.trim(sys.exec("devstatus " .. ifname .. " | jsonfilter -e '@.statistics.rx_bytes'"))
 		    tx = ut.trim(sys.exec("devstatus " .. ifname .. " | jsonfilter -e '@.statistics.tx_bytes'"))
 	    end
+	    
+	    if state == "down" then
+		    connectivity = "ERROR"
+	    end
+	    
 	    local data = {
 		label = section["label"] or interface,
 		name = interface,
@@ -1466,6 +1508,7 @@ function interfaces_status()
 		gw_ping = gw_ping,
 		gw_ping6 = gw_ping6,
 		server_ping = server_ping,
+		server_http = server_http,
 		ipv6_discover = ipv6_discover,
 		multipath_available = multipath_available,
 		multipath_state = current_multipath_state,
@@ -1481,6 +1524,7 @@ function interfaces_status()
 		tx = tx,
 		zonewan = zonewan,
 		iftype = itype,
+		state = state,
 	    }
 	    if ifname ~= nil and ifname:match("^tun.*") then
 		    table.insert(mArray.tunnels, data);
