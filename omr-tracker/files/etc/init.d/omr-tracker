@@ -15,7 +15,7 @@
 
 _validate_section() {
 	local tmp_hosts=$hosts tmp_hosts6=$hosts6 tmp_timeout=$timeout tmp_tries=$tries
-	local tmp_interval=$interval tmp_interval_tries=$interval_tries tmp_options=$options tmp_type=$type tmp_enabled=$enabled tmp_wait_test=$wait_test
+	local tmp_interval=$interval tmp_interval_tries=$interval_tries tmp_options=$options tmp_type=$type tmp_enabled=$enabled tmp_wait_test=$wait_test tmp_server_http_test=$server_http_test
 
 	uci_validate_section omr-tracker "$1" "$2" \
 		'hosts:list(host)'  \
@@ -27,6 +27,7 @@ _validate_section() {
 		'wait_test:uinteger' \
 		'type:string:undef'  \
 		'enabled:bool:1'    \
+		'server_http_test:bool:1'    \
 		'options:string'
 
 	[ -z "$hosts"    ] && hosts=$tmp_hosts
@@ -38,6 +39,7 @@ _validate_section() {
 	[ -z "$wait_test" ] && wait_test=$tmp_wait_test
 	[ -z "$options"  ] && options=$tmp_options
 	[ "$type" = "undef" ] && type=${tmp_type:-ping}
+	[ -z "$server_http_test"  ] && server_http_test=$tmp_server_http_test
 	[ -z "$enabled"  ] && enabled=$tmp_enabled
 }
 
@@ -46,7 +48,7 @@ _launch_tracker() {
 		loopback|lan*|if0*) return;;
 	esac
 
-	local hosts hosts6 timeout tries interval interval_tries options type enabled wait_test ipv6 proto
+	local hosts hosts6 timeout tries interval interval_tries options type enabled wait_test ipv6 proto server_http_test
 	_validate_section "defaults" "defaults"
 	_validate_section "interface" "$1"
 
@@ -84,6 +86,7 @@ _launch_tracker() {
 	procd_append_param env "OMR_TRACKER_IPV6=$ipv6"
 	procd_append_param env "OMR_TRACKER_PROTO=$proto"
 	procd_append_param env "OMR_TRACKER_WAIT_TEST=$wait_test"
+	procd_append_param env "OMR_TRACKER_SERVER_HTTP_TEST=$server_http_test"
 	procd_set_param limits nofile="51200 51200"
 	procd_set_param respawn 0 10 0
 	procd_set_param stderr 1
@@ -268,7 +271,7 @@ start_service() {
 }
 
 service_triggers() {
-	procd_add_reload_trigger omr-tracker network shadowsocks-libev
+	procd_add_reload_trigger omr-tracker network shadowsocks-libev v2ray
 }
 
 reload_service() {

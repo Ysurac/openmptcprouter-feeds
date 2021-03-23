@@ -543,7 +543,6 @@ _get_gre_tunnel() {
 					set network.oip${i}.ipaddr="$peeraddr"
 					set network.oip${i}.netmask="255.255.255.252"
 					set network.oip${i}.lookup="667${i}"
-					commit network
 				EOF
 				allintf=$(uci -q get firewall.zone_vpn.network)
 				uci -q del firewall.zone_vpn.network
@@ -553,7 +552,6 @@ _get_gre_tunnel() {
 				uci -q batch <<-EOF >/dev/null
 					add_list firewall.zone_vpn.network="oip${i}gre"
 					add_list firewall.zone_vpn.network="oip${i}"
-					commit firewall
 				EOF
 				ssport="$(echo $tunnel | jsonfilter -q -e '@.shadowsocks_port')"
 				uci -q batch <<-EOF >/dev/null
@@ -584,11 +582,15 @@ _get_gre_tunnel() {
 					set shadowsocks-libev.oip${i}_rule.dst_default='bypass'
 					set shadowsocks-libev.oip${i}_rule.local_default='bypass'
 					set shadowsocks-libev.oip${i}_rule.redir_tcp="oip${i}"
-					commit shadowsocks-libev
 				EOF
 			fi
 			i=$((i+1))
 		done
+		uci -q batch <<-EOF >/dev/null
+			commit network
+			commit firewall
+			commit shadowsocks-libev
+		EOF
 	fi
 }
 
@@ -866,6 +868,7 @@ _vps_firewall_redirect_port() {
 	config_get dest_port $1 dest_port
 	config_get src_ip $1 src_ip
 	config_get v2ray $1 v2ray "0"
+	config_get v2ray $1 name
 	config_get dmz $1 dmz "0"
 	if [ -z "$src_dport" ] && [ -n "$dest_port" ]; then
 		src_dport=$dest_port
@@ -887,7 +890,7 @@ _vps_firewall_redirect_port() {
 	[ "$(uci -q get v2ray.main.enabled)" = "0" ] && v2ray="0"
 	[ "$proto" = "all" ] && proto="tcp udp"
 	[ "$proto" = "" ] && proto="tcp udp"
-	[ "$src" = "vpn" ] && [ -n "$proto" ] && [ -n "$src_dport" ] && [ "$enabled" != "0" ] && {
+	[ "$src" = "vpn" ] && [ -n "$proto" ] && [ -n "$src_dport" ] && [ "$enabled" != "0" ] && [ "$name" != "Allow-DHCP-Request-VPN" ] && {
 		for protoi in $proto; do
 			if [ "$v2ray" = "0" ]; then
 				checkfw=""
@@ -1078,6 +1081,10 @@ _set_vps_firewall() {
 		logger -t "OMR-VPS" "Remove old firewall rules"
 		_vps_firewall_close_port
 	}
+	uci -q batch <<-EOF >/dev/null
+		set openmptcprouter.${fwservername}.set_firewall=0
+		commit openmptcprouter
+	EOF
 }
 
 set_vps_firewall() {
@@ -1840,6 +1847,7 @@ start_service() {
 }
 
 service_triggers() {
-	procd_add_reload_trigger openmptcprouter shadowsocks-libev glorytun glorytun-udp mlvpn openvpn network upnpd dsvpn v2ray firewall
+	procd_add_reload_trigger openmptcprouter network shadowsocks-libev v2ray glorytun glorytun-udp mlspn openvpn dsvpn
+	procd_add_config_trigger "config.change" "firewall" /etc/init.d/openmptcprouter-vps set_vps_firewall
 	#procd_add_reload_trigger openmptcprouter shadowsocks-libev network upnpd
 }
