@@ -6,7 +6,7 @@ START=99
 
 USE_PROCD=1
 
-EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key"
+EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key set_gre_tunnel"
 
 . /usr/lib/unbound/iptools.sh
 
@@ -503,6 +503,7 @@ _get_vps_config() {
 }
 
 _get_gre_tunnel() {
+	[ -z "$servername" ] && servername=$1
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 	gre_tunnel_state="$(echo "$vps_config" | jsonfilter -q -e '@.gre_tunnel.enabled')"
@@ -515,7 +516,7 @@ _get_gre_tunnel() {
 			peeraddr="$(echo $tunnel | jsonfilter -q -e '@.remote_ip')"
 			ipaddr="$(echo $tunnel | jsonfilter -q -e '@.local_ip')"
 			publicaddr="$(echo $tunnel | jsonfilter -q -e '@.public_ip')"
-			if [ "$peeraddr" != "" ] && [ "$ipaddr" != "" ] && [ "$publicaddr" != "" ] && ([ "$(uci -q get network.oip${i}.ipaddr)" != "$peeraddr" ] || [ "$(uci -q get network.oip${i}.ipaddr)" != "$ipaddr" ] || [ "$(uci -q get network.oip${i}gre.ipaddr)" != "$vpnip_local" ]); then
+			if [ "$peeraddr" != "" ] && [ "$ipaddr" != "" ] && [ "$publicaddr" != "" ] && [ "$vpnip_local" != "" ] && ([ "$(uci -q get network.oip${i}.ipaddr)" != "$peeraddr" ] || [ "$(uci -q get network.oip${i}.ipaddr)" != "$ipaddr" ] || [ "$(uci -q get network.oip${i}gre.ipaddr)" != "$vpnip_local" ]); then
 				uci -q batch <<-EOF >/dev/null
 					set network.oip${i}gre=interface
 					set network.oip${i}gre.label="GRE tunnel for $publicaddr"
@@ -529,6 +530,7 @@ _get_gre_tunnel() {
 					set network.oip${i}gre.ip4table='vpn'
 					set network.oip${i}gre.peeraddr="$publicaddr"
 					set network.oip${i}gre.ipaddr="$vpnip_local"
+					set network.oip${i}gre.tunlink='omrvpn'
 					set network.oip${i}=interface
 					set network.oip${i}.label="Tunnel for $publicaddr"
 					set network.oip${i}.proto=static
@@ -593,6 +595,12 @@ _get_gre_tunnel() {
 		EOF
 	fi
 }
+
+set_gre_tunnel() {
+	config_load openmptcprouter
+	config_foreach _get_gre_tunnel server
+}
+
 
 _get_pihole() {
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
@@ -1044,7 +1052,16 @@ _set_vps_firewall() {
 	fw3 -q print | grep 'vpn.* -d' |
 	while IFS=$"\n" read -r c; do
 		eval $(echo $c | sed 's/iptables/iptables -w/' | sed 's/-A/-D/') 2>&1 >/dev/null
-		newrule=$(echo $c | sed 's/iptables/iptables -w/' | sed -E -e 's/ -d ([^ ])*//' -e 's/ -s ([^ ])*//')
+		publicip=$(echo $c | awk -F'-d' '{print $2}' | cut -d '/' -f1 | sed 's/ //g')
+		[ -n "$publicip" ] && {
+			greintf=$(uci show network | grep "Tunnel for $publicip" | cut -d '.' -f2 | tr -d "\n")
+			[ -n "$greintf" ] && greip=$(uci -q get network.${greintf}.ipaddr)
+		}
+		if [ -z "$greip" ]; then
+			newrule=$(echo $c | sed 's/iptables/iptables -w/' | sed -E -e 's/ -d ([^ ])*//' -e 's/ -s ([^ ])*//')
+		else
+			newrule=$(echo $c | sed 's/iptables/iptables -w/' | sed -E -e "s/ -d ([^ ])*/ -d ${greip}\/255.255.255.252/" -e 's/ -s ([^ ])*//')
+		fi
 		eval $(echo $newrule | sed 's/-A/-D/') || true
 		eval $newrule
 	done
