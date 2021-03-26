@@ -1768,7 +1768,10 @@ _config_service() {
 				EOF
 				config_foreach _set_ss_server server "method" "aes-256-gcm"
 				uci -q commit shadowsocks-libev
-				[ "$method" != "aes-256-gcm" ] && /etc/init.d/shadowsocks-libev restart
+				[ "$method" != "aes-256-gcm" ] && {
+					logger -t "OMR-VPS" "Shadowsocks restart"
+					/etc/init.d/shadowsocks-libev restart
+				}
 			fi
 		}
 	fi
@@ -1807,12 +1810,13 @@ _config_service() {
 	if [ "$(uci -q get openmptcprouter.settings.vpn)" != "openvpn" ] && [ "$(echo "$vps_config" | jsonfilter -q -e '@.client2client.enabled')" == "true" ]; then
 		_set_client2client
 	fi
-	[ "$error" = 0 ] && {
+	if [ "$error" = 0 ]; then
 		#logger -t "OMR-VPS" "No errors"
 		uci -q set openmptcprouter.${servername}.lastchange=$(date "+%s")
 		[ -n "$vps_config" ] && uci -q set openmptcprouter.settings.firstboot=0
-
-	}
+	else
+		logger -t "OMR-VPS" "Setting server config error, try again"
+	fi
 	#[ "$error" != 0 ] && logger -t "OMR-VPS" "Error !"
 	uci -q batch <<-EOF >/dev/null
 		set openmptcprouter.${servername}.admin_error=$error
@@ -1866,5 +1870,6 @@ start_service() {
 service_triggers() {
 	procd_add_reload_trigger openmptcprouter network shadowsocks-libev v2ray glorytun glorytun-udp mlspn openvpn dsvpn
 	procd_add_config_trigger "config.change" "firewall" /etc/init.d/openmptcprouter-vps set_vps_firewall
+	#procd_add_config_trigger "config.change" "network" /etc/init.d/openmptcprouter-vps set_gre_tunnel
 	#procd_add_reload_trigger openmptcprouter shadowsocks-libev network upnpd
 }
