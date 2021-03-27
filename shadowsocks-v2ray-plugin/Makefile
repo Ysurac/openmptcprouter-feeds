@@ -19,7 +19,6 @@ PKG_SOURCE_VERSION:=6c0c5fb15851e13b36fe2eeaaba97fd27c9d291b
 
 PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_PARALLEL:=1
-PKG_BUILD_DEPENDS:=golang/host
 GO_PKG:=github.com/shadowsocks/v2ray-plugin
 #GO_PKG_BUILD_PKG:=github.com/shadowsocks/v2ray-plugin
 

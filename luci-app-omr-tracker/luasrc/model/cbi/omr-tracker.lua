@@ -134,6 +134,13 @@ o.default     = false
 o.disabled    = 0
 o.enabled     = 1
 
+o = s:option(Flag, "restart_down", translate("Restart if down"), translate("Restart interface if detected as down"))
+o.optional    = false
+o.rmempty     = false
+o.default     = false
+o.disabled    = 0
+o.enabled     = 1
+
 o = s:option(DynamicList, "hosts", translate("Hosts"), translate("Must be IPs and not domains"))
 o.placeholder = "4.2.2.1"
 o.default     = { "4.2.2.1", "8.8.8.8" }
@@ -196,6 +203,13 @@ o.disabled    = 0
 o.enabled     = 1
 
 o = s:option(Flag, "mail_alert", translate("Mail alert"), translate("Send a mail when connection status change. You need to configure e-mail settings <a href=\"/cgi-bin/luci/admin/services/mail\">here</a>."))
+o.optional    = false
+o.rmempty     = false
+o.default     = false
+o.disabled    = 0
+o.enabled     = 1
+
+o = s:option(Flag, "restart_down", translate("Restart if down"), translate("Restart interface if detected as down"))
 o.optional    = false
 o.rmempty     = false
 o.default     = false
