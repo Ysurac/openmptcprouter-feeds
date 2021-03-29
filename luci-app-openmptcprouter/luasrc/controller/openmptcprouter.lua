@@ -505,6 +505,11 @@ function wizard_add()
 	ucic:set("openmptcprouter","settings","mptcpovervpn",mptcpovervpn_vpn)
 	ucic:save("openmptcprouter")
 
+	-- Get Country
+	local country = luci.http.formvalue("country") or "world"
+	ucic:set("openmptcprouter","settings","country",country)
+	ucic:save("openmptcprouter")
+
 	-- Get Proxy set by default
 	local default_proxy = luci.http.formvalue("default_proxy") or "shadowsocks"
 	if default_proxy == "shadowsocks" and serversnb > 0 and serversnb > disablednb then
