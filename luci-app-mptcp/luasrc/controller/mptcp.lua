@@ -75,7 +75,6 @@ function multipath_bandwidth()
 			end
 			if multipath == "on" or multipath == "master" or multipath == "backup" or multipath == "handover" then
 				local bwc = luci.sys.exec("luci-bwc -i %q 2>/dev/null" % dev) or ""
-				local bwc = luci.sys.exec("luci-bwc -i %q 2>/dev/null" % dev) or ""
 				if bwc ~= nil then
 					--result[dev] = "[" .. string.gsub(bwc, '[\r\n]', '') .. "]"
 					if label ~= nil then
@@ -121,13 +120,13 @@ function multipath_bandwidth()
 					res[key][i][j]= tonumber(res[key][i][j])
 					res["total"][i][j]= tonumber(res["total"][i][j])
 					if j ==1 then
-						if res[key][i][j] ~= nil then
+						if res[key][i][j] ~= nil and res[key][i][j] > 0 then
 							res["total"][i][j] = res[key][i][j]
 						else
 							res["total"][i][j] = 0
 						end
 					else
-						if res[key][i][j] ~= nil then
+						if res[key][i][j] ~= nil and res[key][i][j] > 0 then
 							res["total"][i][j] = res["total"][i][j] + res[key][i][j]
 						end
 					end
