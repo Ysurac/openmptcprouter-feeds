@@ -20,4 +20,5 @@ uci show | \
 	-e "/vless_address=/s/......$/xxxxxx'/" \
 	-e "/vpn\.key=/s/......$/xxxxxx'/" \
 	-e "/vps\.key=/s/......$/xxxxxx'/" \
+	-e "/wgkey=/s/......$/xxxxxx'/" \
 	-e "/token=/s/............$/xxxxxx'/"
