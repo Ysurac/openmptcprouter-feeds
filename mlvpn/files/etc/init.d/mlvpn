@@ -15,8 +15,10 @@ interface_multipath_settings() {
 	[ "$mode" = "off" ] || [ "$mode" = "" ] && return 1
 	config_get ifname "$config" ifname
 	[ -z "$ifname" ] && ifname=$(ifstatus "$config" | jsonfilter -q -e '@["l3_device"]')
+	[ -n "$(echo $ifname | grep '@')" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["device"]')
 	[ -z "$ifname" ] && return 1
 	addr=$(ifstatus ${config} | jsonfilter -q -e '@["ipv4-address"][0].address')
+	[ -z "$addr" ] && return 1
 	count=$(($count+1))
 	port=$((firstport+count))
 	cat >> /tmp/etc/${interface_name}.conf <<-EOF
@@ -38,6 +40,8 @@ start() {
 	password="$(uci -q get mlvpn.general.password)"
 	reorder_buffer_size="$(uci -q get mlvpn.general.reorder_buffer_size)"
 	loss_tolerence="$(uci -q get mlvpn.general.loss_tolerence)"
+	cleartext_data="$(uci -q get mlvpn.general.cleartext_data)"
+	[ -z "$cleartext_data" ] && cleartext_data="0"
 	host="$(uci -q get mlvpn.general.host)"
 	firstport="$(uci -q get mlvpn.general.firstport)"
 	
@@ -55,6 +59,7 @@ start() {
 	reorder_buffer = yes
 	reorder_buffer_size = ${reorder_buffer_size}
 	loss_tolerence = ${loss_tolerence}
+	cleartext_data = ${cleartext_data}
 	password = "${password}"
 	mtu = 1452
 	EOF

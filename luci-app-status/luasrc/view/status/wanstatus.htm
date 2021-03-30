@@ -19,7 +19,7 @@
 --    along with OverTheBox.  If not, see (http://www.gnu.org/licenses/)
 -%>
 <%
--- Copyright 2018-2020 Ycarus (Yannick Chabanois) ycarus@zugaina.org
+-- Copyright 2018 Ycarus (Yannick Chabanois) ycarus@zugaina.org
 --
 -- Small changes to make this work with OpenMPTCProuter
 -- New features: 
@@ -55,10 +55,13 @@
     end
 
     local curifname = luci.http.formvalue("dev") or "all"
-    local bandwidthtotalurl = "admin/system/status/multipath_bandwidth"
-    local bandwidthintfurl = "admin/system/status/interface_bandwidth"
 -%>
 <%+header%>
+<%
+local ucic = luci.model.uci.cursor()
+local menuentry = "status"
+local statuslogo = ucic:get("openmptcprouter","settings","statuslogo") or "openmptcprouter.png"
+%>
 <link rel="stylesheet" type="text/css" href="<%=resource%>/status/css/wanstatus.css?v=git-20"/>
 <script type="text/javascript" src="<%=resource%>/seedrandom.js?v=git-20"></script>
 <script type="text/javascript" src="<%=resource%>/cbi.js?v=git-20"></script>
@@ -75,7 +78,8 @@
 			return false;
 		}
 	}
-	XHR.poll(20, '/cgi-bin/luci/admin/system/status/interfaces_status', null,
+	function formatBytes(a,b=2){if(0===a)return"0 Bytes";const c=0>b?0:b,d=Math.floor(Math.log(a)/Math.log(1024));return parseFloat((a/Math.pow(1024,d)).toFixed(c))+" "+["Bytes","KiB","MiB","GiB","TiB","PiB","EiB","ZiB","YiB"][d]}
+	XHR.poll(20, '<%=build_url("admin/system/" .. menuentry:lower() .. "/interfaces_status")%>', null,
 		function(x, mArray)
 		{
 			var status = document.getElementById('openmptcprouter_status');
@@ -99,12 +103,12 @@
 				{
 					if (mArray.openmptcprouter.remote_from_lease == false)
 					{
-						var title = String.format("%s (%s)",'You', mArray.openmptcprouter.remote_addr);
+						var title = String.format("%s (%s)",'<%:You%>', mArray.openmptcprouter.remote_addr);
 						var statusMessageClass = "warning";
 						var statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
-						var statusMessage = _('Your IP was not leased by this router');
+						var statusMessage = '<%:Your IP was not leased by this router%>';
 					} else {
-						var title = String.format('<br /><strong>%s (%s)</strong>', mArray.openmptcprouter.remote_hostname ? mArray.openmptcprouter.remote_hostname : _('You'), mArray.openmptcprouter.remote_addr)
+						var title = String.format('<br /><strong>%s (%s)</strong>', mArray.openmptcprouter.remote_hostname ? mArray.openmptcprouter.remote_hostname : _('<%:You%>'), mArray.openmptcprouter.remote_addr)
 						var statusMessageClass = "";
 						var statusIcon = "<%=resource%>/openmptcprouter/images/statusOK.png";
 						var statusMessage = "";
@@ -130,7 +134,7 @@
 					}
 				}
 				temp += '<tr><td></td></tr><tr><td><a href="#" id="omr">';
-				var equipmentIcon = '<img src="<%=resource%>/openmptcprouter.png" style:"top: 0px;" />';
+				var equipmentIcon = '<img src="<%=resource%>/<%=statuslogo%>" style:"top: 0px;" />';
 				var title = String.format("%s (%s)", mArray.openmptcprouter.hostname, mArray.openmptcprouter.local_addr);
 				var statusMessageClass = "";
 				var statusIcon = "<%=resource%>/openmptcprouter/images/statusOK.png";
@@ -143,24 +147,24 @@
 					content += "Version " + mArray.openmptcprouter.version;
 					if (mArray.openmptcprouter.latest_version_omr != mArray.openmptcprouter.version && mArray.openmptcprouter.latest_version_omr != "")
 					{
-						content += "<br><i>(" + _('Latest available version') + " " + mArray.openmptcprouter.latest_version_omr + ")</i>";
+						content += "<br><i>(" + '<%:Latest available version%>' + " " + mArray.openmptcprouter.latest_version_omr + ")</i>";
 					}
 					content += "<br />";
 				}
 				if (mArray.openmptcprouter.loadavg)
 				{
-					content += _('Load:') + " " + mArray.openmptcprouter.loadavg;
+					content += '<%:Load:%>' + " " + mArray.openmptcprouter.loadavg;
 					content += "<br />";
 				}
 				if (mArray.openmptcprouter.core_temp)
 				{
-					content += _('Core temp:') + " " + (mArray.openmptcprouter.core_temp / 1000).toFixed(1) + " &#176;";
+					content += '<%:Core temp:%>' + " " + (mArray.openmptcprouter.core_temp / 1000).toFixed(1) + " &#176;";
 					content += "<br />";
 				}
 				if (mArray.openmptcprouter.uptime)
 				{
 					var date = new Date(null);
-					content += _('Uptime:') + " " + String.format('%t', mArray.openmptcprouter.uptime);
+					content += '<%:Uptime:%>' + " " + String.format('%t', mArray.openmptcprouter.uptime);
 					content += "<br />";
 				}
 				if (mArray.openmptcprouter.dhcpd)
@@ -168,38 +172,46 @@
 					for ( dhcpd in mArray.openmptcprouter.dhcpd )
 					{
 						var dhcp = mArray.openmptcprouter.dhcpd[dhcpd];
-						content += String.format('<span style="text-transform:capitalize;">%s</span> %s %s<br />', dhcp.interface, _('address:') ,dhcp.router);
-						content += String.format('<span style="text-transform:capitalize;">%s</span> %s %s - %s<br />', dhcp.interface, _('range:'), dhcp.range_start, dhcp.range_end);
+						content += String.format('<span style="text-transform:capitalize;">%s</span> %s %s<br />', dhcp.interface, '<%:address:%>' ,dhcp.router);
+						content += String.format('<span style="text-transform:capitalize;">%s</span> %s %s - %s<br />', dhcp.interface, '<%:range:%>', dhcp.range_start, dhcp.range_end);
 					}
 				}
 
-				if (mArray.openmptcprouter.socks_service_enabled == true && mArray.openmptcprouter.service_addr != "") 
+				if (mArray.openmptcprouter.shadowsocks_enabled == true && mArray.openmptcprouter.service_addr != "") 
 				{
-					if (mArray.openmptcprouter.socks_service == false)
+					if (mArray.openmptcprouter.shadowsocks_service == false)
 					{
-						statusMessage += _('ShadowSocks is not running');
-						if (mArray.openmptcprouter.socks_service_key == false && mArray.openmptcprouter.socks_service_method !== "none")
+						statusMessage += '<%:ShadowSocks is not running%>';
+						if (mArray.openmptcprouter.shadowsocks_service_key == false && mArray.openmptcprouter.shadowsocks_service_method !== "none")
 						{
-							statusMessage += ' <i>(' + _('empty key') + ')</i>';
+							statusMessage += ' <i>(' + '<%:empty key%>' + ')</i>';
 						}
+						statusMessage += '<br/>';
+					}
+				}
+				if (mArray.openmptcprouter.v2ray_enabled == true && mArray.openmptcprouter.service_addr != "")
+				{
+					if (mArray.openmptcprouter.v2ray_service == false)
+					{
+						statusMessage += '<%:V2Ray is not running%>';
 						statusMessage += '<br/>';
 					}
 				}
 				if (mArray.openmptcprouter.fsro == true)
 				{
-					statusMessage += _('Filesystem is readonly') + '<br/>';
+					statusMessage += '<%:Filesystem is readonly%>' + '<br/>';
 				}
 				if (mArray.openmptcprouter.multi_vpn == true)
 				{
-					statusMessage += _('More than one default VPN is enabled') + '<br/>';
+					statusMessage += '<%:More than one default VPN is enabled%>' + '<br/>';
 				}
 				if (mArray.openmptcprouter.tun_service == false && mArray.openmptcprouter.service_addr != "")
 				{
-					statusMessage += _('VPN is not running') + '<br/>';
+					statusMessage += '<%:VPN is not running%>' + '<br/>';
 				}
 				if (mArray.openmptcprouter.dns == false)
 				{
-					statusMessage += _('DNS issue: can\'t resolve hostname') + '<br/>';
+					statusMessage += '<%:DNS issue: can\'t resolve hostname%>' + '<br/>';
 				}
 
 				if(statusMessage !== "")
@@ -208,22 +220,22 @@
 					statusIcon = "<%=resource%>/openmptcprouter/images/statusError.png";
 				} else if (mArray.openmptcprouter.service_addr != "")
 				{
-					if (mArray.openmptcprouter.socks_service_enabled == false)
+					if (mArray.openmptcprouter.v2ray_enabled == false && mArray.openmptcprouter.shadowsocks_enabled == false)
 					{
-						statusMessage += _('ShadowSocks is DISABLED') + '<br/>';
+						statusMessage += '<%:Proxy is DISABLED%>' + '<br/>';
 					} 
 					if (mArray.openmptcprouter.tun_state == "DOWN")
 					{
-						statusMessage += _('VPN tunnel DOWN') + '<br/>';
+						statusMessage += '<%:VPN tunnel DOWN%>' + '<br/>';
 					}
 					if (mArray.openmptcprouter.ipv6 == "enabled")
 					{
 						if (mArray.openmptcprouter.tun6_state == "DOWN")
 						{
-							statusMessage += _('VPN IPv6 tunnel DOWN') + '<br/>';
+							statusMessage += '<%:IPv6 tunnel DOWN%>' + '<br/>';
 						} else if (mArray.openmptcprouter.wan_addr6 == '')
 						{
-							statusMessage += _('No IPv6 access') + '<br/>';
+							statusMessage += '<%:No IPv6 access%>' + '<br/>';
 						}
 					}
 					if (statusMessage !== "")
@@ -237,20 +249,31 @@
 				temp += '</td></tr>';
 				temp += '<tr><td><div class="vertdash" ></div></td></tr>';
 				temp += '<tr><td>';
-				temp += '<a href="<%=url('admin/network/network')%>" id="omr-vps">';
+				temp += '<a href="<%=url('admin/system/' .. menuentry:lower() .. '/wizard')%>" id="omr-vps">';
 				var statusIcon = "<%=resource%>/openmptcprouter/images/statusOK.png";
 				var equipmentIcon = '<img src="<%=resource%>/server.png" />';
 				content = "";
 				statusMessage = "";
-				if (mArray.openmptcprouter.wan_addr == mArray.openmptcprouter.service_addr && mArray.openmptcprouter.wan_addr != "")
+				if ((mArray.openmptcprouter.wan_addr == mArray.openmptcprouter.service_addr || mArray.openmptcprouter.wan_addr == mArray.openmptcprouter.service_addr_ip) && mArray.openmptcprouter.wan_addr != "")
 				{
 					var title = String.format("%s (%s)", mArray.openmptcprouter.vps_hostname, mArray.openmptcprouter.wan_addr);
+				} else if ((mArray.openmptcprouter.wan_addr6 == mArray.openmptcprouter.service_addr || mArray.openmptcprouter.wan_addr6 == mArray.openmptcprouter.service_addr_ip6) && mArray.openmptcprouter.wan_addr6 != "")
+				{
+					var title = String.format("%s (%s)", mArray.openmptcprouter.vps_hostname, mArray.openmptcprouter.wan_addr6);
 				} else if (mArray.openmptcprouter.wan_addr != "" && mArray.openmptcprouter.service_addr == "127.0.0.1")
 				{
 					var title = String.format("%s (%s)", mArray.openmptcprouter.vps_hostname, mArray.openmptcprouter.wan_addr);
+				} else if (mArray.openmptcprouter.wan_addr6 != "" && mArray.openmptcprouter.service_addr == "127.0.0.1")
+				{
+					var title = String.format("%s (%s)", mArray.openmptcprouter.vps_hostname, mArray.openmptcprouter.wan_addr6);
 				} else if (mArray.openmptcprouter.wan_addr != "")
 				{
 					var title = String.format("%s (%s)", _('Direct output'), mArray.openmptcprouter.wan_addr);
+					statusMessageClass = "warning";
+					statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
+				} else if (mArray.openmptcprouter.wan_addr6 != "")
+				{
+					var title = String.format("%s (%s)", _('Direct output'), mArray.openmptcprouter.wan_addr6);
 					statusMessageClass = "warning";
 					statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
 				} else if (mArray.openmptcprouter.ss_addr != "" && mArray.openmptcprouter.vps_status != "DOWN")
@@ -259,16 +282,16 @@
 				} else if (mArray.openmptcprouter.external_check == false) {
 					var title = String.format("%s ?", mArray.openmptcprouter.vps_hostname);
 				} else {
-					var title = _('No output');
-					statusMessage += _('No output') + '<br/>';
+					var title = '<%:No output%>';
+					statusMessage += '<%:No output%>' + '<br/>';
 				}
-				if (mArray.openmptcprouter.wan_addr == "" && mArray.openmptcprouter.ss_addr == "" && mArray.openmptcprouter.external_check == true)
+				if (mArray.openmptcprouter.wan_addr == "" && mArray.openmptcprouter.wan_addr6 == "" && mArray.openmptcprouter.ss_addr == "" && mArray.openmptcprouter.external_check == true)
 				{
-					statusMessage += _('No VPS IP address, No WAN IP address') + '<br/>';
+					statusMessage += '<%:No server IP address, No WAN IP address%>' + '<br/>';
 				}
-				if (mArray.openmptcprouter.service_addr !== "" && mArray.openmptcprouter.wan_addr !== "" && mArray.openmptcprouter.vps_status == "DOWN")
+				if (mArray.openmptcprouter.service_addr !== "" && (mArray.openmptcprouter.wan_addr !== "" || mArray.openmptcprouter.wan_addr6 !== "") && mArray.openmptcprouter.vps_status == "DOWN")
 				{
-					statusMessage += _('Can\'t access and use server part') + '<br/>';
+					statusMessage += '<%:Can\'t access and use server part%>' + '<br/>';
 				}
 				if (statusMessage !== "")
 				{
@@ -277,21 +300,24 @@
 				}
 				if (mArray.openmptcprouter.service_addr == "")
 				{
-					statusMessage += _('No server defined') + '<br/>';
+					statusMessage += '<%:No server defined%>' + '<br/>';
 				} else {
 					if (mArray.openmptcprouter.vps_status == "DOWN")
 					{
-						statusMessage += _('Can\'t ping server') + '<br/>';
-					} else if (mArray.openmptcprouter.socks_service_enabled == true && mArray.openmptcprouter.ss_addr == "" && mArray.openmptcprouter.external_check == true)
+						statusMessage += '<%:Can\'t ping server%>' + '<br/>';
+					} else if (mArray.openmptcprouter.shadowsocks_enabled == true && mArray.openmptcprouter.ss_addr == "" && mArray.openmptcprouter.external_check == true)
 					{
-						statusMessage += _('Can\'t get public IP address from ShadowSocks') + '<br/>';
-					} else if (mArray.openmptcprouter.wan_addr == "" && mArray.openmptcprouter.external_check == true)
+						statusMessage += '<%:Can\'t get public IP address from ShadowSocks%>' + '<br/>';
+					} else if (mArray.openmptcprouter.v2ray_enabled == true && mArray.openmptcprouter.ss_addr == "" && mArray.openmptcprouter.external_check == true)
 					{
-						statusMessage += _('No WAN IP address detected in less than 1 second') + '<br/>';
+						statusMessage += '<%:Can\'t get public IP address from V2Ray%>' + '<br/>';
+					} else if (mArray.openmptcprouter.wan_addr == "" && mArray.openmptcprouter.wan_addr6 == "" && mArray.openmptcprouter.external_check == true)
+					{
+						statusMessage += '<%:No WAN IP address detected in less than 1 second%>' + '<br/>';
 					}
 					if (mArray.openmptcprouter.vps_admin == false)
 					{
-						statusMessage += _('Can\'t contact Server Admin Script');
+						statusMessage += '<%:Can\'t contact Server Admin Script%>';
 						if (mArray.openmptcprouter.vps_admin_error_msg !== "")
 						{
 							statusMessage += ' <i>(' + mArray.openmptcprouter.vps_admin_error_msg + ')</i>';
@@ -300,11 +326,11 @@
 					} 
 					if (mArray.openmptcprouter.vps_mptcp == "0")
 					{
-						statusMessage += _('MPTCP is not enabled on the server') + '<br/>';
+						statusMessage += '<%:MPTCP is not enabled on the server%>' + '<br/>';
 					} 
 					if (mArray.openmptcprouter.vps_time_accurate == false)
 					{
-						statusMessage += _('Big time difference between the server and the router') + '<br/>';
+						statusMessage += '<%:Big time difference between the server and the router%>' + '<br/>';
 					}
 				}
 				if (statusMessage !== "" && statusMessageClass !== "error")
@@ -314,39 +340,40 @@
 				}
 				if (mArray.openmptcprouter.vps_omr_version)
 				{
-					content += _('Version') + " " + mArray.openmptcprouter.vps_omr_version;
+					content += '<%:Version%>' + " " + mArray.openmptcprouter.vps_omr_version;
 					if (mArray.openmptcprouter.vps_kernel)
 					{
 						content += " " + mArray.openmptcprouter.vps_kernel;
 					}
 					if (mArray.openmptcprouter.latest_version_vps !== mArray.openmptcprouter.vps_omr_version && mArray.openmptcprouter.latest_version_vps !== "")
 					{
-						content += "<br><i>(" + _('Latest available version') + " " + mArray.openmptcprouter.latest_version_vps + ")</i>";
+						content += "<br><i>(" + '<%:Latest available version%>' + " " + mArray.openmptcprouter.latest_version_vps + ")</i>";
 					}
 					content += "<br />";
 				}
 				if (mArray.openmptcprouter.vps_loadavg)
 				{
-					content += _('Load:') + " " + mArray.openmptcprouter.vps_loadavg;
+					content += '<%:Load:%>' + " " + mArray.openmptcprouter.vps_loadavg;
 					content += "<br />";
 				}
 				if (mArray.openmptcprouter.vps_uptime)
 				{
 					var date = new Date(null);
-					content += _('Uptime:') + " " + String.format('%t', mArray.openmptcprouter.vps_uptime);
+					content += '<%:Uptime:%>' + " " + String.format('%t', mArray.openmptcprouter.vps_uptime);
 					content += "<br />";
 				}
 				if (mArray.openmptcprouter.server_mptcp == "disabled")
 				{
-					statusMessage += _('MPTCP may not be enabled on the server') + '<br/>';
+					statusMessage += '<%:MPTCP may not be enabled on the server%>' + '<br/>';
 					statusMessageClass = "warning";
 					statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
 				}
 				if (mArray.openmptcprouter.wan_addr6)
 				{
-					content += _('IPv6:') + " " + mArray.openmptcprouter.wan_addr6;
+					content += '<%:IPv6:%>' + " " + mArray.openmptcprouter.wan_addr6;
 					content += '<br />';
 				}
+				
 				content += '<br />';
 
 				temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
@@ -388,23 +415,37 @@
 							statusMessage = "";
 					}
 					// Populate info
-					var wanip   = mArray.wans[i].wanip;
+					var wanip    = mArray.wans[i].wanip;
 					if (anonymize == "true" && testPrivateIP(wanip) == false)
 					{
 						wanip=replaceLastNChars(wanip,"x",6);
 					}
-					var ipaddr   = mArray.wans[i].ipaddr;
+					var wanip6   = mArray.wans[i].wanip6;
+					if (anonymize == "true")
+					{
+						wanip6=replaceLastNChars(wanip6,"x",6);
+					}
+					var ipaddr    = mArray.wans[i].ipaddr;
 					if (anonymize == "true" && testPrivateIP(ipaddr) == false)
 					{
 						ipaddr=replaceLastNChars(ipaddr,"x",6);
 					}
-					var whois   = mArray.wans[i].whois;
-					var signal   = mArray.wans[i].signal;
+					var ip6addr   = mArray.wans[i].ip6addr;
+					if (anonymize == "true")
+					{
+						ip6addr=replaceLastNChars(ip6addr,"x",6);
+					}
+					var ifname    = mArray.wans[i].ifname;
+					var iftype    = mArray.wans[i].iftype;
+					var whois     = mArray.wans[i].whois;
+					var whois6    = mArray.wans[i].whois6;
+					var signal    = mArray.wans[i].signal;
 					var multipath = mArray.wans[i].multipath;
 					if(multipath == 'master')
 					{
 						master++;
 					}
+					var zonewan = mArray.wans[i].zonewan;
 					var latency = mArray.wans[i].latency;
 					var mtu = mArray.wans[i].mtu;
 					var operator = mArray.wans[i].operator;
@@ -416,12 +457,20 @@
 					{
 						gateway=replaceLastNChars(gateway,"x",6);
 					}
+					var gateway6 = mArray.wans[i].gateway6;
+					if (anonymize == "true" && testPrivateIP(gateway6) == false)
+					{
+						gateway6=replaceLastNChars(gateway6,"x",10);
+					}
 					var gw_ping = mArray.wans[i].gw_ping;
+					var gw_ping6 = mArray.wans[i].gw_ping6;
 					var server_ping = mArray.wans[i].server_ping;
+					var server_http = mArray.wans[i].server_http;
 					var ipv6_discover = mArray.wans[i].ipv6_discover;
 					var multipath_available = mArray.wans[i].multipath_available;
 					var multipath_state = mArray.wans[i].multipath_state;
 					var duplicateif = mArray.wans[i].duplicateif;
+					var duplicatemac = mArray.wans[i].duplicatemac;
 					// Generate template
 					if(mArray.openmptcprouter.remote_from_lease == true && mArray.wans.length == 1)
 					{
@@ -434,41 +483,60 @@
 					if (mArray.wans[i].gateway !== "")
 					{
 						var title = mArray.wans[i].label + " (" + gateway + ")";
+					} else if (mArray.wans[i].gateway6 !== "")
+					{
+						var title = mArray.wans[i].label + " (" + gateway6 + ")";
 					} else {
 						var title = mArray.wans[i].label;
 					}
 					var content = "";
 					if(ipaddr !== '')
 					{
-						content += String.format('%s <strong>%s</strong><br />',_('ip address:'), ipaddr);
+						content += String.format('%s <strong>%s</strong><br />','<%:ip address:%>', ipaddr);
+					}
+					if(ip6addr !== '' && gateway6 !== '')
+					{
+						content += String.format('%s <strong>%s</strong><br />','<%:ipv6 address:%>', ip6addr);
 					}
 					if(wanip !== '')
 					{
-						content += String.format('%s <strong>%s</strong><br />',_('wan address:'), wanip);
+						content += String.format('%s <strong>%s</strong><br />','<%:wan address:%>', wanip);
+					}
+					if(wanip6 !== '')
+					{
+						content += String.format('%s <strong>%s</strong><br />','<%:wan ipv6 address:%>', wanip6);
+					}
+					if(ifname !== '' && ifname !== mArray.wans[i].label)
+					{
+						content += String.format('%s %s<br />','<%:interface:%>', ifname);
 					}
 					if(whois !== '')
 					{
-						content += String.format('%s %s<br />',_('whois:'), whois);
+						content += String.format('%s %s<br />','<%:whois:%>', whois);
+					}
+					if(whois6 !== '' && whois6 != whois)
+					{
+						content += String.format('%s %s<br />','<%:whois:%>', whois6);
 					}
 					if(latency !== '')
 					{
-						content += String.format('%s %s ms<br />',_('latency:'), latency);
+						content += String.format('%s %s ms<br />','<%:latency:%>', latency);
 					}
 					if(mtu !== '')
 					{
-						content += String.format('%s %s<br />',_('mtu:'), mtu);
+						content += String.format('%s %s<br />','<%:mtu:%>', mtu);
 					}
 					if (operator !== '')
 					{
-						content += String.format('%s %s<br />',_('operator:'), operator);
+						content += String.format('%s %s<br />','<%:operator:%>', operator);
 					}
 					if (phonenumber !== '' && anonymize !== 'true')
 					{
-						content += String.format('%s %s<br />',_('phone number:'), phonenumber);
+						content += String.format('%s %s<br />','<%:phone number:%>', phonenumber);
 					}
 					if (donglestate !== '')
 					{
-						content += String.format('%s %s<br />',_('state:'), donglestate);
+						content += String.format('%s %s<br />','<%:state:%>', donglestate);
 					}
 
 					if(signal !== '')
@@ -488,65 +556,103 @@
 					{
 						title += String.format(' <i>%s</i>',networktype);
 					}
-					if(ipaddr == '')
+					if(ipaddr == '' && ip6addr == '')
 					{
-						statusMessage += _('No IP defined') + '<br />';
+						statusMessage += '<%:No IP defined%>' + '<br />';
 					}
-					if(gateway == '')
+					if(gateway == '' && gateway6 == '')
 					{
-						statusMessage += _('No gateway defined') + '<br />';
-					} else if(gw_ping == 'DOWN')
+						statusMessage += '<%:No gateway defined%>' + '<br />';
+					} else if(gateway != '' && gw_ping == 'DOWN')
 					{
-						statusMessage += _('Gateway DOWN') + '<br />';
+						statusMessage += '<%:Gateway DOWN%>' + '<br />';
+					} else if(gateway6 != '' && gw_ping6 == 'DOWN')
+					{
+						statusMessage += '<%:Gateway IPv6 DOWN%>' + '<br />';
 					} else if(multipath_available == 'ERROR')
 					{
-						statusMessage += _('Multipath seems to be blocked on the connection') + '<br />';
+						statusMessage += '<%:Multipath seems to be blocked on the connection%>' + '<br />';
 					}
 					if(server_ping == 'DOWN' && mArray.openmptcprouter.service_addr !== "")
 					{
-						statusMessage += _('No Server ping response after 1 second') + '<br />';
+						statusMessage += '<%:No Server ping response after 1 second%>' + '<br />';
+					}
+					if(server_http == 'DOWN' && mArray.openmptcprouter.service_addr !== "")
+					{
+						statusMessage += '<%:No Server http response after 1 second%>' + '<br />';
 					}
 					if (stat == 'Offline' && ipaddr != '' && ipaddr == mArray.wans[i].gateway)
 					{
-						statusMessage += _('Wan IP and gateway are identical') + '<br />';
+						statusMessage += '<%:Wan IP and gateway are identical%>' + '<br />';
+						statusMessageClass = "error";
+					}
+					if (stat == 'Offline' && ip6addr != '' && ip6addr == mArray.wans[i].gateway6)
+					{
+						statusMessage += '<%:Wan IP and gateway are identical%>' + '<br />';
 						statusMessageClass = "error";
 					}
 					if(multipath == 'master') 
 					{
 						if (master > 1)
 						{
-							statusMessage += _('Multipath master already defined') + '<br />';
+							statusMessage += '<%:Multipath master already defined%>' + '<br />';
 							statusMessageClass = "error";
 						}
 						if(multipath_state !== 'on' && multipath_state !== '')
 						{
-							statusMessage += _('Multipath current state is ') + multipath_state + '<br />';
+							statusMessage += '<%:Multipath current state is %>' + multipath_state + '<br />';
 							statusMessageClass = "error";
 						}
 					} else {
 						if(multipath !== multipath_state && multipath_state !== '')
 						{
-							statusMessage += _('Multipath current state is ') + multipath_state + '<br />';
+							statusMessage += '<%:Multipath current state is %>' + multipath_state + '<br />';
 							statusMessageClass = "error";
 						}
 					}
 					if(duplicateif)
 					{
-						statusMessage += _('Network interface duplicated') + '<br />';
+						statusMessage += '<%:Network interface duplicated%>' + '<br />';
+						statusMessageClass = "error";
+					}
+					if(iftype == "bridge")
+					{
+						statusMessage += '<%:Bridge can't have multipath enabled%>' + '<br />';
+						statusMessageClass = "error";
+					}
+					if(duplicatemac)
+					{
+						statusMessage += '<%:Network interface MAC address duplicated%>' + '<br />';
+						statusMessageClass = "error";
+					}
+					if(zonewan == "NO")
+					{
+						statusMessage += '<%:Network interface not in WAN firewall zone%>' + '<br />';
 						statusMessageClass = "error";
 					}
 					if(ipv6_discover == 'DETECTED')
 					{
-						statusMessage += _('IPv6 route received') + '<br />'
+						statusMessage += '<%:IPv6 route received%>' + '<br />'
 					}
-					content += String.format('multipath: %s<br />',multipath);
+					if (statusMessage !== "" && statusMessageClass !== "error")
+					{
+						statusMessageClass = "warning";
+						statusIcon = "<%=resource%>/openmptcprouter/images/statusWarning.png";
+					}
+					content += String.format('<%:multipath:%> %s<br />',multipath);
 					if(mArray.wans[i].qos && mArray.wans[i].download > 0 && mArray.wans[i].upload > 0)
 					{
-						content += String.format('%s %s/%s kbps (%s)',_('traffic control:'), mArray.wans[i].download, mArray.wans[i].upload, mArray.wans[i].qos)
+						content += String.format('%s %s/%s kbps (%s)','<%:traffic control:%>', mArray.wans[i].download, mArray.wans[i].upload, mArray.wans[i].qos)
 					}
 					temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
 
 					temp += '</a></li>';
+				}
+				if (mArray.wans.length == 0)
+				{
+					temp += '<li>';
+					temp += '<%:No WAN with multipath enabled:%>';
+					temp += '</li>';
 				}
 				for( var i = 0; i < mArray.tunnels.length; i++ )
 				{
@@ -626,79 +732,79 @@
 					var content = "";
 					if(ipaddr !== '')
 					{
-						content += String.format('%s <strong>%s</strong><br />',_('ip address:'), ipaddr);
+						content += String.format('%s <strong>%s</strong><br />','<%:ip address:%>', ipaddr);
 					}
 					if(wanip !== '')
 					{
-						content += String.format('%s <strong>%s</strong><br />',_('wan address:'), wanip);
+						content += String.format('%s <strong>%s</strong><br />','<%:wan address:%>', wanip);
 					}
 					if(whois !== '')
 					{
-						content += String.format('%s %s<br />',_('whois:'), whois);
+						content += String.format('%s %s<br />','<%:whois:%>', whois);
 					}
 					if(latency !== '')
 					{
-						content += String.format('%s %s ms<br />',_('latency:'), latency);
+						content += String.format('%s %s ms<br />','<%:latency:%>', latency);
 					}
 					if(mtu !== '')
 					{
-						content += String.format('%s %s<br />',_('mtu:'), mtu);
+						content += String.format('%s %s<br />','<%:mtu:%>', mtu);
 					}
 					if(ipaddr == '')
 					{
-						statusMessage += _('No IP defined') + '<br />'
+						statusMessage += '<%:No IP defined%>' + '<br />'
 					}
 					if(gateway == '')
 					{
-						statusMessage += _('No gateway defined') + '<br />'
+						statusMessage += '<%:No gateway defined%>' + '<br />'
 					} else if(gw_ping == 'DOWN')
 					{
-						statusMessage += _('Gateway DOWN') + '<br />'
+						statusMessage += '<%:Gateway DOWN%>' + '<br />'
 					} else if(multipath_available == 'ERROR')
 					{
-						statusMessage += _('Multipath seems to be blocked on the connection') + '<br />'
+						statusMessage += '<%:Multipath seems to be blocked on the connection%>' + '<br />'
 					}
 					if(server_ping == 'DOWN')
 					{
-						statusMessage += _('No Server ping response after 1 second') + '<br />'
+						statusMessage += '<%:No Server ping response after 1 second%>' + '<br />'
 					}
 					if (stat == 'Offline' && ipaddr != '' && ipaddr == mArray.tunnels[i].gateway)
 					{
-						statusMessage += _('Wan IP and gateway are identical') + '<br />';
+						statusMessage += '<%:Wan IP and gateway are identical%>' + '<br />';
 						statusMessageClass = "error";
 					}
 					if(multipath == 'master') 
 					{
 						if (master > 1)
 						{
-							statusMessage += _('Multipath master already defined') + '<br />';
+							statusMessage += '<%:Multipath master already defined%>' + '<br />';
 							statusMessageClass = "error";
 						}
 						if(multipath_state !== 'on' && multipath_state !== '')
 						{
-							statusMessage += _('Multipath current state is ') + multipath_state + '<br />';
+							statusMessage += '<%:Multipath current state is %>' + multipath_state + '<br />';
 							statusMessageClass = "error";
 						}
 					} else {
 						if(multipath !== multipath_state && multipath_state !== '')
 						{
-							statusMessage += _('Multipath current state is ') + multipath_state + '<br />';
+							statusMessage += '<%:Multipath current state is %>' + multipath_state + '<br />';
 							statusMessageClass = "error";
 						}
 					}
 					if(duplicateif)
 					{
-						statusMessage += _('Network interface duplicated') + '<br />';
+						statusMessage += '<%:Network interface duplicated%>' + '<br />';
 						statusMessageClass = "error";
 					}
 					if(ipv6_discover == 'DETECTED')
 					{
-						statusMessage += _('IPv6 route received') + '<br />'
+						statusMessage += '<%:IPv6 route received%>' + '<br />'
 					}
-					content += String.format('multipath: %s<br />',multipath);
+					content += String.format('<%:multipath:%> %s<br />',multipath);
 					if(mArray.tunnels[i].qos && mArray.tunnels[i].download > 0 && mArray.tunnels[i].upload > 0)
 					{
-						content += String.format('%s %s/%s kbps (%s)',_('traffic control:'), mArray.tunnels[i].download, mArray.tunnels[i].upload, mArray.tunnels[i].qos)
+						content += String.format('%s %s/%s kbps (%s)','<%:traffic control:%>', mArray.tunnels[i].download, mArray.tunnels[i].upload, mArray.tunnels[i].qos)
 					}
 					temp += getNetworkNodeTemplate(equipmentIcon, statusIcon, title, statusMessageClass,statusMessage,content);
 
@@ -708,7 +814,7 @@
 				temp += '</tr></table>';
 			}
 			if (mArray === null) {
-			    temp += _('No data');
+			    temp += '<%:No data%>';
 			}
 			temp += '</li>';
 			// Close tree
@@ -793,21 +899,21 @@
 	function stringToColour(str) {
 		if(str == "total")
 			return "OrangeRed";
-		if(str.substring(0, 4) == "wan")
+		if(str.substring(0,4)  == "wan")
 			return "FireBrick";
-		if(str.substring(0, 4) == "wan1")
+		if(str.substring(0,4) == "wan1")
 			return "DeepSkyBlue";
-		if(str.substring(0, 4) == "wan2")
+		if(str.substring(0,4) == "wan2")
 			return "SeaGreen";
-		if(str.substring(0, 4) == "wan3")
+		if(str.substring(0,4) == "wan3")
 			return "PaleGreen";
-		if(str.substring(0, 4) == "wan4")
+		if(str.substring(0,4) == "wan4")
 			return "PowderBlue";
-		if(str.substring(0, 4) == "wan5")
+		if(str.substring(0,4) == "wan5")
 			return "Salmon";
-		if(str.substring(0, 4) == "wan6")
+		if(str.substring(0,4) == "wan6")
 			return "LightGreen";
-		if(str.substring(0, 4) == "wan7")
+		if(str.substring(0,4) == "wan7")
 			return "PaleTurquoise";
 		// Generate a color folowing the name
 		Math.seedrandom(str);
@@ -924,6 +1030,13 @@
 				height      = dnsvg.offsetHeight - 2;
 				data_wanted = Math.ceil(width / step);
 
+				/* prefill datasets
+				for (var i = 0; i < data_wanted; i++)
+				{
+					data_tx[i] = 0;
+				}
+				*/
+
 				/* find svg elements */
 				labeldn_25 = Gdn.getElementById('label_25');
 				labeldn_50 = Gdn.getElementById('label_50');
@@ -976,7 +1089,7 @@
 				labelup_scale.innerHTML = String.format('<%:(%d minutes window, %d seconds interval)%>', 3, data_wanted / 60);
 
 				/* render datasets, start update interval */
-				XHR.poll(3, '<%=build_url(bandwidthtotalurl, all)%>', null,
+				XHR.poll(3, '<%=build_url("admin/system/status/multipath_bandwidth", all)%>', null,
 					function(x, dataarray)
 					{
 						var data_max_dnl   = 0;
@@ -1081,14 +1194,12 @@
 								
 								// Create legend for this connextion
 								var table = document.getElementById('upload_stats');
-								
 								if (pre_itf == "total")
 								{
 									var tr = table.insertRow(0);
 								}
 								else
 								{
-								
 									var tr = table.insertRow();
 								}
 								tr.setAttribute('id', itf + '_upload');
@@ -1167,7 +1278,6 @@
 						var toadditf = [ ];
 						for (var itf in data)
 						{
-							//if (itf == "total") continue;
 							uplineDnl[itf] 	= [ ];
 							downlineDnl[itf]= [ ];
 							uplineUpl[itf]  = [ ];
@@ -1215,8 +1325,8 @@
 									downlineUpl[itf][i] = uplineUpl[toadditf[toadditf.length-1]][i];
 									}
 								}
-								
 							}
+							
 							toadditf.push(itf);
 							
 							// Update stats labels
@@ -1340,20 +1450,22 @@
 								father.removeChild(uptopline);
 								father.appendChild(uptopline);
 							}
-							var y_rx = 0;
-							var y_tx = 0;
+                                                        var y_rx = 0;
+                                                        var y_tx = 0;
 
-							/* plot data */
-							var pt_rx = '0,' + height;
-							var pt_tx = '0,' + height;
+                                                        /* plot data */
+                                                        var pt_rx = '0,' + height;
+                                                        var pt_tx = '0,' + height;
 
-							// draw polygon
-							for (var i = 0; i < uplineDnl[itf].length; i++)
-							{
-								var x = i * step;
-								y_rx = height - Math.floor((uplineDnl[itf][i]) * data_scale_dnl);
-								y_tx = height - Math.floor((uplineUpl[itf][i]) * data_scale_upl);
-								pt_rx += ' ' + x + ',' + y_rx;
+                                                        // draw polygon
+                                                        for (var i = 0; i < uplineDnl[itf].length; i++)
+                                                        {
+                                                                var x = i * step;
+
+                                                                y_rx = height - Math.floor((uplineDnl[itf][i]) * data_scale_dnl);
+                                                                y_tx = height - Math.floor((uplineUpl[itf][i]) * data_scale_upl);
+
+                                                                pt_rx += ' ' + x + ',' + y_rx;
 								pt_tx += ' ' + x + ',' + y_tx;
 							}
 							// draw last tangant point in upline graph
@@ -1509,7 +1621,7 @@
 				label_scale.innerHTML = String.format('<%:(%d minute window, %d second interval)%>', data_wanted / 60, 3);
 
 				/* render datasets, start update interval */
-				XHR.poll(3, '<%=build_url(bandwidthintfurl, curifname)%>', null,
+				XHR.poll(3, '<%=build_url("admin/system/status/interface_bandwidth", curifname)%>', null,
 					function(x, data)
 					{
 						var data_max   = 0;

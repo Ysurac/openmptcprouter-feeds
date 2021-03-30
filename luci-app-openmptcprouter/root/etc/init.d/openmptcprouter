@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018-2021 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 # Released under GPL 3. See LICENSE for the full terms.
 
 START=5
@@ -18,35 +18,20 @@ omr_intf_check() {
 omr_intf_set() {
 	local device
 	local ifname
-	local multipath
-	config_get multipath "$1" multipath
 	config_get ifname "$1" ifname
 	config_get device "$1" device
-	config_get proto "$1" proto
 	config_get type "$1" type
-	config_get addlatency "$1" addlatency
-	[ -z "$addlatency" ] && addlatency=0
-	devicename=$(echo "$device" | cut -d'/' -f3)
 
 	[ -z "$ifname" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
-
-	if [ -n "$ifname" ]; then
-		if [ "$addlatency" = "0" ] && [ "$(tc qdisc show dev $ifname | grep delay)" != "" ]; then
-			tc qdisc del dev ${ifname} root netem
-		fi
-		if [ "$addlatency" != "0" ]; then
-			if [ "$(tc qdisc show dev $ifname | grep delay)" != "" ]; then
-				tc qdisc add dev ${ifname} root netem delay ${addlatency}ms
-			elif [ "$(tc qdisc show dev $ifname | awk '/delay/ { print $10 }' | sed 's/ms//')" != "$addlatency" ]; then
-				tc qdisc replace dev ${ifname} root netem delay ${addlatency}ms
-			fi
-		fi
-	fi
 
 	if [ "$type" != "macvlan" ] && [ -n "$ifname" ] && [ -f /sys/class/net/${ifname}/device/uevent ]; then
 		devicepath=$(readlink -f /sys/class/net/${ifname})
 		if [ -n "$devicepath" ] && [ "$(echo ${devicepath} | grep virtual)" = "" ] && [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT)" != "" ] && [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PCI_SLOT_NAME)" = "" ]; then
-			uci -q set network.$1.modalias="$(cat /sys/class/net/${ifname}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')"
+			mac=""
+			if [ -f /sys/class/net/${ifname}/address ]; then
+				mac="$(cat /sys/class/net/${ifname}/address | tr -d '\n')"
+			fi
+			uci -q set network.$1.modalias="$(cat /sys/class/net/${ifname}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')-$mac"
 			uci -q set network.$1.product="$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT | cut -d '=' -f2 | tr -d '\n')"
 		elif [ -n "$devicepath" ] && ([ "$(echo ${devicepath} | grep virtual)" != "" ] || [ "$(echo ${devicepath} | grep virtual)" = "" ] && [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT)" = "" ] || [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PCI_SLOT_NAME)" != "" ] || [ "$(cat /sys/class/net/${ifname}tmp/device/uevent)" != "" ]); then
 			uci -q delete network.$1.device
@@ -54,19 +39,68 @@ omr_intf_set() {
 			uci -q delete network.$1.product
 		fi
 	elif [ "$type" != "macvlan" ] &&  [ -n "$device" ] && [ -f /sys/bus/usb-serial/devices/${devicename}/device/uevent ] && [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT)" != "" ]; then
-		uci -q set network.$1.modalias="$(cat /sys/bus/usb-serial/devices/${devicename}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')"
+		mac=""
+		if [ -f /sys/class/net/${ifname}/address ]; then
+			mac="$(cat /sys/class/net/${ifname}/address | tr -d '\n')"
+		fi
+		uci -q set network.$1.modalias="$(cat /sys/bus/usb-serial/devices/${devicename}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')-$mac"
 		uci -q set network.$1.product="$(cat /sys/bus/usb-serial/devices/${devicename}/device/uevent | grep PRODUCT | cut -d '=' -f2 | tr -d '\n')"
+	else
+		uci -q delete network.$1.modalias
+		uci -q delete network.$1.product
 	fi
+}
 
-	[ -z "$multipath" ] || [ "$multipath" = "off" ] && [ "$1" != "omrvpn" ] && [ "$1" != "glorytun" ] && return
+omr_set_settings() {
+	local device
+	local ifname
+	local multipath
+	config_get multipath "$1" multipath
+	config_get ifname "$1" ifname
+	config_get device "$1" device
+	config_get proto "$1" proto
+	config_get type "$1" type
+	config_get ip6addr "$1" ip6addr
+	config_get ipv6 "$1" ipv6
+	config_get addlatency "$1" addlatency
+	[ -z "$multipath" ] || [ "$multipath" = "off" ] && return
+	[ "$1" = "omrvpn" ] || [ "$1" = "glorytun" ] && return
 
 	uci -q set openmptcprouter.$1=interface
 	uci -q set openmptcprouter.$1.multipath="$multipath"
 	config_get disable_ipv6 settings disable_ipv6 "0"
-	if [ "$disable_ipv6" = "1" ] || [ "$1" != "omr6in4" ]; then
+	if [ "$disable_ipv6" = "1" ]; then
 		uci -q set network.$1.ipv6=0
-	else
-		uci -q set network.$1.ipv6=1
+	fi
+
+	[ -z "$addlatency" ] && addlatency=0
+	devicename=$(echo "$device" | cut -d'/' -f3)
+
+	[ -z "$ifname" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
+	[ -n "$(echo $ifname | grep '@')" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["device"]')
+
+	if [ -n "$ifname" ]; then
+		if [ "$proto" = "dhcpv6" ] || [ "$ipv6" = "1" ] || [ -n "$ip6addr" ]; then
+			# Change interface name for sysctl in case of VLAN (eth0.2 => eth0/2)
+			ifnamesys=$(echo $ifname | sed 's:\.:/:')
+			sysctl -qw net.ipv6.conf.${ifnamesys}.disable_ipv6=0
+			[ -z "$ip6addr" ] && sysctl -qw net.ipv6.conf.${ifnamesys}.accept_ra=1
+		else
+			ifnamesys=$(echo $ifname | sed 's:\.:/:')
+			sysctl -qw net.ipv6.conf.${ifnamesys}.disable_ipv6=1
+			sysctl -qw net.ipv6.conf.${ifnamesys}.accept_ra=0
+		fi
+
+		if [ "$addlatency" = "0" ] && [ "$(tc qdisc show dev $ifname | grep delay)" != "" ]; then
+			tc qdisc del dev ${ifname} root netem 2>&1 >/dev/null
+		fi
+		if [ "$addlatency" != "0" ]; then
+			if [ "$(tc qdisc show dev $ifname | grep delay)" != "" ]; then
+				tc qdisc add dev ${ifname} root netem delay ${addlatency}ms 2>&1 >/dev/null
+			elif [ "$(tc qdisc show dev $ifname | awk '/delay/ { print $10 }' | sed 's/ms//')" != "$addlatency" ]; then
+				tc qdisc replace dev ${ifname} root netem delay ${addlatency}ms 2>&1 >/dev/null
+			fi
+		fi
 	fi
 }
 
@@ -76,7 +110,7 @@ start_service() {
 	config_load openmptcprouter
 	config_foreach omr_intf_check interface
 	config_load network
-	config_foreach omr_intf_set interface
+	config_foreach omr_set_settings interface
 	uci -q commit network
 	uci -q commit openmptcprouter
 
@@ -105,6 +139,30 @@ start_service() {
 	sed -i -e '/tcp_fin_timeout/d' -e '/tcp_keepalive_time/d' -e '/nf_conntrack_max/d' -e '/tcp_syn_retries/d' -e '/tcp_fastopen/d' -e '/tcp_retries2/d' -e '/tcp_retries1/d' -e '/ip_default_ttl/d' /etc/sysctl.conf
 	sed -i -e '/tcp_fin_timeout/d' -e '/tcp_keepalive_time/d' -e '/nf_conntrack_max/d' -e '/tcp_syn_retries/d' -e '/tcp_fastopen/d' -e '/tcp_retries2/d' -e '/tcp_retries1/d' -e '/ip_default_ttl/d' /etc/sysctl.d/10-default.conf
 
+	if [ "$(uci -q get openmptcprouter.settings.country)" = "china" ] && [ -n "$(uci -q get dhcp.@dnsmasq[0].server | grep '127.0.0.1#5353')" ]; then
+		uci -q batch <<-EOF > /dev/null
+			del_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+			add_list dhcp.@dnsmasq[0].server='114.114.114.114'
+			add_list dhcp.@dnsmasq[0].server="223.5.5.5"
+			add_list dhcp.@dnsmasq[0].server="223.6.6.6"
+			add_list dhcp.@dnsmasq[0].server="180.76.76.76"
+			set dhcp.@dnsmasq[0].dnsseccheckunsigned='0'
+			delete dhcp.@dnsmasq[0].dnssec='1'
+			commit dhcp
+		EOF
+	elif [ "$(uci -q get openmptcprouter.settings.country)" = "world" ] && [ -n "$(uci -q get dhcp.@dnsmasq[0].server | grep '114.114.114.114')" ]; then
+		uci -q batch <<-EOF > /dev/null
+			add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+			del_list dhcp.@dnsmasq[0].server='114.114.114.114'
+			add_list dhcp.@dnsmasq[0].server="223.5.5.5"
+			add_list dhcp.@dnsmasq[0].server="223.6.6.6"
+			add_list dhcp.@dnsmasq[0].server="180.76.76.76"
+			set dhcp.@dnsmasq[0].dnsseccheckunsigned='1'
+			set dhcp.@dnsmasq[0].dnssec='1'
+			commit dhcp
+		EOF
+	fi
+
 	if [ "$(uci -q get rpcd.@rpcd[0].socket)" != "/var/run/ubus/ubus.sock" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set rpcd.@rpcd[0].socket='/var/run/ubus/ubus.sock'
@@ -112,7 +170,13 @@ start_service() {
 		EOF
 		/etc/init.d/rpcd restart 2>&1 >/dev/null
 	fi
+}
 
+stop_service() {
+	config_load network
+	config_foreach omr_intf_set interface
+	uci -q commit network
+	uci -q commit openmptcprouter
 }
 
 reload_service() {

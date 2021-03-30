@@ -84,6 +84,7 @@ interface_multipath_settings() {
 	config_get iface "$config" ifname
 	config_get txqueuelen "$config" txqueuelen
 	[ -z "$iface" ] && iface=$(ifstatus "$config" | jsonfilter -q -e '@["l3_device"]')
+	[ -n "$(echo $iface | grep '@')" ] && iface=$(ifstatus "$config" | jsonfilter -q -e '@["device"]')
 	if [ "$(uci -q get openmptcprouter.${config}.metric)" = "" ]; then
 		count=$((count+1))
 		metric=$count
@@ -130,7 +131,7 @@ interface_multipath_settings() {
 	uci -q set openmptcprouter.${config}.multipath="$mode"
 
 	config_get macaddr "$config" macaddr ""
-	[ -n "$maccaddr" ] && {
+	[ -n "$macaddr" ] && {
 		nbmac=0
 		config_foreach interface_macaddr_count interface $macaddr
 		[ "$nbmac" != "1" ] && {
@@ -205,7 +206,7 @@ interface_multipath_settings() {
 			commit network
 		EOF
 	else
-		ip rule del table $id > /dev/null 2>&1
+		[ -n "$(ip rule list | grep $id)" ] && ip rule del table $id > /dev/null 2>&1
 		ip route flush $id > /dev/null 2>&1
 	fi
 
@@ -238,10 +239,10 @@ interface_multipath_settings() {
 		else
 			#echo "Add routes for $ipaddr table $id"
 			ip rule add from $ipaddr table $id pref 0
-			ip route replace $network/$netmask dev $iface scope link metric $id
-			ip route replace $network/$netmask dev $iface scope link table $id
-			ip route replace default via $gateway dev $iface table $id
-			ip route replace default via $gateway dev $iface metric $id
+			ip route replace $network/$netmask dev $iface scope link metric $id 2>&1 >/dev/null
+			ip route replace $network/$netmask dev $iface scope link table $id 2>&1 >/dev/null
+			ip route replace default via $gateway dev $iface table $id 2>&1 >/dev/null
+			ip route replace default via $gateway dev $iface metric $id 2>&1 >/dev/null
 			#ip route flush $id
 		fi
 
@@ -249,7 +250,7 @@ interface_multipath_settings() {
 		#[ "$mode" = "" ] && mode="$(uci -q get openmptcprouter.${config}.multipath)"
 		[ "$mode" = "master" ] && {
 			#echo "ip route replace default via $gateway dev $iface"
-			ip route replace default via $gateway dev $iface
+			ip route replace default via $gateway dev $iface 2>&1 >/dev/null
 		}
 		if [ "$txqueuelen" != "" ]; then
 			ifconfig $iface txqueuelen $txqueuelen > /dev/null 2>&1
@@ -293,7 +294,7 @@ interface_multipath_settings() {
 				commit network
 			EOF
 		else
-			ip -6 rule del table 6$id > /dev/null 2>&1
+			[ -n "$(ip -6 rule list | grep 6$id)" ] && ip -6 rule del table 6$id > /dev/null 2>&1
 			ip -6 route flush 6$id > /dev/null 2>&1
 		fi
 		if [ -n "$ip6addr" ] && [ -n "$gateway6" ] && [ -n "$network6" ]; then
@@ -321,17 +322,17 @@ interface_multipath_settings() {
 					commit network
 				EOF
 			else
-				ip -6 rule add from $ip6addr table 6$id pref 0
-				ip -6 route replace $network6/$netmask6 dev $iface scope link metric 6$id
-				ip -6 route replace $network6/$netmask6 dev $iface scope link table 6$id
-				ip -6 route replace default via $gateway6 dev $iface table 6$id
-				ip -6 route replace default via $gateway6 dev $iface metric $id
-				ip -6 route flush 6$id
+				ip -6 rule add from $ip6addr table 6$id pref 0 2>&1 >/dev/null
+				ip -6 route replace $network6/$netmask6 dev $iface scope link metric 6$id 2>&1 >/dev/null
+				ip -6 route replace $network6/$netmask6 dev $iface scope link table 6$id 2>&1 >/dev/null
+				ip -6 route replace default via $gateway6 dev $iface table 6$id 2>&1 >/dev/null
+				ip -6 route replace default via $gateway6 dev $iface metric 6$id 2>&1 >/dev/null
+				ip -6 route flush 6$id 2>&1 >/dev/null
 			fi
 
 			#config_get mode "$config" multipath "off"
 			[ "$mode" = "master" ] && {
-				ip -6 route replace default via $gateway6 dev $iface
+				ip -6 route replace default via $gateway6 dev $iface 2>&1 >/dev/null
 			}
 			#[ "$mode" = "off" ] && {
 			#	ifconfig $iface txqueuelen 50 > /dev/null 2>&1
@@ -382,9 +383,10 @@ add_route() {
 	[ -n "$table" ] && routeset="table $table"
 	config_get interface "$1" interface
 	iface=$(ifstatus "$interface" | jsonfilter -q -e '@["l3_device"]')
+	[ -n "$(echo $iface | grep '@')" ] && iface=$(ifstatus "$interface" | jsonfilter -q -e '@["device"]')
 	routeset="$routeset dev $iface"
 	logger -t "MPTCP" "Add route $routeset"
-	ip route replace $routeset
+	ip route replace $routeset 2>&1 >/dev/null
 }
 
 add_route6() {
@@ -402,9 +404,10 @@ add_route6() {
 	[ -n "$table" ] && routeset="table $table"
 	config_get interface "$1" interface
 	iface=$(ifstatus "$interface" | jsonfilter -q -e '@["l3_device"]')
+	[ -n "$(echo $iface | grep '@')" ] && iface=$(ifstatus "$interface" | jsonfilter -q -e '@["device"]')
 	routeset="$routeset dev $iface"
 	logger -t "MPTCP" "Add IPv6 route $routeset"
-	ip -6 route replace $routeset
+	ip -6 route replace $routeset 2>&1 >/dev/null
 }
 
 remove() {

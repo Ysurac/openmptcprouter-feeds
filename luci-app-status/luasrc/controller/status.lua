@@ -43,7 +43,7 @@ function server_add()
 			serversnb = serversnb + 1
 		end
 		ucic:set("openmptcprouter",server,"disabled",openmptcprouter_vps_disabled)
-		ucic:set("openmptcprouter",server,"ip",server_ip)
+		ucic:set_list("openmptcprouter",server,"ip",server_ip)
 		ucic:set("openmptcprouter",server,"port","65500")
 		ucic:save("openmptcprouter")
 	end

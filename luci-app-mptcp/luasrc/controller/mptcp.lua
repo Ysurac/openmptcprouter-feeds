@@ -17,6 +17,8 @@ function index()
 	entry({"admin", "network", "mptcp", "mptcp_fullmesh_data"}, post("mptcp_fullmesh_data")).leaf = true
 	entry({"admin", "network", "mptcp", "mptcp_connections"}, template("mptcp/mptcp_connections"), _("Established connections"), 6).leaf = true
 	entry({"admin", "network", "mptcp", "mptcp_connections_data"}, post("mptcp_connections_data")).leaf = true
+	entry({"admin", "network", "mptcp", "mptcp_monitor"}, template("mptcp/mptcp_monitor"), _("MPTCP monitoring"), 6).leaf = true
+	entry({"admin", "network", "mptcp", "mptcp_monitor_data"}, post("mptcp_monitor_data")).leaf = true
 end
 
 function interface_bandwidth(iface)
@@ -73,7 +75,6 @@ function multipath_bandwidth()
 			end
 			if multipath == "on" or multipath == "master" or multipath == "backup" or multipath == "handover" then
 				local bwc = luci.sys.exec("luci-bwc -i %q 2>/dev/null" % dev) or ""
-				local bwc = luci.sys.exec("luci-bwc -i %q 2>/dev/null" % dev) or ""
 				if bwc ~= nil then
 					--result[dev] = "[" .. string.gsub(bwc, '[\r\n]', '') .. "]"
 					if label ~= nil then
@@ -116,20 +117,16 @@ function multipath_bandwidth()
 			for i=1,60 do
 				res[key][i] = string.split(res[key][i], ",")
 				for j=1,5 do
-					if "string"== type(res[key][i][j]) then
-						res[key][i][j]= tonumber(res[key][i][j])
-					end
-					if "string"==type(res["total"][i][j]) then
-						res["total"][i][j]= tonumber(res["total"][i][j])
-					end
+					res[key][i][j]= tonumber(res[key][i][j])
+					res["total"][i][j]= tonumber(res["total"][i][j])
 					if j ==1 then
-						if res[key][i][j] ~= nil then
+						if res[key][i][j] ~= nil and res[key][i][j] > 0 then
 							res["total"][i][j] = res[key][i][j]
 						else
 							res["total"][i][j] = 0
 						end
 					else
-						if res[key][i][j] ~= nil then
+						if res[key][i][j] ~= nil and res[key][i][j] > 0 then
 							res["total"][i][j] = res["total"][i][j] + res[key][i][j]
 						end
 					end
@@ -195,6 +192,21 @@ function mptcp_fullmesh_data()
 	luci.http.prepare_content("text/plain")
 	local fullmesh
 	fullmesh = io.popen("multipath -f")
+	if fullmesh then
+		while true do
+			local ln = fullmesh:read("*l")
+			if not ln then break end
+			luci.http.write(ln)
+			luci.http.write("\n")
+		end
+	end
+	return
+end
+
+function mptcp_monitor_data()
+	luci.http.prepare_content("text/plain")
+	local fullmesh
+	fullmesh = io.popen("cat /proc/net/mptcp_net/snmp")
 	if fullmesh then
 		while true do
 			local ln = fullmesh:read("*l")

@@ -502,7 +502,35 @@ return view.extend({
 				ifname_multi.optional = true;
 				ifname_multi.network = ifc.getName();
 				ifname_multi.display_size = 6;
-				ifname_multi.write = ifname_multi.remove = function() {};
+				ifname_multi.write = ifname_multi.remove = function(section_id, value) {
+					var old_ifnames = [],
+					    devs = ifc.getDevices() || L.toArray(ifc.getDevice());
+
+					for (var i = 0; i < devs.length; i++)
+						old_ifnames.push(devs[i].getName());
+
+					var new_ifnames = L.toArray(value);
+
+					if (value == null)
+						return;
+
+					old_ifnames.sort();
+					new_ifnames.sort();
+
+					for (var i = 0; i < Math.max(old_ifnames.length, new_ifnames.length); i++) {
+						if (old_ifnames[i] != new_ifnames[i]) {
+							// backup_ifnames()
+							for (var j = 0; j < old_ifnames.length; j++)
+								ifc.deleteDevice(old_ifnames[j]);
+
+							for (var j = 0; j < new_ifnames.length; j++)
+								ifc.addDevice(new_ifnames[j]);
+
+							break;
+						}
+					}
+				};
+
 
 				ifname_single.cfgvalue = ifname_multi.cfgvalue = function(section_id) {
 					var devs = ifc.getDevices() || L.toArray(ifc.getDevice()),
@@ -839,7 +867,7 @@ return view.extend({
 										else if (ifname_master.isActive('_new_')) {
 											uci.set('network', section_id, 'type', 'macvlan');
 											uci.set('network', section_id, 'ifname', section_id);
-											uci.set('network', section_id, 'masterintf', L.toArray(ifname_multi.formvalue('_new_')).join(' '));
+											uci.set('network', section_id, 'masterintf', L.toArray(ifname_master.formvalue('_new_')).join(' '));
 										}
 									}).then(L.bind(m.children[0].renderMoreOptionsModal, m.children[0], nameval));
 

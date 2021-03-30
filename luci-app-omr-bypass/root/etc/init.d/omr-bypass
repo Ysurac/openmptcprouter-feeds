@@ -44,7 +44,34 @@ _bypass_domains() {
 	config_get intf $1 interface
 	config_get enabled $1 enabled
 	[ "$enabled" = "0" ] && return
-	_bypass_domain $domain $intf
+	if [ "$(echo $domain | grep '\.$')" != "" ] || [ "$(echo $domain | grep '\.\*$')" != "" ]; then
+		tlds=`curl --max-time 4 -s -k https://data.iana.org/TLD/tlds-alpha-by-domain.txt`
+		domain="$(echo '"$domain"' | sed 's:*::')"
+		domainlist=""
+		# construct list of domains to query
+		for tld in $tlds; do
+			i=$((i+1))
+			# trim off header
+			if [ "$i" -lt "12" ] || [ "$i" -gt "50" ]; then
+				continue
+			fi 
+			# add to command
+			domainlist="${domainlist} ${domain}${tld}"
+		done
+		domainlist="$(echo $domainlist  `# Get the list of valid domains, pass it to awk` \
+			| awk '{print tolower($0)}'   `# awk lowercases the whole string and passes it to ` \
+			| xargs -n8 -P12              `# xargs sends 8 arguments at a time to` \
+			dig a +timeout=1 +tries=1 +retry=1 +nocmd +noall +answer `# dig, which passes results (if any) to` \
+			| awk '{print $1}'            `# awk, which outputs queried domain to` \
+			| sed -e 's/.$//'             `# sed, which trims off the trailing dot (google.com. -> google.com)` to \
+			| grep $domain                `# grep, only keep wanted domain` \
+			| awk '{for (i=1;i<=NF;i++) if (!a[$i]++) printf("%s%s",$i,FS)}{printf("\n")}')" # deduplicate
+		for validdomain in $domainlist; do
+			_bypass_domain $validdomain $intf
+		done
+	else
+		_bypass_domain $domain $intf
+	fi
 }
 
 _bypass_domain() {
@@ -149,7 +176,7 @@ _bypass_lan_ip() {
 			-A omr-bypass-local -s $ip -j MARK --set-mark 0x539
 			COMMIT
 			EOF
-		elif [ "$valid_ip6" = "ok" ]; then
+		elif [ "$valid_ip6" = "ok" ] && [ "$disableipv6" = "0" ]; then
 			ip6tables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
 			-A omr-bypass6 -s $ip -j MARK --set-mark 0x6539
@@ -168,7 +195,7 @@ _bypass_lan_ip() {
 			-A omr-bypass-local -s $ip -j MARK --set-mark 0x539$intfid
 			COMMIT
 			EOF
-		elif [ "$valid_ip6" = "ok" ]; then
+		elif [ "$valid_ip6" = "ok" ] && [ "$disableipv6" = "0" ]; then
 			ip6tables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
 			-A omr-bypass6 -s $ip -j MARK --set-mark 0x6539$intfid
@@ -447,6 +474,7 @@ _intf_rule() {
 	local intf
 	config_get intf $1 ifname
 	[ -z "$intf" ] && intf=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
+	[ -n "$(echo $intf | grep '@')" ] && intf=$(ifstatus "$1" | jsonfilter -q -e '@["device"]')
 	#count=$((count+1))
 	config_get count $1 metric
 	local mode
@@ -760,8 +788,7 @@ stop_service() {
 }
 
 service_triggers() {
-	PROCD_RELOAD_DELAY=1000
-	procd_add_reload_trigger omr-bypass network
+	procd_add_reload_trigger omr-bypass network firewall
 }
 
 reload_service() {

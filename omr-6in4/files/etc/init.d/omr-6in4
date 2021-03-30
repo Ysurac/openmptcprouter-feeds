@@ -18,7 +18,7 @@ set_ipv6_state() {
 	local disable_ipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
 	[ -z "$disable_ipv6" ] && disable_ipv6="1"
 	#previous=$(sysctl -qn net.ipv6.conf.all.disable_ipv6 | tr -d "\n")
-	previous="$(uci get network.lan.ipv6)"
+	previous="$(uci -q get network.lan.ipv6)"
 	#sysctl -qw net.ipv6.conf.all.disable_ipv6=$disable_ipv6
 	#sed -i "s:^net.ipv6.conf.all.disable_ipv6=[0-9]*:net.ipv6.conf.all.disable_ipv6=$disable_ipv6:" /etc/sysctl.d/zzz_openmptcprouter.conf
 	sed -i "s:^net.ipv6.conf.all.disable_ipv6=[0-9]*::" /etc/sysctl.d/zzz_openmptcprouter.conf
@@ -40,6 +40,8 @@ set_ipv6_state() {
 			delete dhcp.lan.ra_default
 			delete dhcp.lan.ra_management
 			delete dhcp.lan.ra_preference
+			unbound.ub_main.protocol='ip4_only'
+			commit unbound
 			del_list v2ray.main.inbounds="omr6"
 			commit v2ray
 		EOF
@@ -50,6 +52,7 @@ set_ipv6_state() {
 			commit dhcp
 			commit shadowsocks-libev
 		EOF
+		[ ! -f /etc/wgetrc ] && cp /etc/wgetrc4 /etc/wgetrc
 	else
 		logger -t "omr-6in4" "Enable IPv6"
 		uci -q batch <<-EOF >/dev/null
@@ -64,7 +67,10 @@ set_ipv6_state() {
 			set network.lan.ipv6="1"
 			set network.lan.delegate="0"
 			set network.omr6in4.force_link=1
+			set network.omr6in4.metric=1
 			delete network.omr6in4.auto
+			unbound.ub_main.protocol='mixed'
+			commit unbound
 		EOF
 		if [ "$(network.lan.ip6assign)" = "" ]; then
 			uci -q set network.lan.ip6assign='60'
@@ -91,6 +97,7 @@ set_ipv6_state() {
 			EOF
 			/etc/init.d/v2ray restart
 		fi
+		rm -f /etc/wgetrc
 	fi
 	/etc/init.d/odhcpd restart
 	if [ "$previous" != "1" ]; then
@@ -119,7 +126,7 @@ start_service() {
 }
 
 service_triggers() {
-	procd_add_interface_trigger "omrvpn"
+	procd_add_reload_trigger "openmptcprouter"
 }
 
 reload_service() {

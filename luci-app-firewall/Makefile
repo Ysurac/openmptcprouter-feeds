@@ -10,6 +10,7 @@ LUCI_TITLE:=Firewall and Portforwarding application
 LUCI_DEPENDS:=+firewall
 
 PKG_LICENSE:=Apache-2.0
+PKG_VERSION:=omr-202103
 
 include $(TOPDIR)/feeds/luci/luci.mk
 

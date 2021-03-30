@@ -120,6 +120,13 @@ o:value("httping","httping")
 o:value("dns","dns")
 o:value("none","none")
 
+o = s:option(Flag, "server_http_test", translate("Server http test"), translate("Check if connection work with http by sending a request to server"))
+o.optional    = false
+o.rmempty     = false
+o.default     = true
+o.disabled    = 0
+o.enabled     = 1
+
 o = s:option(Flag, "mail_alert", translate("Mail alert"), translate("Send a mail when connection state change"))
 o.optional    = false
 o.rmempty     = false
@@ -127,9 +134,21 @@ o.default     = false
 o.disabled    = 0
 o.enabled     = 1
 
-o = s:option(DynamicList, "hosts", translate("Hosts"),translate("Must be IPs and not domains"))
+o = s:option(Flag, "restart_down", translate("Restart if down"), translate("Restart interface if detected as down"))
+o.optional    = false
+o.rmempty     = false
+o.default     = false
+o.disabled    = 0
+o.enabled     = 1
+
+o = s:option(DynamicList, "hosts", translate("Hosts"), translate("Must be IPs and not domains"))
 o.placeholder = "4.2.2.1"
 o.default     = { "4.2.2.1", "8.8.8.8" }
+o.rmempty     = false
+
+o = s:option(DynamicList, "hosts6", translate("Hosts IPv6"), translate("Must be IPs and not domains"))
+o.placeholder = "2001:4860:4860::8844"
+o.default     = { "2001:4860:4860::8888", "2001:4860:4860::8844" }
 o.rmempty     = false
 
 s = m:section(TypedSection, "interface", translate("Interfaces"))
@@ -176,6 +195,13 @@ o:value("httping","httping")
 o:value("dns","dns")
 o:value("none","none")
 
+o = s:option(Flag, "server_http_test", translate("Server http test"), translate("Check if connection work with http by sending a request to server"))
+o.optional    = false
+o.rmempty     = false
+o.default     = true
+o.disabled    = 0
+o.enabled     = 1
+
 o = s:option(Flag, "mail_alert", translate("Mail alert"), translate("Send a mail when connection status change. You need to configure e-mail settings <a href=\"/cgi-bin/luci/admin/services/mail\">here</a>."))
 o.optional    = false
 o.rmempty     = false
@@ -183,11 +209,20 @@ o.default     = false
 o.disabled    = 0
 o.enabled     = 1
 
+o = s:option(Flag, "restart_down", translate("Restart if down"), translate("Restart interface if detected as down"))
+o.optional    = false
+o.rmempty     = false
+o.default     = false
+o.disabled    = 0
+o.enabled     = 1
 
-o = s:option(DynamicList, "hosts", translate("Hosts"))
+o = s:option(DynamicList, "hosts", translate("Hosts"), translate("Must be IPs and not domains"))
 o.placeholder = "4.2.2.1"
 o.default     = { "4.2.2.1", "8.8.8.8" }
 o.rmempty     = false
 
+o = s:option(DynamicList, "hosts6", translate("Hosts IPv6"), translate("Must be IPs and not domains"))
+o.placeholder = "2001:4860:4860::8844"
+o.rmempty     = false
 
 return m

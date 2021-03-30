@@ -46,8 +46,8 @@ return L.view.extend({
 		o.rmempty = false;
 
 		o = s.taboption('general', form.Value, 'firstport', _('First Port'));
-		o.default  = "65201"
-		o.datatype = "port"
+		o.default  = "65201";
+		o.datatype = "port";
 		o.rmempty  = false;
 
 		o = s.taboption('general', form.Value, 'password', _('Password'));
@@ -55,26 +55,29 @@ return L.view.extend({
 		o.modalonly = true;
 
 		o = s.taboption('general', form.Value, 'interface_name', _('Interface name'));
-		o.default     = "mlvpn0"
-		o.placeholder = "mlvpn0"
+		o.default     = "mlvpn0";
+		o.placeholder = "mlvpn0";
 		o.rmempty     = false;
 		o.modalonly   = true;
 
 		o = s.taboption('advanced', form.Value, 'timeout', _('Timeout (s)'));
 		o.default   = '30';
-		o.datatype  = "uinteger"
+		o.datatype  = "uinteger";
 		o.rmempty   = false;
 		o.modalonly = true;
 
 		o = s.taboption('advanced', form.Value, 'reorder_buffer_size', _('Reorder buffer size'));
 		o.default   = '128';
-		o.datatype  = "uinteger"
+		o.datatype  = "uinteger";
 		o.rmempty   = false;
 		o.modalonly = true;
 
+		o = s.taboption('advanced', form.Flag, 'cleartext_data', _('Disable encryption'));
+		o.default   = o.disabled;
+
 		o = s.taboption('advanced', form.Value, 'loss_tolerance', _('Loss tolerance'));
 		o.default   = '50';
-		o.datatype  = "uinteger"
+		o.datatype  = "uinteger";
 		o.rmempty   = false;
 		o.modalonly = true;
 
