@@ -135,6 +135,24 @@ start_service() {
 	sed -i -e '/tcp_fin_timeout/d' -e '/tcp_keepalive_time/d' -e '/nf_conntrack_max/d' -e '/tcp_syn_retries/d' -e '/tcp_fastopen/d' -e '/tcp_retries2/d' -e '/tcp_retries1/d' -e '/ip_default_ttl/d' /etc/sysctl.conf
 	sed -i -e '/tcp_fin_timeout/d' -e '/tcp_keepalive_time/d' -e '/nf_conntrack_max/d' -e '/tcp_syn_retries/d' -e '/tcp_fastopen/d' -e '/tcp_retries2/d' -e '/tcp_retries1/d' -e '/ip_default_ttl/d' /etc/sysctl.d/10-default.conf
 
+	if [ "$(uci -q get openmptcprouter.settings.country)" = "china" ] && [ -n "$(uci -q get dhcp.@dnsmasq[0].server | grep '127.0.0.1#5353')" ]; then
+		uci -q batch <<-EOF > /dev/null
+			del_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+			add_list dhcp.@dnsmasq[0].server='114.114.114.114'
+			set dhcp.@dnsmasq[0].dnsseccheckunsigned='0'
+			delete dhcp.@dnsmasq[0].dnssec='1'
+			commit dhcp
+		EOF
+	elif [ "$(uci -q get openmptcprouter.settings.country)" = "world" ] && [ -n "$(uci -q get dhcp.@dnsmasq[0].server | grep '114.114.114.114')" ]; then
+		uci -q batch <<-EOF > /dev/null
+			add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+			del_list dhcp.@dnsmasq[0].server='114.114.114.114'
+			set dhcp.@dnsmasq[0].dnsseccheckunsigned='1'
+			set dhcp.@dnsmasq[0].dnssec='1'
+			commit dhcp
+		EOF
+	fi
+
 	if [ "$(uci -q get rpcd.@rpcd[0].socket)" != "/var/run/ubus/ubus.sock" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set rpcd.@rpcd[0].socket='/var/run/ubus/ubus.sock'
