@@ -60,6 +60,7 @@ omr_set_settings() {
 	config_get device "$1" device
 	config_get proto "$1" proto
 	config_get type "$1" type
+	config_get ip6addr "$1" ip6addr
 	config_get ipv6 "$1" ipv6
 	config_get addlatency "$1" addlatency
 	[ -z "$multipath" ] || [ "$multipath" = "off" ] && return
@@ -79,11 +80,15 @@ omr_set_settings() {
 	[ -n "$(echo $ifname | grep '@')" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["device"]')
 
 	if [ -n "$ifname" ]; then
-		if [ "$proto" = "dhcpv6" ] || [ "$ipv6" = "1" ]; then
+		if [ "$proto" = "dhcpv6" ] || [ "$ipv6" = "1" ] || [ -n "$ip6addr" ]; then
 			# Change interface name for sysctl in case of VLAN (eth0.2 => eth0/2)
 			ifnamesys=$(echo $ifname | sed 's:\.:/:')
 			sysctl -qw net.ipv6.conf.${ifnamesys}.disable_ipv6=0
-			sysctl -qw net.ipv6.conf.${ifnamesys}.accept_ra=1
+			[ -z "$ip6addr" ] && sysctl -qw net.ipv6.conf.${ifnamesys}.accept_ra=1
+		else
+			ifnamesys=$(echo $ifname | sed 's:\.:/:')
+			sysctl -qw net.ipv6.conf.${ifnamesys}.disable_ipv6=1
+			sysctl -qw net.ipv6.conf.${ifnamesys}.accept_ra=0
 		fi
 
 		if [ "$addlatency" = "0" ] && [ "$(tc qdisc show dev $ifname | grep delay)" != "" ]; then
@@ -97,7 +102,6 @@ omr_set_settings() {
 			fi
 		fi
 	fi
-
 }
 
 start_service() {
