@@ -546,6 +546,7 @@ function wizard_add()
 		if sectionname:match("^sss.*") then
 			ucic:delete("shadowsocks-libev",sectionname,"ip")
 			ucic:set("shadowsocks-libev",sectionname,"disabled","1")
+			ucic:delete("openmptcprouter","omr","ss_" .. sectionname)
 		end
 	end)
 
