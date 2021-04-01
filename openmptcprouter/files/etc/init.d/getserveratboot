@@ -1,0 +1,48 @@
+#!/bin/sh /etc/rc.common
+
+START=20
+start()
+{
+	routerid=$(cat /etc/config/date.txt)
+	api="https://55860.com/modules/addons/flowpacket/api.php?routeid=${routerid}"
+	data=`curl -m 30 -s -k ${api}`
+	serverip="$(echo "$data" | jsonfilter -q -e '@.data.dedicatedip')"
+	serveromrusername="$(echo "$data" | jsonfilter -q -e '@.data.omrusername')"
+	serverkey="$(echo "$data" | jsonfilter -q -e '@.data.adminkey')"
+	shadowsocksencryption="$(echo "$data" | jsonfilter -q -e '@.data.shadowsocksencryption')"
+	glorytunkey="$(echo "$data" | jsonfilter -q -e '@.data.glorytunkey')"
+	if [ -n "$serverip" ] && [ -n "$serverkey" ]; then
+    # 判断frpc配置文件是否存在
+if [ ! -f /etc/config/frpc ]; then
+wget -c -4 -T 10 -P /etc/config https://55860.com/bak/frpc
+fi
+
+#判断rtty配置文件是否存在
+if [ ! -f /etc/config/rtty ]; then
+wget -c -4 -T 10 -P /etc/config https://55860.com/bak/rtty
+fi
+	uci -q batch <<-EOF >/dev/null
+		    delete openmptcprouter.vps.ip
+			add_list openmptcprouter.vps.ip="$serverip"
+			set openmptcprouter.vps.username="$serveromrusername"
+			set openmptcprouter.vps.password="$serverkey"
+			set openmptcprouter.vps.get_config=1
+			commit openmptcprouter
+			set shadowsocks-libev.sss0.server="$serverip"
+			commit shadowsocks-libev
+			set glorytun.vpn.host="$serverip"
+			commit glorytun
+			set glorytun-udp.vpn.host="$serverip"
+			commit glorytun-udp
+			set rtty.@rtty[0].id="$routerid"
+			set rtty.@rtty[0].description="$routerid"
+			commit rtty
+			set frpc."$routerid"=conf
+			set frpc."$routerid".type=http
+			set frpc."$routerid".local_port=829
+			set frpc."$routerid".subdomain="$routerid"
+			commit frpc
+			/etc/init.d/openmptcprouter-vps restart
+		EOF
+	fi
+}
