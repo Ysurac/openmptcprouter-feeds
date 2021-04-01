@@ -376,18 +376,19 @@ while true; do
 								OMR_TRACKER_STATUS="OK"
 							fi
 						fi
-						if [ "$serverip_ping" != false ] && [ "$OMR_TRACKER_STATUS" = "OK" ] && [ "$OMR_TRACKER_TYPE" != "httping" ] && [ "$OMR_TRACKER_SERVER_HTTP_TEST" = "1" ]; then
+						if [ "$serverip_ping" != false ] && ([ "$OMR_TRACKER_STATUS_MSG" = "" ] || [ "$OMR_TRACKER_STATUS" = "OK" ]) && [ "$OMR_TRACKER_TYPE" != "httping" ] && [ "$OMR_TRACKER_SERVER_HTTP_TEST" = "1" ]; then
 							serverip_ping=false
 							config_load openmptcprouter
 							config_foreach _httping_server server $OMR_TRACKER_DEVICE_IP
 							if [ "$serverip_ping" = false ]; then
+								OMR_TRACKER_STATUS="ERROR"
 								OMR_TRACKER_STATUS_MSG="No access to server API"
 							else
 								OMR_TRACKER_STATUS_MSG=""
 								OMR_TRACKER_STATUS="OK"
 								break
 							fi
-						elif [ "$serverip_ping" != false ]; then
+						elif [ "$serverip_ping" != false ] && ([ "$OMR_TRACKER_STATUS_MSG" = "" ] || [ "$OMR_TRACKER_STATUS" = "OK" ]); then
 							OMR_TRACKER_STATUS_MSG=""
 							OMR_TRACKER_STATUS="OK"
 							break
@@ -405,7 +406,7 @@ while true; do
 					sleep "$OMR_TRACKER_INTERVAL_TRIES"
 				done
 			fi
-			if [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
+			if [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" = "0" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
 				# setup loop variable
 				tries="$OMR_TRACKER_TRIES"
 				# loop until tries attempts have been reached
@@ -475,18 +476,19 @@ while true; do
 								OMR_TRACKER_STATUS="OK"
 							fi
 						fi
-						if [ "$serverip_ping" != false ] && [ "$OMR_TRACKER_STATUS" = "OK" ] && [ "$OMR_TRACKER_TYPE" != "httping" ] && [ "$OMR_TRACKER_SERVER_HTTP_TEST" = "1" ]; then
+						if [ "$serverip_ping" != false ] && ([ "$OMR_TRACKER_STATUS_MSG" = "" ] || [ "$OMR_TRACKER_STATUS" = "OK" ]) && [ "$OMR_TRACKER_TYPE" != "httping" ] && [ "$OMR_TRACKER_SERVER_HTTP_TEST" = "1" ]; then
 							serverip_ping=false
 							config_load openmptcprouter
 							config_foreach _httping_server server $OMR_TRACKER_DEVICE_IP
 							if [ "$serverip_ping" = false ]; then
 								OMR_TRACKER_STATUS_MSG="No access to server API"
+								OMR_TRACKER_STATUS="ERROR"
 							else
 								OMR_TRACKER_STATUS_MSG=""
 								OMR_TRACKER_STATUS="OK"
 								break
 							fi
-						elif [ "$serverip_ping" != false ]; then
+						elif [ "$serverip_ping" != false ] && ([ "$OMR_TRACKER_STATUS_MSG" = "" ] || [ "$OMR_TRACKER_STATUS" = "OK" ]); then
 							OMR_TRACKER_STATUS_MSG=""
 							OMR_TRACKER_STATUS="OK"
 							break
@@ -504,12 +506,14 @@ while true; do
 					sleep "$OMR_TRACKER_INTERVAL_TRIES"
 				done
 			fi
-			if [ -z "$OMR_TRACKER_DEVICE_IP" ] || [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ -z "$OMR_TRACKER_DEVICE_IP6" ] || [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
-				[ -z "$OMR_TRACKER_STATUS_MSG" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_INTERFACE have ip issues"
+			if [ -z "$OMR_TRACKER_DEVICE_IP" ] || [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ -z "$OMR_TRACKER_DEVICE_IP6" ] || [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
+				[ -z "$OMR_TRACKER_STATUS_MSG" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_INTERFACE may have ip issues"
 				[ -z "$OMR_TRACKER_DEVICE_IP" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG, interface have no IPv4"
 				[ -z "$OMR_TRACKER_DEVICE_GATEWAY" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG, interface have no IPv4 gateway"
-				[ -z "$OMR_TRACKER_DEVICE_IP6" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG, interface have no IPv6"
-				[ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG, interface have no IPv6 gateway"
+				if [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" = "0" ]; then
+					[ -z "$OMR_TRACKER_DEVICE_IP6" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG, interface have no IPv6"
+					[ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG, interface have no IPv6 gateway"
+				fi
 			fi
 		else
 			OMR_TRACKER_STATUS_MSG="link down"
