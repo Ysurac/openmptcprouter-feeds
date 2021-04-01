@@ -74,6 +74,7 @@ return L.view.extend({
 
 		o = s.taboption('advanced', form.Flag, 'cleartext_data', _('Disable encryption'));
 		o.default   = o.disabled;
+		o.rmempty   = false;
 
 		o = s.taboption('advanced', form.Value, 'loss_tolerance', _('Loss tolerance'));
 		o.default   = '50';

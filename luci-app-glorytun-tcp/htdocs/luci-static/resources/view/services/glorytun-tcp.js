@@ -32,6 +32,7 @@ return L.view.extend({
 		s.tab('advanced', _('Advanced Settings'));
 
 		o = s.taboption('general', form.Flag, 'enable', _('Enabled'));
+		o.rmempty = false;
 
 		o = s.taboption('general',form.Value, 'label', _('Label'));
 		o.rmempty = true;
