@@ -883,6 +883,7 @@ function wizard_add()
 	if gostatus == true then
 		luci.sys.call("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
 		luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
+		luci.sys.call("ip addr flush dev tun0 >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/omr-tracker stop >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/mptcp restart >/dev/null 2>/dev/null")
 		--if openmptcprouter_vps_key ~= "" then
