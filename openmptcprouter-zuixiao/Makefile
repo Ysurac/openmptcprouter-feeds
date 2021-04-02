@@ -17,7 +17,6 @@ MY_DEPENDS := \
     mptcp       \
     unbound-daemon unbound-control unbound-anchor \
     netifd      \
-    luci-app-dsvpn \
     mc          \
     f2fs-tools \
     openmptcprouter \
@@ -34,24 +33,27 @@ MY_DEPENDS := \
     iptables-mod-ipsec kmod-crypto-authenc kmod-ipsec kmod-ipsec4 kmod-ipsec6 kmod-ipt-ipsec \
     wireless-tools \
     libiwinfo-lua \
-    ca-bundle ca-certificates libustream-openssl \
+    ca-bundle ca-certificates \
     luci-mod-admin-full luci-app-firewall luci-app-glorytun-tcp luci-app-glorytun-udp luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-base \
     luci-app-omr-tracker luci-app-omr-dscp \
     luci-app-sqm sqm-scripts-extra \
-    luci-app-vnstat2 omr-quota luci-app-omr-quota \
-    luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail luci-app-upnp \
-    luci-app-opkg \
+    omr-quota luci-app-omr-quota \
+    luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-upnp \
+    luci-app-wol \
     luci-app-uhttpd \
     luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
     luci-app-openvpn \
     macvlan \
     shadowsocks-libev-ss-server shadowsocks-libev-ss-tunnel \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd ip6tables \
+    speedtestc \
     iftop \
     htop \
+    nano \
     tcpdump \
     ethtool \
     iputils-ping \
+    tracebox \
     !TARGET_mvebu:luci-proto-3g \
     !TARGET_mvebu:comgt-ncm !TARGET_mvebu:luci-proto-ncm \
     !TARGET_mvebu:luci-proto-modemmanager \
@@ -63,6 +65,7 @@ MY_DEPENDS := \
     libimobiledevice \
     comgt \
     kmod-random-core \
+    kmod-netem \
     ca-bundle openssl-util \
     dejavu-fonts-ttf-DejaVuSerif dejavu-fonts-ttf-DejaVuSerif-Bold dejavu-fonts-ttf-DejaVuSerif-Italic dejavu-fonts-ttf-DejaVuSerif-BoldItalic \
     iputils-tracepath netcat adb-enablemodem \
@@ -72,15 +75,14 @@ MY_DEPENDS := \
     !TARGET_mvebu:kmod-usb-serial !TARGET_mvebu:kmod-usb-serial-option !TARGET_mvebu:kmod-usb-serial-wwan !TARGET_mvebu:usb-modeswitch !TARGET_mvebu:uqmi \
     !TARGET_mvebu:umbim !TARGET_mvebu:kmod-mii !TARGET_mvebu:kmod-usb-net !TARGET_mvebu:kmod-usb-wdm !TARGET_mvebu:kmod-usb-net-qmi-wwan !TARGET_mvebu:kmod-usb-net-cdc-mbim !TARGET_mvebu:umbim \
     !TARGET_mvebu:kmod-usb-net-huawei-cdc-ncm !TARGET_mvebu:kmod-usb-net-rndis !TARGET_mvebu:kmod-usb-net-cdc-ether !TARGET_mvebu:kmod-usb-net-ipheth !TARGET_mvebu:usbmuxd \
-    !TARGET_mvebu:luci-proto-qmi wpad-basic \
-    luci-app-mlvpn mlvpn 464xlat !TARGET_mvebu:kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-https-dns-proxy kmod-tcp-nanqinlang iptables-mod-ipopt ss \
-    kmod-usb-dwc3-qcom kmod-gpio-button-hotplug kmod-hwmon-gpiofan kmod-i2c-gpio kmod-i2c-mux-gpio kmod-input-gpio-encoder \
-    kmod-input-gpio-keys kmod-input-gpio-keys-polled kmod-leds-gpio kmod-ledtrig-gpio kmod-gpio-beeper kmod-gpio-button-hotplug \
-    kmod-gpio-dev kmod-pps-gpio kmod-ledtrig-activity kmod-ledtrig-default-on kmod-ledtrig-heartbeat kmod-ledtrig-netdev \
-    kmod-ledtrig-oneshot kmod-ledtrig-timer kmod-ledtrig-transient kmod-usb-ledtrig-usbport \
-    luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre
+    kmod-rt2800-usb kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su \
+    !TARGET_mvebu:luci-proto-qmi wpad-basic kmod-mt7601u kmod-rtl8187 \
+    464xlat !TARGET_mvebu:kmod-usb-net-smsc75xx kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-https-dns-proxy kmod-tcp-nanqinlang (TARGET_x86_64||aarch64):kmod-tcp-bbr2 iptables-mod-ipopt igmpproxy ss iptraf-ng \
+    luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre tcptraceroute luci-proto-mbim kmod-rtl8xxxu kmod-ath9k-htc luci-app-ttyd luci-mod-dashboard (TARGET_x86||TARGET_x86_64):rtl8192eu-firmware kmod-usb2 libustream-wolfssl (TARGET_x86||TARGET_x86_64):kmod-ixgbevf \
+    hwinfo (TARGET_x86||TARGET_x86_64):dmidecode kmod-bonding luci-proto-bonding \
+    luci-proto-wireguard luci-app-wireguard (TARGET_x86||TARGET_x86_64):kmod-r8125
 
-OMR_SUPPORTED_LANGS := en
+OMR_SUPPORTED_LANGS := zh-cn zh-tw oc
 
 define Package/$(PKG_NAME)
 SECTION:=OMR
