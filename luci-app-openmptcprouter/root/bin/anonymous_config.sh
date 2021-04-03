@@ -9,7 +9,7 @@ uci show | \
 	-e "/publicip=/s/......$/xxxxxx'/" \
 	-e "/\.host=/s/......$/xxxxxx'/" \
 	-e "/\.ip=/s/......$/xxxxxx'/" \
-	-e "/\.ipv6=/s/......$/xxxxxx'/" \
+	-e "/\.ipv6='2/s/=....../='xxxxxx/" \
 	-e "/user_id=/s/......$/xxxxxx'/" \
 	-e "/openvpn\.omr\.remote=/s/......$/xxxxxx'/" \
 	-e "/shadowsocks-libev\.sss.*\.server=/s/......$/xxxxxx'/" \
@@ -21,4 +21,5 @@ uci show | \
 	-e "/vpn\.key=/s/......$/xxxxxx'/" \
 	-e "/vps\.key=/s/......$/xxxxxx'/" \
 	-e "/wgkey=/s/......$/xxxxxx'/" \
+	-e "/ula_prefix=2/s/=.........../='xxxxxxxxxxx/" \
 	-e "/token=/s/............$/xxxxxx'/"
