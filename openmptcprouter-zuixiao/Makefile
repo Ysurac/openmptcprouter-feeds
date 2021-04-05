@@ -30,14 +30,14 @@ MY_DEPENDS := \
     bind-dig \
     libnetfilter-conntrack ebtables ebtables-utils ip-full \
     iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace iptables-mod-conntrack-extra iptables-mod-account \
-    kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra iptables-mod-extra \
+    kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra iptables-mod-extra kmod-ledtrig-activity kmod-ledtrig-gpio kmod-ledtrig-oneshot kmod-ledtrig-transient kmod-ledtrig-disk kmod-ledtrig-mtd kmod-ledtrig-heartbeat kmod-ledtrig-backlight kmod-ledtrig-cpu kmod-ledtrig-panic kmod-ledtrig-netdev kmod-ledtrig-pattern kmod-ipt-led \
     iptables-mod-ipsec kmod-crypto-authenc kmod-ipsec kmod-ipsec4 kmod-ipsec6 kmod-ipt-ipsec \
     wireless-tools \
     libiwinfo-lua \
     ca-bundle ca-certificates \
-    luci-mod-admin-full luci-app-firewall luci-app-glorytun-tcp luci-app-glorytun-udp luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-theme-argon luci-base \
+    luci-mod-admin-full luci-app-firewall luci-app-glorytun-tcp luci-app-glorytun-udp luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-theme-argon luci-theme-bootstrap luci-base \
     luci-app-omr-tracker luci-app-omr-dscp \
-    luci-app-sqm sqm-scripts-extra \
+    luci-app-sqm sqm-scripts-extra luci-app-status luci-mod-status frpc rtty-nossl minicom irqbalance mtr \
     luci-app-vnstat2 omr-quota luci-app-omr-quota \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail luci-app-upnp \
     luci-app-wol luci-app-opkg \
@@ -81,7 +81,7 @@ MY_DEPENDS := \
     !TARGET_mvebu:luci-proto-qmi wpad-basic kmod-mt7601u kmod-rtl8187 \
     luci-app-mlvpn mlvpn 464xlat !TARGET_mvebu:kmod-usb-net-smsc75xx kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-https-dns-proxy kmod-tcp-nanqinlang (TARGET_x86_64||aarch64):kmod-tcp-bbr2 iptables-mod-ipopt igmpproxy ss iptraf-ng \
     luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre tcptraceroute luci-proto-mbim kmod-rtl8xxxu kmod-ath9k-htc luci-app-ttyd luci-mod-dashboard (TARGET_x86||TARGET_x86_64):rtl8192eu-firmware kmod-usb2 libustream-wolfssl (TARGET_x86||TARGET_x86_64):kmod-ixgbevf \
-    hwinfo (TARGET_x86||TARGET_x86_64):dmidecode luci-app-packet-capture kmod-bonding luci-proto-bonding luci-app-sysupgrade \
+    hwinfo (TARGET_x86||TARGET_x86_64):dmidecode luci-app-packet-capture kmod-bonding luci-proto-bonding \
     luci-theme-openwrt-2020 luci-proto-wireguard luci-app-wireguard (TARGET_x86||TARGET_x86_64):kmod-r8125
 
 OMR_SUPPORTED_LANGS := zh-cn zh-tw oc
