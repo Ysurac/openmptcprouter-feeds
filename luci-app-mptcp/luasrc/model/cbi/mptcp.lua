@@ -37,8 +37,8 @@ end
 local mtcpsyn = s:option(Value, "mptcp_syn_retries", translate("Multipath TCP SYN retries"))
 mtcpsyn.datatype = "uinteger"
 mtcpsyn.rmempty = false
-local congestion = s:option(ListValue, "congestion", translate("Congestion Control"),translate("Default is bbr"))
-local availablecong = sys.exec("sysctl net.ipv4.tcp_available_congestion_control | awk -F'= ' '{print $NF}'")
+local congestion = s:option(ListValue, "congestion", translate("Congestion Control"),translate("Default is cubic"))
+local availablecong = sys.exec("sysctl -n net.ipv4.tcp_available_congestion_control | xargs -n1 | sort | xargs")
 for cong in string.gmatch(availablecong, "[^%s]+") do
 	congestion:value(cong, translate(cong))
 end
