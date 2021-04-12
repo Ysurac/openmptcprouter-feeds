@@ -997,7 +997,7 @@ function settings_add()
 	ucic:set("openmptcprouter","settings","defaultgw",disabledefaultgw)
 
 	-- Enable/disable tracebox
-	local tracebox = luci.http.formvalue("tracebox") or "1"
+	local tracebox = luci.http.formvalue("disabletracebox") or "1"
 	ucic:set("openmptcprouter","settings","tracebox",tracebox)
 
 	-- Enable/disable server ping
