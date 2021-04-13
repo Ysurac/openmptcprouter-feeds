@@ -364,6 +364,7 @@ function wizard_add()
 			ucic:set("sqm",intf,"download",math.ceil(downloadspeed*95/100))
 			ucic:set("qos",intf,"download",math.ceil(downloadspeed*95/100))
 		else
+			ucic:delete("network",intf,"downloadspeed")
 			ucic:set("sqm",intf,"download","0")
 			ucic:set("qos",intf,"download","0")
 		end
@@ -372,12 +373,9 @@ function wizard_add()
 			ucic:set("sqm",intf,"upload",math.ceil(uploadspeed*95/100))
 			ucic:set("qos",intf,"upload",math.ceil(uploadspeed*95/100))
 		else
+			ucic:delete("network",intf,"uploadspeed")
 			ucic:set("sqm",intf,"upload","0")
 			ucic:set("qos",intf,"upload","0")
-		end
-		if downloadspeed ~= "0" and downloadspeed ~= "" and uploadspeed ~= "0" and uploadspeed ~= "" then
-			ucic:set("sqm",intf,"enabled","0")
-			ucic:set("qos",intf,"enabled","0")
 		end
 
 		if sqmenabled == "1" then
