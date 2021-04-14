@@ -9,58 +9,77 @@ m = Map("network", translate("MPTCP"), translate("Networks MPTCP settings. Visit
 local unameinfo = nixio.uname() or { }
 
 s = m:section(TypedSection, "globals")
-local mtcpg = s:option(ListValue, "multipath", translate("Multipath TCP"))
-mtcpg:value("enable", translate("enable"))
-mtcpg:value("disable", translate("disable"))
-local mtcpck = s:option(ListValue, "mptcp_checksum", translate("Multipath TCP checksum"))
-mtcpck:value(1, translate("enable"))
-mtcpck:value(0, translate("disable"))
-local mtcpck = s:option(ListValue, "mptcp_debug", translate("Multipath Debug"))
-mtcpck:value(1, translate("enable"))
-mtcpck:value(0, translate("disable"))
-local mtcppm = s:option(ListValue, "mptcp_path_manager", translate("Multipath TCP path-manager"), translate("Default is fullmesh"))
-mtcppm:value("default", translate("default"))
-mtcppm:value("fullmesh", translate("fullmesh"))
-mtcppm:value("ndiffports", translate("ndiffports"))
-mtcppm:value("binder", translate("binder"))
+o = s:option(ListValue, "multipath", translate("Multipath TCP"))
+o:value("enable", translate("enable"))
+o:value("disable", translate("disable"))
+o = s:option(ListValue, "mptcp_checksum", translate("Multipath TCP checksum"))
+o:value(1, translate("enable"))
+o:value(0, translate("disable"))
+o = s:option(ListValue, "mptcp_debug", translate("Multipath Debug"))
+o:value(1, translate("enable"))
+o:value(0, translate("disable"))
+o = s:option(ListValue, "mptcp_path_manager", translate("Multipath TCP path-manager"), translate("Default is fullmesh"))
+o:value("default", translate("default"))
+o:value("fullmesh", "fullmesh")
+o:value("ndiffports", "ndiffports")
+o:value("binder", "binder")
 if uname.release:sub(1,4) ~= "4.14" then
-	mtcppm:value("netlink", translate("Netlink"))
+	o:value("netlink", translate("Netlink"))
 end
-local mtcpsch = s:option(ListValue, "mptcp_scheduler", translate("Multipath TCP scheduler"))
-mtcpsch:value("default", translate("default"))
-mtcpsch:value("roundrobin", translate("round-robin"))
-mtcpsch:value("redundant", translate("redundant"))
+o = s:option(ListValue, "mptcp_scheduler", translate("Multipath TCP scheduler"))
+o:value("default", translate("default"))
+o:value("roundrobin", "round-robin")
+o:value("redundant", "redundant")
 if uname.release:sub(1,4) ~= "4.14" then
-	mtcpsch:value("blest", translate("BLEST"))
-	mtcpsch:value("ecf", translate("ECF"))
+	o:value("blest", "BLEST")
+	o:value("ecf", "ECF")
 end
-local mtcpsyn = s:option(Value, "mptcp_syn_retries", translate("Multipath TCP SYN retries"))
-mtcpsyn.datatype = "uinteger"
-mtcpsyn.rmempty = false
-local congestion = s:option(ListValue, "congestion", translate("Congestion Control"),translate("Default is cubic"))
+o = s:option(Value, "mptcp_syn_retries", translate("Multipath TCP SYN retries"))
+o.datatype = "uinteger"
+o.rmempty = false
+o = s:option(ListValue, "congestion", translate("Congestion Control"),translate("Default is cubic"))
 local availablecong = sys.exec("sysctl -n net.ipv4.tcp_available_congestion_control | xargs -n1 | sort | xargs")
 for cong in string.gmatch(availablecong, "[^%s]+") do
-	congestion:value(cong, translate(cong))
+	o:value(cong, translate(cong))
 end
-local mtcpfm_subflows = s:option(Value, "mptcp_fullmesh_num_subflows", translate("Fullmesh subflows for each pair of IP addresses"))
-mtcpfm_subflows.datatype = "uinteger"
-mtcpfm_subflows.rmempty = false
-local mtcpfm_createonerr = s:option(ListValue, "mptcp_fullmesh_create_on_err", translate("Re-create fullmesh subflows after a timeout"))
-mtcpfm_createonerr:value(1, translate("enable"))
-mtcpfm_createonerr:value(0, translate("disable"))
 
-local mtcpnd_subflows = s:option(Value, "mptcp_ndiffports_num_subflows", translate("ndiffports subflows number"))
-mtcpnd_subflows.datatype = "uinteger"
-mtcpnd_subflows.rmempty = false
+o = s:option(Value, "mptcp_fullmesh_num_subflows", translate("Fullmesh subflows for each pair of IP addresses"))
+o.datatype = "uinteger"
+o.rmempty = false
+o.default = 1
+--o:depends("mptcp_path_manager","fullmesh")
+
+o = s:option(ListValue, "mptcp_fullmesh_create_on_err", translate("Re-create fullmesh subflows after a timeout"))
+o:value(1, translate("enable"))
+o:value(0, translate("disable"))
+--o:depends("mptcp_path_manager","fullmesh")
+
+o = s:option(Value, "mptcp_ndiffports_num_subflows", translate("ndiffports subflows number"))
+o.datatype = "uinteger"
+o.rmempty = false
+o.default = 1
+--o:depends("mptcp_path_manager","ndiffports")
+
+o = s:option(ListValue, "mptcp_rr_cwnd_limited", translate("Fill the congestion window on all subflows for round robin"))
+o:value("Y", translate("enable"))
+o:value("N", translate("disable"))
+o.default = "Y"
+--o:depends("mptcp_scheduler","roundrobin")
+
+o = s:option(Value, "mptcp_rr_num_segments", translate("Consecutive segments that should be sent for round robin"))
+o.datatype = "uinteger"
+o.rmempty = false
+o.default = 1
+--o:depends("mptcp_scheduler","roundrobin")
 
 s = m:section(TypedSection, "interface", translate("Interfaces Settings"))
-mptcp = s:option(ListValue, "multipath", translate("Multipath TCP"), translate("One interface must be set as master"))
-mptcp:value("on", translate("enabled"))
-mptcp:value("off", translate("disabled"))
-mptcp:value("master", translate("master"))
-mptcp:value("backup", translate("backup"))
---mptcp:value("handover", translate("handover"))
-mptcp.default = "off"
+o = s:option(ListValue, "multipath", translate("Multipath TCP"), translate("One interface must be set as master"))
+o:value("on", translate("enabled"))
+o:value("off", translate("disabled"))
+o:value("master", translate("master"))
+o:value("backup", translate("backup"))
+--o:value("handover", translate("handover"))
+o.default = "off"
 
 
 return m
