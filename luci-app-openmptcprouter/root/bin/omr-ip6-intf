@@ -4,14 +4,17 @@
 intf=$1
 
 get_ip_from_server() {
-	serverip=$(uci -q get openmptcprouter.$1.ip)
 	serverport=$(uci -q get openmptcprouter.$1.port)
-	getip="$(curl -s -k -6 -m 2 --interface $intf https://$serverip:$serverport/clienthost)"
-	[ -n "$getip" ] && getip=$(echo $getip | jsonfilter -e '@.client_host')
-	if [ -n "$(echo "$getip" | grep :)" ]; then
-		ip=$getip
-		break
-	fi
+	get_ip() {
+		getip="$(curl -s -k -6 -m 2 --interface $intf https://$serverip:$serverport/clienthost)"
+		[ -n "$getip" ] && getip=$(echo $getip | jsonfilter -e '@.client_host')
+		if [ -n "$(echo "$getip" | grep :)" ]; then
+			ip=$getip
+			break
+		fi
+	}
+	config_list_foreach $1 ip get_ip
+	[ -n "$ip" ] && break
 }
 
 get_ip_from_website() {
