@@ -1067,6 +1067,13 @@ function settings_add()
 		ucic:set("openmptcprouter","settings","scaling_governor",scaling_governor)
 	end
 
+	-- Enable/disable Qualcomm Shortcut FE
+	local sfe_enabled = luci.http.formvalue("sfe_enabled") or "0"
+	ucic:set("openmptcprouter","settings","sfe_enabled",sfe_enabled)
+	local sfe_bridge = luci.http.formvalue("sfe_bridge") or "0"
+	ucic:set("openmptcprouter","settings","sfe_bridge",sfe_bridge)
+
+
 	ucic:save("openmptcprouter")
 	ucic:commit("openmptcprouter")
 
