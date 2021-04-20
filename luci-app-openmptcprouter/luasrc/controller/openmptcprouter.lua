@@ -508,6 +508,18 @@ function wizard_add()
 	ucic:set("openmptcprouter","settings","country",country)
 	ucic:save("openmptcprouter")
 
+	-- Get DNS64
+	local dns64 = luci.http.formvalue("dns64") or "0"
+	ucic:set("openmptcprouter","settings","dns64",dns64)
+	ucic:save("openmptcprouter")
+	if dns64 == "1" then
+		ucic:set("unbound","ub_main","dns64","1")
+		ucic:set("unbound","ub_main","validator","0")
+	else
+		ucic:set("unbound","ub_main","dns64","0")
+	
+	end
+
 	-- Get Proxy set by default
 	local default_proxy = luci.http.formvalue("default_proxy") or "shadowsocks"
 	if default_proxy == "shadowsocks" and serversnb > 0 and serversnb > disablednb then
