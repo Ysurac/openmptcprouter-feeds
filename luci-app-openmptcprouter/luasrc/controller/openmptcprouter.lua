@@ -176,8 +176,8 @@ function wizard_add()
 		ucic:set("sqm","wan" .. i,"verbosity","5")
 		ucic:set("sqm","wan" .. i,"download","0")
 		ucic:set("sqm","wan" .. i,"upload","0")
-		ucic:set("sqm","wan" .. i,"iqdisc_opts","autorate-ingress nat dual-dsthost")
-		ucic:set("sqm","wan" .. i,"eqdisc_opts","nat dual-srchost")
+		ucic:set("sqm","wan" .. i,"iqdisc_opts","autorate-ingress dual-dsthost")
+		ucic:set("sqm","wan" .. i,"eqdisc_opts","dual-srchost")
 		ucic:save("sqm")
 		ucic:commit("sqm")
 		
@@ -355,8 +355,8 @@ function wizard_add()
 			ucic:set("sqm",intf,"verbosity","5")
 			ucic:set("sqm",intf,"download","0")
 			ucic:set("sqm",intf,"upload","0")
-			ucic:set("sqm",intf,"iqdisc_opts","autorate-ingress nat dual-dsthost")
-			ucic:set("sqm",intf,"eqdisc_opts","nat dual-srchost")
+			ucic:set("sqm",intf,"iqdisc_opts","autorate-ingress dual-dsthost")
+			ucic:set("sqm",intf,"eqdisc_opts","dual-srchost")
 		end
 
 		if downloadspeed ~= "0" and downloadspeed ~= "" then
@@ -379,8 +379,8 @@ function wizard_add()
 		end
 
 		if sqmenabled == "1" then
-			ucic:set("sqm",intf,"iqdisc_opts","autorate-ingress nat dual-dsthost")
-			ucic:set("sqm",intf,"eqdisc_opts","nat dual-srchost")
+			ucic:set("sqm",intf,"iqdisc_opts","autorate-ingress dual-dsthost")
+			ucic:set("sqm",intf,"eqdisc_opts","dual-srchost")
 			ucic:set("sqm",intf,"enabled","1")
 			ucic:set("qos",intf,"enabled","1")
 		else
