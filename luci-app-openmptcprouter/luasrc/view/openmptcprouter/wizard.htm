@@ -35,6 +35,17 @@
 		return t
 	end
 
+	alltty = {}
+	iftty = luci.sys.exec("timeout 1 /usr/bin/mmcli -L")
+	for listtty in iftty:gmatch("([^\r\n]*)[\r\n]") do
+		modemid = luci.util.trim(luci.sys.exec("echo '" .. listtty .. "' | awk -F' ' '{print $1}' | awk -F/ '{print $6}'"))
+		if modemid ~= '' then
+			modeminfo = luci.sys.exec("timeout 1 /usr/bin/mmcli -m " .. modemid .. " --output-keyvalue")
+			tty = luci.util.trim(luci.sys.exec("echo '" .. modeminfo .. "' | grep 'modem.generic.device ' | awk -F': ' '{print $2}'"))
+			table.insert(alltty, tty)
+		end
+	end
+
 
 %>
 <script type="text/javascript" src="<%=resource%>/cbi.js?v=git-18.243.49640-2f13420" data-strings="{&#34;path&#34;:{&#34;resource&#34;:&#34;\/luci-static\/resources&#34;,&#34;browser&#34;:&#34;\/cgi-bin\/luci\/admin\/filebrowser&#34;}}"></script>
@@ -780,16 +791,10 @@
 			    <select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.device.modemmanager" name="cbid.network.<%=ifname%>.device.modemmanager" size="1">
 			<%
 			    iffind=0
-			    iftty = luci.sys.exec("/usr/bin/mmcli -L")
-			    for listtty in iftty:gmatch("([^\r\n]*)[\r\n]") do
-				modemid = luci.util.trim(luci.sys.exec("echo '" .. listtty .. "' | awk -F' ' '{print $1}' | awk -F/ '{print $6}'"))
-				if modemid ~= '' then
-				    modeminfo = luci.sys.exec("/usr/bin/mmcli -m " .. modemid .. " --output-keyvalue")
-				    tty = luci.util.trim(luci.sys.exec("echo '" .. modeminfo .. "' | grep 'modem.generic.device ' | awk -F': ' '{print $2}'"))
+			    for _, tty in ipairs(alltty) do
 			%>
 			<option value="<%=tty%>"<% if uci:get("network",ifname,"device") == tty then iffind = 1 %> selected="selected"<% end %>><%=tty%></option>
 			<%
-				end
 			    end
 			    if iffind == 0 and uci:get("network",ifname,"device") ~= nil then
 			%>
