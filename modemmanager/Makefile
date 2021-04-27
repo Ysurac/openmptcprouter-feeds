@@ -1,24 +1,27 @@
 #
 # Copyright (C) 2016 Velocloud Inc.
 # Copyright (C) 2016 Aleksander Morgado <aleksander@aleksander.es>
+# Copyright (C) 2021 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 #
 # This is free software, licensed under the GNU General Public License v2.
 #
 
 include $(TOPDIR)/rules.mk
 
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_URL:=https://gitlab.freedesktop.org/mobile-broadband/ModemManager.git
+PKG_SOURCE_VERSION:=26243e7ed78820d5f0ce95098e7dfeaa1b29baf3
 PKG_NAME:=modemmanager
-PKG_VERSION:=1.16.2
+PKG_VERSION:=1.16.3-$(PKG_SOURCE_VERSION)
 PKG_RELEASE:=10
 
-PKG_SOURCE:=ModemManager-$(PKG_VERSION).tar.xz
-PKG_SOURCE_URL:=https://www.freedesktop.org/software/ModemManager
-PKG_HASH:=efa9a963499e0885f3f163096d433334143c4937545134ecd682e0157fa591e3
-PKG_BUILD_DIR:=$(BUILD_DIR)/ModemManager-$(PKG_VERSION)
+#PKG_BUILD_DIR:=$(BUILD_DIR)/modemamanager-$
 
 PKG_MAINTAINER:=Nicholas Smith <nicholas.smith@telcoantennas.com.au>
 PKG_LICENSE:=GPL-2.0-or-later
 PKG_LICENSE_FILES:=COPYING
+
+PKG_FIXUP:=autoreconf
 
 PKG_INSTALL:=1
 PKG_BUILD_PARALLEL:=1
