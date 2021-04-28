@@ -1,4 +1,7 @@
 #!/bin/sh
+
+. /lib/functions.sh
+
 uci -q batch <<-EOF
     delete ucitrack.@openmptcprouter[-1]
     add ucitrack openmptcprouter
@@ -127,6 +130,21 @@ if [ "$(uci -q get openmptcprouter.settings.tracebox)" = "" ]; then
 		commit openmptcprouter
 	EOF
 fi
+
+_set_omr_ip() {
+	server=$1
+	serverip="$(uci -q get openmptcprouter.${server}.ip)"
+	if [ -n "$serverip" ]; then
+		uci -q batch <<-EOF >/dev/null
+			delete openmptcprouter.${server}.ip
+			add_list openmptcprouter.${server}.ip="${serverip}"
+			commit openmptcprouter
+		EOF
+	fi
+}
+
+config_load openmptcprouter
+config_foreach _set_omr_ip server
 
 sed -i 's/net.ipv4.tcp_retries2=3$/net.ipv4.tcp_retries2=15/' /etc/sysctl.d/zzz_openmptcprouter.conf
 
