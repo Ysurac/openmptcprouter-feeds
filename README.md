@@ -163,6 +163,21 @@ This is used to bypass a protocol
 *Description:* A middlebox detection tool
 
 
+## Shortcut-FE
+*Source:* [https://github.com/coolsnowwolf/lede/tree/master/package/lean/shortcut-fe](https://github.com/coolsnowwolf/lede/tree/master/package/lean/shortcut-fe)
+
+*Description:* Shortcut is an in-Linux-kernel IP packet forwarding engine.
+
+
+## V2Ray
+*Source:* [https://github.com/v2fly/v2ray-core](https://github.com/v2fly/v2ray-core)
+
+*Description:* A platform for building proxies to bypass network restrictions.
+
+This is used as proxy, alternative to Shadowsocks
+
+
+
 # License
 [![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2FYsurac%2Fopenmptcprouter-feeds.svg?type=large)](https://app.fossa.io/projects/git%2Bgithub.com%2FYsurac%2Fopenmptcprouter-feeds?ref=badge_large)
 
