@@ -10,7 +10,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://gitlab.freedesktop.org/mobile-broadband/libqmi.git
-PKG_SOURCE_VERSION:=0b1906618eb47b8bd37fba61507259ef09584031
+PKG_SOURCE_VERSION:=29fab8a1d4496ca5a1d32bb486013b1868a718ba
 PKG_NAME:=libqmi
 PKG_VERSION:=1.29.3-$(PKG_SOURCE_VERSION)
 PKG_RELEASE:=10
