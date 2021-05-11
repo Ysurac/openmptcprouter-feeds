@@ -1,0 +1,26 @@
+#!/bin/sh
+SERVER=$1
+INTERFACE=$2
+[ -z "$SERVER" ] && SERVER="vps"
+KEY=$(uci -q get openmptcprouter.$SERVER.token)
+HOST=$(uci -q get openmptcprouter.$SERVER.ip | awk '{print $1}')
+PORT=$(uci -q get openmptcprouter.$SERVER.port)
+MP=false
+if [ -n "$KEY" ] && [ -n "$HOST" ] && [ -n "$PORT" ]; then
+	trap : HUP INT TERM
+	echo "Download test via server ${SERVER}:"
+	if [ -n "$INTERFACE" ]; then
+		if [ "$(multipath ${INTERFACE} | grep default)" ]; then
+			MP=true
+			/etc/init.d/omr-tracker stop 2>&1 >/dev/null
+			multipath ${INTERFACE} off
+		fi
+		curl -k -o /dev/null --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest || echo
+		if [ $MP ]; then
+			multipath ${INTERFACE} on
+			/etc/init.d/omr-tracker start & 2>&1 >/dev/null
+		fi
+	else
+		curl -k -o /dev/null -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest || echo
+	fi
+fi
