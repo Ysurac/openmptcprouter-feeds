@@ -1111,7 +1111,7 @@ function update_vps()
 	local update_vps = luci.http.formvalue("flash") or ""
 	if update_vps ~= "" then
 		local ut = require "luci.util"
-		local result = ut.ubus("openmptcprouter", "update_vps", {})
+		local result = ut.ubus("openmptcprouter", "updateVPS", {})
 	end
 	return
 end
