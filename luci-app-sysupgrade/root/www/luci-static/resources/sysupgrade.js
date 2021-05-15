@@ -250,7 +250,7 @@ function upgrade_request_callback(response) {
     }
     if (sysupgrade_file != "") {
         data.sysupgrade_url = data.url + '/release/' + response.bin_dir + '/' + sysupgrade_file
-        var info_output = '<h3>Firmware created</h3><p>Created file: <a href="' + data.sysupgrade_url + '">' + sysupgrade_file + '</p></a>'
+        var info_output = '<h3>Firmware searched</h3><p>File: <a href="' + data.sysupgrade_url + '">' + sysupgrade_file + '</p></a>'
         set_status("success", info_output, false, true);
 
         show("#keep_container");
@@ -260,7 +260,7 @@ function upgrade_request_callback(response) {
         upgrade_button.value = "Flash firmware";
         upgrade_button.onclick = download_image;
     } else {
-        set_status("danger", "Firmware build successfull but device not sysupgrade compatible!")
+        set_status("danger", "Device not sysupgrade compatible!")
     }
 }
 
