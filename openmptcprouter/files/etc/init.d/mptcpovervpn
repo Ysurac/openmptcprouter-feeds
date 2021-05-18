@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# Copyright (C) 2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2019 - 2021 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 # Released under GPL 3. See LICENSE for the full terms.
 
 {
@@ -25,7 +25,7 @@ _getremoteip() {
 
 mptcp_over_vpn() {
 	local interface=$1
-	nbintf=$(($nbintf+1))
+	[ -n "$(uci show firewall.zone_wan.network | grep $interface)" ] && nbintf=$(($nbintf+1))
 	if [ "$(uci -q get openmptcprouter.${interface}.multipathvpn)" = "1" ]; then
 		if [ "$(uci -q get network.${interface})" = "" ]; then
 			uci -q batch <<-EOF >/dev/null
@@ -218,6 +218,17 @@ start_service()
 	[ -z "$vpn" ] && vpn="openvpn"
 	config_load openmptcprouter
 	config_foreach mptcp_over_vpn interface
+	if [ "$nbintf" = "$nbintfvpn" ] &&  [ "$nbintf" != "0" ] && [ "$nbintfvpn" != "0" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.settings.allmptcpovervpn='1'
+			commit openmptcprouter
+		EOF
+	else
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.settings.allmptcpovervpn='0'
+			commit openmptcprouter
+		EOF
+	fi
 	if [ "$nbintf" = "$nbintfvpn" ] &&  [ "$nbintf" != "0" ]; then
 		if [ "$vpn" = "openvpn" ]; then
 			uci -q batch <<-EOF >/dev/null
@@ -286,6 +297,8 @@ start_service()
 		uci -q batch <<-EOF >/dev/null
 			commit shadowsocks-libev
 		EOF
+		/etc/init.d/shadowsocks restart
+		/etc/init.d/openvpn restart
 	elif [ "$(uci -q get shadowsocks-libev.hivpn1)" != "" ]; then
 		for c in $(seq 1 $NBCPU); do
 			uci -q batch <<-EOF >/dev/null
