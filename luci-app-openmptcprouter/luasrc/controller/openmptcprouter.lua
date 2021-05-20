@@ -1001,6 +1001,18 @@ function settings_add()
 	local disablegwping = luci.http.formvalue("disablegwping") or "0"
 	ucic:set("openmptcprouter","settings","disablegwping",disablegwping)
 
+	-- VPS timeout
+	local status_vps_timeout = luci.http.formvalue("status_vps_timeout") or "1"
+	ucic:set("openmptcprouter","settings","status_vps_timeout",status_vps_timeout)
+
+	-- IP timeout
+	local status_getip_timeout = luci.http.formvalue("status_getip_timeout") or "1"
+	ucic:set("openmptcprouter","settings","status_getip_timeout",status_getip_timeout)
+
+	-- Enable/disable loop detection
+	local disableloopdetection = luci.http.formvalue("disableloopdetection") or "0"
+	ucic:set("openmptcprouter","settings","disableloopdetection",disableloopdetection)
+
 	-- Enable/disable renaming intf
 	local disableintfrename = luci.http.formvalue("disableintfrename") or "0"
 	ucic:set("openmptcprouter","settings","disableintfrename",disableintfrename)
