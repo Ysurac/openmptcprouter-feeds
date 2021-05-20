@@ -1124,6 +1124,35 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 		[ -n "$asn" ] && {
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.asn="$asn"
 		}
+
+		# Routing loop detection
+		local lanip="$(uci -q network.lan.ipaddr)"
+		local masterip
+		get_master_ip() {
+			if [ "$(openmptcprouter.$1.multipath)" = "master" ]; then
+				masterip="$(uci -q get openmptcprouter.$1.publicip)"
+			fi
+		}
+		config_load openmptcprouter
+		config_foreach get_master_ip interface
+		if [ -n "$lanip" ] && [ -n "$masterip" ] && [ -n "$ipaddr" ] && [ "$ipaddr" = "$masterip" ] && [ "$(uci -q get openmptcprouter.settings.disableloopdetection)" != "1" ]; then
+			loop=0
+			routingloop() {
+				if [ "$(omr-routing-loop $1 $lanip)" = "detected" ]; then
+					loop=1
+				fi
+			}
+			config_load openmptcprouter
+			config_foreach routingloop server
+			if [ "$loop" = "1" ]; then
+				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.loop='1'
+			else
+				uci -q delete openmptcprouter.$OMR_TRACKER_INTERFACE.loop
+			fi
+		else
+			uci -q delete openmptcprouter.$OMR_TRACKER_INTERFACE.loop
+		fi
+
 		local omrtracebox
 		traceboxmtutest() {
 			omr_tracebox_mtu() {
