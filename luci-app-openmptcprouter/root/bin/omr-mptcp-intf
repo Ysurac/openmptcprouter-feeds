@@ -2,6 +2,8 @@
 . /lib/functions.sh
 
 intf=$1
+timeout="$(uci -q get openmptcprouter.settings.status_vps_timeout)"
+[ -z "$timeout" ] && timeout="1"
 
 [ -z "$intf" ] && return
 
@@ -10,9 +12,9 @@ get_mptcp_from_server() {
 	get_mptcp() {
 		serverip=$1
 		if [ "$(echo $serverip | grep :)" ]; then
-			support="$(curl -s -k -6 -m 2 --interface $intf https://[$serverip]:$serverport/mptcpsupport)"
+			support="$(curl -s -k -6 -m ${timeout} --interface $intf https://[$serverip]:$serverport/mptcpsupport)"
 		else
-			support="$(curl -s -k -4 -m 2 --interface $intf https://$serverip:$serverport/mptcpsupport)"
+			support="$(curl -s -k -4 -m ${timeout} --interface $intf https://$serverip:$serverport/mptcpsupport)"
 		fi
 		[ -n "$support" ] && {
 			support=$(echo $support | jsonfilter -e '@.mptcp')
@@ -26,7 +28,7 @@ get_mptcp_from_server() {
 get_mptcp_from_website() {
 	multipathip=$(dig +short A multipath-tcp.org | tr -d "\n")
 	ipset add ss_rules_dst_bypass_all $multipathip > /dev/null 2>&1
-	support="$(curl -s -4 -m 2 --interface $intf http://www.multipath-tcp.org)"
+	support="$(curl -s -4 -m ${timeout} --interface $intf http://www.multipath-tcp.org)"
 	ipset del ss_rules_dst_bypass_all $multipathip > /dev/null 2>&1
 	[ -n "$support" ] && {
 		if [ "$support" = "Yay, you are MPTCP-capable! You can now rest in peace." ]; then
@@ -40,7 +42,7 @@ get_mptcp_from_website() {
 get_mptcp_from_website6() {
 	multipathip=$(dig +short AAAA multipath-tcp.org | tr -d "\n")
 	ipset add ss_rules6_dst_bypass_all $multipathip > /dev/null 2>&1
-	support="$(curl -s -6 -m 2 --interface $intf http://www.multipath-tcp.org)"
+	support="$(curl -s -6 -m ${timeout} --interface $intf http://www.multipath-tcp.org)"
 	ipset del ss_rules6_dst_bypass_all $multipathip > /dev/null 2>&1
 	[ -n "$support" ] && {
 		if [ "$support" = "Yay, you are MPTCP-capable! You can now rest in peace." ]; then

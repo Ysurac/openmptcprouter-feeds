@@ -908,12 +908,12 @@ function wizard_add()
 		luci.sys.call("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
 		--luci.sys.call("/etc/init.d/ubond restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/mptcpovervpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/openvpnbonding restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/dsvpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/omr-tracker start >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
-		luci.sys.call("/etc/init.d/mptcpovervpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/v2ray restart >/dev/null 2>/dev/null")
 		luci.http.redirect(luci.dispatcher.build_url("admin/system/" .. menuentry:lower() .. "/status"))
@@ -1000,6 +1000,18 @@ function settings_add()
 	-- Enable/disable gateway ping
 	local disablegwping = luci.http.formvalue("disablegwping") or "0"
 	ucic:set("openmptcprouter","settings","disablegwping",disablegwping)
+
+	-- VPS timeout
+	local status_vps_timeout = luci.http.formvalue("status_vps_timeout") or "1"
+	ucic:set("openmptcprouter","settings","status_vps_timeout",status_vps_timeout)
+
+	-- IP timeout
+	local status_getip_timeout = luci.http.formvalue("status_getip_timeout") or "1"
+	ucic:set("openmptcprouter","settings","status_getip_timeout",status_getip_timeout)
+
+	-- Enable/disable loop detection
+	local disableloopdetection = luci.http.formvalue("disableloopdetection") or "0"
+	ucic:set("openmptcprouter","settings","disableloopdetection",disableloopdetection)
 
 	-- Enable/disable renaming intf
 	local disableintfrename = luci.http.formvalue("disableintfrename") or "0"
@@ -1111,7 +1123,7 @@ function update_vps()
 	local update_vps = luci.http.formvalue("flash") or ""
 	if update_vps ~= "" then
 		local ut = require "luci.util"
-		local result = ut.ubus("openmptcprouter", "update_vps", {})
+		local result = ut.ubus("openmptcprouter", "updateVPS", {})
 	end
 	return
 end
