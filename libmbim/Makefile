@@ -10,7 +10,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://gitlab.freedesktop.org/mobile-broadband/libmbim.git
-PKG_SOURCE_VERSION:=c90c7c5b877de6e413b4833aaf1a42d2d128b051
+PKG_SOURCE_VERSION:=764d91155570d653e178ae8f12ff4de00d71e06c
 
 PKG_NAME:=libmbim
 PKG_VERSION:=1.25.3-$(PKG_SOURCE_VERSION)
