@@ -1013,6 +1013,10 @@ function settings_add()
 	local disableloopdetection = luci.http.formvalue("disableloopdetection") or "0"
 	ucic:set("openmptcprouter","settings","disableloopdetection",disableloopdetection)
 
+	-- Enable/disable http test
+	local disableserverhttptest = luci.http.formvalue("disableserverhttptest") or "0"
+	ucic:set("openmptcprouter","settings","disableserverhttptest",disableserverhttptest)
+
 	-- Enable/disable renaming intf
 	local disableintfrename = luci.http.formvalue("disableintfrename") or "0"
 	ucic:set("openmptcprouter","settings","disableintfrename",disableintfrename)
