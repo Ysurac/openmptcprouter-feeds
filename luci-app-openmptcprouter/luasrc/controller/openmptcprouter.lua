@@ -1041,6 +1041,10 @@ function settings_add()
 	local shadowsocksudp = luci.http.formvalue("shadowsocksudp") or "0"
 	ucic:set("openmptcprouter","settings","shadowsocksudp",shadowsocksudp)
 
+	-- Enable/disable nDPI
+	local ndpi = luci.http.formvalue("ndpi") or "1"
+	ucic:set("openmptcprouter","settings","ndpi",ndpi)
+
 	-- Enable/disable fast open
 	local disablefastopen = luci.http.formvalue("disablefastopen") or "0"
 	if disablefastopen == "0" then
