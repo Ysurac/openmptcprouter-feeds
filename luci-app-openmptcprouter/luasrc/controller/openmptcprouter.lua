@@ -1013,6 +1013,10 @@ function settings_add()
 	local disableloopdetection = luci.http.formvalue("disableloopdetection") or "0"
 	ucic:set("openmptcprouter","settings","disableloopdetection",disableloopdetection)
 
+	-- Enable/disable http test
+	local disableserverhttptest = luci.http.formvalue("disableserverhttptest") or "0"
+	ucic:set("openmptcprouter","settings","disableserverhttptest",disableserverhttptest)
+
 	-- Enable/disable renaming intf
 	local disableintfrename = luci.http.formvalue("disableintfrename") or "0"
 	ucic:set("openmptcprouter","settings","disableintfrename",disableintfrename)
@@ -1036,6 +1040,10 @@ function settings_add()
 	-- Enable/disable shadowsocks udp
 	local shadowsocksudp = luci.http.formvalue("shadowsocksudp") or "0"
 	ucic:set("openmptcprouter","settings","shadowsocksudp",shadowsocksudp)
+
+	-- Enable/disable nDPI
+	local ndpi = luci.http.formvalue("ndpi") or "1"
+	ucic:set("openmptcprouter","settings","ndpi",ndpi)
 
 	-- Enable/disable fast open
 	local disablefastopen = luci.http.formvalue("disablefastopen") or "0"
