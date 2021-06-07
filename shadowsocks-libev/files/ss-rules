@@ -276,7 +276,7 @@ ss_rules_iptchains_mkprerules() {
 	local proto="$1"
 
 	if [ -z "$o_ifnames" ]; then
-		echo "-I PREROUTING 1 -p $proto -j ssr_${rule}_pre_src"
+		echo "-A PREROUTING -p $proto -j ssr_${rule}_pre_src"
 	else
 		echo $o_ifnames \
 			| tr ' ' '\n' \
@@ -284,7 +284,19 @@ ss_rules_iptchains_mkprerules() {
 	fi
 }
 
+ss_rules_fw_drop() {
+	fw3 -4 print 2>/dev/null | awk '/iptables/&&/zone_lan_forward/&&/-t filter/&&/-j reject/ {for(i=6; i<=NF; i++) printf "%s ",$i }' |
+	while IFS=$"\n" read -r c; do
+		iptables -t nat -A zone_lan_prerouting $(echo $c | sed 's/reject/REDIRECT --to-ports 65535/') 2>&1 >/dev/null
+	done
+	fw3 -4 print 2>/dev/null | awk '/iptables/&&/zone_lan_forward/&&/-t filter/&&/-j drop/ {for(i=6; i<=NF; i++) printf "%s ",$i }' |
+	while IFS=$"\n" read -r c; do
+		iptables -t nat -A zone_lan_prerouting $(echo $c | sed 's/drop/REDIRECT --to-ports 65535/') 2>&1 >/dev/null
+	done
+}
+
 ss_rules_parse_args "$@"
 #ss_rules_flush
 ss_rules_ipset_init
 ss_rules_iptchains_init
+ss_rules_fw_drop
