@@ -274,7 +274,20 @@ v2ray_rules6_iptchains_mkprerules() {
 	fi
 }
 
+v2ray_rules6_fw_drop() {
+	fw3 -6 print 2>/dev/null | awk '/ip6tables/&&/zone_lan_forward/&&/-t filter/&&/-j reject/ {for(i=6; i<=NF; i++) printf "%s ",$i }' |
+	while IFS=$"\n" read -r c; do
+		ip6tables -t nat -A zone_lan_prerouting $(echo $c | sed 's/reject/REDIRECT --to-ports 65535/') 2>&1 >/dev/null
+	done
+	fw3 -6 print 2>/dev/null | awk '/ip6tables/&&/zone_lan_forward/&&/-t filter/&&/-j drop/ {for(i=6; i<=NF; i++) printf "%s ",$i }' |
+	while IFS=$"\n" read -r c; do
+		ip6tables -t nat -A zone_lan_prerouting $(echo $c | sed 's/drop/REDIRECT --to-ports 65535/') 2>&1 >/dev/null
+	done
+}
+
+
 v2ray_rules6_parse_args "$@"
 v2ray_rules6_flush
 v2ray_rules6_ipset_init
 v2ray_rules6_iptchains_init
+v2ray_rules6_fw_drop
