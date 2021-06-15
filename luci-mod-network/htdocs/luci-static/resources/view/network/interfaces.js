@@ -213,21 +213,19 @@ function iface_updown(up, id, ev, force) {
 
 function get_netmask(s, use_cfgvalue) {
 	var readfn = use_cfgvalue ? 'cfgvalue' : 'formvalue',
-	    addropt = s.children.filter(function(o) { return o.option == 'ipaddr'})[0],
-	    addrvals = addropt ? L.toArray(addropt[readfn](s.section)) : [],
-	    maskopt = s.children.filter(function(o) { return o.option == 'netmask'})[0],
-	    maskval = maskopt ? maskopt[readfn](s.section) : null,
-	    firstsubnet = maskval ? addrvals[0] + '/' + maskval : addrvals.filter(function(a) { return a.indexOf('/') > 0 })[0];
+	    addrs = L.toArray(s[readfn](s.section, 'ipaddr')),
+	    mask = s[readfn](s.section, 'netmask'),
+	    firstsubnet = mask ? addrs[0] + '/' + mask : addrs.filter(function(a) { return a.indexOf('/') > 0 })[0];
 
 	if (firstsubnet == null)
 		return null;
 
-	var mask = firstsubnet.split('/')[1];
+	var subnetmask = firstsubnet.split('/')[1];
 
-	if (!isNaN(mask))
-		mask = network.prefixToMask(+mask);
+	if (!isNaN(subnetmask))
+		subnetmask = network.prefixToMask(+subnetmask);
 
-	return mask;
+	return subnetmask;
 }
 
 return view.extend({
@@ -469,6 +467,42 @@ return view.extend({
 						uci.unset('network', section_id, 'type');
 				};
 
+				o = s.taboption('advanced', form.Value, 'ip6assign', _('IPv6 assignment length'), _('Assign a part of given length of every public IPv6-prefix to this interface'));
+				o.value('', _('disabled'));
+				o.value('64');
+				o.datatype = 'max(64)';
+
+				o = s.taboption('advanced', form.Value, 'ip6hint', _('IPv6 assignment hint'), _('Assign prefix parts using this hexadecimal subprefix ID for this interface.'));
+				o.placeholder = '0';
+				o.validate = function(section_id, value) {
+				    if (value == null || value == '')
+					return true;
+				    var n = parseInt(value, 16);
+				    if (!/^(0x)?[0-9a-fA-F]+$/.test(value) || isNaN(n) || n >= 0xffffffff)
+					return _('Expecting a hexadecimal assignment hint');
+				    return true;
+				};
+
+				for (var i = 33; i <= 64; i++)
+				    o.depends('ip6assign', String(i));
+
+				o = s.taboption('advanced', form.DynamicList, 'ip6addr', _('IPv6 address'));
+				o.datatype = 'ip6addr';
+				o.placeholder = _('Add IPv6 address…');
+				o.depends('ip6assign', '');
+
+				o = s.taboption('advanced', form.Value, 'ip6gw', _('IPv6 gateway'));
+				o.datatype = 'ip6addr("nomask")';
+				o.depends('ip6assign', '');
+
+				o = s.taboption('advanced', form.Value, 'ip6prefix', _('IPv6 routed prefix'), _('Public prefix routed to this device for distribution to clients.'));
+				o.datatype = 'ip6addr';
+				o.depends('ip6assign', '');
+
+				o = s.taboption('advanced', form.Value, 'ip6ifaceid', _('IPv6 suffix'), _("Optional. Allowed values: 'eui64', 'random', fixed value like '::1' or '::1:2'. When IPv6 prefix (like 'a:b:c:d::') is received from a delegating server, use the suffix (like '::1') to form the IPv6 address ('a:b:c:d::1') for the interface."));
+				o.datatype = 'ip6hostid';
+				o.placeholder = '::1';
+
 				stp = s.taboption('physical', form.Flag, 'stp', _('Enable <abbr title="Spanning Tree Protocol">STP</abbr>'), _('Enables the Spanning Tree Protocol on this bridge'));
 
 				igmp = s.taboption('physical', form.Flag, 'igmp_snooping', _('Enable <abbr title="Internet Group Management Protocol">IGMP</abbr> snooping'), _('Enables IGMP snooping on this bridge'));
@@ -677,9 +711,9 @@ return view.extend({
 					};
 
 					so.validate = function(section_id, value) {
-						var node = this.map.findElement('id', this.cbid(section_id));
-						if (node)
-							node.querySelector('input').setAttribute('placeholder', get_netmask(s, false));
+						var uielem = this.getUIElement(section_id);
+						if (uielem)
+							uielem.setPlaceholder(get_netmask(s, false));
 						return form.Value.prototype.validate.apply(this, [ section_id, value ]);
 					};
 
@@ -941,12 +975,9 @@ return view.extend({
 
 		o = s.taboption('advanced', form.Flag, 'force_link', _('Force link'), _('Set interface properties regardless of the link carrier (If set, carrier sense events do not invoke hotplug handlers).'));
 		o.modalonly = true;
-		o.render = function(option_index, section_id, in_table) {
-			var protoopt = this.section.children.filter(function(o) { return o.option == 'proto' })[0],
-			    protoval = protoopt ? protoopt.cfgvalue(section_id) : null;
-
-			this.default = (protoval == 'static') ? this.enabled : this.disabled;
-			return this.super('render', [ option_index, section_id, in_table ]);
+		o.defaults = {
+			'1': [{ proto: 'static' }],
+			'0': []
 		};
 
 
