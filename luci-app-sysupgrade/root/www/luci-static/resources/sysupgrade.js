@@ -65,7 +65,8 @@ function setup() {
     ubus_call("system", "board", {}, "release");
     ubus_call("system", "board", {}, "board_name");
     ubus_call("system", "info", {}, "memory");
-    ubus_call("openmptcprouter", "rootfs", {}, "format");
+    ubus_call("openmptcprouter", "getrootfs", {}, "format");
+    ubus_call("openmptcprouter", "getefi", {}, "efi_enabled");
     uci_get({
         "config": "sysupgrade",
         "section": "server",
@@ -231,6 +232,7 @@ function upgrade_request() {
     request_dict.target = data.release.target
     request_dict.profile = data.board_name
     request_dict.rootfs = data.format
+    request_dict.efi = data.efi_enabled
 
     if (data.edit_packages == true) {
         request_dict.packages = $("#edit_packages").value.split("\n")
