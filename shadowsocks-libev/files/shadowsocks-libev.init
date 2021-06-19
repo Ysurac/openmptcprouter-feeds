@@ -196,11 +196,15 @@ ss_rules() {
 			all_ss_redir_ports=$min_ss_redir_ports
 		fi
 		local_port_tcp="$all_ss_redir_ports"
-		#local_port_udp="$all_ss_redir_ports"
-		eval local_port_udp="\$ss_rules_redir_udp_$redir_udp"
+		if [ "$ss_rules_redir_udp_$redir_udp" = "all" ] || [ "$ss_rules_redir_udp_$redir_udp" = "hi1" ]; then
+			local_port_udp="$min_ss_redir_ports"
+		fi
+		#eval local_port_udp="\$ss_rules_redir_udp_$redir_udp"
 		local_port_tcp6="$all_ss_redir_ports"
-		#local_port_udp6="$all_ss_redir_ports"
-		eval local_port_udp6="\$ss_rules6_redir_udp_$redir_udp"
+		if [ "$ss_rules_redir_udp_$redir_udp" = "all" ] || [ "$ss_rules_redir_udp_$redir_udp" = "hi1" ]; then
+			local_port_udp6="$min_ss_redir_ports"
+		fi
+		#eval local_port_udp6="\$ss_rules6_redir_udp_$redir_udp"
 	else
 		eval local_port_tcp="\$ss_rules_redir_tcp_$redir_tcp"
 		eval local_port_udp="\$ss_rules_redir_udp_$redir_udp"
@@ -308,7 +312,10 @@ server_state() {
 }
 
 rules_up() {
-	rules_exist && return 0
+	rules_exist && {
+		[ -f /bin/blocklanfw ] && /bin/blocklanfw 2>&1 >/dev/null
+		return 0
+	}
 	[ "$(uci -q get shadowsocks-libev.ss_rules.disabled)" = "1" ] && return 0
 	enabled="0"
 	passkey=""
@@ -325,6 +332,7 @@ rules_up() {
 		logger -t "Shadowsocks" "Reload omr-bypass rules"
 		/etc/init.d/omr-bypass reload_rules
 	}
+	[ -f /bin/blocklanfw ] && /bin/blocklanfw 2>&1 >/dev/null
 }
 
 rules_down() {

@@ -35,6 +35,17 @@
 		return t
 	end
 
+	alltty = {}
+	iftty = luci.sys.exec("timeout 1 /usr/bin/mmcli -L")
+	for listtty in iftty:gmatch("([^\r\n]*)[\r\n]") do
+		modemid = luci.util.trim(luci.sys.exec("echo '" .. listtty .. "' | awk -F' ' '{print $1}' | awk -F/ '{print $6}'"))
+		if modemid ~= '' then
+			modeminfo = luci.sys.exec("timeout 1 /usr/bin/mmcli -m " .. modemid .. " --output-keyvalue")
+			tty = luci.util.trim(luci.sys.exec("echo '" .. modeminfo .. "' | grep 'modem.generic.device ' | awk -F': ' '{print $2}'"))
+			table.insert(alltty, tty)
+		end
+	end
+
 
 %>
 <script type="text/javascript" src="<%=resource%>/cbi.js?v=git-18.243.49640-2f13420" data-strings="{&#34;path&#34;:{&#34;resource&#34;:&#34;\/luci-static\/resources&#34;,&#34;browser&#34;:&#34;\/cgi-bin\/luci\/admin\/filebrowser&#34;}}"></script>
@@ -49,7 +60,7 @@
 	}
 </script>
 <% if stderr and #stderr > 0 then %><pre class="error"><%=pcdata(stderr)%></pre><% end %>
-<form class="inline" method="post" action="<%=url('admin/system/' .. menuentry:lower() .. '/wizard_add')%>" enctype="multipart/form-data">
+<form class="inline" method="post" action="<%=url('admin/system/' .. menuentry:lower() .. '/wizard_add')%>" enctype="multipart/form-data" onkeydown="return event.key != 'Enter';">
     <div class="cbi-map">
 	<h2 name="content"><%:Wizard%></h2>
 	<fieldset class="cbi-section" id="server">
@@ -118,7 +129,7 @@
 		<div class="cbi-value" data-index="4">
 		    <label class="cbi-value-title"><%:Set server as master%></label>
 		    <div class="cbi-value-field">
-			<input class="cbi-input-radio" type="radio" name="master" value="<%=servername%>" <% if uci:get("openmptcprouter",servername,"master") == "1" then %>checked<% end %>/>
+			<input class="cbi-input-radio" type="radio" name="master" value="<%=servername%>" <% if uci:get("openmptcprouter",servername,"master") == "1" then %>checked <% end %>/>
 			<br />
 			<div class="cbi-value-description">
 			    <%:Only one server can be master, else all servers are set as backup.%>
@@ -132,7 +143,7 @@
 		<div class="cbi-value" data-index="5">
 		    <label class="cbi-value-title"><%:Disable server%></label>
 		    <div class="cbi-value-field">
-			<input class="cbi-input-radio" type="checkbox" name="<%=servername%>.openmptcprouter_vps_disabled" value="1" <% if uci:get("openmptcprouter",servername,"disabled") == "1" then %>checked<% end %>/>
+			<input class="cbi-input-radio" type="checkbox" name="<%=servername%>.openmptcprouter_vps_disabled" value="1" <% if uci:get("openmptcprouter",servername,"disabled") == "1" then %>checked <% end %>/>
 		    </div>
 		</div>
 	    <%
@@ -191,6 +202,16 @@
 		    <br />
 		    <div class="cbi-value-description">
 		        <%:You can use a public IPv6 prefix only if you set only one server.%>
+		    </div>
+		</div>
+	    </div>
+	    <div class="cbi-value">
+		<label class="cbi-value-title"><%:Enable DNS64%></label>
+		<div class="cbi-value-field">
+		    <input class="cbi-input-checkbox" type="checkbox" name="dns64" value="1" <% if uci:get("openmptcprouter","settings","dns64") == "1" then %>checked <% end %>/>
+		    <br />
+		    <div class="cbi-value-description">
+		        <%:If host support NAT64, you can enable DNS64 support.%>
 		    </div>
 		</div>
 	    </div>
@@ -367,7 +388,7 @@
 	</fieldset>
 	<fieldset class="cbi-section" id="mptcpovervpn">
 	    <legend><%:MPTCP over VPN settings%></legend>
-	    <div class="cbi-section-descr"><%:MPTCP over VPN should be used only when Multipath TCP is blocked on a connection.%></div>
+	    <div class="cbi-section-descr"><%:MPTCP over VPN should be used only when Multipath TCP is blocked on a connection.%> <%:Only work with Shadowsocks as proxy.%></div>
 	    <div class="cbi-value">
 		<label class="cbi-value-title"><%:MPTCP over VPN%></label>
 		<div class="cbi-value-field">
@@ -449,7 +470,7 @@
 			<%
 			    iffind=0
 			    for _, ifacea in ipairs(ifaces) do
-				if not (ifacea == "lo" or ifacea == "6in4-omr6in4" or ifacea == "mlvpn0" or ifacea:match("^ifb.*") or ifacea:match("^sit.*") or ifacea:match("^gre.*") or ifacea:match("^ip6.*") or ifacea:match("^teql.*") or ifacea:match("^erspan.*") or ifacea:match("^tun.*")) and device_notvirtual(ifacea) then
+				if not (ifacea == "lo" or ifacea == "6in4-omr6in4" or ifacea == "mlvpn0" or ifacea:match("^ifb.*") or ifacea:match("^sit.*") or ifacea:match("^gre.*") or ifacea:match("^ip6.*") or ifacea:match("^teql.*") or ifacea:match("^erspan.*") or ifacea:match("^tun.*") or ifacea:match("^bond.*")) and device_notvirtual(ifacea) then
 				    if uci:get("network",ifname,"proto") ~= "macvlan" then
 			%>
 			<option value="<%=ifacea%>"<% if uci:get("network",ifname,"ifname") == ifacea then iffind = 1 %> selected="selected"<% end %>><%=ifacea%></option>
@@ -554,7 +575,7 @@
 			    <select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.masterintf" name="cbid.network.<%=ifname%>.masterintf" size="1">
 			<%
 			    for _, ifacea in ipairs(ifaces) do
-				if not (ifacea == "lo" or ifacea == "6in4-omr6in4" or ifacea:match("^ifb.*") or ifacea:match("^sit.*") or ifacea:match("^gre.*") or ifacea:match("^ip6.*") or ifacea:match("^teql.*") or ifacea:match("^erspan.*") or ifacea:match("^tun.*")) and device_notvirtual(ifacea) then
+				if not (ifacea == "lo" or ifacea == "6in4-omr6in4" or ifacea:match("^ifb.*") or ifacea:match("^sit.*") or ifacea:match("^gre.*") or ifacea:match("^ip6.*") or ifacea:match("^teql.*") or ifacea:match("^erspan.*") or ifacea:match("^tun.*") or ifacea:match("^bond.*")) and device_notvirtual(ifacea) then
 			%>
 			<option value="<%=ifacea%>"<% if uci:get("network",ifname,"masterintf") == ifacea then %> selected="selected"<% end %>><%=ifacea%></option>
 			<%
@@ -606,7 +627,7 @@
 				end
 			    end
 			    for _, ifacea in ipairs(ifaces) do
-				if not (ifacea == "lo" or ifacea == "6in4-omr6in4" or ifacea == "mlvpn0" or ifacea:match("^ifb.*") or ifacea:match("^sit.*") or ifacea:match("^gre.*") or ifacea:match("^ip6.*") or ifacea:match("^teql.*") or ifacea:match("^erspan.*") or ifacea:match("^tun.*")) and device_notvirtual(ifacea) then
+				if not (ifacea == "lo" or ifacea == "6in4-omr6in4" or ifacea == "mlvpn0" or ifacea:match("^ifb.*") or ifacea:match("^sit.*") or ifacea:match("^gre.*") or ifacea:match("^ip6.*") or ifacea:match("^teql.*") or ifacea:match("^erspan.*") or ifacea:match("^tun.*") or ifacea:match("^bond.*")) and device_notvirtual(ifacea) then
 			%>
 				<option value="<%=ifacea%>"<% if realifname == ifacea then iffind = 1 %> selected="selected"<% end %>><%=ifacea%></option>
 			<%
@@ -770,16 +791,10 @@
 			    <select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.device.modemmanager" name="cbid.network.<%=ifname%>.device.modemmanager" size="1">
 			<%
 			    iffind=0
-			    iftty = luci.sys.exec("/usr/bin/mmcli -L")
-			    for listtty in iftty:gmatch("([^\r\n]*)[\r\n]") do
-				modemid = luci.util.trim(luci.sys.exec("echo '" .. listtty .. "' | awk -F' ' '{print $1}' | awk -F/ '{print $6}'"))
-				if modemid ~= '' then
-				    modeminfo = luci.sys.exec("/usr/bin/mmcli -m " .. modemid .. " --output-keyvalue")
-				    tty = luci.util.trim(luci.sys.exec("echo '" .. modeminfo .. "' | grep 'modem.generic.device ' | awk -F': ' '{print $2}'"))
+			    for _, tty in ipairs(alltty) do
 			%>
 			<option value="<%=tty%>"<% if uci:get("network",ifname,"device") == tty then iffind = 1 %> selected="selected"<% end %>><%=tty%></option>
 			<%
-				end
 			    end
 			    if iffind == 0 and uci:get("network",ifname,"device") ~= nil then
 			%>
@@ -956,7 +971,7 @@
 		<select class="cbi-section-create-name" name="add_interface_ifname">
 			<%
 			    for _, ifacea in ipairs(ifaces) do
-				if not (ifacea == "lo" or ifacea == "6in4-omr6in4" or ifacea == "mlvpn0" or ifacea:match("^ifb.*") or ifacea:match("^sit.*") or ifacea:match("^gre.*") or ifacea:match("^ip6.*") or ifacea:match("^teql.*") or ifacea:match("^erspan.*")) and device_notvirtual(ifacea) then
+				if not (ifacea == "lo" or ifacea == "6in4-omr6in4" or ifacea == "mlvpn0" or iface == "bond0" or ifacea:match("^ifb.*") or ifacea:match("^sit.*") or ifacea:match("^gre.*") or ifacea:match("^ip6.*") or ifacea:match("^teql.*") or ifacea:match("^erspan.*")) and device_notvirtual(ifacea) then
 			%>
 			<option value="<%=ifacea%>"><%=ifacea%></option>
 			<%

@@ -176,8 +176,8 @@ function wizard_add()
 		ucic:set("sqm","wan" .. i,"verbosity","5")
 		ucic:set("sqm","wan" .. i,"download","0")
 		ucic:set("sqm","wan" .. i,"upload","0")
-		ucic:set("sqm","wan" .. i,"iqdisc_opts","autorate-ingress nat dual-dsthost")
-		ucic:set("sqm","wan" .. i,"eqdisc_opts","nat dual-srchost")
+		ucic:set("sqm","wan" .. i,"iqdisc_opts","autorate-ingress dual-dsthost")
+		ucic:set("sqm","wan" .. i,"eqdisc_opts","dual-srchost")
 		ucic:save("sqm")
 		ucic:commit("sqm")
 		
@@ -349,14 +349,16 @@ function wizard_add()
 			ucic:set("sqm",intf,"qdisc","fq_codel")
 			ucic:set("sqm",intf,"script","simple.qos")
 			ucic:set("sqm",intf,"qdisc_advanced","0")
-			ucic:set("sqm",intf,"linklayer","none")
+			ucic:set("sqm",intf,"linklayer","atm")
+			ucic:set("sqm",intf,"overhead","40")
 			ucic:set("sqm",intf,"enabled","0")
 			ucic:set("sqm",intf,"debug_logging","0")
 			ucic:set("sqm",intf,"verbosity","5")
 			ucic:set("sqm",intf,"download","0")
 			ucic:set("sqm",intf,"upload","0")
-			ucic:set("sqm",intf,"iqdisc_opts","autorate-ingress nat dual-dsthost")
-			ucic:set("sqm",intf,"eqdisc_opts","nat dual-srchost")
+			ucic:set("sqm",intf,"iqdisc_opts","autorate-ingress")
+			--ucic:set("sqm",intf,"iqdisc_opts","autorate-ingress dual-dsthost")
+			--ucic:set("sqm",intf,"eqdisc_opts","dual-srchost")
 		end
 
 		if downloadspeed ~= "0" and downloadspeed ~= "" then
@@ -364,6 +366,7 @@ function wizard_add()
 			ucic:set("sqm",intf,"download",math.ceil(downloadspeed*95/100))
 			ucic:set("qos",intf,"download",math.ceil(downloadspeed*95/100))
 		else
+			ucic:delete("network",intf,"downloadspeed")
 			ucic:set("sqm",intf,"download","0")
 			ucic:set("qos",intf,"download","0")
 		end
@@ -372,17 +375,15 @@ function wizard_add()
 			ucic:set("sqm",intf,"upload",math.ceil(uploadspeed*95/100))
 			ucic:set("qos",intf,"upload",math.ceil(uploadspeed*95/100))
 		else
+			ucic:delete("network",intf,"uploadspeed")
 			ucic:set("sqm",intf,"upload","0")
 			ucic:set("qos",intf,"upload","0")
 		end
-		if downloadspeed ~= "0" and downloadspeed ~= "" and uploadspeed ~= "0" and uploadspeed ~= "" then
-			ucic:set("sqm",intf,"enabled","0")
-			ucic:set("qos",intf,"enabled","0")
-		end
 
 		if sqmenabled == "1" then
-			ucic:set("sqm",intf,"iqdisc_opts","autorate-ingress nat dual-dsthost")
-			ucic:set("sqm",intf,"eqdisc_opts","nat dual-srchost")
+			ucic:set("sqm",intf,"iqdisc_opts","autorate-ingress")
+			--ucic:set("sqm",intf,"iqdisc_opts","autorate-ingress dual-dsthost")
+			--ucic:set("sqm",intf,"eqdisc_opts","dual-srchost")
 			ucic:set("sqm",intf,"enabled","1")
 			ucic:set("qos",intf,"enabled","1")
 		else
@@ -509,6 +510,18 @@ function wizard_add()
 	local country = luci.http.formvalue("country") or "world"
 	ucic:set("openmptcprouter","settings","country",country)
 	ucic:save("openmptcprouter")
+
+	-- Get DNS64
+	local dns64 = luci.http.formvalue("dns64") or "0"
+	ucic:set("openmptcprouter","settings","dns64",dns64)
+	ucic:save("openmptcprouter")
+	if dns64 == "1" then
+		ucic:set("unbound","ub_main","dns64","1")
+		ucic:set("unbound","ub_main","validator","0")
+	else
+		ucic:set("unbound","ub_main","dns64","0")
+	
+	end
 
 	-- Get Proxy set by default
 	local default_proxy = luci.http.formvalue("default_proxy") or "shadowsocks"
@@ -895,12 +908,12 @@ function wizard_add()
 		luci.sys.call("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
 		--luci.sys.call("/etc/init.d/ubond restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/mptcpovervpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/openvpnbonding restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/dsvpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/omr-tracker start >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
-		luci.sys.call("/etc/init.d/mptcpovervpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/v2ray restart >/dev/null 2>/dev/null")
 		luci.http.redirect(luci.dispatcher.build_url("admin/system/" .. menuentry:lower() .. "/status"))
@@ -988,6 +1001,22 @@ function settings_add()
 	local disablegwping = luci.http.formvalue("disablegwping") or "0"
 	ucic:set("openmptcprouter","settings","disablegwping",disablegwping)
 
+	-- VPS timeout
+	local status_vps_timeout = luci.http.formvalue("status_vps_timeout") or "1"
+	ucic:set("openmptcprouter","settings","status_vps_timeout",status_vps_timeout)
+
+	-- IP timeout
+	local status_getip_timeout = luci.http.formvalue("status_getip_timeout") or "1"
+	ucic:set("openmptcprouter","settings","status_getip_timeout",status_getip_timeout)
+
+	-- Enable/disable loop detection
+	local disableloopdetection = luci.http.formvalue("disableloopdetection") or "0"
+	ucic:set("openmptcprouter","settings","disableloopdetection",disableloopdetection)
+
+	-- Enable/disable http test
+	local disableserverhttptest = luci.http.formvalue("disableserverhttptest") or "0"
+	ucic:set("openmptcprouter","settings","disableserverhttptest",disableserverhttptest)
+
 	-- Enable/disable renaming intf
 	local disableintfrename = luci.http.formvalue("disableintfrename") or "0"
 	ucic:set("openmptcprouter","settings","disableintfrename",disableintfrename)
@@ -997,8 +1026,12 @@ function settings_add()
 	ucic:set("openmptcprouter","settings","defaultgw",disabledefaultgw)
 
 	-- Enable/disable tracebox
-	local tracebox = luci.http.formvalue("tracebox") or "1"
+	local tracebox = luci.http.formvalue("disabletracebox") or "1"
 	ucic:set("openmptcprouter","settings","tracebox",tracebox)
+
+	-- Enable/disable ModemManager
+	local modemmanager = luci.http.formvalue("disablemodemmanager") or "1"
+	ucic:set("openmptcprouter","settings","modemmanager",modemmanager)
 
 	-- Enable/disable server ping
 	local disableserverping = luci.http.formvalue("disableserverping") or "0"
@@ -1007,6 +1040,10 @@ function settings_add()
 	-- Enable/disable shadowsocks udp
 	local shadowsocksudp = luci.http.formvalue("shadowsocksudp") or "0"
 	ucic:set("openmptcprouter","settings","shadowsocksudp",shadowsocksudp)
+
+	-- Enable/disable nDPI
+	local ndpi = luci.http.formvalue("ndpi") or "1"
+	ucic:set("openmptcprouter","settings","ndpi",ndpi)
 
 	-- Enable/disable fast open
 	local disablefastopen = luci.http.formvalue("disablefastopen") or "0"
@@ -1069,6 +1106,13 @@ function settings_add()
 		ucic:set("openmptcprouter","settings","scaling_governor",scaling_governor)
 	end
 
+	-- Enable/disable Qualcomm Shortcut FE
+	local sfe_enabled = luci.http.formvalue("sfe_enabled") or "0"
+	ucic:set("openmptcprouter","settings","sfe_enabled",sfe_enabled)
+	local sfe_bridge = luci.http.formvalue("sfe_bridge") or "0"
+	ucic:set("openmptcprouter","settings","sfe_bridge",sfe_bridge)
+
+
 	ucic:save("openmptcprouter")
 	ucic:commit("openmptcprouter")
 
@@ -1087,7 +1131,7 @@ function update_vps()
 	local update_vps = luci.http.formvalue("flash") or ""
 	if update_vps ~= "" then
 		local ut = require "luci.util"
-		local result = ut.ubus("openmptcprouter", "update_vps", {})
+		local result = ut.ubus("openmptcprouter", "updateVPS", {})
 	end
 	return
 end

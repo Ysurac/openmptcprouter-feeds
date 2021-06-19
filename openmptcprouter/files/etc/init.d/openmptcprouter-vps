@@ -173,7 +173,7 @@ _set_wireguard_vps() {
 		local interface=$1
 		proto=$(uci -q get network.${interface}.proto)
 		if [ "$proto" = "wireguard" ]; then
-			ip="$(uci -q get network.${interface}.addresses)"
+			ip="$(uci -q get network.${interface}.addresses | cut -d/ -f1)"
 			key="$(uci -q get network.${interface}.public_key)"
 			if [ -z "$ipskey" ]; then
 				ipskey='{"ip": "'$ip'", "key": "'$key'"}'
@@ -185,8 +185,12 @@ _set_wireguard_vps() {
 	config_load network
 	config_foreach _get_wg_ipskey interface
 	local settings
-	settings='{"peers": ['$ipskey']}'
-	echo $(_set_json "wireguard" "$settings")
+	if [ -n "$ipskey" ]; then
+		settings='{"peers": ['$ipskey']}'
+		echo $(_set_json "wireguard" "$settings")
+	else
+		echo 1
+	fi
 }
 
 get_openvpn_key() {
@@ -560,7 +564,6 @@ _get_gre_tunnel() {
 					set shadowsocks-libev.oip${i}server=server
 					set shadowsocks-libev.oip${i}server.label="Server with public IP $publicaddr"
 					set shadowsocks-libev.oip${i}server.server_port="$ssport"
-					set shadowsocks-libev.oip${i}server.disabled="1"
 					set shadowsocks-libev.oip${i}server.server="$(uci -q get shadowsocks-libev.sss0.server)"
 					set shadowsocks-libev.oip${i}server.method="$(uci -q get shadowsocks-libev.sss0.method)"
 					set shadowsocks-libev.oip${i}server.key="$(uci -q get shadowsocks-libev.sss0.key)"
@@ -585,6 +588,9 @@ _get_gre_tunnel() {
 					set shadowsocks-libev.oip${i}_rule.local_default='bypass'
 					set shadowsocks-libev.oip${i}_rule.redir_tcp="oip${i}"
 				EOF
+				if [ "$(uci -q get shadowsocks-libev.oip${i}server.disabled)" = "" ]; then
+					uci -q set shadowsocks-libev.oip${i}server.disabled="1"
+				fi
 			fi
 			i=$((i+1))
 		done
@@ -822,8 +828,8 @@ _set_vpn_ip() {
 	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} | awk -F'[ /]+' '{print $3}')
 	vpnip_remote_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.localip')"
 	vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep via | grep -v default | grep -v / | grep -v metric | awk '{print $1}' | tr -d "\n")
-	[ -z "$vpnip_remote" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep kernel | awk '{print $1}' | tr -d "\n")
-	[ -z "$vpnip_remote" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep "proto static src" | awk '{print $3}' | tr -d "\n")
+	[ -z "$vpnip_remote" ] && [ -n "$vpnifname" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep kernel | awk '{print $1}' | tr -d "\n")
+	[ -z "$vpnip_remote" ] && [ -n "$vpnifname" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep "proto static src" | awk '{print $3}' | tr -d "\n")
 	[ -z "$vpnip_remote" ] && vpnip_remote=$(ifstatus omrvpn | jsonfilter -e '@.route[0].nexthop')
 	ula="$(uci -q get network.globals.ula_prefix)"
 	ula_current="$(echo "$vps_config" | jsonfilter -q -e '@.ip6in4.ula')"
@@ -1100,13 +1106,21 @@ _set_vps_firewall() {
 	vpsfwlist=$(echo $fw_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')
 	settings='{"name" : "open router"}'
 	fw_list=$(_set_json "shorewalllist" "$settings")
-	vpsfwlist="$vpsfwlist\n$(echo $fw_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')"
+	if [ -n "$vpsfwlist" ]; then
+		vpsfwlist="$vpsfwlist\n$(echo $fw_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')"
+	else
+		vpsfwlist="$(echo $fw_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')"
+	fi
 	settings='{"name" : "redirect router","ipproto" : "ipv6"}'
 	fw6_list=$(_set_json "shorewalllist" "$settings")
 	vpsfw6list=$(echo $fw6_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')
 	settings='{"name" : "open router","ipproto" : "ipv6"}'
 	fw6_list=$(_set_json "shorewalllist" "$settings")
-	vpsfw6list="$vpsfw6list\n$(echo $fw6_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')"
+	if [ -n "$vpsfw6list" ]; then
+		vpsfw6list="$vpsfw6list\n$(echo $fw6_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')"
+	else
+		vpsfw6list="$(echo $fw6_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')"
+	fi
 	config_load firewall
 	config_foreach _vps_firewall_redirect_port redirect
 	config_foreach _vps_firewall_redirect_port rule
@@ -1800,7 +1814,7 @@ _config_service() {
 		[ -z "$(_set_openvpn_vps)" ] && error=1
 		[ -z "$(_set_mlvpn_vps)" ] && error=1
 		_set_vps_firewall
-		_set_wireguard_vps
+		[ -z "$(_set_wireguard_vps)" ] && error=1
 	fi
 	_backup_list
 	redirect_port="0"

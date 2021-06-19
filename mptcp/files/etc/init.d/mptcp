@@ -10,7 +10,7 @@ USE_PROCD=1
 . /lib/functions/network.sh
 
 global_multipath_settings() {
-	local multipath mptcp_path_manager mptcp_schdeduler mptcp_debug congestion mptcp_checksum mptcp_syn_retries mptcp_fullmesh_num_subflows mptcp_fullmesh_create_on_err mptcp_ndiffports_num_subflows
+	local multipath mptcp_path_manager mptcp_schdeduler mptcp_debug congestion mptcp_checksum mptcp_syn_retries mptcp_fullmesh_num_subflows mptcp_fullmesh_create_on_err mptcp_ndiffports_num_subflows mptcp_rr_cwnd_limited mptcp_rr_num_segments
 	local multipath_status=0
 	config_load network
 	config_get multipath globals multipath
@@ -23,6 +23,8 @@ global_multipath_settings() {
 	config_get mptcp_fullmesh_num_subflows globals mptcp_fullmesh_num_subflows
 	config_get mptcp_fullmesh_create_on_err globals mptcp_fullmesh_create_on_err
 	config_get mptcp_ndiffports_num_subflows globals mptcp_ndiffports_num_subflows
+	config_get mptcp_rr_cwnd_limited globals mptcp_rr_cwnd_limited
+	config_get mptcp_rr_num_segments globals mptcp_rr_num_segments
 	
 	[ "$multipath" = "enable" ] && multipath_status=1
 
@@ -37,6 +39,8 @@ global_multipath_settings() {
 	[ -z "$mptcp_fullmesh_num_subflows" ] || sysctl -qw /sys/module/mptcp_fullmesh/parameters/num_subflows="$mptcp_fullmesh_num_subflows"
 	[ -z "$mptcp_fullmesh_create_on_err" ] || sysctl -qw /sys/module/mptcp_fullmesh/parameters/create_on_err="$mptcp_fullmesh_create_on_err"
 	[ -z "$mptcp_ndiffports_num_subflows" ] || sysctl -qw /sys/module/mptcp_ndiffports/parameters/num_subflows="$mptcp_ndiffports_num_subflows"
+	[ -z "$mptcp_rr_cwnd_limited" ] || sysctl -qw /sys/module/mptcp_rr/parameters/cwnd_limited="$mptcp_rr_cwnd_limited"
+	[ -z "$mptcp_rr_num_segments" ] || sysctl -qw /sys/module/mptcp_rr/parameters/num_segments="$mptcp_rr_num_segments"
 }
 
 interface_macaddr_count() {
@@ -112,6 +116,7 @@ interface_multipath_settings() {
 	[ "$mode" != "off" ] && {
 		[ -n "$mptcpintf" ] && mptcpintf="$mptcpintf $iface"
 		[ -z "$mptcpintf" ] && mptcpintf="$iface"
+		[ -z "$mptcpmintf" ] && mptcpmintf="$config"
 		uci -q set network.${config}.defaultroute=0
 		uci -q set network.${config}.peerdns=0
 	}
@@ -238,7 +243,7 @@ interface_multipath_settings() {
 			EOF
 		else
 			#echo "Add routes for $ipaddr table $id"
-			ip rule add from $ipaddr table $id pref 0
+			[ -n "$ipaddr" ] && ip rule add from $ipaddr table $id pref 0
 			ip route replace $network/$netmask dev $iface scope link metric $id 2>&1 >/dev/null
 			ip route replace $network/$netmask dev $iface scope link table $id 2>&1 >/dev/null
 			ip route replace default via $gateway dev $iface table $id 2>&1 >/dev/null
@@ -384,9 +389,9 @@ add_route() {
 	config_get interface "$1" interface
 	iface=$(ifstatus "$interface" | jsonfilter -q -e '@["l3_device"]')
 	[ -n "$(echo $iface | grep '@')" ] && iface=$(ifstatus "$interface" | jsonfilter -q -e '@["device"]')
-	routeset="$routeset dev $iface"
+	[ -n "$iface" ] && routeset="$routeset dev $iface"
 	logger -t "MPTCP" "Add route $routeset"
-	ip route replace $routeset 2>&1 >/dev/null
+	[ -n "$routeset" ] && ip route replace $routeset 2>&1 >/dev/null
 }
 
 add_route6() {
@@ -405,9 +410,9 @@ add_route6() {
 	config_get interface "$1" interface
 	iface=$(ifstatus "$interface" | jsonfilter -q -e '@["l3_device"]')
 	[ -n "$(echo $iface | grep '@')" ] && iface=$(ifstatus "$interface" | jsonfilter -q -e '@["device"]')
-	routeset="$routeset dev $iface"
+	[ -n "$iface" ] && routeset="$routeset dev $iface"
 	logger -t "MPTCP" "Add IPv6 route $routeset"
-	ip -6 route replace $routeset 2>&1 >/dev/null
+	[ -n "$routeset" ] && ip -6 route replace $routeset 2>&1 >/dev/null
 }
 
 remove() {
@@ -431,6 +436,7 @@ start_service() {
 	}
 
 	mptcpintf=""
+	mptcpmintf=""
 	master=""
 	count="0"
 	config_load openmptcprouter
@@ -455,7 +461,7 @@ start_service() {
 	config_foreach add_route route6
 	# If no master is defined, one interface is defined as master
 	if [ "$master" = "" ] && [ "$intf" = "" ]; then
-		intfmaster="$(echo $mptcpintf | cut -d' ' -f1 | tr -d '\n')"
+		intfmaster="$mptcpmintf"
 		[ "$intfmaster" != "" ] && {
 			logger -t "MPTCP" "No master multipath defined, setting it to $intfmaster"
 			uci -q set network.${intfmaster}.multipath="master"

@@ -149,11 +149,13 @@ ss_rules6_iptchains_init() {
 }
 
 ss_rules6_iptchains_init_mark() {
-	ip6tables-restore -w --noflush <<-EOF
-		*mangle
-		-A PREROUTING -m set --match-set ss_rules6_dst_bypass_all dst -j MARK --set-mark 0x6539
-		COMMIT
-	EOF
+	if [ "$(ip6tables -w -t mangle -L PREROUTING | grep ss_rules6_dst_bypass_all)" = "" ]; then
+		ip6tables-restore -w --noflush <<-EOF
+			*mangle
+			-A PREROUTING -m set --match-set ss_rules6_dst_bypass_all dst -j MARK --set-mark 0x6539
+			COMMIT
+		EOF
+	fi
 }
 
 
@@ -257,7 +259,7 @@ ss_rules6_iptchains_mkprerules() {
 	local proto="$1"
 
 	if [ -z "$o_ifnames" ]; then
-		echo "-I PREROUTING 1 -p $proto -j ssr6_${rule}_pre_src"
+		echo "-A PREROUTING -p $proto -j ssr6_${rule}_pre_src"
 	else
 		echo $o_ifnames \
 			| tr ' ' '\n' \

@@ -1,0 +1,43 @@
+#!/bin/sh
+. /lib/functions.sh
+
+intf=$1
+
+timeout=$(uci -q get openmptcprouter.settings.status_getip_timeout)
+[ -z "$timeout" ] && timeout="1"
+
+get_ip_from_server() {
+	serverport=$(uci -q get openmptcprouter.$1.port)
+	get_ip() {
+		getip="$(curl -s -k -6 -m ${timeout} --interface $intf https://$serverip:$serverport/clienthost)"
+		[ -n "$getip" ] && getip=$(echo $getip | jsonfilter -e '@.client_host')
+		if [ -n "$(echo "$getip" | grep :)" ]; then
+			ip=$getip
+			break
+		fi
+	}
+	config_list_foreach $1 ip get_ip
+	[ -n "$ip" ] && break
+}
+
+get_ip_from_website() {
+	check_ipv6_website="$(uci -q get openmptcprouter.settings.check_ipv6_website)"
+	[ -z "$check_ipv6_website" ] && check_ipv6_website="http://ipv6.openmptcprouter.com"
+	checkip=$(echo $check_ipv6_website | sed -e 's/https:\/\///' -e 's/http:\/\///' | xargs dig +short AAAA | tr -d "\n")
+	ipset add ss_rules6_dst_bypass_all $checkip > /dev/null 2>&1
+	getip="$(curl -s -6 -m ${timeout} --interface $intf $check_ipv6_website)"
+	ipset del ss_rules6_dst_bypass_all $checkip > /dev/null 2>&1
+	if [ -n "$(echo "$getip" | grep :)" ]; then
+		ip=$getip
+		break
+	fi
+}
+
+[ -z "$intf" ] && return
+if [ -n "$(ip -6 a show dev $intf)" ]; then
+	ip=""
+	config_load openmptcprouter
+	config_foreach get_ip_from_server server
+	[ -z "$ip" ] && get_ip_from_website
+	echo $ip
+fi

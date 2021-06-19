@@ -282,7 +282,7 @@ return view.extend({
 		fwtool.addLimitBurstOption(s);
 
 		o = s.taboption('advanced', form.Flag, 'v2ray', _('Use V2Ray'),
-			_('Forwards ports from server using V2Ray proxy (if enabled) instead of VPN'));
+			_('Forward a port (not a range) from server using V2Ray proxy (if enabled) instead of VPN'));
 		o.modalonly = true;
 		o.editable = true;
 		o.depends({ src: 'vpn', '!contains': true });

@@ -143,9 +143,6 @@ start_service() {
 		uci -q batch <<-EOF > /dev/null
 			del_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
 			add_list dhcp.@dnsmasq[0].server='114.114.114.114'
-			add_list dhcp.@dnsmasq[0].server="223.5.5.5"
-			add_list dhcp.@dnsmasq[0].server="223.6.6.6"
-			add_list dhcp.@dnsmasq[0].server="180.76.76.76"
 			set dhcp.@dnsmasq[0].dnsseccheckunsigned='0'
 			delete dhcp.@dnsmasq[0].dnssec='1'
 			commit dhcp
@@ -154,13 +151,27 @@ start_service() {
 		uci -q batch <<-EOF > /dev/null
 			add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
 			del_list dhcp.@dnsmasq[0].server='114.114.114.114'
-			add_list dhcp.@dnsmasq[0].server="223.5.5.5"
-			add_list dhcp.@dnsmasq[0].server="223.6.6.6"
-			add_list dhcp.@dnsmasq[0].server="180.76.76.76"
 			set dhcp.@dnsmasq[0].dnsseccheckunsigned='1'
 			set dhcp.@dnsmasq[0].dnssec='1'
 			commit dhcp
 		EOF
+	fi
+
+	if [ "$(uci -q get openmptcprouter.settings.sfe_enabled)" = "1" ]; then
+		[ -z "$(lsmod | grep fast_classifier)" ] && modprobe fast_classifier 2>&1 >/dev/null
+		if [ "$(uci -q get openmptcprouter.settings.sfe_bridge)" = "1" ]; then
+			echo 1 >/sys/fast_classifier/skip_to_bridge_ingress
+		else
+			echo 0 >/sys/fast_classifier/skip_to_bridge_ingress
+		fi
+		if [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" = "0" ]; then
+			sfe_ipv6=$(cat /sys/sfe_ipv6/debug_dev)
+			[ ! -f /dev/sfe_ipv6 ] && mknod /dev/sfe_ipv6 c $sfe_ipv6 0 2>&1 >/dev/null
+		else
+			rm -f /dev/sfe_ipv6
+		fi
+	else
+		rmmod fast_classifier 2>&1 >/dev/null
 	fi
 
 	if [ "$(uci -q get rpcd.@rpcd[0].socket)" != "/var/run/ubus/ubus.sock" ]; then
@@ -169,6 +180,10 @@ start_service() {
 			commit rpcd
 		EOF
 		/etc/init.d/rpcd restart 2>&1 >/dev/null
+	fi
+	if [ "$(pgrep ModemManager)" = "" ] && [ -f /etc/init.d/modemmanager ] && [ -n "$(uci -q show network | grep modemmanager)" ] && [ "$(uci -q openmptcprouter.settings.modemmanager)" != "0" ]; then
+		_log "Can't find ModemManager, start it..."
+		/etc/init.d/modemmanager restart
 	fi
 }
 
