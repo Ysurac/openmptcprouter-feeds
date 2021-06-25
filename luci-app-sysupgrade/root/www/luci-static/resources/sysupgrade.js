@@ -164,7 +164,7 @@ function upgrade_check() {
     hide("#status_box");
     hide("#server_div");
     set_status("info", _("Searching for upgrades"), true);
-    fetch(data.url + "/api/versions")
+    fetch(data.url + "/api/versions?v=" + Date.now())
         .then(response => response.json())
         .then(response => {
             var branches = response["branches"]
@@ -348,7 +348,7 @@ function download_image() {
 }
 
 function server_request() {
-    fetch(data.url + "/api/build", {
+    fetch(data.url + "/api/build?v=" + Date.now(), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
