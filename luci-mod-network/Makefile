@@ -1,10 +1,10 @@
 #
 # Copyright (C) 2008-2014 The LuCI Team <luci@lists.subsignal.org>
-# Copyright (C) 2020 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+# Copyright (C) 2020-2021 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 #
 # This is free software, licensed under the Apache License, Version 2.0 .
 #
-# From https://github.com/openwrt/luci/commit/f5c04e1a2e173f536597f220db0380cc08869e8e
+# From https://github.com/openwrt/luci/commit/b88157e69a060ade618e48b30947729310935d61
 
 include $(TOPDIR)/rules.mk
 
