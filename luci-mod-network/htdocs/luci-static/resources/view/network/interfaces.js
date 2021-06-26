@@ -942,14 +942,14 @@ return view.extend({
 				o.datatype = 'uinteger';
 				o.placeholder = '0';
 				
-				o = nettools.replaceOptions(s,'advanced', form.ListValue, 'multipath', _('Multipath setting'), _('Only one interface must be set as Master.'));
+				o = nettools.replaceOption(s,'advanced', form.ListValue, 'multipath', _('Multipath setting'), _('Only one interface must be set as Master.'));
 				o.value('on',_('Enabled'));
 				o.value('off',_('Disabled'));
 				o.value('master',_('Master'));
 				o.value('backup',_('Backup'));
 				o.default = 'off';
 
-				o = nettools.replaceOptions(s,'advanced', form.Value, 'addlatency', _('Additional latency'));
+				o = nettools.replaceOption(s,'advanced', form.Value, 'addlatency', _('Additional latency'));
 				o.datatype = 'uinteger';
 				o.default = '0';
 
