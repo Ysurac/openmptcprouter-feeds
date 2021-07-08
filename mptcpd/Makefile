@@ -8,12 +8,14 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mptcpd
-PKG_VERSION:=0.5.1
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://github.com/intel/mptcpd/releases/download/v$(PKG_VERSION)
-PKG_HASH:=0ee4418880f20a1a2eff5c54c26185a75092cb44cbabe0fa3f25a2c5886459e7
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_URL:=https://github.com/intel/mptcpd.git
+PKG_SOURCE_VERSION:=0e7175adf721c95a3bd742be77cb85e0b47138cd
+PKG_VERSION:=0.7-$(PKG_SOURCE_VERSION)
 PKG_RELEASE:=1
 PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+
+PKG_FIXUP:=autoreconf
 
 PKG_FORTIFY_SOURCE:=2
 PKG_INSTALL:=1
@@ -43,6 +45,7 @@ endef
 define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(CP) $(PKG_INSTALL_DIR)/usr/bin/mptcpd $(1)/usr/bin/mptcpd
+	$(CP) $(PKG_INSTALL_DIR)/usr/bin/mptcpize $(1)/usr/bin/mptcpize
 	$(INSTALL_DIR) $(1)/usr/include/mptcpd
 	$(CP) $(PKG_INSTALL_DIR)/usr/include/mptcpd/*.h $(1)/usr/include/
 	$(INSTALL_DIR) $(1)/usr/lib/mptcpd
