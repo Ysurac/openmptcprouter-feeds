@@ -47,7 +47,7 @@ interface_macaddr_count() {
 	local intf="$1"
 	local dmacaddr="$2"
 	config_get macaddr "$intf" macaddr
-	[ "$macaddr" = "$dmacaddr" ] && nbmac=$((nbmac+1))
+	[ "$macaddr" = "$dmacaddr" ] && [ -z "$(echo $intf | grep '\.')" ] && nbmac=$((nbmac+1))
 }
 
 interface_max_metric() {
@@ -85,7 +85,10 @@ interface_multipath_settings() {
 	local enabled
 
 	config_get enabled "$config" auto "1"
-	config_get iface "$config" ifname
+	network_get_device iface $config
+	[ -z "$iface" ] && network_get_physdev iface $config
+	[ -z "$iface" ] && config_get iface "$config" device
+	[ -z "$iface" ] && config_get iface "$config" ifname
 	config_get txqueuelen "$config" txqueuelen
 	[ -z "$iface" ] && iface=$(ifstatus "$config" | jsonfilter -q -e '@["l3_device"]')
 	[ -n "$(echo $iface | grep '@')" ] && iface=$(ifstatus "$config" | jsonfilter -q -e '@["device"]')
@@ -349,7 +352,10 @@ interface_multipath_settings() {
 }
 
 load_interfaces() {
-	config_get ifname "$1" ifname
+	network_get_device ifname $1
+	[ -z "$ifname" ] && network_get_physdev ifname $1
+	[ -z "$ifname" ] && config_get ifname "$1" device
+	[ -z "$ifname" ] && config_get ifname "$1" ifname
 	config_get multipath "$1" multipath ""
 	[ -z "$multipath" ] && multipath="$(uci -q get openmptcprouter.$1.multipath)"
 	[ "$multipath" != "off" ] && [ "$multipath" != "" ] && interfaces=" ${ifname} ${interfaces}"

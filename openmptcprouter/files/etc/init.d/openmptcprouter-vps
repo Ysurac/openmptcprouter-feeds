@@ -539,7 +539,7 @@ _get_gre_tunnel() {
 					set network.oip${i}.label="Tunnel for $publicaddr"
 					set network.oip${i}.proto=static
 					set network.oip${i}.nohostroute='1'
-					set network.oip${i}.ifname="@oip${i}gre"
+					set network.oip${i}.device="@oip${i}gre"
 					set network.oip${i}.ipv6='0'
 					set network.oip${i}.defaultroute='0'
 					set network.oip${i}.multipath='off'
@@ -823,7 +823,7 @@ _set_vpn_ip() {
 	local settings
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
-	vpnifname="$(uci -q get network.omrvpn.ifname)"
+	vpnifname="$(uci -q get network.omrvpn.device)"
 	vpnip_local_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.remoteip')"
 	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} | awk -F'[ /]+' '{print $3}')
 	vpnip_remote_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.localip')"
@@ -850,7 +850,7 @@ _set_client2client() {
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 	c2cips="$(echo "$vps_config" | jsonfilter -q -e '@.client2client.lanips[0]')"
-	vpnifname="$(uci -q get network.omrvpn.ifname)"
+	vpnifname="$(uci -q get network.omrvpn.device)"
 	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} | awk -F'[ /]+' '{print $3}' | tr -d "\n")
 	vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep via | grep -v default | grep -v / | grep -v metric | awk '{print $1}' | tr -d "\n")
 	for lanip in $c2cips; do
@@ -909,7 +909,7 @@ _vps_firewall_redirect_port() {
 			if [ "$v2ray" = "0" ]; then
 				checkfw=""
 				if [ "$family" = "ipv4" ]; then
-					if [ "$src_dip" = "" ]; then
+					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
 						checkfw=$(echo "$vpsfwlist" | grep "$src_dport	# OMR $username redirect router $src_dport port $protoi")
 					else
 						comment=""
@@ -921,7 +921,7 @@ _vps_firewall_redirect_port() {
 						checkfw=$(echo "$vpsfwlist" | grep "# OMR $username redirect router $src_dport port $protoi${comment}")
 					fi
 				else
-					if [ "$src_dip" = "" ]; then
+					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
 						checkfw=$(echo "$vpsfw6list" | grep "$src_dport	# OMR $username redirect router $src_dport port $protoi")
 					else
 						comment=""
@@ -935,7 +935,7 @@ _vps_firewall_redirect_port() {
 					_set_json "shorewallopen" "$settings"
 				fi
 				if [ "$family" = "ipv4" ]; then
-					if [ "$src_dip" = "" ]; then
+					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
 						vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR $username redirect router $src_dport port $protoi")
 						[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR redirect router $src_dport port $protoi")
 					else
@@ -946,7 +946,7 @@ _vps_firewall_redirect_port() {
 						[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR redirect router $src_dport port $protoi${comment}")
 					fi
 				else
-					if [ "$src_dip" = "" ]; then
+					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
 						vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR $username redirect router $src_dport port $protoi")
 						[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR redirect router $src_dport port $protoi")
 					else
@@ -959,7 +959,7 @@ _vps_firewall_redirect_port() {
 			else
 				checkfw=""
 				if [ "$family" = "ipv4" ]; then
-					if [ "$src_dip" = "" ]; then
+					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
 						checkfw=$(echo "$vpsfwlist" | grep "$src_dport	# OMR $username open router $src_dport port $protoi")
 					else
 						comment=""
@@ -971,7 +971,7 @@ _vps_firewall_redirect_port() {
 						checkfw=$(echo "$vpsfwlist" | grep "# OMR $username open router $src_dport port $protoi${comment}")
 					fi
 				else
-					if [ "$src_dip" = "" ]; then
+					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
 						checkfw=$(echo "$vpsfw6list" | grep "$src_dport	# OMR $username open router $src_dport port $protoi")
 					else
 						comment=""
@@ -987,7 +987,7 @@ _vps_firewall_redirect_port() {
 					_set_json "v2rayredirect" "$settings"
 				fi
 				if [ "$family" = "ipv4" ]; then
-					if [ "$src_dip" = "" ]; then
+					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
 						vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR $username open router $src_dport port $protoi")
 						[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR open router $src_dport port $protoi")
 					else
@@ -998,7 +998,7 @@ _vps_firewall_redirect_port() {
 						[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR open router $src_dport port $protoi${comment}")
 					fi
 				else
-					if [ "$src_dip" = "" ]; then
+					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
 						vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR $username open router $src_dport port $protoi")
 						[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR open router $src_dport port $protoi")
 					else
