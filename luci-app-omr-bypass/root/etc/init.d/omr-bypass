@@ -100,12 +100,14 @@ _bypass_domain() {
 		fi
 		if [ "$(uci -q get dhcp.@dnsmasq[0].ipset | grep /$domain/)" = "" ]; then
 			uci -q add_list dhcp.@dnsmasq[0].ipset="/$domain/omr_dst_bypass_$intf,omr6_dst_bypass_$intf"
+			add_domains="true"
 		else
 			dnsmasqipset=$(uci -q get dhcp.@dnsmasq[0].ipset | sed 's/ /\n/g')
 			for dnsipset in $dnsmasqipset; do
 				if [ "$(echo $dnsipset | cut -d/ -f2)" = "$domain" ]; then
 					uci -q del_list dhcp.@dnsmasq[0].ipset=$dnsipset
 					uci -q add_list dhcp.@dnsmasq[0].ipset="$dnsipset,omr_dst_bypass_$intf,omr6_dst_bypass_$intf"
+					add_domains="true"
 				fi
 			done
 		fi
@@ -680,6 +682,7 @@ boot() {
 start_service() {
 	#local count
 	logger -t "omr-bypass" "Starting OMR-ByPass..."
+	add_domains="false"
 	config_load omr-bypass
 	config_foreach _add_proto proto
 	disableipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
@@ -797,11 +800,11 @@ start_service() {
 	config_foreach _bypass_proto dpis
 	uci -q commit omr-bypass
 
-	[ -z "$RELOAD" ] && {
+	[ -z "$RELOAD" ] && [ "$add_domains" = "true" ] && {
 		logger -t "omr-bypass" "Restart dnsmasq..."
 		/etc/init.d/dnsmasq restart
 	}
-	[ -n "$RELOAD" ] && {
+	[ -n "$RELOAD" ] && [ "$add_domains" = "true" ] && {
 		logger -t "omr-bypass" "Reload dnsmasq..."
 		/etc/init.d/dnsmasq reload
 	}
