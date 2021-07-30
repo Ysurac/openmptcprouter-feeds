@@ -292,12 +292,24 @@ function wizard_add()
 			ucic:set("network",intf,"masterintf",masterintf)
 		elseif typeintf == "" and ifname ~= "" and (proto == "static" or proto == "dhcp" or proto == "dhcpv6") then
 			ucic:set("network",intf,"device",ifname)
+			ucic:set("network",intf .. "_dev","device")
+			ucic:set("network",intf .. "_dev","name",ifname)
 		elseif typeintf == "" and device ~= "" and proto == "ncm" then
 			ucic:set("network",intf,"device",device_ncm)
+			ucic:set("network",intf .. "_dev","device")
+			ucic:set("network",intf .. "_dev","name",device_ncm)
 		elseif typeintf == "" and device ~= "" and proto == "qmi" then
 			ucic:set("network",intf,"device",device_qmi)
+			ucic:set("network",intf .. "_dev","device")
+			ucic:set("network",intf .. "_dev","name",device_qmi)
 		elseif typeintf == "" and device ~= "" and proto == "modemmanager" then
 			ucic:set("network",intf,"device",device_manager)
+			ucic:set("network",intf .. "_dev","device")
+			ucic:set("network",intf .. "_dev","name",device_manager)
+		elseif typeintf == "" and ifname ~= "" and proto == "static" then
+			ucic:set("network",intf,"device",ifname)
+			ucic:set("network",intf .. "_dev","device")
+			ucic:set("network",intf .. "_dev","name",ifname)
 		end
 		if proto == "pppoe" then
 			ucic:set("network",intf,"pppd_options","persist maxfail 0")
