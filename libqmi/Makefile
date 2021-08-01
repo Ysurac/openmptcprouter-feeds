@@ -10,10 +10,10 @@ include $(TOPDIR)/rules.mk
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://gitlab.freedesktop.org/mobile-broadband/libqmi.git
-PKG_SOURCE_VERSION:=29fab8a1d4496ca5a1d32bb486013b1868a718ba
+PKG_SOURCE_VERSION:=311af7e04cd16a732ec799969b1e8d9c5334ac27
 PKG_NAME:=libqmi
 PKG_VERSION:=1.29.3-$(PKG_SOURCE_VERSION)
-PKG_RELEASE:=10
+PKG_RELEASE:=11
 
 PKG_FIXUP:=autoreconf
 PKG_MAINTAINER:=Nicholas Smith <nicholas.smith@telcoantennas.com.au>
