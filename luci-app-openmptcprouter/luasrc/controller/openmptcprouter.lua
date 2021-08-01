@@ -38,6 +38,17 @@ function interface_from_device(dev)
 	return ""
 end
 
+function uci_device_from_interface(intf)
+	intfname = ucic:get("network",intf,"device")
+	deviceuci = ""
+	ucic:foreach("network", "device", function(s)
+		if intfname == ucic:get("network",s[".name"],"name") then
+		    deviceuci = s[".name"]
+		end
+	end)
+	return deviceuci
+end
+
 function wizard_add()
 	local gostatus = true
 	
@@ -292,24 +303,34 @@ function wizard_add()
 			ucic:set("network",intf,"masterintf",masterintf)
 		elseif typeintf == "" and ifname ~= "" and (proto == "static" or proto == "dhcp" or proto == "dhcpv6") then
 			ucic:set("network",intf,"device",ifname)
-			ucic:set("network",intf .. "_dev","device")
-			ucic:set("network",intf .. "_dev","name",ifname)
+			if uci_device_from_interface(intf) == "" then
+				ucic:set("network",intf .. "_dev","device")
+				ucic:set("network",intf .. "_dev","name",ifname)
+			end
 		elseif typeintf == "" and device ~= "" and proto == "ncm" then
 			ucic:set("network",intf,"device",device_ncm)
-			ucic:set("network",intf .. "_dev","device")
-			ucic:set("network",intf .. "_dev","name",device_ncm)
+			if uci_device_from_interface(intf) == "" then
+				ucic:set("network",intf .. "_dev","device")
+				ucic:set("network",intf .. "_dev","name",device_ncm)
+			end
 		elseif typeintf == "" and device ~= "" and proto == "qmi" then
 			ucic:set("network",intf,"device",device_qmi)
-			ucic:set("network",intf .. "_dev","device")
-			ucic:set("network",intf .. "_dev","name",device_qmi)
+			if uci_device_from_interface(intf) == "" then
+				ucic:set("network",intf .. "_dev","device")
+				ucic:set("network",intf .. "_dev","name",device_qmi)
+			end
 		elseif typeintf == "" and device ~= "" and proto == "modemmanager" then
 			ucic:set("network",intf,"device",device_manager)
-			ucic:set("network",intf .. "_dev","device")
-			ucic:set("network",intf .. "_dev","name",device_manager)
+			if uci_device_from_interface(intf) == "" then
+				ucic:set("network",intf .. "_dev","device")
+				ucic:set("network",intf .. "_dev","name",device_manager)
+			end
 		elseif typeintf == "" and ifname ~= "" and proto == "static" then
 			ucic:set("network",intf,"device",ifname)
-			ucic:set("network",intf .. "_dev","device")
-			ucic:set("network",intf .. "_dev","name",ifname)
+			if uci_device_from_interface(intf) == "" then
+				ucic:set("network",intf .. "_dev","device")
+				ucic:set("network",intf .. "_dev","name",ifname)
+			end
 		end
 		if proto == "pppoe" then
 			ucic:set("network",intf,"pppd_options","persist maxfail 0")
