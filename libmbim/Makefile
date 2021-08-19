@@ -10,10 +10,10 @@ include $(TOPDIR)/rules.mk
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://gitlab.freedesktop.org/mobile-broadband/libmbim.git
-PKG_SOURCE_VERSION:=c90c7c5b877de6e413b4833aaf1a42d2d128b051
+PKG_SOURCE_VERSION:=2cc7444cad59fcadd017905235d876367478ec9b
 
 PKG_NAME:=libmbim
-PKG_VERSION:=1.25.3-$(PKG_SOURCE_VERSION)
+PKG_VERSION:=1.26.0-$(PKG_SOURCE_VERSION)
 PKG_RELEASE:=10
 
 PKG_MAINTAINER:=Nicholas Smith <nicholas.smith@telcoantennas.com.au>
