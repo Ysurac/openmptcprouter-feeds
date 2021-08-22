@@ -10,7 +10,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://gitlab.freedesktop.org/mobile-broadband/libmbim.git
-PKG_SOURCE_VERSION:=2cc7444cad59fcadd017905235d876367478ec9b
+PKG_SOURCE_VERSION:=af15f1cd3c1e586a35c3ff439312b2ae8edbf35e
 
 PKG_NAME:=libmbim
 PKG_VERSION:=1.26.0-$(PKG_SOURCE_VERSION)
@@ -24,6 +24,8 @@ PKG_BUILD_PARALLEL:=1
 
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/nls.mk
+
+MESON_BUILD_DIR:=$(PKG_BUILD_DIR)/contrib/meson/openwrt-build
 
 CONFIGURE_ARGS += \
 	--disable-static \
