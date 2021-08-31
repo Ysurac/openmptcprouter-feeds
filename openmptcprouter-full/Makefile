@@ -28,7 +28,7 @@ MY_DEPENDS := \
     iperf3-ssl luci-app-iperf \
     arptables \
     bind-dig \
-    libnetfilter-conntrack ebtables ebtables-utils ip-full \
+    libnetfilter-conntrack ebtables ebtables-utils ip-full nstat \
     iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace iptables-mod-conntrack-extra iptables-mod-account \
     kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra iptables-mod-extra conntrack \
     iptables-mod-ipsec kmod-crypto-authenc kmod-ipsec kmod-ipsec4 kmod-ipsec6 kmod-ipt-ipsec \
