@@ -221,6 +221,8 @@ _get_ss_redir() {
 	[ "$cf_fast_open" = "1" ] && fast_open="true"
 	config_get cf_no_delay $1 no_delay
 	[ "$cf_no_delay" = "1" ] && no_delay="true"
+	config_get cf_mptcp $1 mptcp
+	[ "$cf_mptcp" = "1" ] && mptcp="true"
 }
 
 _get_ss_server() {
@@ -253,10 +255,12 @@ _set_ss_server_vps() {
 	current_obfs_type="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.obfs_type')"
 	current_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.fast_open')"
 	current_no_delay="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.no_delay')"
+	current_mptcp="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.mptcp')"
 	
 	ebpf="false"
 	fast_open="false"
 	no_delay="false"
+	mptcp="false"
 	obfs="false"
 	obfs_plugin="v2ray"
 	obfs_type="http"
@@ -264,9 +268,9 @@ _set_ss_server_vps() {
 	config_foreach _get_ss_redir ss_redir
 	config_foreach _get_ss_server server
 
-	if [ "$current_obfs_plugin" != "$obfs_plugin" ] || [ "$current_obfs_type" != "$obfs_type" ] || [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_key" != "$key" ] || [ "$current_ebpf" != "$ebpf" ] || [ "$current_obfs" != "$obfs" ] || [ "$current_fast_open" != "$fast_open" ] || [ "$current_no_delay" != "$no_delay" ]; then
+	if [ "$current_mptcp" != "$mptcp" ] || [ "$current_obfs_plugin" != "$obfs_plugin" ] || [ "$current_obfs_type" != "$obfs_type" ] || [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_key" != "$key" ] || [ "$current_ebpf" != "$ebpf" ] || [ "$current_obfs" != "$obfs" ] || [ "$current_fast_open" != "$fast_open" ] || [ "$current_no_delay" != "$no_delay" ]; then
 		local settings
-		settings='{"port": '$port',"method":"'$method'","fast_open":'$fast_open',"reuse_port":true,"no_delay":'$no_delay',"mptcp":true,"key":"'$key'","ebpf":'$ebpf',"obfs":'$obfs',"obfs_plugin":"'$obfs_plugin'","obfs_type":"'$obfs_type'"}'
+		settings='{"port": '$port',"method":"'$method'","fast_open":'$fast_open',"reuse_port":true,"no_delay":'$no_delay',"mptcp":'$mptcp',"key":"'$key'","ebpf":'$ebpf',"obfs":'$obfs',"obfs_plugin":"'$obfs_plugin'","obfs_type":"'$obfs_type'"}'
 		_set_json "shadowsocks" "$settings"
 	fi
 }
@@ -736,7 +740,7 @@ _set_mptcp_vps() {
 	syn_retries="$(uci -q get network.globals.mptcp_syn_retries)"
 	congestion="$(uci -q get network.globals.congestion)"
 	[ -z "$congestion" ] && congestion="bbr"
-	if [ "$mptcp_enabled_current" != "$mptcp_enabled" ] || [ "$checksum_current" != "$checksum" ] || [ "$path_manager_current" != "$path_manager" ] || [ "$scheduler_current" != "$scheduler" ] || [ "$syn_retries_current" != "$syn_retries" ] || [ "$congestion_control_current" != "$congestion" ]; then
+	if [ "$mptcp_enabled_current" != "$mptcp_enabled" ] || [ "$checksum_current" != "$checksum" ] || ([ "$path_manager_current" != "" ] && [ "$path_manager_current" != "$path_manager" ]) || ([ "$scheduler_current" != "" ] && [ "$scheduler_current" != "$scheduler" ]) || ([ "$syn_retries_current" != "" ] && [ "$syn_retries_current" != "$syn_retries" ]) || [ "$congestion_control_current" != "$congestion" ]; then
 		settings='{"enabled" : "'$mptcp_enabled'", "checksum": "'$checksum'","path_manager": "'$path_manager'","scheduler": "'$scheduler'","syn_retries": "'$syn_retries'","congestion_control": "'$congestion'"}'
 		echo $(_set_json "mptcp" "$settings")
 	else
@@ -1542,13 +1546,18 @@ _set_config_from_vps() {
 	congestion="$(echo "$vps_config" | jsonfilter -q -e '@.network.congestion_control')"
 	uci -q batch <<-EOF >/dev/null
 		set network.globals.multipath=$mptcp_enabled
-		set network.globals.mptcp_path_manager=$mptcp_path_manager
-		set network.globals.mptcp_scheduler=$mptcp_scheduler
 		set network.globals.mptcp_checksum=$mptcp_checksum
-		set network.globals.mptcp_syn_retries=$mptcp_syn_retries
 		set network.globals.congestion=$congestion
 		commit network
 	EOF
+	if [ "$mptcp_path_manager" != "" ] && [ "$mptcp_scheduler" != "" ] && [ "$mptcp_syn_retries" != "" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set network.globals.mptcp_path_manager=$mptcp_path_manager
+			set network.globals.mptcp_scheduler=$mptcp_scheduler
+			set network.globals.mptcp_syn_retries=$mptcp_syn_retries
+			commit network
+		EOF
+	fi
 
 	# Check if server get an IPv6, if not disable IPv6 on OMR
 	vps_ipv6_addr="$(echo "$vps_config" | jsonfilter -q -e '@.network.ipv6')"

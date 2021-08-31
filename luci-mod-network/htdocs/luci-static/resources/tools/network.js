@@ -662,6 +662,10 @@ return baseclass.extend({
 		o.placeholder = '0';
 		o.datatype = 'uinteger';
 
+		o = this.replaceOption(s, 'devadvanced', form.Value, 'ttl', _('Force TTL'), _('Some LTE providers detect tethering by inspecting packet TTL values'));
+		o.placeholder = '65';
+		o.datatype = 'uinteger';
+
 		o = this.replaceOption(s, 'devgeneral', form.Flag, 'ipv6', _('Enable IPv6'));
 		o.migrate = false;
 		o.default = o.enabled;

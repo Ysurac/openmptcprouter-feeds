@@ -284,6 +284,7 @@ function wizard_add()
 		local sqmenabled = luci.http.formvalue("cbid.sqm.%s.enabled" % intf) or "0"
 		local multipath = luci.http.formvalue("cbid.network.%s.multipath" % intf) or "on"
 		local lan = luci.http.formvalue("cbid.network.%s.lan" % intf) or "0"
+		local ttl = luci.http.formvalue("cbid.network.%s.ttl" % intf) or ""
 		if typeintf ~= "" then
 			if typeintf == "normal" then
 				typeintf = ""
@@ -338,6 +339,13 @@ function wizard_add()
 		if proto ~= "other" then
 			ucic:set("network",intf,"proto",proto)
 		end
+
+		uci_device = uci_device_from_interface(intf)
+		if uci_device == "" then
+			uci_device = intf .. "_dev"
+		end
+		ucic:set("network",uci_device,"ttl",ttl)
+
 		ucic:set("network",intf,"apn",apn)
 		ucic:set("network",intf,"pincode",pincode)
 		ucic:set("network",intf,"delay",delay)

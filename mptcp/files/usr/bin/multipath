@@ -12,8 +12,6 @@ if [ -d "/proc/sys/net/mptcp" ]; then
         fi
 else
         echo "Your device don't support multipath-TCP."
-        echo "You have to install the pached kernel to use MPTCP."
-        echo "See http://multipath-tcp.org/ for details"
         exit 1
 fi
 
@@ -22,7 +20,11 @@ case $1 in
         echo "          Multipath-TCP configuration tool"
         echo "show/update flags:"
         echo "  multipath [device]"
-        echo "  multipath device {on | off | backup | handover}"
+        if [ -f /proc/sys/net/mptcp/mptcp_enabled ]; then
+                echo "  multipath device {on | off | backup }"
+        else
+                echo "  multipath device {on | off | signal | backup }"
+        fi
         echo
         echo "show established conections: -c"
         echo "show fullmesh info: -f"
@@ -32,14 +34,21 @@ case $1 in
         echo "will allow a subflow to be established across this interface, but only be used"
         echo "as backup. Handover-flag indicates that his interface is not used at all (even "
         echo "no subflow being established), as long as there are other interfaces available."
-        echo "See http://multipath-tcp.org/ for details"
         echo
         exit 0 ;;
    "-c")
-        cat /proc/net/mptcp_net/mptcp
+        if [ -f /proc/net/mptcp_net/mptcp ]; then
+            cat /proc/net/mptcp_net/mptcp
+        else
+            ss -M
+        fi
         exit 0;;
    "-f")
-        cat /proc/net/mptcp_fullmesh
+        if [ -f /proc/net/mptcp_fullmesh ]; then
+            cat /proc/net/mptcp_fullmesh
+        else
+            ip mptcp endpoint | grep fullmesh
+        fi
         exit 0;;
    "-k")
         if [ -f /proc/sys/net/mptcp/mptcp_enabled ]; then
@@ -65,7 +74,6 @@ case $1 in
             echo Debugmode: `cat /proc/sys/net/mptcp/mptcp_debug`
         fi
         echo
-        echo See http://multipath-tcp.org/ for details
         exit 0 ;;
    "")
         for ifpath in /sys/class/net/*; do
@@ -128,7 +136,8 @@ else
                         exit 0;;
                 "signal")
                         [ -n "$ID" ] && ip mptcp endpoint delete id $ID 2>&1 >/dev/null
-                        ip mptcp endpoint add $IP dev $DEVICE signal subflow fullmesh
+                        #ip mptcp endpoint add $IP dev $DEVICE signal subflow fullmesh
+                        ip mptcp endpoint add $IP dev $DEVICE signal
                         exit 0;;
                 "backup")
                         [ -n "$ID" ] && ip mptcp endpoint delete id $ID 2>&1 >/dev/null
