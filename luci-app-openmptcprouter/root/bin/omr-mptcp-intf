@@ -12,9 +12,17 @@ get_mptcp_from_server() {
 	get_mptcp() {
 		serverip=$1
 		if [ "$(echo $serverip | grep :)" ]; then
-			support="$(curl -s -k -6 -m ${timeout} --interface $intf https://[$serverip]:$serverport/mptcpsupport)"
+			if [ -f /proc/sys/net/mptcp/enabled ]; then
+				support="$(mptcpize run curl -s -k -6 -m ${timeout} --interface $intf https://[$serverip]:$serverport/mptcpsupport)"
+			else
+				support="$(curl -s -k -6 -m ${timeout} --interface $intf https://[$serverip]:$serverport/mptcpsupport)"
+			fi
 		else
-			support="$(curl -s -k -4 -m ${timeout} --interface $intf https://$serverip:$serverport/mptcpsupport)"
+			if [ -f /proc/sys/net/mptcp/enabled ]; then
+				support="$(mptcpize run curl -s -k -4 -m ${timeout} --interface $intf https://$serverip:$serverport/mptcpsupport)"
+			else
+				support="$(curl -s -k -4 -m ${timeout} --interface $intf https://$serverip:$serverport/mptcpsupport)"
+			fi
 		fi
 		[ -n "$support" ] && {
 			support=$(echo $support | jsonfilter -e '@.mptcp')
@@ -56,8 +64,10 @@ get_mptcp_from_website6() {
 support=""
 config_load openmptcprouter
 config_foreach get_mptcp_from_server server
-[ -z "$support" ] && [ -n "$(ip -4 a show dev $intf)" ] && get_mptcp_from_website
-[ -z "$support" ] && [ -n "$(ip -6 a show dev $intf)" ] && get_mptcp_from_website6
+if [ ! -f /proc/sys/net/mptcp/enabled ] && [ -z "$support" ]; then
+	[ -n "$(ip -4 a show dev $intf)" ] && get_mptcp_from_website
+	[ -n "$(ip -6 a show dev $intf)" ] && get_mptcp_from_website6
+fi
 if [ "$support" = "working" ]; then
 	echo "MPTCP enabled"
 elif [ "$support" = "not working" ]; then
