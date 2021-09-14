@@ -524,7 +524,7 @@ _get_gre_tunnel() {
 			peeraddr="$(echo $tunnel | jsonfilter -q -e '@.remote_ip')"
 			ipaddr="$(echo $tunnel | jsonfilter -q -e '@.local_ip')"
 			publicaddr="$(echo $tunnel | jsonfilter -q -e '@.public_ip')"
-			if [ "$peeraddr" != "" ] && [ "$ipaddr" != "" ] && [ "$publicaddr" != "" ] && [ "$vpnip_local" != "" ] && ([ "$(uci -q get network.oip${i}.ipaddr)" != "$peeraddr" ] || [ "$(uci -q get network.oip${i}.ipaddr)" != "$ipaddr" ] || [ "$(uci -q get network.oip${i}gre.ipaddr)" != "$vpnip_local" ]); then
+			if [ "$peeraddr" != "" ] && [ "$ipaddr" != "" ] && [ "$publicaddr" != "" ] && [ "$vpnip_local" != "" ] && ([ "$(uci -q get network.oip${i}.ipaddr)" != "$peeraddr" ] || [ "$(uci -q get network.oip${i}.gateway)" != "$ipaddr" ] || [ "$(uci -q get network.oip${i}gre.ipaddr)" != "$vpnip_local" ]); then
 				uci -q batch <<-EOF >/dev/null
 					set network.oip${i}gre=interface
 					set network.oip${i}gre.label="GRE tunnel for $publicaddr"
@@ -559,10 +559,10 @@ _get_gre_tunnel() {
 				for intf in $allintf; do
 					uci -q add_list firewall.zone_vpn.network=$intf
 				done
-				uci -q batch <<-EOF >/dev/null
-					add_list firewall.zone_vpn.network="oip${i}gre"
-					add_list firewall.zone_vpn.network="oip${i}"
-				EOF
+				[ -z "$(uci -q get firewall.zone_vpn.network | grep oip${i}gre)" ] && {
+					uci -q add_list firewall.zone_vpn.network="oip${i}gre"
+					uci -q add_list firewall.zone_vpn.network="oip${i}"
+				}
 				ssport="$(echo $tunnel | jsonfilter -q -e '@.shadowsocks_port')"
 				uci -q batch <<-EOF >/dev/null
 					set shadowsocks-libev.oip${i}server=server
@@ -1121,7 +1121,7 @@ _set_vps_firewall() {
 	#'
 
 	fwservername=$1
-	[ -z "$servername" ] && servername=$fwservername
+	[ -n "$fwservername" ] && servername=$fwservername
 	[ -z "$fwservername" ] && fwservername=$servername
 	[ "$(uci -q get openmptcprouter.${fwservername}.nofwredirect)" = "1" ] && return
 	[ -z "$(uci -q get openmptcprouter.${fwservername}.username)" ] && return
