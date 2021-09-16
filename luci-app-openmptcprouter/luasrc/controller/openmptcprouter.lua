@@ -880,7 +880,7 @@ function wizard_add()
 
 	local dsvpn_key = luci.http.formvalue("dsvpn_key")
 	if dsvpn_key ~= "" then
-		ucic:set("dsvpn","vpn","port","65011")
+		ucic:set("dsvpn","vpn","port","65401")
 		ucic:set("dsvpn","vpn","key",dsvpn_key)
 		ucic:set("dsvpn","vpn","localip","10.255.251.2")
 		ucic:set("dsvpn","vpn","remoteip","10.255.251.1")
