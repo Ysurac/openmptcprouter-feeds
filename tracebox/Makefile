@@ -14,11 +14,13 @@ PKG_RELEASE:=2
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.bz2
 PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
-PKG_SOURCE_URL:=https://github.com/tracebox/tracebox.git
+PKG_SOURCE_URL:=https://github.com/dreibh/tracebox.git
+#https://github.com/tracebox/tracebox.git
 PKG_MAINTAINER:=Ycarus <ycarus@zugaina.org>
 
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_VERSION:=v0.4.4
+PKG_SOURCE_VERSION:=4ad40ea43354038a04ad90aedae5874801c223e8
+#v0.4.4
 
 PKG_FIXUP:=autoreconf
 
@@ -43,7 +45,7 @@ CONFIGURE_VARS += \
 
 CONFIGURE_ARGS += --enable-sniffer --enable-curl --with-libpcap="$(STAGING_DIR)/usr/include/"
 
-EXTRA_CPPFLAGS += -fpermissive -Wno-variadic-macros
+EXTRA_CPPFLAGS += -fpermissive -Wno-variadic-macros -std=c++14
 
 TARGET_CFLAGS += -D_GNU_SOURCE
 
