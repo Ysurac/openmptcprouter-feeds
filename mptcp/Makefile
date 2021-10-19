@@ -24,6 +24,7 @@ define Package/mptcp
   DEPENDS:=+ip +iptables +ethtool +ipcalc
   KCONFIG:=\
       CONFIG_MPTCP=y \
+      CONFIG_MPTCP_IPV6=y \
       CONFIG_MPTCP_BINDER=y \
       CONFIG_MPTCP_FULLMESH=y \
       CONFIG_MPTCP_NDIFFPORTS=y \
