@@ -16,6 +16,9 @@ global_multipath_settings() {
 	config_get multipath globals multipath
 	config_get mptcp_path_manager globals mptcp_path_manager
 	config_get mptcp_scheduler globals mptcp_scheduler
+	config_get mptcp_subflows globals mptcp_subflows "3"
+	config_get mptcp_add_addr_accepted globals mptcp_add_addr_accepted "1"
+	config_get mptcp_add_addr_timeout globals mptcp_add_addr_timeout "120"
 	config_get mptcp_debug globals mptcp_debug
 	config_get congestion globals congestion
 	config_get mptcp_checksum globals mptcp_checksum
@@ -29,18 +32,25 @@ global_multipath_settings() {
 	[ "$multipath" = "enable" ] && multipath_status=1
 
 	# Global MPTCP configuration
-	sysctl -qw net.mptcp.mptcp_enabled="$multipath_status"
-	[ -z "$mptcp_path_manager" ] || sysctl -qw net.mptcp.mptcp_path_manager="$mptcp_path_manager"
-	[ -z "$mptcp_scheduler" ] || sysctl -qw net.mptcp.mptcp_scheduler="$mptcp_scheduler"
+	if [ -f /proc/sys/net/mptcp/mptcp_enabled ]; then
+		sysctl -qw net.mptcp.mptcp_enabled="$multipath_status"
+		[ -z "$mptcp_path_manager" ] || sysctl -qw net.mptcp.mptcp_path_manager="$mptcp_path_manager"
+		[ -z "$mptcp_scheduler" ] || sysctl -qw net.mptcp.mptcp_scheduler="$mptcp_scheduler"
+		[ -z "$mptcp_checksum" ] || sysctl -qw net.mptcp.mptcp_checksum="$mptcp_checksum"
+		[ -z "$mptcp_debug" ] || sysctl -qw net.mptcp.mptcp_debug="$mptcp_debug"
+		[ -z "$mptcp_syn_retries" ] || sysctl -qw net.mptcp.mptcp_syn_retries="$mptcp_syn_retries"
+		[ -z "$mptcp_fullmesh_num_subflows" ] || sysctl -qw /sys/module/mptcp_fullmesh/parameters/num_subflows="$mptcp_fullmesh_num_subflows"
+		[ -z "$mptcp_fullmesh_create_on_err" ] || sysctl -qw /sys/module/mptcp_fullmesh/parameters/create_on_err="$mptcp_fullmesh_create_on_err"
+		[ -z "$mptcp_ndiffports_num_subflows" ] || sysctl -qw /sys/module/mptcp_ndiffports/parameters/num_subflows="$mptcp_ndiffports_num_subflows"
+		[ -z "$mptcp_rr_cwnd_limited" ] || sysctl -qw /sys/module/mptcp_rr/parameters/cwnd_limited="$mptcp_rr_cwnd_limited"
+		[ -z "$mptcp_rr_num_segments" ] || sysctl -qw /sys/module/mptcp_rr/parameters/num_segments="$mptcp_rr_num_segments"
+	else
+		sysctl -qw net.mptcp.enabled="$multipath_status"
+		ip mptcp limits set add_addr_accepted $mptcp_add_addr_accepted subflows $mptcp_subflows 2>&1 >/dev/null
+		[ -z "$mptcp_add_addr_timeout" ] || sysctl -qw net.mptcp.add_addr_timeout="$mptcp_add_addr_timeout"
+		[ -z "$mptcp_checksum" ] || sysctl -qw net.mptcp.checksum_enabled="$mptcp_checksum"
+	fi
 	[ -z "$congestion" ] || sysctl -qw net.ipv4.tcp_congestion_control="$congestion"
-	[ -z "$mptcp_checksum" ] || sysctl -qw net.mptcp.mptcp_checksum="$mptcp_checksum"
-	[ -z "$mptcp_debug" ] || sysctl -qw net.mptcp.mptcp_debug="$mptcp_debug"
-	[ -z "$mptcp_syn_retries" ] || sysctl -qw net.mptcp.mptcp_syn_retries="$mptcp_syn_retries"
-	[ -z "$mptcp_fullmesh_num_subflows" ] || sysctl -qw /sys/module/mptcp_fullmesh/parameters/num_subflows="$mptcp_fullmesh_num_subflows"
-	[ -z "$mptcp_fullmesh_create_on_err" ] || sysctl -qw /sys/module/mptcp_fullmesh/parameters/create_on_err="$mptcp_fullmesh_create_on_err"
-	[ -z "$mptcp_ndiffports_num_subflows" ] || sysctl -qw /sys/module/mptcp_ndiffports/parameters/num_subflows="$mptcp_ndiffports_num_subflows"
-	[ -z "$mptcp_rr_cwnd_limited" ] || sysctl -qw /sys/module/mptcp_rr/parameters/cwnd_limited="$mptcp_rr_cwnd_limited"
-	[ -z "$mptcp_rr_num_segments" ] || sysctl -qw /sys/module/mptcp_rr/parameters/num_segments="$mptcp_rr_num_segments"
 }
 
 interface_macaddr_count() {
@@ -179,7 +189,7 @@ interface_multipath_settings() {
 		config_get gateway $config gateway
 		config_get netmask $config netmask
 		[ -n "$ipaddr" ] && [ -n "$netmask" ] && netmask=`ipcalc.sh $ipaddr $netmask | sed -n '/PREFIX=/{;s/.*=//;s/ .*//;p;}'`
-		[ -n "$îpaddr" ] && [ -n "$netmask" ] && network=`ipcalc.sh $ipaddr $netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
+		[ -n "$ipaddr" ] && [ -n "$netmask" ] && network=`ipcalc.sh $ipaddr $netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 	elif [ "$proto" != "gre" ]; then
 		network_get_ipaddr ipaddr $config
 		[ -z "$ipaddr" ] && ipaddr=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")

@@ -38,6 +38,17 @@ function interface_from_device(dev)
 	return ""
 end
 
+function uci_device_from_interface(intf)
+	intfname = ucic:get("network",intf,"device")
+	deviceuci = ""
+	ucic:foreach("network", "device", function(s)
+		if intfname == ucic:get("network",s[".name"],"name") then
+		    deviceuci = s[".name"]
+		end
+	end)
+	return deviceuci
+end
+
 function wizard_add()
 	local gostatus = true
 	
@@ -273,6 +284,7 @@ function wizard_add()
 		local sqmenabled = luci.http.formvalue("cbid.sqm.%s.enabled" % intf) or "0"
 		local multipath = luci.http.formvalue("cbid.network.%s.multipath" % intf) or "on"
 		local lan = luci.http.formvalue("cbid.network.%s.lan" % intf) or "0"
+		local ttl = luci.http.formvalue("cbid.network.%s.ttl" % intf) or ""
 		if typeintf ~= "" then
 			if typeintf == "normal" then
 				typeintf = ""
@@ -292,12 +304,34 @@ function wizard_add()
 			ucic:set("network",intf,"masterintf",masterintf)
 		elseif typeintf == "" and ifname ~= "" and (proto == "static" or proto == "dhcp" or proto == "dhcpv6") then
 			ucic:set("network",intf,"device",ifname)
+			if uci_device_from_interface(intf) == "" then
+				ucic:set("network",intf .. "_dev","device")
+				ucic:set("network",intf .. "_dev","name",ifname)
+			end
 		elseif typeintf == "" and device ~= "" and proto == "ncm" then
 			ucic:set("network",intf,"device",device_ncm)
+			if uci_device_from_interface(intf) == "" then
+				ucic:set("network",intf .. "_dev","device")
+				ucic:set("network",intf .. "_dev","name",device_ncm)
+			end
 		elseif typeintf == "" and device ~= "" and proto == "qmi" then
 			ucic:set("network",intf,"device",device_qmi)
+			if uci_device_from_interface(intf) == "" then
+				ucic:set("network",intf .. "_dev","device")
+				ucic:set("network",intf .. "_dev","name",device_qmi)
+			end
 		elseif typeintf == "" and device ~= "" and proto == "modemmanager" then
 			ucic:set("network",intf,"device",device_manager)
+			if uci_device_from_interface(intf) == "" then
+				ucic:set("network",intf .. "_dev","device")
+				ucic:set("network",intf .. "_dev","name",device_manager)
+			end
+		elseif typeintf == "" and ifname ~= "" and proto == "static" then
+			ucic:set("network",intf,"device",ifname)
+			if uci_device_from_interface(intf) == "" then
+				ucic:set("network",intf .. "_dev","device")
+				ucic:set("network",intf .. "_dev","name",ifname)
+			end
 		end
 		if proto == "pppoe" then
 			ucic:set("network",intf,"pppd_options","persist maxfail 0")
@@ -305,6 +339,13 @@ function wizard_add()
 		if proto ~= "other" then
 			ucic:set("network",intf,"proto",proto)
 		end
+
+		uci_device = uci_device_from_interface(intf)
+		if uci_device == "" then
+			uci_device = intf .. "_dev"
+		end
+		ucic:set("network",uci_device,"ttl",ttl)
+
 		ucic:set("network",intf,"apn",apn)
 		ucic:set("network",intf,"pincode",pincode)
 		ucic:set("network",intf,"delay",delay)
@@ -839,7 +880,7 @@ function wizard_add()
 
 	local dsvpn_key = luci.http.formvalue("dsvpn_key")
 	if dsvpn_key ~= "" then
-		ucic:set("dsvpn","vpn","port","65011")
+		ucic:set("dsvpn","vpn","port","65401")
 		ucic:set("dsvpn","vpn","key",dsvpn_key)
 		ucic:set("dsvpn","vpn","localip","10.255.251.2")
 		ucic:set("dsvpn","vpn","remoteip","10.255.251.1")

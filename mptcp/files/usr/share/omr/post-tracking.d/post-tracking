@@ -2,6 +2,25 @@ SETROUTE=false
 
 . /lib/functions/network.sh
 
+find_network_device() {
+	local device="${1}"
+	local device_section=""
+
+	check_device() {
+		local cfg="${1}"
+		local device="${2}"
+
+		local type name
+		config_get name "${cfg}" name
+
+		[ "${name}" = "${device}" ] && device_section="${cfg}"
+	}
+
+	config_load network
+	config_foreach check_device device "$(uci -q netwok.${device}.device)"
+	echo "${device_section}"
+}
+
 set_route() {
 	local multipath_config_route interface_gw interface_if
 	INTERFACE=$1
@@ -834,17 +853,17 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE="interface"
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency="$OMR_TRACKER_LATENCY"
 		if [ "$(uci -q get glorytun.vpn.enable)" != "1" ] || [ "$(uci -q get glorytun-udp.vpn.enable)" != "1" ]; then
-			if [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.mtu)" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
-				mtu=$(uci -q get network.$OMR_TRACKER_INTERFACE.mtu)
-				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
+			if [ -n "$(uci -q get network.$(find_network_device ${OMR_TRACKER_INTERFACE}).mtu)" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
+				mtu=$(uci -q get network.$(find_network_device ${OMR_TRACKER_INTERFACE}).mtu)
+				uci -q set openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu=$mtu
 				[ -n "$mtu" ] && ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
 				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
-			elif [ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.mtu)" ] && [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
+			elif [ -z "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu)" ] && [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
 				if [ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ]; then 
 					local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP $serverip)
 					#local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP 8.8.8.8)
 					[ -n "$mtu" ] && {
-						uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
+						uci -q set openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu=$mtu
 						ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
 						uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
 					}
@@ -1082,7 +1101,7 @@ if [ "$multipath_config" = "on" ] || [ "$multipath_config" = "backup" ]; then
 fi
 [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" != "1" ] && {
 	[ "$multipath_status" = "$multipath_config" ] || {
-		if [ "$(sysctl -n net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ]; then
+		if [ "$(sysctl -qn net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ] || [ "$(sysctl -qn net.mptcp.enabled | tr -d '\n')" = "1" ]; then
 			_log "Multipath $OMR_TRACKER_DEVICE switched to $multipath_config"
 			multipath "$OMR_TRACKER_DEVICE" "$multipath_config"
 		fi
@@ -1108,7 +1127,7 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 		#[ -z "$check_ipv6_website" ] && check_ipv6_website="http://ipv6.openmptcprouter.com/"
 		#local ip6addr="$(curl -s -6 -m 2 $check_ipv6_website)"
 		#[ -z "$ip6addr" ] && {
-		#	local ip6addr="$(curl -s -6 -m 2 http://ifconfig.co/)"
+		#	local ip6addr="$(curl -s -6 -m 2 http://ifconfig.me/)"
 		#}
 		#if [ "$(uci -q get openmptcprouter.settings.ipv6_disable)" = "0" ]; then
 		#	if [ -n "$ip6addr" ] && [ "$(uci -q get dhcp.lan.ra_default)" != 1 ]; then
@@ -1188,8 +1207,8 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 					[ -n "$omrtracebox" ] && [ -z "$(echo $omrtracebox | grep error)" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$omrtracebox"
 				}
 				if [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$(uci -q get glorytun.vpn.enable)" != "1" ] && [ "$(uci -q get glorytun-udp.vpn.enable)" != "1" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
-					if [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.mtu)" ]; then
-						mtu=$(uci -q get network.$OMR_TRACKER_INTERFACE.mtu)
+					if [ -n "$(uci -q get network.$(find_network_device ${OMR_TRACKER_INTERFACE}).mtu)" ]; then
+						mtu=$(uci -q get network.$(find_network_device ${OMR_TRACKER_INTERFACE}).mtu)
 						[ -n "$mtu" ] && {
 							uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
 							ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
@@ -1252,10 +1271,10 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 					[ -n "$omrtracebox" ] && [ -z "$(echo $omrtracebox | grep error)" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$omrtracebox"
 				}
 				if [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$(uci -q get glorytun.vpn.enable)" != "1" ] && [ "$(uci -q get glorytun-udp.vpn.enable)" != "1" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
-					if [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.mtu)" ]; then
-						mtu=$(uci -q get network.$OMR_TRACKER_INTERFACE.mtu)
+					if [ -n "$(uci -q get network.$(find_network_device ${OMR_TRACKER_INTERFACE}).mtu)" ]; then
+						mtu=$(uci -q get network.$(find_network_device ${OMR_TRACKER_INTERFACE}).mtu)
 						[ -n "$mtu" ] && {
-							uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
+							uci -q set openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu=$mtu
 							ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
 						}
 					elif [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
@@ -1487,7 +1506,8 @@ if [ "$(pgrep openmptcprouter-vps)" = "" ] && ([ "$(uci -q show openmptcprouter 
 	sleep 5
 fi
 
-if [ "$(pgrep openmptcprouter-vps)" = "" ] && ([ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ] || [ -z "$(iptables-save | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ]); then
+
+if [ "$(pgrep openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && ([ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ] || [ -z "$(iptables-save | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ]); then
 	_log "Set firewall on server"
 	/etc/init.d/openmptcprouter-vps set_vps_firewall >/dev/null 2>&1
 

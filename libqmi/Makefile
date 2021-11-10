@@ -1,22 +1,21 @@
 #
 # Copyright (C) 2016 Velocloud Inc.
 # Copyright (C) 2016 Aleksander Morgado <aleksander@aleksander.es>
-# Copyright (C) 2021 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 #
 # This is free software, licensed under the GNU General Public License v2.
 #
 
 include $(TOPDIR)/rules.mk
 
-PKG_SOURCE_PROTO:=git
-PKG_SOURCE_URL:=https://gitlab.freedesktop.org/mobile-broadband/libqmi.git
-PKG_SOURCE_VERSION:=29fab8a1d4496ca5a1d32bb486013b1868a718ba
 PKG_NAME:=libqmi
-PKG_VERSION:=1.29.3-$(PKG_SOURCE_VERSION)
-PKG_RELEASE:=10
+PKG_VERSION:=1.30.2
+PKG_RELEASE:=$(AUTORELEASE)
 
-PKG_FIXUP:=autoreconf
-PKG_MAINTAINER:=Nicholas Smith <nicholas.smith@telcoantennas.com.au>
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
+PKG_SOURCE_URL:=https://www.freedesktop.org/software/libqmi
+PKG_HASH:=be01ece0ea2c2194cbea5744bf5aaf06c04ba5fb7ec7887a13116c76d114fedd
+
+PKG_MAINTAINER:=Nicholas Smith <nicholas@nbembedded.com>
 
 PKG_INSTALL:=1
 PKG_BUILD_PARALLEL:=1
