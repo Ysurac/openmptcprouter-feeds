@@ -8,12 +8,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=libmbim
-PKG_VERSION:=1.27.3
+PKG_VERSION:=1.26.2
 PKG_RELEASE:=$(AUTORELEASE)
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
-PKG_SOURCE_URL:=https://55860.com/bak
-PKG_HASH:=5f6505ddfe35266d05eba94d968a8d4135f2f1ef15fcc7dbb4f6b5f5335f12bc
+PKG_SOURCE_URL:=https://www.freedesktop.org/software/libmbim
+PKG_HASH:=10c77bf5b5eb8c92ba80e9b519923ad9b898362bc8e1928e2bc9a17eeba649af
 
 PKG_MAINTAINER:=Nicholas Smith <nicholas@nbembedded.com>
 
