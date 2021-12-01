@@ -597,7 +597,7 @@ del_server_route() {
 	remove_route() {
 		local serverip="$1"
 		[ -n "$serverip" ] && serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
-		[ -n "$serverip" ] && _log "Delete default route via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
+		[ -n "$serverip" ] && _log "Delete default route to $serverip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
 		local metric
 		metric=$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)
 		[ -n "$metric" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$serverip" ] && [ -n "$(ip route show $serverip dev $OMR_TRACKER_DEVICE metric $metric)" ] && ip route del $serverip dev $OMR_TRACKER_DEVICE metric $metric >/dev/null 2>&1
@@ -617,11 +617,11 @@ del_server_route6() {
 	remove_route() {
 		local serverip="$1"
 		[ -n "$serverip" ] && serverip="$(resolveip -6 -t 5 $serverip | head -n 1 | tr -d '\n')"
-		[ -n "$serverip" ] && _log "Delete default route via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE"
+		[ -n "$serverip" ] && _log "Delete default route to $serverip via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE"
 		local metric
 		metric=$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)
-		[ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$metric" ] && [ -n "$(ip -6 route show $serverip dev $OMR_TRACKER_DEVICE metric $metric)" ] && ip -6 route del $serverip dev $OMR_TRACKER_DEVICE metric $metric >/dev/null 2>&1
-		[ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$metric" ] && [ -n "$(ip -6 route show $serverip dev $OMR_TRACKER_DEVICE)" ] && ip -6 route del $serverip dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
+		[ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$metric" ] && [ -n "$serverip"] && [ -n "$(ip -6 route show $serverip dev $OMR_TRACKER_DEVICE metric $metric)" ] && ip -6 route del $serverip dev $OMR_TRACKER_DEVICE metric $metric >/dev/null 2>&1
+		[ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$metric" ] && [ -n "$serverip" ] && [ -n "$(ip -6 route show $serverip dev $OMR_TRACKER_DEVICE)" ] && ip -6 route del $serverip dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
 	}
 	config_list_foreach $server ip remove_route
 	if [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
@@ -836,11 +836,13 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 	fi
 	if ([ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]) && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ]; then
 		_log "Tunnel up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
+		[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Current route: $(ip r)"
 		ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE 2>&1 >/dev/null
 		if [ "$(pgrep openmptcprouter-vps)" = "" ]; then
 			/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1
 		fi
 		[ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && conntrack -D -p udp 2>&1 >/dev/null
+		[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "New route: $(ip r)"
 	fi
 
 	# Set VPN MTU

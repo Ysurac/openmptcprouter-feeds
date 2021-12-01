@@ -12,8 +12,9 @@ PKG_NAME:=v2ray-core
 PKG_VERSION:=4.43.0
 PKG_RELEASE:=1
 
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://github.com/v2fly/v2ray-core/archive/v$(PKG_VERSION)
+#PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+PKG_SOURCE:=v$(PKG_VERSION).tar.gz
+PKG_SOURCE_URL:=https://github.com/v2fly/v2ray-core/archive/refs/tags/
 PKG_HASH:=f27b8fe8e1e102b0297339ee368c8b650fde0f949e0d90e1229ff6744f99ba0f
 
 PKG_LICENSE:=MIT
