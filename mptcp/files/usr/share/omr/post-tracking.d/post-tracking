@@ -454,7 +454,7 @@ set_server_all_routes() {
 			config_foreach set_routes_intf interface
 			uintf="$(echo $routesintf | awk '{print $5}')"
 			uintfb="$(echo $routesintfbackup | awk '{print $5}')"
-			if [ -n "$routesintf" ] && ([ "$nbintf" -gt "1" ] && [ "$(ip r show $serverip metric 1 | tr -d '\t' | tr -d '\n')" != "$serverip $routesintf " ]) || ([ "$nbintf" = "1" ] && [ -n "$uintf" ] && [ "$(ip r show $serverip metric 1 | grep $uintf)" = "" ]); then
+			if [ -n "$routesintf" ] && ([ "$nbintf" -gt "1" ] && [ "$(ip r show $serverip metric 1 | tr -d '\t' | sort | tr -d '\n' | sed 's/ *$//')" != "$(echo $serverip $routesintf | sort | sed 's/ *$//')" ]) || ([ "$nbintf" = "1" ] && [ -n "$uintf" ] && [ "$(ip r show $serverip metric 1 | grep $uintf)" = "" ]); then
 				while [ "$(ip r show $serverip | grep -v nexthop | sed 's/ //g' | tr -d '\n')" != "$serverip" ] && [ "$(ip r show $serverip | grep -v nexthop | sed 's/ //g' | tr -d '\n')" != "" ]; do
 					ip r del $serverip
 				done
@@ -500,7 +500,7 @@ set_server_all_routes6() {
 			config_foreach set_routes_intf6 interface
 			uintf="$(echo $routesintf6 | awk '{print $5}')"
 			uintfb="$(echo $routesintfbackup6 | awk '{print $5}')"
-			if [ -n "$routesintf6" ] && ([ "$nbintf6" -gt "1" ] && [ "$(ip -6 r show $serverip metric 1 | tr -d '\t' | tr -d '\n')" != "$serverip $routesintf6 " ]) || ([ "$nbintf6" = "1" ] && [ -n "$uintf" ] && [ "$(ip -6 r show $serverip metric 1 | grep $uintf)" = "" ]); then
+			if [ -n "$routesintf6" ] && ([ "$nbintf6" -gt "1" ] && [ "$(ip -6 r show $serverip metric 1 | tr -d '\t' | sort | tr -d '\n' | sed 's/ *$//')" != "$(echo $serverip $routesintf6 | sort | sed 's/ *$//')" ]) || ([ "$nbintf6" = "1" ] && [ -n "$uintf" ] && [ "$(ip -6 r show $serverip metric 1 | grep $uintf)" = "" ]); then
 				while [ "$(ip -6 r show $serverip | grep -v nexthop | sed 's/ //g' | tr -d '\n')" != "$serverip" ] && [ "$(ip -6 r show $serverip | grep -v nexthop | sed 's/ //g' | tr -d '\n')" != "" ]; do
 					ip -6 r del $serverip
 				done
@@ -988,7 +988,9 @@ if [ "$multipath_config" = "master" ]; then
 			[ -n "$routesbalancing" ] && {
 				([ "$nbintf" -gt "1" ] && [ "$(ip r show default metric 1 | tr -d '\t' | tr -d '\n')" != "default via $routesbalancing " ]) || ([ "$nbintf" = "1" ] && ([ "$(ip r show default metric 1 | grep $OMR_TRACKER_DEVICE)" = "" ] || [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" = "1" ]) && [ -n "$OMR_TRACKER_DEVICE_IP" ]) && {
 					_log "Change in routes, set ip route replace default scope global $routesbalancing (omrvpn_intf: $omrvpn_intf)"
+					[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Current route: $(ip r)"
 					ip route replace default scope global metric 1 $routesbalancing 2>&1 >/dev/null
+					[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "New route: $(ip r)"
 				}
 			}
 			[ -n "$routesbalancing6" ] && {
