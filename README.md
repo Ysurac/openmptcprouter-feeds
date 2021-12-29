@@ -3,7 +3,7 @@
 
 This is the OpenWrt OpenMPTCProuter feed containing all modified and necessary packages to build the OpenMPTCProuter image.
 
-For More information, see [https://github.com/suyuan168/3grouter](https://github.com/suyuan168/3grouter) and [https://www.openmptcprouter.com](https://www.openmptcprouter.com/).
+For More information, see [https://github.com/ysurac/openmptcprouter](https://github.com/ysurac/openmptcprouter) and [https://www.openmptcprouter.com](https://www.openmptcprouter.com/).
 
 
 ## Glorytun
@@ -66,7 +66,7 @@ Added support to gateway set by user for 6in4. Used for IPv6 over the glorytun I
 
 
 ## luci-omr-bypass
-*Source:* [https://github.com/suyuan168/3grouter-feeds/tree/master/luci-app-omr-bypass](https://github.com/suyuan168/3grouter-feeds/tree/master/luci-app-omr-bypass)
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-bypass](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-bypass)
 
 *Description:* Luci interface to bypass domains, IPs and networks with shadowsocks
 
@@ -74,7 +74,7 @@ Domains, IPs, networks and protocol (using DPI) added are bypassed when shadowso
 
 
 ## omr-tracker
-*Source:* [https://github.com/suyuan168/3grouter-feeds/tree/master/omr-tracker](https://github.com/suyuan168/3grouter-feeds/tree/master/omr-tracker)
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-tracker](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-tracker)
 
 *Description:* Track connection status. This check if gateway is up then check if the connection work. If it's not working this execute scripts. This also detect if ShadowSocks is up or not.
 
@@ -82,7 +82,7 @@ This is used for OpenMPTCProuter failover.
 
 
 ## luci-omr-tracker
-*Source:* [https://github.com/suyuan168/3grouter-feeds/tree/master/luci-app-omr-tracker](https://github.com/suyuan168/3grouter-feeds/tree/master/luci-app-omr-tracker)
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-tracker](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-tracker)
 
 *Description:* Luci interface to omr-tracker
 
@@ -90,37 +90,37 @@ Interface to omr-tracker.
 
 
 ## luci-app-iperf
-*Source:* [https://github.com/suyuan168/3grouter-feeds/tree/master/luci-app-iperf](https://github.com/suyuan168/3grouter-feeds/tree/master/luci-app-iperf)
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-iperf](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-iperf)
 
 *Description:* Luci interface to iPerf
 
 
 ## omr-6in4
-*Source:* [https://github.com/suyuan168/3grouter-feeds/tree/master/omr-6in4](https://github.com/suyuan168/3grouter-feeds/tree/master/omr-6in4)
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-6in4](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-6in4)
 
 *Description:* Set tunnel configuration by tracking tunnel configuration.
 
 
 ## omr-update
-*Source:* [https://github.com/suyuan168/3grouter-feeds/tree/master/omr-update](https://github.com/suyuan168/3grouter-feeds/tree/master/omr-update)
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-update](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/omr-update)
 
 *Description:* Update old config with new settings.
 
 
 ## luci-app-mptcp
-*Source:* [https://github.com/suyuan168/3grouter-feeds/tree/master/luci-app-mptcp](https://github.com/suyuan168/3grouter-feeds/tree/master/luci-app-mptcp)
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-mptcp](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-mptcp)
 
 *Description:* Luci interface for all MPTCP settings
 
 
 ## luci-app-openmptcprouter
-*Source:* [https://github.com/suyuan168/3grouter-feeds/tree/master/luci-app-openmptcprouter](https://github.com/suyuan168/3grouter-feeds/tree/master/luci-app-openmptcprouter)
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-openmptcprouter](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-openmptcprouter)
 
 *Description:* Wizard for OpenMPTCProuter settings and status page
 
 
 ## mptcp
-*Source:* [https://github.com/suyuan168/3grouter-feeds/tree/master/mptcp](https://github.com/suyuan168/3grouter-feeds/tree/master/mptcp)
+*Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/mptcp](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/mptcp)
 
 *Description:* This package set all MPTCP settings
 
