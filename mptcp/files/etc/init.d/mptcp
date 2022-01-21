@@ -33,24 +33,24 @@ global_multipath_settings() {
 
 	# Global MPTCP configuration
 	if [ -f /proc/sys/net/mptcp/mptcp_enabled ]; then
-		sysctl -qw net.mptcp.mptcp_enabled="$multipath_status"
-		[ -z "$mptcp_path_manager" ] || sysctl -qw net.mptcp.mptcp_path_manager="$mptcp_path_manager"
-		[ -z "$mptcp_scheduler" ] || sysctl -qw net.mptcp.mptcp_scheduler="$mptcp_scheduler"
-		[ -z "$mptcp_checksum" ] || sysctl -qw net.mptcp.mptcp_checksum="$mptcp_checksum"
-		[ -z "$mptcp_debug" ] || sysctl -qw net.mptcp.mptcp_debug="$mptcp_debug"
-		[ -z "$mptcp_syn_retries" ] || sysctl -qw net.mptcp.mptcp_syn_retries="$mptcp_syn_retries"
-		[ -z "$mptcp_fullmesh_num_subflows" ] || sysctl -qw /sys/module/mptcp_fullmesh/parameters/num_subflows="$mptcp_fullmesh_num_subflows"
-		[ -z "$mptcp_fullmesh_create_on_err" ] || sysctl -qw /sys/module/mptcp_fullmesh/parameters/create_on_err="$mptcp_fullmesh_create_on_err"
-		[ -z "$mptcp_ndiffports_num_subflows" ] || sysctl -qw /sys/module/mptcp_ndiffports/parameters/num_subflows="$mptcp_ndiffports_num_subflows"
-		[ -z "$mptcp_rr_cwnd_limited" ] || sysctl -qw /sys/module/mptcp_rr/parameters/cwnd_limited="$mptcp_rr_cwnd_limited"
-		[ -z "$mptcp_rr_num_segments" ] || sysctl -qw /sys/module/mptcp_rr/parameters/num_segments="$mptcp_rr_num_segments"
+		sysctl -qew net.mptcp.mptcp_enabled="$multipath_status"
+		[ -z "$mptcp_path_manager" ] || sysctl -qew net.mptcp.mptcp_path_manager="$mptcp_path_manager"
+		[ -z "$mptcp_scheduler" ] || sysctl -qew net.mptcp.mptcp_scheduler="$mptcp_scheduler"
+		[ -z "$mptcp_checksum" ] || sysctl -qew net.mptcp.mptcp_checksum="$mptcp_checksum"
+		[ -z "$mptcp_debug" ] || sysctl -qew net.mptcp.mptcp_debug="$mptcp_debug"
+		[ -z "$mptcp_syn_retries" ] || sysctl -qew net.mptcp.mptcp_syn_retries="$mptcp_syn_retries"
+		[ -z "$mptcp_fullmesh_num_subflows" ] || sysctl -qew /sys/module/mptcp_fullmesh/parameters/num_subflows="$mptcp_fullmesh_num_subflows"
+		[ -z "$mptcp_fullmesh_create_on_err" ] || sysctl -qew /sys/module/mptcp_fullmesh/parameters/create_on_err="$mptcp_fullmesh_create_on_err"
+		[ -z "$mptcp_ndiffports_num_subflows" ] || sysctl -qew /sys/module/mptcp_ndiffports/parameters/num_subflows="$mptcp_ndiffports_num_subflows"
+		[ -z "$mptcp_rr_cwnd_limited" ] || sysctl -qew /sys/module/mptcp_rr/parameters/cwnd_limited="$mptcp_rr_cwnd_limited"
+		[ -z "$mptcp_rr_num_segments" ] || sysctl -qew /sys/module/mptcp_rr/parameters/num_segments="$mptcp_rr_num_segments"
 	else
-		sysctl -qw net.mptcp.enabled="$multipath_status"
+		sysctl -qew net.mptcp.enabled="$multipath_status"
 		ip mptcp limits set add_addr_accepted $mptcp_add_addr_accepted subflows $mptcp_subflows 2>&1 >/dev/null
-		[ -z "$mptcp_add_addr_timeout" ] || sysctl -qw net.mptcp.add_addr_timeout="$mptcp_add_addr_timeout"
-		[ -z "$mptcp_checksum" ] || sysctl -qw net.mptcp.checksum_enabled="$mptcp_checksum"
+		[ -z "$mptcp_add_addr_timeout" ] || sysctl -qew net.mptcp.add_addr_timeout="$mptcp_add_addr_timeout"
+		[ -z "$mptcp_checksum" ] || sysctl -qew net.mptcp.checksum_enabled="$mptcp_checksum"
 	fi
-	[ -z "$congestion" ] || sysctl -qw net.ipv4.tcp_congestion_control="$congestion"
+	[ -z "$congestion" ] || sysctl -qew net.ipv4.tcp_congestion_control="$congestion"
 }
 
 interface_macaddr_count() {
@@ -213,6 +213,7 @@ interface_multipath_settings() {
 		[ -n "$netmask" ] && [ "$(echo $netmask | grep '/')" != "" ] && netmask=""
 		[ -z "$netmask" ] && netmask=$(ip -4 addr show dev $iface | grep peer | awk '{print $4}' | cut -d/ -f2 | tr -d "\n")
 		[ -z "$netmask" ] && netmask=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f2 | tr -d "\n")
+		[ -n "$ipaddr" ] && ipaddr=$(echo $ipaddr | cut -d/ -f1 | tr -d "\n")
 		[ -n "$ipaddr" ] && [ -n "$netmask" ] && netmask=`ipcalc.sh $ipaddr $netmask | sed -n '/PREFIX=/{;s/.*=//;s/ .*//;p;}'`
 		[ -n "$ipaddr" ] && [ -n "$netmask" ] && network=`ipcalc.sh $ipaddr $netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 	fi
@@ -289,20 +290,20 @@ interface_multipath_settings() {
 			ip6addr=`echo $ip6addr | cut -d/ -f1`
 			netmask6=`ipcalc $ipaddr6 | sed -n '/PREFIX=/{;s/.*=//;s/ .*//;p;}'`
 			network6=`ipcalc $ip6addr | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
-			if [ -z "$ip6addr" ] || [ -z "$network6" ]; then
-				ip6addr=$(ip -6 addr show dev $iface | grep -v 'scope link' | grep inet6 | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
-				gateway6=$(ip -6 r list dev $iface | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
-				[ -z "$gateway6" ] && gateway6=$(uci -q get "network.$config.ip6gw")
-				[ -z "$gateway6" ] && gateway6=$(ubus call network.interface.$config status | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
-				if [ -z "$gateway6" ] || [ "$( valid_subnet6 $gateway6 )" != "ok" ]; then 
-					gateway6=$(ubus call network.interface.$config status | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
-				fi
-				if [ -z "$gateway6" ] || [ "$( valid_subnet6 $gateway6 )" != "ok" ]; then
-					gateway6=$(ubus call network.interface.${config}_6 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
-				fi
-				netmask6=$(ip -6 addr show dev $iface | grep -v 'scope link' | grep inet6 | awk '{print $2}' | cut -d/ -f2 | tr -d "\n")
-				network6=`ipcalc $ip6addr | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
+		fi
+		if [ -z "$ip6addr" ] || [ -z "$network6" ]; then
+			ip6addr=$(ip -6 addr show dev $iface | grep -v 'scope link' | grep inet6 | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
+			gateway6=$(ip -6 r list dev $iface | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
+			[ -z "$gateway6" ] && gateway6=$(uci -q get "network.$config.ip6gw")
+			[ -z "$gateway6" ] && gateway6=$(ubus call network.interface.$config status | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
+			if [ -z "$gateway6" ] || [ "$( valid_subnet6 $gateway6 )" != "ok" ]; then 
+				gateway6=$(ubus call network.interface.$config status | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
 			fi
+			if [ -z "$gateway6" ] || [ "$( valid_subnet6 $gateway6 )" != "ok" ]; then
+				gateway6=$(ubus call network.interface.${config}_6 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
+			fi
+			netmask6=$(ip -6 addr show dev $iface | grep -v 'scope link' | grep inet6 | awk '{print $2}' | cut -d/ -f2 | tr -d "\n")
+			network6=`ipcalc $ip6addr | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 		fi
 		if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
 			uci -q batch <<-EOF >/dev/null
@@ -315,7 +316,7 @@ interface_multipath_settings() {
 			[ -n "$(ip -6 rule list | grep 6$id)" ] && ip -6 rule del table 6$id > /dev/null 2>&1
 			ip -6 route flush 6$id > /dev/null 2>&1
 		fi
-		if [ -n "$ip6addr" ] && [ -n "$gateway6" ] && [ -n "$network6" ]; then
+		if [ -n "$gateway6" ] && [ -n "$network6" ]; then
 			if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
 				uci -q batch <<-EOF >/dev/null
 					delete network.${config}_rule6
@@ -340,12 +341,12 @@ interface_multipath_settings() {
 					commit network
 				EOF
 			else
-				ip -6 rule add from $ip6addr table 6$id pref 0 2>&1 >/dev/null
+				[ -n "$ip6addr" ] && ip -6 rule add from $ip6addr table 6$id pref 0 2>&1 >/dev/null
 				ip -6 route replace $network6/$netmask6 dev $iface scope link metric 6$id 2>&1 >/dev/null
 				ip -6 route replace $network6/$netmask6 dev $iface scope link table 6$id 2>&1 >/dev/null
 				ip -6 route replace default via $gateway6 dev $iface table 6$id 2>&1 >/dev/null
 				ip -6 route replace default via $gateway6 dev $iface metric 6$id 2>&1 >/dev/null
-				ip -6 route flush 6$id 2>&1 >/dev/null
+				#ip -6 route flush 6$id 2>&1 >/dev/null
 			fi
 
 			#config_get mode "$config" multipath "off"
