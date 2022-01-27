@@ -1182,7 +1182,7 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 		if [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ]; then
 			#local asn="$(wget -4 -qO- -T 4 http://api.iptoasn.com/v1/as/ip/$ipaddr | jsonfilter -q -e '@.as_description')"
 			#[ -z "$asn" ] && {
-			local asn="$(whois $ipaddr 2>/dev/null | grep -m 1 -i 'netname' | awk '{print $2}')"
+			local asn="$(timeout 2 whois $ipaddr 2>/dev/null | grep -m 1 -i 'netname' | awk '{print $2}')"
 			#}
 		fi
 		[ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE)" ] && {
@@ -1197,9 +1197,16 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 				uci -q set openmptcprouter.latest_versions.lc=$(date +"%s")
 			}
 		fi
-		[ -n "$ipaddr" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.publicip="$ipaddr"
+		[ -n "$ipaddr" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.publicip)" != "$ipaddr" ] && {
+			_log "New public ip detected for $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE): $ipaddr"
+			/etc/init.d/mptcp enabled && {
+				_log "Reload MPTCP for $OMR_TRACKER_DEVICE"
+				/etc/init.d/mptcp reload "$OMR_TRACKER_DEVICE" >/dev/null
+			}
+			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.publicip="$ipaddr"
+		}
 		[ -n "$OMR_TRACKER_LATENCY" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency="$OMR_TRACKER_LATENCY"
-		[ -n "$asn" ] && {
+		[ -n "$asn" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.asn)" != "$asn" ] && {
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.asn="$asn"
 		}
 
@@ -1291,7 +1298,14 @@ if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(
 				uci -q set openmptcprouter.latest_versions.lc=$(date +"%s")
 			}
 		fi
-		[ -n "$ipaddr" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.publicip6="$ip6addr"
+		[ -n "$ip6addr" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.publicip)" != "$ip6addr" ] && {
+			_log "New public ip detected for $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE): $ip6addr"
+			/etc/init.d/mptcp enabled && {
+				_log "Reload MPTCP for $OMR_TRACKER_DEVICE"
+				/etc/init.d/mptcp reload "$OMR_TRACKER_DEVICE" >/dev/null
+			}
+			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.publicip="$ip6addr"
+		}
 		[ -n "$OMR_TRACKER_LATENCY" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency="$OMR_TRACKER_LATENCY"
 		[ -n "$asn" ] && {
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.asn="$asn"
