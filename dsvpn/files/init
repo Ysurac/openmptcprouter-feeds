@@ -29,6 +29,16 @@ validate_section() {
 		'externalip:string:auto'
 }
 
+version_over_5_4() {
+	MAJOR_VERSION=$(uname -r | awk -F '.' '{print $1}')
+	MINOR_VERSION=$(uname -r | awk -F '.' '{print $2}')
+	if [ $MAJOR_VERSION -ge 5 ] && [ $MINOR_VERSION -gt 13 ] || [ $MAJOR_VERSION -gt 5 ] ; then
+		return 0
+	else
+		return 1
+	fi
+}
+
 start_instance() {
 	local enable key host port dev
 
@@ -49,7 +59,7 @@ start_instance() {
 	key=""
 
 	if [ "$(uci -q get network.omrvpn)" != "" ] && [ "$(uci -q get network.omrvpn)" != "$dev" ]; then
-		uci -q set network.omrvpn.ifname=$dev
+		uci -q set network.omrvpn.device=$dev
 		uci -q commit
 	fi
 
@@ -57,6 +67,10 @@ start_instance() {
 	sleep 2
 
 	_log "starting ${PROG_NAME} ${1} instance $*"
+
+	if version_over_5_4; then
+		PROG="mptcpize run ${PROG}"
+	fi
 
 	procd_open_instance
 

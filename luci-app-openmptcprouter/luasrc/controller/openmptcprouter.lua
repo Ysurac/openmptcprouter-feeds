@@ -26,12 +26,27 @@ end
 function interface_from_device(dev)
 	for _, iface in ipairs(net:get_networks()) do
 		local ifacen = iface:name()
-		local ifacename = ucic:get("network",ifacen,"ifname")
+		local ifacename = ""
+		ifacename = ucic:get("network",ifacen,"device")
+		if ifacename == "" then
+			ifacename = ucic:get("network",ifacen,"ifname")
+		end
 		if ifacename == dev then
 			return ifacen
 		end
 	end
 	return ""
+end
+
+function uci_device_from_interface(intf)
+	intfname = ucic:get("network",intf,"device")
+	deviceuci = ""
+	ucic:foreach("network", "device", function(s)
+		if intfname == ucic:get("network",s[".name"],"name") then
+		    deviceuci = s[".name"]
+		end
+	end)
+	return deviceuci
 end
 
 function wizard_add()
@@ -113,7 +128,10 @@ function wizard_add()
 		end)
 		local defif = "eth0"
 		if add_interface_ifname == "" then
-			local defif1 = ucic:get("network","wan1_dev","ifname") or ""
+			local defif1 = ucic:get("network","wan1_dev","device") or ""
+			if defif1 == "" then
+				defif1 = ucic:get("network","wan1_dev","ifname") or ""
+			end
 			if defif1 ~= "" then
 				defif = defif1
 			end
@@ -126,17 +144,29 @@ function wizard_add()
 		if ointf ~= "" then
 			if ucic:get("network",ointf,"type") == "" then
 				ucic:set("network",ointf,"type","macvlan")
+				ucic:set("network",ointf,"device",ointf)
+				ucic:set("network",ointf .. "_dev","device")
+				ucic:set("network",ointf .. "_dev","type","macvlan")
+				ucic:set("network",ointf .. "_dev","mode","vepa")
+				ucic:set("network",ointf .. "_dev","ifname",defif)
+				ucic:set("network",ointf .. "_dev","name",ointf)
 			end
 			wanif = "wan" .. i
 		end
 		
 		ucic:set("network","wan" .. i,"interface")
-		ucic:set("network","wan" .. i,"ifname",defif)
+		ucic:set("network","wan" .. i,"device",defif)
 		ucic:set("network","wan" .. i,"proto","static")
 		ucic:set("openmptcprouter","wan" .. i,"interface")
 		if ointf ~= "" then
 			ucic:set("network","wan" .. i,"type","macvlan")
+			ucic:set("network","wan" .. i,"device","wan" .. i)
 			ucic:set("network","wan" .. i,"masterintf",defif)
+			ucic:set("network","wan" .. i .. "_dev","device")
+			ucic:set("network","wan" .. i .. "_dev","type","macvlan")
+			ucic:set("network","wan" .. i .. "_dev","mode","vepa")
+			ucic:set("network","wan" .. i .. "_dev","ifname",defif)
+			ucic:set("network","wan" .. i .. "_dev","name","wan" .. i)
 		end
 		ucic:set("network","wan" .. i,"ip4table","wan")
 		if multipath_master then
@@ -171,7 +201,7 @@ function wizard_add()
 		ucic:set("sqm","wan" .. i,"script","simple.qos")
 		ucic:set("sqm","wan" .. i,"qdisc_advanced","0")
 		ucic:set("sqm","wan" .. i,"linklayer","none")
-		ucic:set("sqm","wan" .. i,"enabled","0")
+		ucic:set("sqm","wan" .. i,"enabled","1")
 		ucic:set("sqm","wan" .. i,"debug_logging","0")
 		ucic:set("sqm","wan" .. i,"verbosity","5")
 		ucic:set("sqm","wan" .. i,"download","0")
@@ -197,7 +227,10 @@ function wizard_add()
 	local delete_intf = luci.http.formvaluetable("delete") or ""
 	if delete_intf ~= "" then
 		for intf, _ in pairs(delete_intf) do
-			local defif = ucic:get("network",intf,"ifname")
+			local defif = ucic:get("network",intf,"ifname") or ""
+			if defif == "" then
+				defif = ucic:get("network",intf,"ifname")
+			end
 			ucic:delete("network",intf)
 			if ucic:get("network",intf .. "_dev") ~= "" then
 				ucic:delete("network",intf .. "_dev")
@@ -251,6 +284,7 @@ function wizard_add()
 		local sqmenabled = luci.http.formvalue("cbid.sqm.%s.enabled" % intf) or "0"
 		local multipath = luci.http.formvalue("cbid.network.%s.multipath" % intf) or "on"
 		local lan = luci.http.formvalue("cbid.network.%s.lan" % intf) or "0"
+		local ttl = luci.http.formvalue("cbid.network.%s.ttl" % intf) or ""
 		if typeintf ~= "" then
 			if typeintf == "normal" then
 				typeintf = ""
@@ -262,15 +296,42 @@ function wizard_add()
 		end
 		if typeintf == "macvlan" and masterintf ~= "" then
 			ucic:set("network",intf,"type","macvlan")
+			ucic:set("network",intf .. "_dev","device")
+			ucic:set("network",intf .. "_dev","type","macvlan")
+			ucic:set("network",intf .. "_dev","ifname",masterinf)
+			ucic:set("network",intf .. "_dev","mode","vepa")
+			ucic:set("network",intf .. "_dev","name",intf)
 			ucic:set("network",intf,"masterintf",masterintf)
 		elseif typeintf == "" and ifname ~= "" and (proto == "static" or proto == "dhcp" or proto == "dhcpv6") then
-			ucic:set("network",intf,"ifname",ifname)
+			ucic:set("network",intf,"device",ifname)
+			if uci_device_from_interface(intf) == "" then
+				ucic:set("network",intf .. "_dev","device")
+				ucic:set("network",intf .. "_dev","name",ifname)
+			end
 		elseif typeintf == "" and device ~= "" and proto == "ncm" then
 			ucic:set("network",intf,"device",device_ncm)
+			if uci_device_from_interface(intf) == "" then
+				ucic:set("network",intf .. "_dev","device")
+				ucic:set("network",intf .. "_dev","name",device_ncm)
+			end
 		elseif typeintf == "" and device ~= "" and proto == "qmi" then
 			ucic:set("network",intf,"device",device_qmi)
+			if uci_device_from_interface(intf) == "" then
+				ucic:set("network",intf .. "_dev","device")
+				ucic:set("network",intf .. "_dev","name",device_qmi)
+			end
 		elseif typeintf == "" and device ~= "" and proto == "modemmanager" then
 			ucic:set("network",intf,"device",device_manager)
+			if uci_device_from_interface(intf) == "" then
+				ucic:set("network",intf .. "_dev","device")
+				ucic:set("network",intf .. "_dev","name",device_manager)
+			end
+		elseif typeintf == "" and ifname ~= "" and proto == "static" then
+			ucic:set("network",intf,"device",ifname)
+			if uci_device_from_interface(intf) == "" then
+				ucic:set("network",intf .. "_dev","device")
+				ucic:set("network",intf .. "_dev","name",ifname)
+			end
 		end
 		if proto == "pppoe" then
 			ucic:set("network",intf,"pppd_options","persist maxfail 0")
@@ -278,6 +339,13 @@ function wizard_add()
 		if proto ~= "other" then
 			ucic:set("network",intf,"proto",proto)
 		end
+
+		uci_device = uci_device_from_interface(intf)
+		if uci_device == "" then
+			uci_device = intf .. "_dev"
+		end
+		ucic:set("network",uci_device,"ttl",ttl)
+
 		ucic:set("network",intf,"apn",apn)
 		ucic:set("network",intf,"pincode",pincode)
 		ucic:set("network",intf,"delay",delay)
@@ -342,7 +410,10 @@ function wizard_add()
 		if not ucic:get("sqm",intf) ~= "" then
 			local defif = get_device(intf)
 			if defif == "" then
-				defif = ucic:get("network",intf,"ifname") or ""
+				defif = ucic:get("network",intf,"device") or ""
+				if defif == "" then
+					defif = ucic:get("network",intf,"ifname") or ""
+				end
 			end
 			ucic:set("sqm",intf,"queue")
 			ucic:set("sqm",intf,"interface",defif)
@@ -442,7 +513,7 @@ function wizard_add()
 		ucic:set("network","omrvpn","proto","bonding")
 	end
 	if vpn_intf ~= "" then
-		ucic:set("network","omrvpn","ifname",vpn_intf)
+		ucic:set("network","omrvpn","device",vpn_intf)
 		ucic:set("sqm","omrvpn","interface",vpn_intf)
 		ucic:save("network")
 		ucic:commit("network")
@@ -809,7 +880,7 @@ function wizard_add()
 
 	local dsvpn_key = luci.http.formvalue("dsvpn_key")
 	if dsvpn_key ~= "" then
-		ucic:set("dsvpn","vpn","port","65011")
+		ucic:set("dsvpn","vpn","port","65401")
 		ucic:set("dsvpn","vpn","key",dsvpn_key)
 		ucic:set("dsvpn","vpn","localip","10.255.251.2")
 		ucic:set("dsvpn","vpn","remoteip","10.255.251.1")
@@ -894,7 +965,7 @@ function wizard_add()
 	-- Restart all
 	menuentry = ucic:get("openmptcprouter","settings","menu") or "openmptcprouter"
 	if gostatus == true then
-		luci.sys.call("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
+		--luci.sys.call("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
 		luci.sys.call("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
 		luci.sys.call("ip addr flush dev tun0 >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/omr-tracker stop >/dev/null 2>/dev/null")

@@ -3,13 +3,13 @@ on: [push]
 
 env:
   REPO_URL: 'https://github.com/ysurac/openmptcprouter'
-  OMR_KERNEL: '5.4'
 
 jobs:
   build:
     strategy:
       matrix:
-        OMR_TARGET: [bpi-r1, bpi-r2, bpi-r64, rpi2, rpi4, wrt32x, espressobin, r2s, rpi3, wrt3200acm, x86, x86_64, ubnt-erx, r4s]
+        OMR_TARGET: [bpi-r1, bpi-r2, bpi-r64, rpi2, rpi4, wrt32x, espressobin, r2s, rpi3, wrt3200acm, x86, x86_64, ubnt-erx, r4s, r7800]
+        OMR_KERNEL: [5.4, 5.15]
     runs-on: ubuntu-latest
     continue-on-error: true
 
@@ -61,10 +61,11 @@ jobs:
         OMR_FEED_URL: https://github.com/ysurac/openmptcprouter-feeds
         SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
         OMR_TARGET: ${{ matrix.OMR_TARGET }}
+        OMR_KERNEL: ${{ matrix.OMR_KERNEL }}
         OMR_HOST: ${{ secrets.OMR_HOST }}
         OMR_PORT: ${{ secrets.OMR_PORT }}
       run: |
-        OMR_FEED_SRC="${SOURCE_NAME}" sh build.sh prepare {tools,toolchain}/install -j$(nproc) || OMR_FEED_SRC="${SOURCE_NAME}" sh build.sh prepare {tools,toolchain}/install -j1 V=s
+        OMR_KERNEL="${OMR_KERNEL}" OMR_FEED_SRC="${SOURCE_NAME}" sh build.sh prepare {tools,toolchain}/install -j$(nproc) || OMR_KERNEL="${OMR_KERNEL}" OMR_FEED_SRC="${SOURCE_NAME}" sh build.sh prepare {tools,toolchain}/install -j1 V=s
         #echo -e "${{ secrets.OMR_PRIVKEY }}" > $OMR_TARGET/source/key-build
         #echo -e "${{ secrets.OMR_PUBKEY }}" > $OMR_TARGET/source/key-build.pub
     - name: Build packages
@@ -108,7 +109,7 @@ jobs:
           SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
       with:
         command: |
-          mkdir -p deploy/${{env.SOURCE_BRANCH}}/${{env.OMR_KERNEL}}/${{matrix.OMR_TARGET}}
+          mkdir -p deploy/${{env.SOURCE_BRANCH}}/${{matrix.OMR_KERNEL}}/${{matrix.OMR_TARGET}}
         host: ${{ secrets.OMR_DEPLOY_HOST }}
         user: deploy
         port: ${{ secrets.OMR_DEPLOY_PORT }}
@@ -141,7 +142,7 @@ jobs:
       uses: ysurac/action-rsync@master
       env:
         ARGS: -av --delete-after
-        TARGET: deploy/${{ steps.branch_name.outputs.SOURCE_BRANCH }}/${{env.OMR_KERNEL}}/${{matrix.OMR_TARGET}}
+        TARGET: deploy/${{ steps.branch_name.outputs.SOURCE_BRANCH }}/${{matrix.OMR_KERNEL}}/${{matrix.OMR_TARGET}}
         SOURCE: ./bin/
         KEY: ${{ secrets.PRIVATE_KEY }}
         USER: deploy

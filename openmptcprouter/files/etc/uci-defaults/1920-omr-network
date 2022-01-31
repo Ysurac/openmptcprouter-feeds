@@ -11,7 +11,7 @@ _setup_macvlan() {
 
 	# do not create macvlan for vlan
 	local _ifname
-	_ifname=$(uci -q get "network.$1.ifname")
+	_ifname=$(uci -q get "network.$1.device")
 	case "$_ifname" in
 	eth*.*) return ;;
 	esac
@@ -21,26 +21,24 @@ _setup_macvlan() {
 	set network.$1_dev.name=$1
 	set network.$1_dev.type=macvlan
 	set network.$1_dev.ifname=$_ifname
-	set network.$1.ifname=$1
+	set network.$1_dev.mode='vepa'
+	set network.$1.device=$1
 	set network.$1.type=macvlan
 	set network.$1.masterintf=$_ifname
-	set macvlan.$1=macvlan
-	set macvlan.$1.name=$1
-	set macvlan.$1.ifname=$_ifname
 	EOF
 	_macaddr=$(uci -q get "network.$1.macaddr")
 	_setup_macaddr "$1_dev" "${_macaddr:-auto$(date +%s)}"
 }
 
-_setup_macvlan_update() {
-	uci -q get "network.$1_dev.ifname" >/dev/null || return
-
-	uci -q batch <<-EOF
-	set macvlan.$1=macvlan
-	set macvlan.$1.ifname=$_ifname
-	commit macvlan
-	EOF
-}
+#_setup_macvlan_update() {
+#	uci -q get "network.$1_dev.device" >/dev/null || return
+#
+#	uci -q batch <<-EOF
+#	set macvlan.$1=macvlan
+#	set macvlan.$1.device=$_ifname
+#	commit macvlan
+#	EOF
+#}
 
 _setup_mptcp_handover_to_on() {
 	if [ "$(uci -q get network.$1.multipath)" = "handover" ]; then
@@ -59,11 +57,13 @@ _setup_multipath_off() {
 _setup_wan_interface() {
 	uci -q batch <<-EOF
 	set network.$1=interface
-	set network.$1.ifname=$2
+	set network.$1.device=$2
 	set network.$1.proto=static
 	set network.$1.ip4table=wan
 	set network.$1.multipath=$3
 	set network.$1.defaultroute=0
+	set network.${1}_dev=device
+	set network.${1}_dev.name=$2
 	commit network
 	add_list firewall.@zone[1].network=$1
 	commit firewall
@@ -72,7 +72,7 @@ _setup_wan_interface() {
 }
 
 config_load network
-config_foreach _setup_macvlan_update interface
+#config_foreach _setup_macvlan_update interface
 config_foreach _setup_mptcp_handover_to_on interface
 
 if [ "$(uci -q show network.lan | grep multipath)" != "" ]; then
@@ -117,6 +117,8 @@ elif [ "$(swconfig list 2>&1 | grep switch0)" != "" ] && [ -d '/sys/class/net/et
 	set network.@switch_vlan[4].vid=5
 	set network.@switch_vlan[4].ports='4 6t'
 	EOF
+elif [ "$(swconfig list 2>&1 | grep switch0)" != "" ] && [ -d /sys/class/net/eth1 ] && [ "$(grep ipq806x /etc/os-release)" != "" ]; then
+	lanif="eth0.2"
 elif [ "$(swconfig list 2>&1 | grep switch0)" != "" ] && [ -d /sys/class/net/eth1 ]; then
 	lanif="eth1"
 elif [ ! -d /sys/class/net/eth1 ] && [ -d /sys/class/net/eth0 ]; then
@@ -128,7 +130,7 @@ set network.lan=interface
 set network.lan.proto=static
 set network.lan.ipaddr=192.168.100.1
 set network.lan.netmask=255.255.255.0
-set network.lan.ifname=${lanif}
+set network.lan.device=${lanif}
 set network.lan.metric=2048
 set network.lan.ipv6=0
 set network.lan.delegate=0
@@ -169,7 +171,12 @@ uci -q set network.lan.ip4table='lan'
 
 # Create WAN interfaces
 if [ "$(uci -q show network.wan1 | grep multipath)" = "" ] && [ -z "$(uci -q get network.wan1.multipath)" ]; then
-	if [ "$(grep rockchip /etc/os-release)" != "" ]; then
+	if [ "$(grep ipq806x /etc/os-release)" != "" ]; then
+		_setup_wan_interface wan1 eth1.1 master
+		_setup_wan_interface wan2 eth1.2 on
+		_setup_wan_interface wan3 eth1.3 on
+		_setup_wan_interface wan4 eth1.4 on
+	elif [ "$(grep rockchip /etc/os-release)" != "" ]; then
 		_setup_wan_interface wan1 eth0 master macvlan
 		_setup_wan_interface wan2 eth0 on macvlan
 		_setup_macvlan wan1
@@ -294,6 +301,10 @@ fi
 
 # Replace omrip to oip in config for old config
 sed -i 's/omrip/oip/g' /etc/config/*
+
+# Fix config from ifname to device for loopback
+uci -q delete network.loopback.ifname
+uci -q set network.loopback.device='lo'
 
 uci -q commit macvlan
 uci -q commit network
