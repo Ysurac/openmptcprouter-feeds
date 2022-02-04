@@ -46,7 +46,7 @@ MY_DEPENDS := \
     luci-app-openvpn \
     shadowsocks-libev-ss-server shadowsocks-libev-ss-tunnel \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd ip6tables \
-    speedtestc \
+    speedtestcpp \
     iftop \
     htop \
     nano \
