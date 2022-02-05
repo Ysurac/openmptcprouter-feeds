@@ -21,5 +21,6 @@ uci show | \
 	-e "/vpn\.key=/s/......$/xxxxxx'/" \
 	-e "/vps\.key=/s/......$/xxxxxx'/" \
 	-e "/wgkey=/s/......$/xxxxxx'/" \
+	-e "/key=/s/......$/xxxxxx'/" \
 	-e "/ula_prefix=2/s/=.........../='xxxxxxxxxxx/" \
 	-e "/token=/s/............$/xxxxxx'/"
