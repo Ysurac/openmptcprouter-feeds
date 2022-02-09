@@ -30,7 +30,7 @@ if uname.release:sub(1,4) ~= "5.14" then
 end
 o = s:option(ListValue, "mptcp_scheduler", translate("Multipath TCP scheduler"))
 o:value("default", translate("default"))
-if uname.release:sub(1,4) ~= "5.14" then
+if uname.release:sub(1,4) ~= "5.15" then
     o:value("roundrobin", "round-robin")
     o:value("redundant", "redundant")
     if uname.release:sub(1,4) ~= "4.14" then
@@ -38,7 +38,7 @@ if uname.release:sub(1,4) ~= "5.14" then
 	o:value("ecf", "ECF")
     end
 end
-if uname.release:sub(1,4) ~= "5.14" then
+if uname.release:sub(1,4) ~= "5.15" then
     o = s:option(Value, "mptcp_syn_retries", translate("Multipath TCP SYN retries"))
     o.datatype = "uinteger"
     o.rmempty = false
@@ -49,7 +49,7 @@ for cong in string.gmatch(availablecong, "[^%s]+") do
 	o:value(cong, translate(cong))
 end
 
-if uname.release:sub(1,4) == "5.14" then
+if uname.release:sub(1,4) == "5.15" then
     o = s:option(Value, "mptcp_subflows", translate("specifies the maximum number of additional subflows allowed for each MPTCP connection"))
     o.datatype = "uinteger"
     o.rmempty = false
