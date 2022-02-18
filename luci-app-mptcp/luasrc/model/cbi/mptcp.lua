@@ -43,6 +43,12 @@ if uname.release:sub(1,4) ~= "5.15" then
     o.datatype = "uinteger"
     o.rmempty = false
 end
+if uname.release:sub(1,4) ~= "5.15" then
+    o = s:option(Value, "mptcp_version", translate("Multipath TCP version"))
+    o.datatype = "uinteger"
+    o.rmempty = false
+    o.default = 0
+end
 o = s:option(ListValue, "congestion", translate("Congestion Control"),translate("Default is cubic"))
 local availablecong = sys.exec("sysctl -n net.ipv4.tcp_available_congestion_control | xargs -n1 | sort | xargs")
 for cong in string.gmatch(availablecong, "[^%s]+") do
