@@ -7,9 +7,15 @@
 	local sys = require "luci.sys"
 	local ut = require "luci.util"
 	local ifaces = sys.net:devices()
+	local ifttyu = nixio.fs.glob("/dev/ttyUSB*")
+	local ifttyc = nixio.fs.glob("/dev/cdc-wdm*")
 	menuentry = uci:get("openmptcprouter","settings","menu") or "openmptcprouter"
 	function device_notvirtual(dev)
-		for _, iface in ipairs(net:get_networks()) do
+		if dev:match("^eth.*") or dev:match("^wwan.*") or dev:match("^tun.*") or dev:match("/") then
+			return true
+		end
+		networks = net:get_networks()
+		for _, iface in ipairs(networks) do
 			local ifacen = iface:name()
 			local ifacename = uci:get("network",ifacen,"device")
 			local ifacetype = uci:get("network",ifacen,"type") or ""
@@ -428,7 +434,7 @@
 <% 
     for _, iface in ipairs(net:get_networks()) do
 	local ifname = iface:name()
-	local firewall_lan = luci.util.trim(luci.sys.exec("uci -q get firewall.zone_lan.network | grep \'" .. ifname .. "\'"))
+	local firewall_lan = luci.util.trim(luci.sys.exec("uci -q get firewall.zone_lan.network | tr ' ' '\n' | grep \'^" .. ifname .. "$\'"))
 	if firewall_lan ~= "" then
 %>
 	    <h3><%=ifname%></h3>
@@ -531,7 +537,7 @@
 <% 
     for _, iface in ipairs(net:get_networks()) do
 	local ifname = iface:name()
-	local firewall_wan = luci.util.trim(luci.sys.exec("uci -q get firewall.zone_wan.network | grep \'" .. ifname .. "\'"))
+	local firewall_wan = luci.util.trim(luci.sys.exec("uci -q get firewall.zone_wan.network | tr ' ' '\n' | grep \'^" .. ifname .. "$\'"))
 	if firewall_wan ~= "" then
 
 --	local multipath = uci:get("network",ifname,"multipath")
@@ -743,14 +749,12 @@
 			    <select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.device.ncm" name="cbid.network.<%=ifname%>.device.ncm" size="1">
 			<%
 			    iffind=0
-			    iftty = nixio.fs.glob("/dev/ttyUSB*")
-			    for tty in iftty do
+			    for tty in ifttyu do
 			%>
 			<option value="<%=tty%>"<% if uci:get("network",ifname,"device") == tty then iffind = 1 %> selected="selected"<% end %>><%=tty%></option>
 			<%
 			    end
-			    iftty = nixio.fs.glob("/dev/cdc-wdm*")
-			    for tty in iftty do
+			    for tty in ifttyc do
 			%>
 			<option value="<%=tty%>"<% if uci:get("network",ifname,"device") == tty then iffind = 1 %> selected="selected"<% end %>><%=tty%></option>
 			<%
@@ -770,8 +774,7 @@
 			    <select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.device.qmi" name="cbid.network.<%=ifname%>.device.qmi" size="1">
 			<%
 			    iffind=0
-			    iftty = nixio.fs.glob("/dev/cdc-wdm*")
-			    for tty in iftty do
+			    for tty in ifttyc do
 			%>
 			<option value="<%=tty%>"<% if uci:get("network",ifname,"device") == tty then iffind = 1 %> selected="selected"<% end %>><%=tty%></option>
 			<%
