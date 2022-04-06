@@ -1,0 +1,50 @@
+Author: Ken Zhu <guigenz@codeaurora.org>
+Date:   Thu Dec 17 09:08:39 2020 -0800
+
+    netifd: fix ip lost after dhcp renew
+
+    When two more IPv4 addresses of the same subnetwork are assigned
+    to one device, if the primary address got deleted, the rest IP
+    addresses could be deleted as well.
+
+    To make sure that old IPv4 address deleted before assigning the
+    new address, both of them  must be proceeded in one time.
+
+    Change-Id: Ib989955c1511a14d34a5a45df1ad7e8713815b42
+    Signed-off-by: Ken Zhu <guigenz@codeaurora.org>
+
+diff -Nur a/interface-ip.c netifd-2019-08-05-5e02f944/interface-ip.c
+--- a/interface-ip.c	2021-01-26 13:08:43.624405844 -0800
++++ netifd-2019-08-05-5e02f944/interface-ip.c	2021-01-26 13:11:14.935635800 -0800
+@@ -509,9 +509,23 @@
+ 	free(route);
+ }
+ 
++/*
++ * addr_cmp
++ *  return 0 if two ipv6 addresses and its netmask are same
++ *  return 0 if two ipv4 addresses are in the same subnetwork.
++ */
+ static int
+ addr_cmp(const void *k1, const void *k2, void *ptr)
+ {
++	struct device_addr *addr1, *addr2;
++	addr1 = container_of(k1, struct device_addr, flags);
++	addr2 = container_of(k2, struct device_addr, flags);
++	if (((addr1->flags & DEVADDR_FAMILY) == DEVADDR_INET4)
++			&& ((addr2->flags & DEVADDR_FAMILY) == DEVADDR_INET4)) {
++		return (ntohl(addr1->addr.in.s_addr) & (~((1 << (32 - addr1->mask)) - 1))) !=
++			(ntohl(addr2->addr.in.s_addr) & (~((1 << (32 - addr2->mask)) - 1)));
++	}
++
+ 	return memcmp(k1, k2, sizeof(struct device_addr) -
+ 		      offsetof(struct device_addr, flags));
+ }
+@@ -662,6 +676,7 @@
+ 
+ 		if (((a_new->flags & DEVADDR_FAMILY) == DEVADDR_INET4) &&
+ 		     (a_new->broadcast != a_old->broadcast ||
++		      a_new->addr.in.s_addr != a_old->addr.in.s_addr ||
+ 		      a_new->point_to_point != a_old->point_to_point))
+ 			keep = false;
+ 	}

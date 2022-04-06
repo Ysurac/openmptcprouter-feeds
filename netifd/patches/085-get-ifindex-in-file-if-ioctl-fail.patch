@@ -1,0 +1,46 @@
+diff -Nur a/system-linux.c netifd-2015-12-16/system-linux.c
+--- a/system-linux.c	2018-11-08 15:30:16.422606326 -0800
++++ netifd-2015-12-16/system-linux.c	2018-11-08 15:30:24.522606530 -0800
+@@ -593,6 +593,33 @@
+ 	return path + 1;
+ }
+ 
++static int system_get_ifindex(const char *name)
++{
++	char path[64], buf[24];
++	int len;
++	FILE *f;
++	struct stat st;
++
++	snprintf(path, sizeof(path), "/sys/class/net/%s/ifindex", name);
++
++	if (stat(path, &st) < 0)
++		return 0;
++
++	f = fopen(path, "r");
++	if (!f) {
++		return 0;
++	}
++
++	len = fread(buf, 1, 23, f);
++	fclose(f);
++
++	if (len <= 0)
++		return 0;
++
++	buf[len] = 0;
++	return strtoul(buf, NULL, 0);
++}
++
+ static struct device *system_get_bonding(const char *name, char *buf, int buflen)
+ {
+ 	char path[64], *devname;
+@@ -706,7 +733,7 @@
+ 	if (!ioctl(sock_ioctl, SIOCGIFINDEX, &ifr))
+ 		return ifr.ifr_ifindex;
+ 	else
+-		return 0;
++		return system_get_ifindex(dev->ifname);
+ }
+ 
+ static int system_if_flags(const char *ifname, unsigned add, unsigned rem)

@@ -1,0 +1,66 @@
+diff -Nur a/scripts/netifd-wireless.sh netifd-2019-08-05-5e02f944/scripts/netifd-wireless.sh
+--- a/scripts/netifd-wireless.sh	2020-05-01 14:46:21.243721221 -0700
++++ netifd-2019-08-05-5e02f944/scripts/netifd-wireless.sh	2020-05-01 14:47:21.139395257 -0700
+@@ -42,7 +42,6 @@
+ 	json_get_vars channel hwmode
+ 
+ 	auto_channel=0
+-	enable_ht=0
+ 	htmode=
+ 	hwmode="${hwmode##11}"
+ 	hwmode_n="${hwmode##n}"
+@@ -59,7 +58,6 @@
+ 	esac
+ 
+ 	[[ "$hwmode_n" = "$hwmode" ]] || {
+-		enable_ht=1
+ 		hwmode="$hwmode_n"
+ 
+ 		json_get_vars htmode
+@@ -195,16 +193,17 @@
+ 	auth_mode_open=1
+ 	auth_mode_shared=0
+ 	auth_type=none
+-	wpa_cipher=CCMP
++	wpa=0
++	wpa_cipher=
+ 	case "$encryption" in
+ 		*tkip+aes|*tkip+ccmp|*aes+tkip|*ccmp+tkip) wpa_cipher="CCMP TKIP";;
+-		*aes|*ccmp) wpa_cipher="CCMP";;
+-		*tkip) wpa_cipher="TKIP";;
++		*aes|*ccmp| psk2 | wpa2) wpa_cipher="CCMP";;
++		*tkip | wpa | psk ) wpa_cipher="TKIP";;
+ 		*gcmp) wpa_cipher="GCMP";;
+ 	esac
+ 
+-	# 802.11n requires CCMP for WPA
+-	[ "$enable_ht:$wpa_cipher" = "1:TKIP" ] && wpa_cipher="CCMP TKIP"
++	# Standlone TKIP is no longer allowed
++	[ "$wpa_cipher" = "TKIP" ] && wpa_cipher="CCMP TKIP"
+ 
+ 	# Examples:
+ 	# psk-mixed/tkip    => WPA1+2 PSK, TKIP
+@@ -212,6 +211,10 @@
+ 	# wpa2/tkip+aes     => WPA2 RADIUS, CCMP+TKIP
+ 
+ 	case "$encryption" in
++		none)
++			wpa=0
++			wpa_cipher=
++		;;
+ 		wpa2*|wpa3*|*psk2*|psk3*|sae*|owe*)
+ 			wpa=2
+ 		;;
+@@ -222,8 +225,10 @@
+ 			wpa=1
+ 		;;
+ 		*)
+-			wpa=0
+-			wpa_cipher=
++			# TKIP alone is now prohibited by WFA so the only
++			# combination left must be CCMP+TKIP (wpa=3)
++			wpa=3
++			wpa_cipher="CCMP TKIP"
+ 		;;
+ 	esac
+ 	wpa_pairwise="$wpa_cipher"

@@ -1,0 +1,35 @@
+diff -Nur a/utils.c netifd-2019-08-05-5e02f944/utils.c
+--- a/utils.c	2020-06-04 11:54:37.287682451 -0700
++++ netifd-2019-08-05-5e02f944/utils.c	2020-06-04 11:58:41.782809397 -0700
+@@ -118,9 +118,11 @@
+ int
+ parse_ip_and_netmask(int af, const char *str, void *addr, unsigned int *netmask)
+ {
+-	char *astr = alloca(strlen(str) + 1);
++	int len = strlen(str) + 1;
++	char *astr = alloca(len);
++	int ret = 0;
+ 
+-	strcpy(astr, str);
++	strncpy(astr, str, len);
+ 	if (!split_netmask(astr, netmask, af == AF_INET6))
+ 		return 0;
+ 
+@@ -132,7 +134,16 @@
+ 			return 0;
+ 	}
+ 
+-	return inet_pton(af, astr, addr);
++	ret = inet_pton(af, astr, addr);
++	if ((ret > 0) && (af == AF_INET)) {
++                struct in_addr *ip4_addr = (struct in_addr *)addr;
++                uint32_t host_addr = ntohl(ip4_addr->s_addr);
++
++                if (!IN_CLASSA(host_addr) && !IN_CLASSB(host_addr) && !IN_CLASSC(host_addr)) {
++                        ret = 0;
++                }
++        }
++        return ret;
+ }
+ 
+ char *

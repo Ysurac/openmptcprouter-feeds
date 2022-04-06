@@ -1,0 +1,71 @@
+diff -Nur a/bonding.c netifd-2015-12-16/bonding.c
+--- a/bonding.c	2019-09-19 14:34:58.459599942 -0700
++++ netifd-2015-12-16/bonding.c	2019-09-19 14:50:09.374322419 -0700
+@@ -29,6 +29,7 @@
+         BONDING_ATTR_MODE,
+         BONDING_ATTR_XMITHASHPOL,
+         BONDING_ATTR_L2DA_MULTIMAC,
++        BONDING_ATTR_LACP_RATE_ENABLED,
+         __BONDING_ATTR_MAX
+ };
+ 
+@@ -38,6 +39,7 @@
+         [BONDING_ATTR_MODE] = { "mode", BLOBMSG_TYPE_INT32 },
+         [BONDING_ATTR_XMITHASHPOL] = { "xmit_hash_policy", BLOBMSG_TYPE_STRING },
+         [BONDING_ATTR_L2DA_MULTIMAC] = { "l2da_multimac", BLOBMSG_TYPE_INT32 },
++        [BONDING_ATTR_LACP_RATE_ENABLED] = { "lacp_rate_enabled", BLOBMSG_TYPE_BOOL },
+ };
+ 
+ static const struct uci_blob_param_info bonding_attr_info[__BONDING_ATTR_MAX] = {
+@@ -458,6 +460,7 @@
+         /* defaults */
+         cfg->mode = 0;
+         cfg->l2da_multimac = 0;
++        cfg->lacp_rate_enabled = 0;
+ 
+         if ((cur = tb[BONDING_ATTR_MODE]))
+                 cfg->mode = blobmsg_get_u32(cur);
+@@ -469,6 +472,10 @@
+ 
+         if ((cur = tb[BONDING_ATTR_L2DA_MULTIMAC]))
+                 cfg->l2da_multimac = blobmsg_get_u32(cur);
++
++	if ((cur = tb[BONDING_ATTR_LACP_RATE_ENABLED]))
++                cfg->lacp_rate_enabled = blobmsg_get_bool(cur);
++
+ }
+ 
+ enum dev_change_type
+diff -Nur a/system.h netifd-2015-12-16/system.h
+--- a/system.h	2019-09-19 14:34:58.459599942 -0700
++++ netifd-2015-12-16/system.h	2019-09-19 14:42:52.014826386 -0700
+@@ -66,6 +66,7 @@
+ struct bonding_config {
+ 	int mode;
+ 	int l2da_multimac;
++	bool lacp_rate_enabled;
+ 	char xmit_hash_policy[16];
+ };
+ 
+diff -Nur a/system-linux.c netifd-2015-12-16/system-linux.c
+--- a/system-linux.c	2019-09-19 14:34:58.435600178 -0700
++++ netifd-2015-12-16/system-linux.c	2019-09-19 14:47:45.839806369 -0700
+@@ -949,6 +949,7 @@
+ int system_bonding_addbonding(struct device *bonding, struct bonding_config *cfg)
+ {
+ 	char cmd[32], mode[4], l2da_multimac[4], policy[16];
++	char lacp_rate_enabled[4];
+ 
+ 	snprintf(cmd, sizeof(cmd), "+%s", bonding->ifname);
+ 	system_set_sysctl("/sys/class/net/bonding_masters", cmd);
+@@ -963,6 +964,10 @@
+ 	system_set_dev_sysctl("/sys/class/net/%s/bonding/xmit_hash_policy",
+ 				bonding->ifname, policy);
+ 
++	snprintf(lacp_rate_enabled, sizeof(lacp_rate_enabled), "%d", cfg->lacp_rate_enabled);
++	system_set_dev_sysctl("/sys/class/net/%s/bonding/lacp_rate",
++				bonding->ifname, lacp_rate_enabled);
++
+ 	return 0;
+ }
+ 
