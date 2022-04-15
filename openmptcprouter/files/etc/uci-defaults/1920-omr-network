@@ -88,6 +88,34 @@ elif [ -d /sys/class/net/lan1 -o -n "$(ip link | grep ' lan1')" ] && [ -d /sys/c
 	lanif="wan"
 elif [ -d /sys/class/net/lan ] || [ -n "$(ip link | grep ' lan')" ]; then
 	lanif="lan"
+elif [ "$(swconfig list 2>&1 | grep switch0)" != "" ] && [ "$(cat /etc/board.json | jsonfilter -q -e '@.model.platform' | tr -d '\n')" = "RUTX" ]; then
+	lanif="eth1"
+	uci -q batch <<-EOF
+	set network.@switch_vlan[0]=switch_vlan
+	set network.@switch_vlan[0].device='switch0'
+	set network.@switch_vlan[0].vlan=1
+	set network.@switch_vlan[0].ports='1t 2t 3t 4t 0t'
+	set network.@switch_vlan[1]=switch_vlan
+	set network.@switch_vlan[1].device='switch0'
+	set network.@switch_vlan[1].vlan=1
+	set network.@switch_vlan[1].ports='5 0'
+	add network switch_vlan
+	set network.@switch_vlan[2].device='switch0'
+	set network.@switch_vlan[2].vlan=3
+	set network.@switch_vlan[2].ports='0t 1'
+	add network switch_vlan
+	set network.@switch_vlan[3].device='switch0'
+	set network.@switch_vlan[3].vlan=4
+	set network.@switch_vlan[3].ports='0t 2'
+	add network switch_vlan
+	set network.@switch_vlan[4].device='switch0'
+	set network.@switch_vlan[4].vlan=5
+	set network.@switch_vlan[4].ports='0t 3'
+	add network switch_vlan
+	set network.@switch_vlan[5].device='switch0'
+	set network.@switch_vlan[5].vlan=6
+	set network.@switch_vlan[5].ports='0t 4'
+	EOF
 elif [ "$(swconfig list 2>&1 | grep switch0)" != "" ] && [ -d '/sys/class/net/eth1.5' ]; then
 	lanif="eth1.5"
 	uci -q batch <<-EOF
@@ -131,6 +159,7 @@ set network.lan.proto=static
 set network.lan.ipaddr=192.168.100.1
 set network.lan.netmask=255.255.255.0
 set network.lan.device=${lanif}
+set network.lan.ifname=${lanif}
 set network.lan.metric=2048
 set network.lan.ipv6=0
 set network.lan.delegate=0
@@ -181,6 +210,11 @@ if [ "$(uci -q show network.wan1 | grep multipath)" = "" ] && [ -z "$(uci -q get
 		_setup_wan_interface wan2 eth0 on macvlan
 		_setup_macvlan wan1
 		_setup_macvlan wan2
+	elif [ "$(cat /etc/board.json | jsonfilter -q -e '@.model.platform' | tr -d '\n')" = "RUTX" ]; then
+		_setup_wan_interface wan1 eth0.3 master
+		_setup_wan_interface wan2 eth0.4 on
+		_setup_wan_interface wan3 eth0.5 on
+		_setup_wan_interface wan4 eth0.6 on
 	elif [ "$(swconfig list 2>&1 | grep switch0)" != "" ]; then
 		_setup_wan_interface wan1 eth0.1 master
 		_setup_wan_interface wan2 eth0.2 on
