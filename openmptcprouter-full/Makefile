@@ -44,7 +44,6 @@ MY_DEPENDS := \
     luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
     luci-app-openvpn \
     shadowsocks-libev-ss-server shadowsocks-libev-ss-tunnel \
-    omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd ip6tables \
     iftop \
     htop \
     nano \
