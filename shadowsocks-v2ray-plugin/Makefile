@@ -15,7 +15,7 @@ PKG_SOURCE_PROTO:=git
 #PKG_SOURCE_URL:=https://github.com/shadowsocks/v2ray-plugin.git
 PKG_SOURCE_URL:=https://github.com/teddysun/v2ray-plugin.git
 #PKG_SOURCE_VERSION:=63a74bef9e9f639bc199255db9d452d96f01d11a
-PKG_SOURCE_VERSION:=6c0c5fb15851e13b36fe2eeaaba97fd27c9d291b
+PKG_SOURCE_VERSION:=5cafcf9a0ae316cb268120eb1994adf5255eb7f0
 
 PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_PARALLEL:=1

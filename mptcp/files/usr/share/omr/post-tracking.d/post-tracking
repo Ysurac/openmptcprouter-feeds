@@ -704,6 +704,95 @@ default_gw6=$(ip -6 route show default | grep -v "metric" | awk '/default/ {prin
 
 interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
 
+
+if [ -n "$(grep RUTX /etc/board.json)" ] && [ -n "$OMR_TRACKER_INTERFACE" ]; then
+	if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.device)" = "wwan0" ]; then
+		modemdata=$(omr-modemmanager '/sys/devices/platform/soc/60f8800.usb2/6000000.dwc3/xhci-hcd.1.auto/usb3/3-1' all)
+		gen=$(echo $modemdata | cut -d ';' -f 5 | tr -d '\n')
+		if [ "$gen" = "gsm" ]; then
+			echo "default-on" > /sys/class/leds/mob_gen_2/trigger
+			echo "none" > /sys/class/leds/mob_gen_3/trigger
+			echo "none" > /sys/class/leds/mob_gen_4/trigger
+		elif [ "$gen" = "umts" ]; then
+			echo "none" > /sys/class/leds/mob_gen_2/trigger
+			echo "default-on" > /sys/class/leds/mob_gen_3/trigger
+			echo "none" > /sys/class/leds/mob_gen_4/trigger
+		elif [ "$gen" = "lte" ]; then
+			echo "none" > /sys/class/leds/mob_gen_2/trigger
+			echo "none" > /sys/class/leds/mob_gen_3/trigger
+			echo "default-on" > /sys/class/leds/mob_gen_4/trigger
+		fi
+		bar=$(echo $modemdata | cut -d ';' -f 1 | tr -d '\n')
+		if [ "$bar" -gt "0" ]; then
+			echo "default-on" > /sys/class/leds/mob_ssid_1/trigger
+		else
+			echo "none" > /sys/class/leds/mob_ssid_1/trigger
+		fi
+		if [ "$bar" -gt "30" ]; then
+			echo "default-on" > /sys/class/leds/mob_ssid_2/trigger
+		else
+			echo "none" > /sys/class/leds/mob_ssid_2/trigger
+		fi
+		if [ "$bar" -gt "50" ]; then
+			echo "default-on" > /sys/class/leds/mob_ssid_3/trigger
+		else
+			echo "none" > /sys/class/leds/mob_ssid_3/trigger
+		fi
+		if [ "$bar" -gt "70" ]; then
+			echo "default-on" > /sys/class/leds/mob_ssid_4/trigger
+		else
+			echo "none" > /sys/class/leds/mob_ssid_4/trigger
+		fi
+		if [ "$bar" -gt "90" ]; then
+			echo "default-on" > /sys/class/leds/mob_ssid_5/trigger
+		else
+			echo "none" > /sys/class/leds/mob_ssid_5/trigger
+		fi
+	elif [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.device)" = "wwan1" ]; then
+		modemdata=$(omr-modemmanager '/sys/devices/platform/soc/8af8800.usb3/8a00000.dwc3/xhci-hcd.0.auto/usb1/1-1/1-1.2' all)
+		gen=$(echo $modemdata | cut -d ';' -f 5 | tr -d '\n')
+		if [ "$gen" = "gsm" ]; then
+			echo "default-on" > /sys/class/leds/mob2_gen_2/trigger
+			echo "none" > /sys/class/leds/mob2_gen_3/trigger
+			echo "none" > /sys/class/leds/mob2_gen_4/trigger
+		elif [ "$gen" = "umts" ]; then
+			echo "none" > /sys/class/leds/mob2_gen_2/trigger
+			echo "default-on" > /sys/class/leds/mob2_gen_3/trigger
+			echo "none" > /sys/class/leds/mob2_gen_4/trigger
+		elif [ "$gen" = "lte" ]; then
+			echo "none" > /sys/class/leds/mob2_gen_2/trigger
+			echo "none" > /sys/class/leds/mob2_gen_3/trigger
+			echo "default-on" > /sys/class/leds/mob2_gen_4/trigger
+		fi
+		bar=$(echo $modemdata | cut -d ';' -f 1 | tr -d '\n')
+		if [ "$bar" -gt "0" ]; then
+			echo "default-on" > /sys/class/leds/mob2_ssid_1/trigger
+		else
+			echo "none" > /sys/class/leds/mob2_ssid_1/trigger
+		fi
+		if [ "$bar" -gt "30" ]; then
+			echo "default-on" > /sys/class/leds/mob2_ssid_2/trigger
+		else
+			echo "none" > /sys/class/leds/mob2_ssid_2/trigger
+		fi
+		if [ "$bar" -gt "50" ]; then
+			echo "default-on" > /sys/class/leds/mob2_ssid_3/trigger
+		else
+			echo "none" > /sys/class/leds/mob2_ssid_3/trigger
+		fi
+		if [ "$bar" -gt "70" ]; then
+			echo "default-on" > /sys/class/leds/mob2_ssid_4/trigger
+		else
+			echo "none" > /sys/class/leds/mob2_ssid_4/trigger
+		fi
+		if [ "$bar" -gt "90" ]; then
+			echo "default-on" > /sys/class/leds/mob2_ssid_5/trigger
+		else
+			echo "none" > /sys/class/leds/mob2_ssid_5/trigger
+		fi
+	fi
+fi
+
 # An interface in error will never be used in MPTCP
 if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || [ "$interface_up" != "true" ]; then
 	if [ "$interface_up" = "true" ] && [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "modemmanager" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "wireguard" ]); then
@@ -1575,7 +1664,6 @@ if [ "$(pgrep openmptcprouter-vps)" = "" ] && ([ "$(uci -q show openmptcprouter 
 	/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1
 	sleep 5
 fi
-
 
 #if [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && ([ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ] || [ -z "$(iptables-save | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ]); then
 if [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && [ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ]; then
