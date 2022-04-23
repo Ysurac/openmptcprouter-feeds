@@ -209,23 +209,13 @@ end
 function mptcp_monitor_data()
 	luci.http.prepare_content("text/plain")
 	local fullmesh
-	fullmesh = io.popen("cat /proc/net/mptcp_net/snmp")
+	fullmesh = io.popen("multipath -m")
 	if fullmesh:read() ~= nil then
 		while true do
 			local ln = fullmesh:read("*l")
 			if not ln then break end
 			luci.http.write(ln)
 			luci.http.write("\n")
-		end
-	else
-		fullmesh = io.popen("nstat -z")
-		if fullmesh then
-			while true do
-				local ln = fullmesh:read("*l")
-				if not ln then break end
-				luci.http.write(ln)
-				luci.http.write("\n")
-			end
 		end
 	end
 	return
