@@ -20,7 +20,7 @@ GO_PKG:=github.com/fatedier/frp
 GO_PKG_BUILD_PKG:=github.com/fatedier/frp/cmd/...
 
 include $(INCLUDE_DIR)/package.mk
-include ../../lang/golang/golang-package.mk
+include /golang/golang-package.mk
 
 define Package/frp/install
 	$(call GoPackage/Package/Install/Bin,$(PKG_INSTALL_DIR))
