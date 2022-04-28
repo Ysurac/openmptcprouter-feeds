@@ -8,12 +8,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=modemmanager
-PKG_VERSION:=1.16.10
-PKG_RELEASE:=1
+PKG_VERSION:=1.18.6
+PKG_RELEASE:=$(AUTORELEASE)
 
 PKG_SOURCE:=ModemManager-$(PKG_VERSION).tar.xz
 PKG_SOURCE_URL:=https://www.freedesktop.org/software/ModemManager
-PKG_HASH:=2ccf1f716c2d121e8e6709bcf8af29ee86971a90adacca2e8d6288b30278862e
+PKG_HASH:=d4f804b31cf504239c5f1d4973c62095c00cba1ee9abb503718dac6d146a470a
 PKG_BUILD_DIR:=$(BUILD_DIR)/ModemManager-$(PKG_VERSION)
 
 PKG_MAINTAINER:=Nicholas Smith <nicholas@nbembedded.com>
@@ -98,6 +98,7 @@ define Package/modemmanager/install
 
 	$(INSTALL_DIR) $(1)/usr/sbin
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/sbin/ModemManager $(1)/usr/sbin
+	$(INSTALL_BIN) ./files/usr/sbin/ModemManager-wrapper $(1)/usr/sbin
 
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/mmcli $(1)/usr/bin
@@ -130,6 +131,9 @@ define Package/modemmanager/install
 
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/tty
 	$(INSTALL_DATA) ./files/25-modemmanager-tty $(1)/etc/hotplug.d/tty
+
+	$(INSTALL_DIR) $(1)/etc/hotplug.d/wwan
+	$(INSTALL_DATA) ./files/25-modemmanager-wwan $(1)/etc/hotplug.d/wwan
 
 	$(INSTALL_DIR) $(1)/lib/netifd/proto
 	$(INSTALL_BIN) ./files/modemmanager.proto $(1)/lib/netifd/proto/modemmanager.sh

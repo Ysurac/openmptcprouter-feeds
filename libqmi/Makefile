@@ -8,12 +8,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=libqmi
-PKG_VERSION:=1.28.8
+PKG_VERSION:=1.30.4
 PKG_RELEASE:=$(AUTORELEASE)
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
 PKG_SOURCE_URL:=https://www.freedesktop.org/software/libqmi
-PKG_HASH:=6e3bbbd200bc1b64b23f6254fef9212f2699ec77cfb32075d2ba5079c73a9f78
+PKG_HASH:=00d7da30a4f8d1185f37cba289cfaf1dfcd04a58f2f76d6acfdf5b85312d6ed6
 
 PKG_MAINTAINER:=Nicholas Smith <nicholas@nbembedded.com>
 
@@ -66,11 +66,21 @@ CONFIGURE_ARGS += \
 	--disable-gtk-doc-pdf \
 	--disable-silent-rules \
 	--enable-firmware-update \
-	--$(if $(LIBQMI_WITH_MBIM_QMUX),en,dis)able-mbim-qmux \
-	--$(if $(LIBQMI_WITH_QRTR_GLIB),en,dis)able-qrtr \
 	--enable-more-warnings=yes \
 	--without-udev \
 	--without-udev-base-dir
+
+ifeq ($(CONFIG_LIBQMI_WITH_MBIM_QMUX),y)
+	CONFIGURE_ARGS += --enable-mbim-qmux
+else
+	CONFIGURE_ARGS += --disable-mbim-qmux
+endif
+
+ifeq ($(CONFIG_LIBQMI_WITH_QRTR_GLIB),y)
+	CONFIGURE_ARGS += --enable-qrtr
+else
+	CONFIGURE_ARGS += --disable-qrtr
+endif
 
 define Build/InstallDev
 	$(INSTALL_DIR) $(1)/usr/include
