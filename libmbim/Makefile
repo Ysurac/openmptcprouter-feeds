@@ -8,29 +8,28 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=libmbim
-PKG_SOURCE_VERSION:=1.26.2
-PKG_RELEASE:=$(AUTORELEASE)
+PKG_VERSION:=1.26.0
+PKG_RELEASE:=1
 
-PKG_SOURCE_PROTO:=git
-PKG_SOURCE_URL:=https://gitlab.freedesktop.org/mobile-broadband/libmbim.git
-PKG_MIRROR_HASH:=47eb6511818271be66336fb67ec97de7925119b09ddbd0ffd06b3f76893a461e
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
+PKG_SOURCE_URL:=https://www.freedesktop.org/software/libmbim
+PKG_HASH:=1e1f0926b22c77210442129eca689722ecf324ab9c9abf421a5c989f46e813cf
 
 PKG_MAINTAINER:=Nicholas Smith <nicholas@nbembedded.com>
 
 PKG_INSTALL:=1
+PKG_BUILD_PARALLEL:=1
 
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/nls.mk
-include $(INCLUDE_DIR)/meson.mk
 
-TARGET_CFLAGS += -ffunction-sections -fdata-sections -fno-merge-all-constants -fmerge-constants
-TARGET_LDFLAGS += -Wl,--gc-sections
-
-MESON_ARGS += \
-	-Dintrospection=false \
-	-Dman=false \
-	-Dbash_completion=false \
-	-Db_lto=true
+CONFIGURE_ARGS += \
+	--disable-static \
+	--disable-gtk-doc \
+	--disable-gtk-doc-html \
+	--disable-gtk-doc-pdf \
+	--disable-silent-rules \
+	--enable-more-warnings=yes
 
 define Package/libmbim
   SECTION:=libs
@@ -57,6 +56,10 @@ define Package/mbim-utils
   LICENSE_FILES:=COPYING
 endef
 
+CONFIGURE_ARGS += \
+	--without-udev \
+	--without-udev-base-dir
+
 define Build/InstallDev
 	$(INSTALL_DIR) $(1)/usr/include
 	$(CP) \
@@ -75,15 +78,11 @@ define Build/InstallDev
 endef
 
 define Package/libmbim/install
-	$(INSTALL_DIR) \
-		$(1)/usr/lib \
-		$(1)/usr/libexec
-
+	$(INSTALL_DIR) $(1)/usr/lib
 	$(CP) \
 		$(PKG_INSTALL_DIR)/usr/lib/libmbim*.so.* \
 		$(1)/usr/lib/
-
-	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/libexec/mbim-proxy $(1)/usr/libexec/
+	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/lib/mbim-proxy $(1)/usr/lib/
 endef
 
 define Package/mbim-utils/install
