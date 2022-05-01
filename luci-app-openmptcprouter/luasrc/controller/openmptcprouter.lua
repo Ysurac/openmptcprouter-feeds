@@ -333,6 +333,12 @@ function wizard_add()
 				ucic:set("network",intf .. "_dev","name",ifname)
 			end
 		end
+		if typeintf ~= "macvlan" and ucic:get("network",intf .. "_dev","type") == "macvlan" then
+			ucic:delete("network",intf .. "_dev","type")
+			ucic:delete("network",intf .. "_dev","mode")
+			ucic:delete("network",intf .. "_dev","ifname")
+			ucic:delete("network",intf .. "_dev","macaddr")
+		end
 		if proto == "pppoe" then
 			ucic:set("network",intf,"pppd_options","persist maxfail 0")
 		end
