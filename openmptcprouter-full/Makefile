@@ -31,7 +31,7 @@ MY_DEPENDS := \
     libnetfilter-conntrack ebtables ebtables-utils ip-full nstat \
     iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace iptables-mod-conntrack-extra iptables-mod-account \
     kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra iptables-mod-extra conntrack \
-    iptables-mod-ipsec kmod-crypto-authenc kmod-ipsec kmod-ipsec4 kmod-ipsec6 kmod-ipt-ipsec \
+    iptables-mod-ipsec kmod-crypto-authenc kmod-ipsec kmod-ipsec4 kmod-ipt-ipsec \
     wireless-tools \
     libiwinfo-lua \
     ca-bundle ca-certificates \
@@ -45,7 +45,7 @@ MY_DEPENDS := \
     luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
     luci-app-openvpn \
     shadowsocks-libev-ss-server shadowsocks-libev-ss-tunnel \
-    omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd ip6tables \
+
     speedtestcpp \
     iftop \
     htop \
