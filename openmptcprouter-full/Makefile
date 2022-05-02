@@ -45,7 +45,6 @@ MY_DEPENDS := \
     luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
     luci-app-openvpn \
     shadowsocks-libev-ss-server shadowsocks-libev-ss-tunnel \
-
     speedtestcpp \
     iftop \
     htop \
