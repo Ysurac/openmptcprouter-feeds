@@ -46,7 +46,7 @@ endef
 
 define Package/msmtp
 $(call Package/msmtp/Default)
-  DEPENDS+= +libgnutls +ca-bundle +libopenssl 
+  DEPENDS+= +libgnutls +ca-bundle
   TITLE+= (with SSL support)
   VARIANT:=ssl
   DEFAULT_VARIANT:=1
