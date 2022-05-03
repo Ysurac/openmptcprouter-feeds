@@ -9,9 +9,9 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=xtables-addons
-PKG_VERSION:=3.18
-PKG_RELEASE:=4
-PKG_HASH:=a77914a483ff381663f52120577e5e9355ca07cca73958b038e09d91247458d5
+PKG_VERSION:=3.19
+PKG_RELEASE:=$(AUTORELEASE)
+PKG_HASH:=5e36ea027ab15a84d9af1f3f8e84a78b80a617093657f08089bd44657722f661
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
 PKG_SOURCE_URL:=https://inai.de/files/xtables-addons/
@@ -162,7 +162,7 @@ define Package/iptgeoip/install
 		$(1)/usr/lib/xtables-addons/
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(CP) \
-		$(PKG_INSTALL_DIR)/usr/bin/xt_geoip_fetch \
+		$(PKG_INSTALL_DIR)/usr/bin/xt_geoip_query \
 		$(1)/usr/bin/
 	$(INSTALL_DIR) $(1)/usr/share/xt_geoip
 	touch $(1)/usr/share/xt_geoip/.keep
