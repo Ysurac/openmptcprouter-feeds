@@ -25,7 +25,7 @@ GO_PKG:=github.com/golang/protobuf
 GO_PKG_SOURCE_ONLY:=1
 
 include $(INCLUDE_DIR)/package.mk
-include ../golang/golang-package.mk
+include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
 
 define Package/golang-protobuf-dev
 $(call GoPackage/GoSubMenu)
