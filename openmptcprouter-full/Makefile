@@ -37,6 +37,7 @@ MY_DEPENDS := \
     ca-bundle ca-certificates \
     luci-mod-admin-full luci-app-firewall luci-app-glorytun-tcp luci-app-glorytun-udp luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-theme-argon luci-base \
     luci-app-omr-tracker luci-app-omr-dscp \
+    luci-app-sqm sqm-scripts-extra \
     luci-app-vnstat2 omr-quota luci-app-omr-quota \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail luci-app-upnp \
     luci-app-wol luci-app-opkg \
