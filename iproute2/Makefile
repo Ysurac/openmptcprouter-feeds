@@ -8,12 +8,13 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=iproute2
-PKG_VERSION:=5.15.0
 PKG_RELEASE:=$(AUTORELEASE)
 
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
-PKG_SOURCE_URL:=@KERNEL/linux/utils/net/iproute2
-PKG_HASH:=38e3e4a5f9a7f5575c015027a10df097c149111eeb739993128e5b2b35b291ff
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_URL:=git://git.kernel.org/pub/scm/network/iproute2/iproute2.git
+PKG_SOURCE_VERSION:=29da83f89f6e1fe528c59131a01f5d43bcd0a000
+PKG_VERSION:=5.16.0-$(PKG_SOURCE_VERSION)
+
 PKG_BUILD_PARALLEL:=1
 PKG_BUILD_DEPENDS:=iptables
 PKG_LICENSE:=GPL-2.0
@@ -230,12 +231,16 @@ define Package/rdma/install
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/rdma/rdma $(1)/usr/sbin/
 endef
 
-$(eval $(call BuildPackage,ip-tiny))
+#$(eval $(call BuildPackage,ip-tiny))
 $(eval $(call BuildPackage,ip-full))
 # build tc-mod-iptables before its dependents, to avoid
 # spurious rebuilds when building multiple variants.
 $(eval $(call BuildPackage,tc-mod-iptables))
+<<<<<<< HEAD
 $(eval $(call BuildPackage,tc-tiny))
+=======
+#$(eval $(call BuildPackage,tc-tiny))
+>>>>>>> parent of 406b6780 (fix iproute2)
 $(eval $(call BuildPackage,tc-full))
 $(eval $(call BuildPackage,genl))
 $(eval $(call BuildPackage,ip-bridge))
