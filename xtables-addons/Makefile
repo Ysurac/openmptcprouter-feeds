@@ -36,7 +36,6 @@ define Package/xtables-addons
 endef
 
 # uses GNU configure
-TARGET_CFLAGS += -std=c99 -D_GNU_SOURCE
 
 CONFIGURE_ARGS+= \
 	--with-kbuild="$(LINUX_DIR)" \
