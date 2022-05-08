@@ -236,11 +236,7 @@ $(eval $(call BuildPackage,ip-full))
 # build tc-mod-iptables before its dependents, to avoid
 # spurious rebuilds when building multiple variants.
 $(eval $(call BuildPackage,tc-mod-iptables))
-<<<<<<< HEAD
 $(eval $(call BuildPackage,tc-tiny))
-=======
-#$(eval $(call BuildPackage,tc-tiny))
->>>>>>> parent of 406b6780 (fix iproute2)
 $(eval $(call BuildPackage,tc-full))
 $(eval $(call BuildPackage,genl))
 $(eval $(call BuildPackage,ip-bridge))
