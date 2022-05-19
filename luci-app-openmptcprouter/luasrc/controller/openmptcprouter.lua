@@ -1190,6 +1190,19 @@ function settings_add()
 	local sfe_bridge = luci.http.formvalue("sfe_bridge") or "0"
 	ucic:set("openmptcprouter","settings","sfe_bridge",sfe_bridge)
 
+	-- Enable/disable SIP ALG
+	local sipalg = luci.http.formvalue("sipalg") or "0"
+	ucic:set("openmptcprouter","settings","sipalg",sipalg)
+	ucic:foreach("firewall", "zone", function (section)
+		ucic:set("firewall",section[".name"],"auto_helper",sipalg)
+	end)
+	if sipalg == "1" then
+		luci.sys.call("modprobe nf_conntrack_ip >/dev/null 2>/dev/null")
+		luci.sys.call("modprobe nf_nat_sip >/dev/null 2>/dev/null")
+	else
+		luci.sys.call("rmmod nf_nat_sip >/dev/null 2>/dev/null")
+		luci.sys.call("rmmod nf_conntrack_ip >/dev/null 2>/dev/null")
+	end
 
 	ucic:save("openmptcprouter")
 	ucic:commit("openmptcprouter")
