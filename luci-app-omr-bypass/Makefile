@@ -6,7 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI Interface to bypass domains
-LUCI_DEPENDS:=+dnsmasq-full +shadowsocks-libev-ss-rules +iptables-mod-extra +iptables
+LUCI_DEPENDS:=+dnsmasq-full +shadowsocks-libev-ss-rules +iptables-mod-ndpi +iptables-mod-extra +kmod-ipt-ndpi +iptables
 
 PKG_LICENSE:=GPLv3
 

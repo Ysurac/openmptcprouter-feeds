@@ -221,8 +221,6 @@ _get_ss_redir() {
 	[ "$cf_fast_open" = "1" ] && fast_open="true"
 	config_get cf_no_delay $1 no_delay
 	[ "$cf_no_delay" = "1" ] && no_delay="true"
-	config_get cf_mptcp $1 mptcp
-	[ "$cf_mptcp" = "1" ] && mptcp="true"
 }
 
 _get_ss_server() {
@@ -255,12 +253,10 @@ _set_ss_server_vps() {
 	current_obfs_type="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.obfs_type')"
 	current_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.fast_open')"
 	current_no_delay="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.no_delay')"
-	current_mptcp="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks.mptcp')"
 	
 	ebpf="false"
 	fast_open="false"
 	no_delay="false"
-	mptcp="false"
 	obfs="false"
 	obfs_plugin="v2ray"
 	obfs_type="http"
@@ -268,9 +264,9 @@ _set_ss_server_vps() {
 	config_foreach _get_ss_redir ss_redir
 	config_foreach _get_ss_server server
 
-	if [ "$current_mptcp" != "$mptcp" ] || [ "$current_obfs_plugin" != "$obfs_plugin" ] || [ "$current_obfs_type" != "$obfs_type" ] || [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_key" != "$key" ] || [ "$current_ebpf" != "$ebpf" ] || [ "$current_obfs" != "$obfs" ] || [ "$current_fast_open" != "$fast_open" ] || [ "$current_no_delay" != "$no_delay" ]; then
+	if [ "$current_obfs_plugin" != "$obfs_plugin" ] || [ "$current_obfs_type" != "$obfs_type" ] || [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_key" != "$key" ] || [ "$current_ebpf" != "$ebpf" ] || [ "$current_obfs" != "$obfs" ] || [ "$current_fast_open" != "$fast_open" ] || [ "$current_no_delay" != "$no_delay" ]; then
 		local settings
-		settings='{"port": '$port',"method":"'$method'","fast_open":'$fast_open',"reuse_port":true,"no_delay":'$no_delay',"mptcp":'$mptcp',"key":"'$key'","ebpf":'$ebpf',"obfs":'$obfs',"obfs_plugin":"'$obfs_plugin'","obfs_type":"'$obfs_type'"}'
+		settings='{"port": '$port',"method":"'$method'","fast_open":'$fast_open',"reuse_port":true,"no_delay":'$no_delay',"mptcp":true,"key":"'$key'","ebpf":'$ebpf',"obfs":'$obfs',"obfs_plugin":"'$obfs_plugin'","obfs_type":"'$obfs_type'"}'
 		_set_json "shadowsocks" "$settings"
 	fi
 }
@@ -524,7 +520,7 @@ _get_gre_tunnel() {
 			peeraddr="$(echo $tunnel | jsonfilter -q -e '@.remote_ip')"
 			ipaddr="$(echo $tunnel | jsonfilter -q -e '@.local_ip')"
 			publicaddr="$(echo $tunnel | jsonfilter -q -e '@.public_ip')"
-			if [ "$peeraddr" != "" ] && [ "$ipaddr" != "" ] && [ "$publicaddr" != "" ] && [ "$vpnip_local" != "" ] && ([ "$(uci -q get network.oip${i}.ipaddr)" != "$peeraddr" ] || [ "$(uci -q get network.oip${i}.gateway)" != "$ipaddr" ] || [ "$(uci -q get network.oip${i}gre.ipaddr)" != "$vpnip_local" ]); then
+			if [ "$peeraddr" != "" ] && [ "$ipaddr" != "" ] && [ "$publicaddr" != "" ] && [ "$vpnip_local" != "" ] && ([ "$(uci -q get network.oip${i}.ipaddr)" != "$peeraddr" ] || [ "$(uci -q get network.oip${i}.ipaddr)" != "$ipaddr" ] || [ "$(uci -q get network.oip${i}gre.ipaddr)" != "$vpnip_local" ]); then
 				uci -q batch <<-EOF >/dev/null
 					set network.oip${i}gre=interface
 					set network.oip${i}gre.label="GRE tunnel for $publicaddr"
@@ -543,7 +539,7 @@ _get_gre_tunnel() {
 					set network.oip${i}.label="Tunnel for $publicaddr"
 					set network.oip${i}.proto=static
 					set network.oip${i}.nohostroute='1'
-					set network.oip${i}.device="@oip${i}gre"
+					set network.oip${i}.ifname="@oip${i}gre"
 					set network.oip${i}.ipv6='0'
 					set network.oip${i}.defaultroute='0'
 					set network.oip${i}.multipath='off'
@@ -559,10 +555,10 @@ _get_gre_tunnel() {
 				for intf in $allintf; do
 					uci -q add_list firewall.zone_vpn.network=$intf
 				done
-				[ -z "$(uci -q get firewall.zone_vpn.network | grep oip${i}gre)" ] && {
-					uci -q add_list firewall.zone_vpn.network="oip${i}gre"
-					uci -q add_list firewall.zone_vpn.network="oip${i}"
-				}
+				uci -q batch <<-EOF >/dev/null
+					add_list firewall.zone_vpn.network="oip${i}gre"
+					add_list firewall.zone_vpn.network="oip${i}"
+				EOF
 				ssport="$(echo $tunnel | jsonfilter -q -e '@.shadowsocks_port')"
 				uci -q batch <<-EOF >/dev/null
 					set shadowsocks-libev.oip${i}server=server
@@ -740,7 +736,7 @@ _set_mptcp_vps() {
 	syn_retries="$(uci -q get network.globals.mptcp_syn_retries)"
 	congestion="$(uci -q get network.globals.congestion)"
 	[ -z "$congestion" ] && congestion="bbr"
-	if [ "$mptcp_enabled_current" != "$mptcp_enabled" ] || [ "$checksum_current" != "$checksum" ] || ([ "$path_manager_current" != "" ] && [ "$path_manager_current" != "$path_manager" ]) || ([ "$scheduler_current" != "" ] && [ "$scheduler_current" != "$scheduler" ]) || ([ "$syn_retries_current" != "" ] && [ "$syn_retries_current" != "$syn_retries" ]) || [ "$congestion_control_current" != "$congestion" ]; then
+	if [ "$mptcp_enabled_current" != "$mptcp_enabled" ] || [ "$checksum_current" != "$checksum" ] || [ "$path_manager_current" != "$path_manager" ] || [ "$scheduler_current" != "$scheduler" ] || [ "$syn_retries_current" != "$syn_retries" ] || [ "$congestion_control_current" != "$congestion" ]; then
 		settings='{"enabled" : "'$mptcp_enabled'", "checksum": "'$checksum'","path_manager": "'$path_manager'","scheduler": "'$scheduler'","syn_retries": "'$syn_retries'","congestion_control": "'$congestion'"}'
 		echo $(_set_json "mptcp" "$settings")
 	else
@@ -827,7 +823,7 @@ _set_vpn_ip() {
 	local settings
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
-	vpnifname="$(uci -q get network.omrvpn.device)"
+	vpnifname="$(uci -q get network.omrvpn.ifname)"
 	vpnip_local_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.remoteip')"
 	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} | awk -F'[ /]+' '{print $3}')
 	vpnip_remote_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.localip')"
@@ -843,19 +839,6 @@ _set_vpn_ip() {
 	fi
 }
 
-_set_sipalg() {
-	local settings
-	sipalg="$(uci -q get openmptcprouter.settings.sipalg)"
-	if [ "$sipalg" = "1" ]; then
-		sipalg="true"
-	else
-		sipalg="false"
-	fi
-	settings='{"enable" : "'$sipalg'"}'
-	result=$(_set_json "sipalg" "$settings")
-}
-
-
 _delete_client2client() {
 	if [ -n "$(echo $1 | grep omr_client2client)" ]; then
 		uci -q delete network.$1
@@ -867,7 +850,7 @@ _set_client2client() {
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 	c2cips="$(echo "$vps_config" | jsonfilter -q -e '@.client2client.lanips[0]')"
-	vpnifname="$(uci -q get network.omrvpn.device)"
+	vpnifname="$(uci -q get network.omrvpn.ifname)"
 	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} | awk -F'[ /]+' '{print $3}' | tr -d "\n")
 	vpnip_remote=$(ip -4 r list dev ${vpnifname} | grep via | grep -v default | grep -v / | grep -v metric | awk '{print $1}' | tr -d "\n")
 	for lanip in $c2cips; do
@@ -901,7 +884,6 @@ _vps_firewall_redirect_port() {
 	config_get v2ray $1 v2ray "0"
 	config_get name $1 name
 	config_get dmz $1 dmz "0"
-	config_get target $1 target "REDIRECT"
 	if [ -z "$src_dport" ] && [ -n "$dest_port" ]; then
 		src_dport=$dest_port
 	fi
@@ -936,74 +918,42 @@ _vps_firewall_redirect_port() {
 							iptables-save --counters | sed "s:-d $src_dip/32::g" | iptables-restore -w
 						}
 						[ -n "$src_ip" ] && comment=" from $src_ip"
-						if [ "$target" = "ACCEPT" ]; then
-							checkfw=$(echo "$vpsfwlist" | grep "# OMR $username open router $src_dport port $protoi${comment}")
-						else
-							checkfw=$(echo "$vpsfwlist" | grep "# OMR $username redirect router $src_dport port $protoi${comment}")
-						fi
+						checkfw=$(echo "$vpsfwlist" | grep "# OMR $username redirect router $src_dport port $protoi${comment}")
 					fi
 				else
 					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
-						if [ "$target" = "ACCEPT" ]; then
-							checkfw=$(echo "$vpsfw6list" | grep "$src_dport	# OMR $username open router $src_dport port $protoi")
-						else
-							checkfw=$(echo "$vpsfw6list" | grep "$src_dport	# OMR $username redirect router $src_dport port $protoi")
-						fi
+						checkfw=$(echo "$vpsfw6list" | grep "$src_dport	# OMR $username redirect router $src_dport port $protoi")
 					else
 						comment=""
 						[ -n "$src_dip" ] && comment=" to $src_dip"
 						[ -n "$src_ip" ] && comment=" from $src_ip"
-						if [ "$target" = "ACCEPT" ]; then
-							checkfw=$(echo "$vpsfw6list" | grep "# OMR $username open router $src_dport port $protoi${comment}")
-						else
-							checkfw=$(echo "$vpsfw6list" | grep "# OMR $username redirect router $src_dport port $protoi${comment}")
-						fi
+						checkfw=$(echo "$vpsfw6list" | grep "# OMR $username redirect router $src_dport port $protoi${comment}")
 					fi
 				fi
 				if [ "$checkfw" = "" ]; then
-					settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","source_dip" : "'$src_dip'","source_ip" : "'$src_ip'","proto" : "'$protoi'","fwtype" : "'$target'","ipproto" : "'$family'"}'
+					settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","source_dip" : "'$src_dip'","source_ip" : "'$src_ip'","proto" : "'$protoi'","fwtype" : "DNAT","ipproto" : "'$family'"}'
 					_set_json "shorewallopen" "$settings"
 				fi
 				if [ "$family" = "ipv4" ]; then
 					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
-						if [ "$target" = "ACCEPT" ]; then
-							vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR $username open router $src_dport port $protoi")
-							[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR open router $src_dport port $protoi")
-						else
-							vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR $username redirect router $src_dport port $protoi")
-							[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR redirect router $src_dport port $protoi")
-						fi
+						vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR $username redirect router $src_dport port $protoi")
+						[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR redirect router $src_dport port $protoi")
 					else
 						comment=""
 						[ -n "$src_dip" ] && comment=" to $src_dip"
 						[ -n "$src_ip" ] && comment=" from $src_ip"
-						if [ "$target" = "ACCEPT" ]; then
-							vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR $username open router $src_dport port $protoi${comment}")
-							[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR open router $src_dport port $protoi${comment}")
-						else
-							vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR $username redirect router $src_dport port $protoi${comment}")
-							[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR redirect router $src_dport port $protoi${comment}")
-						fi
+						vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR $username redirect router $src_dport port $protoi${comment}")
+						[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR redirect router $src_dport port $protoi${comment}")
 					fi
 				else
 					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
-						if [ "$target" = "ACCEPT" ]; then
-							vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR $username open router $src_dport port $protoi")
-							[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR open router $src_dport port $protoi")
-						else
-							vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR $username redirect router $src_dport port $protoi")
-							[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR redirect router $src_dport port $protoi")
-						fi
+						vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR $username redirect router $src_dport port $protoi")
+						[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR redirect router $src_dport port $protoi")
 					else
 						[ -n "$src_dip" ] && comment=" to $src_dip"
 						[ -n "$src_ip" ] && comment=" from $src_ip"
-						if [ "$target" = "ACCEPT" ]; then
-							vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR $username open router $src_dport port $protoi${comment}")
-							[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR open router $src_dport port $protoi${comment}")
-						else
-							vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR $username redirect router $src_dport port $protoi${comment}")
-							[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR redirect router $src_dport port $protoi${comment}")
-						fi
+						vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR $username redirect router $src_dport port $protoi${comment}")
+						[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR redirect router $src_dport port $protoi${comment}")
 					fi
 				fi
 			else
@@ -1134,7 +1084,7 @@ _set_vps_firewall() {
 	#'
 
 	fwservername=$1
-	[ -n "$fwservername" ] && servername=$fwservername
+	[ -z "$servername" ] && servername=$fwservername
 	[ -z "$fwservername" ] && fwservername=$servername
 	[ "$(uci -q get openmptcprouter.${fwservername}.nofwredirect)" = "1" ] && return
 	[ -z "$(uci -q get openmptcprouter.${fwservername}.username)" ] && return
@@ -1153,11 +1103,9 @@ _set_vps_firewall() {
 	username="$(uci -q get openmptcprouter.${fwservername}.username)"
 	settings='{"name" : "redirect router"}'
 	fw_list=$(_set_json "shorewalllist" "$settings")
-	[ -z "$fw_list" ] && return
 	vpsfwlist=$(echo $fw_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')
 	settings='{"name" : "open router"}'
 	fw_list=$(_set_json "shorewalllist" "$settings")
-	[ -z "$fw_list" ] && return
 	if [ -n "$vpsfwlist" ]; then
 		vpsfwlist="$vpsfwlist\n$(echo $fw_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')"
 	else
@@ -1165,11 +1113,9 @@ _set_vps_firewall() {
 	fi
 	settings='{"name" : "redirect router","ipproto" : "ipv6"}'
 	fw6_list=$(_set_json "shorewalllist" "$settings")
-	[ -z "$fw6_list" ] && return
 	vpsfw6list=$(echo $fw6_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')
 	settings='{"name" : "open router","ipproto" : "ipv6"}'
 	fw6_list=$(_set_json "shorewalllist" "$settings")
-	[ -z "$fw6_list" ] && return
 	if [ -n "$vpsfw6list" ]; then
 		vpsfw6list="$vpsfw6list\n$(echo $fw6_list | jsonfilter -q -e '@.list[*]' | sed '/^[[:space:]]*$/d')"
 	else
@@ -1563,18 +1509,13 @@ _set_config_from_vps() {
 	congestion="$(echo "$vps_config" | jsonfilter -q -e '@.network.congestion_control')"
 	uci -q batch <<-EOF >/dev/null
 		set network.globals.multipath=$mptcp_enabled
+		set network.globals.mptcp_path_manager=$mptcp_path_manager
+		set network.globals.mptcp_scheduler=$mptcp_scheduler
 		set network.globals.mptcp_checksum=$mptcp_checksum
+		set network.globals.mptcp_syn_retries=$mptcp_syn_retries
 		set network.globals.congestion=$congestion
 		commit network
 	EOF
-	if [ "$mptcp_path_manager" != "" ] && [ "$mptcp_scheduler" != "" ] && [ "$mptcp_syn_retries" != "" ]; then
-		uci -q batch <<-EOF >/dev/null
-			set network.globals.mptcp_path_manager=$mptcp_path_manager
-			set network.globals.mptcp_scheduler=$mptcp_scheduler
-			set network.globals.mptcp_syn_retries=$mptcp_syn_retries
-			commit network
-		EOF
-	fi
 
 	# Check if server get an IPv6, if not disable IPv6 on OMR
 	vps_ipv6_addr="$(echo "$vps_config" | jsonfilter -q -e '@.network.ipv6')"
@@ -1895,7 +1836,6 @@ _config_service() {
 	lanips=""
 	config_foreach _get_lan_ip interface
 	_set_lan_ip
-	_set_sipalg
 	config_foreach _delete_client2client route
 	if [ "$(uci -q get openmptcprouter.settings.vpn)" != "openvpn" ] && [ "$(echo "$vps_config" | jsonfilter -q -e '@.client2client.enabled')" == "true" ]; then
 		_set_client2client

@@ -82,12 +82,6 @@ return L.view.extend({
 		o.rmempty   = false;
 		o.modalonly = true;
 
-		o = s.taboption('advanced', form.Value, 'latency_tolerance', _('Latency tolerance'));
-		o.default   = '300';
-		o.datatype  = "uinteger";
-		o.rmempty   = false;
-		o.modalonly = true;
-
 		return m.render();
 	}
 });
