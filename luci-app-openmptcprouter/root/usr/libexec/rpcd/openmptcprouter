@@ -11,7 +11,7 @@ local jsonc  = require "luci.jsonc"
 function interface_from_device(dev)
 	for _, iface in ipairs(net:get_networks()) do
 		local ifacen = iface:name()
-		local ifacename = ucic:get("network",ifacen,"device")
+		local ifacename = ucic:get("network",ifacen,"ifname")
 		if ifacename == dev then
 			return ifacen
 		end
@@ -72,7 +72,7 @@ function add_interface(add_interface_ifname)
 	end
 
 	ucic:set("network","wan" .. i,"interface")
-	ucic:set("network","wan" .. i,"device",defif)
+	ucic:set("network","wan" .. i,"ifname",defif)
 	ucic:set("network","wan" .. i,"proto","static")
 	if ointf ~= "" then
 		ucic:set("network","wan" .. i,"type","macvlan")
@@ -128,7 +128,7 @@ end
 
 function remove_interface(intf)
 	-- Remove existing interface
-	local defif = ucic:get("network",intf,"device")
+	local defif = ucic:get("network",intf,"ifname")
 	ucic:delete("network",intf)
 	ucic:delete("network",intf .. "_dev")
 	ucic:save("network")
@@ -170,7 +170,7 @@ function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspee
 	if not ucic:get("sqm",intf) ~= "" then
 		local defif = get_device(intf)
 		if defif == "" then
-			defif = ucic:get("network",intf,"device") or ""
+			defif = ucic:get("network",intf,"ifname") or ""
 		end
 		ucic:set("sqm",intf,"queue")
 		ucic:set("sqm",intf,"interface",defif)
@@ -268,7 +268,7 @@ function default_vpn(default_vpn)
 		ucic:set("network","omrvpn","proto","dhcp")
 	end
 	if vpn_intf ~= "" then
-		ucic:set("network","omrvpn","device",vpn_intf)
+		ucic:set("network","omrvpn","ifname",vpn_intf)
 		ucic:save("network")
 		ucic:commit("network")
 	end
@@ -824,7 +824,7 @@ function interfaces_status()
 				if mArray.openmptcprouter["external_check"] ~= false then
 					mArray.openmptcprouter["proxy_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m " .. timeout .. " " .. check_ipv4_website))
 					if mArray.openmptcprouter["proxy_addr"] == "" then
-						mArray.openmptcprouter["proxy_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m " .. timeout .. " ifconfig.me"))
+						mArray.openmptcprouter["proxy_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m " .. timeout .. " ifconfig.co"))
 					end
 					--mArray.openmptcprouter["ss_addr6"] = sys.exec("curl -s -6 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m 3 http://ipv6.openmptcprouter.com")
 				end
@@ -931,11 +931,6 @@ function interfaces_status()
 					else
 						mArray.openmptcprouter["vps_admin"] = false
 						mArray.openmptcprouter["vps_admin_error_msg"] = "No result"
-						uci:set("openmptcprouter",s[".name"],"admin_error","1")
-						mArray.openmptcprouter["vps_admin_error"] = true
-						uci:delete("openmptcprouter",s[".name"],"token")
-						uci:save("openmptcprouter",s[".name"])
-						uci:commit("openmptcprouter",s[".name"])
 					end
 				else
 					mArray.openmptcprouter["vps_admin"] = false
@@ -966,10 +961,7 @@ function interfaces_status()
 	if string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?glorytun(-udp)?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?dsvpn?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?mlvpn?$'"), "%d+") or string.find(sys.exec("/usr/bin/pgrep '^(/usr/sbin/)?openvpn?$'"), "%d+") then
 		mArray.openmptcprouter["tun_service"] = true
 		mArray.openmptcprouter["tun_ip"] = get_ip("omrvpn")
-		local tun_dev = uci:get("network","omrvpn","device")
-		if tun_dev == "" then
-			tun_dev = uci:get("network","omrvpn","ifname")
-		end
+		local tun_dev = uci:get("network","omrvpn","ifname")
 		if tun_dev == "" then
 			tun_dev = get_device("omrvpn")
 		end
@@ -1027,7 +1019,7 @@ function interfaces_status()
 			mArray.openmptcprouter["multi_vpn"] = true
 		end
 	end
-
+	
 	-- check Shadowsocks is running
 	mArray.openmptcprouter["shadowsocks_service"] = false
 	if string.find(sys.exec("/usr/bin/pgrep ss-redir"), "%d+") then
@@ -1035,16 +1027,10 @@ function interfaces_status()
 	end
 
 	mArray.openmptcprouter["shadowsocks_enabled"] = true
-	local ss_server = "1"
-	ucic:foreach("shadowsocks-libev", "server", function(s)
-		if uci:get("shadowsocks-libev",s[".name"],"disabled") == "0" then
-			ss_server = "0"
-		end
-	end)
+	local ss_server = uci:get("shadowsocks-libev","sss0","disabled") or "0"
 	if ss_server == "1" then
 		mArray.openmptcprouter["shadowsocks_enabled"] = false
 	end
-
 	-- check V2Ray is running
 	mArray.openmptcprouter["v2ray_service"] = false
 	if string.find(sys.exec("/usr/bin/pgrep v2ray"), "%d+") then
@@ -1153,14 +1139,14 @@ function interfaces_status()
 
 	    local ifname = get_device(interface)
 	    if ifname == "" or ifname == nil then
-		ifname = section["device"] or ""
+		ifname = section["ifname"] or ""
 	    end
 	    --if ifname ~= nil and ifname:match("^tun.*") and interface:match("^ovpn.*") then
 	    --ifname = get_device(interface:sub(5))
 	    --end
 	    
 	    duplicateif = false
-	    if ifname ~= "" and ifname ~= nil and not (section["device"] ~= nil and section["device"]:match("^@.*")) and (proto == "static" or proto == "dhcp") then
+	    if ifname ~= "" and ifname ~= nil and not (section["ifname"] ~= nil and section["ifname"]:match("^@.*")) then
 		if allintf[ifname] then
 		    connectivity = "ERROR"
 		    duplicateif = true
@@ -1170,7 +1156,7 @@ function interfaces_status()
 	    end
 
 	    duplicatemac = false
-	    if mac ~= "" and mac ~= nil and not (section["device"] ~= nil and section["device"]:match("^@.*")) and not (ifname ~= nil and ifname:match("%.")) then
+	    if mac ~= "" and mac ~= nil and not (section["ifname"] ~= nil and section["ifname"]:match("^@.*")) then
 		if allmac[mac] then
 		    connectivity = "ERROR"
 		    duplicatemac = true
@@ -1385,8 +1371,7 @@ function interfaces_status()
 		    if adminport == "" then
 			    adminport = "65500"
 		    end
-		    -- httping disable for now, with -l (ssl) timeout is ignored
-		    if false and server_ping == "UP" and uci:get("openmptcprouter", "settings", "disableserverhttptest") ~= "1" and ipaddr ~= "" and adminport ~= "" then
+		    if server_ping == "UP" and uci:get("openmptcprouter", "settings", "disableserverhttptest") ~= "1" and ipaddr ~= "" and adminport ~= "" then
 			    local server_http_result = ""
 			    local server_http_test = ""
 			    if mArray.openmptcprouter["service_addr_ip"] ~= "" then

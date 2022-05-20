@@ -14,18 +14,13 @@ _add_proto() {
 	if [ "$(dd if=/proc/net/xt_ndpi/proto bs=4096 2> /dev/null | grep $protoname)" = "" ]; then
 		echo "add_custom $protoname" >/proc/net/xt_ndpi/proto
 	fi
-	allurls="$(dd if=/proc/net/xt_ndpi/host_proto bs=4096 2> /dev/null)"
 	hosts="$( uci -q get omr-bypass.$protoname.url )"
 	for url in $hosts; do
-		if [ "$(echo "$allurls" | grep -i ^${protoname}: | grep $url)" = "" ]; then
-			echo "$protoname:$url" >/proc/net/xt_ndpi/host_proto
-		fi
+		echo "$protoname:$url" >/proc/net/xt_ndpi/host_proto
 	done
 	ip="$( uci -q get omr-bypass.$protoname.ip )"
 	for ip in $ips; do
-		if [ "$(echo "$allurls" | grep -i ^${protoname}: | grep $ip)" = "" ]; then
-			echo "$protoname:$ip" >/proc/net/xt_ndpi/ip_proto
-		fi
+		echo "$protoname:$ip" >/proc/net/xt_ndpi/ip_proto
 	done
 }
 
@@ -105,14 +100,12 @@ _bypass_domain() {
 		fi
 		if [ "$(uci -q get dhcp.@dnsmasq[0].ipset | grep /$domain/)" = "" ]; then
 			uci -q add_list dhcp.@dnsmasq[0].ipset="/$domain/omr_dst_bypass_$intf,omr6_dst_bypass_$intf"
-			add_domains="true"
 		else
 			dnsmasqipset=$(uci -q get dhcp.@dnsmasq[0].ipset | sed 's/ /\n/g')
 			for dnsipset in $dnsmasqipset; do
 				if [ "$(echo $dnsipset | cut -d/ -f2)" = "$domain" ]; then
 					uci -q del_list dhcp.@dnsmasq[0].ipset=$dnsipset
 					uci -q add_list dhcp.@dnsmasq[0].ipset="$dnsipset,omr_dst_bypass_$intf,omr6_dst_bypass_$intf"
-					add_domains="true"
 				fi
 			done
 		fi
@@ -508,10 +501,9 @@ _intf_rule_v2ray_rules() {
 
 _intf_rule() {
 	local intf
-	intf=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
+	config_get intf $1 ifname
+	[ -z "$intf" ] && intf=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
 	[ -n "$(echo $intf | grep '@')" ] && intf=$(ifstatus "$1" | jsonfilter -q -e '@["device"]')
-	[ -z "$intf" ] && config_get intf $1 device
-	[ -n "$(echo $intf | grep '/')" ] && return
 	#count=$((count+1))
 	config_get count $1 metric
 	local mode
@@ -545,7 +537,7 @@ _intf_rule() {
 			EOF
 		else
 			ip rule add prio 1 fwmark 0x539$count lookup $count pref 1 > /dev/null 2>&1
-			ip -6 rule add prio 1 fwmark 0x6539$count lookup 6$count pref 1 > /dev/null 2>&1
+			ip -6 rule add prio 1 fwmark 0x6539$count lookup 6$count > /dev/null 2>&1
 		fi
 	}
 	if [ "$(iptables-save | grep omr-bypass | grep omr_dst_bypass_$intf)" = "" ]; then
@@ -688,7 +680,6 @@ boot() {
 start_service() {
 	#local count
 	logger -t "omr-bypass" "Starting OMR-ByPass..."
-	add_domains="false"
 	config_load omr-bypass
 	config_foreach _add_proto proto
 	disableipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
@@ -806,11 +797,11 @@ start_service() {
 	config_foreach _bypass_proto dpis
 	uci -q commit omr-bypass
 
-	[ -z "$RELOAD" ] && [ "$add_domains" = "true" ] && {
+	[ -z "$RELOAD" ] && {
 		logger -t "omr-bypass" "Restart dnsmasq..."
 		/etc/init.d/dnsmasq restart
 	}
-	[ -n "$RELOAD" ] && [ "$add_domains" = "true" ] && {
+	[ -n "$RELOAD" ] && {
 		logger -t "omr-bypass" "Reload dnsmasq..."
 		/etc/init.d/dnsmasq reload
 	}

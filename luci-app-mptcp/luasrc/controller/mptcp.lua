@@ -63,10 +63,7 @@ function multipath_bandwidth()
 		local label = s["label"]
 		local dev = get_device(intname)
 		if dev == "" then
-			dev = get_device(s["device"])
-			if dev == "" then
-				dev = get_device(s["ifname"])
-			end
+			dev = get_device(s["ifname"])
 		end
 		local multipath = s["multipath"] or ""
 		if dev ~= "lo" and dev ~= "" then
@@ -209,8 +206,8 @@ end
 function mptcp_monitor_data()
 	luci.http.prepare_content("text/plain")
 	local fullmesh
-	fullmesh = io.popen("multipath -m")
-	if fullmesh:read() ~= nil then
+	fullmesh = io.popen("cat /proc/net/mptcp_net/snmp")
+	if fullmesh then
 		while true do
 			local ln = fullmesh:read("*l")
 			if not ln then break end
@@ -225,7 +222,7 @@ function mptcp_connections_data()
 	luci.http.prepare_content("text/plain")
 	local connections
 	connections = io.popen("multipath -c")
-	if connections:read() ~= nil then
+	if connections then
 		while true do
 			local ln = connections:read("*l")
 			if not ln then break end

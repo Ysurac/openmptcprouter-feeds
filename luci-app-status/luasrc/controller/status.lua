@@ -295,10 +295,7 @@ function multipath_bandwidth()
 		local label = s["label"]
 		local dev = get_device(intname)
 		if dev == "" then
-			dev = get_device(s["device"])
-			if dev == "" then
-				dev = get_device(s["ifname"])
-			end
+			dev = get_device(s["ifname"])
 		end
 		local multipath = s["multipath"] or ""
 		if dev ~= "lo" and dev ~= "" then

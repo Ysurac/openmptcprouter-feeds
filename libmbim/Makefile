@@ -1,22 +1,24 @@
 #
 # Copyright (C) 2016 Velocloud Inc.
 # Copyright (C) 2016 Aleksander Morgado <aleksander@aleksander.es>
+# Copyright (C) 2021 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 #
 # This is free software, licensed under the GNU General Public License v2.
 #
 
 include $(TOPDIR)/rules.mk
 
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_URL:=https://gitlab.freedesktop.org/mobile-broadband/libmbim.git
+PKG_SOURCE_VERSION:=c90c7c5b877de6e413b4833aaf1a42d2d128b051
+
 PKG_NAME:=libmbim
-PKG_VERSION:=1.26.2
-PKG_RELEASE:=$(AUTORELEASE)
+PKG_VERSION:=1.25.3-$(PKG_SOURCE_VERSION)
+PKG_RELEASE:=10
 
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
-PKG_SOURCE_URL:=https://www.freedesktop.org/software/libmbim
-PKG_HASH:=10c77bf5b5eb8c92ba80e9b519923ad9b898362bc8e1928e2bc9a17eeba649af
+PKG_MAINTAINER:=Nicholas Smith <nicholas.smith@telcoantennas.com.au>
 
-PKG_MAINTAINER:=Nicholas Smith <nicholas@nbembedded.com>
-
+PKG_FIXUP:=autoreconf
 PKG_INSTALL:=1
 PKG_BUILD_PARALLEL:=1
 

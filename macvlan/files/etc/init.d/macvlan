@@ -13,7 +13,6 @@ _save_macaddr() {
 	local _macaddr
 	uci -q get "network.$1_dev.ifname" >/dev/null && {
 		_ifname=$(uci -q get "network.$1.ifname")
-		[ -z "$_ifname" ] && _ifname=$(uci -q get "network.$1.device")
 		if [ -n "$(uci -q get network.$1.macaddr)" ] &&  [ "$(uci -q get network.$1.macaddr)" != "$(uci -q get network.$1_dev.macaddr)" ]; then
 			uci -q set network.$1_dev.macaddr="$(uci -q get network.$1.macaddr)"
 		else
@@ -26,8 +25,7 @@ _save_macaddr() {
 	}
 	[ -z "$(uci -q get network.$1.macaddr)" ] && {
 		_ifname=$(uci -q get "network.$1.ifname")
-		[ -z "$_ifname" ] && _ifname=$(uci -q get "network.$1.device")
-		[ -n "$_ifname" ] && [ -z "$(echo $_ifname | grep '\.')" ] && {
+		[ -n "$_ifname" ] && {
 			_macaddr=$(ip link show dev $_ifname 2>/dev/null | grep link | awk '{print $2}')
 			[ -n "$_macaddr" ] && {
 				uci -q set network.$1.macaddr=$_macaddr
@@ -44,6 +42,8 @@ _delete_device() {
 			uci -q batch <<-EOF
 			delete network.$1
 			commit network
+			delete macvlan.$1
+			commit macvlan
 			EOF
 		}
 		return
@@ -67,7 +67,7 @@ _setup_interface() {
 		[ -z "$(uci -q get network.$1.masterintf)" ] && uci -q set network.$1.masterintf=$(uci -q get network.$1_dev.ifname)
 		[ -n "$(uci -q get network.$1.masterintf)" ] && uci -q set network.$1_dev.ifname=$(uci -q get network.$1.masterintf)
 		[ -n "$(uci -q get network.$1.macaddr)" ] && uci -q set network.$1_dev.macaddr=$(uci -q get network.$1.macaddr)
-		uci set network.$1.device=$1
+		uci set network.$1.ifname=$1
 		uci -q commit network
 		return 0
 	}
@@ -75,11 +75,9 @@ _setup_interface() {
 	uci -q batch <<-EOF
 	set network.$1_dev=device
 	set network.$1_dev.name=$1
-	set network.$1_dev.type='macvlan'
+	set network.$1_dev.type=macvlan
 	set network.$1_dev.ifname=$_ifname
-	set network.$1_dev.mode='private'
-	set network.$1_dev.multicast=0
-	set network.$1.device=$1
+	set network.$1.ifname=$1
 	set network.$1.masterintf=$_ifname
 	set network.$1.type=macvlan
 	set network.$1.defaultroute=0
@@ -88,7 +86,7 @@ _setup_interface() {
 	
 	#_macaddr=$(uci -q get "network.$1.macaddr")
 	#_setup_macaddr "$1" "${_macaddr:-auto$(date +%s)}"
-	_setup_macaddr "$1" "$(dd if=/dev/urandom bs=1024 count=1 2>/dev/null | md5sum | sed -e 's/^\(..\)\(..\)\(..\)\(..\)\(..\)\(..\).*$/\1:\2:\3:\4:\5:\6/' -e 's/^\(.\)[13579bdf]/\10/')"
+	_setup_macaddr "$1" "auto$(date +%s)"
 	uci -q set network.$1_dev.mtu=$(uci -q get network.$1.mtu)
 	uci -q commit network
 }
