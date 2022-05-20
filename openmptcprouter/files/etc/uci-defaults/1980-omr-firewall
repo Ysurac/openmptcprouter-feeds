@@ -45,7 +45,8 @@ if [ "$(uci -q get firewall.zone_vpn)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set firewall.zone_vpn=zone
 		set firewall.zone_vpn.name=vpn
-		set firewall.zone_vpn.network=glorytun
+		add_list firewall.zone_vpn.network=omrvpn
+		add_list firewall.zone_vpn.network=omr6in4
 		set firewall.zone_vpn.masq=1
 		set firewall.zone_vpn.input=REJECT
 		set firewall.zone_vpn.forward=ACCEPT
@@ -98,6 +99,7 @@ if [ "$(uci -q show firewall | grep Allow-Lan-to-Wan)" = "" ]; then
 		set firewall.@rule[-1].name='Allow-Lan-to-Wan'
 		set firewall.@rule[-1].dest='wan'
 		set firewall.@rule[-1].src='lan'
+		set firewall.@rule[-1].proto='all'
 		commit firewall
 	EOF
 fi
@@ -145,6 +147,14 @@ if [ "$(uci -q get firewall.gre_tunnel)" = "" ]; then
 		set firewall.gre_tunnel=include
 		set firewall.gre_tunnel.path=/etc/firewall.gre-tunnel
 		set firewall.gre_tunnel.reload=0
+		commit firewall
+	EOF
+fi
+if [ "$(uci -q get firewall.ttl)" = "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		set firewall.ttl=include
+		set firewall.ttl.path=/etc/firewall.ttl
+		set firewall.ttl.reload=1
 		commit firewall
 	EOF
 fi
@@ -230,6 +240,15 @@ uci -q batch <<-EOF >/dev/null
 	set firewall.@include[0].reload='1'
 	commit firewall
 EOF
+if [ "$(uci -q get openmptcprouter.settings.sipalg)" != "1" ]; then
+	uci -q batch <<-EOF >/dev/null
+		set firewall.zone_lan.auto_helper='0'
+		set firewall.zone_wan.auto_helper='0'
+		commit firewall
+	EOF
+	rmmod nf_nat_sip 2>&1 >/dev/null
+	rmmod nf_conntrack_sip 2>&1 >/dev/null
+fi
 
 rm -f /tmp/luci-indexcache
 

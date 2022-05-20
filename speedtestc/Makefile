@@ -12,7 +12,7 @@ PKG_RELEASE:=3
 
 PKG_SOURCE_URL:=https://github.com/mobrembski/SpeedTestC.git
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_VERSION:=64f8d8288cbbaa596a408fd3051a2b5bc831faa9
+PKG_SOURCE_VERSION:=5bd807bc32269321e500a7e7d36b8ec3fefa5f47
 PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 PKG_LICENSE:=GPL-2.0
 PKG_BUILD_PARALLEL:=0

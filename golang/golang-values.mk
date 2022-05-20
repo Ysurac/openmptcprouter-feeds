@@ -13,10 +13,11 @@ endif
 # Unset environment variables
 # There are more magic variables to track down, but ain't nobody got time for that
 
-# From https://golang.org/cmd/go/#hdr-Environment_variables
+# From https://pkg.go.dev/cmd/go#hdr-Environment_variables
 
 # General-purpose environment variables:
 unexport \
+  GO111MODULE \
   GCCGO \
   GOARCH \
   GOBIN \
@@ -36,6 +37,7 @@ unexport \
 #   GONOPROXY
 #   GOSUMDB
 #   GONOSUMDB
+#   GOVCS
 
 # Environment variables for use with cgo:
 unexport \
@@ -63,23 +65,20 @@ unexport \
 # Special-purpose environment variables:
 unexport \
   GCCGOTOOLDIR \
+  GOEXPERIMENT \
   GOROOT_FINAL \
   GO_EXTLINK_ENABLED
 # Unmodified:
 #   GIT_ALLOW_PROTOCOL
 
-# From https://golang.org/cmd/go/#hdr-Module_support
-unexport \
-  GO111MODULE
-
-# From https://golang.org/pkg/runtime/#hdr-Environment_Variables
+# From https://pkg.go.dev/runtime#hdr-Environment_Variables
 unexport \
   GOGC \
   GOMAXPROCS \
   GORACE \
   GOTRACEBACK
 
-# From https://golang.org/cmd/cgo/#hdr-Using_cgo_with_the_go_command
+# From https://pkg.go.dev/cmd/cgo#hdr-Using_cgo_with_the_go_command
 unexport \
   CC_FOR_TARGET \
   CXX_FOR_TARGET
@@ -110,10 +109,6 @@ unexport \
 unexport \
   BOOT_GO_GCFLAGS \
   BOOT_GO_LDFLAGS
-
-# From https://golang.org/src/cmd/dist/buildruntime.go
-unexport \
-  GOEXPERIMENT
 
 # From https://golang.org/src/cmd/dist/buildtool.go
 unexport \
@@ -148,8 +143,11 @@ else
 endif
 
 ifeq ($(GO_ARCH),386)
-  # ensure binaries can run on older CPUs
-  GO_386:=387
+  ifeq ($(CONFIG_TARGET_x86_geode)$(CONFIG_TARGET_x86_legacy),y)
+    GO_386:=softfloat
+  else
+    GO_386:=sse2
+  endif
 
   # -fno-plt: causes "unexpected GOT reloc for non-dynamic symbol" errors
   GO_CFLAGS_TO_REMOVE:=-fno-plt
@@ -195,19 +193,23 @@ GO_ARCH_DEPENDS:=@(aarch64||arm||i386||i686||mips||mips64||mips64el||mipsel||pow
 
 # ASLR/PIE
 
+# From https://golang.org/src/cmd/internal/sys/supported.go
 GO_PIE_SUPPORTED_OS_ARCH:= \
-  android_386 android_amd64 android_arm android_arm64 \
-  linux_386   linux_amd64   linux_arm   linux_arm64 \
+  android_386  android_amd64  android_arm  android_arm64 \
+  linux_386    linux_amd64    linux_arm    linux_arm64 \
   \
-  windows_386 windows_amd64 windows_arm \
+  windows_386  windows_amd64  windows_arm \
   \
-  darwin_amd64 \
+  darwin_amd64 darwin_arm64 \
+  ios_amd64    ios_arm64 \
+  \
   freebsd_amd64 \
   \
   aix_ppc64 \
   \
-  linux_ppc64le linux_s390x
+  linux_ppc64le linux_riscv64 linux_s390x
 
+# From https://golang.org/src/cmd/go/internal/work/init.go
 go_pie_install_suffix=$(if $(filter $(1),aix_ppc64 windows_386 windows_amd64 windows_arm),,shared)
 
 ifneq ($(filter $(GO_HOST_OS_ARCH),$(GO_PIE_SUPPORTED_OS_ARCH)),)
@@ -236,7 +238,7 @@ endif
 
 # General build info
 
-GO_BUILD_CACHE_DIR:=$(or $(call qstrip,$(CONFIG_GOLANG_BUILD_CACHE_DIR)),$(TOPDIR)/.go-build)
+GO_BUILD_CACHE_DIR:=$(or $(call qstrip,$(CONFIG_GOLANG_BUILD_CACHE_DIR)),$(TMP_DIR)/go-build)
 GO_MOD_CACHE_DIR:=$(DL_DIR)/go-mod-cache
 
 GO_MOD_ARGS= \
@@ -249,6 +251,6 @@ GO_GENERAL_BUILD_CONFIG_VARS= \
 	GO_MOD_ARGS="$(GO_MOD_ARGS)"
 
 define Go/CacheCleanup
-	$(GENERAL_BUILD_CONFIG_VARS) \
+	$(GO_GENERAL_BUILD_CONFIG_VARS) \
 	$(SHELL) $(GO_INCLUDE_DIR)/golang-build.sh cache_cleanup
 endef

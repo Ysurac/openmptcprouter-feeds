@@ -6,6 +6,8 @@ START=5
 
 USE_PROCD=1
 
+. /lib/functions/network.sh
+
 omr_intf_del() {
 	[ -z "$1" ] && return
 	uci -q delete openmptcprouter.$1
@@ -18,11 +20,14 @@ omr_intf_check() {
 omr_intf_set() {
 	local device
 	local ifname
-	config_get ifname "$1" ifname
-	config_get device "$1" device
-	config_get type "$1" type
-
+	network_get_device ifname $1
+	[ -z "$ifname" ] && network_get_physdev ifname $1
+	[ -z "$ifname" ] && config_get ifname "$1" device
+	[ -z "$ifname" ] && config_get ifname "$1" ifname
 	[ -z "$ifname" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
+	#config_get devicename "$1" _modem_device
+	devicename=${ifname}
+	config_get type "$1" type
 
 	if [ "$type" != "macvlan" ] && [ -n "$ifname" ] && [ -f /sys/class/net/${ifname}/device/uevent ]; then
 		devicepath=$(readlink -f /sys/class/net/${ifname})
@@ -34,11 +39,11 @@ omr_intf_set() {
 			uci -q set network.$1.modalias="$(cat /sys/class/net/${ifname}/device/uevent | grep MODALIAS | cut -d '=' -f2 | tr -d '\n')-$mac"
 			uci -q set network.$1.product="$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT | cut -d '=' -f2 | tr -d '\n')"
 		elif [ -n "$devicepath" ] && ([ "$(echo ${devicepath} | grep virtual)" != "" ] || [ "$(echo ${devicepath} | grep virtual)" = "" ] && [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT)" = "" ] || [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PCI_SLOT_NAME)" != "" ] || [ "$(cat /sys/class/net/${ifname}tmp/device/uevent)" != "" ]); then
-			uci -q delete network.$1.device
+			#uci -q delete network.$1.device
 			uci -q delete network.$1.modalias
 			uci -q delete network.$1.product
 		fi
-	elif [ "$type" != "macvlan" ] &&  [ -n "$device" ] && [ -f /sys/bus/usb-serial/devices/${devicename}/device/uevent ] && [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT)" != "" ]; then
+	elif [ "$type" != "macvlan" ] &&  [ -n "$devicename" ] && [ -f /sys/bus/usb-serial/devices/${devicename}/device/uevent ] && [ "$(cat /sys/class/net/${ifname}/device/uevent | grep PRODUCT)" != "" ]; then
 		mac=""
 		if [ -f /sys/class/net/${ifname}/address ]; then
 			mac="$(cat /sys/class/net/${ifname}/address | tr -d '\n')"
@@ -56,7 +61,10 @@ omr_set_settings() {
 	local ifname
 	local multipath
 	config_get multipath "$1" multipath
-	config_get ifname "$1" ifname
+	network_get_device ifname $1
+	[ -z "$ifname" ] && network_get_physdev ifname $1
+	[ -z "$ifname" ] && config_get ifname "$1" device
+	[ -z "$ifname" ] && config_get ifname "$1" ifname
 	config_get device "$1" device
 	config_get proto "$1" proto
 	config_get type "$1" type
@@ -76,7 +84,8 @@ omr_set_settings() {
 	[ -z "$addlatency" ] && addlatency=0
 	devicename=$(echo "$device" | cut -d'/' -f3)
 
-	[ -z "$ifname" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
+	ifname=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$ifname" ] && config_get ifname "$1" ifname
 	[ -n "$(echo $ifname | grep '@')" ] && ifname=$(ifstatus "$1" | jsonfilter -q -e '@["device"]')
 
 	if [ -n "$ifname" ]; then
@@ -144,15 +153,13 @@ start_service() {
 			del_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
 			add_list dhcp.@dnsmasq[0].server='114.114.114.114'
 			set dhcp.@dnsmasq[0].dnsseccheckunsigned='0'
-			delete dhcp.@dnsmasq[0].dnssec='1'
+			delete dhcp.@dnsmasq[0].dnssec
 			commit dhcp
 		EOF
 	elif [ "$(uci -q get openmptcprouter.settings.country)" = "world" ] && [ -n "$(uci -q get dhcp.@dnsmasq[0].server | grep '114.114.114.114')" ]; then
 		uci -q batch <<-EOF > /dev/null
 			add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
 			del_list dhcp.@dnsmasq[0].server='114.114.114.114'
-			set dhcp.@dnsmasq[0].dnsseccheckunsigned='1'
-			set dhcp.@dnsmasq[0].dnssec='1'
 			commit dhcp
 		EOF
 	fi

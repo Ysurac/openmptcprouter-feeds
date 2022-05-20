@@ -85,13 +85,19 @@ _post_tracking() {
 			_log() {
 				logger -t "post-tracking-${tracker_bin##*/}" "$*"
 			}
-			. "$tracker_bin"
+			. "$tracker_bin" 2>&1
+			#tmp=$(mktemp)
+			#. "$tracker_bin" 2>&1 > "$tmp"
+			#trackresult=$(< "$tmp")
+			#[ -n "$trackresult" ] && _log $trackresult
+			#rm -f "$tmp"
 		)
 	done
 }
 
 _ping_server() {
 	local servername=$1
+	[ -z "$servername" ] && return
 	local disabled=$(uci -q get openmptcprouter.$1.disabled)
 	local device=$2
 	if [ -n "$device" ] && [ "$disabled" != "1" ]; then
@@ -113,6 +119,7 @@ _ping_server() {
 
 _httping_server() {
 	local servername=$1
+	[ -z "$servername" ] && return
 	local disabled=$(uci -q get openmptcprouter.$1.disabled)
 	local port=$(uci -q get openmptcprouter.$1.port)
 	local device=$2
@@ -135,9 +142,10 @@ _httping_server() {
 
 _ping() {
 	local host=$1
+	[ -z "$host" ] && return
 	local device=$2
 	local localip=$3
-	if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]; then
+	if [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]); then
 		ret=$(ping -I "${device}" \
 			-w "$OMR_TRACKER_TIMEOUT" \
 			-c 2 \
@@ -222,7 +230,7 @@ _none() {
 
 _restart
 
-OMR_TRACKER_INTERFACE_PROTO="$(uci -q get network.${OMR_TRACKER_INTERFACE_PROTO}.proto)"
+OMR_TRACKER_INTERFACE_PROTO="$(uci -q get network.${OMR_TRACKER_INTERFACE}.proto)"
 OMR_TRACKER_PREV_STATUS=""
 # main loop
 while true; do
