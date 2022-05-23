@@ -6,30 +6,20 @@
     <h3 align="center">
     Argon is a clean HTML5 theme for LuCI. Users may<br>setup their own favorite logins, including beautiful<br>pics and customized mp4 videos.<br><br>
   </h3>
-
-  <a href="/LICENSE">
-    <img src="https://img.shields.io/badge/license-MIT-brightgreen.svg" alt="">
+<a href="/LICENSE">
+    <img src="https://img.shields.io/github/license/jerrykuku/luci-theme-argon?style=flat-square&a=1" alt="">
   </a>
-
   <a href="https://github.com/jerrykuku/luci-theme-argon/pulls">
-    <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="">
-  </a>
-  
-  <a href="https://github.com/jerrykuku/luci-theme-argon/issues/new">
-    <img src="https://img.shields.io/badge/Issues-welcome-brightgreen.svg">
-  </a>
-  
-  <a href="https://github.com/jerrykuku/luci-theme-argon/releases">
-    <img src="https://img.shields.io/badge/release-v2.2.5-blue.svg?">
-  </a>
-  
-  <a href="https://github.com/jerrykuku/luci-theme-argon/releases">
-    <img src="https://img.shields.io/github/downloads/jerrykuku/luci-theme-argon/total">
-  </a>
-  
-  <a href="https://t.me/jerryk6">
-    <img src="https://img.shields.io/badge/Contact-telegram-blue">
-  </a>
+    <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square" alt="">
+  </a><a href="https://github.com/jerrykuku/luci-theme-argon/issues/new">
+    <img src="https://img.shields.io/badge/Issues-welcome-brightgreen.svg?style=flat-square">
+  </a><a href="https://github.com/jerrykuku/luci-theme-argon/releases">
+    <img src="https://img.shields.io/github/release/jerrykuku/luci-theme-argon.svg?style=flat-square">
+  </a><a href="hhttps://github.com/jerrykuku/luci-theme-argon/releases">
+    <img src="https://img.shields.io/github/downloads/jerrykuku/luci-theme-argon/total?style=flat-square">
+  </a><a href="https://t.me/jerryk6">
+    <img src="https://img.shields.io/badge/Contact-telegram-blue?style=flat-square">
+  </a> 
 </div>
 <br>
 <div align="center">
@@ -46,8 +36,12 @@ FireFox does not enable the backdrop-filter by default, see here for the opening
 v2.x.x Adapt to official mainline snapshot.  
 You can checkout branch 18.06 for OpenWRT 18.06 or lean 19.07.
 
-## Update Log 2020.09.13 v2.2.5
+## Update Log 2021.10.16 v2.2.9
 
+- 【v2.2.9】Fix the problem that the menu could not pop up in mobile mode  
+- 【v2.2.9】Unify the settings of css spacing  
+- 【v2.2.9】Refactored the code of the login page  
+- 【v2.2.8】Fix the problem that the Minify Css option is turned on when compiling, which causes the frosted glass effect to be invalid and the logo font is lost.  
 - 【v2.2.5】New config app for argon theme. You can set the blur and transparency of the login page of argon theme, and manage the background pictures and videos.[Chrome is recommended] [Download](https://github.com/jerrykuku/luci-app-argon-config/releases/download/v0.8-beta/luci-app-argon-config_0.8-beta_all.ipk)
 - 【v2.2.5】Automatically set as the default theme when compiling.
 - 【v2.2.5】Modify the file structure to adapt to luci-app-argon-config. The old method of turning on dark mode is no longer applicable, please use it with luci-app-argon-config.
@@ -100,7 +94,7 @@ make -j1 V=s
 ### For Lean openwrt 18.06 LuCI
 
 ```
-wget --no-check-certificate https://github.com/jerrykuku/luci-theme-argon/releases/download/v1.7.0/luci-theme-argon_1.7.0-20200909_all.ipk
+wget --no-check-certificate https://github.com/jerrykuku/luci-theme-argon/releases/download/v1.7.3/luci-theme-argon-18.06_1.7.3-20220421_all.ipk
 opkg install luci-theme-argon*.ipk
 ```
 
@@ -108,7 +102,8 @@ opkg install luci-theme-argon*.ipk
 
 ```
 opkg install luci-compat
-wget --no-check-certificate https://github.com/jerrykuku/luci-theme-argon/releases/download/v2.2.5/luci-theme-argon_2.2.5-20200914_all.ipk
+opkg install luci-lib-ipkg
+wget --no-check-certificate https://github.com/jerrykuku/luci-theme-argon/releases/download/v2.2.9/luci-theme-argon_2.2.9-20211016-1_all.ipk
 opkg install luci-theme-argon*.ipk
 ```
 ![](/Screenshots/screenshot_pc.jpg)
