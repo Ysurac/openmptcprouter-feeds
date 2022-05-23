@@ -10,12 +10,10 @@ include $(TOPDIR)/rules.mk
 PKG_NAME:=mptcpd
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/intel/mptcpd.git
-PKG_SOURCE_VERSION:=0e7175adf721c95a3bd742be77cb85e0b47138cd
-PKG_VERSION:=0.7-$(PKG_SOURCE_VERSION)
+PKG_SOURCE_VERSION:=df4ea048cd3821f749bf06e0d01bb7d79faac812
+PKG_VERSION:=0.9-$(PKG_SOURCE_VERSION)
 PKG_RELEASE:=1
 PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
-
-PKG_FIXUP:=autoreconf
 
 PKG_FORTIFY_SOURCE:=2
 PKG_INSTALL:=1
@@ -36,7 +34,16 @@ define Package/$(PKG_NAME)/conffiles
 /etc/mptcpd/mptcpd.conf
 endef
 
-TARGET_CFLAGS += -D_GNU_SOURCE -Wno-unused-result -Wno-format-nonliteral
+CONFIGURE_ARGS += \
+	--disable-doxygen-doc \
+	--disable-logging
+
+TARGET_CFLAGS += -Wno-unused-result -Wno-format-nonliteral
+
+define Build/Prepare
+	$(Build/Prepare/Default)
+	( cd $(PKG_BUILD_DIR); $(AM_TOOL_PATHS) ./bootstrap )
+endef
 
 define Build/Compile
 	+$(MAKE_VARS) $(MAKE) $(PKG_JOBS) -C $(PKG_BUILD_DIR) $(MAKE_FLAGS)
