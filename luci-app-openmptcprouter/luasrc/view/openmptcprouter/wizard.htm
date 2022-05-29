@@ -7,11 +7,19 @@
 	local sys = require "luci.sys"
 	local ut = require "luci.util"
 	local ifaces = sys.net:devices()
+	local ifttyu = nixio.fs.glob("/dev/ttyUSB*")
+	local ifttyc = nixio.fs.glob("/dev/cdc-wdm*")
+	local sqm = luci.sys.exec("opkg list-installed | grep -q luci-app-sqm && echo -n '1' || echo -n '0'")
+	local qos = luci.sys.exec("opkg list-installed | grep -q luci-app-qos && echo -n '1' || echo -n '0'")
 	menuentry = uci:get("openmptcprouter","settings","menu") or "openmptcprouter"
 	function device_notvirtual(dev)
-		for _, iface in ipairs(net:get_networks()) do
+		if dev:match("^eth.*") or dev:match("^wwan.*") or dev:match("^tun.*") or dev:match("/") then
+			return true
+		end
+		networks = net:get_networks()
+		for _, iface in ipairs(networks) do
 			local ifacen = iface:name()
-			local ifacename = uci:get("network",ifacen,"ifname")
+			local ifacename = uci:get("network",ifacen,"device")
 			local ifacetype = uci:get("network",ifacen,"type") or ""
 			local ifaceproto = uci:get("network",ifacen,"proto") or ""
 			--if ifacename == dev and (ifacetype == "macvlan" or ifacetype == "bridge" or ifaceproto == "6in4") then
@@ -428,7 +436,7 @@
 <% 
     for _, iface in ipairs(net:get_networks()) do
 	local ifname = iface:name()
-	local firewall_lan = luci.util.trim(luci.sys.exec("uci -q get firewall.zone_lan.network | grep " .. ifname))
+	local firewall_lan = luci.util.trim(luci.sys.exec("uci -q get firewall.zone_lan.network | tr ' ' '\n' | grep \'^" .. ifname .. "$\'"))
 	if firewall_lan ~= "" then
 %>
 	    <h3><%=ifname%></h3>
@@ -473,7 +481,7 @@
 				if not (ifacea == "lo" or ifacea == "6in4-omr6in4" or ifacea == "mlvpn0" or ifacea:match("^ifb.*") or ifacea:match("^sit.*") or ifacea:match("^gre.*") or ifacea:match("^ip6.*") or ifacea:match("^teql.*") or ifacea:match("^erspan.*") or ifacea:match("^tun.*") or ifacea:match("^bond.*")) and device_notvirtual(ifacea) then
 				    if uci:get("network",ifname,"proto") ~= "macvlan" then
 			%>
-			<option value="<%=ifacea%>"<% if uci:get("network",ifname,"ifname") == ifacea then iffind = 1 %> selected="selected"<% end %>><%=ifacea%></option>
+			<option value="<%=ifacea%>"<% if uci:get("network",ifname,"device") == ifacea then iffind = 1 %> selected="selected"<% end %>><%=ifacea%></option>
 			<%
 				    else
 			%>
@@ -483,9 +491,9 @@
 				end
 			    end
 			    if uci:get("network",ifname,"proto") ~= "macvlan" then
-				    if iffind == 0 and uci:get("network",ifname,"ifname") ~= nil then
+				    if iffind == 0 and uci:get("network",ifname,"device") ~= nil then
 			%>
-				<option value="<%=uci:get("network",ifname,"ifname")%>" selected="selected"><%=uci:get("network",ifname,"ifname")%></option>
+				<option value="<%=uci:get("network",ifname,"device")%>" selected="selected"><%=uci:get("network",ifname,"device")%></option>
 			<%
 				    end
 			    else
@@ -531,7 +539,7 @@
 <% 
     for _, iface in ipairs(net:get_networks()) do
 	local ifname = iface:name()
-	local firewall_wan = luci.util.trim(luci.sys.exec("uci -q get firewall.zone_wan.network | grep " .. ifname))
+	local firewall_wan = luci.util.trim(luci.sys.exec("uci -q get firewall.zone_wan.network | tr ' ' '\n' | grep \'^" .. ifname .. "$\'"))
 	if firewall_wan ~= "" then
 
 --	local multipath = uci:get("network",ifname,"multipath")
@@ -616,7 +624,7 @@
 			    <select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.intf" name="cbid.network.<%=ifname%>.intf" size="1">
 			<%
 			    iffind=0
-			    uciifname=uci:get("network",ifname,"ifname")
+			    uciifname=uci:get("network",ifname,"device")
 			    if uciifname ~= nil then
 				if uciifname:match("/") then
 				    realifname=uciifname
@@ -682,7 +690,7 @@
 		<div class="cbi-value" id="cbi-network-<%=ifname%>-ipv6address" data-index="8">
 		    <label class="cbi-value-title"><%:IPv6 address%></label>
 		    <div class="cbi-value-field">
-			<input type="text" id="cbid.network.<%=ifname%>.ip6addr" name="cbid.network.<%=ifname%>.ip6addr" class="cbi-input-text" value="<%=value%>" data-type="ip6addr">
+			<input type="text" id="cbid.network.<%=ifname%>.ip6addr" name="cbid.network.<%=ifname%>.ip6addr" class="cbi-input-text" value="<%=value%>" data-type="ip6addr" data-optional="true">
 			<br />
 			<div class="cbi-value-description">
 			    <%:Set an IP in the same network as the modem%>
@@ -696,7 +704,7 @@
 		<div class="cbi-value" id="cbi-network-<%=ifname%>-ip6gw" data-index="9">
 		    <label class="cbi-value-title"><%:IPv6 gateway%></label>
 		    <div class="cbi-value-field">
-			<input type="text" id="cbid.network.<%=ifname%>.ip6gw" name="cbid.network.<%=ifname%>.ip6gw" class="cbi-input-text" value="<%=uci:get("network",ifname,"ip6gw")%>" data-type="ip6addr">
+			<input type="text" id="cbid.network.<%=ifname%>.ip6gw" name="cbid.network.<%=ifname%>.ip6gw" class="cbi-input-text" value="<%=uci:get("network",ifname,"ip6gw")%>" data-type="ip6addr"  data-optional="true">
 			<br />
 			<div class="cbi-value-description">
 			    <%:Set here IP of the modem%>
@@ -743,14 +751,12 @@
 			    <select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.device.ncm" name="cbid.network.<%=ifname%>.device.ncm" size="1">
 			<%
 			    iffind=0
-			    iftty = nixio.fs.glob("/dev/ttyUSB*")
-			    for tty in iftty do
+			    for tty in ifttyu do
 			%>
 			<option value="<%=tty%>"<% if uci:get("network",ifname,"device") == tty then iffind = 1 %> selected="selected"<% end %>><%=tty%></option>
 			<%
 			    end
-			    iftty = nixio.fs.glob("/dev/cdc-wdm*")
-			    for tty in iftty do
+			    for tty in ifttyc do
 			%>
 			<option value="<%=tty%>"<% if uci:get("network",ifname,"device") == tty then iffind = 1 %> selected="selected"<% end %>><%=tty%></option>
 			<%
@@ -770,8 +776,7 @@
 			    <select class="cbi-input-select" data-update="change" id="cbid.network.<%=ifname%>.device.qmi" name="cbid.network.<%=ifname%>.device.qmi" size="1">
 			<%
 			    iffind=0
-			    iftty = nixio.fs.glob("/dev/cdc-wdm*")
-			    for tty in iftty do
+			    for tty in ifttyc do
 			%>
 			<option value="<%=tty%>"<% if uci:get("network",ifname,"device") == tty then iffind = 1 %> selected="selected"<% end %>><%=tty%></option>
 			<%
@@ -893,6 +898,16 @@
 		<%
 		    end
 		%>
+		<div class="cbi-value" data-index="14">
+		    <label class="cbi-value-title"><%:Force TTL%></label>
+		    <div class="cbi-value-field">
+			<input type="text" name="cbid.network.<%=ifname%>.ttl" class="cbi-input-text" value="<%=ttl%>" data-type="uinteger" data-optional="true">
+			<br />
+			<div class="cbi-value-description">
+			    <%:You can force a TTL. Some LTE provider detect tethering by inpecting packet TTL value, setting it to 65 often solve the issue.%>
+			</div>
+		    </div>
+		</div>
 
 		<%
 			local download = "0"
@@ -909,7 +924,7 @@
 			--	end
 			--end
 		%>
-		<div class="cbi-value" data-index="14">
+		<div class="cbi-value" data-index="15">
 		    <label class="cbi-value-title"><%:MPTCP over VPN%></label>
 		    <div class="cbi-value-field">
 			<input class="cbi-input-checkbox" type="checkbox" name="multipathvpn.<%=ifname%>.enabled" value="1" <% if uci:get("openmptcprouter",ifname,"multipathvpn") == "1" then %>checked<% end %> />
@@ -919,17 +934,40 @@
 			</div>
 		    </div>
 		</div>
-		<div class="cbi-value" data-index="15">
+		<%
+			if sqm == "1" then
+		%>
+		<div class="cbi-value" data-index="16">
 		    <label class="cbi-value-title"><%:Enable SQM%></label>
 		    <div class="cbi-value-field">
 			<input class="cbi-input-checkbox" type="checkbox" name="cbid.sqm.<%=ifname%>.enabled" value="1" <% if uci:get("sqm",ifname,"enabled") == "1" then %>checked<% end %> />
 			<br />
 			<div class="cbi-value-description">
+			    <%:SQM control bufferloat: the undesirable latency that arises when the router buffers too much data.%>
 			    <%:You should disable SQM for LTE or any interfaces with variable speed.%>
 			</div>
 		    </div>
 		</div>
+		<%
+			end
+		%>
+		<%
+			if qos == "1" then
+		%>
 		<div class="cbi-value" data-index="16">
+		    <label class="cbi-value-title"><%:Enable QoS%></label>
+		    <div class="cbi-value-field">
+			<input class="cbi-input-checkbox" type="checkbox" name="cbid.qos.<%=ifname%>.enabled" value="1" <% if uci:get("qos",ifname,"enabled") == "1" then %>checked<% end %> />
+			<br />
+			<div class="cbi-value-description">
+			    <%:QoS permit to prioritize any upload traffic.%>
+			</div>
+		    </div>
+		</div>
+		<%
+			end
+		%>
+		<div class="cbi-value" data-index="17">
 		    <label class="cbi-value-title"><%:Download speed (Kb/s)%></label>
 		    <div class="cbi-value-field">
 			<input type="text" name="cbid.sqm.<%=ifname%>.download" class="cbi-input-text" value="<%=download%>" data-type="uinteger">
@@ -945,7 +983,7 @@
 			-->
 		    </div>
 		</div>
-		<div class="cbi-value" data-index="17">
+		<div class="cbi-value" data-index="18">
 		    <label class="cbi-value-title"><%:Upload speed (Kb/s)%></label>
 		    <div class="cbi-value-field">
 			<input type="text" name="cbid.sqm.<%=ifname%>.upload" class="cbi-input-text" value="<%=upload%>" data-type="uinteger">
