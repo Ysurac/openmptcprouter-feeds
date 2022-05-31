@@ -82,7 +82,7 @@ MY_DEPENDS := \
     luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre tcptraceroute luci-proto-mbim kmod-rtl8xxxu kmod-ath9k-htc luci-app-ttyd luci-mod-dashboard (TARGET_x86||TARGET_x86_64):rtl8192eu-firmware kmod-usb2 libustream-openssl (TARGET_x86||TARGET_x86_64):kmod-ixgbevf (TARGET_x86||TARGET_x86_64):kmod-igbvf \
     hwinfo (TARGET_x86||TARGET_x86_64):dmidecode luci-app-packet-capture kmod-bonding luci-proto-bonding luci-app-sysupgrade \
     luci-theme-openwrt-2020 luci-proto-wireguard luci-app-wireguard kmod-crypto-lib-blake2s (TARGET_x86||TARGET_x86_64):kmod-r8125 TARGET_x86_64:kmod-atlantic \
-    !LINUX_5.4:mptcpd (TARGET_x86||TARGET_x86_64):kmod-igc kmod-mmc-spi kmod-macsec
+    LINUX_5_15:mptcpd (TARGET_x86||TARGET_x86_64):kmod-igc kmod-mmc-spi kmod-macsec
 #    !TARGET_mvebu:kmod-usb-net-smsc75xx
 #    libnetfilter-conntrack ebtables ebtables-utils ip-full nstat \
 
