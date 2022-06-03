@@ -167,6 +167,7 @@ function wizard_add()
 			ucic:set("network","wan" .. i .. "_dev","mode","vepa")
 			ucic:set("network","wan" .. i .. "_dev","ifname",defif)
 			ucic:set("network","wan" .. i .. "_dev","name","wan" .. i)
+			ucic:set("network","wan" .. i .. "_dev","txqueuelen","20")
 		end
 		ucic:set("network","wan" .. i,"ip4table","wan")
 		if multipath_master then
@@ -282,6 +283,7 @@ function wizard_add()
 		local auth = luci.http.formvalue("cbid.network.%s.auth" % intf) or ""
 		local mode = luci.http.formvalue("cbid.network.%s.mode" % intf) or ""
 		local sqmenabled = luci.http.formvalue("cbid.sqm.%s.enabled" % intf) or "0"
+		local qosenabled = luci.http.formvalue("cbid.qos.%s.enabled" % intf) or "0"
 		local multipath = luci.http.formvalue("cbid.network.%s.multipath" % intf) or "on"
 		local lan = luci.http.formvalue("cbid.network.%s.lan" % intf) or "0"
 		local ttl = luci.http.formvalue("cbid.network.%s.ttl" % intf) or ""
@@ -462,9 +464,12 @@ function wizard_add()
 			--ucic:set("sqm",intf,"iqdisc_opts","autorate-ingress dual-dsthost")
 			--ucic:set("sqm",intf,"eqdisc_opts","dual-srchost")
 			ucic:set("sqm",intf,"enabled","1")
-			ucic:set("qos",intf,"enabled","1")
 		else
 			ucic:set("sqm",intf,"enabled","0")
+		end
+		if qosenabled == "1" then
+			ucic:set("qos",intf,"enabled","1")
+		else
 			ucic:set("qos",intf,"enabled","0")
 		end
 	end
