@@ -60,7 +60,8 @@ GO_PKG:=github.com/v2fly/v2ray-core/v4
 GO_PKG_LDFLAGS:=-s -w
 
 include $(INCLUDE_DIR)/package.mk
-include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
+#include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
+include $(TOPDIR)/feeds/openmptcprouter/golang/golang-package.mk
 
 define Package/v2ray-core
   TITLE:=A platform for building proxies

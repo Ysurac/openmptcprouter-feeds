@@ -66,25 +66,27 @@ jobs:
         OMR_PORT: ${{ secrets.OMR_PORT }}
       run: |
         OMR_KERNEL="${OMR_KERNEL}" OMR_FEED_SRC="${SOURCE_NAME}" sh build.sh prepare {tools,toolchain}/install -j$(nproc) || OMR_KERNEL="${OMR_KERNEL}" OMR_FEED_SRC="${SOURCE_NAME}" sh build.sh prepare {tools,toolchain}/install -j1 V=s
-        #echo -e "${{ secrets.OMR_PRIVKEY }}" > $OMR_TARGET/source/key-build
-        #echo -e "${{ secrets.OMR_PUBKEY }}" > $OMR_TARGET/source/key-build.pub
+        #echo -e "${{ secrets.OMR_PRIVKEY }}" > $OMR_TARGET/$OMR_KERNEL/source/key-build
+        #echo -e "${{ secrets.OMR_PUBKEY }}" > $OMR_TARGET/$OMR_KERNEL/source/key-build.pub
     - name: Build packages
       working-directory: ../../omr
       env:
         OMR_TARGET: ${{ matrix.OMR_TARGET }}
+        OMR_KERNEL: ${{ matrix.OMR_KERNEL }}
       run: |
-        make IGNORE_ERRORS=m -C $OMR_TARGET/source package/{compile,install,index} -j$(nproc) || make IGNORE_ERRORS=m -C $OMR_TARGET/source package/{compile,install,index} -j1 V=s
+        make IGNORE_ERRORS=m -C $OMR_TARGET/$OMR_KERNEL/source package/{compile,install,index} -j$(nproc) || make IGNORE_ERRORS=m -C $OMR_TARGET/$OMR_KERNEL/source package/{compile,install,index} -j1 V=s
     - name: Build image
       working-directory: ../../omr
       env:
         OMR_TARGET: ${{ matrix.OMR_TARGET }}
+        OMR_KERNEL: ${{ matrix.OMR_KERNEL }}
       run: |
-        make IGNORE_ERRORS=m -C $OMR_TARGET/source target/install -j$(nproc) || make IGNORE_ERRORS=m -C $OMR_TARGET/source target/install -j1 V=s
+        make IGNORE_ERRORS=m -C $OMR_TARGET/$OMR_KERNEL/source target/install -j$(nproc) || make IGNORE_ERRORS=m -C $OMR_TARGET/$OMR_KERNEL/source target/install -j1 V=s
     - name: Upload artifacts
       uses: actions/upload-artifact@v2
       with:
         name: ${{ matrix.OMR_TARGET }}
-        path: /home/runner/work/omr/${{ matrix.OMR_TARGET }}/source/bin
+        path: /home/runner/work/omr/${{ matrix.OMR_TARGET }}/${{ matrix.OMR_KERNEL }}/source/bin
     - if: steps.branch_name.outputs.SOURCE_BRANCH == ''
       name: Deploy - Create directory
       uses: ysurac/ssh-action@master
@@ -119,9 +121,10 @@ jobs:
       working-directory: ../../omr
       env:
         OMR_TARGET: ${{ matrix.OMR_TARGET }}
+        OMR_KERNEL: ${{ matrix.OMR_KERNEL }}
         GITHUB_WORKSPACE: ${{ steps.branch_name.outputs.WORKSPACE }}
       run: |
-        mv ${OMR_TARGET}/source/bin ${GITHUB_WORKSPACE}/
+        mv ${OMR_TARGET}/${OMR_KERNEL}/source/bin ${GITHUB_WORKSPACE}/
     - if: steps.branch_name.outputs.SOURCE_BRANCH == ''
       name: Deploy - Upload via rsync
       uses: ysurac/action-rsync@master
