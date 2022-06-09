@@ -38,11 +38,11 @@ config PACKAGE_$(PKG_NAME)_INCLUDE_OFFLOADING
 config PACKAGE_$(PKG_NAME)_INCLUDE_SHORTCUT_FE_DRV
 	bool "Include Shortcut-FE for ECM"
 	depends on PACKAGE_$(PKG_NAME)_INCLUDE_SHORTCUT_FE=n
-	default y if (TARGET_ipq806x||TARGET_ipq807x)
+	default y if (TARGET_ipq60xxx||TARGET_ipq806x||TARGET_ipq807x)
 
 config PACKAGE_$(PKG_NAME)_INCLUDE_SHORTCUT_FE
 	bool "Include Shortcut-FE"
-	default y if !(TARGET_ipq806x||TARGET_ipq807x||TARGET_ramips)
+	default y if !(TARGET_ipq60xxx||TARGET_ipq806x||TARGET_ipq807x||TARGET_ramips)
 
 config PACKAGE_$(PKG_NAME)_INCLUDE_BBR_CCA
 	bool "Include BBR CCA"
