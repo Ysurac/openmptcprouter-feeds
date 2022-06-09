@@ -24,7 +24,7 @@ GO_PKG:=github.com/AdguardTeam/dnsproxy
 GO_PKG_LDFLAGS_X:=main.VersionString=v$(PKG_VERSION)
 
 include $(INCLUDE_DIR)/package.mk
-include ../../lang/golang/golang-package.mk
+include $(TOPDIR)/feeds/openmptcprouter/golang/golang-package.mk
 
 define Package/dnsproxy
   SECTION:=net
