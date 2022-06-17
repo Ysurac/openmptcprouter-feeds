@@ -29,6 +29,7 @@ case $1 in
         echo "show established conections: -c"
         echo "show fullmesh info: -f"
         echo "show kernel config: -k"
+        echo "show MPTCP info: -m"
         echo
         echo "Flag on the device, to enable/disable MPTCP for this interface. The backup-flag"
         echo "will allow a subflow to be established across this interface, but only be used"
@@ -74,6 +75,13 @@ case $1 in
             echo Debugmode: `cat /proc/sys/net/mptcp/mptcp_debug`
         fi
         echo
+        exit 0 ;;
+   "-m")
+	if [ -f /proc/net/mptcp_net/snmp ]; then
+	    cat /proc/net/mptcp_net/snmp
+	else
+	    nstat -z | grep -i mptcp
+	fi
         exit 0 ;;
    "")
         for ifpath in /sys/class/net/*; do
@@ -126,6 +134,9 @@ else
         ID=$(ip mptcp endpoint show | grep "dev $DEVICE" | awk '{print $3}')
         IFF=$(ip mptcp endpoint show | grep "dev $DEVICE" | awk '{print $4}')
         IP=$(ifconfig $DEVICE | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}[0-9]*).*/\2/p')
+        [ -z "$ID" ] && ID=$(ip mptcp endpoint show | grep "$IP" | awk '{print $3}')
+        RMID=$(ip mptcp endpoint show | grep '::ffff' | awk '{ print $3 }')
+        [ -n "$RMID" ] && ip mptcp endpoint delete id $RMID 2>&1 >/dev/null
         case $TYPE in
                 "off")
                         [ -n "$ID" ] && ip mptcp endpoint delete id $ID 2>&1 >/dev/null
