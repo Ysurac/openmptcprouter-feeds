@@ -283,6 +283,7 @@ function wizard_add()
 		local auth = luci.http.formvalue("cbid.network.%s.auth" % intf) or ""
 		local mode = luci.http.formvalue("cbid.network.%s.mode" % intf) or ""
 		local sqmenabled = luci.http.formvalue("cbid.sqm.%s.enabled" % intf) or "0"
+		local sqmautorate = luci.http.formvalue("cbid.sqm.%s.autorate" % intf) or "0"
 		local qosenabled = luci.http.formvalue("cbid.qos.%s.enabled" % intf) or "0"
 		local multipath = luci.http.formvalue("cbid.network.%s.multipath" % intf) or "on"
 		local lan = luci.http.formvalue("cbid.network.%s.lan" % intf) or "0"
@@ -439,10 +440,21 @@ function wizard_add()
 			--ucic:set("sqm",intf,"iqdisc_opts","autorate-ingress dual-dsthost")
 			--ucic:set("sqm",intf,"eqdisc_opts","dual-srchost")
 		end
+		ucic:set("sqm",intf,"autorate",sqmautorate)
 
+		if sqmautorate == "1" then
+			ucic:set("sqm",intf,"qdisc","cake")
+			ucic:set("sqm",intf,"script","piece_of_cake.qos")
+		end
 		if downloadspeed ~= "0" and downloadspeed ~= "" then
+			if sqmautorate == "1" and (ucic:get("network",intf,"downloadspeed") ~= downloadspeed or ucic:get("sqm",intf,"max_download") == "" or ucic:get("sqm",intf,"download") == "0") then
+				ucic:set("sqm",intf,"download",math.ceil(downloadspeed*65/100))
+				ucic:set("sqm",intf,"min_download",math.ceil(downloadspeed*10/100))
+				ucic:set("sqm",intf,"max_download",downloadspeed)
+			elseif sqmautorate ~= "1" then
+				ucic:set("sqm",intf,"download",math.ceil(downloadspeed*95/100))
+			end
 			ucic:set("network",intf,"downloadspeed",downloadspeed)
-			ucic:set("sqm",intf,"download",math.ceil(downloadspeed*95/100))
 			ucic:set("qos",intf,"download",math.ceil(downloadspeed*95/100))
 		else
 			ucic:delete("network",intf,"downloadspeed")
@@ -450,8 +462,14 @@ function wizard_add()
 			ucic:set("qos",intf,"download","0")
 		end
 		if uploadspeed ~= "0" and uploadspeed ~= "" then
+			if sqmautorate == "1" and (ucic:get("network",intf,"uploadspeed") ~= uploadspeed or ucic:get("sqm",intf,"max_upload") == "" or ucic:get("sqm",intf,"upload") == "0") then
+				ucic:set("sqm",intf,"upload",math.ceil(uploadspeed*65/100))
+				ucic:set("sqm",intf,"min_upload",math.ceil(uploadspeed*10/100))
+				ucic:set("sqm",intf,"max_upload",uploadspeed)
+			elseif sqmautorate ~= "1" then
+				ucic:set("sqm",intf,"upload",math.ceil(uploadspeed*95/100))
+			end
 			ucic:set("network",intf,"uploadspeed",uploadspeed)
-			ucic:set("sqm",intf,"upload",math.ceil(uploadspeed*95/100))
 			ucic:set("qos",intf,"upload",math.ceil(uploadspeed*95/100))
 		else
 			ucic:delete("network",intf,"uploadspeed")
@@ -998,6 +1016,7 @@ function wizard_add()
 		luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/v2ray restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/sqm-autorate restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/sysntpd restart >/dev/null 2>/dev/null")
 		luci.http.redirect(luci.dispatcher.build_url("admin/system/" .. menuentry:lower() .. "/status"))
 	else
