@@ -28,7 +28,6 @@ global_multipath_settings() {
 	config_get mptcp_ndiffports_num_subflows globals mptcp_ndiffports_num_subflows
 	config_get mptcp_rr_cwnd_limited globals mptcp_rr_cwnd_limited
 	config_get mptcp_rr_num_segments globals mptcp_rr_num_segments
-	config_get mptcp_version globals mptcp_version "0"
 	
 	[ "$multipath" = "enable" ] && multipath_status=1
 
@@ -45,7 +44,6 @@ global_multipath_settings() {
 		[ -z "$mptcp_ndiffports_num_subflows" ] || sysctl -qew /sys/module/mptcp_ndiffports/parameters/num_subflows="$mptcp_ndiffports_num_subflows"
 		[ -z "$mptcp_rr_cwnd_limited" ] || sysctl -qew /sys/module/mptcp_rr/parameters/cwnd_limited="$mptcp_rr_cwnd_limited"
 		[ -z "$mptcp_rr_num_segments" ] || sysctl -qew /sys/module/mptcp_rr/parameters/num_segments="$mptcp_rr_num_segments"
-		[ -z "$mptcp_version" ] || sysctl -qew net.mptcp.mptcp_version="$mptcp_version"
 	elif [ -f /proc/sys/net/mptcp/enabled ]; then
 		sysctl -qew net.mptcp.enabled="$multipath_status"
 		ip mptcp limits set add_addr_accepted $mptcp_add_addr_accepted subflows $mptcp_subflows 2>&1 >/dev/null
@@ -133,7 +131,6 @@ interface_multipath_settings() {
 		[ -z "$mptcpmintf" ] && mptcpmintf="$config"
 		uci -q set network.${config}.defaultroute=0
 		uci -q set network.${config}.peerdns=0
-		echo '' > /etc/resolv.conf 2>&1 >/dev/null
 	}
 	[ "$mode" = "master" ] && {
 		# Force that only one interface is master
@@ -167,7 +164,6 @@ interface_multipath_settings() {
 	[ "$config" = "omrvpn" ] && mode="off"
 	[ -n "$(ifconfig | grep $iface)" ] || return 0
 	[ "$(echo $iface | grep _dev)" != "" ] && return 0
-	[ "$(echo $iface | grep '^if')" != "" ] && return 0
 	
 	if [ "$mode" = "master" ]; then
 		multipath "$iface" "on"
@@ -261,11 +257,10 @@ interface_multipath_settings() {
 		else
 			#echo "Add routes for $ipaddr table $id"
 			[ -n "$ipaddr" ] && ip rule add from $ipaddr table $id pref 0
-			ip rule add oif $iface table $id pref 0
 			ip route replace $network/$netmask dev $iface scope link metric $id 2>&1 >/dev/null
 			ip route replace $network/$netmask dev $iface scope link table $id 2>&1 >/dev/null
 			ip route replace default via $gateway dev $iface table $id 2>&1 >/dev/null
-			[ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && ip route replace default via $gateway dev $iface metric $id 2>&1 >/dev/null
+			ip route replace default via $gateway dev $iface metric $id 2>&1 >/dev/null
 			#ip route flush $id
 		fi
 
@@ -348,11 +343,10 @@ interface_multipath_settings() {
 				EOF
 			else
 				[ -n "$ip6addr" ] && ip -6 rule add from $ip6addr table 6$id pref 0 2>&1 >/dev/null
-				ip rule add oif $iface table 6$id pref 0
 				ip -6 route replace $network6/$netmask6 dev $iface scope link metric 6$id 2>&1 >/dev/null
 				ip -6 route replace $network6/$netmask6 dev $iface scope link table 6$id 2>&1 >/dev/null
 				ip -6 route replace default via $gateway6 dev $iface table 6$id 2>&1 >/dev/null
-				[ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && ip -6 route replace default via $gateway6 dev $iface metric 6$id 2>&1 >/dev/null
+				ip -6 route replace default via $gateway6 dev $iface metric 6$id 2>&1 >/dev/null
 				#ip -6 route flush 6$id 2>&1 >/dev/null
 			fi
 
