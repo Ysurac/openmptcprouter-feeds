@@ -1669,8 +1669,15 @@ fi
 
 #if [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && ([ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ] || [ -z "$(iptables-save | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ]); then
 if [ "$(pgrep -f set_vps_firewall)" = "" ] && [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && [ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ]; then
-	_log "Set firewall on server"
-	/etc/init.d/openmptcprouter-vps set_vps_firewall >/dev/null 2>&1
+	check_server_fw() {
+		[ "$(uci -q get openmptcprouter.$1.set_firewall)" = "1" ] && {
+			_log "Set firewall on server $1"
+			/etc/init.d/openmptcprouter-vps set_vps_firewall $1 >/dev/null 2>&1
+		}
+	}
+	config_load openmptcprouter
+	config_foreach check_server_fw server
+
 
 	run_fw_include() {
 		[ -n "$1" ] && [ "$(uci -q get firewall.$1.reload)" = "0" ] && sh $(uci -q get firewall.$1.path) >/dev/null 2>&1
