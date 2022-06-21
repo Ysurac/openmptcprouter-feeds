@@ -931,6 +931,11 @@ function interfaces_status()
 					else
 						mArray.openmptcprouter["vps_admin"] = false
 						mArray.openmptcprouter["vps_admin_error_msg"] = "No result"
+						uci:set("openmptcprouter",s[".name"],"admin_error","1")
+						mArray.openmptcprouter["vps_admin_error"] = true
+						uci:delete("openmptcprouter",s[".name"],"token")
+						uci:save("openmptcprouter",s[".name"])
+						uci:commit("openmptcprouter",s[".name"])
 					end
 				else
 					mArray.openmptcprouter["vps_admin"] = false
@@ -1022,7 +1027,7 @@ function interfaces_status()
 			mArray.openmptcprouter["multi_vpn"] = true
 		end
 	end
-	
+
 	-- check Shadowsocks is running
 	mArray.openmptcprouter["shadowsocks_service"] = false
 	if string.find(sys.exec("/usr/bin/pgrep ss-redir"), "%d+") then
@@ -1030,10 +1035,16 @@ function interfaces_status()
 	end
 
 	mArray.openmptcprouter["shadowsocks_enabled"] = true
-	local ss_server = uci:get("shadowsocks-libev","sss0","disabled") or "0"
+	local ss_server = "1"
+	ucic:foreach("shadowsocks-libev", "server", function(s)
+		if uci:get("shadowsocks-libev",s[".name"],"disabled") == "0" then
+			ss_server = "0"
+		end
+	end)
 	if ss_server == "1" then
 		mArray.openmptcprouter["shadowsocks_enabled"] = false
 	end
+
 	-- check V2Ray is running
 	mArray.openmptcprouter["v2ray_service"] = false
 	if string.find(sys.exec("/usr/bin/pgrep v2ray"), "%d+") then
@@ -1149,7 +1160,7 @@ function interfaces_status()
 	    --end
 	    
 	    duplicateif = false
-	    if ifname ~= "" and ifname ~= nil and not (section["device"] ~= nil and section["device"]:match("^@.*")) then
+	    if ifname ~= "" and ifname ~= nil and not (section["device"] ~= nil and section["device"]:match("^@.*")) and (proto == "static" or proto == "dhcp") then
 		if allintf[ifname] then
 		    connectivity = "ERROR"
 		    duplicateif = true
@@ -1473,10 +1484,24 @@ function interfaces_status()
 			    end
 		    end
 		    if publicIP ~= "" then
-				whois = ut.trim(sys.exec("curl -4 --max-time 20 -s -k 'https://api.ip138.com/ip/?ip=" .. publicIP .. "&datatype=txt&callback=find' -H 'token:99eeff11df2c5c5a6e6b984bafd0bb77'  | awk '{print $3 $4 $5 $6}'"))
+		    	    whois = uci:get("openmptcprouter",interface,"asn") or ""
+			    if whois == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] == true then
+				    whois = ut.trim(sys.exec("whois " .. publicIP .. " | grep -i 'netname' | awk '{print $2}'"))
+				    --whois = ut.trim(sys.exec("wget -4 -qO- -T 1 'http://api.iptoasn.com/v1/as/ip/" .. publicIP .. "' | jsonfilter -q -e '@.as_description'"))
+			    end
+			    if publicIP == mArray.openmptcprouter["wan_addr"] then
+				mArray.openmptcprouter["direct_output"] = true
+			    end
 		    end
 		    if publicIP6 ~= "" then
-				whois6 = ut.trim(sys.exec("curl -6 --max-time 20 -s -k 'https://api.ip138.com/ip/?ip=" .. publicIP6 .. "&datatype=txt&callback=find' -H 'token:99eeff11df2c5c5a6e6b984bafd0bb77'  | awk '{print $3 $4 $5 $6}'"))
+		    	    whois6 = uci:get("openmptcprouter",interface,"asn") or ""
+			    if whois6 == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] == true then
+				    whois6 = ut.trim(sys.exec("whois " .. publicIP6 .. " | grep -i 'netname' | awk '{print $2}'"))
+				    --whois6 = ut.trim(sys.exec("wget -6 -qO- -T 1 'http://api.iptoasn.com/v1/as/ip/" .. publicIP6 .. "' | jsonfilter -q -e '@.as_description'"))
+			    end
+			    if publicIP6 == mArray.openmptcprouter["wan_addr6"] then
+				mArray.openmptcprouter["direct_output"] = true
+			    end
 		    end
 		    if ifname ~= "" and ifname ~= nil then
 			    if fs.access("/sys/class/net/" .. ifname) then
