@@ -57,7 +57,7 @@ set_route() {
 		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ]; then
 			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && [ "$SETDEFAULT" = "yes" ] && _log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
 			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && [ "$SETDEFAULT" != "yes" ] && _log "$PREVINTERFACE down. Replace default in table 991337 route by $interface_gw dev $interface_if"
-			[ "$SETDEFAULT" = "yes" ] && ip route replace default scope global nexthop via $interface_gw dev $interface_if 2>&1 >/dev/null
+			[ "$SETDEFAULT" = "yes" ] && [ "$(uci -q openmptcprouter.settings.defaultgw)" != "0" ] && ip route replace default scope global metric 1 nexthop via $interface_gw dev $interface_if 2>&1 >/dev/null
 			ip route replace default via $interface_gw dev $interface_if table 991337 2>&1 >/dev/null && SETROUTE=true
 		fi
 	fi
@@ -97,7 +97,7 @@ set_route6() {
 		fi
 		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ -n "$(echo $interface_gw | grep ':')" ]; then
 			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
-			[ "$SETDEFAULT" = "yes" ] && ip -6 route replace default scope global nexthop via $interface_gw dev $interface_if 2>&1 >/dev/null
+			[ "$SETDEFAULT" = "yes" ] && [ "$(uci -q openmptcprouter.settings.defaultgw)" != "0" ] && ip -6 route replace default scope metric 1 global nexthop via $interface_gw dev $interface_if 2>&1 >/dev/null
 			ip -6 route replace default via $interface_gw dev $interface_if table 991337 2>&1 >/dev/null && SETROUTE=true
 		fi
 	fi
@@ -700,8 +700,10 @@ if [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
 	esac
 fi
 
-default_gw=$(ip route show default | grep -v "metric" | awk '/default/ {print $3}')
-default_gw6=$(ip -6 route show default | grep -v "metric" | awk '/default/ {print $3}')
+#default_gw=$(ip route show default | awk '/default/ {print $3}')
+#default_gw6=$(ip -6 route show default | awk '/default/ {print $3}')
+default_gw=$(ip route get 1.1.1.1 | grep via | awk '{print $3}')
+default_gw6=$(ip -6 route get 2606:4700:4700::1111 | grep via | awk '{print $3}')
 #current_interface_gw=$(uci -q get "network.$OMR_TRACKER_INTERFACE.gateway")
 
 interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
@@ -807,9 +809,24 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || [ "$interface_up" != "true" ]; then
 		sleep 20
 	fi
 
+	if [ "$interface_up" = "true" ] && [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "dhcp" ]; then
+		for modem in $(mmcli -L | awk -F/ '{ print $6}' | awk '{print $1}'); do
+			if [ -n "$(timeout 2 mmcli -m $modem -K | grep $OMR_TRACKER_DEVICE)" ]; then
+				modem_device=$(mmcli -m $modem -K | grep 'modem.generic.device ' | awk '{print $3}')
+				[ -n "$modem_device" ] && modem_interface=$(uci show network | grep $modem_device | awk -F. '{print $2}')
+				[ -n "$modem_interface" ] && {
+					_log "No anwser from $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE), restart associed interface $modem_interface"
+					ifup $modem_interface
+				}
+			fi
+		done
+	fi
+
+	# This part must be done after modems restart because we have no idea when modems will be ready again... (another solution would be to check ModemManager status)
 	if [ "$OMR_TRACKER_PREV_STATUS" = "$OMR_TRACKER_STATUS" ]; then
 		exit 0
 	fi
+
 	if [ "$multipath_status" != "off" ] || ([ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" = "1" ]); then
 		if [ "$OMR_TRACKER_STATUS_MSG" = "" ]; then
 			_log "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) switched off"
@@ -910,6 +927,8 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || [ "$interface_up" != "true" ]; then
 			config_load network
 			config_foreach set_route interface $OMR_TRACKER_INTERFACE
 			config_foreach set_route6 interface $OMR_TRACKER_INTERFACE
+		else
+			_log "Default gateway disabled, no default gateway set"
 		fi
 		if [ "$(uci -q get openmptcprouter.settings.shadowsocksudp)" = "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.shadowsocks)" = "up" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q get shadowsocks-libev.hi1.mode)" = "tcp_and_udp" ] && [ "$(uci -q get shadowsocks-libev.sss0.obfs)" != "1" ]; then
 			_log "Tunnel down use ShadowSocks for UDP"
@@ -971,7 +990,7 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 	fi
 	if ([ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]) && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ]; then
 		_log "Tunnel up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
-		[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Current route: $(ip r)"
+		[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Default gw : $default_gw - Current route: $(ip r)"
 		ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE 2>&1 >/dev/null
 		if [ "$(pgrep openmptcprouter-vps)" = "" ]; then
 			/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1
@@ -1080,7 +1099,7 @@ if [ "$multipath_config" = "master" ]; then
 		[ -z "$omrvpn_intf" ] && omrvpn_intf=$(uci -q get "network.omrvpn.ifname" || echo "tun0")
 		if [ -n "$omrvpn_intf" ] && [ "$(ip route show default | grep -v metric | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
 			_log "Master up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
-			ip route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE 2>&1 >/dev/null
+			ip route replace default scope global metric 1 nexthop via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE 2>&1 >/dev/null
 		fi
 		config_load openmptcprouter
 		#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ]; then
