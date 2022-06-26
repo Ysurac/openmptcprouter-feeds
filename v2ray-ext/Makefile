@@ -25,7 +25,7 @@ GO_PKG:=v2ray.com/ext
 GO_PKG_SOURCE_ONLY:=1
 
 include $(INCLUDE_DIR)/package.mk
-include ../golang/golang-package.mk
+include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
 
 define Package/v2ray-ext-dev
 $(call GoPackage/GoSubMenu)
