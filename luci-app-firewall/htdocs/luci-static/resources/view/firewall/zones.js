@@ -145,14 +145,14 @@ return view.extend({
 
 		o = s.taboption('general', form.Flag, 'masq', _('Masquerading'));
 		o.editable = true;
-
-		o = s.taboption('general', form.Flag, 'fullcone', _('Full Cone'));
+	    o = s.taboption('general', form.Flag, 'fullcone', _('Full Cone'));
 		o.editable = true;
-		o.depends('masq', '1');
-
+     	o.depends('masq', '1');
+		o = s.taboption('general', form.Flag, 'mtu_fix', _('MSS clamp'));
+		o.modalonly = true;
 		o = s.taboption('general', form.Flag, 'mtu_fix', _('MSS clamping'));
 		o.modalonly = true;
-
+		
 		o = s.taboption('general', widgets.NetworkSelect, 'network', _('Covered networks'));
 		o.modalonly = true;
 		o.multiple = true;

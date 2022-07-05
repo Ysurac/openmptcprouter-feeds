@@ -12,8 +12,8 @@ PKG_NAME:=ndisc6
 PKG_VERSION:=1.0.3
 PKG_RELEASE:=1
 
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.bz2
-PKG_SOURCE_URL:=http://www.remlab.net/files/ndisc6
+PKG_SOURCE:=$(PKG_NAME)_$(PKG_VERSION).orig.tar.bz2
+PKG_SOURCE_URL:=http://deb.debian.org/debian/pool/main/n/ndisc6
 PKG_HASH:=0f41d6caf5f2edc1a12924956ae8b1d372e3b426bd7b11eed7d38bc974eec821
 
 PKG_INSTALL:=1
