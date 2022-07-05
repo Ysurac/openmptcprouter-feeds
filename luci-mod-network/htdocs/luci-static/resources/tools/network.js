@@ -622,6 +622,23 @@ return baseclass.extend({
 		o = this.replaceOption(s, 'devadvanced', form.Flag, 'promisc', _('Enable promiscuous mode'));
 		o.default = o.disabled;
 
+		o = this.replaceOption(s, 'devadvanced', form.Flag, 'autoneg', _('Autonegociation'));
+		o.default = o.enabled;
+
+		o = this.replaceOption(s, 'devadvanced', form.Value, 'speed', _('Speed'));
+		o.placeholder = dev ? dev.getSpeed() : '';
+		o.default = '';
+		o.rmempty = true;
+		o.datatype = 'uinteger';
+		o.depends('autoneg', '0');
+
+		o = this.replaceOption(s, 'devadvanced', form.ListValue, 'duplex', _('Duplex'));
+		o.default = '';
+		o.value('', _('unknown'));
+		o.value('half', _('half'));
+		o.value('full', _('full'));
+		o.depends('autoneg', '0');
+
 		o = this.replaceOption(s, 'devadvanced', form.ListValue, 'rpfilter', _('Reverse path filter'));
 		o.default = '';
 		o.value('', _('disabled'));
