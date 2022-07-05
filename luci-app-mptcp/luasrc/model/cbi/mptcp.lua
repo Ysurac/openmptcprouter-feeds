@@ -73,6 +73,9 @@ o.default = 1
 --o:depends("mptcp_scheduler","roundrobin")
 
 s = m:section(TypedSection, "interface", translate("Interfaces Settings"))
+function s.filter(self, section)
+    return not section:match("^oip.*") and not section:match("^lo.*") and section ~= "omrvpn" and section ~= "omr6in4"
+end
 o = s:option(ListValue, "multipath", translate("Multipath TCP"), translate("One interface must be set as master"))
 o:value("on", translate("enabled"))
 o:value("off", translate("disabled"))
