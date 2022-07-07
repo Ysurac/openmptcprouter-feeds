@@ -301,9 +301,10 @@ function wizard_add()
 			ucic:set("network",intf,"type","macvlan")
 			ucic:set("network",intf .. "_dev","device")
 			ucic:set("network",intf .. "_dev","type","macvlan")
-			ucic:set("network",intf .. "_dev","ifname",masterinf)
+			ucic:set("network",intf .. "_dev","ifname",masterintf)
 			ucic:set("network",intf .. "_dev","mode","vepa")
 			ucic:set("network",intf .. "_dev","name",intf)
+			ucic:set("network",intf,"device",intf)
 			ucic:set("network",intf,"masterintf",masterintf)
 		elseif typeintf == "" and ifname ~= "" and (proto == "static" or proto == "dhcp" or proto == "dhcpv6") then
 			ucic:set("network",intf,"device",ifname)
@@ -336,11 +337,14 @@ function wizard_add()
 				ucic:set("network",intf .. "_dev","name",ifname)
 			end
 		end
-		if typeintf ~= "macvlan" and ucic:get("network",intf .. "_dev","type") == "macvlan" then
-			ucic:delete("network",intf .. "_dev","type")
-			ucic:delete("network",intf .. "_dev","mode")
-			ucic:delete("network",intf .. "_dev","ifname")
-			ucic:delete("network",intf .. "_dev","macaddr")
+		if typeintf ~= "macvlan" then
+			if ucic:get("network",intf .. "_dev","type") == "macvlan" then
+				ucic:delete("network",intf .. "_dev","type")
+				ucic:delete("network",intf .. "_dev","mode")
+				ucic:delete("network",intf .. "_dev","ifname")
+				ucic:delete("network",intf .. "_dev","macaddr")
+			end
+			ucic:delete("network",intf,"masterintf")
 		end
 		if proto == "pppoe" then
 			ucic:set("network",intf,"pppd_options","persist maxfail 0")
@@ -373,17 +377,17 @@ function wizard_add()
 		ucic:set("network",intf,"defaultroute",0)
 		ucic:set("network",intf,"peerdns",0)
 		if ipaddr ~= "" then
-			ucic:set("network",intf,"ipaddr",ipaddr)
-			ucic:set("network",intf,"netmask",netmask)
-			ucic:set("network",intf,"gateway",gateway)
+			ucic:set("network",intf,"ipaddr",ipaddr:gsub("%s+", ""))
+			ucic:set("network",intf,"netmask",netmask:gsub("%s+", ""))
+			ucic:set("network",intf,"gateway",gateway:gsub("%s+", ""))
 		else
 			ucic:set("network",intf,"ipaddr","")
 			ucic:set("network",intf,"netmask","")
 			ucic:set("network",intf,"gateway","")
 		end
 		if ip6addr ~= "" then
-			ucic:set("network",intf,"ip6addr",ip6addr)
-			ucic:set("network",intf,"ip6gw",ip6gw)
+			ucic:set("network",intf,"ip6addr",ip6addr:gsub("%s+", ""))
+			ucic:set("network",intf,"ip6gw",ip6gw:gsub("%s+", ""))
 		else
 			ucic:set("network",intf,"ip6addr","")
 			ucic:set("network",intf,"ip6gw","")
@@ -593,8 +597,8 @@ function wizard_add()
 			serversnb = serversnb + 1
 		end
 		ucic:set("openmptcprouter",server,"server")
-		ucic:set("openmptcprouter",server,"username",openmptcprouter_vps_username)
-		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key)
+		ucic:set("openmptcprouter",server,"username",openmptcprouter_vps_username:gsub("%s+", ""))
+		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key:gsub("%s+", ""))
 		ucic:set("openmptcprouter",server,"disabled",openmptcprouter_vps_disabled)
 		ucic:set_list("openmptcprouter",server,"ip",aserverips)
 		ucic:set("openmptcprouter",server,"port","65500")
