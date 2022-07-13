@@ -602,6 +602,7 @@ function wizard_add()
 		ucic:set("openmptcprouter",server,"disabled",openmptcprouter_vps_disabled)
 		ucic:set_list("openmptcprouter",server,"ip",aserverips)
 		ucic:set("openmptcprouter",server,"port","65500")
+		ucic:set("openmptcprouter",server,"set_firewall","1")
 		ucic:save("openmptcprouter")
 	end
 
