@@ -600,7 +600,12 @@ function wizard_add()
 		ucic:set("openmptcprouter",server,"username",openmptcprouter_vps_username:gsub("%s+", ""))
 		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key:gsub("%s+", ""))
 		ucic:set("openmptcprouter",server,"disabled",openmptcprouter_vps_disabled)
-		ucic:set_list("openmptcprouter",server,"ip",aserverips)
+		if ucic:get("openmptcprouter",server,"ip") ~= aserverips then
+			ucic:set_list("openmptcprouter",server,"ip",aserverips)
+			if ucic:get("openmptcprouter",server,"master") == "1" then
+				ucic:set("openmptcprouter",server,"get_config","1")
+			end
+		end
 		ucic:set("openmptcprouter",server,"port","65500")
 		ucic:set("openmptcprouter",server,"set_firewall","1")
 		ucic:save("openmptcprouter")
