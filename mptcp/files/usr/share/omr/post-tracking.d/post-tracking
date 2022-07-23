@@ -1556,6 +1556,21 @@ fi
 	fi
 }
 
+if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
+	addlatency=$(uci -q get network.${OMR_TRACKER_INTERFACE}.addlatency)
+	[ -z "$addlatency" ] && addlatency="0"
+	if [ "$addlatency" = "0" ] && [ "$(tc qdisc show dev $OMR_TRACKER_DEVICE | grep delay)" != "" ]; then
+		tc qdisc del dev ${OMR_TRACKER_DEVICE} root netem 2>&1 >/dev/null
+	fi
+	if [ "$addlatency" != "0" ]; then
+		if [ "$(tc qdisc show dev $OMR_TRACKER_DEVICE | grep delay)" = "" ]; then
+			tc qdisc add dev ${OMR_TRACKER_DEVICE} root netem delay ${addlatency}ms 2>&1 >/dev/null
+		elif [ "$(tc qdisc show dev $OMR_TRACKER_DEVICE | awk '/delay/ { print $10 }' | sed 's/ms//')" != "$addlatency" ]; then
+			tc qdisc replace dev ${OMR_TRACKER_DEVICE} root netem delay ${addlatency}ms 2>&1 >/dev/null
+		fi
+	fi
+fi
+
 # If a service is down, force restart it
 if [ -f /etc/init.d/shadowsocks-libev ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep ss-redir)" = "" ] && [ "$(pgrep ss-local)" = "" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "192.18.1.3" ] && [ "$(uci -q get shadowsocks-libev.sss0.key)" != "" ]; then
 	_log "Can't find Shadowsocks, restart it..."
