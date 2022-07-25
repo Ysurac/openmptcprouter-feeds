@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2020 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter project
+# Copyright (C) 2020-2022 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter project
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -10,7 +10,7 @@ include $(TOPDIR)/rules.mk
 PKG_NAME:=mptcpd
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/intel/mptcpd.git
-PKG_SOURCE_VERSION:=df4ea048cd3821f749bf06e0d01bb7d79faac812
+PKG_SOURCE_VERSION:=88bea6802379ee1cdbcba4817351b63fd1489537
 PKG_VERSION:=0.9-$(PKG_SOURCE_VERSION)
 PKG_RELEASE:=1
 PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
@@ -36,7 +36,8 @@ endef
 
 CONFIGURE_ARGS += \
 	--disable-doxygen-doc \
-	--disable-logging
+	--disable-logging \
+	--with-kernel=upstream
 
 TARGET_CFLAGS += -Wno-unused-result -Wno-format-nonliteral
 
