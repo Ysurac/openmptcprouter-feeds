@@ -170,6 +170,7 @@ interface_multipath_settings() {
 	[ -n "$(ifconfig | grep $iface)" ] || return 0
 	[ "$(echo $iface | grep _dev)" != "" ] && return 0
 	[ "$(echo $iface | grep '^if')" != "" ] && return 0
+	[ "$iface" = "lo" ] && return 0
 	
 	if [ "$mode" = "master" ]; then
 		multipath "$iface" "on"
@@ -262,8 +263,8 @@ interface_multipath_settings() {
 			EOF
 		else
 			#echo "Add routes for $ipaddr table $id"
-			[ -n "$ipaddr" ] && ip rule add from $ipaddr table $id pref 0
-			ip rule add oif $iface table $id pref 0
+			[ -n "$ipaddr" ] && [ -z "$(ip rule show from $ipaddr table $id)" ] && ip rule add from $ipaddr table $id pref 0
+			[ -z "$(ip rule show oif $iface table $id)" ] && ip rule add oif $iface table $id pref 0
 			ip route replace $network/$netmask dev $iface scope link metric $id 2>&1 >/dev/null
 			ip route replace $network/$netmask dev $iface scope link table $id 2>&1 >/dev/null
 			ip route replace default via $gateway dev $iface table $id 2>&1 >/dev/null
@@ -389,11 +390,15 @@ set_multipath() {
 				exist=1
 			fi
 		done
-		[ "$exist" = "0" ] && multipath $iface off
+		[ "$exist" = "0" ] && {
+			multipath $iface off
+		}
 	done
 }
 
 add_route() {
+	config_get disabled "$1" disabled
+	[ "$disabled" = "1" ] && return 0
 	config_get target "$1" target
 	routeset="$target"
 	config_get netmask "$1" netmask
@@ -417,10 +422,14 @@ add_route() {
 	[ -n "$(echo $iface | grep '@')" ] && iface=$(ifstatus "$interface" | jsonfilter -q -e '@["device"]')
 	[ -n "$iface" ] && routeset="$routeset dev $iface"
 	logger -t "MPTCP" "Add route $routeset"
-	[ -n "$routeset" ] && ip route replace $routeset 2>&1 >/dev/null
+	[ -n "$routeset" ] && {
+		ip route replace ${routeset} 2>&1 >/dev/null
+	}
 }
 
 add_route6() {
+	config_get disabled "$1" disabled
+	[ "$disabled" = "1" ] && return 0
 	config_get target "$1" target
 	routeset="$target"
 	config_get gateway "$1" gateway
@@ -438,7 +447,9 @@ add_route6() {
 	[ -n "$(echo $iface | grep '@')" ] && iface=$(ifstatus "$interface" | jsonfilter -q -e '@["device"]')
 	[ -n "$iface" ] && routeset="$routeset dev $iface"
 	logger -t "MPTCP" "Add IPv6 route $routeset"
-	[ -n "$routeset" ] && ip -6 route replace $routeset 2>&1 >/dev/null
+	[ -n "$routeset" ] && {
+		ip -6 route replace ${routeset} 2>&1 >/dev/null
+	}
 }
 
 remove() {
@@ -484,7 +495,7 @@ start_service() {
 	config_foreach interface_multipath_settings interface $intf
 	set_multipath
 	config_foreach add_route route
-	config_foreach add_route route6
+	config_foreach add_route6 route6
 	# If no master is defined, one interface is defined as master
 	if [ "$master" = "" ] && [ "$intf" = "" ]; then
 		intfmaster="$mptcpmintf"
