@@ -1372,6 +1372,7 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$(uci -q get openmptcprouter.$OMR_TRAC
 		traceboxmtutest() {
 			omr_tracebox_mtu() {
 				local serverip=$1
+				[ "$serverip" != "${1#*[0-9].[0-9]}" ] && serverip=""
 				[ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ] && [ "$(pgrep tracebox)" = "" ] && [ "$(uci -q get openmptcprouter.settings.tracebox)" != "0" ] && {
 					omrtracebox="$(omr-tracebox-mptcp $serverip $OMR_TRACKER_DEVICE)"
 					[ -n "$omrtracebox" ] && [ -z "$(echo $omrtracebox | grep error)" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$omrtracebox"
@@ -1446,6 +1447,7 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$(uci -q get openmptcprouter.$OMR_TRAC
 		traceboxmtutest() {
 			omr_tracebox_mtu() {
 				local serverip=$1
+				[ "$serverip" != "${1#*:[0-9a-fA-F]}" ] && serverip=""
 				[ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ] && [ "$(pgrep tracebox)" = "" ] && [ "$(uci -q get openmptcprouter.settings.tracebox)" != "0" ] && {
 					omrtracebox="$(omr-tracebox-mptcp $serverip $OMR_TRACKER_DEVICE)"
 					[ -n "$omrtracebox" ] && [ -z "$(echo $omrtracebox | grep error)" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$omrtracebox"
@@ -1467,7 +1469,7 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$(uci -q get openmptcprouter.$OMR_TRAC
 								ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
 							}
 						} || {
-							local mtu=$(omr-mtu6 $OMR_TRACKER_DEVICE_IP 2606:4700:4700::1111)
+							local mtu=$(omr-mtu6 $OMR_TRACKER_DEVICE_IP6 2606:4700:4700::1111)
 							[ -n "$mtu" ] && {
 								uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
 								ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
@@ -1700,6 +1702,11 @@ fi
 
 if [ "$(pgrep openmptcprouter-vps)" = "" ] && ([ "$(uci -q show openmptcprouter | grep get_config=\'1\')" != "" ] || [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" != "" ]); then
 	/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1
+	sleep 5
+fi
+
+if [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.enabled)" = "1" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.autorate)" = "1" ] && [ -z $(pgrep -f "autorate.sh ${OMR_TRACKER_INTERFACE}") ]; then
+	/etc/init.d/sqm-autorate restart >/dev/null 2>&1
 	sleep 5
 fi
 
