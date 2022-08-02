@@ -471,18 +471,32 @@ _intf_rule_v2ray_rules() {
 	#rule_name=$1
 	#[ "$rule_name" = "ss_rules" ] && rule_name="def"
 	rule_name="def"
-	if [ "$(iptables --wait=40 -t nat -L -n | grep v2r_${rule_name}_pre_src)" != "" ] && [ "$(iptables-save | grep v2r | grep omr_dst_bypass_$intf)" = "" ]; then
+	if [ "$(iptables --wait=40 -t nat -L -n | grep v2r_${rule_name}_dst)" != "" ] && [ "$(iptables-save | grep v2r_${rule_name}_dst | grep omr_dst_bypass_$intf)" = "" ]; then
 		iptables-restore -w --wait=60 --noflush <<-EOF
 		*nat
 		-I v2r_${rule_name}_dst 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
 		-I v2r_${rule_name}_dst 2 -m mark --mark 0x539$count -j RETURN
+		COMMIT
+		EOF
+	fi
+	if [ "$(iptables --wait=40 -t nat -L -n | grep v2r_${rule_name}_local_out)" != "" ] && [ "$(iptables-save | grep v2r_${rule_name}_local_out | grep omr_dst_bypass_$intf)" = "" ]; then
+		iptables-restore -w --wait=60 --noflush <<-EOF
+		*nat
 		-I v2r_${rule_name}_local_out 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
 		-I v2r_${rule_name}_local_out 2 -m mark --mark 0x539$count -j RETURN
+		COMMIT
+		EOF
+	fi
+	if [ "$(iptables --wait=40 -t nat -L -n | grep v2r_${rule_name}_pre_src)" != "" ] && [ "$(iptables-save | grep v2r_${rule_name}_pre_src | grep omr_dst_bypass_$intf)" = "" ]; then
+		iptables-restore -w --wait=60 --noflush <<-EOF
+		*nat
 		-I v2r_${rule_name}_pre_src 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
 		-I v2r_${rule_name}_pre_src 2 -m mark --mark 0x539$count -j RETURN
 		COMMIT
 		EOF
 	fi
+
+
 	if [ "$disableipv6" = "0" ]; then
 		if [ "$(ip6tables-save | grep omr-bypass6 | grep omr6_dst_bypass_$intf)" = "" ]; then
 			ip6tables-restore -w --wait=60 --noflush <<-EOF
@@ -552,7 +566,9 @@ _intf_rule() {
 		iptables-restore -w --wait=60 --noflush <<-EOF
 		*mangle
 		-I omr-bypass 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
+		-I omr-bypass 2 -m mark --mark 0x539$count -j RETURN
 		-I omr-bypass-local 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
+		-I omr-bypass-local 2 -m mark --mark 0x539$count -j RETURN
 		COMMIT
 		EOF
 	fi
@@ -610,7 +626,7 @@ _ss_rules_config() {
 		iptables-restore -w --wait=60 --noflush <<-EOF
 		*nat
 		-I ssr_${rule_name}_dst 1 -m set --match-set omr_dst_bypass_all dst -j  MARK --set-mark 0x539
-		-I ssr_${rule_name}_dst 1 -m mark --mark 0x539 -j RETURN
+		-I ssr_${rule_name}_dst 2 -m mark --mark 0x539 -j RETURN
 		-I ssr_${rule_name}_local_out 1 -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
 		-I ssr_${rule_name}_local_out 2 -m mark --mark 0x539 -j RETURN
 		-I ssr_${rule_name}_pre_src 1 -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
@@ -649,7 +665,7 @@ _v2ray_rules_config() {
 		iptables-restore -w --wait=60 --noflush <<-EOF
 		*nat
 		-I v2r_${rule_name}_dst 1 -m set --match-set omr_dst_bypass_all dst -j  MARK --set-mark 0x539
-		-I v2r_${rule_name}_dst 1 -m mark --mark 0x539 -j RETURN
+		-I v2r_${rule_name}_dst 2 -m mark --mark 0x539 -j RETURN
 		-I v2r_${rule_name}_local_out 1 -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
 		-I v2r_${rule_name}_local_out 2 -m mark --mark 0x539 -j RETURN
 		-I v2r_${rule_name}_pre_src 1 -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
