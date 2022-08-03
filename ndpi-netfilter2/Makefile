@@ -39,28 +39,18 @@ define Package/iptables-mod-ndpi/description
   nDPI is a ntop-maintained superset of the popular OpenDPI library
 endef
 
-#CONFIGURE_CMD = ./autogen.sh
-#CONFIGURE_ARGS += --with-pic
-MAKE_PATH := ndpi-netfilter
+CONFIGURE_CMD=./autogen.sh
+CONFIGURE_ARGS += --with-pic
+
+MAKE_PATH:=ndpi-netfilter
 
 MAKE_FLAGS += \
     KERNEL_DIR="$(LINUX_DIR)" \
     MODULES_DIR="$(TARGET_MODULES_DIR)" \
     ARCH="$(LINUX_KARCH)" \
     CROSS_COMPILE="$(TARGET_CROSS)" \
+    CC="$(TARGET_CC)" \
     NDPI_PATH=$(PKG_BUILD_DIR)/ndpi-netfilter
-
-define Build/Configure
-	cd $(PKG_BUILD_DIR) && \
-	    CC="" ./autogen.sh \
-	    --host="$(GNU_TARGET_NAME)"
-#	    --with-pic \
-#	    CFLAGS="$(TARGET_CFLAGS)" \
-#	    HOST_CFLAGS="$(BUILD_CFLAGS)" \
-#	    BUILD_CPPFLAGS="$(TARGET_CPPLAGS)" \
-#	    BUILD_CFLAGS="$(TARGET_CFLAGS)" \
-#	    BUILD_LDFLAGS="$(TARGET_LDFLAGS)"
-endef
 
 define Build/Compile
 	(cd $(PKG_BUILD_DIR)/src/lib &&\
