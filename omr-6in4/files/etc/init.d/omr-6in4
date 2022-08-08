@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018-2022 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 # shellcheck disable=SC2039
 # vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
 
@@ -29,18 +29,10 @@ set_ipv6_state() {
 		commit firewall
 	EOF
 
-	if [ "$disable_ipv6" == "1" ]; then
+	if [ "$disable_ipv6" = "1" ]; then
 		logger -t "omr-6in4" "Disable IPv6"
 		uci -q batch <<-EOF >/dev/null
-			set dhcp.lan.ra_default="0"
-			set network.lan.ipv6="0"
-			delete network.lan.ipv6
-			delete dhcp.lan.dhcpv6
-			delete dhcp.lan.ra
-			delete dhcp.lan.ra_default
-			delete dhcp.lan.ra_management
-			delete dhcp.lan.ra_preference
-			unbound.ub_main.protocol='ip4_only'
+			set unbound.ub_main.protocol='ip4_only'
 			commit unbound
 			del_list v2ray.main.inbounds="omr6"
 			commit v2ray
@@ -48,34 +40,19 @@ set_ipv6_state() {
 		config_load shadowsocks-libev
 		config_foreach set_shadowsocks_address ss_redir "0.0.0.0"
 		uci -q batch <<-EOF >/dev/null
-			commit network
-			commit dhcp
 			commit shadowsocks-libev
 		EOF
 		[ ! -f /etc/wgetrc ] && cp /etc/wgetrc4 /etc/wgetrc
 	else
 		logger -t "omr-6in4" "Enable IPv6"
 		uci -q batch <<-EOF >/dev/null
-			set dhcp.lan.dhcpv6="server"
-			set dhcp.lan.ra="server"
-			set dhcp.lan.ra_default="1"
-			set dhcp.lan.ra_preference="high"
-			set dhcp.lan.ra_management="1"
-			delete dhcp.lan.ra_flags
-			add_list dhcp.lan.ra_flags='managed-config'
-			set dhcp.lan.ra_slaac='1'
-			add_list dhcp.lan.ra_flags='other-config'
-			set network.lan.ipv6="1"
 			set network.lan.delegate="0"
 			set network.omr6in4.force_link=1
 			set network.omr6in4.metric=1
 			delete network.omr6in4.auto
-			unbound.ub_main.protocol='mixed'
+			set unbound.ub_main.protocol='mixed'
 			commit unbound
 		EOF
-		if [ "$(uci -q get network.lan.ip6assign)" = "" ]; then
-			uci -q set network.lan.ip6assign='60'
-		fi
 		if [ "$(uci -q get network.globals.ula_prefix)" = "" ]; then
 			r1=$(dd if=/dev/urandom bs=1 count=1 |hexdump -e '1/1 "%02x"')
 			r2=$(dd if=/dev/urandom bs=2 count=1 |hexdump -e '2/1 "%02x"')
@@ -106,12 +83,62 @@ set_ipv6_state() {
 	fi
 }
 
+set_ipv6_state_intf() {
+	local disable_ipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
+	local intf="$1"
+	config_get ip4table $intf ip4table
+	config_get ipv6 $intf ipv6 "0"
+	if [ "$ip4table" = "lan" ]; then
+		if [ "$disable_ipv6" = "1" ] && [ "$ipv6" != "0" ]; then
+			logger -t "omr-6in4" "Disable IPv6 on ${intf}"
+			uci -q batch <<-EOF >/dev/null
+				set dhcp.${intf}.ra_default="0"
+				delete network.${intf}.ipv6
+				delete dhcp.${intf}.dhcpv6
+				delete dhcp.${intf}.ra
+				delete dhcp.${intf}.ra_default
+				delete dhcp.${intf}.ra_management
+				delete dhcp.${intf}.ra_preference
+				commit network
+				commit dhcp
+			EOF
+		elif [ "$disable_ipv6" != "1" ] && [ "$ipv6" != "1" ]; then
+			logger -t "omr-6in4" "Enable IPv6 on ${intf}"
+			uci -q batch <<-EOF >/dev/null
+				set dhcp.${intf}.dhcpv6="server"
+				set dhcp.${intf}.ra="server"
+				set dhcp.${intf}.ra_default="1"
+				set dhcp.${intf}.ra_preference="high"
+				set dhcp.${intf}.ra_management="1"
+				delete dhcp.${intf}.ra_flags
+				add_list dhcp.${intf}.ra_flags='managed-config'
+				set dhcp.${intf}.ra_slaac='1'
+				add_list dhcp.${intf}.ra_flags='other-config'
+				set network.${intf}.ipv6="1"
+				set network.${intf}.delegate="0"
+			EOF
+			if [ "$(uci -q get network.${intf}.ip6assign)" = "" ]; then
+				uci -q set network.${intf}.ip6assign='60'
+			fi
+			uci -q batch <<-EOF >/dev/null
+				commit network
+				commit dhcp
+			EOF
+		fi
+	fi
+}
 
 start_service() {
-	[ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(uci -q get network.lan.ipv6)" != "1" ] && set_ipv6_state
+	[ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && {
+		config_load network
+		config_foreach set_ipv6_state_intf interface
+		set_ipv6_state
+	}
 	[ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "0" ] && {
+		config_load network
+		config_foreach set_ipv6_state_intf interface
 		ifdown omr6in4
-		/etc/init.d/odhcpd stop
+		[ -z "$(/etc/init.d/odhcpd status | grep inactive)" ] && /etc/init.d/odhcpd stop
 		return
 	}
 	[ "$(ifstatus omr6in4 | jsonfilter -e '@.up' | tr -d '\n')" != "true" ] && ifup omr6in4
