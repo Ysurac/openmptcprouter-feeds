@@ -1,6 +1,6 @@
 #!/bin/sh
-if [ "$(uci -q get openmptcprouter.latest_versions)" = "" ]; then
-	if [ "$(uci -q get unbound.@unbound[0].listen_port | grep 5353)" = "" ]; then
+if [ "$(uci -q get openmptcprouter.settings.version)" = "" ]; then
+	if [ "$(uci -q get unbound.@unbound[-1].listen_port | grep 5353)" = "" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set unbound.@unbound[-1].listen_port=5353
 			set unbound.@unbound[-1].protocol="ip4_only"
@@ -8,11 +8,11 @@ if [ "$(uci -q get openmptcprouter.latest_versions)" = "" ]; then
 			set unbound.@unbound[-1].recursion="aggressive"
 			set unbound.@unbound[-1].validator='1'
 			set unbound.@unbound[-1].validator_ntp='1'
-			del unbound.ub_main.dns64_prefix
-			del unbound.ub_main.iface_wan
-			del unbound.ub_main.dhcp4_slaac6
-			del unbound.ub_main.query_minimize
-			del unbound.ub_main.query_min_strict
+			del unbound.@unbound[-1].dns64_prefix
+			del unbound.@unbound[-1].iface_wan
+			del unbound.@unbound[-1].dhcp4_slaac6
+			del unbound.@unbound[-1].query_minimize
+			del unbound.@unbound[-1].query_min_strict
 			commit unbound
 		EOF
 	fi
@@ -23,6 +23,13 @@ if [ "$(uci -q get openmptcprouter.latest_versions)" = "" ]; then
 			commit dhcp
 		EOF
 	fi
+fi
+if [ -z "$(uci -q get unbound.ub_main)" ]; then
+	uci -q batch <<-EOF >/dev/null
+		rename unbound.@unbound[-1]=ub_main
+		commit unbound
+	EOF
+
 fi
 if [ "$(uci -q show dhcp | grep 'use-application-dns.net')" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
@@ -66,6 +73,7 @@ fi
 
 if [ -z "$(uci -q show unbound.auth_icann)" ]; then
 	uci -q batch <<-EOF >/dev/null
+		del unbound.auth_icann
 		set unbound.auth_icann=zone
 		set unbound.auth_icann.fallback='1'
 		set unbound.auth_icann.url_dir='https://www.internic.net/domain/'
@@ -77,6 +85,7 @@ if [ -z "$(uci -q show unbound.auth_icann)" ]; then
 		add_list unbound.auth_icann.zone_name='in-addr.arpa.'
 		add_list unbound.auth_icann.zone_name='ip6.arpa.'
 		set unbound.auth_icann.enabled='1'
+		del unbound.fwd_isp
 		set unbound.fwd_isp=zone
 		set unbound.fwd_isp.enabled='0'
 		set unbound.fwd_isp.fallback='1'
@@ -84,6 +93,7 @@ if [ -z "$(uci -q show unbound.auth_icann)" ]; then
 		set unbound.fwd_isp.zone_type='forward_zone'
 		add_list unbound.fwd_isp.zone_name='isp-bill.example.com.'
 		add_list unbound.fwd_isp.zone_name='isp-mail.example.net.'
+		del unbound.fwd_google
 		set unbound.fwd_google=zone
 		set unbound.fwd_google.enabled='0'
 		set unbound.fwd_google.fallback='1'
@@ -95,6 +105,7 @@ if [ -z "$(uci -q show unbound.auth_icann)" ]; then
 		add_list unbound.fwd_google.server='2001:4860:4860::8844'
 		add_list unbound.fwd_google.server='2001:4860:4860::8888'
 		set unbound.fwd_google.zone_name='.'
+		del unbound.fwd_cloudflare
 		set unbound.fwd_cloudflare=zone
 		set unbound.fwd_cloudflare.enabled='0'
 		set unbound.fwd_cloudflare.fallback='1'
