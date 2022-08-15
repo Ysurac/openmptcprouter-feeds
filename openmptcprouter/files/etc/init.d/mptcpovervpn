@@ -17,7 +17,7 @@ wireguard_restart() {
 }
 
 _getremoteip() {
-	[ "$(uci -q get openmptcprouter.$1.master)" = "1" ] && {
+	[ "$(uci -q get openmptcprouter.$1.current)" = "1" ] && {
 		remoteip=$(uci -q get openmptcprouter.$1.ip | awk '{print $1}')
 		wg_server_key=$(uci -q get openmptcprouter.$1.wgkey)
 	}
@@ -27,6 +27,10 @@ mptcp_over_vpn() {
 	local interface=$1
 	[ -n "$(uci show firewall.zone_wan.network | grep $interface)" ] && nbintf=$(($nbintf+1))
 	if [ "$(uci -q get openmptcprouter.${interface}.multipathvpn)" = "1" ]; then
+		remoteip=""
+		config_load openmptcprouter
+		config_foreach _getremoteip server
+
 		if [ "$(uci -q get network.${interface})" = "" ]; then
 			uci -q batch <<-EOF >/dev/null
 				delete openmptcprouter.${interface}
@@ -47,12 +51,9 @@ mptcp_over_vpn() {
 			return
 		fi
 		nbintfvpn=$(($nbintfvpn+1))
-		if [ "$(uci -q get network.ovpn${interface})" = "" ] && [ "$vpn" = "openvpn" ]; then
+		if ([ "$(uci -q get network.ovpn${interface})" = "" ] || [ "$(uci -q get openvpn.${interface}.remote)" != "${remoteip}" ]) && [ "$vpn" = "openvpn" ]; then
 			logger -t "MPTCPoverVPN" "Enable MPTCP over VPN for ${interface}"
 			id=$(uci -q get network.${interface}.metric)
-			remoteip=""
-			config_load openmptcprouter
-			config_foreach _getremoteip server
 			localip=$(ubus call network.interface.$interface status | jsonfilter -e '@["ipv4-address"][0].address' | tr -d "\n")
 			[ -z "$(uci -q get openmptcprouter.ovpn${interface}.multipath)" ] && multipath=$(uci -q get network.${interface}.multipath)
 			[ -n "$(uci -q get openmptcprouter.ovpn${interface}.multipath)" ] && multipath=$(uci -q get openmptcprouter.ovpn${interface}.multipath)
@@ -103,7 +104,7 @@ mptcp_over_vpn() {
 					add_list firewall.zone_vpn.network="ovpn${interface}"
 					commit firewall
 				EOF
-		elif [ "$(uci -q get network.wg${interface})" = "" ] && [ "$vpn" = "wireguard" ]; then
+		elif ([ "$(uci -q get network.wg${interface})" = "" ] || [ "$(uci -q get network.@wireguard_wg${interface}[0].endpoint_host)" != "$remoteip" ]) && [ "$vpn" = "wireguard" ]; then
 			logger -t "MPTCPoverVPN" "Enable MPTCP over VPN for ${interface}"
 			id=$(uci -q get network.${interface}.metric)
 			remoteip=""

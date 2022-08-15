@@ -584,10 +584,12 @@ function wizard_add()
 				ucic:set("openmptcprouter",server,"get_config","1")
 			end
 			ucic:set("openmptcprouter",server,"master","1")
+			ucic:set("openmptcprouter",server,"current","1")
 			ucic:set("openmptcprouter",server,"backup","0")
 		else
 			ucic:set("openmptcprouter",server,"get_config","0")
 			ucic:set("openmptcprouter",server,"master","0")
+			ucic:set("openmptcprouter",server,"current","0")
 			ucic:set("openmptcprouter",server,"backup","1")
 		end
 		if openmptcprouter_vps_disabled == "1" then
