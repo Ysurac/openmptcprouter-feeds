@@ -19,7 +19,9 @@ cleanup_and_killall()
 	echo "Killing all background processes and cleaning up /tmp files."
 	trap - INT TERM EXIT
 	kill $monitor_achieved_rates_pid 2> /dev/null
+	# Initiate termination of ping processes and wait until complete
 	kill $maintain_pingers_pid 2> /dev/null
+	wait $maintain_pingers_pid
 	[[ -d /tmp/CAKE-autorate-${dl_if} ]] && rm -r /tmp/CAKE-autorate-${dl_if}
 	exit
 }
@@ -45,35 +47,42 @@ get_next_shaper_rate()
 
 	case $load_condition in
 
+		# upload Starlink satelite switching compensation, so drop down to minimum rate for upload through switching period
+		ul*sss)
+				shaper_rate_kbps=$min_shaper_rate_kbps
+			;;
+		# download Starlink satelite switching compensation, so drop down to base rate for download through switching period
+		dl*sss)
+				shaper_rate_kbps=$base_shaper_rate_kbps
+			;;
 		# bufferbloat detected, so decrease the rate providing not inside bufferbloat refractory period
-		*delayed)
+		*bb*)
 			if (( $t_next_rate_us > ($t_last_bufferbloat_us+$bufferbloat_refractory_period_us) )); then
-				adjusted_achieved_rate_kbps=$(( ($achieved_rate_kbps*$achieved_rate_adjust_bufferbloat)/1000 )) 
-				adjusted_shaper_rate_kbps=$(( ($shaper_rate_kbps*$shaper_rate_adjust_bufferbloat)/1000 )) 
+				adjusted_achieved_rate_kbps=$(( ($achieved_rate_kbps*$achieved_rate_adjust_down_bufferbloat)/1000 )) 
+				adjusted_shaper_rate_kbps=$(( ($shaper_rate_kbps*$shaper_rate_adjust_down_bufferbloat)/1000 )) 
 				shaper_rate_kbps=$(( $adjusted_achieved_rate_kbps < $adjusted_shaper_rate_kbps ? $adjusted_achieved_rate_kbps : $adjusted_shaper_rate_kbps ))
 				t_last_bufferbloat_us=${EPOCHREALTIME/./}
 			fi
 			;;
-		
             	# high load, so increase rate providing not inside bufferbloat refractory period 
-		high)	
+		*high*)	
 			if (( $t_next_rate_us > ($t_last_bufferbloat_us+$bufferbloat_refractory_period_us) )); then
-				shaper_rate_kbps=$(( ($shaper_rate_kbps*$shaper_rate_adjust_load_high)/1000 ))
+				shaper_rate_kbps=$(( ($shaper_rate_kbps*$shaper_rate_adjust_up_load_high)/1000 ))
 			fi
 			;;
 		# medium load, so just maintain rate as is, i.e. do nothing
-		medium)
+		*med*)
 			:
 			;;
 		# low or idle load, so determine whether to decay down towards base rate, decay up towards base rate, or set as base rate
-		low|idle)
+		*low*|*idle*)
 			if (($t_next_rate_us > ($t_last_decay_us+$decay_refractory_period_us) )); then
 
 	                	if (($shaper_rate_kbps > $base_shaper_rate_kbps)); then
-					decayed_shaper_rate_kbps=$(( ($shaper_rate_kbps*$shaper_rate_adjust_load_low)/1000 ))
+					decayed_shaper_rate_kbps=$(( ($shaper_rate_kbps*$shaper_rate_adjust_down_load_low)/1000 ))
 					shaper_rate_kbps=$(( $decayed_shaper_rate_kbps > $base_shaper_rate_kbps ? $decayed_shaper_rate_kbps : $base_shaper_rate_kbps))
 				elif (($shaper_rate_kbps < $base_shaper_rate_kbps)); then
-        			        decayed_shaper_rate_kbps=$(( ((2000-$shaper_rate_adjust_load_low)*$shaper_rate_kbps)/1000 ))
+        			        decayed_shaper_rate_kbps=$(( ($shaper_rate_kbps*$shaper_rate_adjust_up_load_low)/1000 ))
 					shaper_rate_kbps=$(( $decayed_shaper_rate_kbps < $base_shaper_rate_kbps ? $decayed_shaper_rate_kbps : $base_shaper_rate_kbps))
                 		fi
 
@@ -118,11 +127,11 @@ monitor_achieved_rates()
 		printf '%s' "$dl_achieved_rate_kbps" > /tmp/CAKE-autorate-${dl_if}/dl_achieved_rate_kbps
 		printf '%s' "$ul_achieved_rate_kbps" > /tmp/CAKE-autorate-${dl_if}/ul_achieved_rate_kbps
 
-       		prev_rx_bytes=$rx_bytes
-       		prev_tx_bytes=$tx_bytes
+		prev_rx_bytes=$rx_bytes
+		prev_tx_bytes=$tx_bytes
 
 		# read in the max_wire_packet_rtt_us
-		concurrent_read max_wire_packet_rtt_us /tmp/CAKE-autorate-${dl_if}/max_wire_packet_rtt_us
+		concurrent_read_positive_integer max_wire_packet_rtt_us /tmp/CAKE-autorate-${dl_if}/max_wire_packet_rtt_us
 
 		compensated_monitor_achieved_rates_interval_us=$(( (($monitor_achieved_rates_interval_us>(10*$max_wire_packet_rtt_us) )) ? $monitor_achieved_rates_interval_us : $((10*$max_wire_packet_rtt_us)) ))
 
@@ -134,8 +143,8 @@ get_loads()
 {
 	# read in the dl/ul achived rates and determine the loads
 
-	concurrent_read dl_achieved_rate_kbps /tmp/CAKE-autorate-${dl_if}/dl_achieved_rate_kbps 
-	concurrent_read ul_achieved_rate_kbps /tmp/CAKE-autorate-${dl_if}/ul_achieved_rate_kbps 
+	concurrent_read_positive_integer dl_achieved_rate_kbps /tmp/CAKE-autorate-${dl_if}/dl_achieved_rate_kbps 
+	concurrent_read_positive_integer ul_achieved_rate_kbps /tmp/CAKE-autorate-${dl_if}/ul_achieved_rate_kbps 
 
 	dl_load_percent=$(((100*10#${dl_achieved_rate_kbps})/$dl_shaper_rate_kbps))
 	ul_load_percent=$(((100*10#${ul_achieved_rate_kbps})/$ul_shaper_rate_kbps))
@@ -152,14 +161,25 @@ classify_load()
 	if (( $load_percent > $high_load_thr_percent )); then
 		load_condition="high"  
 	elif (( $load_percent > $medium_load_thr_percent )); then
-		load_condition="medium"
+		load_condition="med"
 	elif (( $achieved_rate_kbps > $connection_active_thr_kbps )); then
 		load_condition="low"
 	else 
 		load_condition="idle"
 	fi
 	
-	(($bufferbloat_detected)) && load_condition=$load_condition"_delayed"
+	(($bufferbloat_detected)) && load_condition=$load_condition"_bb"
+		
+	if ((sss_compensation)); then
+		for sss_time_us in "${sss_times_us[@]}"
+		do
+			((timestamp_usecs_past_minute=${EPOCHREALTIME/./}%60000000))
+			if (( ($timestamp_usecs_past_minute > ($sss_time_us-$sss_compensation_pre_duration_us)) && ($timestamp_usecs_past_minute < ($sss_time_us+$sss_compensation_post_duration_us)) )); then
+				load_condition=$load_condition"_sss"
+				break
+			fi
+		done			
+	fi
 }
 
 monitor_reflector_responses() 
@@ -245,7 +265,7 @@ maintain_pingers()
 		for ((pinger=0; pinger<$no_pingers; pinger++))
 		do
 			reflector_check_time_us=${EPOCHREALTIME/./}
-			concurrent_read reflector_last_timestamp_us /tmp/CAKE-autorate-${dl_if}/reflector_${pinger}_last_timestamp_us
+			concurrent_read_positive_integer reflector_last_timestamp_us /tmp/CAKE-autorate-${dl_if}/reflector_${pinger}_last_timestamp_us
 			declare -n reflector_offences="reflector_${pinger}_offences"
 
 			(( ${reflector_offences[$reflector_offences_idx]} )) && ((sum_reflector_offences[$pinger]--))
@@ -367,7 +387,7 @@ update_max_wire_packet_compensation()
 	printf '%s' "$max_wire_packet_rtt_us" > /tmp/CAKE-autorate-${dl_if}/max_wire_packet_rtt_us
 }
 
-concurrent_read()
+concurrent_read_positive_integer()
 {
 	# in the context of separate processes writing using > and reading form file
         # it seems costly calls to the external flock binary can be avoided
@@ -376,10 +396,20 @@ concurrent_read()
 
 	local -n value=$1
  	local path=$2
-	read -r value < $path
-	while [[ -z $value ]]; do
-		sleep_us $concurrent_read_interval_us
+	while true 
+	do
 		read -r value < $path; 
+		if [[ -z "${value##*[!0-9]*}" ]]; then
+			if (($debug)); then
+				read -r caller_output< <(caller)
+				echo "DEBUG concurrent_read_positive_integer() misfire with the following particulars:"
+				echo "DEBUG caller="$caller_output"; value="$value"; and path="$path
+			fi 
+			sleep_us $concurrent_read_positive_integer_interval_us
+			continue
+		else
+			break
+		fi
 	done
 }
 
@@ -474,10 +504,11 @@ verify_ifs_up
 # Convert human readable parameters to values that work with integer arithmetic
 printf -v alpha_baseline_increase %.0f\\n "${alpha_baseline_increase}e3"
 printf -v alpha_baseline_decrease %.0f\\n "${alpha_baseline_decrease}e3"   
-printf -v achieved_rate_adjust_bufferbloat %.0f\\n "${achieved_rate_adjust_bufferbloat}e3"
-printf -v shaper_rate_adjust_bufferbloat %.0f\\n "${shaper_rate_adjust_bufferbloat}e3"
-printf -v shaper_rate_adjust_load_high %.0f\\n "${shaper_rate_adjust_load_high}e3"
-printf -v shaper_rate_adjust_load_low %.0f\\n "${shaper_rate_adjust_load_low}e3"
+printf -v achieved_rate_adjust_down_bufferbloat %.0f\\n "${achieved_rate_adjust_down_bufferbloat}e3"
+printf -v shaper_rate_adjust_down_bufferbloat %.0f\\n "${shaper_rate_adjust_down_bufferbloat}e3"
+printf -v shaper_rate_adjust_up_load_high %.0f\\n "${shaper_rate_adjust_up_load_high}e3"
+printf -v shaper_rate_adjust_down_load_low %.0f\\n "${shaper_rate_adjust_down_load_low}e3"
+printf -v shaper_rate_adjust_up_load_low %.0f\\n "${shaper_rate_adjust_up_load_low}e3"
 printf -v high_load_thr_percent %.0f\\n "${high_load_thr}e2"
 printf -v medium_load_thr_percent %.0f\\n "${medium_load_thr}e2"
 printf -v reflector_ping_interval_us %.0f\\n "${reflector_ping_interval_s}e6"
@@ -488,9 +519,16 @@ bufferbloat_refractory_period_us=$(( 1000*$bufferbloat_refractory_period_ms ))
 decay_refractory_period_us=$(( 1000*$decay_refractory_period_ms ))
 delay_thr_us=$(( 1000*$delay_thr_ms ))
 
+for (( i=0; i<${#sss_times_s[@]}; i++ ));
+do
+	printf -v sss_times_us[i] %.0f\\n "${sss_times_s[i]}e6"
+done
+printf -v sss_compensation_pre_duration_us %.0f\\n "${sss_compensation_pre_duration_ms}e3"
+printf -v sss_compensation_post_duration_us %.0f\\n "${sss_compensation_post_duration_ms}e3"
+
 ping_response_interval_us=$(($reflector_ping_interval_us/$no_pingers))
 
-concurrent_read_interval_us=$(($ping_response_interval_us/4))
+concurrent_read_positive_integer_interval_us=$(($ping_response_interval_us/4))
 
 dl_shaper_rate_kbps=$base_dl_shaper_rate_kbps
 ul_shaper_rate_kbps=$base_ul_shaper_rate_kbps
@@ -533,12 +571,20 @@ monitor_achieved_rates_pid=$!
 
 prev_timestamp=0
 
+if (($debug)); then
+	if (( $bufferbloat_refractory_period_us <= ($bufferbloat_detection_window*$ping_response_interval_us) )); then
+		echo "DEBUG Warning: bufferbloat refractory period: " $bufferbloat_refractory_period_us " us."
+		echo "DEBUG Warning: but expected time to overwrite samples in bufferbloat detection window is: " $(($bufferbloat_detection_window*$ping_response_interval_us)) " us." 
+		echo "DEBUG Warning: Consider increasing bufferbloat refractory period or decreasing bufferbloat detection window."
+	fi
+fi
+
 while true
 do
 	while read -t $global_ping_response_timeout_s -r timestamp reflector seq rtt_baseline_us rtt_us rtt_delta_us
 	do 
 		t_start_us=${EPOCHREALTIME/./}
-		if ((($t_start_us - "${timestamp//[[\[\].]}")>500000)); then
+		if ((($t_start_us - 10#"${timestamp//[[\[\].]}")>500000)); then
 			(($debug)) && echo "DEBUG processed response from [" $reflector "] that is > 500ms old. Skipping." 
 			continue
 		fi
@@ -556,6 +602,9 @@ do
 		classify_load $dl_load_percent $dl_achieved_rate_kbps dl_load_condition
 		classify_load $ul_load_percent $ul_achieved_rate_kbps ul_load_condition
 	
+		dl_load_condition="dl_"$dl_load_condition
+		ul_load_condition="ul_"$ul_load_condition
+
 		get_next_shaper_rate $min_dl_shaper_rate_kbps $base_dl_shaper_rate_kbps $max_dl_shaper_rate_kbps $dl_achieved_rate_kbps $dl_load_condition $t_start_us t_dl_last_bufferbloat_us t_dl_last_decay_us dl_shaper_rate_kbps
 		get_next_shaper_rate $min_ul_shaper_rate_kbps $base_ul_shaper_rate_kbps $max_ul_shaper_rate_kbps $ul_achieved_rate_kbps $ul_load_condition $t_start_us t_ul_last_bufferbloat_us t_ul_last_decay_us ul_shaper_rate_kbps
 
@@ -584,8 +633,9 @@ do
 	ul_shaper_rate_kbps=$min_ul_shaper_rate_kbps
 	set_shaper_rates
 
-	# Kill off ping processes
+	# Initiate termination of ping processes and wait until complete
 	kill $maintain_pingers_pid 2> /dev/null
+	wait $maintain_pingers_pid
 
 	# reset idle timer
 	t_sustained_connection_idle_us=0
