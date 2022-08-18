@@ -341,6 +341,7 @@ _bypass_proto() {
 	config_get proto $1 proto
 	config_get intf $1 interface
 	config_get enabled $1 enabled
+	config_get ndpi $1 ndpi
 	[ "$enabled" = "0" ] && return
 	intf=$(echo $intf | sed -e 's/\./_/')
 	[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
@@ -348,7 +349,7 @@ _bypass_proto() {
 
 	[ -z "$intf" ] && intf="all"
 	[ -z "$proto" ] && return
-	if [ "$(uci -q get openmptcprouter.settings.ndpi)" != "0" ]; then
+	if [ "$(uci -q get openmptcprouter.settings.ndpi)" != "0" ] && [ "$ndpi" != "0" ]; then
 		if [ "$intf" = "all" ]; then
 			iptables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
@@ -802,9 +803,8 @@ start_service() {
 	iptables-restore -w --wait=60  --noflush <<-EOF
 	*mangle
 	:omr-bypass-dpi -
-	-A PREROUTING -m addrtype ! --dst-type LOCAL -j omr-bypass-dpi
-	-A OUTPUT -m addrtype ! --dst-type LOCAL -j omr-bypass-dpi
-	-A POSTROUTING -m addrtype --dst-type LOCAL -j omr-bypass-dpi
+	-A INPUT -m addrtype ! --dst-type LOCAL -j omr-bypass-dpi
+	-A FORWARD -m addrtype ! --dst-type LOCAL -j omr-bypass-dpi
 	COMMIT
 	EOF
 	if [ "$disableipv6" = "0" ]; then
@@ -812,9 +812,8 @@ start_service() {
 		ip6tables-restore -w --wait=60  --noflush <<-EOF
 		*mangle
 		:omr-bypass6-dpi -
-		-A PREROUTING -m addrtype ! --dst-type LOCAL -j omr-bypass6-dpi
-		-A OUTPUT -m addrtype ! --dst-type LOCAL -j omr-bypass6-dpi
-		-A POSTROUTING -m addrtype --dst-type LOCAL -j omr-bypass6-dpi
+		-A INPUT -m addrtype ! --dst-type LOCAL -j omr-bypass6-dpi
+		-A FORWARD -m addrtype ! --dst-type LOCAL -j omr-bypass6-dpi
 		COMMIT
 		EOF
 	fi
