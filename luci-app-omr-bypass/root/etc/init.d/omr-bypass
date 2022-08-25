@@ -354,12 +354,14 @@ _bypass_proto() {
 			iptables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
 			-A omr-bypass-dpi -m ndpi --proto $proto -j MARK --set-mark 0x539
+			-A omr-bypass-dpi -m mark --mark 0x539 -j RETURN
 			COMMIT
 			EOF
 			if [ "$disableipv6" = "0" ]; then
 				ip6tables-restore -w --wait=60  --noflush <<-EOF
 				*mangle
 				-A omr-bypass6-dpi -m ndpi --proto $proto -j MARK --set-mark 0x6539
+				-A omr-bypass6-dpi -m mark --mark 0x6539 -j RETURN
 				COMMIT
 				EOF
 			fi
@@ -367,12 +369,14 @@ _bypass_proto() {
 			iptables-restore -w --wait=60  --noflush <<-EOF
 			*mangle
 			-A omr-bypass-dpi -m ndpi --proto $proto -j MARK --set-mark 0x539$intfid
+			-A omr-bypass-dpi -m mark --mark 0x539$intfid -j RETURN
 			COMMIT
 			EOF
 			if [ "$disableipv6" = "0" ]; then
 				ip6tables-restore -w --wait=60  --noflush <<-EOF
 				*mangle
 				-A omr-bypass6-dpi -m ndpi --proto $proto -j MARK --set-mark 0x6539$intfid
+				-A omr-bypass6-dpi -m mark --mark 0x6539$intfid -j RETURN
 				COMMIT
 				EOF
 			fi
@@ -725,13 +729,13 @@ start_service() {
 	iptables-restore -w --wait=60  --noflush <<-EOF
 	*mangle
 	:omr-bypass -
-	-I PREROUTING -m addrtype ! --dst-type LOCAL -j omr-bypass
+	-A PREROUTING -j omr-bypass
 	COMMIT
 	EOF
 	iptables-restore -w --wait=60  --noflush <<-EOF
 	*mangle
 	:omr-bypass-local -
-	-I OUTPUT -m addrtype ! --dst-type LOCAL -j omr-bypass-local
+	-A OUTPUT -m addrtype ! --dst-type LOCAL -j omr-bypass-local
 	COMMIT
 	EOF
 	if [ "$disableipv6" = "0" ]; then
@@ -739,7 +743,7 @@ start_service() {
 		ip6tables-restore -w --wait=60  --noflush <<-EOF
 		*mangle
 		:omr-bypass6 -
-		-I PREROUTING -m addrtype ! --dst-type LOCAL -j omr-bypass6
+		-A PREROUTING -j omr-bypass6
 		COMMIT
 		EOF
 	fi
@@ -786,11 +790,13 @@ start_service() {
 		iptables-restore -w --wait=60 --noflush <<-EOF
 		*mangle
 		-A omr-bypass -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
+		-A omr-bypass -m mark --mark 0x539 -j RETURN
 		COMMIT
 		EOF
 		iptables-restore -w --wait=60 --noflush <<-EOF
 		*mangle
 		-A omr-bypass-local -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
+		-A omr-bypass-local -m mark --mark 0x539 -j RETURN
 		COMMIT
 		EOF
 	fi
@@ -803,8 +809,8 @@ start_service() {
 	iptables-restore -w --wait=60  --noflush <<-EOF
 	*mangle
 	:omr-bypass-dpi -
-	-A INPUT -m addrtype ! --dst-type LOCAL -j omr-bypass-dpi
-	-A FORWARD -m addrtype ! --dst-type LOCAL -j omr-bypass-dpi
+	-A INPUT -j omr-bypass-dpi
+	-A FORWARD -j omr-bypass-dpi
 	COMMIT
 	EOF
 	if [ "$disableipv6" = "0" ]; then
@@ -812,8 +818,8 @@ start_service() {
 		ip6tables-restore -w --wait=60  --noflush <<-EOF
 		*mangle
 		:omr-bypass6-dpi -
-		-A INPUT -m addrtype ! --dst-type LOCAL -j omr-bypass6-dpi
-		-A FORWARD -m addrtype ! --dst-type LOCAL -j omr-bypass6-dpi
+		-A INPUT -j omr-bypass6-dpi
+		-A FORWARD -j omr-bypass6-dpi
 		COMMIT
 		EOF
 	fi
