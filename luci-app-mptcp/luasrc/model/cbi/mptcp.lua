@@ -65,6 +65,11 @@ if uname.release:sub(1,4) == "5.15" then
     o.datatype = "uinteger"
     o.rmempty = false
     o.default = 1
+
+    o = s:option(Value, "mptcp_stale_loss_cnt", translate("The number of MPTCP-level retransmission intervals with no traffic and pending outstanding data on a given subflow required to declare it stale"))
+    o.datatype = "uinteger"
+    o.rmempty = false
+    o.default = 4
 else
     o = s:option(Value, "mptcp_fullmesh_num_subflows", translate("Fullmesh subflows for each pair of IP addresses"))
     o.datatype = "uinteger"

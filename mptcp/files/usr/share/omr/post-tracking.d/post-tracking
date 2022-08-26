@@ -644,7 +644,7 @@ del_server_route6() {
 		else
 			metric=$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)
 		fi
-		[ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$metric" ] && [ -n "$serverip"] && [ -n "$(ip -6 route show $serverip dev $OMR_TRACKER_DEVICE metric $metric)" ] && ip -6 route del $serverip dev $OMR_TRACKER_DEVICE metric $metric >/dev/null 2>&1
+		[ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$metric" ] && [ -n "$serverip" ] && [ -n "$(ip -6 route show $serverip dev $OMR_TRACKER_DEVICE metric $metric)" ] && ip -6 route del $serverip dev $OMR_TRACKER_DEVICE metric $metric >/dev/null 2>&1
 		[ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$metric" ] && [ -n "$serverip" ] && [ -n "$(ip -6 route show $serverip dev $OMR_TRACKER_DEVICE)" ] && ip -6 route del $serverip dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
 	}
 	config_list_foreach $server ip remove_route
@@ -1218,8 +1218,9 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$multipath_config" = "on" ] || [ "$mul
 			serverip=$1
 			#gtudpst="up"
 			#[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" != "1" ] && [ "$multipath_config" = "backup" ] && [ "$(pgrep glorytun-udp)" != "" ] && gtudpst="backup"
-			if [ "$OMR_TRACKER_DEVICE_IP" != "" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep glorytun-udp)" != "" ] && [ "$(glorytun-udp path | grep $OMR_TRACKER_DEVICE_IP | grep running)" = "" ] && [ -n "$(resolveip -4 $serverip)" ]; then
-			    if [ "$download" != "0" ] && [ "$download" != "" ] && [ "$upload" != "0" ] && [ "$upload" != "" ]; then
+			if [ "$OMR_TRACKER_DEVICE_IP" != "" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep glorytun-udp)" != "" ] && [ "$(glorytun-udp path | grep $OMR_TRACKER_DEVICE_IP | grep running)" = "" ] && [ -n "$(resolveip -4 -t 5 $serverip)" ]; then
+				serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
+				if [ "$download" != "0" ] && [ "$download" != "" ] && [ "$upload" != "0" ] && [ "$upload" != "" ]; then
 					if [ "$(uci -q get glorytun-udp.vpn.rateauto)" = "1" ]; then
 						glorytun-udp path addr $OMR_TRACKER_DEVICE_IP to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set up rate auto tx $((upload*1000/8)) rx $((download*1000/8)) pref 1 > /dev/null 2>&1
 					else
@@ -1233,7 +1234,8 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$multipath_config" = "on" ] || [ "$mul
 					fi
 				fi
 			fi
-			if [ "$OMR_TRACKER_DEVICE_IP6" != "" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep glorytun-udp)" != "" ] && [ "$(glorytun-udp path | grep $OMR_TRACKER_DEVICE_IP6 | grep running)" = "" ] && [ -n "$(resolveip -6 $serverip)" ]; then
+			if [ "$OMR_TRACKER_DEVICE_IP6" != "" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep glorytun-udp)" != "" ] && [ "$(glorytun-udp path | grep $OMR_TRACKER_DEVICE_IP6 | grep running)" = "" ] && [ -n "$(resolveip -6 -t 5 $serverip)" ]; then
+				serverip="$(resolveip -6 -t 5 $serverip | head -n 1 | tr -d '\n')"
 				if [ "$download" != "0" ] && [ "$download" != "" ] && [ "$upload" != "0" ] && [ "$upload" != "" ]; then
 					if [ "$(uci -q get glorytun-udp.vpn.rateauto)" = "1" ]; then
 						glorytun-udp path addr $OMR_TRACKER_DEVICE_IP6 to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set up rate auto tx $((upload*1000/8)) rx $((download*1000/8)) pref 1 > /dev/null 2>&1
@@ -1252,8 +1254,8 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$multipath_config" = "on" ] || [ "$mul
 #				glorytun-udp set dev tun0 kxtimeout 7d > /dev/null 2>&1
 		#	fi
 			[ "$multipath_config" = "backup" ] && [ "$(pgrep glorytun-udp)" != "" ] && {
-				[ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$(resolveip -4 $serverip)" ] && glorytun-udp path addr $OMR_TRACKER_DEVICE_IP to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set pref 125 > /dev/null 2>&1
-				[ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$(resolveip -6 $serverip)" ] && glorytun-udp path addr $OMR_TRACKER_DEVICE_IP6 to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set pref 125 > /dev/null 2>&1
+				[ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$(resolveip -4 -t 5 $serverip)" ] && glorytun-udp path addr $OMR_TRACKER_DEVICE_IP to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set pref 125 > /dev/null 2>&1
+				[ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$(resolveip -6 -t 5 $serverip)" ] && glorytun-udp path addr $OMR_TRACKER_DEVICE_IP6 to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set pref 125 > /dev/null 2>&1
 			}
 		}
 		config_list_foreach $1 ip addpath
@@ -1372,11 +1374,13 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$(uci -q get openmptcprouter.$OMR_TRAC
 		traceboxmtutest() {
 			omr_tracebox_mtu() {
 				local serverip=$1
+				[ "$serverip" != "${1#*[0-9].[0-9]}" ] && serverip=""
 				[ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ] && [ "$(pgrep tracebox)" = "" ] && [ "$(uci -q get openmptcprouter.settings.tracebox)" != "0" ] && {
 					omrtracebox="$(omr-tracebox-mptcp $serverip $OMR_TRACKER_DEVICE)"
 					[ -n "$omrtracebox" ] && [ -z "$(echo $omrtracebox | grep error)" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$omrtracebox"
 				}
-				if [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$(uci -q get glorytun.vpn.enable)" != "1" ] && [ "$(uci -q get glorytun-udp.vpn.enable)" != "1" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
+				#if [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$(uci -q get glorytun.vpn.enable)" != "1" ] && [ "$(uci -q get glorytun-udp.vpn.enable)" != "1" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
+				if [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
 					if [ -n "$(uci -q get network.$(find_network_device ${OMR_TRACKER_INTERFACE}).mtu)" ]; then
 						network_device=$(find_network_device ${OMR_TRACKER_INTERFACE})
 						mtu=""
@@ -1445,11 +1449,13 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$(uci -q get openmptcprouter.$OMR_TRAC
 		traceboxmtutest() {
 			omr_tracebox_mtu() {
 				local serverip=$1
+				[ "$serverip" != "${1#*:[0-9a-fA-F]}" ] && serverip=""
 				[ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ] && [ "$(pgrep tracebox)" = "" ] && [ "$(uci -q get openmptcprouter.settings.tracebox)" != "0" ] && {
 					omrtracebox="$(omr-tracebox-mptcp $serverip $OMR_TRACKER_DEVICE)"
 					[ -n "$omrtracebox" ] && [ -z "$(echo $omrtracebox | grep error)" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$omrtracebox"
 				}
-				if [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$(uci -q get glorytun.vpn.enable)" != "1" ] && [ "$(uci -q get glorytun-udp.vpn.enable)" != "1" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
+				#if [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$(uci -q get glorytun.vpn.enable)" != "1" ] && [ "$(uci -q get glorytun-udp.vpn.enable)" != "1" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
+				if [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
 					network_device=$(find_network_device ${OMR_TRACKER_INTERFACE})
 					if [ -n "$network_device" ] && [ -n "$(uci -q get network.${network_device}.mtu)" ]; then
 						mtu=$(uci -q get network.$(find_network_device ${OMR_TRACKER_INTERFACE}).mtu)
@@ -1459,13 +1465,13 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$(uci -q get openmptcprouter.$OMR_TRAC
 						}
 					elif [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
 						[ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ] && {
-							local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP $serverip)
+							local mtu=$(omr-mtu6 $OMR_TRACKER_DEVICE_IP6 $serverip)
 							[ -n "$mtu" ] && {
 								uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
 								ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
 							}
 						} || {
-							local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP 1.1.1.1)
+							local mtu=$(omr-mtu6 $OMR_TRACKER_DEVICE_IP6 2606:4700:4700::1111)
 							[ -n "$mtu" ] && {
 								uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
 								ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
@@ -1556,6 +1562,21 @@ fi
 	fi
 }
 
+if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
+	addlatency=$(uci -q get network.${OMR_TRACKER_INTERFACE}.addlatency)
+	[ -z "$addlatency" ] && addlatency="0"
+	if [ "$addlatency" = "0" ] && [ "$(tc qdisc show dev $OMR_TRACKER_DEVICE | grep delay)" != "" ]; then
+		tc qdisc del dev ${OMR_TRACKER_DEVICE} root netem 2>&1 >/dev/null
+	fi
+	if [ "$addlatency" != "0" ]; then
+		if [ "$(tc qdisc show dev $OMR_TRACKER_DEVICE | grep delay)" = "" ]; then
+			tc qdisc add dev ${OMR_TRACKER_DEVICE} root netem delay ${addlatency}ms 2>&1 >/dev/null
+		elif [ "$(tc qdisc show dev $OMR_TRACKER_DEVICE | awk '/delay/ { print $10 }' | sed 's/ms//')" != "$addlatency" ]; then
+			tc qdisc replace dev ${OMR_TRACKER_DEVICE} root netem delay ${addlatency}ms 2>&1 >/dev/null
+		fi
+	fi
+fi
+
 # If a service is down, force restart it
 if [ -f /etc/init.d/shadowsocks-libev ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep ss-redir)" = "" ] && [ "$(pgrep ss-local)" = "" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "192.18.1.3" ] && [ "$(uci -q get shadowsocks-libev.sss0.key)" != "" ]; then
 	_log "Can't find Shadowsocks, restart it..."
@@ -1602,7 +1623,7 @@ if [ "$(pgrep dsvpn)" = "" ] && [ "$(uci -q get dsvpn.vpn.enable)" = "1" ] && [ 
 	/etc/init.d/dsvpn restart 2>&1 >/dev/null
 	sleep 5
 fi
-if [ "$(pgrep v2ray)" = "" ] && [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ -f /etc/init.d/v2ray ]; then
+if [ "$(pgrep -f v2ray)" = "" ] && [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ -f /etc/init.d/v2ray ]; then
 	_log "Can't find V2Ray, restart it..."
 	/etc/init.d/v2ray restart 2>&1 >/dev/null
 	sleep 5
@@ -1671,9 +1692,10 @@ if [ -n "$(logread | tail -n 2 | grep 'Ring expansion failed')" ]; then
 	echo 1 > /sys/bus/pci/rescan
 fi
 
-if [ -f /etc/init.d/omr-bypass ] && [ "$(iptables-save | grep omr-bypass)" = "" ] && [ "$(pgrep omr-bypass)" = "" ]; then
+if [ -f /etc/init.d/omr-bypass ] && [ "$(iptables-save | grep omr-bypass)" = "" ] && [ "$(pgrep -f omr-bypass)" = "" ]; then
 	_log "Can't find omr-bypass rules, restart omr-bypass..."
 	/etc/init.d/omr-bypass 2>&1 >/dev/null
+	sleep 5
 fi
 
 if [ -f /etc/backup/installed_packages.txt ] && [ -n "$(grep overlay /etc/backup/installed_packages.txt)" ]; then
@@ -1683,6 +1705,11 @@ fi
 
 if [ "$(pgrep openmptcprouter-vps)" = "" ] && ([ "$(uci -q show openmptcprouter | grep get_config=\'1\')" != "" ] || [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" != "" ]); then
 	/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1
+	sleep 5
+fi
+
+if [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.enabled)" = "1" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.autorate)" = "1" ] && [ -z $(pgrep -f "autorate.sh ${OMR_TRACKER_INTERFACE}") ]; then
+	/etc/init.d/sqm-autorate restart >/dev/null 2>&1
 	sleep 5
 fi
 

@@ -584,10 +584,12 @@ function wizard_add()
 				ucic:set("openmptcprouter",server,"get_config","1")
 			end
 			ucic:set("openmptcprouter",server,"master","1")
+			ucic:set("openmptcprouter",server,"current","1")
 			ucic:set("openmptcprouter",server,"backup","0")
 		else
 			ucic:set("openmptcprouter",server,"get_config","0")
 			ucic:set("openmptcprouter",server,"master","0")
+			ucic:set("openmptcprouter",server,"current","0")
 			ucic:set("openmptcprouter",server,"backup","1")
 		end
 		if openmptcprouter_vps_disabled == "1" then
@@ -600,8 +602,14 @@ function wizard_add()
 		ucic:set("openmptcprouter",server,"username",openmptcprouter_vps_username:gsub("%s+", ""))
 		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key:gsub("%s+", ""))
 		ucic:set("openmptcprouter",server,"disabled",openmptcprouter_vps_disabled)
-		ucic:set_list("openmptcprouter",server,"ip",aserverips)
+		if ucic:get("openmptcprouter",server,"ip") ~= aserverips then
+			ucic:set_list("openmptcprouter",server,"ip",aserverips)
+			if ucic:get("openmptcprouter",server,"master") == "1" then
+				ucic:set("openmptcprouter",server,"get_config","1")
+			end
+		end
 		ucic:set("openmptcprouter",server,"port","65500")
+		ucic:set("openmptcprouter",server,"set_firewall","1")
 		ucic:save("openmptcprouter")
 	end
 
@@ -634,7 +642,7 @@ function wizard_add()
 		ucic:set("v2ray","main","enabled","0")
 		ucic:foreach("shadowsocks-libev", "server", function(s)
 			local sectionname = s[".name"]
-			if sectionname:match("^sss.*") then
+			if sectionname:match("^sss.*") and ucic:get("shadowsocks-libev",sectionname,"server") ~= "" then
 				ucic:set("shadowsocks-libev",sectionname,"disabled","0")
 			end
 		end)
@@ -703,7 +711,7 @@ function wizard_add()
 					local nbip = 0
 					for _, ssip in pairs(server_ips) do
 						ucic:set("shadowsocks-libev","sss" .. nbip,"server",ssip)
-						if default_proxy == "shadowsocks" and serversnb > disablednb then
+						if default_proxy == "shadowsocks" and serversnb > disablednb and ssip ~= "" then
 							ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","0")
 						end
 						nbip = nbip + 1
@@ -741,7 +749,7 @@ function wizard_add()
 				local nbip = 0
 				for _, ssip in pairs(server_ips) do
 					ucic:set("shadowsocks-libev","sss" .. nbip,"server",ssip)
-					if default_proxy == "shadowsocks" and serversnb > disablednb then
+					if default_proxy == "shadowsocks" and serversnb > disablednb and ssip ~= "" then
 						ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","0")
 					end
 					nbip = nbip + 1
@@ -837,8 +845,8 @@ function wizard_add()
 		end
 	else
 		if serversnb == 0 then
-			ucic:set("shadowsocks-libev","sss0","disabled",shadowsocks_disable)
-			ucic:set("shadowsocks-libev","sss1","disabled",shadowsocks_disable)
+			ucic:set("shadowsocks-libev","sss0","disabled","1")
+			ucic:set("shadowsocks-libev","sss1","disabled","1")
 		end
 		ucic:set("shadowsocks-libev","sss0","key","")
 		ucic:set("shadowsocks-libev","sss1","key","")
@@ -1146,6 +1154,10 @@ function settings_add()
 	-- Enable/disable shadowsocks udp
 	local shadowsocksudp = luci.http.formvalue("shadowsocksudp") or "0"
 	ucic:set("openmptcprouter","settings","shadowsocksudp",shadowsocksudp)
+
+	-- Enable/disable v2ray udp
+	local shadowsocksudp = luci.http.formvalue("v2rayudp") or "1"
+	ucic:set("v2ray","main_transparent_proxy","redirect_udp",v2rayudp)
 
 	-- Enable/disable nDPI
 	local ndpi = luci.http.formvalue("ndpi") or "1"
