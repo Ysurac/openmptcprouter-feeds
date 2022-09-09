@@ -1,0 +1,52 @@
+#!/bin/sh
+
+. /lib/functions/service.sh
+. /lib/functions.sh
+
+/etc/init.d/mcsd enabled || exit 0
+
+mcsd_restart_aggr() {
+	local fileflag="/tmp/.mcsd.restart.pending"
+
+	[ -f "$fileflag" ] && return
+	touch "$fileflag"
+
+	sleep 5
+
+	rm -f $fileflag
+
+	/etc/init.d/mcsd start
+}
+
+mcsd_restart() {
+	local exescript
+	local enabled
+	local bootdone="/tmp/.mcsd_boot_done"
+
+	config_load "mcsd"
+	config_get_bool enabled config Enable 0
+
+	[ $enabled -eq 0 ] && return
+
+	#if mcsd boot is not done yet, do nothing
+	[ -f "$bootdone" ] || return
+
+	exescript=`ls /etc/hotplug.d/net/*mcsd* 2>&-`
+	[ -n "$exescript" ] || return
+
+	# Restart with aggregation(background)
+	exescript="$exescript &"
+	eval $exescript
+}
+
+
+if [ -n "$1" ] ; then # Called by hotplugd
+	case "$INTERFACE" in
+		ath*|eth*|eth*.*|br*|ovs*)
+		mcsd_restart
+		;;
+	esac
+else                  # Called directly
+	mcsd_restart_aggr
+fi
+

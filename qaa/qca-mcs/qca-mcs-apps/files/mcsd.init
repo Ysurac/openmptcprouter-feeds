@@ -1,0 +1,195 @@
+#!/bin/sh /etc/rc.common
+
+# Copyright (c)  2013-2016, 2019, 2021 Qualcomm Technologies, Inc.
+#
+# All Rights Reserved.
+# Confidential and Proprietary - Qualcomm Technologies, Inc.
+#
+# 2013-2016 Qualcomm Atheros, Inc.
+# All Rights Reserved.
+# Qualcomm Atheros Confidential and Proprietary.
+
+START=75
+USE_PROCD=1
+
+SERVICE_PATH="/usr/sbin/mcsd"
+MCSD_CONFIG_FILE="/tmp/mcs.conf"
+WLAN_DEVICES=
+
+mcs_cfg_append() {
+	echo "$1" >> "$MCSD_CONFIG_FILE.$$"
+}
+
+
+__mcs_get_switch_iface() {
+	local loc_switch_iface="auto"
+	local loc_switch_device_id="0"
+	local implicit_vlan="0"
+	local ref_design
+
+	config_load mcsd
+	config_get loc_switch_iface config SwitchInterface ""
+	config_get loc_switch_device_id config SwitchDeviceId "0"
+	if [ -z "$loc_switch_iface" ]; then
+		eval "$1=''"
+		return
+	fi
+
+	if [ "$loc_switch_iface" = "auto" ]; then
+		ref_design=`cat /tmp/sysinfo/board_name`
+
+		# List of supported reference designs. For other designs
+		# either add to cases, or setup SwitchInterface.
+		case "$ref_design" in
+		ap148|ap145|db149)
+		# S17c switch
+			loc_switch_iface="eth1"
+			;;
+		ap-dk0*)
+			loc_switch_iface="eth1"
+			implicit_vlan="1"
+			;;
+		ap135)
+		# ap135 has S17 switch, which is not fully supported by
+		# the multicast switch wrapper. Disable it for now until
+		# support for S17 will be added.
+			loc_switch_iface=""
+			;;
+		ap-mp03.1*)
+		#Maple uses S17 switch but its switch device id is 1.
+			loc_switch_iface="eth1"
+			loc_switch_device_id="1"
+			;;
+		*)
+			loc_switch_iface=""
+			;;
+		esac
+	fi
+
+	local loc_switch_cpu_port
+	mcs_get_switch_cpu_port loc_switch_cpu_port
+
+	local lan_vid
+	mcs_get_switch_lan_vid lan_vid
+
+	if [ -z "$switch_cpu_port_tagged" -o "$implicit_vlan" = "1" ]; then
+		eval "$1='$loc_switch_iface'"
+	else
+		eval "$1='${loc_switch_iface}.${lan_vid}'"
+	fi
+
+	eval "$2='$loc_switch_device_id'"
+}
+
+mcs_get_switch_lan_vid() {
+	local loc_lan_vid
+
+	config_load mcsd
+	config_get loc_lan_vid config SwitchLanVid ""
+
+	eval "$1='$loc_lan_vid'"
+}
+
+__mcs_get_switch_cpu_port_iterate() {
+	config_get vlan "$1" "vlan"
+	config_get ports "$1" "ports"
+
+	if [ "${vlan}" = "$2" ]; then
+		switch_cpu_port=`echo ${ports} |sed 's/t//g' |cut -f 1 -d " "`
+		switch_cpu_port_tagged=`echo ${ports} |grep t`
+	fi
+}
+
+mcs_get_switch_cpu_port() {
+	local lan_vid
+	mcs_get_switch_lan_vid lan_vid
+
+	config_load network
+	config_foreach __mcs_get_switch_cpu_port_iterate switch_vlan $lan_vid
+
+	eval "$1='$switch_cpu_port'"
+}
+
+__mcs_get_wlan_devices() {
+	local config="$1"
+	local disabled devtype
+
+	#Collect qca wifi radio information, assume all configuratoin should be ready
+	#Before mcsd starts.
+	config_get devtype  "$config" type ''
+	if [ "$devtype" = "qcawifi" ] || [ "$devtype" = "qcawificfg80211" ]; then
+		WLAN_DEVICES="${WLAN_DEVICES}${WLAN_DEVICES:+","}${config}"
+	fi
+}
+
+mcs_cfg_get_wifi_device() {
+	config_load wireless
+	config_foreach __mcs_get_wlan_devices wifi-device
+	eval "$1='${WLAN_DEVICES}'"
+}
+
+mcs_cfg_add_interface() {
+	local wifi_device
+	local switch_device
+	local switch_device_id
+	local switch_lan_vid
+	local switch_cpu_root_port
+	local nonsnoopbridge
+	local blockedinterface
+
+	mcs_cfg_get_wifi_device wifi_device
+	mcs_cfg_append 'WifiDevice='$wifi_device
+	__mcs_get_switch_iface switch_device switch_device_id
+	mcs_cfg_append 'SwitchDevice='$switch_device
+	mcs_cfg_append 'SwitchDeviceId='$switch_device_id
+
+	# Get switch VLAN ID and CPU port
+	mcs_get_switch_lan_vid switch_lan_vid
+	mcs_get_switch_cpu_port switch_cpu_root_port
+	mcs_cfg_append 'SwitchLanVid='"$switch_lan_vid"
+	mcs_cfg_append 'SwitchCpuPort='"$switch_cpu_root_port"
+
+	config_load mcsd
+	# NonSnoopBridge seperated by comma ",", for example "br-lan, br-lan1"
+	config_get nonsnoopbridge config NonSnoopBridge ""
+	mcs_cfg_append 'NonSnoopBridge='"$nonsnoopbridge"
+
+	# BlockedInterface seperated by comma ",", for example "ath0, eth3"
+	config_get blockedinterface config BlockedInterface ""
+	mcs_cfg_append 'BlockedInterface='"$blockedinterface"
+
+}
+
+
+mcs_create_config() {
+	rm -f "$MCSD_CONFIG_FILE"
+	mcs_cfg_append ';  Automatically generated mcsd configuration file,do not change it.'
+	mcs_cfg_append '[INTERFACE]'
+	mcs_cfg_add_interface
+}
+
+
+reload_service() {
+	restart
+}
+
+service_triggers() {
+	procd_add_reload_trigger mcsd network wireless
+}
+
+start_service() {
+	local enabled
+	config_load 'mcsd'
+	config_get_bool enabled config 'Enable' '0'
+	touch /tmp/.mcsd_boot_done
+	[ "$enabled" -gt 0 ] || {
+		return 1;
+	}
+	mcs_create_config
+	mv $MCSD_CONFIG_FILE.$$ $MCSD_CONFIG_FILE
+	procd_open_instance
+	procd_set_param command ${SERVICE_PATH} -d -C "$MCSD_CONFIG_FILE"
+	#procd_set_param limits core="unlimited"
+	procd_set_param respawn
+	procd_close_instance
+}

@@ -1,0 +1,81 @@
+#!/bin/sh /etc/rc.common
+#
+# Copyright (c) 2017 Qualcomm Technologies, Inc.
+#
+# All Rights Reserved.
+# Confidential and Proprietary - Qualcomm Technologies, Inc.
+
+START=08
+STOP=98
+
+create_ftm_modules_list() {
+	rm -rf /etc/modules.d.ftm
+	mkdir /etc/modules.d.ftm
+	cd /etc/modules.d
+	[ -e /sys/firmware/devicetree/base/MP_256 ] && {
+		echo diagchar > /etc/modules.d/52-diag-char
+	}
+	cp *bridge /etc/modules.d.ftm
+	cp *bonding /etc/modules.d.ftm
+	cp *cfg80211-linux /etc/modules.d.ftm
+	cp *crypto-ocf /etc/modules.d.ftm
+	cp *qca-ssdk-nohnat /etc/modules.d.ftm
+	cp *hnat /etc/modules.d.ftm
+	cp *qca-wifi-cfg80211 /etc/modules.d.ftm
+	cp *iptunnel /etc/modules.d.ftm
+	cp *iptunnel4 /etc/modules.d.ftm
+	cp *iptunnel6 /etc/modules.d.ftm
+	cp *qca-nss-dp /etc/modules.d.ftm
+	cp *l2tp* /etc/modules.d.ftm
+	cp *qca-nss-drv /etc/modules.d.ftm
+	cp *sit /etc/modules.d.ftm
+	cp *nat46 /etc/modules.d.ftm
+	cp *bonding /etc/modules.d.ftm
+	cp *qca-edma /etc/modules.d.ftm
+	cp *qca-nss-drv-bridge-mgr /etc/modules.d.ftm
+	cp *qca-nss-drv-l2tpv2 /etc/modules.d.ftm
+	cp *qca-nss-drv-lag-mgr /etc/modules.d.ftm
+	cp *qca-nss-drv-map-t /etc/modules.d.ftm
+	cp *qca-nss-drv-pptp /etc/modules.d.ftm
+	cp *qca-nss-drv-vlan-mgr /etc/modules.d.ftm
+	cp *qca-nss-crypto /etc/modules.d.ftm
+	cp *qca-nss-drv-ipsecmgr /etc/modules.d.ftm
+	cp *qca-nss-drv-qdisc /etc/modules.d.ftm
+	cp *qca-nss-cfi* /etc/modules.d.ftm
+	cp *qca-nss-drv-tun6rd /etc/modules.d.ftm
+	cp *qca-nss-drv-tunipip6 /etc/modules.d.ftm
+	cp *nf-conntrack /etc/modules.d.ftm
+	cp *usb-f-diag  /etc/modules.d.ftm
+	cp *diag-char  /etc/modules.d.ftm
+	cp *openvswitch /etc/modules.d.ftm
+	cp *qca-ovsmgr /etc/modules.d.ftm
+	cp *qca-mcs /etc/modules.d.ftm
+	cp *pppoe /etc/modules.d.ftm
+	# cp unified-profile to do ftm autoload on 5.4 kernel
+	cp *qca-wifi-unified-profile /etc/modules.d.ftm 2> /dev/null
+	cd /
+	mv /etc/modules.d /etc/modules.d.bk
+	mv /etc/modules.d.ftm /etc/modules.d
+
+	# dmesg disabled to avoid prints and reduce load time
+	# dmesg would be enabled back in qcawifi.sh:ftm_qcawifi function
+	dmesg -n1
+}
+
+boot() {
+	local board_name
+	[ -f /tmp/sysinfo/board_name ] && {
+		board_name=$(cat /tmp/sysinfo/board_name)
+	}
+	is_ftm=`grep wifi_ftm_mode /proc/cmdline | wc -l`
+	serverip=`grep -oh "serverip.*#"  /proc/cmdline  | awk -F '#' '{print $2}'`
+	[ $is_ftm = 1 ] && [ -z "$serverip" ] && echo "ERROR: QSPR Serverip is not set" > /dev/console
+
+	case "$board_name" in
+	*hk*|*ac*|*cp*|*oa*|*mp*)
+		[ $is_ftm = 1 ] && [ -n "$serverip" ] && create_ftm_modules_list
+	;;
+	*)
+	;;
+	esac
+}

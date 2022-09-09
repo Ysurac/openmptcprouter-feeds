@@ -1,0 +1,488 @@
+#!/bin/sh /etc/rc.common
+# Copyright (c) 2013 Qualcomm Atheros, Inc.
+#
+# All Rights Reserved.
+# Qualcomm Atheros Confidential and Proprietary.
+
+START=50
+
+SERVICE_WRITE_PID=1
+SERVICE_DAEMONIZE=1
+#SERVICE_DEBUG=1
+NETWORK_RESTART=0
+SERVICE_DEBUG_OUTPUT=0
+ACD_DEBUG_OUTOUT=0
+SERVICE_PATH="/usr/sbin/acd"
+
+ACD_CONFIG_FILE="/tmp/acd.conf"
+WIRELESS_CONFIG_FILE="/etc/config/wireless"
+
+EXTRA_COMMANDS="restart_in_hc_mode restart_in_hr_mode"
+EXTRA_HELP=<<EOF
+        restart_in_hc_mode Reconfigure the system in Hybrid Client mode
+        restart_in_hr_mode Reconfigure the system in Hybrid Router mode
+EOF
+
+. /lib/functions/hyfi-debug.sh
+. /lib/functions/hyfi-iface.sh
+. /lib/functions/hyfi-network.sh
+
+ieee1905managed= config_changed=
+wsplcd_start=0 wsplcd_restart=0
+hyd_start=0 vhyfid_start=0
+
+__acd_echo() {
+	if [ "$ACD_DEBUG_OUTOUT" -gt 0 ]; then
+		echo "acd: $1" > /dev/console
+	else
+		echo "acd: $1"
+	fi
+}
+
+__acd_append_wireless() {
+    echo "$1" >> "$WIRELESS_CONFIG_FILE"
+}
+
+__acd_router_mode() {
+	local wan_iface
+
+	config_load network
+	config_get wan_iface wan ifname
+
+	[ -n "$wan_iface" ] && return 1
+
+	return 0
+}
+
+__acd_get_freq_from_standard() {
+	config_get hwmode $1 hwmode '11ng'
+
+	case "$hwmode" in
+		11ac|11na|11a)
+			eval "$2='5G'"
+		;;
+
+		*)
+			eval "$2='2G'"
+		;;
+	esac
+}
+
+__acd_vaps_in_default_config() {
+	local ssid encryption last_vap
+
+	ssid=`uci show wireless | grep "ssid=OpenWrt"`
+	encryption=`uci show wireless | grep "encryption=none"`
+
+	__acd_echo "ssid=$ssid encryption=$encryption"
+
+	if [ -n "$ssid" -a -n "$encryption" ]; then
+		return 1
+	fi
+
+	last_vap=`uci show wireless.@wifi-iface[-1]`
+	__acd_echo "last_vap=$last_vap"
+	[ -z "$last_vap" ] && return 1
+
+	return 0
+}
+
+__acd_destroy_vaps() {
+	local retval
+
+	/sbin/wifi down
+	/etc/init.d/network stop
+	uci delete wireless.@wifi-iface[0] 2>/dev/null; retval=$?
+
+	while [ "$retval" -eq 0 ]; do
+		uci delete wireless.@wifi-iface[0] 2>/dev/null
+		retval=$?
+	done
+
+	uci commit wireless
+}
+
+__acd_enable_wifi() {
+	local DEVICES=
+	local device changed=0
+
+	config_cb() {
+			local type="$1"
+			local section="$2"
+
+			case "$type" in
+					wifi-device)
+							append DEVICES "$section"
+					;;
+			esac
+	}
+	config_load wireless
+
+	for device in $DEVICES ; do
+		config_get_bool disabled $device disabled
+		[ -z "$disabled" ] && continue
+		[ "$disabled" -eq 0 ] && continue
+
+		uci_set wireless $device disabled '0'
+		changed=1
+	done
+
+	if [ "$changed" -gt 0 ]; then
+		uci_commit wireless
+		config_changed=1
+	fi
+}
+
+__acd_create_vaps() {
+	local DEVICES=
+	local HYFI_SEED=
+	local AP_disabled=0 STA_disabled=0
+
+	config_cb() {
+		local type="$1"
+		local section="$2"
+
+		case "$type" in
+			wifi-device)
+				append DEVICES "$section"
+			;;
+		esac
+	}
+	config_load wireless
+
+	HYFI_SEED=`ifconfig br-$ieee1905managed | grep HWaddr | awk '{print $5}' | awk -F":" '{print $4$5$6}'`
+
+	if [ -z "$DEVICES" ]; then
+		DEVICES=`ls /sys/class/net/wifi* -d1 | awk -F/ '{print $NF}'`
+	fi
+
+	for device in $DEVICES ; do
+		uci_set wireless $device disabled '0'
+
+		__acd_append_wireless ""
+		__acd_append_wireless "config wifi-iface"
+		__acd_append_wireless "		option device '$device'"
+		__acd_append_wireless "		option mode 'ap'"
+		__acd_append_wireless "		option athnewind '0'"
+		__acd_append_wireless "		option ssid 'Hy-Fi Network $HYFI_SEED'"
+		__acd_append_wireless "		option wds '1'"
+		__acd_append_wireless "		option network '$ieee1905managed'"
+		__acd_append_wireless "		option encryption 'psk2'"
+		__acd_append_wireless "		option key 'hyfi$HYFI_SEED'"
+		__acd_append_wireless "		option wps_pbc '1'"
+		__acd_append_wireless "		option disabled '$AP_disabled'"
+		__acd_append_wireless ""
+		__acd_append_wireless "config wifi-iface"
+		__acd_append_wireless "		option device '$device'"
+		__acd_append_wireless "		option mode 'sta'"
+		__acd_append_wireless "		option athnewind '0'"
+		__acd_append_wireless "		option ssid 'Hy-Fi Network $HYFI_SEED'"
+		__acd_append_wireless "		option wds '1'"
+		__acd_append_wireless "		option network '$ieee1905managed'"
+		__acd_append_wireless "		option encryption 'psk2'"
+		__acd_append_wireless "		option key 'hyfi$HYFI_SEED'"
+		__acd_append_wireless "		option wps_pbc '1'"
+		__acd_append_wireless "		option disabled '$STA_disabled'"
+		__acd_append_wireless ""
+	done
+	uci_commit wireless
+}
+
+# __acd_disable_vaps
+# input: $1 config
+# input: $2 network
+# input: $3 mode: sta or ap
+# input: $4 1 - disable, 0 - enable
+# input-output: $5 change counter
+__acd_disable_vaps() {
+	local config="$1"
+	local mode network disabled
+	local changed="$5"
+
+	config_get mode "$config" mode
+	config_get network "$config" network
+	config_get disabled "$config" disabled
+
+	if [ "$2" = "$network" -a "$3" = "$mode" -a ! "$4" = "$disabled" ]; then
+		uci_set wireless $config disabled $4
+		changed=$((changed + 1))
+		eval "$5='$changed'"
+		__acd_echo "Set VAP $config to Disabled=$4"
+	fi
+}
+
+__acd_config_hr_mode() {
+	config_load hyd
+	config_get mode config 'Mode'
+
+	if [ ! "$mode" = 'HYROUTER' ]; then
+		uci_set hyd config 'Mode' 'HYROUTER'
+		config_changed=1
+		uci commit hyd
+		__acd_echo "Set hyd in HR mode"
+	fi
+
+	config_load wsplcd
+	config_get mode config 'RunMode'
+
+	if [ ! "$mode" = 'REGISTRAR' ]; then
+		uci_set wsplcd config 'RunMode' 'REGISTRAR'
+		config_changed=1
+		uci commit wsplcd
+		__acd_echo "Set wsplcd in REGISTRAR mode"
+		wsplcd_restart=1
+	fi
+
+	config_load wireless
+	config_foreach __acd_disable_vaps wifi-iface $ieee1905managed 'sta' '1' config_changed
+	config_foreach __acd_disable_vaps wifi-iface $ieee1905managed 'ap' '0' config_changed
+	uci commit wireless
+}
+
+__acd_config_hc_mode() {
+	config_load hyd
+	config_get mode config 'Mode'
+
+	if [ ! "$mode" = 'HYCLIENT' ]; then
+		uci_set hyd config 'Mode' 'HYCLIENT'
+		config_changed=1
+		uci commit hyd
+		__acd_echo "Set hyd in HC mode"
+	fi
+
+	config_load wsplcd
+	config_get mode config 'RunMode'
+
+	if [ ! "$mode" = 'ENROLLEE' ]; then
+		uci_set wsplcd config 'RunMode' 'ENROLLEE'
+		config_changed=1
+		uci commit wsplcd
+		__acd_echo "Set wsplcd in ENROLLEE mode"
+		wsplcd_restart=1
+	fi
+
+	config_load wireless
+	config_foreach __acd_disable_vaps wifi-iface $ieee1905managed 'sta' '0' config_changed
+	config_foreach __acd_disable_vaps wifi-iface $ieee1905managed 'ap' '1' config_changed
+	uci commit wireless
+}
+
+__acd_config_hc_boot_mode() {
+	config_load hyd
+	config_get mode config 'Mode'
+	config_get_bool hyd_enabled config 'Enable' 0
+	config_load vhyfid
+	config_get_bool vhyfid_enabled config 'Enable' 0
+	local disable_sta=1
+
+	if [ "$hyd_enabled" -eq 1 -a "$vhyfid_enabled" -eq 0 ]; then
+		disable_sta=0
+	fi
+
+	if [ ! "$mode" = 'HYCLIENT' ]; then
+		uci_set hyd config 'Mode' 'HYCLIENT'
+		config_changed=1
+		uci commit hyd
+		__acd_echo "Set hyd in HC mode"
+	fi
+
+	config_load wsplcd
+	config_get mode config 'RunMode'
+
+	if [ ! "$mode" = 'ENROLLEE' ]; then
+		uci_set wsplcd config 'RunMode' 'ENROLLEE'
+		config_changed=1
+		uci commit wsplcd
+		__acd_echo "Set wsplcd in ENROLLEE mode"
+		wsplcd_restart=1
+	fi
+
+	config_load wireless
+	config_foreach __acd_disable_vaps wifi-iface $ieee1905managed 'sta' $disable_sta config_changed
+	uci commit wireless
+}
+
+
+__acd_restart_dependencies() {
+	__acd_echo "Restarting network stack..."
+	hyfi_network_restart
+	if [ "$wsplcd_start" -gt 0 ]; then
+		/etc/init.d/wsplcd start
+	else
+		[ "$wsplcd_restart" -gt 0 ] && /etc/init.d/wsplcd restart
+	fi
+	[ "$hyd_start" -gt 0 ] && /etc/init.d/hyd start
+	[ "$vhyfid_start" -gt 0 ] && /etc/init.d/vhyfid start
+}
+
+__stop_acd_run() {
+	PID=$(ps | grep acd-run | grep -v grep | awk '{print $1}')
+	if [ $PID ]; then
+		kill -s SIGTERM $PID
+		__acd_echo "stopped acd-run process $PID"
+	fi
+}
+
+start() {
+	local enabled default_vaps router_mode
+	local mode
+
+	stop
+	config_changed=0
+
+	config_load 'acd'
+	config_get_bool enabled config 'AutoConfigEnable' '0'
+
+	[ "$enabled" -gt 0 ] || {
+		return 1
+	}
+
+	hyfi_echo acd "starting Hy-Fi auto-configuration"
+	# Get the IEEE1905.1 managed bridge name
+	hyfi_get_ieee1905_managed_iface ieee1905managed
+
+	__acd_echo "Managed bridge: $ieee1905managed"
+
+	__acd_vaps_in_default_config
+
+	if [ "$?" -gt 0 ]; then
+		__acd_destroy_vaps
+		__acd_create_vaps
+		config_changed=1
+		__acd_echo "Created new VAPs"
+	fi
+
+	__acd_enable_wifi
+
+	__acd_router_mode
+	if [ "$?" -gt 0 ]; then
+		# WAN group not empty
+		__acd_config_hr_mode
+	else
+		# WAN group empty or non-existent
+		# Disable all STAs and reset hyd state
+		__acd_config_hc_boot_mode
+	fi
+
+	local vhyfid_rcd_enabled=`ls /etc/rc.d/S??vhyfid 2> /dev/null`
+
+	config_load hyd
+	config_get_bool enabled config 'Enable' 0
+	config_get hyd_control config 'Control'
+
+	if [ "$hyd_control" = "manual" ]; then
+		if [ "$enabled" -eq 0 ]; then
+			uci_set hyd config 'Enable' '1'
+			config_changed=1
+			uci commit hyd
+			hyd_start=1
+		else
+			if [ ! -f /var/run/.hyd ]; then
+				config_changed=1
+				hyd_start=1
+			fi
+		fi
+	fi
+
+	if [ -n "$vhyfid_rcd_enabled" ]; then
+		config_load vhyfid
+		config_get_bool enabled config 'Enable' 0
+
+		if [ "$enabled" -eq 0 ]; then
+			uci_set vhyfid config 'Enable' '1'
+			config_changed=1
+			uci commit vhyfid
+			__acd_echo "Enabled Virtual Hy-Fi"
+			vhyfid_start=1
+		fi
+	fi
+
+	if [ -f "/etc/init.d/wsplcd" ]; then
+		config_load wsplcd
+		config_get_bool enabled config 'HyFiSecurity' 0
+
+		if [ "$enabled" -eq 0 ]; then
+			uci_set wsplcd config 'HyFiSecurity' '1'
+			config_changed=1
+			uci commit wsplcd
+			__acd_echo "Enabled security and configuration"
+			wsplcd_start=1
+		fi
+	fi
+
+	if [ "$config_changed" -gt 0 ]; then
+		__acd_restart_dependencies
+	fi
+
+	__acd_router_mode
+	if [ "$?" -eq 0 ]; then
+		config_load hyd
+		config_get_bool hyd_enabled config 'Enable' 0
+
+		hyfi_network_sync
+		__stop_acd_run
+		if [ "$hyd_enabled" -gt 0 ]; then
+			# Monitor Ethernet ports
+			start-stop-daemon -S -x /usr/sbin/acd-run.sh -b
+		fi
+	fi
+}
+
+stop() {
+	hyfi_network_sync
+        __stop_acd_run
+}
+
+restart() {
+	stop
+
+	config_load 'acd'
+	config_get_bool enabled config 'AutoConfigEnable' '0'
+
+	[ "$enabled" -gt 0 ] || {
+			return 1
+	}
+
+	__acd_router_mode
+	if [ "$?" -eq 0 ]; then
+		config_load hyd
+		config_get_bool hyd_enabled config 'Enable' 0
+
+		if [ "$hyd_enabled" -gt 0 ]; then
+			# Monitor Ethernet ports
+			start-stop-daemon -S -x /usr/sbin/acd-run.sh -b
+		fi
+	else
+		start
+	fi
+}
+
+restart_in_hc_mode() {
+	hyfi_get_ieee1905_managed_iface ieee1905managed
+
+	stop
+	__acd_config_hc_mode
+	__acd_restart_dependencies
+	/etc/init.d/hyd restart
+
+	__acd_router_mode
+	if [ "$?" -eq 0 ]; then
+		# Monitor Ethernet ports
+		start-stop-daemon -S -x /usr/sbin/acd-run.sh -b
+	fi
+}
+
+restart_in_hr_mode() {
+	hyfi_get_ieee1905_managed_iface ieee1905managed
+
+	stop
+	__acd_config_hr_mode
+	__acd_restart_dependencies
+	/etc/init.d/hyd restart
+
+	__acd_router_mode
+	if [ "$?" -eq 0 ]; then
+		# Monitor Ethernet ports
+		start-stop-daemon -S -x /usr/sbin/acd-run.sh -b -- hr
+	fi
+}

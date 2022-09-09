@@ -1,0 +1,83 @@
+#!/bin/sh
+
+. /lib/functions.sh
+. /lib/functions/network.sh
+. /lib/functions/hyfi-iface.sh
+. /lib/functions/hyfi-network.sh
+
+wan_protocol="pppoe"
+
+__wan_pppoe_mode() {
+	local ifname wan_proto
+
+	ifname=`uci get network.wan.ifname`
+	wan_proto=`uci get network.wan.proto`
+
+	case "$ACTION" in
+		add)
+		if [[ "${ifname}" = "${INTERFACE}"  -a  "${wan_protocol}" = "${wan_proto}" ]];
+		then
+			return 1
+		fi
+		;;
+		remove)
+		if [[ "${ifname}" = "${INTERFACE}"  -a  "${wan_protocol}" = "${wan_proto}" ]];
+		then
+			return 1
+		fi
+		;;
+	esac
+	return 0
+}
+
+hyd_restart_aggr() {
+	local fileflag="/tmp/.hyd.restart.pending"
+
+	touch "$fileflag"
+
+	sleep 7
+
+	[ -f "$fileflag" ] || return
+
+	a=`stat -c %Y $fileflag`
+	b=`date +%s`
+	c=`expr $b - $a`
+	[ "$c" -ge 7 ] || return
+
+	[ -f "$fileflag" ] || return
+	rm -f $fileflag
+
+	/etc/init.d/hyd restart
+}
+
+hyd_restart() {
+	local exescript
+
+	exescript=`ls /etc/hotplug.d/net/*hyd* 2>&-`
+	[ -n "$exescript" ] || return
+
+	# Restart with aggregation(background)
+	exescript="$exescript &"
+	eval $exescript
+}
+
+trap '' INT TERM ABRT QUIT ALRM
+
+enabled
+config_load 'hyd'
+config_get_bool enabled config 'Enable' '0'
+[ "$enabled" -eq 0 ] && return
+
+if [ -n "$1" ] ; then # Called by hotplugd
+	case "$INTERFACE" in
+		ath*|eth*|eth*.*|br*)
+		__wan_pppoe_mode
+			if [ "$?" -eq 0 ]; then
+				hyd_restart
+			fi
+		;;
+	esac
+else                  # Called directly
+	hyd_restart_aggr
+fi
+

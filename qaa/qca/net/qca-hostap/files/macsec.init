@@ -1,0 +1,76 @@
+#!/bin/sh /etc/rc.common
+#
+# Copyright (c) 2017 Qualcomm Technologies, Inc.
+# All Rights Reserved.
+# Confidential and Proprietary - Qualcomm Technologies, Inc.
+#
+
+#
+# Copyright (c) 2014, The Linux Foundation. All rights reserved.
+#
+
+START=
+SERVICE_DAEMONIZE=1
+SERVICE_WRITE_PID=1
+
+start () {
+	config_load macsec
+
+	local enable
+	config_get_bool enable global enable 0
+	[ "${enable}" -gt 0 ] || return
+
+	config_get ifname global ifname
+
+	config_get eapol_version global eapol_version 3
+	eapol_version="eapol_version=$eapol_version"
+
+	config_get ap_scan global ap_scan 0
+	ap_scan="ap_scan=$ap_scan"
+
+	config_get key_mgmt global key_mgmt
+	key_mgmt="key_mgmt=$key_mgmt"
+
+	config_get eap global eap
+	eap="eap=$eap"
+
+	config_get identity global identity
+	identity="identity=\"$identity\""
+
+	config_get password global password
+	password="password=\"$password\""
+
+	config_get eapol_flags global eapol_flags 0
+	eapol_flags="eapol_flags=$eapol_flags"
+
+	config_get macsec_policy global macsec_policy 1
+	macsec_policy="macsec_policy=$macsec_policy"
+
+	rm -rf /var/run/wpa_supplicant-macsec-$ifname*
+
+	SERVICE_PID_FILE=/var/run/wpa_supplicant-macsec-$ifname.pid
+	cat > /var/run/wpa_supplicant-macsec-$ifname.conf <<EOF
+
+ctrl_interface=/var/run/wpa_supplicant-macsec-$ifname
+$eapol_version
+$ap_scan
+network={
+	$key_mgmt
+	$eap
+	$identity
+	$password
+	$eapol_flags
+	$macsec_policy
+}
+EOF
+	service_start /usr/sbin/wpa_supplicant-macsec -D macsec_qca -i "$ifname" -c /var/run/wpa_supplicant-macsec-$ifname.conf
+}
+
+stop() {
+	config_load macsec
+
+	config_get ifname global ifname
+
+	SERVICE_PID_FILE=/var/run/wpa_supplicant-macsec-$ifname.pid
+	service_stop /usr/sbin/wpa_supplicant-macsec
+}

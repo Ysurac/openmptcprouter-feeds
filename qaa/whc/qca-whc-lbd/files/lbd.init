@@ -1,0 +1,115 @@
+#!/bin/sh /etc/rc.common
+#
+# @@-COPYRIGHT-START-@@
+#
+# Copyright (c) 2013-2018 Qualcomm Technologies, Inc.
+#
+# All Rights Reserved.
+# Confidential and Proprietary - Qualcomm Technologies, Inc.
+#
+# 2013-2016 Qualcomm Atheros, Inc.
+#
+# All Rights Reserved.
+# Qualcomm Atheros Confidential and Proprietary.
+#
+# @@-COPYRIGHT-END-@@
+#
+
+START=55
+USE_PROCD=1
+RESPAWN_THRESHOLD=120
+RESPAWN_TIMEOUT=5
+RESPAWN_RETRIES=10
+SERVICE_PATH="/usr/sbin/lbd"
+LBD_CONFIG_FILE="/tmp/lbd.conf"
+
+. /lib/functions/lbd-config.sh
+. /lib/functions/whc-debug.sh
+. /lib/functions/whc-iface.sh
+
+#Check lbd config to enable/disable cfg80211
+config_load 'lbd'
+config_get_bool lbd_wxt config 'ForceWextMode' '0'
+
+#check wireless config to enable/disable cfg80211 for lbd
+wireless_cfg=
+config_load 'wireless'
+config_foreach __whc_check_wlan_cfg_mode wifi-device wireless_cfg
+
+if [ "$lbd_wxt" == "0" -a "$wireless_cfg" == "1" ]; then
+    LBD_CFG80211=-cfg80211
+else
+    LBD_CFG80211=
+fi
+
+check_bands() {
+	local band_24g
+	local band_5g
+
+	driver=$(lsmod | cut -d' ' -f 1 | grep ath10k_core)
+
+	if [ "$driver" == "ath10k_core" ]; then
+		BANDS=$(/usr/sbin/iw dev 2> /dev/null | grep channel | cut -d' ' -f 2 | cut -d'.' -f 1)
+		for channel in $BANDS
+		do
+			whc_echo lbd "bands $BANDS channel $channel"
+			if [ "$channel" -le "13" ]; then
+				band_24g=1
+			elif [ "$channel" -ge "32" ]; then
+				band_5g=1
+			fi
+		done
+	else
+		BANDS=$(repacdcli athx get_all_freq)
+		for band in $BANDS
+		do
+			if [ "$band" == "2" ]; then
+				band_24g=1
+			elif [ "$band" == "5" ]; then
+				band_5g=1
+			fi
+		done
+	fi
+
+	if [ "$band_24g" == "1" ] && [ "$band_5g" == "1" ]; then
+		dual_bands=1
+	else
+		dual_bands=0
+	fi
+}
+
+start_service() {
+	whc_wifi_config_lock
+
+	config_load 'lbd'
+	config_get_bool enabled config 'Enable' '0'
+	local lbd_rcd_enabled=`ls /etc/rc.d/S${START}lbd 2> /dev/null`
+
+	[ "$enabled" -gt 0 -a -n "$lbd_rcd_enabled" ] || {
+		whc_wifi_config_unlock
+		return 1
+	}
+
+	check_bands
+	if [ "$dual_bands" -ne "1" ]; then
+		whc_echo lbd "require both 2.4 GHz and 5 GHz to be configured. Aborting start."
+		whc_wifi_config_unlock
+		return 1
+	fi
+
+	whc_echo lbd "starting daemon"
+	# Create configuration file and start lbd
+	lbd_create_config $LBD_CONFIG_FILE '' # second param indicates running in single AP mode
+	procd_open_instance
+	procd_set_param command ${SERVICE_PATH} -d -C "$LBD_CONFIG_FILE" $LBD_CFG80211
+
+	procd_set_param respawn ${RESPAWN_THRESHOLD} ${RESPAWN_TIMEOUT} ${RESPAWN_RETRIES}
+	procd_add_reload_trigger "hyd" "lbd"
+	procd_close_instance
+
+	whc_wifi_config_unlock
+}
+
+stop_service() {
+	whc_echo lbd "stopping daemon"
+}

@@ -1,0 +1,78 @@
+#!/bin/sh
+: '
+Copyright (c) 2020 Qualcomm Technologies, Inc.
+
+All Rights Reserved.
+Confidential and Proprietary - Qualcomm Technologies, Inc.
+'
+
+# If minidump utility is not present, exit.
+[ ! -e /usr/sbin/minidump ] && exit 0
+
+LIVEDUMP=$(uci get minidump.config.enable_livedump);
+
+# If livedump config option is disabled, exit.
+if [ "$LIVEDUMP" -ne 1 ]; then
+	./usr/sbin/minidump 0
+	exit 0
+fi
+
+# Read user config options for live minidump
+SERVER=$(fw_printenv serverip | cut -c10-24);
+MAX_COUNT=$(uci get minidump.livedump.dump_count);
+DUMP_PATH=$(uci get minidump.livedump.path);
+TFTP=$(uci get minidump.livedump.tftp);
+SAVE_DUMPS=$(uci get minidump.livedump.save_dump);
+
+# For Lowmem profiles, disable save to filesystem option
+[ -e /proc/device-tree/MP_512 ] && SAVE_DUMPS=0
+[ -e /proc/device-tree/MP_256 ] && SAVE_DUMPS=0
+
+if [ -e /dev/$DEVICENAME ] && [ "$ACTION" = add ]; then
+	mkdir $DUMP_PATH
+	count=$(ls -1 $DUMP_PATH/*.gz | wc -l)
+
+# If number of dumps exceed max count, delete the oldest dumpfile
+	if [ $count -ge $MAX_COUNT ]; then
+		oldest=$(ls -1t $DUMP_PATH/*.gz | tail -1)
+		echo "Deleting file $oldest" > /dev/console
+		rm $oldest
+	fi
+
+# Path to store dumps is prefixed with timestamp
+	timestamp="$(date +"%s")"
+	mkdir $DUMP_PATH/$timestamp
+
+# Invoke minidump utility and provide path to store dumps
+	printf "%s\n" "starting minidump utility" > /dev/console
+	./usr/sbin/minidump 1 $DUMP_PATH/$timestamp > /dev/console
+
+# Compress dump binaries
+	cd $DUMP_PATH
+	chmod 777 -R $timestamp/*
+	rm $timestamp/log.txt
+	tar -czvf minidump_$timestamp.tar.gz $timestamp/*
+	rm -rf $timestamp
+
+# If tftp option is enabled, send dumps to tftp server
+	if [ "$TFTP" -eq 1 ]; then
+		if [ ! -n "$SERVER" ]; then
+			printf "%s\n" "Wrong configuaration SERVER = $SERVER" > /dev/console
+			exit 0
+		fi
+
+		printf "%s\n" "Collecting $DEVICENAME dump in $SERVER" > /dev/console
+		$(tftp -l minidump_$timestamp.tar.gz -p $SERVER 2>&1)
+		if [ $? -eq 0 ]; then
+			printf "%s\n" "$DEVICENAME dump collected in $SERVER" > /dev/console
+		else
+			printf "%s\n" "$DEVICENAME dump collection failed in $SERVER" > /dev/console
+		fi
+	fi
+
+# If save dump to filesystem option is disabled, delete dump file
+	if [ "$SAVE_DUMPS" -ne 1 ]; then
+		rm minidump_$timestamp.tar.gz
+	fi
+	cd-
+fi

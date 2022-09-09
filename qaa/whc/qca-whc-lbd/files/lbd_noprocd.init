@@ -1,0 +1,158 @@
+#!/bin/sh /etc/rc.common
+#
+# @@-COPYRIGHT-START-@@
+#
+# Copyright (c) 2013-2018 Qualcomm Technologies, Inc.
+#
+# All Rights Reserved.
+# Confidential and Proprietary - Qualcomm Technologies, Inc.
+#
+# 2013-2016 Qualcomm Atheros, Inc.
+#
+# All Rights Reserved.
+# Qualcomm Atheros Confidential and Proprietary.
+#
+# @@-COPYRIGHT-END-@@
+#
+
+START=55
+SERVICE_WRITE_PID=1
+SERVICE_DAEMONIZE=1
+SERVICE_DEBUG_OUTPUT=0
+SERVICE_PATH="/usr/sbin/lbd"
+LBD_CONFIG_FILE="/tmp/lbd.conf"
+LBD_RUN_FILE="/var/run/.lbd"
+
+#Check lbd config to enable/disable cfg80211
+config_load 'lbd'
+config_get_bool lbd_cfg config 'cfg80211_enable' '0'
+if [ "$lbd_cfg" -eq "1" ]; then
+    LBD_CFG80211=-cfg80211
+else
+    LBD_CFG80211=
+fi
+
+. /lib/functions/lbd-config.sh
+. /lib/functions/whc-debug.sh
+. /lib/functions/whc-iface.sh
+
+check_bands() {
+	local band_24g
+	local band_5g
+
+	driver=$(lsmod | cut -d' ' -f 1 | grep ath10k_core)
+
+	if [ "$driver" == "ath10k_core" ]; then
+		BANDS=$(/usr/sbin/iw dev 2> /dev/null | grep channel | cut -d' ' -f 2 | cut -d'.' -f 1)
+		for channel in $BANDS
+		do
+			whc_echo lbd "bands $BANDS channel $channel"
+			if [ "$channel" -le "13" ]; then
+				band_24g=1
+			elif [ "$channel" -ge "32" ]; then
+				band_5g=1
+			fi
+		done
+	else
+		BANDS=$(repacdcli athx get_all_freq)
+		for band in $BANDS
+		do
+			if [ "$band" == "2" ]; then
+				band_24g=1
+			elif [ "$band" == "5" ]; then
+				band_5g=1
+			fi
+		done
+	fi
+
+	if [ "$band_24g" == "1" ] && [ "$band_5g" == "1" ]; then
+		dual_bands=1
+	else
+		dual_bands=0
+	fi
+}
+
+check_interface_up() {
+	local section="config"
+	local option="MatchingSSID"
+	local all_wlan_ifaces
+	local ssid_to_match
+	local loop_count
+	wifi_interface_up=0
+	count=2
+
+	#init the interface lists
+	whc_init_wlan_interface_list
+
+	# Get the list of wlan interfaces, seperated by comma
+	config_list_foreach "${section}" "${option}" whc_get_wlan_ifaces all_wlan_ifaces ssid_to_match "$br_name"
+
+	while [ "$wifi_interface_up" -eq "0" ]
+	do
+		loop_count=5
+		interface=`echo ${all_wlan_ifaces}| cut -d':' -f $count | cut -d',' -f 1`
+		while [ ! -z $interface ] && [ "$loop_count" -gt 0 ]
+		do
+			essid=$(repacdcli $interface get_essid)
+			if [ -z $essid ]; then
+				sleep 2s
+			else
+				break
+			fi
+			loop_count=$((loop_count - 1))
+		done
+		if [ -z $interface ]; then
+			wifi_interface_up=1
+		else
+			count=$((count+=1))
+		fi
+	done
+}
+
+start() {
+	whc_wifi_config_lock
+	__stop
+
+	config_load 'lbd'
+	config_get_bool enabled config 'Enable' '0'
+	local lbd_rcd_enabled=`ls /etc/rc.d/S${START}lbd 2> /dev/null`
+
+	[ "$enabled" -gt 0 -a -n "$lbd_rcd_enabled" ] || {
+		whc_wifi_config_unlock
+		return 1
+	}
+
+	check_bands
+	if [ "$dual_bands" -ne "1" ]; then
+		whc_echo lbd "require both 2.4 GHz and 5 GHz to be configured. Aborting start."
+		whc_wifi_config_unlock
+		return 1
+	fi
+
+	check_interface_up
+	whc_echo lbd "starting daemon"
+	# Create configuration file and start lbd
+	lbd_create_config $LBD_CONFIG_FILE '' # second param indicates running in single AP mode
+	${SVCDBG}service_start ${SERVICE_PATH} -d -C "$LBD_CONFIG_FILE" $LBD_CFG80211
+
+	touch $LBD_RUN_FILE
+	whc_wifi_config_unlock
+}
+
+__stop() {
+	whc_echo lbd "stopping daemon"
+	${SVCDBG}service_stop ${SERVICE_PATH}
+
+	# Workaround, sometimes service_stop does not kill lbd
+	start-stop-daemon -K -x ${SERVICE_PATH} -s SIGKILL > /dev/null
+}
+
+stop() {
+	__stop
+	config_load 'lbd'
+}
+
+restart() {
+	[ -f "$LBD_RUN_FILE" ] || return
+	start
+}

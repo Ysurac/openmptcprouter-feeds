@@ -1,0 +1,372 @@
+#!/bin/sh /etc/rc.common
+#
+# Copyright (c) 2013, 2017 Qualcomm Technologies, Inc.
+#
+# All Rights Reserved.
+# Confidential and Proprietary - Qualcomm Technologies, Inc.
+#
+# 2013 Qualcomm Atheros, Inc.
+# All Rights Reserved.
+# Qualcomm Atheros Confidential and Proprietary.
+#
+
+# We don't want to start ART2 automatically at boot time as we want the
+# default to be a working user configuration.
+# At the end of the boot process, the user can start art using:
+# put the START value as 99 in below defined variable ( ex. START=99)
+# /etc/init.d/art enable
+# /etc/init.d/art start
+# now art should be running automatically at every boot, but if user wants
+#  to disable it back then he should use below command to disable it back:
+#  /etc/init.d/art disable
+START=
+SERVICE_DAEMONIZE=1
+SERVICE_WRITE_PID=1
+#wlan_dir is for ath10K platform
+wlan_dir=/sys/class/net/wlan
+wifi_dir=/sys/class/net/wifi
+arm_platform=`uname -m | grep arm`
+third_party=""
+board_id=""
+
+if [ -f /etc/modules.d/33-qca-wifi* ]; then
+	qcawifi_modules=/etc/modules.d/33-qca-wifi*
+else
+	qcawifi_modules=/lib/wifi/qca-wifi-modules
+fi
+
+ART_QCA_WIFI_DETECTED=1
+MTD_ART_PART_NAME="ART"
+
+unload_wifi_art_modules() {
+	if [ "${ART_QCA_WIFI_DETECTED}" -eq 1 ]; then
+		for mod in art $(cat $qcawifi_modules | sed '1!G;h;$!d'); do
+			case ${mod} in
+				mem_manager) continue;
+				;;
+				art) continue;
+				;;
+			esac
+			[ -d /sys/module/${mod} ] && rmmod ${mod}
+		done
+	else
+		[ -d /sys/module/art ] && rmmod art
+	fi
+}
+
+load_wifi_art_modules() {
+	if [ "${ART_QCA_WIFI_DETECTED}" -eq 1 ]; then
+	if [ -n "$arm_platform" ] ; then
+         for mod in $(cat $qcawifi_modules) art ; do
+			case ${mod} in
+				umac) [ -d /sys/module/${mod} ] || { \
+					insmod ${mod} ahbskip=1 || { \
+						unload_wifi_art_modules
+					}
+				};;
+				qca_ol) [ -d /sys/module/${mod} ] || { \
+                                        insmod ${mod} testmode=1 || { \
+                                                unload_wifi_art_modules
+                                        }
+                                };;
+				*) [ -d /sys/module/${mod} ] || { \
+					insmod ${mod} || { \
+						unload_wifi_art_modules
+					}
+				};;
+			esac
+		done
+    else
+        for mod in art $(cat $qcawifi_modules) ; do
+            case ${mod} in
+                umac) [ -d /sys/module/${mod} ] || { \
+                    insmod ${mod} ahbskip=1 || { \
+                        unload_wifi_art_modules
+                    }
+                };;
+                qca_ol) [ -d /sys/module/${mod} ] || { \
+                                        insmod ${mod} testmode=1 || { \
+                                                unload_wifi_art_modules
+                                        }
+                                };;
+                *) [ -d /sys/module/${mod} ] || { \
+                    insmod ${mod} || { \
+                        unload_wifi_art_modules
+                    }
+                };;
+            esac
+        done
+    fi
+	else
+		for mod in $(lsmod | grep ath) ; do
+			case ${mod} in
+				ath9k) rmmod ${mod};;
+			esac
+		done
+		[ -d /sys/module/art ] || insmod art
+	fi
+}
+
+is_art_runnable() {
+	# First argument represents wifi_dir/wlan_dir
+	# Second argument represents wifi index/wlan index
+	local dir=$1
+	local index=$2
+	if [ -e "$dir$index/device/device" ]; then
+		read dev_id < "$dir$index/device/device"
+		case "$dev_id" in
+			"0x0040")
+				return 0
+				;;
+			"0x0046")
+				return 0
+				;;
+			"0x0056")
+				return 0
+				;;
+			"0x0050")
+				return 0
+				;;
+			"0x003c")
+				return 0
+				;;
+			*)
+				return 1
+				;;
+		esac
+	fi
+	return 1
+}
+
+start_nart_out() {
+	# First argument represents the wifi directory name/wlan directory name to be use
+	# Second argument represents the wifi index/wlan index to be use
+	local dir=$1
+	local wifi_index=$2
+	local inst=$3
+
+	is_art_runnable $dir $wifi_index && return
+
+	SERVICE_PID_FILE=/var/run/nart${wifi_index}.pid
+	if [ -n "$arm_platform" ] || [ -n "$third_party" ]; then
+		service_start /usr/sbin/nart.out -instance ${wifi_index} -pcie ${wifi_index}
+	else
+		case "$board_id" in
+			"ap135"|\
+			"ap147"|\
+			"ap151"|\
+			"ap152"|\
+            "ap137"|\
+            "apjet01")
+				SERVICE_PID_FILE=/var/run/nart${inst}.pid
+				service_start /usr/sbin/nart.out -instance ${inst} -pcie ${wifi_index}
+				;;
+			*)
+				service_start /usr/sbin/nart.out -instance ${wifi_index}
+				;;
+		esac
+	fi
+}
+
+stop_nart_out() {
+	# First argument represents the wifi directory name/wlan directory name to be use
+	# Second argument represents the wifi index/wlan index to be use
+	local dir=$1
+	local wifi_index=$2
+	local inst=$3
+
+	is_art_runnable $dir $wifi_index && return
+
+	# in qca-wifi, cfg name is the wifi iface name
+	SERVICE_PID_FILE=/var/run/nart${wifi_index}.pid
+	if [ -n "$arm_platform" ] || [ -n "$third_party" ]; then
+		service_stop /usr/sbin/nart.out -instance ${wifi_index} -pcie ${wifi_index}
+	else
+		case "$board_id" in
+			"ap135"|\
+			"ap147"|\
+			"ap151"|\
+			"ap152"|\
+            "ap137"|\
+            "apjet01")
+				SERVICE_PID_FILE=/var/run/nart${inst}.pid
+				service_stop /usr/sbin/nart.out -instance ${inst} -pcie ${wifi_index}
+				;;
+			*)
+				service_stop /usr/sbin/nart.out -instance ${wifi_index}
+				;;
+		esac
+	fi
+}
+
+art_qca_wifi_detect() {
+	local qca_wifi_entry
+	local wlan_entry
+
+	if [ -f $qcawifi_modules ]; then
+		qca_wifi_entry=`cat $qcawifi_modules`
+		[ -n "$qca_wifi_entry" ] || ART_QCA_WIFI_DETECTED=0
+	elif [ -f /etc/modules.d/ath10k ]; then
+		wlan_entry=`cat /etc/modules.d/ath10k`
+		[ -n "$wlan_entry" ] || ART_QCA_WIFI_DETECTED=0
+	else
+		ART_QCA_WIFI_DETECTED=0
+	fi
+
+}
+
+start() {
+	local art_inst=1
+	local nor_flash=""
+
+	art_qca_wifi_detect
+
+	config_load wireless
+
+	# ART2 conflicts with the WiFi driver so we don't start anything here
+	# We'll just prepare the field in case we want to start nart.out
+	[ -c /dev/dk0 ] || mknod /dev/dk0 c 63 0
+	[ -c /dev/dk1 ] || mknod /dev/dk1 c 63 1
+
+	mtd_name=$(grep -i -w ${MTD_ART_PART_NAME} /proc/mtd | cut -f1 -d:)
+
+	nor_flash=`find /sys/bus/spi/devices/*/mtd -name ${mtd_name} 2> /dev/null`
+
+	if [ -n "$nor_flash" -a -n "$arm_platform" ]; then
+		[ -L /dev/caldata ] || \
+			ln -s /dev/${mtd_name} /dev/caldata
+	elif [ -n "$mtd_name" ]; then
+		[ -L /dev/caldata ] || \
+			ln -s /dev/${mtd_name//mtd/mtdblock} /dev/caldata
+	fi
+
+	unload_wifi_art_modules
+
+	load_wifi_art_modules
+
+	if [ -n "$mtd_name" ]; then
+		third_party=""
+		if [ -n "$arm_platform" ]; then
+			. /lib/ipq806x.sh
+			board_id=$(ipq806x_board_name)
+		else
+			. /lib/ar71xx.sh
+			board_id=$(ar71xx_board_name)
+		fi
+	else
+		third_party="true"
+	fi
+
+	# Start the daemon
+	if [ "${ART_QCA_WIFI_DETECTED}" -eq 1 ]; then
+		case "$board_id" in
+			"ap135"|\
+			"ap147"|\
+			"ap151"|\
+			"ap152"|\
+            "ap137"|\
+            "apjet01")
+				SERVICE_PID_FILE=/var/run/nart0.pid
+				service_start /usr/sbin/nart.out -instance 0
+                service_start /usr/sbin/nart.out -instance 1 -pcie 0
+				# Check for ath10K driver
+				# If ath10K driver installed,
+				# use wlan_dir instead of wifi_dir to check for device existence
+				# and launch nart.out application accordingly
+				if [ -n "`lsmod | grep ath10k`" ] ; then
+					for dir in /sys/class/net/wlan*; do
+						[ -d "$dir" ] || continue
+						start_nart_out $wlan_dir "${dir#"$wlan_dir"}" $art_inst
+						art_inst=`expr $art_inst + 1`
+					done
+				else
+					for dir in /sys/class/net/wifi*; do
+						[ -d "$dir" ] || continue
+						start_nart_out $wifi_dir "${dir#"$wifi_dir"}" $art_inst
+						art_inst=`expr $art_inst + 1`
+					done
+				fi
+				;;
+			*)
+				if [ -n "`lsmod | grep ath10k`" ] ; then
+					for dir in /sys/class/net/wlan*; do
+						[ -d "$dir" ] || continue
+						start_nart_out $wlan_dir "${dir#"$wlan_dir"}" $art_inst
+					done
+				else
+					#config_foreach start_nart_out $wifi_dir wifi-device "0"
+					for dir in /sys/class/net/wifi*; do
+						[ -d "$dir" ] || continue
+						start_nart_out $wifi_dir "${dir#"$wifi_dir"}" $art_inst
+						art_inst=`expr $art_inst + 1`
+					done
+				fi
+				;;
+		esac
+	else
+		start_nart_out "0" "0" "0"
+	fi
+}
+
+stop() {
+	local art_inst=1
+	art_qca_wifi_detect
+
+	config_load wireless
+
+	# Stop the daemon
+	if [ "${ART_QCA_WIFI_DETECTED}" -eq 1 ]; then
+		case "$board_id" in
+			"ap135"|\
+			"ap147"|\
+			"ap151"|\
+			"ap152"|\
+            "ap137"|\
+            "apjet01")
+				SERVICE_PID_FILE=/var/run/nart0.pid
+				service_stop /usr/sbin/nart.out -instance 0
+				# Check for ath10K driver
+				# If ath10K driver installed,
+				# use wlan_dir instead of wifi_dir to check for device existence
+				# and stop art application accordingly
+				if [ -n "`lsmod | grep ath10k`" ] ; then
+					for dir in /sys/class/net/wlan*; do
+						[ -d "$dir" ] || continue
+						stop_nart_out $wlan_dir "${dir#"$wlan_dir"}" $art_inst
+						art_inst=`expr $art_inst + 1`
+					done
+				else
+					for dir in /sys/class/net/wifi*; do
+						[ -d "$dir" ] || continue
+						stop_nart_out $wifi_dir "${dir#"$wifi_dir"}" $art_inst
+						art_inst=`expr $art_inst + 1`
+					done
+				fi
+				;;
+			*)
+				if [ -n "`lsmod | grep ath10k`" ] ; then
+					for dir in /sys/class/net/wlan*; do
+						[ -d "$dir" ] || continue
+						stop_nart_out $wlan_dir "${dir#"$wlan_dir"}" $art_inst
+					done
+				else
+					#config_foreach stop_nart_out $wifi_dir wifi-device "0"
+					for dir in /sys/class/net/wifi*; do
+						[ -d "$dir" ] || continue
+						stop_nart_out $wifi_dir "${dir#"$wifi_dir"}" $art_inst
+						art_inst=`expr $art_inst + 1`
+					done
+				fi
+				;;
+		esac
+	else
+		stop_nart_out "0" "0" "0"
+	fi
+
+	unload_wifi_art_modules
+
+	[ -c /dev/dk0 ] && rm /dev/dk0
+	[ -c /dev/dk1 ] && rm /dev/dk1
+	[ -L /dev/caldata ] && rm /dev/caldata
+
+}
