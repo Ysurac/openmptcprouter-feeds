@@ -1096,7 +1096,7 @@ static int __init sfe_cm_init(void)
 	 */
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 #ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-	result = nf_conntrack_register_chain_notifier(&init_net, &sfe_cm_conntrack_notifier);
+	result = nf_conntrack_register_notifier(&init_net, &sfe_cm_conntrack_notifier);
 #else
 	result = nf_conntrack_register_notifier(&init_net, &sfe_cm_conntrack_notifier);
 #endif
@@ -1184,7 +1184,7 @@ static void __exit sfe_cm_exit(void)
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 #ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-	nf_conntrack_unregister_chain_notifier(&init_net, &sfe_cm_conntrack_notifier);
+	nf_conntrack_unregister_notifier(&init_net, &sfe_cm_conntrack_notifier);
 #else
 	nf_conntrack_unregister_notifier(&init_net, &sfe_cm_conntrack_notifier);
 #endif
