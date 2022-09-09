@@ -1,0 +1,218 @@
+#
+# Copyright (c) 2017 Qualcomm Technologies, Inc.
+# All Rights Reserved.
+# Confidential and Proprietary - Qualcomm Technologies, Inc.
+#
+
+#!/bin/sh
+#
+# Copyright (c) 2014, The Linux Foundation. All rights reserved.
+#
+
+. /lib/config/uci.sh
+
+DEBUG=
+
+WPA_CLI() {
+	local iface=$1;shift
+	local opt
+	case ${iface} in
+		global) opt="-g /var/run/wpa_supplicant-${iface}" ;;
+		*) opt="-p /var/run/wpa_supplicant-${iface} -i ${iface}";;
+	esac
+	if [ -n "${DEBUG}" ]; then
+		echo wpa_cli ${opt} "$@" >&2
+		wpa_cli ${opt} "$@" || exit 2
+		return 0
+	fi
+	wpa_cli ${opt} "$@" >/dev/null 2>&1 || exit 2
+}
+
+showhelp() {
+	cat << EOF
+  $0 -c <chan> -s <ssid> -a <auth>
+     [-p <passphrase>] [-k key] [-i index] [ -t timeout ] [ -d ]
+
+  Mandatory parameters:
+    -c <chan>: Search on channel <chan>
+    -s <ssid>: Connect to SSID <ssid>
+    -a <auth>: Use authentication <auth>, where <auth> can be one of:
+        "open": No authentication
+        "wep": WEP authentication
+        "wpa": WPA/WPA2 authentication
+
+  Optional parameters:
+    -p <passphrase>: (WEP or WPA only) Set the WEP (string) or WPA passphrase
+    -k <key>: (WEP only) Set the key (hex key only, either 5 or 13 bytes len)
+    -i <index>: (WEP only) Set the key index (0-3)
+    -t <timeout>: Set the connection timeout (in seconds) - default=4
+    -d : enable debug
+    -h : print this help
+
+  Return value:
+    0: Connection Success
+    1: Connection Failed
+    2: Error
+EOF
+}
+
+check_params() {
+	local chan=$1
+	local auth=$2
+	local psk=$3
+	local key=$4
+	local index=$5
+
+	if [ -z "${chan}" ] || [ -z "${auth}" ] || [ -z "${ssid}" ]; then
+		echo "Error: channel, ssid or authentication not found" >&2
+		return 1
+	fi
+
+	if [ ! ${chan} -ge 1 ] && [ ! ${chan} -le 13 ] || \
+	[ ! ${chan} -ge 36 ] && [ ! ${chan} -le 64 ] && [ ! $((${chan}%4)) -eq 0 ] || \
+	[ ! ${chan} -ge 100 ] && [ ! ${chan} -le 150 ] && [ ! $((${chan}%4)) -eq 0 ]; then
+		echo "Invalid channel \"${chan}\"" >&2
+		echo "Please specify a valid channel in the following range:" >&2
+		echo " *1-13" >&2
+		echo " *36-64 (HT20 aligned) " >&2
+		echo " *100-150 (HT20 aligned) " >&2
+		return 1;
+	fi
+
+	# Using passphrase and/or key and/or index in Open mode is inconsistent
+	if [ "${auth}" = "open" ]; then
+		if [ -n "${key}" -o -n "${index}" -o -n "${psk}" ]; then
+			echo "Open mode can't be used with passphrase/key/index" >&2
+			return 1
+		fi
+	fi
+
+	# If wep is used, make sure we also got a key & its index
+	if [ "${auth}" = "wep" ]; then
+		if [ -z "${key}" ] || [ -z "${index}" ]; then
+			echo "In WEP, please specify the key and index" >&2
+			return 1
+		fi
+	fi
+
+	# Having a key and/or index with non-WEP encryption is inconsistent
+	if [ "${auth}" != "wep" ]; then
+		if [ -n "${key}" -o -n "${index}" ]; then
+			echo "Index/Key can't be used with non-WEP authentication " >&2
+			return 1
+		fi
+	fi
+
+	# If wpa is used, make sure we also got a passphrase
+	if [ "${auth}" = "wpa" ]; then
+		if [ -z "${psk}" ]; then
+			echo "In WPA, please specify a passphrase" >&2
+			return 1
+		fi
+	fi
+
+	return 0
+}
+
+# Process arguments
+chan ssid auth psk key index
+timeout=4
+while [ -n "$1" ];do
+	case "$1" in
+	-c) chan="$2"; shift;;
+	-s) ssid=$2; shift;;
+	-a) auth=$2; shift
+		[ ${auth} = "open" ] || [ ${auth} = "wep" ] || [ ${auth} = "wpa" ] || {
+			echo "Invalid authentication \"${auth}\"" >&2
+			echo "Valid authentication values are \"open\", \"wep\", \"wpa\"" >&2
+			showhelp
+			exit 2;
+		};;
+	-p) psk=$2; shift;;
+	-k) key=$2; shift;;
+	-i) index=$2; shift
+		if [ ! ${index} -ge 0 ] && [ ! ${index} -le 3 ]; then
+			echo "Invalid index \"${index}\"" >&2
+			echo "Valid index values are \"0\", \"1\", \"2\", \"3\"" >&2
+			showhelp
+			exit 2
+		fi;;
+	-t) timeout=$2; shift;;
+	-d) DEBUG=1;;
+	-h) showhelp; exit 2;;
+	*)
+		echo "Invalid opton: -${OPTARG}" >&2
+		showhelp
+		exit 2
+		;;
+	esac
+	shift
+done
+# Perform sanity checks on the script arguments
+check_params "${chan}" "${auth}" "${psk}" "${key}" "${index}" || {
+	showhelp
+	exit 2
+}
+
+
+# Ok, we're ready. Let's perform the WiFi operations now
+
+# Step 1: we create the interface and launch the right wpa daemons
+nid
+oldchan=$(uci_get wireless @wifi-device[0] channel)
+iface=$(wlanconfig ath create wlandev wifi0 wlanmode sta)
+
+wpa_supplicant -g /var/run/wpa_supplicant-global -B -P /var/run/wpa_supplicant-configme.pid > /dev/null 2>&1
+WPA_CLI global interface_add ${iface} "" athr /var/run/wpa_supplicant-${iface}
+nid=$(wpa_cli -p /var/run/wpa_supplicant-${iface} -i ${iface} add_network)
+
+# Step 2: we set the network parameters
+WPA_CLI ${iface} set_network ${nid} ssid \"${ssid}\"
+WPA_CLI ${iface} set_network ${nid} scan_freq ${chan}
+WPA_CLI ${iface} set_network ${nid} scan_ssid 1
+case ${auth} in
+	"open")
+		WPA_CLI ${iface} set_network ${nid} key_mgmt NONE
+		;;
+	"wep")
+		WPA_CLI ${iface} set_network ${nid} key_mgmt NONE
+		WPA_CLI ${iface} set_network ${nid} wep_key${index} \"${key}\"
+		WPA_CLI ${iface} set_network ${nid} wep_tx_keyidx ${index}
+		;;
+	"wpa")
+		WPA_CLI ${iface} set_network ${nid} key_mgmt WPA-PSK
+		WPA_CLI ${iface} set_network ${nid} psk \"${psk}\"
+		;;
+esac
+
+# Step 3: we enable the network with the previously set parameters
+WPA_CLI ${iface} enable_network ${nid}
+
+conn_state=
+while [ ${timeout} -gt 0 ]; do
+	sleep 1
+	conn_state=$(wpa_cli -p /var/run/wpa_supplicant-${iface} -i ${iface} status 2>/dev/null | grep wpa_state | cut -d= -f2)
+	if [ ${conn_state} = "COMPLETED" ]; then
+		break;
+	fi
+	timeout=$((--timeout))
+done
+
+# Step 4: Clean-up
+if [ ${conn_state} != "COMPLETED" ]; then
+	echo "Timeout --> connection failed"
+	WPA_CLI ${iface} remove_network ${nid}
+	WPA_CLI global interface_remove ${iface}
+	iwconfig ath0 channel ${oldchan}
+	wlanconfig ${iface} destroy
+	kill $(cat /var/run/wpa_supplicant-configme.pid)
+	exit 1
+fi
+
+echo "Connection success"
+WPA_CLI ${iface} remove_network ${nid}
+WPA_CLI global interface_remove ${iface}
+iwconfig ath0 channel ${oldchan}
+wlanconfig ${iface} destroy
+kill $(cat /var/run/wpa_supplicant-configme.pid)
+exit 0

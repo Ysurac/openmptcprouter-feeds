@@ -1,0 +1,123 @@
+#!/bin/sh
+
+. /lib/functions.sh
+. /lib/functions/network.sh
+. /lib/functions/hyfi-network.sh
+. /lib/functions/hyfi-debug.sh
+. /lib/functions/hyfi-iface.sh
+
+###############################################################################
+#
+#      Script for stoping HyFi features
+#
+###############################################################################
+
+#Delete PLC ports and get PLC port ID
+vhyfid_del_plc_ports() {
+	config_get vlan "$1" "vlan"
+
+	if [ "${vlan}" = ${PLC_VLANID} ];then
+		PORTID=`uci get network.$1.ports |cut -f 2 -d " "`
+		uci delete network.$1
+	fi
+}
+
+#Add the PLC port back to vlan1
+vhyfid_update_lan_ports() {
+	config_get vlan "$1" "vlan"
+
+	if [ "${vlan}" = ${LAN_VLANID} ];then
+		config_get ports "$1" "ports"
+		new_ports=${ports}${ports:+" "}${PORTID}
+		[ "${VLAN_TAGGED}" -eq 0 ] && new_ports=`echo ${new_ports} |sed 's/t//g'`
+		uci set network.$1.ports="${new_ports}"
+	fi
+}
+
+__disable_vaps() {
+	local config="$1"
+	local mode network disabled
+
+	config_get mode "$config" mode
+	config_get network "$config" network
+	config_get disabled "$config" disabled
+
+	if [ "$2" = "$network" -a "sta" = "$mode" -a "0" = "$disabled" ]; then
+		uci_set wireless $config disabled 1
+	fi
+}
+
+#Disable WLAN STAs, avoid loops when Hy-Fi is disabled
+vhyfid_disable_wlan_stas() {
+	hyfi_get_ieee1905_managed_iface ieee1905managed
+
+	config_load wireless
+	config_foreach __disable_vaps wifi-iface $ieee1905managed
+	uci commit wireless
+}
+
+LANIF=`uci get vhyfid.config.LanInterfaceName`
+LAN_VLANID=`uci get vhyfid.config.LanVlanID`
+PLC_VLANID=`uci get vhyfid.config.PLCVlanID`
+VLAN_TAGGED=`uci get vhyfid.config.LanVlanTagged`
+LAN_VLANIF=${LANIF}${LANIF:+"."}${LAN_VLANID}
+PLCIF=${LANIF}${LANIF:+"."}${PLC_VLANID}
+
+config_load network
+config_foreach vhyfid_del_plc_ports switch_vlan
+config_foreach vhyfid_update_lan_ports switch_vlan
+
+#Remove PLC interface from lan interface
+VIFS=`uci get network.lan.ifname`
+for vif in $VIFS; do
+	if [ "${vif}" != ${PLCIF} ];then
+		[ "${VLAN_TAGGED}" -eq 0 ] && [ "${vif}" = ${LAN_VLANIF} -o "${vif}" = ${LANIF} ] && continue
+		new_vifs=${new_vifs}${new_vifs:+" "}${vif}
+	fi
+done;
+[ "${VLAN_TAGGED}" -eq 0 ] && new_vifs=${new_vifs}" ${LANIF}"
+
+cur_vifs=`uci get network.lan.ifname`
+
+# Check if there was any change
+if [ "$cur_vifs" = "${new_vifs}" ]; then
+	uci set plc.config.PlcIfname=''
+	uci commit
+	return
+fi
+
+uci set network.lan.ifname="${new_vifs}"
+
+#Restore plc interface name for plc
+uci set plc.config.PlcIfname=''
+
+#Disable HyFi features
+local control=`uci get hyd.config.Control`
+local hyd_enabled=`uci get hyd.config.Enable`
+
+if [ "$control" = "auto" ]; then
+	uci set hyd.config.Enable=0
+	hyfi_echo vhyfid "stopping Hy-Fi"
+else
+	hyfi_echo vhyfid "removing PLC interface"
+fi
+uci commit
+
+if [ "$hyd_enabled" = "0" ]; then
+	# Shut down STAs to avoid loops
+	vhyfid_disable_wlan_stas
+fi
+
+# Stop/restart all Hy-Fi Daemons
+/etc/init.d/hyd stop
+/etc/init.d/wsplcd stop
+hyfi_network_sync
+/etc/init.d/acd stop
+/etc/init.d/plc reload
+
+# Restart the network
+hyfi_network_restart
+/etc/init.d/acd restart
+
+# exit successfully
+exit 0

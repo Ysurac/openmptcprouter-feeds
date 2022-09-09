@@ -1,0 +1,193 @@
+#!/bin/sh /etc/rc.common
+# Copyright (c) 2013 Qualcomm Atheros, Inc.
+#
+# All Rights Reserved.
+# Qualcomm Atheros Confidential and Proprietary. 
+
+START=54
+SERVICE_WRITE_PID=1
+SERVICE_DAEMONIZE=1
+SERVICE_DEBUG_OUTPUT=0
+SERVICE_PATH="/usr/sbin/vhyfid"
+
+VHYFID_CONFIG_FILE="/tmp/vhyfid.conf"
+. /lib/functions/hyfi-iface.sh
+. /lib/functions/hyfi-debug.sh
+
+vhyfid_cfg_append() {
+	echo "$1" >> "$VHYFID_CONFIG_FILE"
+}
+
+# vhyfid_cfg_add_str <section> <option>
+vhyfid_cfg_add_str() {
+	local key="$2"
+	local section="$1"
+	local option="$2"
+
+	config_get val "${section}" "${option}"
+	[ -n "${val}" ] && vhyfid_cfg_append "${key}=${val}"
+}
+
+vhyfid_cfg_add_plchip_info_one() {
+	local curpath="${3}${1}/"
+	local inipath="${curpath}${2}.ini"
+	local nvmpath="${curpath}${1}.nvm"
+	local pibpath="${curpath}${2}.pib"
+
+	sed "s/=/${chipindex}=/" $inipath >> "$VHYFID_CONFIG_FILE"
+	echo "NVMPath${chipindex}=${nvmpath}" >> "$VHYFID_CONFIG_FILE"
+	echo "PIBPath${chipindex}=${pibpath}" >> "$VHYFID_CONFIG_FILE"
+
+	chipindex=$(($chipindex + 1))
+}
+
+vhyfid_cfg_add_plchip_info() {
+	chipindex=0
+
+	config_get plcpath config 'PLCFirmwarePath' '/lib/firmware/plc/'
+
+	chip_families=`ls ${plcpath}`
+	for chip_family in $chip_families; do
+		ini_files=`ls ${plcpath}/${chip_family}/*.ini`
+		for ini in $ini_files; do
+			chip=`basename ${ini} .ini`
+			vhyfid_cfg_add_plchip_info_one $chip_family $chip ${plcpath}
+		done;
+	done;
+}
+
+vhyfid_cfg_add_head() {
+	echo ";"	> "$VHYFID_CONFIG_FILE"
+	vhyfid_cfg_append ';  Automatically generated vhyfid configure file,do not change it.'
+	vhyfid_cfg_append ';'
+	vhyfid_cfg_append ';  PLC:             plc manager'
+	vhyfid_cfg_append ';  ETH:             eth manager'
+	vhyfid_cfg_append ';  CONFIG:	       config service'
+	vhyfid_cfg_append ';'
+}
+
+vhyfid_create_config() {
+	config_load 'vhyfid'
+
+	vhyfid_cfg_add_head
+
+	vhyfid_cfg_append '[CONFIG]'
+	vhyfid_cfg_add_str		config			StartHyFiScriptPath
+	vhyfid_cfg_add_str		config			StopHyFiScriptPath
+
+	vhyfid_cfg_append '[ETH]'
+	vhyfid_cfg_add_str		config			MaxConsecutiveLinkDownReads
+	vhyfid_cfg_add_str		config			LanInterfaceName
+	vhyfid_cfg_add_str		config			SwitchManagementInterfaceName
+	vhyfid_cfg_add_str		config			ReadSwitchScriptPath
+
+	vhyfid_cfg_append '[PLC]'
+	vhyfid_cfg_add_str		config			LanVlanID
+	vhyfid_cfg_add_str		config			PLCVlanID
+	vhyfid_cfg_add_str		config			LanVlanTagged
+	vhyfid_cfg_add_str		config			PLCHFIDList
+	vhyfid_cfg_add_str		config			DisableHyFiIfNoManufacturerMatch
+	vhyfid_cfg_add_str		config			PLCQueryExpireTime
+	vhyfid_cfg_add_str		config			PLCUPDTFWExpireTime
+	vhyfid_cfg_add_str		config			PLCUPDTPIBExpireTime
+	vhyfid_cfg_add_str		config			AllowPLCFwUpdate
+	vhyfid_cfg_add_str		config			PLCOUIList
+	vhyfid_cfg_add_str		config			PLCDongleInfoPath
+
+	vhyfid_cfg_add_plchip_info
+}
+
+vhyfid_find_lan_vlan() {
+	config_get ports "$1" "ports"
+	config_get vlan "$1" "vlan"
+
+	has_vlan=`echo ${ports} |grep t`
+	if [ "${vlan}" = ${LAN_VLANID} ] && [ -n "${has_vlan}" ];then
+		LanVlanTagged=1
+	fi
+}
+
+vhyfid_lan_vlan_detect() {
+	LanVlanTagged=0
+	LAN_VLANID=`uci get vhyfid.config.LanVlanID`
+
+	config_get val config 'LanVlanTagged'
+	[ -n "${val}" ] && return
+
+	config_load network
+	config_foreach vhyfid_find_lan_vlan switch_vlan
+
+	uci set vhyfid.config.LanVlanTagged=${LanVlanTagged}
+	uci commit
+}
+
+vhyfid_enable_plc()
+{
+	uci set plc.config.Enabled='1'
+	uci commit plc
+	/etc/init.d/plc start
+	sleep 2
+}
+
+vhyfid_disable_plc()
+{
+	uci set plc.config.Enabled='0'
+	uci commit plc
+	/etc/init.d/plc stop
+}
+
+#vhyfid_disable_hyfi
+#Stop hyd and vlan setting
+#It must be called with hyfi_lock unlocked
+vhyfid_disable_hyfi()
+{
+	local stop_hyfi
+
+	config_get stop_hyfi config 'StopHyFiScriptPath'
+	if [ -n "$stop_hyfi" ]; then
+		eval $stop_hyfi
+	fi
+}
+
+__stop() {
+
+	#disable plchost
+	#vhyfid_disable_plc
+
+	${SVCDBG}service_stop ${SERVICE_PATH}
+}
+
+start() {
+	hyfi_lock
+	__stop
+
+	config_load 'vhyfid'
+	config_get_bool enabled config 'Enable' '0'
+	local vhyfid_rcd_enabled=`ls /etc/rc.d/S${START}vhyfid 2> /dev/null`
+
+	[ "$enabled" -gt 0 -a -n "$vhyfid_rcd_enabled" ] || {
+		hyfi_unlock
+		return 1
+	}
+
+	vhyfid_create_config
+
+	#enable plchost
+	#vhyfid_enable_plc
+
+	vhyfid_lan_vlan_detect
+
+	hyfi_echo vhyfid "starting daemon"
+	${SVCDBG}service_start ${SERVICE_PATH} -d -C "$VHYFID_CONFIG_FILE"
+	hyfi_unlock
+}
+
+stop() {
+	config_load 'vhyfid'
+	__stop
+	vhyfid_disable_hyfi
+}
+
+restart() {
+	start
+}

@@ -1,0 +1,38 @@
+#!/bin/sh /etc/rc.common
+
+# Copyright (c) 2017 Qualcomm Technologies, Inc.
+# All Rights Reserved.
+# Confidential and Proprietary - Qualcomm Technologies, Inc.
+#
+# Copyright (c) 2015, The Linux Foundation. All rights reserved.
+#
+
+START=
+SERVICE_DAEMONIZE=1
+SERVICE_WRITE_PID=1
+SERVICE_PATH="/usr/sbin/ssidsteering"
+
+start () {
+	config_load ssid-steering
+
+	local enable
+	config_get_bool enable global enable 0
+	[ "${enable}" -gt 0 ] || return
+
+	config_get private_vaps global private_vaps
+	config_get public_vaps global public_vaps
+
+	cat > /etc/config/ssid-steering.conf <<EOF
+	private=$private_vaps
+	public=$public_vaps
+EOF
+
+	service_start ${SERVICE_PATH} -C /etc/config/ssid-steering.conf
+}
+
+stop() {
+	service_stop /usr/sbin/ssidsteering
+
+	# Workaround, sometimes service_stop does not kill ssidsteering
+        start-stop-daemon -K -x ${SERVICE_PATH} -s SIGTERM > /dev/null
+}

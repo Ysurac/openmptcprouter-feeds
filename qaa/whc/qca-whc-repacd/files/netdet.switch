@@ -1,0 +1,23 @@
+#!/bin/sh
+# Copyright (c) 2016 Qualcomm Atheros, Inc.
+#
+# All Rights Reserved.
+# Qualcomm Atheros Confidential and Proprietary.
+
+. /lib/functions/repacd-netdet.sh
+
+ENABLED=$(uci get repacd.repacd.EnableLANWANDetect)
+
+if [ "$ENABLED" -eq 1 ] && [ "$EVENT" == "direction" ] && [ "$STATE" == "upstream" ]; then
+    logger -t hotplug-switch -p user.info "detecting mode because port $PORT is $STATE"
+    pkill -9 -f repacd-detect_device_mode.sh 2>/dev/null || true
+    logger -t hotplug-switch -p user.debug "waiting for DHCP address"
+    sleep 5
+    repacd_netdet_wait_for_dhcp_addr eth0
+    if [ $? -eq 1 ]; then
+        logger -t hotplug-switch -p user.debug "we timed out waiting for a DHCP address"
+    else
+        logger -t hotplug-switch -p user.debug "we got a DHCP address"
+    fi
+    repacd-detect_device_mode.sh &
+fi

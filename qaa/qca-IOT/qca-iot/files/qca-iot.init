@@ -1,0 +1,60 @@
+#!/bin/sh /etc/rc.common
+
+[ -e /lib/ipq806x.sh ] && . /lib/ipq806x.sh
+
+START=09
+STOP=99
+
+SERVICE_WRITE_PID=1
+SERVICE_DAEMONIZE=1
+
+IOTDaemon=iotd
+
+check_platform ( ) {
+     boardname=$(ipq806x_board_name)
+     case "$boardname" in
+          ap-dk07*)
+          pwd_gpio=48
+          ConfigFile=iotd_config_dk.ini
+          ;;
+          ap-hk*)
+          pwd_gpio=21
+          ConfigFile=iotd_config_hk.ini
+          ;;
+          ap-cp01*)
+          pwd_gpio=79
+          ConfigFile=iotd_config_cp01.ini
+          ;;
+          ap-cp02*)
+          pwd_gpio=74
+          ConfigFile=iotd_config_cp02.ini
+          ;;
+     esac
+
+     if [[ -e /dev/spidev1.0 ]]; then
+         sed -i s/spidev32765.0/spidev1.0/g /usr/bin/$ConfigFile
+     fi
+
+     if [[ ! -e /sys/class/gpio/gpio$pwd_gpio ]]; then
+         echo $pwd_gpio > /sys/class/gpio/export
+         echo out > /sys/class/gpio/gpio$pwd_gpio/direction
+     fi
+
+     echo 0 > /sys/class/gpio/gpio$pwd_gpio/value
+     echo 1 > /sys/class/gpio/gpio$pwd_gpio/value
+}
+
+start ( ) {
+    check_platform
+	# Launching IOT Daemon
+	service_start  /usr/bin/$IOTDaemon /usr/bin/$ConfigFile
+}
+
+stop( ) {
+	service_stop /usr/bin/$IOTDaemon
+}
+
+restart( ) {
+	stop
+	start
+}

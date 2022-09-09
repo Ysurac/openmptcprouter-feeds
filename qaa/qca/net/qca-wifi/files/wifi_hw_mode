@@ -1,0 +1,298 @@
+#!/bin/sh
+#
+# Copyright (c) 2019 Qualcomm Technologies, Inc.
+#
+# All Rights Reserved.
+# Confidential and Proprietary - Qualcomm Technologies, Inc.
+
+
+. /lib/functions.sh
+. /lib/wifi_interface_helper.sh
+
+#Gives simple usage of how script works and whats expecting to receive as input
+usage() {
+	cat <<EOF
+Usage: $0 [DBS_SBS|DBS|dbs_sbs|dbs]
+EOF
+	exit 1
+}
+
+#Enables vaps up after hw mode has changed
+wifi_hw_mode_continue() {
+    local driver_hw_mode=""
+    mode=`retrieve_current_hw_mode`
+
+    if [ $mode -eq 1 ]; then
+        driver_hw_mode="DBS"
+    else
+        driver_hw_mode="DBS_SBS"
+    fi
+
+    if [ $prev_hw_mode = $mode ]; then
+        echo "Switch Incomplete! HW mode is $driver_hw_mode"
+    else
+        echo "HW mode was changed to $driver_hw_mode"
+    fi
+
+    if [ $mode -eq 1 ]; then #DBS
+        wifi_vaps_change_state "enable_recover" "wifi0"
+    elif [ $mode -eq 4 ]; then #DBS_SBS
+        wifi_vaps_change_state "enable_recover" "wifi0"
+        wifi_vaps_change_state "enable_recover" "wifi2"
+    fi
+
+}
+
+#Receives an state as a parameter for a radio
+#It either disables or enables vaps depending on that given state
+wifi_vaps_change_state() {
+    local vaps_state=$1
+    local device=$2
+
+    config_get disabled "$device" disabled
+    [ "$disabled" = "1" ] && {
+            echo "'$device' is disabled"
+            set disable
+    }
+    config_get iftype "$device" type
+
+    if [ "$vaps_state" = "disable_recover" ]; then
+        eval "${vaps_state}_$iftype '$device'" || echo "$device($iftype): $vaps_state failed"
+    else
+        if eval "type ${vaps_state}_$iftype" 2>/dev/null >/dev/null; then
+            eval "scan_$iftype '$device'"
+            eval "${vaps_state}_$iftype '$device' 1" || echo "$device($iftype): $vaps_state failed"
+        elif [ ! -f /lib/netifd/wireless/$iftype.sh ]; then
+            echo "$device($iftype): Interface type not supported"
+        fi
+    fi
+}
+
+check_for_acs_cac_on_vap() {
+    local vap=$1
+    # if ACS is running, return
+    acs_state=`cfg80211tool $vap get_acs_state \
+        | awk -F  ':' '{print $2}'`
+    if [ $acs_state -ne 0 ]; then
+        echo "Cannot mode-switch!ACS is in progress, Please try after sometime"
+        lock -u /var/run/wifilock
+        exit
+    fi
+
+    # if DFS CAC is running, return
+    cac_state=`cfg80211tool $vap get_cac_state \
+        | awk -F  ':' '{print $2}'`
+    if [ $cac_state -ne 0 ]; then
+        echo "Cannot mode-switch!DFS-CAC is in progress. Please try after some time"
+        lock -u /var/run/wifilock
+        exit
+    fi
+}
+
+check_for_acs_cac_on_radio() {
+    local radio=$1
+    cd /sys/class/net
+    for dev in *; do
+        [ -f /sys/class/net/${dev}/parent ] && { \
+            local parent=$(cat /sys/class/net/${dev}/parent)
+            [ -n "$parent" -a "$parent" = "$radio" ] && { \
+                if_type=`cat "/sys/class/net/$dev/type"`
+                if [ $if_type = "1" ]; then
+                    check_for_acs_cac_on_vap $dev
+                    return
+                fi
+            }
+        }
+    done
+    cd -
+}
+
+check_for_csa_on_radio() {
+    local radio=$1
+    local radio_flag_dec=`cat /proc/wifi0/ic_config | grep "ic_flags: " | awk '{print $2}'`
+    let radio_flag=$(($radio_flag_dec))
+    let csa_macro=0x80000000
+    let flag_check=$(($radio_flag&$csa_macro))
+    if [ $flag_check -ne 0 ]; then
+        echo "Cannot mode-switch!CSA in progress. Please try after some time"
+        lock -u /var/run/wifilock
+        exit
+    fi
+}
+
+check_for_cfr() {
+    local radio=$1
+    cfr_status=`cfg80211tool $radio get_cfr_capture_status | awk -F'get_cfr_capture_status:' '{print $2}'`
+    if [ "$cfr_status" -ne "0" ]; then
+        echo "Cannot mode-switch!CFR capture is in progress"
+        lock -u /var/run/wifilock
+        exit
+    fi
+}
+
+disable_enable_all_vaps() {
+    local radio=$1
+    local action=$2
+    if [ "$action" = "enable" ]; then
+        eval "ifconfig $radio up"
+    fi
+
+    cd /sys/class/net
+	for dev in *; do
+		[ -f /sys/class/net/${dev}/parent ] && { \
+			local parent=$(cat /sys/class/net/${dev}/parent)
+			[ -n "$parent" -a "$parent" = "$radio" ] && { \
+                if_type=`cat "/sys/class/net/$dev/type"`
+                if [ $if_type = "1" ]; then
+                    eval "hostapd_cli -i $dev -p /var/run/hostapd-$radio $action"
+                else
+                    if [ $action = "enable" ]; then
+                        eval "ifconfig $dev up"
+                    else
+                        eval "ifconfig $dev down"
+                    fi
+                fi
+			}
+		}
+	done
+    if [ "$action" = "disable" ]; then
+        eval "ifconfig $radio down"
+    fi
+    cd -
+}
+
+#Starting point where user input get checked, vaps get disabled and
+#called to driver is made to make the hw mode switch
+wifi_hw_mode() {
+    local user_hwmode=$1
+    if [ "$user_hwmode" != "DBS_SBS" ] && [ "$user_hwmode" != "DBS" ] && [ "$user_hwmode" != "dbs_sbs" ] && [ "$user_hwmode" != "dbs" ]; then
+        echo "wrong input for hw mode"
+        usage
+        exit
+    fi
+
+    if [ "$user_hwmode" == "DBS_SBS" ] || [ "$user_hwmode" == "dbs_sbs" ]; then
+        user_hwmode="DBS_SBS"
+    else
+        user_hwmode="DBS"
+    fi
+
+
+    dynamic_hw_mode=`grep "dynamic_hw_mode" /ini/internal/global_i.ini | grep -m1 -v "^[#]" | awk -F'=' '{print $2}'`
+    if [[ "$dynamic_hw_mode" != "1" && "$dynamic_hw_mode" != "2" ]]; then
+        echo "dynamic mode not on!"
+        exit
+    fi
+
+    if [ $dynamic_hw_mode = "2" ]; then
+        primary_if=`cat /sys/class/net/soc0/pdev_map | grep "*" | awk -F "*" '{print \$2}' | awk '{print \$1}'`
+        if [[ "$primary_if" != "wifi0" && "$primary_if" != "wifi2" ]]; then
+            primary_if="wifi0"
+        fi
+
+        if [ "$primary_if" == "wifi0" ]; then
+            secondary_if="wifi2"
+        else
+            secondary_if="wifi0"
+        fi
+    fi
+
+    if [ $dynamic_hw_mode = "1" ]; then
+        driver_hw_mode=`retrieve_current_hw_mode`
+    else
+        driver_hw_mode=`retrieve_current_hw_mode $primary_if`
+    fi
+
+
+    prev_hw_mode=$driver_hw_mode
+    if [ $driver_hw_mode -eq 1 ]; then
+        driver_hw_mode="DBS"
+    elif [ $driver_hw_mode -eq 4 ]; then
+        driver_hw_mode="DBS_SBS"
+    else
+        echo "$driver_hw_mode is unsupported for dynamic change"
+        exit
+    fi
+
+    if [ "$driver_hw_mode" = "$user_hwmode" ]; then
+        echo "$1 is already current hw mode"
+        exit
+    fi
+
+    lock -n /var/run/wifilock
+    error=`echo $?`
+
+    if [ "$error" != "0" ]; then
+	echo "wifilock can't be currently taken!!! exiting..."
+	echo "try again after some time"
+	exit
+    fi
+
+    echo "wifilock aquired!!!"
+
+    check_for_wifi_script=`ps | egrep "/bin/sh\s+/sbin/wifi$" | grep -v "grep"`
+    if [ -n "$check_for_wifi_script" ]; then
+        echo "ERROR!! wifi script is running. Try after sometime"
+        lock -u /var/run/wifilock
+        exit
+    fi
+    if [ $dynamic_hw_mode = "1" ]; then
+        if [ "$user_hwmode" = "DBS" ]; then
+            user_hwmode=1
+            wifi_vaps_change_state "disable_recover" "wifi0"
+            wifi_vaps_change_state "disable_recover" "wifi2"
+            echo "switching hw_mode to DBS..."
+        elif [ "$user_hwmode" = "DBS_SBS" ]; then
+            user_hwmode=4
+            wifi_vaps_change_state "disable_recover" "wifi0"
+            echo "switching hw_mode to DBS_SBS..."
+        fi
+    elif [ $dynamic_hw_mode = "2" ]; then
+        check_for_csa_on_radio "$primary_if"
+        check_for_acs_cac_on_radio "$primary_if"
+        check_for_cfr "$primary_if"
+        if [ "$user_hwmode" = "DBS" ]; then
+            eval "disable_enable_all_vaps $secondary_if disable"
+            user_hwmode_num=1
+        elif [ "$user_hwmode" = "DBS_SBS" ]; then
+            user_hwmode_num=4
+        fi
+        eval "switch_hw_mode $user_hwmode_num $primary_if"
+        driver_hw_mode=`retrieve_current_hw_mode $primary_if`
+        if [ "$driver_hw_mode" -ne "$user_hwmode_num" ]; then
+            if [ "$user_hwmode" = "DBS" ]; then
+                #mode-switch was not succesful.
+                #Bring all the interfaces back to the older state
+                eval "disable_enable_all_vaps $secondary_if enable"
+            fi
+            echo "ERROR! failed to switch to $user_hwmode"
+            lock -u /var/run/wifilock
+            return
+        fi
+        if [ "$user_hwmode" = "DBS_SBS" ]; then
+            eval "disable_enable_all_vaps $secondary_if enable"
+        fi
+        lock -u /var/run/wifilock
+        return
+    fi
+
+    eval "switch_hw_mode $user_hwmode"
+    wifi_hw_mode_continue
+    lock -u /var/run/wifilock
+}
+
+DEVICES=
+DRIVERS=
+include /lib/wifi
+scan_wifi
+
+trap 'wifi_trap; exit' INT TERM ABRT QUIT ALRM
+hw_mode=$1
+prev_hw_mode=""
+
+
+case "$1" in
+	--help|help) usage;;
+	*) wifi_hw_mode "$1";;
+esac
+

@@ -1,0 +1,89 @@
+#!/bin/sh /etc/rc.common
+
+#
+# Copyright (c) 2016 Qualcomm Atheros, Inc.
+#
+# All Rights Reserved.
+# Qualcomm Atheros Confidential and Proprietary.
+#
+
+configure_firewall_zone() {
+	local zone_id=$1
+	local disabled=$2
+	local is_found
+
+	config_get zone_name "$zone_id" name
+	if [ "$zone_name" == "wan" ]; then {
+		config_get network_name "$zone_id" network
+		if [ -n "$network_name" ]; then {
+			echo $network_name | grep -q "wan2"
+			is_found=$?
+			if [ $is_found -ne 0 ] && [ $disabled -eq 0 ]; then {
+				uci add_list firewall.$zone_id.network=wan2
+				uci add_list firewall.$zone_id.network=wan2_6
+				uci commit
+			}
+			elif [ $is_found -eq 0 ] && [ $disabled -ne 0 ]; then {
+				uci del_list firewall.$zone_id.network=wan2
+				uci del_list firewall.$zone_id.network=wan2_6
+				uci commit
+			}
+			fi
+			break
+		}
+		fi
+	}
+	fi
+}
+
+configure_wan2_interface() {
+	local disabled=$1
+	config_load network && {
+		config_get ifname wan2 ifname
+		if [ -z "$ifname" ] && [ $disabled -eq 0 ]; then {
+			uci set network.wan2='interface'
+			uci set network.wan2.ifname='eth2'
+			uci set network.wan2.proto='dhcp'
+			uci set network.wan2_6='interface'
+			uci set network.wan2_6.ifname='@wan2'
+			uci set network.wan2_6.proto='dhcpv6'
+			uci commit
+		}
+		elif [ -n "$ifname" ] && [ $disabled -ne 0 ]; then {
+			uci delete network.wan2
+			uci delete network.wan2_6
+			uci commit
+		}
+		fi
+	}
+}
+
+start() {
+	local SERVICE_DAEMONIZE=1
+	local SERVICE_WRITE_PID=1
+	local disabled
+
+	config_load sierra-cm && {
+		config_get_bool disabled config 'disabled' '1'
+		configure_wan2_interface $disabled
+		config_load firewall && {
+			config_foreach configure_firewall_zone zone $disabled
+		}
+		[ $disabled -eq 0 ] || {
+			return 1
+		}
+		service_start /usr/bin/connectionmgrarm /usr/bin/slqssdk 0
+	}
+}
+
+stop() {
+	config_load sierra-cm && {
+		config_get_bool disabled config 'disabled' '1'
+		configure_wan2_interface $disabled
+		config_load firewall && {
+			config_foreach configure_firewall_zone zone $disabled
+		}
+		service_stop /usr/bin/connectionmgrarm
+		killall slqssdk 2&> /dev/null
+	}
+}

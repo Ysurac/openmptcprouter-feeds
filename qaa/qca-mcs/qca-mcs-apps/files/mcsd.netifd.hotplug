@@ -1,0 +1,32 @@
+#!/bin/sh
+
+# Copyright (c)  2020 Qualcomm Technologies, Inc.
+#
+# All Rights Reserved.
+# Confidential and Proprietary - Qualcomm Technologies, Inc.
+
+. /lib/functions/service.sh
+. /lib/functions.sh
+
+/etc/init.d/mcsd enabled || exit 0
+
+mcsd_restart() {
+	local exescript
+	local enabled
+
+	config_load "mcsd"
+	config_get_bool enabled config Enable 0
+
+	[ $enabled -eq 0 ] && return
+
+	exescript=`ls /etc/hotplug.d/net/*mcsd* 2>&-`
+	[ -n "$exescript" ] || return
+
+	# Restart with aggregation(background)
+	exescript="$exescript &"
+	eval $exescript
+}
+
+device=$(uci_get_state network $INTERFACE ifname)
+ovs-vsctl br-exists $device >/dev/null 2>&1
+[ $? = 0 ] && mcsd_restart

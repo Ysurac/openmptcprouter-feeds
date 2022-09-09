@@ -1,0 +1,192 @@
+#!/bin/sh /etc/rc.common
+#
+# Copyright (c) 2020 Qualcomm Technologies, Inc.
+# All Rights Reserved.
+# Confidential and Proprietary - Qualcomm Technologies, Inc.
+
+START=56
+USE_PROCD=1
+SERVICE_PATH="/usr/sbin/mesh_app"
+RESPAWN_THRESHOLD=120
+RESPAWN_TIMEOUT=5
+RESPAWN_RETRIES=2
+MAD_CONFIG_FILE="/tmp/mad.conf"
+
+# hyd config should considered for SON mode support
+config_load 'ezmesh'
+config_get_bool hyd_enable config 'Enable' '0'
+config_get_bool map_enabled MAPConfig 'Enable' '0'
+config_get_bool map_controller MultiAP 'EnableController' '0'
+
+config_load 'repacd'
+config_get son_role repacd Role
+
+config_load 'mesh_app'
+config_get_bool de_enable config 'EnableDataElements' '0'
+config_get_bool ieee1905_enable config 'EnableIeee1905' '0'
+
+__mad_cfg_append() {
+        echo "$1" >> "$2"
+}
+
+__mad_cfg_nl_append() {
+        echo "" >> "$2"
+                echo "$1" >> "$2"
+}
+
+# __mad_cfg_add_str <section> <option> <filename>
+__mad_cfg_add_str() {
+     local key="$2"
+     local section="$1"
+     local option="$2"
+     local filename="$3"
+
+     config_get val "${section}" "${option}"
+     [ -n "${val}" ] && __mad_cfg_append "${key}=${val}" $filename
+}
+
+__mad_cfg_add_enable_str() {
+    local key="$2"
+    local val="$3"
+    __mad_cfg_append "${key}=${val}" $filename
+}
+
+# Add a string to the config file where the key in the UCI config is
+# different from the config in the generated config.
+# input: $1 - section name in UCI
+# input: $2 - parameter name in UCI
+# input: $3 - parameter name in the generated configuration
+# input: $4 - output filename
+__mad_cfg_add_str_new_key() {
+     local section="$1"
+     local option="$2"
+     local newkey="$3"
+     local filename="$4"
+
+     config_get val "${section}" "${option}"
+     [ -n "${val}" ] && __mad_cfg_append "${newkey}=${val}" $filename
+}
+
+__mad_get_wlan_ifaces() {
+    local config="$1"
+    local device iface disabled mode ssid network radio_disabled
+
+    config_get device "$config" device
+    config_get iface "$config" ifname
+    config_get disabled "$config" disabled '0'
+    config_get mode "$config" mode
+    config_get ssid "$config" ssid
+    config_get network "$config" network
+    config_get radio_disabled "$device" disabled '0'
+
+    if [ -n "$iface" -a "$disabled" -eq 0 ]; then
+        if [ "$mode" == "ap" -o "$mode" == "wrap" ]; then
+            WLAN_INCLUDED_DEVICES="${WLAN_INCLUDED_DEVICES}${WLAN_INCLUDED_DEVICES:+","}${device}:${iface}"
+            return
+        fi
+    fi
+}
+
+mad_get_wlan_ifaces() {
+
+    config_load wireless
+    config_foreach __mad_get_wlan_ifaces wifi-iface "$1"
+
+    eval "$1='${WLAN_INCLUDED_DEVICES}'"
+}
+
+__mad_cfg_add_interface() {
+    local filename="$1"
+    local all_wlan_ifaces
+
+    #init the interface lists
+    WLAN_INCLUDED_DEVICES=""
+
+    # Get the list of wlan interfaces, seperated by comma
+    mad_get_wlan_ifaces all_wlan_ifaces
+
+    __mad_cfg_append 'WlanInterfaces='$all_wlan_ifaces $filename
+}
+
+mad_create_config() {
+    local filename=$1
+    config_load 'mesh_app'
+    __mad_cfg_nl_append '[WLANIF]' $filename
+    __mad_cfg_add_interface $filename $br_name
+
+    __mad_cfg_nl_append '[DATAELEMENTS]' $filename
+    __mad_cfg_add_str   DataElements       DEReportingInteval $filename
+    __mad_cfg_add_str   DataElements       DENeighbourScanInterval $filename
+    __mad_cfg_add_str   DataElements       DEJsonFilePath $filename
+    __mad_cfg_add_str   DataElements       DERadioJsonEnable $filename
+    __mad_cfg_add_str   DataElements       DERadioCapsJsonEnable $filename
+    __mad_cfg_add_str   DataElements       DERadioBssListJsonEnable $filename
+    __mad_cfg_add_str   DataElements       DERadioBkStaJsonEnable $filename
+    __mad_cfg_add_str   DataElements       DERadioScanResultJsonEnable $filename
+    __mad_cfg_add_str   DataElements       DERadioUnAssocStaJsonEnable $filename
+    __mad_cfg_add_str   DataElements       DERadioCurOpClassJsonEnable $filename
+    __mad_cfg_add_str   DataElements       DEBssSTAListJsonEnable $filename
+    __mad_cfg_add_str   DataElements       DEStaAssocEventJsonEnable $filename
+    __mad_cfg_add_str   DataElements       DEStaDisAssocEventJsonEnable $filename
+    __mad_cfg_add_str   DataElements       DEEnableBase64Encoding $filename
+    if [ "$hyd_enable" -eq 0 ]; then
+        __mad_cfg_add_enable_str   DataElements       DESingleAPMode "1"  $filename
+        __mad_cfg_add_enable_str   DataElements       DESONMode "0" $filename
+        __mad_cfg_add_enable_str   DataElements       DEMAPMode "0" $filename
+    elif [ "$map_controller" -eq 0 ]; then
+        if [ "$son_role" == "CAP" ];then
+            __mad_cfg_add_enable_str   DataElements       DESONMode "1" $filename
+            __mad_cfg_add_enable_str   DataElements       DEMAPMode "0" $filename
+            __mad_cfg_add_enable_str   DataElements       DESingleAPMode "0" $filename
+        else
+            __mad_cfg_add_enable_str   DataElements       DESONMode "0" $filename
+            __mad_cfg_add_enable_str   DataElements       DEMAPMode "0" $filename
+            __mad_cfg_add_enable_str   DataElements       DESingleAPMode "1"  $filename
+        fi
+    elif [ "$map_controller" -eq 1 ]; then
+        __mad_cfg_add_enable_str   DataElements       DEMAPMode "1" $filename
+        __mad_cfg_add_enable_str   DataElements       DESONMode "0" $filename
+        __mad_cfg_add_enable_str   DataElements       DESingleAPMode "0"  $filename
+    else
+        __mad_cfg_add_enable_str   DataElements       DEMAPMode "0" $filename
+        __mad_cfg_add_enable_str   DataElements       DESONMode "0" $filename
+        __mad_cfg_add_enable_str   DataElements       DESingleAPMode "1"  $filename
+    fi
+    __mad_cfg_add_str   DataElements       DEEnableCertCompliance $filename
+    __mad_cfg_add_str   DataElements       NBEventEnable $filename
+
+}
+
+start_service() {
+    local mesh_mode=0
+    local DEMODE=2
+    local IEEE1905MODE=1
+    local mesh_rcd_enabled=`ls /etc/rc.d/S${START}mesh 2> /dev/null`
+    echo -n "" > $MAD_CONFIG_FILE
+    mad_create_config $MAD_CONFIG_FILE ''
+
+    if [ "$de_enable" -eq "1" ] || [ "$ieee1905_enable" -eq "1" ]; then
+        if [ "$ieee1905_enable" -eq "1" ]; then
+            mesh_mode=$(( $mesh_mode|$IEEE1905MODE ))
+        fi
+        if [ "$de_enable" -eq "1" ];then
+            mesh_mode=$(( $mesh_mode|$DEMODE ))
+        fi
+
+        echo "Starting Mesh Application Daemon" >> /dev/console
+        procd_open_instance
+        procd_set_param command ${SERVICE_PATH} -m $mesh_mode
+
+        procd_set_param respawn ${RESPAWN_THRESHOLD} ${RESPAWN_TIMEOUT} ${RESPAWN_RETRIES}
+        procd_add_reload_trigger "mesh_app"
+        procd_close_instance
+    else
+        echo "No qca-mad module enabled" >> /dev/console
+        return 1
+    fi
+
+}
+
+stop_service() {
+    echo "Stopping Mesh Application Daemon" >> /dev/console
+}

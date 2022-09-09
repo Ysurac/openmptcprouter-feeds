@@ -1,0 +1,50 @@
+#!/bin/sh
+# Copyright (c) 2016 Qualcomm Atheros, Inc.
+#
+# All Rights Reserved.
+# Qualcomm Atheros Confidential and Proprietary.
+
+logger -t hotplug-edge -p user.info "edge detection sees $EVENT $STATE"
+
+. /lib/functions/repacd-netdet.sh
+
+if [ "$EVENT" = "location" ]; then
+    case $STATE in
+    cap )
+        netdet_detect_cap_bridge_router_mode
+         __gCapDetectVal=$?
+        case $__gCapDetectVal  in
+        $NETDET_CAP_BRIDGE_ROUTER_RESULT_ROUTER )
+            repacd_netdet_get_current_device_mode
+            if [ $? -ne $NETDET_CURRENT_MODE_ROOTAP ]; then
+                netdet_configure_cap_router_mode
+            fi
+            ;;
+        $NETDET_CAP_BRIDGE_ROUTER_RESULT_BRIDGE )
+            repacd_netdet_get_current_device_mode
+            if [ $? -ne $NETDET_CURRENT_MODE_RE ]; then
+                netdet_configure_cap_bridge_mode
+            fi
+            ;;
+        *)
+            echo "error: unknown mode: $result" >&2
+            return 3
+        ;;
+        esac
+        netdet_set_mode_db "cap"
+        ;;
+    re )
+            repacd_netdet_get_current_device_mode
+            if [ $? -ne $NETDET_CURRENT_MODE_RE ]; then
+                repacd_netdet_set_current_device_mode re
+            fi
+            netdet_set_mode_db "re"
+        ;;
+    unknown )
+            netdet_set_mode_db "unknown"
+        ;;
+    * )
+        logger -t hotplug-edge -p user.error "unknown state: $STATE"
+        ;;
+    esac
+fi

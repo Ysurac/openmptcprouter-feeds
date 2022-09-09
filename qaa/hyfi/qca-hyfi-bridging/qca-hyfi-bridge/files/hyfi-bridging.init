@@ -1,0 +1,92 @@
+#!/bin/sh /etc/rc.common
+# Copyright (c) 2016 Qualcomm Atheros, Inc.
+#
+# All Rights Reserved.
+# Qualcomm Atheros Confidential and Proprietary.
+
+START=54
+ECM_SYSFS_FILE="/sys/kernel/debug/ecm/ecm_classifier_hyfi/enabled"
+
+ieee1905managed_bridge=
+ieee1905managed_bridge2=
+
+. /lib/functions/hyfi-debug.sh
+. /lib/functions/hyfi-iface.sh
+. /lib/functions/hyfi-network.sh
+config_load 'repacd'
+config_get_bool ezmesh repacd 'Ezmesh' '0'
+    if [ "$ezmesh" -eq 1 ]; then
+        MAP='ezmesh'
+    else
+        MAP='hyd'
+    fi
+
+start() {
+	config_load $MAP
+	config_get_bool enabled config 'Enable' '0'
+	local hyfi_bridging_rcd_enabled=`ls /etc/rc.d/S${START}hyfi-bridging 2> /dev/null`
+
+	[ "$enabled" -gt 0 -a -n "$hyfi_bridging_rcd_enabled" ] || {
+		return 1
+	}
+
+	# Enable hyfi-netfilter
+	if [ -f /proc/sys/net/bridge/bridge-nf-call-custom ]; then
+		sysctl -w net.bridge.bridge-nf-call-custom=1
+	fi
+
+	# Get the IEEE1905.1 managed bridge name and attach
+	hyfi_get_ieee1905_managed_iface ieee1905managed_bridge ieee1905managed_bridge2
+
+	# Bail out from starting hyd if attach fails.
+	if ! hyctl attach br-$ieee1905managed_bridge; then
+		stop
+		return 1
+	fi
+
+	if [ -n "$ieee1905managed_bridge2" ];then
+	    if ! hyctl attach br-$ieee1905managed_bridge2; then
+		stop
+		return 1
+	    fi
+	fi
+
+	# Get Secondary bridge Names and attach
+	hyfi_get_ieee1905_brguest_map ieee1905_brguest_map ieee1905_brbh_map
+	if [ -n "$ieee1905_brguest_map" ];then
+		for br_name in $ieee1905_brguest_map; do
+			ifnames=`uci get "network.$br_name.ifname"`
+			if [ -n "$ifnames" -a "$ifnames" != " " ]; then
+				if ! hyctl attach br-$br_name; then
+					stop
+					return 1
+				fi
+			fi
+		done
+	fi
+}
+
+stop() {
+	config_load $MAP
+
+	# Disable hyfi-netfilter
+	if [ -f /proc/sys/net/bridge/bridge-nf-call-custom ]; then
+		sysctl -w net.bridge.bridge-nf-call-custom=0
+	fi
+
+	# Get the IEEE1905.1 managed bridge name and detach
+	hyfi_get_ieee1905_managed_iface ieee1905managed_bridge ieee1905managed_bridge2
+	hyctl detach br-$ieee1905managed_bridge
+
+	if [ -n "$ieee1905managed_bridge2" ]; then
+	    hyctl detach br-$ieee1905managed_bridge2
+	fi
+
+	# Get Secondary bridge Names and detach
+	hyfi_get_ieee1905_brguest_map ieee1905_brguest_map ieee1905_brbh_map
+	if [ -n "$ieee1905_brguest_map" ];then
+		for br_name in $ieee1905_brguest_map; do
+			hyctl detach br-$br_name
+		done
+	fi
+}

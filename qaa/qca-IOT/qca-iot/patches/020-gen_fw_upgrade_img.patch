@@ -1,0 +1,180 @@
+Index: qca-IOT/build/tools/fwupgrade/gen_fw_upgrade_img.py
+===================================================================
+--- qca-IOT.orig/build/tools/fwupgrade/gen_fw_upgrade_img.py
++++ qca-IOT/build/tools/fwupgrade/gen_fw_upgrade_img.py
+@@ -64,7 +64,7 @@ class Fw_Upgrade_Img_Descriptor_Entry:
+         ''' Update the block size used for the entry. Changing the block size
+         modifies the size_in_block of the image '''
+         # Check that the input is an integer
+-        if not isinstance(image_len, (int, long)):
++        if not isinstance(image_len, int):
+             raise AssertionError ("The input block size isn't an integer")
+ 
+         self.image_len = image_len
+@@ -77,7 +77,7 @@ class Fw_Upgrade_Img_Descriptor_Entry:
+     def update_disk_size (self, disk_size):
+         ''' Update the size_in_block for the entry. '''
+         # Check that the input is an integer
+-        if not isinstance(disk_size, (int, long)):
++        if not isinstance(disk_size, int):
+             raise AssertionError ("The disk size isn't an integer")
+ 
+         if self.disk_size < disk_size:
+@@ -95,7 +95,7 @@ class Fw_Upgrade_Img_Descriptor_Entry:
+         data = self.fde_packed.pack(self.signature,
+                                     self.image_id,
+ 									self.ver,
+-									self.filename,
++									self.filename.encode('utf-8'),
+                                     self.disk_size,
+ 									self.image_len,
+ 									self.hash_type)
+@@ -118,16 +118,16 @@ class Fw_Upgrade_Img_Descriptor_Entry:
+         self.hash_type = int(xml_root.attrib['HASH_TYPE'], 0)
+ 
+         if self.image_id == 0:
+-            print '0 is not valid image id'
++            print('0 is not valid image id')
+             rtn = 0
+         if self.ver == 0:
+-            print '0 is not valid image version'
++            print('0 is not valid image version')
+             rtn = 0
+         if self.signature == 0:
+-            print '0 is not valid signature'
++            print('0 is not valid signature')
+             rtn = 0
+         if self.hash_type == 0:
+-            print '0 is not valid hash type'
++            print('0 is not valid hash type')
+             rtn = 0
+         rtn = 1;
+         
+@@ -163,16 +163,16 @@ class Fw_Upgrade_Img_Descriptor:
+     def check_parameters(self):
+         rtn = 1
+         if self.version == 0:
+-            print 'version number is not correct, check version setting at header'
++            print('version number is not correct, check version setting at header')
+             rtn = 0
+         if self.format == 0:
+-            print 'format number is not correct, check format setting at header'
++            print('format number is not correct, check format setting at header')
+             rtn = 0
+         if self.signature == 0:
+-            print 'signature is not correct, check signature setting at header'
++            print('signature is not correct, check signature setting at header')
+             rtn = 0
+         if self.num_images == 0:
+-            print 'number of images is zero, check partiton setting at XML file'
++            print('number of images is zero, check partiton setting at XML file')
+             rtn = 0
+         return rtn
+         
+@@ -180,7 +180,7 @@ class Fw_Upgrade_Img_Descriptor:
+         ''' Update the block size used for the entry. Changing the block size
+         modifies the size_in_block of the image '''
+         # Check that the input is an integer
+-        if not isinstance(image_len, (int, long)):
++        if not isinstance(image_len, int):
+             raise AssertionError ("The input block size isn't an integer")
+ 
+         self.image_len = self.image_len + image_len		
+@@ -240,7 +240,7 @@ class Fw_Upgrade_Img_Descriptor:
+         xml = ET.parse(xml_file)
+         fw_descriptor = xml.getroot()
+         if fw_descriptor.tag != 'fw_upgrade_img_descriptor':
+-            print "XML didn't start with the correct tag <fw_upgrade_img_descriptor>"
++            print("XML didn't start with the correct tag <fw_upgrade_img_descriptor>")
+             return 0
+ 
+         for child in fw_descriptor:
+@@ -252,7 +252,7 @@ class Fw_Upgrade_Img_Descriptor:
+             elif child.tag == 'partition':
+                 entry = Fw_Upgrade_Img_Descriptor_Entry()
+                 if entry.from_xml(child) != 1:
+-                    print "parameter setting is not correct at Firmware Upgrade Image Descriptor entry"
++                    print("parameter setting is not correct at Firmware Upgrade Image Descriptor entry")
+                     return 0
+                 self.add_entry(entry)
+         return 1
+@@ -308,7 +308,7 @@ class Fw_Upgrade_Img_Descriptor:
+                             f.close()
+                     except IOError as e:
+                         logging.exception("Unable to open the file '%s'\n" % (entry.filename))
+-                        print "Can't open file %s" % (entry.filename)
++                        print("Can't open file %s" % (entry.filename))
+                         return 0
+ 
+         else: # format with all in one 
+@@ -342,7 +342,7 @@ class Fw_Upgrade_Img_Descriptor:
+                             entry.clear_filename()
+                     except IOError as e:
+                         logging.exception("Unable to open the file '%s'\n" % (entry.filename))
+-                        print "Can't open file %s" % (entry.filename)
++                        print("Can't open file %s" % (entry.filename))
+                         return 0
+ 		
+         #update HASH at Firmware Upgrade Image Header HASH
+@@ -361,15 +361,6 @@ def main():
+     # Give a version number to this script.
+     script_version = '1.0'
+ 
+-    # Check the version, since some changes to argparse on Python 3 causes it to fail.
+-    if sys.version_info[0] >= 3:
+-        logging.critical ("This tool won't run on Python 3, please use Python 2.7")
+-        return
+-
+-    if sys.version_info[0] <= 2 and sys.version_info[1] < 7:
+-        logging.warning ("This tool requires on Python 2.7. Most systems have python 2.7 installed, but it is not part of the PATH")
+-        return
+-
+     import argparse
+ 
+     tool_verbose_description = """Tool to generate intermediate files for flashing a Firmware Upgrade Image Descriptor Table and
+@@ -381,7 +372,7 @@ Run: python gen_fw_upgrade_img.py --xml
+ """
+ 
+     parser = argparse.ArgumentParser(description=tool_verbose_description, formatter_class=argparse.RawDescriptionHelpFormatter)
+-    parser.add_argument('--xml', type=file, required=True, help='The xml file for the firmware upgrade image generater')
++    parser.add_argument('--xml', type=open, required=True, help='The xml file for the firmware upgrade image generater')
+     parser.add_argument('--output', type=str, required=False, help='The output file where to store the whole disk')
+     parser.add_argument('-v', '--verbose', type=int, choices=[0,1,2,3,4,5], help='Verbose levels. Higher numbers include lower. For example, 3 means 3,2,1 and 0. 0=Critcal. 1=Error, 2=Warning 3=Info[Default], 4=Debug, 5=Everything', default=0)	
+     args = parser.parse_args()
+@@ -391,31 +382,31 @@ Run: python gen_fw_upgrade_img.py --xml
+ 
+     if args.output is None:
+         logging.error ('No output specified, please use --output to specify the output file')
+-        print 'No output specified, please use --output to specify the output file'
++        print('No output specified, please use --output to specify the output file')
+         return
+ 
+     #read the intput XML file.
+     fwd = Fw_Upgrade_Img_Descriptor()
+     if fwd.from_xml_file (args.xml.name) != 1:
+         logging.error ('entry setting at XML are not correct')
+-        print 'Failed to generate the whole firmware upgrade image'
++        print('Failed to generate the whole firmware upgrade image')
+         return    
+     
+     #check input parameters
+     if fwd.check_parameters() != 1:
+         logging.error ('parameters at XML are not correct')
+-        print 'Failed to generate the whole firmware upgrade image'
++        print('Failed to generate the whole firmware upgrade image')
+         return    
+     
+     #Generate the disk image.
+     if fwd.gen_whole_disk_binary(args.output) == 1:
+         #done here
+         logging.info('Done generating the whole firmware upgrade image')
+-        print 'Done generating the whole firmware upgrade image'
++        print('Done generating the whole firmware upgrade image')
+     else:
+         #failed here
+         logging.info('Failed to generate the whole firmware upgrade image')
+-        print 'Failed to generate the whole firmware upgrade image'
++        print('Failed to generate the whole firmware upgrade image')
+         
+     return
+     

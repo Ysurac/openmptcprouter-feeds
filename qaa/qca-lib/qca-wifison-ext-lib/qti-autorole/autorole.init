@@ -1,0 +1,67 @@
+#!/bin/sh /etc/rc.common
+# Copyright (c) 2021 Qualcomm Technologies, Inc.
+# All Rights Reserved.
+# Confidential and Proprietary - Qualcomm Technologies, Inc.
+
+START=98  # needs to be after repacd
+
+SERVICE_DEBUG_OUTPUT=0
+AUTOROLE_DEBUG_OUTOUT=0
+
+PID_FILE=/var/run/autorole.pid
+EXEC_FILE=/usr/sbin/autorole-run.sh
+
+. /lib/functions.sh
+
+# Write the provided log message to the correct output stream.
+# If AUTOROLE_DEBUG_OUTOUT is non-zero, it will be written to the console.
+# Otherwise, it will be written to stdout.
+__autorole_echo() {
+    if [ "$AUTOROLE_DEBUG_OUTOUT" -gt 0 ]; then
+        echo "EZ (autorole): $*" > /dev/console
+    else
+        echo "EZ (autorole): $*"
+    fi
+}
+
+__stop_autorole_run1() {
+    PID=$(ps | grep autorole-run | grep -v grep | awk '{print $1}')
+    if [ -n "$PID" ]; then
+        kill -s SIGTERM $PID
+        __autorole_echo "stopped repacd-run process $PID"
+    fi
+}
+
+__stop_autorole_run() {
+    start-stop-daemon -K -p $PID_FILE
+    rm $PID_FILE 2> /dev/null
+}
+
+__start_autorole_run() {
+    start-stop-daemon -S -p $PID_FILE -x $EXEC_FILE -b -m
+}
+
+start() {
+    local enabled
+    config_load autorole
+    config_get enabled config 'Enable' '0'
+
+    [ "$enabled" -eq 0 ] && {
+        __autorole_echo "Autorole is not enabled."
+        return 1
+    }
+
+    [ -f $PID_FILE ] && {
+        __stop_autorole_run
+    }
+    __start_autorole_run
+}
+
+stop() {
+    __stop_autorole_run
+}
+
+restart() {
+    stop
+    start
+}

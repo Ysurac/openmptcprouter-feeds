@@ -1,0 +1,1074 @@
+#!/bin/sh /etc/rc.common
+#
+# Copyright (c) 2013, 2017-2019, 2021 Qualcomm Technologies, Inc.
+# All Rights Reserved.
+# Confidential and Proprietary - Qualcomm Technologies, Inc.
+#
+# 2013 Qualcomm Atheros, Inc.
+#
+# All Rights Reserved.
+# Qualcomm Atheros Confidential and Proprietary.
+
+START=55
+USE_PROCD=1
+RESPAWN_THRESHOLD=120
+RESPAWN_TIMEOUT=5
+RESPAWN_RETRIES=10
+SERVICE_PATH="/usr/sbin/hyd"
+HYD_CONFIG_FILE_PREFIX="/tmp/hyd"
+
+# The stop_wifidown command is a special command that does not try to do
+# any locking in order to prevent deadlocks during a wifi down operation
+# that is actually part of a Wi-Fi interface restart.
+EXTRA_COMMANDS="stop_wifidown"
+EXTRA_HELP=<<EOF
+	stop_wifidown Stop hyd while bring down Wi-Fi interfaces
+EOF
+
+ieee1905managed_bridge=
+ieee1905managed_bridge2=
+ieee1905_brguest_map=""
+ieee1905_brbh_map=""
+ZERO_WLAN_DEVICES=""
+
+. /lib/functions/hyfi-debug.sh
+. /lib/functions/hyfi-iface.sh
+. /lib/functions/hyfi-network.sh
+. /lib/functions/whc-iface.sh
+
+if [ -f /lib/functions/lbd-config.sh ]; then
+    . /lib/functions/lbd-config.sh
+fi
+
+#check hyd config to enable/disable cfg80211
+config_load 'hyd'
+config_get_bool hyd_wxt config 'ForceWextMode' '0'
+
+#check wireless config to enable/disable cfg80211 for hyd
+wireless_cfg=
+config_load 'wireless'
+config_foreach __whc_check_wlan_cfg_mode wifi-device wireless_cfg
+
+if [ "$hyd_wxt" == "0" -a "$wireless_cfg" == "1" ]; then
+    HYD_CFG80211=-cfg80211
+else
+    HYD_CFG80211=
+fi
+
+__hyd_cfg_append() {
+	local configfile=$2
+	echo "$1" >> "$configfile"
+}
+
+__hyd_cfg_nl_append() {
+	local configfile=$2
+	echo "" >> "$configfile"
+	echo "$1" >> "$configfile"
+}
+
+# __hyd_cfg_add_persist_str <section> <option>  <config file> <bridge name>
+__hyd_cfg_add_persist_str_new_key() {
+        local key="$2"
+        local section="$1"
+        local option="$2"
+        local output_key="$2"
+        local configfile=$3
+        local br_name=$4
+
+        config_get val "${section}" "${option}"
+        [ -n "${val}" ] && __hyd_cfg_append "${output_key}=${val}${br_name}" $configfile
+}
+
+# __hyd_cfg_add_str <section> <option> <output key> <config file>
+__hyd_cfg_add_str_new_key() {
+	local key="$2"
+	local section="$1"
+	local option="$2"
+	local output_key="$3"
+	local configfile=$4
+
+	config_get val "${section}" "${option}"
+	[ -n "${val}" ] && __hyd_cfg_append "${output_key}=${val}" $configfile
+}
+
+# __hyd_cfg_add_str <section> <option> <config file>
+__hyd_cfg_add_str() {
+	__hyd_cfg_add_str_new_key $1 $2 $2 $3
+}
+
+__hyd_get_default_mode() {
+	local wan_iface
+
+	config_load network
+	config_get wan_iface wan ifname
+
+	if [ -n "$wan_iface" ]; then
+		eval "$1='HYROUTER'"
+	else
+		eval "$1='HYCLIENT'"
+	fi
+}
+
+__hyd_get_wlan_sta_ifaces() {
+	local config="$1"
+	local iface network mode disabled
+
+	config_get iface "$config" ifname
+	config_get network "$config" network
+	config_get mode "$config" mode
+	config_get disabled "$config" disabled '0'
+
+	if [ "$2" = "$network" -a "$mode" = "sta" -a "$disabled" -eq 0 ]; then
+		non_relay_ifaces=${non_relay_ifaces}${non_relay_ifaces:+","}${iface}
+	fi
+}
+
+# __hyd_get_nonrelay_eth_iface()
+# input: $1 IEEE1905.1 managed bridge interface
+# output: $2 Name of the upstream Ethernet interface
+__hyd_get_nonrelay_eth_iface() {
+	local ieee1905managed="$1"
+	local eth_ifaces_full eth_ifaces
+	local ifname=""
+
+	# Query user config first. Even with Ethernet monitoring disabled, a
+	# manually configured upstream interface will always be non-relaying.
+	config_load hyd
+	config_get ifname config NonRelayingEthernetInterface ""
+	if [ -n "${ifname}" ]; then
+		eval "$2='${ifname}'"
+		return
+	fi
+
+	# If ethernet monitoring is disabled, there should be no nonrelaying
+	# ethernet interfaces.
+	if [ "$(uci get repacd.repacd.EnableEthernetMonitoring)" != "1" ]; then
+		eval "$2=''"
+		return
+        fi
+
+	# assume that our upstream interface is eth0, but verify it
+	# exists first. if it doesn't exist, we may be running on an
+	# unknown board.
+	# the reason we look for an interface that matches a pattern
+	# instead of referencing it directly is because the upstream port
+	# could be in a VLAN, for example if guest networks are configured.
+	hyfi_get_ether_ifaces ${ieee1905managed} eth_ifaces_full
+	hyfi_strip_list ${eth_ifaces_full} eth_ifaces
+	for eth_iface in ${eth_ifaces}; do
+		case ${eth_iface} in
+		eth0*)
+			ifname=${eth_iface}
+		;;
+		esac
+	done
+
+	eval "$2='${ifname}'"
+}
+
+# input: $1 vap interface as uci section
+# input: $2 wifi radio device
+# output: $3 number of vaps count
+# input: $4 network
+__hyf_get_zero_bss_wlan_ifaces() {
+	local config="$1"
+	local radio="$2"
+	local count="$3"
+	local net="$4"
+	local iface network disabled device
+
+	config_get iface "$config" ifname
+	config_get network "$config" network
+	config_get disabled "$config" disabled '0'
+	config_get device "$config" device
+	config_get mapEnable "$config" map
+	config_get mode "$config" mode
+
+	if [ "$mode" = "ap" ]; then
+		if [ -n "$iface" ] && [ "$disabled" -eq 0 ] &&
+				[ "$device" = "$radio" ]; then
+			count=$((count + 1))
+			eval "$3='$count'"
+		fi
+	fi
+}
+
+# input: $1 radio device as uci section
+# input: $2 network name
+# output: $3 zero bss string to be used in config file
+__hyd_get_zero_bss_radios()  {
+	local radio="$1"
+	local network="$2"
+	local cnt=0
+	local band=''
+
+	config_load wireless
+	config_get hwmode $radio 'hwmode' ''
+	if [ $hwmode = "11axa" -o $hwmode = "11a" -o $hwmode = "11na" ]; then
+		band=5
+	elif [ $hwmode = "11axg" -o $hwmode = "11b" -o $hwmode = "11ng" ]; then
+		band=2
+	fi
+
+	config_foreach __hyf_get_zero_bss_wlan_ifaces wifi-iface "$radio" cnt  $network
+
+	if [ $cnt -eq 0 ]; then
+		ZERO_WLAN_DEVICES="${ZERO_WLAN_DEVICES}${ZERO_WLAN_DEVICES:+","}${radio}:${band}G"
+		eval "$3='$ZERO_WLAN_DEVICES'"
+	fi
+}
+
+__hyd_cfg_add_zerobss_radio() {
+	local br_name=$1
+	local configfile=$2
+
+	config_load wireless
+	config_foreach __hyd_get_zero_bss_radios wifi-device "$br_name" zerobss_radios
+
+	__hyd_cfg_append 'ZeroBSSRadiosList='$zerobss_radios $configfile
+}
+
+__hyd_cfg_add_guest_interface() {
+	local all_ifaces wlan_ifaces
+	local configfile=$1
+	local br_name_guest=$ieee1905_brguest_map
+	local br_name_bh=$ieee1905_brbh_map
+
+	# Add other bridge names and interface list to config file
+	if [ -n "$br_name_guest" ]; then
+		br_num=1
+		for br in $br_name_guest; do
+			__hyd_cfg_append bridge$br_num=br-"$br" "$configfile"
+
+			# Get a list of all interfaces
+			hyfi_get_ifaces $br all_ifaces wlan_ifaces
+			if [ -n "$all_ifaces" ]; then
+				__hyd_cfg_append ManagedInterfacesList$br_num=$all_ifaces $configfile
+			fi
+			if [ -n "$wlan_ifaces" ]; then
+				__hyd_cfg_append WlanInterfaces$br_num=$wlan_ifaces $configfile
+			fi
+			br_num=$((br_num+1))
+		done
+	fi
+
+	if [ -n "$br_name_bh" ]; then
+		# Append backhaul interface to config file
+		__hyd_cfg_append backhaul="$br_name_bh" "$configfile"
+
+		# Get a list of all interfaces
+		hyfi_get_ifaces $br_name_bh all_ifaces wlan_ifaces
+		if [ -n "$all_ifaces" ]; then
+			__hyd_cfg_append 'ManagedInterfacesListBH='$all_ifaces $configfile
+		fi
+		if [ -n "$wlan_ifaces" ]; then
+			__hyd_cfg_append 'WlanInterfacesBH='$wlan_ifaces $configfile
+		fi
+	fi
+}
+
+__hyd_cfg_add_interface() {
+	local all_ifaces wlan_ifaces plc_iface non_relay_ifaces default_mode
+	local non_relay_eth_iface
+	local wlan_vlan_sta_ifaces
+	local br_name=$1
+	local configfile=$2
+
+	__hyd_cfg_append 'HybridBridgeInterfaceName=br-'$br_name $configfile
+
+	# Get a list of all interfaces
+	hyfi_get_ifaces $br_name all_ifaces wlan_ifaces
+	__hyd_cfg_append 'ManagedInterfacesList='$all_ifaces $configfile
+	__hyd_cfg_append 'WlanInterfaces='$wlan_ifaces $configfile
+
+	__hyd_get_default_mode default_mode
+	config_get mode config 'Mode' "$default_mode"
+
+	if [ "${mode}" = 'HYCLIENT' ];then
+		# Get PLC interface
+		hyfi_get_plc_iface $br_name plc_iface
+		if [ -n "$plc_iface" ]; then
+			hyfi_strip_list $plc_iface plc_iface
+			non_relay_ifaces=$plc_iface
+		fi
+
+		# Get all WLAN interfaces bound to the managed bridge
+		config_load wireless
+		config_foreach __hyd_get_wlan_sta_ifaces wifi-iface $br_name
+
+		hyfi_get_wlan_vlan_sta_ifaces $br_name wlan_vlan_sta_ifaces
+		if [ -n "${wlan_vlan_sta_ifaces}" ]; then
+			non_relay_ifaces=${non_relay_ifaces}${non_relay_ifaces:+","}${wlan_vlan_sta_ifaces}
+		fi
+
+		# Get the Ethernet interface to be included in the
+		# non-relaying group
+		__hyd_get_nonrelay_eth_iface $br_name non_relay_eth_iface
+		if [ -n "${non_relay_eth_iface}" ]; then
+			non_relay_ifaces=${non_relay_ifaces}${non_relay_ifaces:+","}${non_relay_eth_iface}
+		fi
+
+		__hyd_cfg_append	'NoRelayGroupList='"$non_relay_ifaces" $configfile
+		__hyd_cfg_append	'ForceGroupRelaying=1' $configfile
+	fi
+
+	local switch_lan_vid
+	local switch_cpu_root_port
+    local switch_iface eswitch_support switch_device_id switch_present
+
+	__hyfi_get_switch_lan_vid switch_lan_vid
+	__hyfi_get_switch_cpu_port switch_cpu_root_port
+    __hyfi_get_switch_iface switch_iface eswitch_support switch_device_id switch_present
+
+	__hyd_cfg_append 'SwitchLanVid='"$switch_lan_vid" $configfile
+	__hyd_cfg_append 'SwitchCpuPort='"$switch_cpu_root_port" $configfile
+    __hyd_cfg_append 'SwitchDeviceId='"$switch_device_id" $configfile
+
+	local iface_vlanids
+	hyfi_get_iface_vlanids iface_vlanids
+	__hyd_cfg_append 'VlanIds='"$iface_vlanids" $configfile
+}
+
+# Add or replace a line in the crontab based on the matching expression
+# input: $1 match: the string to match against for deletion
+# input: $2 line: the line to add to the crontab
+__hyd_add_cron_line() {
+	local match=$1
+	local line=$2
+
+	# Need to make sure the crontab exists since otherwise an error will
+	# be produced
+	if crontab -l > /dev/null 2>&1; then
+		crontab -l | ( sed -e "/${match}/d"; echo "${line}" ) | crontab -
+	else
+		echo "${line}" | crontab -
+	fi
+}
+
+# Delete a line in the crontab based on the matching expression
+# input: $1 match: the string to match against for deletion
+__hyd_del_cron_line() {
+	local match=$1
+	local num_lines
+
+	if crontab -l > /dev/null 2>&1; then
+		crontab -l | sed -e "/${match}/d" | crontab -
+
+		num_lines=$(crontab -l | wc -l)
+		if [ "${num_lines}" -eq 0 ]; then
+			crontab -d
+		fi
+	fi
+}
+
+# Determine whether there are any crontabs installed
+# Return 0 if there are, otherwise non-zero
+__hyd_has_crontabs() {
+	if [ -z "$(ls /etc/crontabs/ | grep -v cron.update)" ]; then
+		return 1
+	else
+		return 0
+	fi
+}
+
+# Add a command into cron table
+__hyd_add_crontab_cmd () {
+	local en=$1
+	local cron_expr=$2
+	local short_cmd=$3
+	local cmd
+
+	if [ "${en}" -gt 0 ] && [ -n "${cron_expr}" ]; then
+		cmd="${cron_expr} /usr/sbin/hyd-map-cmd ${short_cmd}"
+		__hyd_add_cron_line "$short_cmd" "$cmd"
+	else
+		__hyd_del_cron_line "$short_cmd"
+	fi
+}
+
+# Generate a new crontab based on the current settings and install it.
+# Also manage whether the cron daemon is running or not based on
+# there is now a new crontab or there are no longer any entries in
+# the crontab.
+__hyd_manage_cron() {
+	# Generate the lines for cron jobs
+	local crontabs_empty=0
+	local en
+	local cron_expr
+	local num_lines
+
+	if ! __hyd_has_crontabs; then
+		crontabs_empty=1
+	fi
+
+	# Generate the line for topology optimization
+	config_get_bool en "MultiAP" "EnableTopologyOpt" 0
+	config_get cron_expr "MultiAP" "TopologyOptCron"
+
+	__hyd_add_crontab_cmd "${en}" "${cron_expr}" "topopt"
+
+	# Generate the line for channel preference query
+	config_get_bool en "MultiAP" "EnableChanPrefQuery" 0
+	config_get cron_expr "MultiAP" "ChanPrefQueryCron"
+
+	__hyd_add_crontab_cmd "${en}" "${cron_expr}" "chanprefquery"
+
+	# Generate the line for background scanning on agent
+	config_get_bool en "MultiAP" "EnableCronBasedBkScan" 0
+	config_get cron_expr "MultiAP" "BkScanCron"
+
+	__hyd_add_crontab_cmd "${en}" "${cron_expr}" "bkscan"
+
+	if [ "${crontabs_empty}" -gt 0 ] && __hyd_has_crontabs;then
+		hyfi_echo hyd "Starting cron due to new crontabs"
+		/etc/init.d/cron start
+	elif [ "${crontabs_empty}" -eq 0 ] && ! __hyd_has_crontabs;then
+		hyfi_echo hyd "Stopping cron due to no crontabs"
+		/etc/init.d/cron stop
+	fi
+}
+
+__hyd_cfg_add_head() {
+       local configfile=$1
+	echo ";"	>"$configfile"
+	__hyd_cfg_append ';  Automatically generated hyd configure file,do not change it.' $configfile
+	__hyd_cfg_append ';' $configfile
+	__hyd_cfg_append ';  INTERFACE:       interface manager' $configfile
+	__hyd_cfg_append ';  HY:              hy manager' $configfile
+	__hyd_cfg_append ';  WLAN:            wlan manager' $configfile
+	__hyd_cfg_append ';  PLC:             plc manager' $configfile
+	__hyd_cfg_append ';  ETH:             eth manager' $configfile
+	__hyd_cfg_append ';  PATHCH:          pc service' $configfile
+	__hyd_cfg_append ';  PATHCHWLAN:      pcw service' $configfile
+	__hyd_cfg_append ';  PATHCHPLC:       pcp service' $configfile
+	__hyd_cfg_append ';  PATHCHETH:       pce service' $configfile
+	__hyd_cfg_append ';  TOPOLOGY:        td service' $configfile
+	__hyd_cfg_append ';  HSPECEST:        he service' $configfile
+	__hyd_cfg_append ';  PATHSELECT:      ps service' $configfile
+	__hyd_cfg_append ';  LOGSETTINGS:     log service' $configfile
+	__hyd_cfg_append ';  IEEE1905:        IEEE 1905.1 settings' $configfile
+	__hyd_cfg_append ';  HCP:             HCP settings' $configfile
+	__hyd_cfg_append ';  MAP:             Multi-AP settings' $configfile
+	__hyd_cfg_append ';  MC:              mc manager' $configfile
+	__hyd_cfg_append ';  MAPSPSettings    Multi-Ap Service Priortization settings' $configfile
+	__hyd_cfg_append ';  MAPInventorySettings Multi-Ap Inventory settings' $configfile
+	__hyd_cfg_append ';  MAPConfigSettings Multi-Ap Onboarding settings' $configfile
+	__hyd_cfg_append ';' $configfile
+}
+
+__hyd_create_config() {
+	local br_name=$1
+	local configfile=$2
+	config_load 'hyd'
+	__hyd_cfg_add_head $configfile
+
+	config_get MapVersion MultiAP 'MapVersion' '0'
+	config_get num_vlan_supported MultiAP 'NumberOfVLANSupported' '0'
+	# we should enable Traffic sepration for map V2 and above
+	if [ "$MapVersion" -gt 1 ] && [ "$num_vlan_supported" -gt 0 ]; then
+		# Get the Guest Bridge Names
+		hyfi_get_ieee1905_brguest_map ieee1905_brguest_map ieee1905_brbh_map
+	fi
+
+	__hyd_cfg_nl_append '[INTERFACE]' $configfile
+	__hyd_cfg_add_interface $br_name $configfile
+	__hyd_cfg_add_guest_interface $configfile
+	__hyd_cfg_add_zerobss_radio $br_name $configfile
+	__hyd_cfg_add_str		hy			ForwardingMode $configfile
+
+	__hyd_cfg_nl_append '[HY]' $configfile
+	__hyd_cfg_add_str		hy			breakPadEnabled $configfile
+	__hyd_cfg_add_str		hy			LoadBalancingSeamless $configfile
+	__hyd_cfg_add_str		hy			ConstrainTCPMedium $configfile
+	__hyd_cfg_add_str		hy			MaxLBReordTimeout $configfile
+	__hyd_cfg_add_str		hy			HActiveMaxAge $configfile
+	__hyd_cfg_add_str		hy			HMWDSProgramRetryCount $configfile
+
+	__hyd_cfg_nl_append '[PATHCH]' $configfile
+        # The following parameters are taken from the LBD config.
+        config_load 'lbd'
+        __hyd_cfg_add_str_new_key               Offload                 MUSafetyThreshold_W2 ChanUtilSafetyThreshold_W2 $configfile
+        __hyd_cfg_add_str_new_key               Offload                 MUSafetyThreshold_W5 ChanUtilSafetyThreshold_W5 $configfile
+	__hyd_cfg_add_str_new_key               Offload                 MUSafetyThreshold_W6 ChanUtilSafetyThreshold_W6 $configfile
+        config_load 'hyd'  # in case loading whc clobbered any values
+
+	__hyd_cfg_nl_append '[PATHCHWLAN]' $configfile
+	__hyd_cfg_add_str		PathChWlan		UpdatedStatsInterval_W2 $configfile
+	__hyd_cfg_add_str		PathChWlan		StatsAgedOutInterval_W2 $configfile
+	__hyd_cfg_add_str		PathChWlan		MaxMediumUtilization_W2 $configfile
+	__hyd_cfg_add_str		PathChWlan		MediumChangeThreshold_W2 $configfile
+	__hyd_cfg_add_str		PathChWlan		LinkChangeThreshold_W2 $configfile
+	__hyd_cfg_add_str		PathChWlan		MaxMediumUtilizationForLC_W2 $configfile
+	__hyd_cfg_add_str		PathChWlan		CPULimitedTCPThroughput_W2 $configfile
+	__hyd_cfg_add_str		PathChWlan		CPULimitedUDPThroughput_W2 $configfile
+	__hyd_cfg_add_str		PathChWlan		PHYRateThresholdForMU_W2 $configfile
+	__hyd_cfg_add_str		PathChWlan		ProbePacketInterval_W2 $configfile
+	__hyd_cfg_add_str		PathChWlan		ProbePacketSize_W2 $configfile
+	__hyd_cfg_add_str		PathChWlan		EnableProbe_W2 $configfile
+	__hyd_cfg_add_str		PathChWlan		AssocDetectionDelay_W2 $configfile
+	__hyd_cfg_add_str		PathChWlan		UpdatedStatsInterval_W5 $configfile
+	__hyd_cfg_add_str		PathChWlan		StatsAgedOutInterval_W5 $configfile
+	__hyd_cfg_add_str		PathChWlan		MaxMediumUtilization_W5 $configfile
+	__hyd_cfg_add_str		PathChWlan		MediumChangeThreshold_W5 $configfile
+	__hyd_cfg_add_str		PathChWlan		LinkChangeThreshold_W5 $configfile
+	__hyd_cfg_add_str		PathChWlan		MaxMediumUtilizationForLC_W5 $configfile
+	__hyd_cfg_add_str		PathChWlan		CPULimitedTCPThroughput_W5 $configfile
+	__hyd_cfg_add_str		PathChWlan		CPULimitedUDPThroughput_W5 $configfile
+	__hyd_cfg_add_str		PathChWlan		PHYRateThresholdForMU_W5 $configfile
+	__hyd_cfg_add_str		PathChWlan		ProbePacketInterval_W5 $configfile
+	__hyd_cfg_add_str		PathChWlan		ProbePacketSize_W5 $configfile
+	__hyd_cfg_add_str		PathChWlan		EnableProbe_W5 $configfile
+	__hyd_cfg_add_str		PathChWlan		AssocDetectionDelay_W5 $configfile
+	__hyd_cfg_add_str               PathChWlan              UpdatedStatsInterval_W6 $configfile
+	__hyd_cfg_add_str               PathChWlan              StatsAgedOutInterval_W6 $configfile
+	__hyd_cfg_add_str               PathChWlan              MaxMediumUtilization_W6 $configfile
+	__hyd_cfg_add_str               PathChWlan              MediumChangeThreshold_W6 $configfile
+	__hyd_cfg_add_str               PathChWlan              LinkChangeThreshold_W6 $configfile
+	__hyd_cfg_add_str               PathChWlan              MaxMediumUtilizationForLC_W6 $configfile
+	__hyd_cfg_add_str               PathChWlan              CPULimitedTCPThroughput_W6 $configfile
+	__hyd_cfg_add_str               PathChWlan              CPULimitedUDPThroughput_W6 $configfile
+	__hyd_cfg_add_str               PathChWlan              PHYRateThresholdForMU_W6 $configfile
+	__hyd_cfg_add_str               PathChWlan              ProbePacketInterval_W6 $configfile
+	__hyd_cfg_add_str               PathChWlan              ProbePacketSize_W6 $configfile
+	__hyd_cfg_add_str               PathChWlan              EnableProbe_W6 $configfile
+	__hyd_cfg_add_str               PathChWlan              AssocDetectionDelay_W6 $configfile
+
+	# These parameters are shared with LBD, so read them from there
+	# and remap them to the keys needed by pcwService.
+	config_load 'lbd'
+	__hyd_cfg_add_str_new_key		Estimator_Adv		LowPhyRateThreshold LinkCapacityThreshold $configfile
+	__hyd_cfg_add_str_new_key		Estimator_Adv		HighPhyRateThreshold_W2 ScalingFactorHighRate_W2 $configfile
+	__hyd_cfg_add_str_new_key		Estimator_Adv		HighPhyRateThreshold_W5 ScalingFactorHighRate_W5 $configfile
+	__hyd_cfg_add_str_new_key               Estimator_Adv           HighPhyRateThreshold_W6 ScalingFactorHighRate_W6 $configfile
+	__hyd_cfg_add_str_new_key		Estimator_Adv		PhyRateScalingFactorLow ScalingFactorLow $configfile
+	__hyd_cfg_add_str_new_key		Estimator_Adv		PhyRateScalingFactorMedium ScalingFactorMedium $configfile
+	__hyd_cfg_add_str_new_key		Estimator_Adv		PhyRateScalingFactorHigh ScalingFactorHigh $configfile
+	__hyd_cfg_add_str_new_key		Estimator_Adv		PhyScalingFactorTCP ScalingFactorTCP $configfile
+
+	config_load 'hyd'
+	__hyd_cfg_add_str		PathChWlan		UseWHCAlgorithm $configfile
+
+	__hyd_cfg_nl_append '[PATHCHPLC]' $configfile
+	__hyd_cfg_add_str		PathChPlc		MaxMediumUtilization $configfile
+	__hyd_cfg_add_str		PathChPlc		MediumChangeThreshold $configfile
+	__hyd_cfg_add_str		PathChPlc		LinkChangeThreshold $configfile
+	__hyd_cfg_add_str		PathChPlc		StatsAgedOutInterval $configfile
+	__hyd_cfg_add_str		PathChPlc		UpdateStatsInterval $configfile
+	__hyd_cfg_add_str		PathChPlc		EntryExpirationInterval $configfile
+	__hyd_cfg_add_str		PathChPlc		MaxMediumUtilizationForLC $configfile
+	__hyd_cfg_add_str		PathChPlc		LCThresholdForUnreachable $configfile
+	__hyd_cfg_add_str		PathChPlc		LCThresholdForReachable $configfile
+	__hyd_cfg_add_str		PathChPlc		HostPLCInterfaceSpeed $configfile
+
+        __hyd_cfg_nl_append '[TOPOLOGY]' $configfile
+	__hyd_cfg_add_str		Topology		ND_UPDATE_INTERVAL $configfile
+	__hyd_cfg_add_str		Topology		BD_UPDATE_INTERVAL $configfile
+	__hyd_cfg_add_str		Topology		HOLDING_TIME $configfile
+	__hyd_cfg_add_str		Topology		TIMER_LOW_BOUND $configfile
+	__hyd_cfg_add_str		Topology		TIMER_UPPER_BOUND $configfile
+	__hyd_cfg_add_str		Topology		MSGID_DELTA $configfile
+	__hyd_cfg_add_str		Topology		HA_AGING_INTERVAL $configfile
+	__hyd_cfg_add_str		Topology		ENABLE_TD3 $configfile
+	__hyd_cfg_add_str		Topology		ENABLE_BD_SPOOFING $configfile
+	__hyd_cfg_add_str		Topology		NOTIFICATION_THROTTLING_WINDOW $configfile
+	__hyd_cfg_add_str		Topology		PERIODIC_QUERY_INTERVAL $configfile
+	__hyd_cfg_add_str		Topology		ENABLE_NOTIFICATION_UNICAST $configfile
+
+	__hyd_cfg_nl_append '[PATHSELECT]' $configfile
+	__hyd_cfg_add_str		PathSelect		UpdateHDInterval $configfile
+	__hyd_cfg_add_str		PathSelect		LinkCapacityThreshold $configfile
+	__hyd_cfg_add_str		PathSelect		UDPInterfaceOrder $configfile
+	__hyd_cfg_add_str		PathSelect		NonUDPInterfaceOrder $configfile
+	__hyd_cfg_add_str		PathSelect		SerialflowIterations $configfile
+	__hyd_cfg_add_str		PathSelect		DeltaLCThreshold $configfile
+	__hyd_cfg_add_str		PathSelect		EnableBadLinkStatsSwitchFlow $configfile
+
+	__hyd_cfg_nl_append '[HSPECEST]' $configfile
+	__hyd_cfg_add_str		HSPECEst		UpdateHSPECInterval $configfile
+	__hyd_cfg_add_str		HSPECEst		NotificationThresholdLimit $configfile
+	__hyd_cfg_add_str		HSPECEst		NotificationThresholdPercentage $configfile
+	__hyd_cfg_add_str		HSPECEst		AlphaNumerator $configfile
+	__hyd_cfg_add_str		HSPECEst		AlphaDenominator $configfile
+	__hyd_cfg_add_str		HSPECEst		LocalFlowRateThreshold $configfile
+	__hyd_cfg_add_str		HSPECEst		LocalFlowRatioThreshold $configfile
+	__hyd_cfg_add_str		HSPECEst		MaxHActiveEntries $configfile
+
+	__hyd_cfg_nl_append '[LOGSETTINGS]' $configfile
+	__hyd_cfg_add_str		LogSettings		EnableLog $configfile
+	__hyd_cfg_add_str		LogSettings		LogRestartIntervalSec $configfile
+	__hyd_cfg_add_str		LogSettings		LogPCSummaryIntervalSec $configfile
+	__hyd_cfg_add_str		LogSettings		LogServerIP $configfile
+	__hyd_cfg_add_str		LogSettings		LogServerPort $configfile
+	__hyd_cfg_add_str		LogSettings		EnableLogPCW2 $configfile
+	__hyd_cfg_add_str		LogSettings		EnableLogPCW5 $configfile
+	__hyd_cfg_add_str               LogSettings             EnableLogPCW6 $configfile
+	__hyd_cfg_add_str		LogSettings		EnableLogPCP $configfile
+	__hyd_cfg_add_str		LogSettings		EnableLogTD $configfile
+	__hyd_cfg_add_str		LogSettings		EnableLogHE $configfile
+	__hyd_cfg_add_str		LogSettings		EnableLogPS $configfile
+	__hyd_cfg_add_str		LogSettings		LogHEThreshold1 $configfile
+	__hyd_cfg_add_str		LogSettings		LogHEThreshold2 $configfile
+
+	__hyd_cfg_nl_append '[IEEE1905]' $configfile
+	__hyd_cfg_add_str		IEEE1905Settings	StrictIEEE1905Mode $configfile
+	__hyd_cfg_add_str		IEEE1905Settings	GenerateLLDP $configfile
+	__hyd_cfg_add_str		IEEE1905Settings	AvoidDupRenew $configfile
+	__hyd_cfg_add_str		IEEE1905Settings	AvoidDupTopologyNotification $configfile
+	__hyd_cfg_add_str		IEEE1905Settings	MapVersionEnabled $configfile
+
+	__hyd_cfg_nl_append '[HCP]' $configfile
+	__hyd_cfg_add_str		HCPSettings		V1Compat $configfile
+
+	__hyd_cfg_nl_append '[WLAN]' $configfile
+	__hyd_cfg_add_str		Wlan			WlanCheckFreqInterval $configfile
+	__hyd_cfg_add_str		Wlan			WlanALDNLNumOverride $configfile
+	__hyd_cfg_add_str		Wlan			WlanALDMulticast $configfile
+
+	__hyd_cfg_nl_append '[MAP]' $configfile
+	__hyd_cfg_add_str		MultiAP         EnableController $configfile
+	__hyd_cfg_add_str		MultiAP         EnableAgent $configfile
+	__hyd_cfg_add_str		MultiAP         EnableSigmaDUT $configfile
+	__hyd_cfg_add_str		MultiAP         MapVersion $configfile
+	__hyd_cfg_add_str		MultiAP         EnableIEEE1905Assist $configfile
+	__hyd_cfg_add_str		MultiAP         ClientAssocCtrlTimeoutSec $configfile
+	__hyd_cfg_add_str		MultiAP         ClientAssocCtrlTimeoutUsec $configfile
+	__hyd_cfg_add_str		MultiAP         ShortBlacklistTimeSec $configfile
+	__hyd_cfg_add_str		MultiAP         AlwaysClearBlacklists $configfile
+	__hyd_cfg_add_str		MultiAP         ClientSteerTimeoutSec $configfile
+	__hyd_cfg_add_str		MultiAP         ClientSteerTimeoutUsec $configfile
+	__hyd_cfg_add_str		MultiAP         MetricsReportingInterval $configfile
+	__hyd_cfg_add_str		MultiAP         RSSIHysteresis_W2 $configfile
+	__hyd_cfg_add_str		MultiAP         RSSIHysteresis_W5 $configfile
+	__hyd_cfg_add_str		MultiAP         RSSIHysteresis_W6 $configfile
+	__hyd_cfg_add_str		MultiAP         LoadBalancingInterval $configfile
+	__hyd_cfg_add_str		MultiAP         EnableChannelSelection $configfile
+	__hyd_cfg_add_str		MultiAP         MinPreferredChannelIndex $configfile
+	__hyd_cfg_add_str		MultiAP         MaxPreferredChannelIndex $configfile
+	__hyd_cfg_add_str		MultiAP         EnableTopologyOpt $configfile
+	__hyd_cfg_add_str		MultiAP         TopologyOptNewAgentDelay $configfile
+	__hyd_cfg_add_str		MultiAP         TopologyOptDelAgentDelay $configfile
+	__hyd_cfg_add_str		MultiAP         TopologyOptCollectionTime $configfile
+	__hyd_cfg_add_str		MultiAP         TopologyOptActivityMonitoringSecs $configfile
+	__hyd_cfg_add_str		MultiAP         TopologyOptMinIncreasePercentage $configfile
+	__hyd_cfg_add_str		MultiAP         TopologyOptAllowActiveSteer $configfile
+	__hyd_cfg_add_str		MultiAP         TopologyOptMaxIdleWaitSecs $configfile
+	__hyd_cfg_add_str		MultiAP         TopologyOptSettlingTime $configfile
+	__hyd_cfg_add_str		MultiAP         BackhaulSteeringRspSendTimeout $configfile
+	__hyd_cfg_add_str		MultiAP         UnassocMetricsRspWaitTimeSec $configfile
+	__hyd_cfg_add_str		MultiAP         UnassocMetricsRspMsgTimeout $configfile
+	__hyd_cfg_add_str		MultiAP         CBSDwellSplitMSec $configfile
+	__hyd_cfg_add_str		MultiAP         CBSDelaySec $configfile
+	__hyd_cfg_add_str		MultiAP         CBSStateResetSec $configfile
+	__hyd_cfg_add_str		MultiAP         BkScanIntervalMin $configfile
+	__hyd_cfg_add_str		MultiAP         EnableCronBasedBkScan $configfile
+	__hyd_cfg_add_str		MultiAP         UseCBSRankForHomeChan $configfile
+	__hyd_cfg_add_str		MultiAP         EnableChanPrefQuery $configfile
+	__hyd_cfg_add_str		MultiAP         ChannelSelectionOnGlobalPref $configfile
+	__hyd_cfg_add_str		MultiAP         ChannelSelectionDelaySec $configfile
+	__hyd_cfg_add_str		MultiAP         ChanSupervisionMinDelaySec $configfile
+	__hyd_cfg_add_str		MultiAP         ChanSupervisionMaxDelaySec $configfile
+	__hyd_cfg_add_str		MultiAP         ChanSupervisionMaxAttempts $configfile
+	__hyd_cfg_add_str		MultiAP         ChanSupervisionIntervalSec $configfile
+	__hyd_cfg_add_str		MultiAP         ChanSupervisionTolerate40MHzCoexRulesOn24GHz $configfile
+	__hyd_cfg_add_str		MultiAP         ControllerChanSelection160MHz $configfile
+	__hyd_cfg_add_str		MultiAP         AgentChanSelection160MHz $configfile
+	__hyd_cfg_add_str		MultiAP         ControllerChanSelection40MHzOn2G $configfile
+	__hyd_cfg_add_str		MultiAP         AgentChanSelection40MHzOn2G $configfile
+	__hyd_cfg_add_str		MultiAP         ChanSelectionMinIncPercent $configfile
+	__hyd_cfg_add_str		MultiAP         AgentChanMismatchCheckInterval $configfile
+	__hyd_cfg_add_str		MultiAP         UnassocRSSIAgeLimitSec $configfile
+	__hyd_cfg_add_str		MultiAP         UnassocPeriodicQueryTimeSec $configfile
+	__hyd_cfg_add_str		MultiAP         UnassocActiveClientTimeoutSec $configfile
+	__hyd_cfg_add_str		MultiAP         UnassocMetricsDriverPollingTime $configfile
+	__hyd_cfg_add_str		MultiAP         EnableBootOnlyScan $configfile
+	__hyd_cfg_add_str		MultiAP         ChanScanIntervalMin $configfile
+	__hyd_cfg_add_str		MultiAP         MapR1R2MixNotSupported $configfile
+	__hyd_cfg_add_str		MultiAP         MapPFCompliant $configfile
+	__hyd_cfg_add_str		MultiAP         NumberOfVLANSupported $configfile
+	__hyd_cfg_add_str		MultiAP         Map2TrafficSepEnabled $configfile
+	__hyd_cfg_add_str		MultiAP         Map8021QPCP $configfile
+	__hyd_cfg_add_str		MultiAP         FronthaulSSIDPrimary $configfile
+	__hyd_cfg_add_str		MultiAP         AdditionalFH $configfile
+	__hyd_cfg_add_str		MultiAP         VlanIDNwPrimary $configfile
+	__hyd_cfg_add_str		MultiAP         FronthaulSSIDNwOne $configfile
+	__hyd_cfg_add_str		MultiAP         VlanIDNwOne $configfile
+	__hyd_cfg_add_str		MultiAP         FronthaulSSIDNwTwo $configfile
+	__hyd_cfg_add_str		MultiAP         VlanIDNwTwo $configfile
+	__hyd_cfg_add_str		MultiAP         FronthaulSSIDNwThree $configfile
+	__hyd_cfg_add_str		MultiAP         VlanIDNwThree $configfile
+	__hyd_cfg_add_str		MultiAP         VlanNetworkPrimary $configfile
+	__hyd_cfg_add_str		MultiAP         CombinedR1R2Backhaul $configfile
+	__hyd_cfg_add_str		MultiAP         EnableChannelScanRequest $configfile
+	__hyd_cfg_add_str		MultiAP         EnableRptIndependentScan $configfile
+	__hyd_cfg_add_str		MultiAP         UseCACResultForChanSelection $configfile
+	__hyd_cfg_add_str		MultiAP         fallback_freq_5GH $configfile
+	__hyd_cfg_add_str		MultiAP         fallback_freq_5GL $configfile
+	__hyd_cfg_add_str		MultiAP         EnableZeroBss $configfile
+	__hyd_cfg_add_str		MultiAP         BasicCap2G $configfile
+	__hyd_cfg_add_str		MultiAP         BasicCap5G $configfile
+	__hyd_cfg_add_str		MultiAP         EnableQCapability $configfile
+	__hyd_cfg_add_str		MultiAP         Enable1905Security $configfile
+	__hyd_cfg_add_str		MAPSPSettings    EnableSP $configfile
+	__hyd_cfg_add_str		MAPSPSettings    EnableEnhancedSP $configfile
+	__hyd_cfg_add_str		MAPSPSettings    MaxSPRules $configfile
+	__hyd_cfg_add_str		MAPSPSettings    EnableQSP $configfile
+	__hyd_cfg_add_str		MAPSPSettings    SPRulesConfPath $configfile
+	__hyd_cfg_add_str		MAPInventorySettings    SerialNumber $configfile
+	__hyd_cfg_add_str		MAPInventorySettings    ExecutionEnvironment $configfile
+	__hyd_cfg_add_str		MAPInventorySettings    ChipsetVendor $configfile
+	__hyd_cfg_add_str		MAPInventorySettings    SoftwareVersion $configfile
+
+	# Update the root user's crontab for any periodic actions
+	__hyd_manage_cron
+
+	# The following parameters are taken from the LBD config.
+	config_load 'lbd'
+	__hyd_cfg_add_str_new_key		Offload         MUOverloadThreshold_W2 ChanUtilSteeringThreshold_W2 $configfile
+	__hyd_cfg_add_str_new_key		Offload         MUOverloadThreshold_W5 ChanUtilSteeringThreshold_W5 $configfile
+	__hyd_cfg_add_str_new_key               Offload         MUOverloadThreshold_W6 ChanUtilSteeringThreshold_W6 $configfile
+	__hyd_cfg_add_str_new_key		Offload         MUOverloadThreshold_W2 ChanUtilReportingThreshold_W2 $configfile
+	__hyd_cfg_add_str_new_key		Offload         MUOverloadThreshold_W5 ChanUtilReportingThreshold_W5 $configfile
+	__hyd_cfg_add_str_new_key               Offload         MUOverloadThreshold_W6 ChanUtilReportingThreshold_W6 $configfile
+	__hyd_cfg_add_str_new_key		APSteer         LowRSSIAPSteerThreshold_SIG RSSISteeringThreshold_W2 $configfile
+	__hyd_cfg_add_str_new_key		APSteer         LowRSSIAPSteerThreshold_SIG RSSISteeringThreshold_W5 $configfile
+	__hyd_cfg_add_str_new_key               APSteer         LowRSSIAPSteerThreshold_SIG RSSISteeringThreshold_W6 $configfile
+	__hyd_cfg_add_str_new_key		APSteer         LowRSSIAPSteerThreshold_SIG RSSIReportingThreshold_W2 $configfile
+	__hyd_cfg_add_str_new_key		APSteer         LowRSSIAPSteerThreshold_SIG RSSIReportingThreshold_W5 $configfile
+	__hyd_cfg_add_str_new_key               APSteer         LowRSSIAPSteerThreshold_SIG RSSIReportingThreshold_W6 $configfile
+	__hyd_cfg_add_str_new_key		ActiveSteer     TxRateXingThreshold_UG  HighTxRateXingThreshold $configfile
+	__hyd_cfg_add_str_new_key		ActiveSteer		TxRateXingThreshold_DG  LowTxRateXingThreshold $configfile
+	__hyd_cfg_add_str_new_key		ActiveSteer		RateRSSIXingThreshold_UG HighRateRSSIXingThreshold $configfile
+	__hyd_cfg_add_str_new_key		ActiveSteer		RateRSSIXingThreshold_DG LowRateRSSIXingThreshold $configfile
+	__hyd_cfg_add_str_new_key		IdleSteer		RSSISteeringPoint_UG InactRSSIXingHighThreshold $configfile
+	__hyd_cfg_add_str_new_key		IdleSteer		RSSISteeringPoint_DG InactRSSIXingLowThreshold $configfile
+
+	__hyd_cfg_nl_append '[MC]' $configfile
+	__hyd_cfg_add_str		mc		AlwaysFloodUpdate $configfile
+
+	config_load 'hyd'  # in case loading whc clobbered any values
+	__hyd_cfg_nl_append '[STEERMSG]' $configfile
+	__hyd_cfg_add_str		SteerMsg		AvgUtilReqTimeout $configfile
+	__hyd_cfg_add_str		SteerMsg		LoadBalancingCompleteTimeout $configfile
+	__hyd_cfg_add_str		SteerMsg		RspTimeout $configfile
+
+	__hyd_cfg_nl_append '[MONITOR]' $configfile
+	__hyd_cfg_add_str       Monitor         MonitorTimer $configfile
+	__hyd_cfg_add_str       Monitor         MonitorResponseTimeout $configfile
+
+	__hyd_cfg_nl_append '[DEBUG]' $configfile
+	__hyd_cfg_add_str       Debug           EnableMemDebug $configfile
+	__hyd_cfg_add_str       Debug           MemDbgReportInterval $configfile
+	__hyd_cfg_add_str       Debug           MemDbgWriteLogToFile $configfile
+	__hyd_cfg_add_str       Debug           MemDbgAuditingOnly $configfile
+	__hyd_cfg_add_str       Debug           MemDbgFreedMemCount $configfile
+	__hyd_cfg_add_str       Debug           MemDbgDisableModule $configfile
+	__hyd_cfg_add_str       Debug           MemDbgEnableFilter $configfile
+	__hyd_cfg_add_str       Debug           MemDbgFilterFileName $configfile
+
+	config_load 'hyd'
+	__hyd_cfg_nl_append '[MAPCONF]' $configfile
+	__hyd_cfg_add_str		MAPConfigSettings    EnableConfigService $configfile
+	__hyd_cfg_add_str		MAPConfigSettings    MapConfigDumpToFile $configfile
+	__hyd_cfg_add_str		MAPConfigSettings    RoleController $configfile
+	__hyd_cfg_add_str		MAPConfigSettings    RoleAgent $configfile
+	__hyd_cfg_add_str		MAPConfigSettings    MapOnboardingType $configfile
+	__hyd_cfg_add_str		MAPConfigSettings    DebugLevel $configfile
+	__hyd_cfg_add_str		MAPConfigSettings    MapEProfile $configfile
+	__hyd_cfg_add_str		MAPConfigSettings    MapMaxBss $configfile
+	__hyd_cfg_add_str		MAPConfigSettings    bridge1 $configfile
+	__hyd_cfg_add_str		MAPConfigSettings    bridge2 $configfile
+	__hyd_cfg_add_str		MAPConfigSettings    bridge3 $configfile
+	__hyd_cfg_add_str		MAPConfigSettings    backhaul $configfile
+	__hyd_cfg_add_str		MAPConfigSettings    DPPConfiguratorKey $configfile
+	__hyd_cfg_add_str		MAPConfigSettings    DPPMyBootstrap $configfile
+
+	# If the configuration exists, go ahead and append it. Even if the Wi-Fi load
+	# balancing feature is disabled, there should be no harm in doing so.
+	if [ -f /etc/config/lbd ]; then
+		local default_mode enable_ctrl enable_agent multi_ap_mode
+		__hyd_get_default_mode default_mode
+		config_get mode config 'Mode' "$default_mode"
+		config_get enable_ctrl MultiAP 'EnableController' '0'
+		config_get enable_agent MultiAP 'EnableAgent' '0'
+
+		if [ "$enable_ctrl" -gt 0 ] || [ "$enable_agent" -gt 0 ]; then
+			multi_ap_mode='map'
+		else
+			multi_ap_mode='son'
+		fi
+
+		__hyd_cfg_nl_append '[WLB]' "$configfile"
+		__hyd_cfg_add_str		config		DisableSteering "$configfile"
+
+		if [ "${mode}" = 'HYCLIENT' ];then
+			# running in multi-AP RE mode
+			lbd_create_config "$configfile" $multi_ap_mode 0 "$br_name"
+		else
+			# running in multi-AP CAP mode
+			lbd_create_config "$configfile" $multi_ap_mode 1 "$br_name"
+		fi
+	fi
+}
+
+__hyd_set_wlan_mcastenhance() {
+	hyfi_get_wlan_ifaces $ieee1905managed_bridge wlan_ifaces wlan_included_ifaces
+	[ -z "$wlan_ifaces" ] && return
+	hyfi_strip_list $wlan_ifaces wlan_ifaces
+
+	for wlan_iface in ${wlan_ifaces}; do
+		if [ -z $HYD_CFG80211 ]; then
+			iwpriv $wlan_iface mcastenhance $1
+		else
+			cfg80211tool $wlan_iface mcastenhance $1
+		fi
+	done
+
+	if [ -n "$ieee1905managed_bridge2" ];then
+		hyfi_get_wlan_ifaces $ieee1905managed_bridge2 wlan_ifaces2 wlan_included_ifaces2
+		[ -z "$wlan_ifaces2" ] && return
+
+		hyfi_strip_list $wlan_ifaces2 wlan_ifaces2
+		for wlan_iface in ${wlan_ifaces}; do
+			if [ -z $HYD_CFG80211 ]; then
+				iwpriv $wlan_iface2 mcastenhance $1
+			else
+				cfg80211tool $wlan_iface2 mcastenhance $1
+			fi
+		done
+	fi
+}
+
+__hyd_reset_cpu_limit_value_for_legacy_boards() {
+	config_load 'hyd'
+	local tcp2g udp2g tcp5g udp5g tcp6g udp6g limit name
+
+	config_get tcp2g PathChWlan 'CPULimitedTCPThroughput_W2' '0'
+	[ "$tcp2g" -gt 0 ] && return 1
+
+	config_get udp2g PathChWlan 'CPULimitedUDPThroughput_W2' '0'
+	[ "$udp2g" -gt 0 ] && return 1
+
+	config_get tcp5g PathChWlan 'CPULimitedTCPThroughput_W5' '0'
+	[ "$tcp5g" -gt 0 ] && return 1
+
+	config_get tcp6g PathChWlan 'CPULimitedTCPThroughput_W6' '0'
+	[ "$tcp6g" -gt 0 ] && return 1
+
+	config_get udp5g PathChWlan 'CPULimitedUDPThroughput_W5' '0'
+	[ "$udp5g" -gt 0 ] && return 1
+
+	config_get udp6g PathChWlan 'CPULimitedUDPThroughput_W6' '0'
+	[ "$udp6g" -gt 0 ] && return 1
+
+	[ -f /tmp/sysinfo/board_name ] || return 1
+	name=`cat /tmp/sysinfo/board_name`
+
+	case "$name" in
+	reh132 | aph126 | aph128 | db120)
+		limit=160
+		;;
+	aph131)
+		limit=300
+		;;
+	*)
+		# Max u_int32.  If the throughput should be limited for a particular
+		# board, add an entry for it above.
+		limit=4294967295
+		;;
+	esac
+
+	uci set hyd.PathChWlan.CPULimitedTCPThroughput_W2=$limit
+	uci set hyd.PathChWlan.CPULimitedUDPThroughput_W2=$limit
+	uci set hyd.PathChWlan.CPULimitedTCPThroughput_W5=$limit
+	uci set hyd.PathChWlan.CPULimitedUDPThroughput_W5=$limit
+	uci set hyd.PathChWlan.CPULimitedTCPThroughput_W6=$limit
+	uci set hyd.PathChWlan.CPULimitedUDPThroughput_W6=$limit
+	uci commit hyd
+}
+
+# this block of code is for checking if all the configured interfaces are ready.
+# a global flag is used for passing the rechecking resule
+is_iface_all_up=1
+__hyd_check_one_iface_ready() {
+	local config=$1
+	local network mode disabled device dev_disabled
+
+	config_get iface "$config" ifname
+	config_get network "$config" network
+	config_get mode "$config" mode
+	config_get disabled "$config" disabled '0'
+
+	# Skip this interface if disabled at the device level
+	config_get device "$config" device
+	config_get dev_disabled "$device" disabled '0'
+	if [ "$dev_disabled" -gt 0 ]; then
+		return
+	fi
+
+	if [ "$2" = "$network" -o "$network" = "backhaul" ]; then
+		if [ "$disabled" -eq 0 ]; then
+			# interface name may not be available
+			if [ -z "$iface" ]; then
+				is_iface_all_up=0
+			else
+				# interface may not be up
+				iwconfig $iface 2>/dev/null |grep $iface
+				retval=$?
+				if [ $retval -ne 0 ] ;then
+					is_iface_all_up=0
+				fi
+			fi
+		fi
+	fi
+}
+
+__hyd_check_interfaces_ready () {
+	config_load wireless
+
+	is_iface_all_up=1
+	config_foreach __hyd_check_one_iface_ready wifi-iface $1
+	if [ $is_iface_all_up -ne 1 ] ;then
+		hyfi_echo hyd "some interface(s) are not ready."
+	fi
+}
+
+__hyd_wlan_set_sp_iface () {
+	local config=$1
+	config_get ifname "$config" ifname
+	if [ -n "$ifname" ];then
+		cfg80211tool "$ifname" hlos_tidoverride $2
+	fi
+}
+
+__hyd_wlan_set_sp() {
+	config_load wireless
+	config_foreach __hyd_wlan_set_sp_iface wifi-iface $1
+}
+
+start_service() {
+	hyfi_lock  # Ensure only single config file generator
+	config_load 'hyd'
+	config_get_bool enabled config 'Enable' '0'
+	config_get sigmaEnabled MultiAP 'EnableSigmaDUT' '0'
+	config_get enable_sp MAPSPSettings 'EnableSP' '0'
+	if [ "$sigmaEnabled" -eq 1 ]; then
+		RESPAWN_RETRIES=0
+		sleep 3
+	fi
+	local hyd_rcd_enabled=`ls /etc/rc.d/S${START}hyd 2> /dev/null`
+
+	[ "$enabled" -gt 0 -a -n "$hyd_rcd_enabled" ] || {
+		hyfi_unlock
+		return 1
+	}
+
+	# Get the IEEE1905.1 managed bridge name and attach
+	hyfi_get_ieee1905_managed_iface ieee1905managed_bridge ieee1905managed_bridge2
+
+	# Make sure the bridge is attached first
+	if ! hyctl show br-$ieee1905managed_bridge | grep -q br-$ieee1905managed_bridge ; then
+		hyfi_error "hyd" "Bridge is not attached; start hyfi-bridging first"
+		hyfi_unlock
+		return 1
+	fi
+
+	if [ -n "$ieee1905managed_bridge2" ] ;then
+	    if  ! hyctl show br-$ieee1905managed_bridge2 | grep -q br-$ieee1905managed_bridge2 ; then
+		hyfi_error "hyd" "Bridge is not attached; start hyfi-bridging first"
+		hyfi_unlock
+		return 1
+	    fi
+	fi
+	# Enable wlan Hy-Fi multicast enhancement
+	__hyd_set_wlan_mcastenhance 5
+
+	# Enable sp
+	if [ "$enable_sp" -eq 1 ]; then
+		__hyd_wlan_set_sp 1
+	fi
+
+	# By default disable retag of DSCP when multicast enhancement is enabled.
+	hyctl setmc br-$ieee1905managed_bridge retag disable
+
+	if [ -n "$ieee1905managed_bridge2" ] ;then
+	    hyctl setmc br-$ieee1905managed_bridge2 retag disable
+	fi
+
+	__hyd_reset_cpu_limit_value_for_legacy_boards
+
+	# check for all the interfaces for private network ready
+	__hyd_check_interfaces_ready ${ieee1905managed_bridge}
+	if [ $is_iface_all_up -eq 0 ]; then
+		hyfi_error "hyd" "Private network interface checking failed"
+		hyfi_unlock
+		return 1
+	fi
+
+	if [ -n "$ieee1905managed_bridge2" ] ;then
+		# check for all the interfaces for guest network ready
+		__hyd_check_interfaces_ready ${ieee1905managed_bridge2}
+		if [ $is_iface_all_up -eq 0 ]; then
+			hyfi_error "hyd" "Guest network interface checking failed" >> /tmp/bill.log
+			hyfi_unlock
+			return 1
+		fi
+	fi
+
+	# Create temp configuration files, then rename and then start hyd
+	hyd_temp_file=${HYD_CONFIG_FILE_PREFIX}-${ieee1905managed_bridge}-tmp.conf
+	hyd_temp_file2=${HYD_CONFIG_FILE_PREFIX}-${ieee1905managed_bridge2}-tmp.conf
+	__hyd_create_config $ieee1905managed_bridge ${hyd_temp_file}
+
+	if [ -n "$ieee1905managed_bridge2" ] ;then
+	    __hyd_create_config $ieee1905managed_bridge2 ${hyd_temp_file2}
+	fi
+
+	hyfi_echo hyd "starting daemon"
+
+	procd_open_instance
+	procd_set_param command ${SERVICE_PATH} -d -C "$HYD_CONFIG_FILE_PREFIX-${ieee1905managed_bridge}.conf" -P 7777 $HYD_CFG80211
+
+	if [ "$sigmaEnabled" -eq 1 ]; then
+	    procd_set_param env DBG_APPEND_FILE_PATH=/tmp/hyd.log
+        fi
+
+	# Uncomment this line to send the logs to a file
+	#procd_set_param env DBG_APPEND_FILE_PATH=/tmp/hyd.log
+
+	# Uncomment this line to enable core dumps
+	#procd_set_param limits core="unlimited"  # If you need to set ulimit for your process
+
+	procd_set_param respawn ${RESPAWN_THRESHOLD} ${RESPAWN_TIMEOUT} ${RESPAWN_RETRIES}
+	procd_add_reload_trigger "hyd" "lbd"
+	procd_close_instance
+
+	if [ -n "$ieee1905managed_bridge2" ] ;then
+	    hyfi_echo hyd "starting daemon ${ieee1905managed_bridge2}"
+	    procd_open_instance
+	    procd_set_param command ${SERVICE_PATH} -d -C "$HYD_CONFIG_FILE_PREFIX-${ieee1905managed_bridge2}.conf" -P 8888 $HYD_CFG80211
+	    procd_set_param respawn ${RESPAWN_THRESHOLD} ${RESPAWN_TIMEOUT} ${RESPAWN_RETRIES}
+	    procd_add_reload_trigger "hyd" "lbd"
+	    procd_close_instance
+	fi
+
+	# rename the temp files to final files
+	mv ${hyd_temp_file}  ${HYD_CONFIG_FILE_PREFIX}-${ieee1905managed_bridge}.conf
+	if [ -n "$ieee1905managed_bridge2" ] ;then
+		mv ${hyd_temp_file2} ${HYD_CONFIG_FILE_PREFIX}-${ieee1905managed_bridge2}.conf
+        fi
+
+	hyfi_unlock
+}
+
+stop_service() {
+	hyfi_get_ieee1905_managed_iface ieee1905managed_bridge ieee1905managed_bridge2
+	config_get enable_sp MAPSPSettings 'EnableSP' '0'
+
+	# Disable wlan Hy-Fi multicast enhancement
+	__hyd_set_wlan_mcastenhance 2
+
+	# Disble sp
+	if [ "$enable_sp" -eq 1 ]; then
+		__hyd_wlan_set_sp 0
+	fi
+}

@@ -1,0 +1,61 @@
+#!/bin/sh /etc/rc.common
+#Copyright (c) 2018 Qualcomm Technologies, Inc.
+#
+#All Rights Reserved.
+#Confidential and Proprietary - Qualcomm Technologies, Inc.
+#
+START=19
+STOP=91
+SERVICE_PID_FILE=/var/run/cnss_diag.pid
+SERVICE_DAEMONIZE=1
+SERVICE_WRITE_PID=1
+
+start () {
+	config_load cnss_diag
+	local ARGS
+
+	local enable
+	config_get_bool enable global enable 0
+	[ "${enable}" -gt 0 ] || return
+
+	local firmware console qxdm syslog file
+	local firmware_file host_file
+
+	config_get firmware_file global firmware_file
+	config_get host_file global host_file
+	echo "LOG_PATH_FLAG = 3" >/var/run/cnss_diag.conf
+	echo "REAL_TIME_WRITE = 1" >>/var/run/cnss_diag.conf
+	echo "MAX_LOG_FILE_SIZE = 50" >>/var/run/cnss_diag.conf
+	echo "MAX_ARCHIVES = 0" >>/var/run/cnss_diag.conf
+	echo "MAX_PKTLOG_ARCHIVES = 0" >>/var/run/cnss_diag.conf
+	echo "AVAILABLE_MEMORY_THRESHOLD = 0" >>/var/run/cnss_diag.conf
+	echo "MAX_LOG_BUFFER = 2" >>/var/run/cnss_diag.conf
+	echo "HOST_LOG_FILE_CUSTOM_LOC = ${host_file}" >>/var/run/cnss_diag.conf
+	echo "FIRMWARE_LOG_FILE_CUSTOM_LOC = ${firmware_file}" >>/var/run/cnss_diag.conf
+	echo "MAX_PKTLOG_BUFFER = 10" >>/var/run/cnss_diag.conf
+	echo "ENABLE_FLUSH_LOG = 1" >>/var/run/cnss_diag.conf
+
+
+	config_get console global console
+	if [ "${console}" -ne "0" ]; then
+		append ARGS "-c "
+	fi
+	config_get file global file
+	if [ "${file}" -ne "0" ]; then
+		append ARGS "-f "
+	fi
+	config_get qxdm global qxdm
+	if [ "${qxdm}" -eq "1" ]; then
+		append ARGS "-q "
+	fi
+	config_get syslog global syslog
+	if [ "${syslog}" -eq "1" ]; then
+		append ARGS "-S "
+	fi
+
+	service_start /usr/sbin/cnss_diag ${ARGS} -s -b 0 -m /var/run/cnss_diag.conf
+}
+
+stop() {
+	service_stop /usr/sbin/cnss_diag
+}

@@ -1,0 +1,192 @@
+#!/bin/sh
+
+. /lib/functions.sh
+. /lib/functions/network.sh
+. /lib/functions/hyfi-network.sh
+. /lib/functions/hyfi-debug.sh
+. /lib/functions/hyfi-iface.sh
+
+###############################################################################
+#
+#      Script for starting HyFi features
+#      Usage: start_hyfi PORTID      
+#
+###############################################################################
+CPU_PORTID=0
+CPU_PORT_FOUND=0
+CPU_PORT_TAGGED=0
+
+if [ -n "${1}" ]; then
+	PLC_PORTID=${1}
+else
+	echo "No PLC PORTID"
+	exit 1
+fi
+
+#Delete PLC ports
+vhyfid_del_plc_ports() {
+	config_get vlan "$1" "vlan"
+
+	if [ "${vlan}" = ${PLC_VLANID} ];then
+		uci delete network.$1
+	fi
+}
+
+# remove the PLC port from the lan vlan
+vhyfid_update_lan_ports() {
+	config_get vlan "$1" "vlan"
+
+	if [ "${vlan}" = ${LAN_VLANID} ];then
+		config_get ports "$1" "ports"
+
+		for port in $ports; do
+			[ "${CPU_PORT_TAGGED}" -eq 0 ] && [ "${port}" = ${CPU_PORTID} ] && port="${port}t"
+			[ "${port}" != "${PLC_PORTID}" ] && new_ports=${new_ports}${new_ports:+" "}${port}
+		done;
+
+		uci set network.$1.ports="${new_ports}"
+	fi
+}
+
+# find out the cpu port id
+vhyfid_get_cpu_portid() {
+	config_get vlan "$1" "vlan"
+	config_get ports "$1" "ports"
+	config_get device "$1" "device"
+
+	if [ "${vlan}" = ${LAN_VLANID} ];then
+		CPU_PORT_FOUND=1
+		SWITCH_NAME=${device}
+		CPU_PORTID=`echo ${ports} |sed 's/t//g' |cut -f 1 -d " "`
+
+		tagged=`echo ${ports} |grep t`
+		[ -n "${tagged}" ] && CPU_PORT_TAGGED=1
+	fi
+}
+
+__enable_vaps() {
+        local config="$1"
+        local mode network disabled
+
+        config_get mode "$config" mode
+        config_get network "$config" network
+        config_get disabled "$config" disabled
+
+        if [ "$2" = "$network" -a "sta" = "$mode" -a "1" = "$disabled" ]; then
+                uci_set wireless $config disabled 0
+        fi
+}
+
+__router_mode() {
+	local wan_iface
+
+	config_load network
+	config_get wan_iface wan ifname
+
+	[ -n "$wan_iface" ] && return 1
+
+	return 0
+}
+
+#Enable WLAN STAs which are disabled
+vhyfid_enable_wlan_stas() {
+	config_load acd
+	config_get_bool enabled config 'AutoConfigEnable' '0'
+
+	# If auto-configuration is enabled, let it manage
+	[ "$enabled" -gt 0 ] && return
+
+	# No auto-config, check if this is a router.
+	# No need to enable STAs for router
+	__router_mode
+	[ "$?" -gt 0 ] && return
+
+	# No auto-config and not a router
+	# Assume that if there are STAs defined by
+	# the user, then they are needed to be on.
+        hyfi_get_ieee1905_managed_iface ieee1905managed
+
+        config_load wireless
+        config_foreach __enable_vaps wifi-iface $ieee1905managed
+        uci commit wireless
+}
+
+LANIF=`uci get vhyfid.config.LanInterfaceName`
+LAN_VLANID=`uci get vhyfid.config.LanVlanID`
+PLC_VLANID=`uci get vhyfid.config.PLCVlanID`
+PLCIF=${LANIF}${LANIF:+"."}${PLC_VLANID}
+SWITCH_NAME=${LANIF}
+
+config_load network
+config_foreach vhyfid_get_cpu_portid switch_vlan
+[ "${CPU_PORT_FOUND}" -gt 0 ] || return 1
+config_foreach vhyfid_del_plc_ports switch_vlan
+config_foreach vhyfid_update_lan_ports switch_vlan
+
+# Enable Wi-Fi STAs for Hy-Fi connectivity
+vhyfid_enable_wlan_stas
+
+#Add new vlan for PLC device port
+uci add network switch_vlan
+uci set network.@switch_vlan[-1].device="${SWITCH_NAME}"
+uci set network.@switch_vlan[-1].vlan="${PLC_VLANID}"
+uci set network.@switch_vlan[-1].ports="${CPU_PORTID}""t ""${PLC_PORTID}"
+
+#Add PLC interface to lan interface
+VIFS=`uci get network.lan.ifname`
+if [ "${CPU_PORT_TAGGED}" -eq 0 ];then
+	for vif in ${VIFS}; do
+		[ "${vif}" != ${LANIF} ] && new_vifs=${new_vifs}${new_vifs:+" "}${vif}
+	done;
+	VIFS=${new_vifs}
+fi
+LAN_VLANIF=${LANIF}${LANIF:+"."}${LAN_VLANID}
+FOUND=`echo ${VIFS} |grep ${LAN_VLANIF}`
+[ -z "${FOUND}" ] && VIFS="${VIFS}"" ${LAN_VLANIF}"
+FOUND=`echo ${VIFS} |grep ${PLCIF}`
+[ -z "${FOUND}" ] && VIFS="${VIFS}"" ${PLCIF}"
+uci set network.lan.ifname="${VIFS}"
+
+#Read PLC IF speed
+READ_SW_SCRIPT=`uci get vhyfid.config.ReadSwitchScriptPath`
+PLC_IF_SPEED=`${READ_SW_SCRIPT} ${LANIF} 2 ${PLC_PORTID}`
+
+#Enable HyFi features
+local hyd_enabled
+local hyd_control
+
+hyd_enabled=`uci get hyd.config.Enable`
+hyd_control=`uci get hyd.config.Control`
+
+if [ "$hyd_enabled" = "0" -a "$hyd_control" = "manual" ]; then
+	# correct the configuration
+	uci set hyd.config.Control=auto
+	hyd_control=auto
+fi
+
+uci set hyd.config.Enable=1
+uci set hyd.PathChPlc.HostPLCInterfaceSpeed=${PLC_IF_SPEED}
+uci set plc.config.PlcIfname=${PLCIF}
+uci commit
+
+if [ "$hyd_control" = "auto" ]; then
+	hyfi_echo vhyfid "starting Hy-Fi"
+else
+	hyfi_echo vhyfid "configuring PLC interface"
+fi
+
+/etc/init.d/hyd stop
+/etc/init.d/wsplcd stop
+hyfi_network_sync
+/etc/init.d/acd stop
+hyfi_network_restart
+/etc/init.d/plc reload
+/etc/init.d/acd restart
+if [ "$hyd_enabled" -gt 0 ]; then
+	/etc/init.d/hyd restart
+else
+	/etc/init.d/hyd start
+fi
+
+# exit successfully
+exit 0
