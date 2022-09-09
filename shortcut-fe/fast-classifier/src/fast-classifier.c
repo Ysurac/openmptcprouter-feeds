@@ -1828,7 +1828,7 @@ static int __init fast_classifier_init(void)
 	 * Register a notifier hook to get fast notifications of expired connections.
 	 */
 #ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-	result = nf_conntrack_register_chain_notifier(&init_net, &fast_classifier_conntrack_notifier);
+	result = nf_conntrack_register_notifier(&init_net, &fast_classifier_conntrack_notifier);
 #else
 	result = nf_conntrack_register_notifier(&init_net, &fast_classifier_conntrack_notifier);
 #endif
@@ -1908,7 +1908,7 @@ exit6:
 exit5:
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 #ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-	nf_conntrack_unregister_chain_notifier(&init_net, &fast_classifier_conntrack_notifier);
+	nf_conntrack_unregister_notifier(&init_net, &fast_classifier_conntrack_notifier);
 #else
 	nf_conntrack_unregister_notifier(&init_net, &fast_classifier_conntrack_notifier);
 #endif
