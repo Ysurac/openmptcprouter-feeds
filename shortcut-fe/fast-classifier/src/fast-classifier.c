@@ -1980,7 +1980,7 @@ static void __exit fast_classifier_exit(void)
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 #ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-	nf_conntrack_unregister_chain_notifier(&init_net, &fast_classifier_conntrack_notifier);
+	nf_conntrack_unregister_notifier(&init_net, &fast_classifier_conntrack_notifier);
 #else
 	nf_conntrack_unregister_notifier(&init_net, &fast_classifier_conntrack_notifier);
 #endif
