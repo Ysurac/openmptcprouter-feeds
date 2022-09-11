@@ -17,7 +17,7 @@ wireguard_restart() {
 }
 
 _getremoteip() {
-	[ "$(uci -q get openmptcprouter.$1.master)" = "1" ] && {
+	[ "$(uci -q get openmptcprouter.$1.current)" = "1" ] && {
 		remoteip=$(uci -q get openmptcprouter.$1.ip | awk '{print $1}')
 		wg_server_key=$(uci -q get openmptcprouter.$1.wgkey)
 	}
@@ -27,6 +27,10 @@ mptcp_over_vpn() {
 	local interface=$1
 	[ -n "$(uci show firewall.zone_wan.network | grep $interface)" ] && nbintf=$(($nbintf+1))
 	if [ "$(uci -q get openmptcprouter.${interface}.multipathvpn)" = "1" ]; then
+		remoteip=""
+		config_load openmptcprouter
+		config_foreach _getremoteip server
+
 		if [ "$(uci -q get network.${interface})" = "" ]; then
 			uci -q batch <<-EOF >/dev/null
 				delete openmptcprouter.${interface}
@@ -47,12 +51,9 @@ mptcp_over_vpn() {
 			return
 		fi
 		nbintfvpn=$(($nbintfvpn+1))
-		if [ "$(uci -q get network.ovpn${interface})" = "" ] && [ "$vpn" = "openvpn" ]; then
+		if ([ "$(uci -q get network.ovpn${interface})" = "" ] || [ "$(uci -q get openvpn.${interface}.remote)" != "${remoteip}" ]) && [ "$vpn" = "openvpn" ]; then
 			logger -t "MPTCPoverVPN" "Enable MPTCP over VPN for ${interface}"
 			id=$(uci -q get network.${interface}.metric)
-			remoteip=""
-			config_load openmptcprouter
-			config_foreach _getremoteip server
 			localip=$(ubus call network.interface.$interface status | jsonfilter -e '@["ipv4-address"][0].address' | tr -d "\n")
 			[ -z "$(uci -q get openmptcprouter.ovpn${interface}.multipath)" ] && multipath=$(uci -q get network.${interface}.multipath)
 			[ -n "$(uci -q get openmptcprouter.ovpn${interface}.multipath)" ] && multipath=$(uci -q get openmptcprouter.ovpn${interface}.multipath)
@@ -103,7 +104,7 @@ mptcp_over_vpn() {
 					add_list firewall.zone_vpn.network="ovpn${interface}"
 					commit firewall
 				EOF
-		elif [ "$(uci -q get network.wg${interface})" = "" ] && [ "$vpn" = "wireguard" ]; then
+		elif ([ "$(uci -q get network.wg${interface})" = "" ] || [ "$(uci -q get network.@wireguard_wg${interface}[0].endpoint_host)" != "$remoteip" ]) && [ "$vpn" = "wireguard" ]; then
 			logger -t "MPTCPoverVPN" "Enable MPTCP over VPN for ${interface}"
 			id=$(uci -q get network.${interface}.metric)
 			remoteip=""
@@ -247,9 +248,14 @@ start_service()
 				commit glorytun-udp
 			EOF
 		fi
-	elif ([ "$(uci -q get glorytun.vpn.host)" = "10.255.250.1" ] || [ "$(uci -q get glorytun.vpn.host)" = "10.255.247.1" ]) && [ "$nbintf" != "$nbintfvpn" ]; then
 		uci -q batch <<-EOF >/dev/null
-			delete shadowsocks-libev.sss0.disabled
+			set shadowsocks-libev.ss_rules.server='mptcpovervpn'
+			set shadowsocks-libev.ss_rules.redir_tcp='all'
+		EOF
+	elif ([ "$(uci -q get glorytun.vpn.host)" = "10.255.250.1" ] || [ "$(uci -q get glorytun.vpn.host)" = "10.255.247.1" ] || [ "$(uci -q get shadowsocks-libev.ss_rules.server)" != "sss0" ]) && [ "$nbintf" != "$nbintfvpn" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set shadowsocks-libev.sss0.disabled='0'
+			set shadowsocks-libev.ss_rules.server='sss0'
 			set glorytun.vpn.host="$(uci -q get openmptcprouter.vps.ip | awk '{print $1}')"
 			set glorytun-udp.vpn.host="$(uci -q get openmptcprouter.vps.ip | awk '{print $1}')"
 			commit glorytun
@@ -265,7 +271,7 @@ start_service()
 				set shadowsocks-libev.mptcpovervpn.key="$(uci -q get shadowsocks-libev.sss0.key)"
 				set shadowsocks-libev.mptcpovervpn.method="$(uci -q get shadowsocks-libev.sss0.method)"
 				set shadowsocks-libev.mptcpovervpn.server="10.255.250.1"
-				delete shadowsocks-libev.mptcpovervpn.disabled
+				set shadowsocks-libev.mptcpovervpn.disabled='0'
 			EOF
 		else
 			uci -q batch <<-EOF >/dev/null
@@ -274,7 +280,7 @@ start_service()
 				set shadowsocks-libev.mptcpovervpn.key="$(uci -q get shadowsocks-libev.sss0.key)"
 				set shadowsocks-libev.mptcpovervpn.method="$(uci -q get shadowsocks-libev.sss0.method)"
 				set shadowsocks-libev.mptcpovervpn.server="10.255.247.1"
-				delete shadowsocks-libev.mptcpovervpn.disabled
+				set shadowsocks-libev.mptcpovervpn.disabled='0'
 			EOF
 		fi
 		for c in $(seq 1 $NBCPU); do
@@ -297,7 +303,7 @@ start_service()
 		uci -q batch <<-EOF >/dev/null
 			commit shadowsocks-libev
 		EOF
-		/etc/init.d/shadowsocks restart
+		/etc/init.d/shadowsocks-libev restart
 		/etc/init.d/openvpn restart
 	elif [ "$(uci -q get shadowsocks-libev.hivpn1)" != "" ]; then
 		for c in $(seq 1 $NBCPU); do
@@ -306,9 +312,10 @@ start_service()
 			EOF
 		done
 		uci -q batch <<-EOF >/dev/null
-			delete shadowsocks-libev.sss0.disabled
+			set shadowsocks-libev.sss0.disabled='0'
 		EOF
 		uci -q batch <<-EOF >/dev/null
+			set shadowsocks-libev.ss_rules.server='sss0'
 			delete shadowsocks-libev.mptcpovervpn
 			commit shadowsocks-libev
 		EOF

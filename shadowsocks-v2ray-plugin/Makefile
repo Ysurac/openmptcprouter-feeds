@@ -25,7 +25,7 @@ GO_PKG:=github.com/shadowsocks/v2ray-plugin
 PKG_USE_MIPS16:=0
 
 include $(INCLUDE_DIR)/package.mk
-include ../golang/golang-package.mk
+include $(TOPDIR)/feeds/openmptcprouter/golang/golang-package.mk
 
 define Package/v2ray-plugin
 	SECTION:=net

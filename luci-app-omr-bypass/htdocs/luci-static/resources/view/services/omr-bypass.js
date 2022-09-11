@@ -223,6 +223,9 @@ return L.view.extend({
 		o.noinactive = true;
 		o.nocreate    = true;
 
+		o = s.option(form.Flag, 'ndpi', _('Enable ndpi'));
+		o.default = o.enabled;
+
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
 
