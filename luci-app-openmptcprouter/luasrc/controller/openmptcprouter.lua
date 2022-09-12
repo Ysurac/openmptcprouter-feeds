@@ -634,6 +634,8 @@ function wizard_add()
 		ucic:set("unbound","ub_main","dns64","0")
 	
 	end
+	ucic:save("unbound")
+	ucic:commit("unbound")
 
 	-- Get Proxy set by default
 	local default_proxy = luci.http.formvalue("default_proxy") or "shadowsocks"
@@ -981,7 +983,7 @@ function wizard_add()
 		ucic:set("openvpn","omr","enabled",1)
 		ucic:set("network","omrvpn","proto","none")
 	else
-		ucic:set("openvpn","omr","enabled",0)
+		ucic:delete("openvpn","omr","enabled")
 	end
 	ucic:save("openvpn")
 	ucic:commit("openvpn")
@@ -1156,7 +1158,7 @@ function settings_add()
 	ucic:set("openmptcprouter","settings","shadowsocksudp",shadowsocksudp)
 
 	-- Enable/disable v2ray udp
-	local shadowsocksudp = luci.http.formvalue("v2rayudp") or "1"
+	local v2rayudp = luci.http.formvalue("v2rayudp") or "1"
 	ucic:set("v2ray","main_transparent_proxy","redirect_udp",v2rayudp)
 
 	-- Enable/disable nDPI
