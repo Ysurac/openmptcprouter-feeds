@@ -159,7 +159,7 @@ function set_status(type, message, loading, show_log) {
 
 function upgrade_check() {
     var current_version = data.release.version.toLowerCase();
-    var current_branch = current_version.split('.').slice(0, 2).join('.')
+    var current_branch = current_version.split('-')[0].split('.').slice(0, 2).join('.')
     var candidates = []
     hide("#status_box");
     hide("#server_div");
