@@ -181,6 +181,28 @@ start_service() {
 		rmmod fast_classifier 2>&1 >/dev/null
 	fi
 
+	if [ "$(uci -q get openmptcprouter.settings.sipalg)" = "0" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set firewall.zone_lan.auto_helper='0'
+			set firewall.zone_wan.auto_helper='0'
+			set firewall.zone_vpn.auto_helper='0'
+			commit firewall
+		EOF
+		rmmod nf_nat_sip 2>&1 >/dev/null
+		sleep 2
+		rmmod nf_conntrack_sip 2>&1 >/dev/null
+	else
+		uci -q batch <<-EOF >/dev/null
+			set firewall.zone_lan.auto_helper='1'
+			set firewall.zone_wan.auto_helper='1'
+			set firewall.zone_vpn.auto_helper='1'
+			commit firewall
+		EOF
+		modprobe -q nf_conntrack_sip 2>&1 >/dev/null
+		sleep 2
+		modprobe -q nf_nat_sip 2>&1 >/dev/null
+	fi
+
 	if [ "$(uci -q get rpcd.@rpcd[0].socket)" != "/var/run/ubus/ubus.sock" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set rpcd.@rpcd[0].socket='/var/run/ubus/ubus.sock'
