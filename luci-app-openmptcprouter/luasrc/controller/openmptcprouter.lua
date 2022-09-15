@@ -1158,8 +1158,10 @@ function settings_add()
 	ucic:set("openmptcprouter","settings","shadowsocksudp",shadowsocksudp)
 
 	-- Enable/disable v2ray udp
-	local v2rayudp = luci.http.formvalue("v2rayudp") or "1"
+	local v2rayudp = luci.http.formvalue("v2rayudp") or "0"
 	ucic:set("v2ray","main_transparent_proxy","redirect_udp",v2rayudp)
+	ucic:save("v2ray")
+	ucic:commit("v2ray")
 
 	-- Enable/disable nDPI
 	local ndpi = luci.http.formvalue("ndpi") or "1"
