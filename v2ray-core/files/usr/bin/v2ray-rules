@@ -122,7 +122,7 @@ v2r_rules_parse_args() {
 v2r_rules_flush() {
 	local setname
 
-	iptables-save --counters | grep -v v2r_ | iptables-restore -w --counters
+	iptables-save --counters 2>/dev/null | grep -v v2r_ | iptables-restore -w --counters
 	while ip rule del fwmark 1 lookup 100 2>/dev/null; do true; done
 	ip route flush table 100 || true
 	for setname in $(ipset -n list | grep "ssr_${rule}"); do
@@ -287,14 +287,14 @@ v2r_rules_fw_drop() {
 	fw3 -4 print 2>/dev/null | awk '/iptables/&&/zone_lan_forward/&&/tcp/&&/-t filter/&&/-j reject/ {for(i=6; i<=NF; i++) { printf "%s ",$i } print "\n" }' |
 	while IFS=$"\n" read -r c; do
 		fwrule=$(echo "$c" | sed 's/reject/REDIRECT --to-ports 65535/')
-		if [ -n "$fwrule" ] && [ -z "$(iptables-save | grep zone_lan_prerouting | grep '${fwrule}')" ]; then
+		if [ -n "$fwrule" ] && [ -z "$(iptables-save 2>/dev/null | grep zone_lan_prerouting | grep '${fwrule}')" ]; then
 			eval "iptables -w -t nat -A zone_lan_prerouting ${fwrule} 2>&1 >/dev/null"
 		fi
 	done
 	fw3 -4 print 2>/dev/null | awk '/iptables/&&/zone_lan_forward/&&/tcp/&&/-t filter/&&/-j drop/ {for(i=6; i<=NF; i++) { printf "%s ",$i } print "\n" }' |
 	while IFS=$"\n" read -r c; do
 		fwrule=$(echo "$c" | sed 's/drop/REDIRECT --to-ports 65535/')
-		if [ -n "$fwrule" ] && [ -z "$(iptables-save | grep zone_lan_prerouting | grep '${fwrule}')" ]; then
+		if [ -n "$fwrule" ] && [ -z "$(iptables-save 2>/dev/null | grep zone_lan_prerouting | grep '${fwrule}')" ]; then
 			eval "iptables -t nat -A zone_lan_prerouting ${fwrule} 2>&1 >/dev/null"
 		fi
 	done
