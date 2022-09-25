@@ -4,6 +4,13 @@
 name=$0
 basename="$(basename $0)"
 
+if [ -f /usr/sbin/iptables-legacy ]; then
+	IPTABLES="/usr/sbin/iptables-legacy"
+else
+	IPTABLES="/usr/sbin/iptables"
+fi
+
+
 _log() {
 	logger -p daemon.info -t "${basename}" "$@"
 }
@@ -75,7 +82,7 @@ while true; do
 			uci -q set openmptcprouter.omr.v2ray="up"
 			uci -q commit openmptcprouter.omr
 		}
-		if [ -z "$(iptables -w -t nat -L -n | grep v2r)" ]; then
+		if [ -z "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep v2r)" ]; then
 			_log "Reload V2Ray rules"
 			/etc/init.d/v2ray rules_up 2> /dev/null
 			_get_ip
@@ -86,7 +93,7 @@ while true; do
 		last=$((last + 1 ))
 		[ -z "$nocontact" ] && nocontact="$host" || nocontact="$nocontact, $host"
 		[ "${last}" -ge "${retry}" ] && {
-			if [ -n "$(iptables -w -t nat -L -n | grep v2r)" ]; then
+			if [ -n "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep v2r)" ]; then
 				_log "V2Ray is down (can't contact via http ${nocontact})"
 				uci -q set openmptcprouter.omr.v2ray="down"
 				uci -q commit openmptcprouter.omr
