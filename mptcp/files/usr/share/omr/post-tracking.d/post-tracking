@@ -1692,7 +1692,7 @@ if [ -n "$(logread | tail -n 2 | grep 'Ring expansion failed')" ]; then
 	echo 1 > /sys/bus/pci/rescan
 fi
 
-if [ -f /etc/init.d/omr-bypass ] && [ "$(iptables-save | grep omr-bypass)" = "" ] && [ "$(pgrep -f omr-bypass)" = "" ]; then
+if [ -f /etc/init.d/omr-bypass ] && (([ -f /usr/sbin/iptables-legacy-save ] && [ "$(iptables-legacy-save 2>/dev/null | grep omr-bypass)" = "" ]) || [ "$(iptables-save 2>/dev/null | grep omr-bypass)" = "" ]) && [ "$(pgrep -f omr-bypass)" = "" ]; then
 	_log "Can't find omr-bypass rules, restart omr-bypass..."
 	/etc/init.d/omr-bypass 2>&1 >/dev/null
 	sleep 5
@@ -1703,6 +1703,10 @@ if [ -f /etc/backup/installed_packages.txt ] && [ -n "$(grep overlay /etc/backup
 	/etc/init.d/sysupgrade restart 2>&1 >/dev/null
 fi
 
+if [ "$(pgrep openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep token_error=\'1\')" != "" ]; then
+	/etc/init.d/openmptcprouter-vps token >/dev/null 2>&1
+	sleep 5
+fi
 if [ "$(pgrep openmptcprouter-vps)" = "" ] && ([ "$(uci -q show openmptcprouter | grep get_config=\'1\')" != "" ] || [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" != "" ]); then
 	/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1
 	sleep 5
@@ -1713,7 +1717,7 @@ if [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.enabled)" = "1" ] && [ "$(uci -q
 	sleep 5
 fi
 
-#if [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && ([ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ] || [ -z "$(iptables-save | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ]); then
+#if [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && ([ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ] || (([ -f /usr/sbin/iptables-legacy-save ] && [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ]) || [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ])); then
 if [ "$(pgrep -f set_vps_firewall)" = "" ] && [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && [ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ]; then
 	check_server_fw() {
 		[ "$(uci -q get openmptcprouter.$1.set_firewall)" = "1" ] && {

@@ -6,9 +6,26 @@ START=99
 
 USE_PROCD=1
 
-EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key set_gre_tunnel"
+EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key set_gre_tunnel token"
 
 . /usr/lib/unbound/iptools.sh
+
+if [ -f /usr/sbin/iptables-legacy ]; then
+	IPTABLES="/usr/sbin/iptables-legacy"
+	IPTABLESRESTORE="/usr/sbin/iptables-legacy-restore"
+	IPTABLESSAVE="/usr/sbin/iptables-legacy-save"
+	IP6TABLES="/usr/sbin/ip6tables-legacy"
+	IP6TABLESRESTORE="/usr/sbin/ip6tables-legacy-restore"
+	IP6TABLESSAVE="/usr/sbin/ip6tables-legacy-save"
+else
+	IPTABLES="/usr/sbin/iptables"
+	IPTABLESRESTORE="/usr/sbin/iptables-restore"
+	IPTABLESSAVE="/usr/sbin/iptables-save"
+	IP6TABLES="/usr/sbin/ip6tables"
+	IP6TABLESRESTORE="/usr/sbin/ip6tables-restore"
+	IP6TABLESSAVE="/usr/sbin/ip6tables-save"
+fi
+
 
 _parse_result() {
 	result=$("echo $1 | jsonfilter -q -e '@.result'")
@@ -937,7 +954,7 @@ _vps_firewall_redirect_port() {
 						comment=""
 						[ -n "$src_dip" ] && {
 							comment=" to $src_dip"
-							iptables-save --counters | sed "s:-d $src_dip/32::g" | iptables-restore -w
+							$IPTABLESSAVE --counters | sed "s:-d $src_dip/32::g" | $IPTABLESRESTORE -w
 						}
 						[ -n "$src_ip" ] && comment=" from $src_ip"
 						if [ "$target" = "ACCEPT" ]; then
@@ -1019,7 +1036,7 @@ _vps_firewall_redirect_port() {
 						comment=""
 						[ -n "$src_dip" ] && {
 							comment=" to $src_dip"
-							iptables-save --counters | sed "s:-d $src_dip/32::g" | iptables-restore -w
+							$IPTABLESSAVE --counters | sed "s:-d $src_dip/32::g" | $IPTABLESRESTORE -w
 						}
 						[ -n "$src_ip" ] && comment=" from $src_ip"
 						checkfw=$(echo "$vpsfwlist" | grep "# OMR $username open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}")
@@ -1791,7 +1808,7 @@ _count_server() {
 	serversnb=$((serversnb+1))
 }
 
-_config_service() {
+_get_token() {
 	servername=$1
 	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
@@ -1799,7 +1816,6 @@ _config_service() {
 	[ -z "$(uci -q get openmptcprouter.${servername}.ip)" ] && return
 	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
 	token=""
-	vps_config=""
 	_login
 	[ -z "$token" ] && {
 		reason=""
@@ -1840,8 +1856,15 @@ _config_service() {
 		uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
-		return
 	}
+	echo $token
+}
+
+_config_service() {
+	servername=$1
+	vps_config=""
+	token=$(_get_token $servername)
+	[ -z "$token" ] && return
 	error=0
 	if [ -n "$serial" ]; then
 		[ -z "$vps_config" ] && vps_config=$(_get_json "config?serial=${serial}")
@@ -1956,6 +1979,11 @@ _set_pihole_server() {
 set_pihole() {
 	config_load openmptcprouter
 	config_foreach _set_pihole_server server
+}
+
+token() {
+	config_load openmptcprouter
+	config_foreach _get_token server
 }
 
 start_service() {
