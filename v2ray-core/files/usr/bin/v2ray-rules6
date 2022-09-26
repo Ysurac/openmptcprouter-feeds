@@ -9,6 +9,18 @@
 # See /LICENSE for more information.
 #
 
+if [ -f /usr/sbin/iptables-legacy ]; then
+	IP6TABLES="/usr/sbin/ip6tables-legacy"
+	IP6TABLESRESTORE="/usr/sbin/ip6tables-legacy-restore"
+	IP6TABLESSAVE="/usr/sbin/ip6tables-legacy-save"
+else
+	IP6TABLES="/usr/sbin/ip6tables"
+	IP6TABLESRESTORE="/usr/sbin/ip6tables-restore"
+	IP6TABLESSAVE="/usr/sbin/ip6tables-save"
+fi
+
+
+
 v2ray_rules6_usage() {
 	cat >&2 <<EOF
 Usage: v2ray-rules6 [options]
@@ -95,7 +107,7 @@ v2ray_rules6_parse_args() {
 		__errmsg "Requires at least -l or -L option"
 		return 1
 	fi
-	if [ -n "$o_dst_forward_recentrst" ] && ! ip6tables -w -m recent -h >/dev/null; then
+	if [ -n "$o_dst_forward_recentrst" ] && ! $IP6TABLES -w -m recent -h >/dev/null; then
 		__errmsg "Please install ip6tables-mod-conntrack-extra with opkg"
 		return 1
 	fi
@@ -105,7 +117,7 @@ v2ray_rules6_parse_args() {
 v2ray_rules6_flush() {
 	local setname
 
-	ip6tables-save --counters | grep -v v2r6_ | ip6tables-restore -w --counters
+	$IP6TABLESSAVE --counters 2>/dev/null | grep -v v2r6_ | $IP6TABLESRESTORE -w --counters
 	while ip -f inet6 rule del fwmark 1 lookup 100 2>/dev/null; do true; done
 	ip -f inet6 route flush table 100 || true
 	for setname in $(ipset -n list | grep "ssr6_${rule}"); do
@@ -149,7 +161,7 @@ v2ray_rules6_iptchains_init() {
 }
 
 v2ray_rules6_iptchains_init_mark() {
-	ip6tables-restore -w --noflush <<-EOF
+	$IP6TABLESRESTORE -w --noflush <<-EOF
 		*mangle
 		-A PREROUTING -m set --match-set ss_rules6_dst_bypass_all dst -j MARK --set-mark 0x6539
 		COMMIT
@@ -172,7 +184,7 @@ v2ray_rules6_iptchains_init_tcp() {
 	esac
 
 #	echo "tcp mangle"
-#	ip6tables-restore -w --noflush <<-EOF
+#	$IP6TABLESRESTORE -w --noflush <<-EOF
 #		*mangle
 #		:v2r6_${rule}_local_out -
 #		-I OUTPUT 1 -p tcp -j v2r6_${rule}_local_out
@@ -232,7 +244,7 @@ v2ray_rules6_iptchains_init_() {
 		forward) dst_default_target=v2r6_${rule}_forward ;;
 		bypass|*) dst_default_target=RETURN ;;
 	esac
-	sed -e '/^\s*$/d' -e 's/^\s\+//' <<-EOF | ip6tables-restore -w --noflush
+	sed -e '/^\s*$/d' -e 's/^\s\+//' <<-EOF | $IP6TABLESRESTORE -w --noflush
 		*$table
 		:v2r6_${rule}_pre_src -
 		:v2r6_${rule}_src -
@@ -279,14 +291,14 @@ v2ray_rules6_fw_drop() {
 	while IFS=$"\n" read -r c; do
 		fwrule=$(echo "$c" | sed 's/reject/REDIRECT --to-ports 65535/')
 		if [ -n "$fwrule" ] && [ -z "$(iptables-save | grep zone_lan_prerouting | grep '${fwrule}')" ]; then
-			eval "ip6tables -w -t nat -A zone_lan_prerouting ${fwrule} 2>&1 >/dev/null"
+			eval "$IP6TABLES -w -t nat -A zone_lan_prerouting ${fwrule} 2>&1 >/dev/null"
 		fi
 	done
 	fw3 -6 print 2>/dev/null | awk '/iptables/&&/zone_lan_forward/&&/tcp/&&/-t filter/&&/-j drop/ {for(i=6; i<=NF; i++) { printf "%s ",$i } print "\n" }' |
 	while IFS=$"\n" read -r c; do
 		fwrule=$(echo "$c" | sed 's/drop/REDIRECT --to-ports 65535/')
 		if [ -n "$fwrule" ] && [ -z "$(iptables-save | grep zone_lan_prerouting | grep '${fwrule}')" ]; then
-			eval "ip6tables -t nat -A zone_lan_prerouting ${fwrule} 2>&1 >/dev/null"
+			eval "$IP6TABLES -t nat -A zone_lan_prerouting ${fwrule} 2>&1 >/dev/null"
 		fi
 	done
 }

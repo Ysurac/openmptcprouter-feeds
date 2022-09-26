@@ -4,6 +4,16 @@
 name=$0
 basename="$(basename $0)"
 
+if [ -f /usr/sbin/iptables-legacy ]; then
+	IPTABLES="/usr/sbin/iptables-legacy"
+	IPTABLESAVE="/usr/sbin/iptables-legacy-save"
+else
+	IPTABLES="/usr/sbin/iptables"
+	IPTABLESAVE="/usr/sbin/iptables-save"
+fi
+
+
+
 _log() {
 	logger -p daemon.info -t "${basename}" "$@"
 }
@@ -76,7 +86,7 @@ while true; do
 			uci -q set openmptcprouter.omr.ss_${server}="up"
 			uci -q commit openmptcprouter.omr
 		}
-		if [ -z "$(iptables-save | grep :ssr)" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.disabled)" != "1" ]; then
+		if [ -z "$($IPTABLESSAVE 2>/dev/null | grep :ssr)" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.disabled)" != "1" ]; then
 			_log "Reload Shadowsocks rules"
 			/etc/init.d/shadowsocks-libev rules_up 2> /dev/null
 			_get_ip
@@ -87,7 +97,7 @@ while true; do
 		last=$((last + 1 ))
 		[ -z "$nocontact" ] && nocontact="$host" || nocontact="$nocontact, $host"
 		[ "${last}" -ge "${retry}" ] && {
-			if [ -n "$(iptables -w -t nat -L -n | grep ssr)" ]; then
+			if [ -n "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep ssr)" ]; then
 				_log "Shadowsocks ${server} is down (can't contact via http ${nocontact})"
 				uci -q set openmptcprouter.omr.ss_${server}="down"
 				uci -q commit openmptcprouter.omr

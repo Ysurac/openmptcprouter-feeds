@@ -9,6 +9,17 @@
 # See /LICENSE for more information.
 #
 
+if [ -f /usr/sbin/iptables-legacy ]; then
+	IPTABLES="/usr/sbin/iptables-legacy"
+	IPTABLESRESTORE="/usr/sbin/iptables-legacy-restore"
+	IPTABLESSAVE="/usr/sbin/iptables-legacy-save"
+else
+	IPTABLES="/usr/sbin/iptables"
+	IPTABLESRESTORE="/usr/sbin/iptables-restore"
+	IPTABLESSAVE="/usr/sbin/iptables-save"
+fi
+
+
 ss_rules_usage() {
 	cat >&2 <<EOF
 Usage: ss-rules [options]
@@ -112,7 +123,7 @@ ss_rules_parse_args() {
 		__errmsg "Requires at least -l or -L option"
 		return 1
 	fi
-	if [ -n "$o_dst_forward_recentrst" ] && ! iptables -w -m recent -h >/dev/null; then
+	if [ -n "$o_dst_forward_recentrst" ] && ! $IPTABLES -w -m recent -h >/dev/null; then
 		__errmsg "Please install iptables-mod-conntrack-extra with opkg"
 		return 1
 	fi
@@ -122,7 +133,7 @@ ss_rules_parse_args() {
 ss_rules_flush() {
 	local setname
 
-	iptables-save --counters | grep -v ssr_ | iptables-restore -w --counters
+	$IPTABLESSAVE --counters 2>/dev/null | grep -v ssr_ | $IPTABLESRESTORE -w --counters
 	while ip rule del fwmark 1 lookup 100 2>/dev/null; do true; done
 	ip route flush table 100 || true
 	for setname in $(ipset -n list | grep "ssr_${rule}"); do
@@ -166,8 +177,8 @@ ss_rules_iptchains_init() {
 }
 
 ss_rules_iptchains_init_mark() {
-	if [ "$(iptables -w -t mangle -L PREROUTING | grep ss_rules_dst_bypass_all)" = "" ]; then
-		iptables-restore -w --noflush <<-EOF
+	if [ "$($IPTABLES -w -t mangle -L PREROUTING | grep ss_rules_dst_bypass_all)" = "" ]; then
+		$IPTABLESRESTORE -w --noflush <<-EOF
 			*mangle
 			-A PREROUTING -m set --match-set ss_rules_dst_bypass_all dst -j MARK --set-mark 0x539
 			COMMIT
@@ -187,8 +198,8 @@ ss_rules_iptchains_init_tcp() {
 		forward) local_target=ssr_${rule}_forward ;;
 		bypass|*) return 0;;
 	esac
-	if [ "$(iptables-save | grep ssr_${rule}_local_out | grep ssr_${rule}_dst_bypass)" = "" ]; then
-		iptables-restore -w --noflush <<-EOF
+	if [ "$($IPTABLESSAVE 2>/dev/null | grep ssr_${rule}_local_out | grep ssr_${rule}_dst_bypass)" = "" ]; then
+		$IPTABLESRESTORE -w --noflush <<-EOF
 			*nat
 			:ssr_${rule}_local_out -
 			-I OUTPUT 1 -p tcp -j ssr_${rule}_local_out
@@ -244,7 +255,7 @@ ss_rules_iptchains_init_() {
 		forward) dst_default_target=ssr_${rule}_forward ;;
 		bypass|*) dst_default_target=RETURN ;;
 	esac
-	sed -e '/^\s*$/d' -e 's/^\s\+//' <<-EOF | iptables-restore -w --noflush
+	sed -e '/^\s*$/d' -e 's/^\s\+//' <<-EOF | $IPTABLESRESTORE -w --noflush
 		*$table
 		:ssr_${rule}_pre_src -
 		:ssr_${rule}_src -
