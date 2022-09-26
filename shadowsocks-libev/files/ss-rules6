@@ -9,6 +9,18 @@
 # See /LICENSE for more information.
 #
 
+if [ -f /usr/sbin/iptables-legacy ]; then
+	IP6TABLES="/usr/sbin/ip6tables-legacy"
+	IP6TABLESRESTORE="/usr/sbin/ip6tables-legacy-restore"
+	IP6TABLESSAVE="/usr/sbin/ip6tables-legacy-save"
+else
+	IP6TABLES="/usr/sbin/ip6tables"
+	IP6TABLESRESTORE="/usr/sbin/ip6tables-restore"
+	IP6TABLESSAVE="/usr/sbin/ip6tables-save"
+fi
+
+
+
 ss_rules6_usage() {
 	cat >&2 <<EOF
 Usage: ss-rules [options]
@@ -95,7 +107,7 @@ ss_rules6_parse_args() {
 		__errmsg "Requires at least -l or -L option"
 		return 1
 	fi
-	if [ -n "$o_dst_forward_recentrst" ] && ! ip6tables -w -m recent -h >/dev/null; then
+	if [ -n "$o_dst_forward_recentrst" ] && ! $IP6TABLES -w -m recent -h >/dev/null; then
 		__errmsg "Please install ip6tables-mod-conntrack-extra with opkg"
 		return 1
 	fi
@@ -105,7 +117,7 @@ ss_rules6_parse_args() {
 ss_rules6_flush() {
 	local setname
 
-	ip6tables-save --counters | grep -v ssr6_ | ip6tables-restore -w --counters
+	$IP6TABLESSAVE --counters 2>/dev/null | grep -v ssr6_ | $IP6TABLESRESTORE -w --counters
 	while ip -f inet6 rule del fwmark 1 lookup 100 2>/dev/null; do true; done
 	ip -f inet6 route flush table 100 || true
 	for setname in $(ipset -n list | grep "ssr6_${rule}"); do
@@ -149,8 +161,8 @@ ss_rules6_iptchains_init() {
 }
 
 ss_rules6_iptchains_init_mark() {
-	if [ "$(ip6tables -w -t mangle -L PREROUTING | grep ss_rules6_dst_bypass_all)" = "" ]; then
-		ip6tables-restore -w --noflush <<-EOF
+	if [ "$($IP6TABLES -w -t mangle -L PREROUTING | grep ss_rules6_dst_bypass_all)" = "" ]; then
+		$IP6TABLESRESTORE -w --noflush <<-EOF
 			*mangle
 			-A PREROUTING -m set --match-set ss_rules6_dst_bypass_all dst -j MARK --set-mark 0x6539
 			COMMIT
@@ -172,7 +184,7 @@ ss_rules6_iptchains_init_tcp() {
 		bypass|*) return 0;;
 	esac
 
-	ip6tables-restore -w --noflush <<-EOF
+	$IP6TABLESRESTORE -w --noflush <<-EOF
 		*nat
 		:ssr6_${rule}_local_out -
 		-I OUTPUT 1 -p tcp -j ssr6_${rule}_local_out
@@ -227,7 +239,7 @@ ss_rules6_iptchains_init_() {
 		forward) dst_default_target=ssr6_${rule}_forward ;;
 		bypass|*) dst_default_target=RETURN ;;
 	esac
-	sed -e '/^\s*$/d' -e 's/^\s\+//' <<-EOF | ip6tables-restore -w --noflush
+	sed -e '/^\s*$/d' -e 's/^\s\+//' <<-EOF | $IP6TABLESRESTORE -w --noflush
 		*$table
 		:ssr6_${rule}_pre_src -
 		:ssr6_${rule}_src -
