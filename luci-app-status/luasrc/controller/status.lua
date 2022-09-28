@@ -9,9 +9,9 @@ module("luci.controller.status", package.seeall)
 
 function index()
 	entry({"admin", "system", "status"}, alias("admin", "system", "status", "server"), _("Settings"), 1)
-	entry({"admin", "system", "status","server"}, template("status/server"),_('Settings'),1).leaf = true
+	-- entry({"admin", "system", "status","server"}, template("status/server"),_('Settings'),1).leaf = true
 	entry({"admin", "system", "status","status"}, template("status/wanstatus"),_('Status'),2).leaf = true
-	entry({"admin", "system", "status","server_add"}, post("server_add"))
+	-- entry({"admin", "system", "status","server_add"}, post("server_add"))
 	entry({"admin", "system", "status", "interfaces_status"}, call("interfaces_status")).leaf = true
 	entry({"admin", "system", "status", "multipath_bandwidth"}, call("multipath_bandwidth")).leaf = true
 	entry({"admin", "system", "status", "interface_bandwidth"}, call("interface_bandwidth")).leaf = true
