@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2019 sbilly <superli_1980@hotmail.com>
+# Copyright (C) 2019 suyuan <175338101@qqcom>
 #
 # This is free software, licensed under the MIT License.
 # See /LICENSE for more information.
@@ -8,18 +8,18 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=netmaker
-PKG_VERSION:=0.9.4
+PKG_VERSION:=0.16.0
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/gravitl/netmaker.git
-PKG_SOURCE_VERSION:=e9bce264719f88c30e252ecc754d08f422f4c080
-PKG_SOURCE_DATE:=20220117
+PKG_SOURCE_VERSION:=db3288782965a7d4713cf271c1277957749802d1
+PKG_SOURCE_DATE:=20220930
 PKG_MIRROR_HASH:=skip
 
 PKG_LICENSE:=MIT
 PKG_LICENSE_FILES:=LICENSE
-PKG_MAINTAINER:=sbilly <superli_1980@hotmail.com>
+PKG_MAINTAINER:=suyuan <175338101@qqcom>
 
 PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_PARALLEL:=1
@@ -31,7 +31,7 @@ GO_PKG_EXCLUDES:=excluded
 GO_PKG_LDFLAGS:=-s -w
 
 include $(INCLUDE_DIR)/package.mk
-include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
+include $(TOPDIR)/feeds/openmptcprouter/golang/golang-package.mk
 
 define Package/netmaker
 $(call Package/netmaker/Default)
@@ -45,7 +45,7 @@ define Package/netmaker/Default
   TITLE:=Netmaker for OpenWRT
   URL:=https://github.com/gravitl/netmaker
   DEPENDS:=$(GO_ARCH_DEPENDS)
-  MAINTAINER:=sbilly <superli_1980@hotmail.com>
+  MAINTAINER:=suyuan <175338101@qqcom>
 endef
 
 define Package/netmaker/Default/description
