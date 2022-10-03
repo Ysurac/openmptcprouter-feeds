@@ -44,9 +44,9 @@ if uname.release:sub(1,4) ~= "5.15" then
     o.rmempty = false
 end
 if uname.release:sub(1,4) ~= "5.15" then
-    o = s:option(Value, "mptcp_version", translate("Multipath TCP version"))
-    o.datatype = "uinteger"
-    o.rmempty = false
+    o = s:option(ListValue, "mptcp_version", translate("Multipath TCP version"))
+    o:value(0, translate("0"))
+    o:value(1, translate("1"))
     o.default = 0
 end
 o = s:option(ListValue, "congestion", translate("Congestion Control"),translate("Default is cubic"))
