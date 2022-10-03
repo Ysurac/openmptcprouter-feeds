@@ -8,25 +8,23 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=modemmanager
-PKG_SOURCE_VERSION:=1.18.12
-PKG_RELEASE:=$(AUTORELEASE)
+PKG_VERSION:=1.18.6
+PKG_RELEASE:=1
 
-PKG_SOURCE_PROTO:=git
-PKG_SOURCE_URL:=https://gitlab.freedesktop.org/mobile-broadband/ModemManager.git
-PKG_MIRROR_HASH:=5a32f90fc58345e2136f4196166a7a2b95a804a6b92adf1bfb5b7a1173a5b1a0
+PKG_SOURCE:=ModemManager-$(PKG_VERSION).tar.xz
+PKG_SOURCE_URL:=https://www.freedesktop.org/software/ModemManager
+PKG_HASH:=d4f804b31cf504239c5f1d4973c62095c00cba1ee9abb503718dac6d146a470a
+PKG_BUILD_DIR:=$(BUILD_DIR)/ModemManager-$(PKG_VERSION)
 
-PKG_MAINTAINER:=Nicholas Smith <nicholas@nbembedded.com>
+PKG_MAINTAINER:=Nicholas Smith <nicholas.smith@telcoantennas.com.au>
 PKG_LICENSE:=GPL-2.0-or-later
 PKG_LICENSE_FILES:=COPYING
 
-PKG_BUILD_DEPENDS:=glib2/host libxslt/host
+PKG_INSTALL:=1
+PKG_BUILD_PARALLEL:=1
 
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/nls.mk
-include $(INCLUDE_DIR)/meson.mk
-
-TARGET_CFLAGS += -ffunction-sections -fdata-sections -fno-merge-all-constants -fmerge-constants
-TARGET_LDFLAGS += -Wl,--gc-sections
 
 define Package/modemmanager/config
   source "$(SOURCE)/Config.in"
@@ -43,8 +41,7 @@ define Package/modemmanager
 	+dbus \
 	+ppp \
 	+MODEMMANAGER_WITH_MBIM:libmbim \
-	+MODEMMANAGER_WITH_QMI:libqmi \
-	+MODEMMANAGER_WITH_QRTR:libqrtr-glib
+	+MODEMMANAGER_WITH_QMI:libqmi
 endef
 
 define Package/modemmanager/description
@@ -53,21 +50,35 @@ define Package/modemmanager/description
   Select Utilities/usb-modeswitch if needed.
 endef
 
-MESON_ARGS += \
-	-Dudev=false \
-	-Dudevdir=/lib/udev \
-	-Dsystemdsystemunitdir=no \
-	-Dsystemd_suspend_resume=false \
-	-Dsystemd_journal=false \
-	-Dpolkit=no \
-	-Dintrospection=false \
-	-Dman=false \
-	-Dbash_completion=false \
-	-Db_lto=true \
-	-Dmbim=$(if $(CONFIG_MODEMMANAGER_WITH_MBIM),true,false) \
-	-Dqmi=$(if $(CONFIG_MODEMMANAGER_WITH_QMI),true,false) \
-	-Dqrtr=$(if $(CONFIG_MODEMMANAGER_WITH_QRTR),true,false) \
-	-Dat_command_via_dbus=$(if $(CONFIG_MODEMMANAGER_WITH_AT_COMMAND_VIA_DBUS),true,false)
+CONFIGURE_ARGS += \
+	--without-polkit \
+	--without-udev \
+	--without-systemdsystemunitdir \
+	--disable-rpath \
+	--disable-gtk-doc
+
+ifeq ($(CONFIG_MODEMMANAGER_WITH_AT_COMMAND_VIA_DBUS),y)
+  CONFIGURE_ARGS += --with-at-command-via-dbus
+endif
+
+ifdef CONFIG_MODEMMANAGER_WITH_MBIM
+  CONFIGURE_ARGS += --with-mbim
+else
+  CONFIGURE_ARGS += --without-mbim
+endif
+
+ifdef CONFIG_MODEMMANAGER_WITH_QMI
+  CONFIGURE_ARGS += --with-qmi
+else
+  CONFIGURE_ARGS += --without-qmi
+endif
+
+define Build/Prepare
+	$(call Build/Prepare/Default)
+	( cd "$(PKG_BUILD_DIR)"; \
+		printf "all:\ninstall:\n" >po/Makefile.in.in; \
+	)
+endef
 
 define Build/InstallDev
 	$(INSTALL_DIR) $(1)/usr/include/ModemManager
@@ -99,9 +110,6 @@ define Package/modemmanager/install
 	$(CP) $(PKG_INSTALL_DIR)/usr/lib/ModemManager/libmm-shared-*.so* $(1)/usr/lib/ModemManager
 	$(CP) $(PKG_INSTALL_DIR)/usr/lib/ModemManager/libmm-plugin-*.so* $(1)/usr/lib/ModemManager
 
-	$(INSTALL_DIR) $(1)/usr/lib/ModemManager/connection.d
-	$(INSTALL_BIN) ./files/10-report-down $(1)/usr/lib/ModemManager/connection.d
-
 	$(INSTALL_DIR) $(1)/etc/dbus-1/system.d
 	$(INSTALL_CONF) $(PKG_INSTALL_DIR)/etc/dbus-1/system.d/org.freedesktop.ModemManager1.conf $(1)/etc/dbus-1/system.d
 
@@ -111,9 +119,6 @@ define Package/modemmanager/install
 	$(INSTALL_DIR) $(1)/usr/share/ModemManager
 	$(INSTALL_DATA) $(PKG_INSTALL_DIR)/usr/share/ModemManager/*.conf $(1)/usr/share/ModemManager
 	$(INSTALL_DATA) ./files/modemmanager.common $(1)/usr/share/ModemManager
-
-	$(INSTALL_DIR) $(1)/usr/share/ModemManager/fcc-unlock.available.d
-	$(INSTALL_DATA) $(PKG_INSTALL_DIR)/usr/share/ModemManager/fcc-unlock.available.d/* $(1)/usr/share/ModemManager/fcc-unlock.available.d
 
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/modemmanager.init $(1)/etc/init.d/modemmanager
