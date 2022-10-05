@@ -1,0 +1,62 @@
+name: 'Build docker image'
+on: 
+  # Auto build on push to main branch
+  push:
+    paths-ignore:
+      - “README.md”
+      - ".gitignore"
+      - "LICENSE"
+    branches:
+      - main
+  # Auto build @ every day 6:00am
+  schedule:
+    - cron: '0 6 * * *'
+jobs:
+  openwrt-builder-ipk:
+    name: 'Build ipk for openwrt branches'
+    strategy:
+      matrix:
+        branch: ["openwrt-18.06", "openwrt-19.07", "openwrt-21.02", "master"]
+    runs-on: ubuntu-latest
+    # Use the Bash shell regardless whether the GitHub Actions runner is ubuntu-latest, macos-latest, or windows-latest
+    defaults:
+        run:
+          shell: bash
+    steps:
+    - run: echo "🎉 The job was automatically triggered by a ${{ github.event_name }} event."
+    - run: echo "🐧 This job is now running on a ${{ runner.os }} server hosted by GitHub!"
+    - run: echo "🔎 The name of your branch is ${{ github.ref }} and your repository is ${{ github.repository }}."
+    - run: echo "Building ${{ matrix.branch }} branch."
+
+    # Checkout the repository to the GitHub Actions runner
+    - name: 'Checkout the repository to the GitHub Actions runner'
+      uses: actions/checkout@v2
+
+    # Set up QEMU
+    - name: 'Set up QEMU'
+      uses: docker/setup-qemu-action@v1
+
+    # Login to DockerHub with username and token
+    - name: Login to DockerHub with username and token
+      uses: docker/login-action@v1
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    # Build image and push to DockerHub
+    - name: 'Build image DockerHub'
+      run: |
+        echo "Building ${{ matrix.branch }} branch."
+
+        # build ipk
+        docker run -t --rm -e OPENWRT_BRANCH="${{ matrix.branch }}" -v `pwd`:/src sbilly/openwrt-builder:latest /bin/bash /src/scripts/build_ipk.sh ${{ matrix.branch }}
+
+    # Upload release
+    - name: Upload binaries to release
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ secrets.TOKEN }}
+        file: bin/*.ipk
+        tag: ${{ github.ref }}
+        overwrite: true
+        file_glob: true
