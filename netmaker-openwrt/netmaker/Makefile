@@ -34,8 +34,6 @@ include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/openmptcprouter/golang/golang-package.mk
 
 define Package/netmaker
-$(call Package/netmaker/Default)
-$(call GoPackage/GoSubMenu)
   SECTION:=net
   CATEGORY:=Network
   SUBMENU:=VPN
@@ -56,7 +54,6 @@ endef
 
 define Package/netmaker/description
 $(call Package/netmaker/Default/description)
-
 This package contains the binaries.
 endef
 
