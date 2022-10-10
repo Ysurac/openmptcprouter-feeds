@@ -74,5 +74,3 @@ endef
 
 $(eval $(call GoBinPackage,netmaker))
 $(eval $(call BuildPackage,netmaker))
-
-
