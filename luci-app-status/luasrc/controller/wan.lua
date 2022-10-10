@@ -207,6 +207,18 @@ function wizard_add()
 			gostatus = false
 		end
 	end
+	-- Set wireless settings
+	local wifi_interfaces = luci.http.formvaluetable("wifi")
+	for wifi_intf, _ in pairs(wifi_interfaces) do
+		local channel = luci.http.formvalue("cbid.wifi.%s.channel" % wifi_intf) or ""
+		local name = luci.http.formvalue("cbid.wifi.%s.name" % wifi_intf) or ""
+		local key = luci.http.formvalue("cbid.wifi.%s.key" % wifi_intf) or ""
+		ucic:set("wireles",wifi_intf,"channel",channel)
+		ucic:set("wireles","default" .. wifi_intf,"ssid",name)
+		ucic:set("wireles","default" .. wifi_intf,"key",key)
+	end
+	ucic:save("wireless")
+	ucic:commit("wireless")
 
 	-- Set interfaces settings
 	local interfaces = luci.http.formvaluetable("intf")
