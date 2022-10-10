@@ -60,20 +60,6 @@ $(call Package/netmaker/Default/description)
 This package contains the binaries.
 endef
 
-define Package/netmaker-dev
-  TITLE+= (source files)
-  SECTION:=net
-  CATEGORY:=Network
-  SUBMENU:=VPN
-  PKGARCH:=all
-endef
-
-define Package/netmaker-dev/description
-$(call Package/netmaker/Default/description)
-
-This package provides the source files.
-endef
-
 define Package/netmaker/install
 	$(INSTALL_DIR) $(1)/etc/netclient/
 	$(INSTALL_DIR) $(1)/etc/netclient/config
@@ -89,5 +75,4 @@ endef
 $(eval $(call GoBinPackage,netmaker))
 $(eval $(call BuildPackage,netmaker))
 
-$(eval $(call GoSrcPackage,netmaker-dev))
-$(eval $(call BuildPackage,netmaker-dev))
+
