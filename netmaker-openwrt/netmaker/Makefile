@@ -8,12 +8,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=netmaker
-PKG_VERSION:=0.9.4
+PKG_VERSION:=0.16.1
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/gravitl/netmaker.git
-PKG_SOURCE_VERSION:=e9bce264719f88c30e252ecc754d08f422f4c080
+PKG_SOURCE_VERSION:=db3288782965a7d4713cf271c1277957749802d1
 PKG_SOURCE_DATE:=20220117
 PKG_MIRROR_HASH:=skip
 
@@ -31,7 +31,7 @@ GO_PKG_EXCLUDES:=excluded
 GO_PKG_LDFLAGS:=-s -w
 
 include $(INCLUDE_DIR)/package.mk
-include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
+include $(TOPDIR)/feeds/openmptcprouter/golang/golang-package.mk
 
 define Package/netmaker
 $(call Package/netmaker/Default)
