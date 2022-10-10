@@ -34,7 +34,6 @@ include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/openmptcprouter/golang/golang-package.mk
 
 define Package/netmaker
-  TITLE:=netmaker
   SECTION:=net
   CATEGORY:=Network
   SUBMENU:=VPN
