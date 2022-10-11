@@ -34,6 +34,8 @@ include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
 
 define Package/netmaker
+$(call Package/netmaker/Default)
+$(call GoPackage/GoSubMenu)
   SECTION:=net
   CATEGORY:=Network
   SUBMENU:=VPN
@@ -54,7 +56,22 @@ endef
 
 define Package/netmaker/description
 $(call Package/netmaker/Default/description)
+
 This package contains the binaries.
+endef
+
+define Package/netmaker-dev
+  TITLE+= (source files)
+  SECTION:=net
+  CATEGORY:=Network
+  SUBMENU:=VPN
+  PKGARCH:=all
+endef
+
+define Package/netmaker-dev/description
+$(call Package/netmaker/Default/description)
+
+This package provides the source files.
 endef
 
 define Package/netmaker/install
@@ -71,3 +88,6 @@ endef
 
 $(eval $(call GoBinPackage,netmaker))
 $(eval $(call BuildPackage,netmaker))
+
+$(eval $(call GoSrcPackage,netmaker-dev))
+$(eval $(call BuildPackage,netmaker-dev))
