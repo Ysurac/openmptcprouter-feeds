@@ -8,22 +8,13 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=netmaker
-<<<<<<< HEAD
-PKG_VERSION:=0.14.6
-=======
 PKG_VERSION:=0.9.4
->>>>>>> parent of de0375f3 (fixx)
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/gravitl/netmaker.git
-<<<<<<< HEAD
-PKG_SOURCE_VERSION:=604bd9be752ccbb72fe2078d56585c5aede2954a
-PKG_SOURCE_DATE:=20220725
-=======
 PKG_SOURCE_VERSION:=e9bce264719f88c30e252ecc754d08f422f4c080
 PKG_SOURCE_DATE:=20220117
->>>>>>> parent of de0375f3 (fixx)
 PKG_MIRROR_HASH:=skip
 
 PKG_LICENSE:=MIT
