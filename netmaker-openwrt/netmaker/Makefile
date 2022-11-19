@@ -31,7 +31,7 @@ GO_PKG_EXCLUDES:=excluded
 GO_PKG_LDFLAGS:=-s -w
 
 include $(INCLUDE_DIR)/package.mk
-include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
+include $(TOPDIR)/feeds/openmptcprouter/golang/golang-package.mk
 
 define Package/netmaker
 $(call Package/netmaker/Default)
