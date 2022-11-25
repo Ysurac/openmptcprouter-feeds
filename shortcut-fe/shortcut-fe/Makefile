@@ -81,9 +81,8 @@ ifneq ($(CONFIG_PACKAGE_kmod-shortcut-fe)$(CONFIG_PACKAGE_kmod-shortcut-fe-cm),)
 define Build/InstallDev
 	$(INSTALL_DIR) $(1)/usr/include
 	$(INSTALL_DIR) $(1)/usr/include/shortcut-fe
-	$(INSTALL_DIR) $(1)/usr/include/fast-classifier
 	$(CP) -rf $(PKG_BUILD_DIR)/sfe.h $(1)/usr/include/shortcut-fe
-	$(CP) -rf $(PKG_BUILD_DIR)/sfe.h $(1)/usr/include/fast-classifier
+	$(CP) -rf $(PKG_BUILD_DIR)/sfe.h $(1)/usr/include
 	$(CP) -rf $(PKG_BUILD_DIR)/sfe_backport.h $(1)/usr/include
 endef
 endif
