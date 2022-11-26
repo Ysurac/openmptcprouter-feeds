@@ -519,6 +519,14 @@ return view.extend({
 			so.value(ipv4, ipaddrs[ipv4] ? '%s (%s)'.format(ipv4, ipaddrs[ipv4]) : ipv4);
 		});
 
+		so = ss.options(form.value, 'gw', _('Gateway IPv4 Address'));
+		so.rmempty = true;
+		so.datatype = 'or(ip4addr,"ignore")';
+		Object.keys(hosts).forEach(function(mac) {
+			if (hosts[mac].ipv4)
+				so.value(hosts[mac].ipv4);
+		});
+
 		so = ss.option(form.Value, 'leasetime', _('Lease time'));
 		so.rmempty = true;
 
