@@ -213,9 +213,9 @@ function wizard_add()
 		local channel = luci.http.formvalue("cbid.wifi.%s.channel" % wifi_intf) or ""
 		local name = luci.http.formvalue("cbid.wifi.%s.name" % wifi_intf) or ""
 		local key = luci.http.formvalue("cbid.wifi.%s.key" % wifi_intf) or ""
-		ucic:set("wireles",wifi_intf,"channel",channel)
-		ucic:set("wireles","default_" .. wifi_intf,"ssid",name)
-		ucic:set("wireles","default_" .. wifi_intf,"key",key)
+		ucic:set("wireless",wifi_intf,"channel",channel)
+		ucic:set("wireless","default_" .. wifi_intf,"ssid",name)
+		ucic:set("wireless","default_" .. wifi_intf,"key",key)
 	end
 	ucic:save("wireless")
 	ucic:commit("wireless")
