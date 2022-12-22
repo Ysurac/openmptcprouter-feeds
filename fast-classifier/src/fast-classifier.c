@@ -36,9 +36,9 @@
 #include <linux/hashtable.h>
 #include <linux/version.h>
 
-#include "sfe_backport.h"
-#include "sfe.h"
-#include "sfe_cm.h"
+#include <sfe_backport.h>
+#include <sfe.h>
+#include <sfe_cm.h>
 #include "fast-classifier.h"
 
 typedef enum fast_classifier_exception {
@@ -451,6 +451,10 @@ static u32 fc_conn_hash(sfe_ip_addr_t *saddr, sfe_ip_addr_t *daddr,
  */
 static int fast_classifier_update_protocol(struct sfe_connection_create *p_sic, struct nf_conn *ct)
 {
+  #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+    struct net *net=NULL ;
+    struct nf_tcp_net *tn=NULL;
+	#endif
 	switch (p_sic->protocol) {
 	case IPPROTO_TCP:
 		p_sic->src_td_window_scale = ct->proto.tcp.seen[0].td_scale;
@@ -461,8 +465,14 @@ static int fast_classifier_update_protocol(struct sfe_connection_create *p_sic, 
 		p_sic->dest_td_max_window = ct->proto.tcp.seen[1].td_maxwin;
 		p_sic->dest_td_end = ct->proto.tcp.seen[1].td_end;
 		p_sic->dest_td_max_end = ct->proto.tcp.seen[1].td_maxend;
-
-		if (nf_ct_tcp_no_window_check
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+	net = nf_ct_net(ct);
+	tn = nf_tcp_pernet(net);
+	if ((tn&&tn->tcp_no_window_check)
+#else
+	if (nf_ct_tcp_no_window_check
+#endif
+	
 		    || (ct->proto.tcp.seen[0].flags & IP_CT_TCP_FLAG_BE_LIBERAL)
 		    || (ct->proto.tcp.seen[1].flags & IP_CT_TCP_FLAG_BE_LIBERAL)) {
 			p_sic->flags |= SFE_CREATE_FLAG_NO_SEQ_CHECK;
@@ -1744,8 +1754,11 @@ static int __init fast_classifier_init(void)
 {
 	struct fast_classifier *sc = &__sc;
 	int result = -1;
+#ifdef CONFIG_SFE_ECM
+	int (*fast_recv)(struct sk_buff *skb);
+#endif
 
-	printk(KERN_ALERT "fast-classifier (PBR safe v2.1.4a): starting up\n");
+	printk(KERN_ALERT "fast-classifier: starting up\n");
 	DEBUG_INFO("SFE CM init\n");
 
 	hash_init(fc_conn_ht);
@@ -1810,6 +1823,7 @@ static int __init fast_classifier_init(void)
 		goto exit3;
 	}
 
+#ifdef CONFIG_NF_CONNTRACK_EVENTS
 	/*
 	 * Register a notifier hook to get fast notifications of expired connections.
 	 */
@@ -1817,11 +1831,13 @@ static int __init fast_classifier_init(void)
 	result = nf_conntrack_register_chain_notifier(&init_net, &fast_classifier_conntrack_notifier);
 #else
 	result = nf_conntrack_register_notifier(&init_net, &fast_classifier_conntrack_notifier);
+#endif
 	if (result < 0) {
 		DEBUG_ERROR("can't register nf notifier hook: %d\n", result);
 		goto exit4;
 	}
 #endif
+
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0))
 	result = genl_register_family(&fast_classifier_gnl_family);
@@ -1865,7 +1881,16 @@ static int __init fast_classifier_init(void)
 	/*
 	 * Hook the receive path in the network stack.
 	 */
+#ifdef CONFIG_SFE_ECM
+	rcu_read_lock();
+	fast_recv = rcu_dereference(athrs_fast_nat_recv);
+	rcu_read_unlock();
+	if (!fast_recv) {
+		BUG_ON(athrs_fast_nat_recv);
+	}
+#else
 	BUG_ON(athrs_fast_nat_recv);
+#endif
 	RCU_INIT_POINTER(athrs_fast_nat_recv, fast_classifier_recv);
 
 	/*
@@ -1974,3 +1999,4 @@ module_exit(fast_classifier_exit)
 
 MODULE_DESCRIPTION("Shortcut Forwarding Engine - Connection Manager");
 MODULE_LICENSE("Dual BSD/GPL");
+
