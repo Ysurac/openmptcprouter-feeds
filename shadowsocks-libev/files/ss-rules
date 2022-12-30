@@ -133,7 +133,7 @@ ss_rules_parse_args() {
 ss_rules_flush() {
 	local setname
 
-	$IPTABLESSAVE --counters 2>/dev/null | grep -v ssr_ | $IPTABLESRESTORE -w --counters
+	$IPTABLESSAVE --counters 2>/dev/null | grep -v ssr_ | $IPTABLESRESTORE --counters
 	while ip rule del fwmark 1 lookup 100 2>/dev/null; do true; done
 	ip route flush table 100 || true
 	for setname in $(ipset -n list | grep "ssr_${rule}"); do
@@ -178,7 +178,7 @@ ss_rules_iptchains_init() {
 
 ss_rules_iptchains_init_mark() {
 	if [ "$($IPTABLES -w -t mangle -L PREROUTING | grep ss_rules_dst_bypass_all)" = "" ]; then
-		$IPTABLESRESTORE -w --noflush <<-EOF
+		$IPTABLESRESTORE --noflush <<-EOF
 			*mangle
 			-A PREROUTING -m set --match-set ss_rules_dst_bypass_all dst -j MARK --set-mark 0x539
 			COMMIT
@@ -199,7 +199,7 @@ ss_rules_iptchains_init_tcp() {
 		bypass|*) return 0;;
 	esac
 	if [ "$($IPTABLESSAVE 2>/dev/null | grep ssr_${rule}_local_out | grep ssr_${rule}_dst_bypass)" = "" ]; then
-		$IPTABLESRESTORE -w --noflush <<-EOF
+		$IPTABLESRESTORE --noflush <<-EOF
 			*nat
 			:ssr_${rule}_local_out -
 			-I OUTPUT 1 -p tcp -j ssr_${rule}_local_out
@@ -255,7 +255,7 @@ ss_rules_iptchains_init_() {
 		forward) dst_default_target=ssr_${rule}_forward ;;
 		bypass|*) dst_default_target=RETURN ;;
 	esac
-	sed -e '/^\s*$/d' -e 's/^\s\+//' <<-EOF | $IPTABLESRESTORE -w --noflush
+	sed -e '/^\s*$/d' -e 's/^\s\+//' <<-EOF | $IPTABLESRESTORE --noflush
 		*$table
 		:ssr_${rule}_pre_src -
 		:ssr_${rule}_src -
