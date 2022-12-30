@@ -21,7 +21,7 @@ MY_DEPENDS := \
     mc          \
     f2fs-tools \
     openmptcprouter \
-    dnsmasq-full \
+    dnsmasq-full dnsmasq_full_ipset \
     uhttpd \
     uhttpd-mod-ubus \
     curl \
