@@ -117,7 +117,7 @@ ss_rules6_parse_args() {
 ss_rules6_flush() {
 	local setname
 
-	$IP6TABLESSAVE --counters 2>/dev/null | grep -v ssr6_ | $IP6TABLESRESTORE -w --counters
+	$IP6TABLESSAVE --counters 2>/dev/null | grep -v ssr6_ | $IP6TABLESRESTORE --counters
 	while ip -f inet6 rule del fwmark 1 lookup 100 2>/dev/null; do true; done
 	ip -f inet6 route flush table 100 || true
 	for setname in $(ipset -n list | grep "ssr6_${rule}"); do
@@ -162,7 +162,7 @@ ss_rules6_iptchains_init() {
 
 ss_rules6_iptchains_init_mark() {
 	if [ "$($IP6TABLES -w -t mangle -L PREROUTING | grep ss_rules6_dst_bypass_all)" = "" ]; then
-		$IP6TABLESRESTORE -w --noflush <<-EOF
+		$IP6TABLESRESTORE --noflush <<-EOF
 			*mangle
 			-A PREROUTING -m set --match-set ss_rules6_dst_bypass_all dst -j MARK --set-mark 0x6539
 			COMMIT
@@ -184,7 +184,7 @@ ss_rules6_iptchains_init_tcp() {
 		bypass|*) return 0;;
 	esac
 
-	$IP6TABLESRESTORE -w --noflush <<-EOF
+	$IP6TABLESRESTORE --noflush <<-EOF
 		*nat
 		:ssr6_${rule}_local_out -
 		-I OUTPUT 1 -p tcp -j ssr6_${rule}_local_out
@@ -239,7 +239,7 @@ ss_rules6_iptchains_init_() {
 		forward) dst_default_target=ssr6_${rule}_forward ;;
 		bypass|*) dst_default_target=RETURN ;;
 	esac
-	sed -e '/^\s*$/d' -e 's/^\s\+//' <<-EOF | $IP6TABLESRESTORE -w --noflush
+	sed -e '/^\s*$/d' -e 's/^\s\+//' <<-EOF | $IP6TABLESRESTORE --noflush
 		*$table
 		:ssr6_${rule}_pre_src -
 		:ssr6_${rule}_src -
