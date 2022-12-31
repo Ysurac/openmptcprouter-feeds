@@ -7,7 +7,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=Firewall and Portforwarding application
-LUCI_DEPENDS:=+@LINUX_5_4:firewall +@LINUX_5_15:uci-firewall
+LUCI_DEPENDS:=+@LINUX_5_4:firewall +@(LINUX_5_15||LINUX_6_1):uci-firewall
 
 PKG_LICENSE:=Apache-2.0
 PKG_VERSION:=omr-202103
