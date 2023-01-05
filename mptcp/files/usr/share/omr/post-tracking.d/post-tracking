@@ -1106,6 +1106,7 @@ if [ "$multipath_config" = "master" ]; then
 		#	config_foreach set_server_all_routes server
 		if [ "$(uci -q get openmptcprouter.settings.master)" != "failover" ]; then
 			config_foreach set_server_default_route server
+			#config_foreach set_server_default_route6 server
 		fi
 	fi
 	if ([ "$default_gw6" != "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$default_gw6" = "" ]) && [ "$OMR_TRACKER_DEVICE_GATEWAY6" != "" ] && [ "$(uci -q get openmptcprouter.settings.master)" != "balancing" ]; then
@@ -1119,12 +1120,12 @@ if [ "$multipath_config" = "master" ]; then
 		#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ]; then
 		#	config_foreach set_server_all_routes server
 		if [ "$(uci -q get openmptcprouter.settings.master)" != "failover" ]; then
-			config_foreach set_server_default_route server
+			#config_foreach set_server_default_route server
 			config_foreach set_server_default_route6 server
 		fi
 	fi
 	#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(ip route show default | grep weight)" = "" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" != "mlvpn" ]; then
-	if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(ip route show default | grep weight)" = "" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
+	if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && ([ "$(ip route show default | grep weight)" = "" ] || [ "$(ip -6 route show default | grep weight)" = "" ]) && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
 		omrvpn_intf=$(uci -q get "network.omrvpn.device" || echo "tun0")
 		[ -z "$omrvpn_intf" ] && omrvpn_intf=$(uci -q get "network.omrvpn.ifname" || echo "tun0")
 		if [ -n "$omrvpn_intf" ] && [ "$(ip route show default | grep -v metric | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ]; then
@@ -1132,11 +1133,11 @@ if [ "$multipath_config" = "master" ]; then
 			routesbalancingbackup=""
 			nbintf=0
 			nbintfb=0
-			nbintf6=0
-			nbintfb6=0
+			#nbintf6=0
+			#nbintfb6=0
 			config_load network
 			config_foreach set_route_balancing interface
-			config_foreach set_route_balancing6 interface
+			#config_foreach set_route_balancing6 interface
 			[ -n "$routesbalancing" ] && {
 				([ "$nbintf" -gt "1" ] && [ "$(ip r show default metric 1 | tr -d '\t' | tr -d '\n')" != "default via $routesbalancing " ]) || ([ "$nbintf" = "1" ] && ([ "$(ip r show default metric 1 | grep $OMR_TRACKER_DEVICE)" = "" ] || ([ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" = "1" ])) && [ -n "$OMR_TRACKER_DEVICE_IP" ]) && {
 					_log "Change in routes, set ip route replace default scope global $routesbalancing (omrvpn_intf: $omrvpn_intf)"
@@ -1145,16 +1146,35 @@ if [ "$multipath_config" = "master" ]; then
 					[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "New route: $(ip r)"
 				}
 			}
-			[ -n "$routesbalancing6" ] && {
-				([ "$nbintf6" -gt "1" ] && [ "$(ip -6 r show default metric 1 | tr -d '\t' | tr -d '\n')" != "default via $routesbalancing6 " ]) || ([ "$nbintf6" = "1" ] && [ "$(ip -6 r show default metric 1 | grep $OMR_TRACKER_DEVICE)" = "" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ]) && {
-					_log "Set ip -6 route replace default scope global metric 1 $routesbalancing6"
-					ip -6 route replace default scope global metric 1 $routesbalancing6 2>&1 >/dev/null
-				}
-			}
+			#[ -n "$routesbalancing6" ] && {
+			#	([ "$nbintf6" -gt "1" ] && [ "$(ip -6 r show default metric 1 | tr -d '\t' | tr -d '\n')" != "default via $routesbalancing6 " ]) || ([ "$nbintf6" = "1" ] && [ "$(ip -6 r show default metric 1 | grep $OMR_TRACKER_DEVICE)" = "" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ]) && {
+			#		_log "Set ip -6 route replace default scope global metric 1 $routesbalancing6"
+			#		ip -6 route replace default scope global metric 1 $routesbalancing6 2>&1 >/dev/null
+			#	}
+			#}
 			[ -n "$routesbalancingbackup" ] && {
 				([ "$nbintfb" -gt "1" ] && [ "$(ip r show default metric 999 | tr -d '\t' | tr -d '\n')" != "default via $routesbalancingbackup " ]) || ([ "$nbintf" = "1" ] && ([ "$(ip r show default metric 999 | grep $OMR_TRACKER_DEVICE)" = "" ] || ([ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" = "1" ])) && [ -n "$OMR_TRACKER_DEVICE_IP" ]) && {
 					_log "Set backup ip route replace default scope global metric 999 $routesbalancingbackup"
 					ip route replace default scope global metric 999 $routesbalancingbackup 2>&1 >/dev/null
+				}
+			}
+			#[ -n "$routesbalancingbackup6" ] && {
+			#	([ "$nbintfb6" -gt "1" ] && [ "$(ip -6 r show default metric 999 | tr -d '\t' | tr -d '\n')" != "default via $routesbalancingbackup6 " ]) || ([ "$nbintf6" = "1" ] && [ "$(ip -6 r show default metric 999 | grep $OMR_TRACKER_DEVICE)" = "" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ]) && {
+			#		_log "Set backup ip -6 route replace default scope global $routesbalancingbackup6"
+			#		ip -6 route replace default scope global metric 999 $routesbalancingbackup6 2>&1 >/dev/null
+			#	}
+			#}
+		elif [ -n "$omrvpn_intf" ] && [ "$(ip -6 route show default | grep -v metric | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ]; then
+			routesbalancing6=""
+			routesbalancingbackup6=""
+			nbintf6=0
+			nbintfb6=0
+			config_load network
+			config_foreach set_route_balancing6 interface
+			[ -n "$routesbalancing6" ] && {
+				([ "$nbintf6" -gt "1" ] && [ "$(ip -6 r show default metric 1 | tr -d '\t' | tr -d '\n')" != "default via $routesbalancing6 " ]) || ([ "$nbintf6" = "1" ] && [ "$(ip -6 r show default metric 1 | grep $OMR_TRACKER_DEVICE)" = "" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ]) && {
+					_log "Set ip -6 route replace default scope global metric 1 $routesbalancing6"
+					ip -6 route replace default scope global metric 1 $routesbalancing6 2>&1 >/dev/null
 				}
 			}
 			[ -n "$routesbalancingbackup6" ] && {
