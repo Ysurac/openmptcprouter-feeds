@@ -21,7 +21,8 @@ o:value(0, translate("disable"))
 o = s:option(ListValue, "mptcp_path_manager", translate("Multipath TCP path-manager"), translate("Default is fullmesh"))
 o:value("default", translate("default"))
 o:value("fullmesh", "fullmesh")
-if tonumber(uname.release:sub(1,4)) <= 5.15 then
+--if tonumber(uname.release:sub(1,4)) <= 5.15 then
+if uname.release:sub(1,4) ~= "5.15" or uname.release:sub(1,1) ~= "6" then
     o:value("ndiffports", "ndiffports")
     o:value("binder", "binder")
     if uname.release:sub(1,4) ~= "4.14" then
@@ -30,7 +31,8 @@ if tonumber(uname.release:sub(1,4)) <= 5.15 then
 end
 o = s:option(ListValue, "mptcp_scheduler", translate("Multipath TCP scheduler"))
 o:value("default", translate("default"))
-if tonumber(uname.release:sub(1,4)) <= 5.15 then
+-- if tonumber(uname.release:sub(1,4)) <= 5.15 then
+if uname.release:sub(1,4) ~= "5.15" or uname.release:sub(1,1) ~= "6" then
     o:value("roundrobin", "round-robin")
     o:value("redundant", "redundant")
     if uname.release:sub(1,4) ~= "4.14" then
@@ -38,12 +40,14 @@ if tonumber(uname.release:sub(1,4)) <= 5.15 then
 	o:value("ecf", "ECF")
     end
 end
-if tonumber(uname.release:sub(1,4)) <= 5.15 then
+-- if tonumber(uname.release:sub(1,4)) <= 5.15 then
+if uname.release:sub(1,4) ~= "5.15" or uname.release:sub(1,1) ~= "6" then
     o = s:option(Value, "mptcp_syn_retries", translate("Multipath TCP SYN retries"))
     o.datatype = "uinteger"
     o.rmempty = false
 end
-if tonumber(uname.release:sub(1,4)) <= 5.15 then
+-- if tonumber(uname.release:sub(1,4)) <= 5.15 then
+if uname.release:sub(1,4) ~= "5.15" or uname.release:sub(1,1) ~= "6" then
     o = s:option(ListValue, "mptcp_version", translate("Multipath TCP version"))
     o:value(0, translate("0"))
     o:value(1, translate("1"))
@@ -55,7 +59,8 @@ for cong in string.gmatch(availablecong, "[^%s]+") do
 	o:value(cong, translate(cong))
 end
 
-if tonumber(uname.release:sub(1,4)) >= 5.15 then
+-- if tonumber(uname.release:sub(1,4)) >= 5.15 then
+if uname.release:sub(1,4) == "5.15" or uname.release:sub(1,1) == "6" then
     o = s:option(Value, "mptcp_subflows", translate("specifies the maximum number of additional subflows allowed for each MPTCP connection"))
     o.datatype = "uinteger"
     o.rmempty = false
