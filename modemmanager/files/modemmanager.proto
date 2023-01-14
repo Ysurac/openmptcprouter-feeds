@@ -156,8 +156,8 @@ modemmanager_connected_method_ppp_ipv4() {
 		novj \
 		noauth \
 		$authopts \
-		${username:+ user $username} \
-		${password:+ password $password} \
+		${username:+ user "$username"} \
+		${password:+ password "$password"} \
 		lcp-echo-failure 5 \
 		lcp-echo-interval 15 \
 		lock \
@@ -197,7 +197,6 @@ modemmanager_connected_method_dhcp_ipv4() {
 	local interface="$1"
 	local wwan="$2"
 	local metric="$3"
-	local defaultroute="$4"
 
 	proto_init_update "${wwan}" 1
 	proto_set_keep 1
@@ -223,7 +222,6 @@ modemmanager_connected_method_static_ipv4() {
 	local dns1="$7"
 	local dns2="$8"
 	local metric="$9"
-	local defaultroute="$10"
 
 	local mask=""
 
@@ -244,9 +242,8 @@ modemmanager_connected_method_static_ipv4() {
 	proto_set_keep 1
 	echo "adding IPv4 address ${address}, netmask ${mask}"
 	proto_add_ipv4_address "${address}" "${mask}"
-	[ -n "${gateway}" ] && [ "${defaultroute}" != 0 ] && {
+	[ -n "${gateway}" ] && {
 		echo "adding default IPv4 route via ${gateway}"
-		logger -t "modemmanager.proto" "adding default IPv4 route via ${gateway} ${address}"
 		proto_add_ipv4_route "0.0.0.0" "0" "${gateway}" "${address}"
 	}
 	[ -n "${dns1}" ] && {
@@ -265,7 +262,6 @@ modemmanager_connected_method_dhcp_ipv6() {
 	local interface="$1"
 	local wwan="$2"
 	local metric="$3"
-	local defaultroute="$4"
 
 	proto_init_update "${wwan}" 1
 	proto_set_keep 1
@@ -292,7 +288,6 @@ modemmanager_connected_method_static_ipv6() {
 	local dns1="$7"
 	local dns2="$8"
 	local metric="$9"
-	local defaultroute="$10"
 
 	[ -n "${address}" ] || {
 		proto_notify_error "${interface}" ADDRESS_MISSING
@@ -311,7 +306,7 @@ modemmanager_connected_method_static_ipv6() {
 	echo "adding IPv6 address ${address}, prefix ${prefix}"
 	proto_add_ipv6_address "${address}" "128"
 	proto_add_ipv6_prefix "${address}/${prefix}"
-	[ -n "${gateway}" ] && [ "$defaultroute" != 0 ] && {
+	[ -n "${gateway}" ] && {
 		echo "adding default IPv6 route via ${gateway}"
 		proto_add_ipv6_route "${gateway}" "128"
 		proto_add_ipv6_route "::0" "0" "${gateway}" "" "" "${address}/${prefix}"
@@ -362,9 +357,9 @@ proto_modemmanager_setup() {
 
 	local device apn allowedauth username password pincode iptype metric signalrate
 
-	local address prefix gateway mtu dns1 dns2 defaultroute
+	local address prefix gateway mtu dns1 dns2
 
-	json_get_vars device apn allowedauth username password pincode iptype metric signalrate defaultroute
+	json_get_vars device apn allowedauth username password pincode iptype metric signalrate
 
 	# validate sysfs path given in config
 	[ -n "${device}" ] || {
@@ -452,7 +447,7 @@ proto_modemmanager_setup() {
 		echo "IPv4 connection setup required in interface ${interface}: ${bearermethod_ipv4}"
 		case "${bearermethod_ipv4}" in
 		"dhcp")
-			modemmanager_connected_method_dhcp_ipv4 "${interface}" "${beareriface}" "${metric}" "${defaultroute}"
+			modemmanager_connected_method_dhcp_ipv4 "${interface}" "${beareriface}" "${metric}"
 			;;
 		"static")
 			address=$(modemmanager_get_field "${bearerstatus}" "bearer.ipv4-config.address")
@@ -461,7 +456,7 @@ proto_modemmanager_setup() {
 			mtu=$(modemmanager_get_field "${bearerstatus}" "bearer.ipv4-config.mtu")
 			dns1=$(modemmanager_get_field "${bearerstatus}" "bearer.ipv4-config.dns.value\[1\]")
 			dns2=$(modemmanager_get_field "${bearerstatus}" "bearer.ipv4-config.dns.value\[2\]")
-			modemmanager_connected_method_static_ipv4 "${interface}" "${beareriface}" "${address}" "${prefix}" "${gateway}" "${mtu}" "${dns1}" "${dns2}" "${metric}" "${defaultroute}"
+			modemmanager_connected_method_static_ipv4 "${interface}" "${beareriface}" "${address}" "${prefix}" "${gateway}" "${mtu}" "${dns1}" "${dns2}" "${metric}"
 			;;
 		"ppp")
 			modemmanager_connected_method_ppp_ipv4 "${interface}" "${beareriface}" "${username}" "${password}" "${allowedauth}"
@@ -479,7 +474,7 @@ proto_modemmanager_setup() {
 		echo "IPv6 connection setup required in interface ${interface}: ${bearermethod_ipv6}"
 		case "${bearermethod_ipv6}" in
 		"dhcp")
-			modemmanager_connected_method_dhcp_ipv6 "${interface}" "${beareriface}" "${metric}" "${defaultroute}"
+			modemmanager_connected_method_dhcp_ipv6 "${interface}" "${beareriface}" "${metric}"
 			;;
 		"static")
 			address=$(modemmanager_get_field "${bearerstatus}" "bearer.ipv6-config.address")
@@ -488,7 +483,7 @@ proto_modemmanager_setup() {
 			mtu=$(modemmanager_get_field "${bearerstatus}" "bearer.ipv6-config.mtu")
 			dns1=$(modemmanager_get_field "${bearerstatus}" "bearer.ipv6-config.dns.value\[1\]")
 			dns2=$(modemmanager_get_field "${bearerstatus}" "bearer.ipv6-config.dns.value\[2\]")
-			modemmanager_connected_method_static_ipv6 "${interface}" "${beareriface}" "${address}" "${prefix}" "${gateway}" "${mtu}" "${dns1}" "${dns2}" "${metric}" "${defaultroute}"
+			modemmanager_connected_method_static_ipv6 "${interface}" "${beareriface}" "${address}" "${prefix}" "${gateway}" "${mtu}" "${dns1}" "${dns2}" "${metric}"
 			;;
 		"ppp")
 			proto_notify_error "${interface}" "unsupported method"
@@ -520,7 +515,8 @@ proto_modemmanager_teardown() {
 	modemstatus=$(mmcli --modem="${device}" --output-keyvalue)
 	bearerpath=$(modemmanager_get_field "${modemstatus}" "modem.generic.bearers.value\[1\]")
 	[ -n "${bearerpath}" ] || {
-		echo "couldn't load bearer path"
+		echo "couldn't load bearer path: disconnecting anyway"
+		mmcli --modem="${device}" --simple-disconnect >/dev/null 2>&1
 		return
 	}
 
