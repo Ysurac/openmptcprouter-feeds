@@ -167,7 +167,7 @@ function wizard_add()
 			ucic:set("network","wan" .. i .. "_dev","mode","vepa")
 			ucic:set("network","wan" .. i .. "_dev","ifname",defif)
 			ucic:set("network","wan" .. i .. "_dev","name","wan" .. i)
-			ucic:set("network","wan" .. i .. "_dev","txqueuelen","20")
+			ucic:set("network","wan" .. i .. "_dev","txqueuelen","1000")
 		end
 		ucic:set("network","wan" .. i,"ip4table","wan")
 		if multipath_master then
@@ -388,9 +388,11 @@ function wizard_add()
 		if ip6addr ~= "" then
 			ucic:set("network",intf,"ip6addr",ip6addr:gsub("%s+", ""))
 			ucic:set("network",intf,"ip6gw",ip6gw:gsub("%s+", ""))
+			ucic:set("network",intf,"ipv6","1")
 		else
 			ucic:set("network",intf,"ip6addr","")
 			ucic:set("network",intf,"ip6gw","")
+			ucic:set("network",intf,"ipv6","0")
 		end
 		
 		if proto == "dhcpv6" then

@@ -2,7 +2,7 @@ a = Map("zerotier")
 a.title = translate("ZeroTier")
 a.description = translate("Zerotier is an open source, cross-platform and easy to use virtual LAN")
 
-a:section(SimpleSection).template  = "zerotier/zerotier_status"
+a:section(SimpleSection).template = "zerotier/zerotier_status"
 
 t = a:section(NamedSection, "sample_config", "zerotier")
 t.anonymous = true
@@ -21,7 +21,17 @@ e.description = translate("Allow zerotier clients access your LAN network")
 e.default = 0
 e.rmempty = false
 
-e = t:option(DummyValue, "opennewwindow", translate("<input type=\"button\" class=\"cbi-button cbi-button-apply\" value=\"Zerotier.com\" onclick=\"window.open('https://my.zerotier.com/network')\" />"))
+e = t:option(MultiValue, "access", translate("Zerotier Access Control"))
+e.default = "lanfwzt ztfwwan ztfwlan"
+e.rmempty = false
+e:value("lanfwzt", translate("LAN Access Zerotier"))
+e:value("wanfwzt", translate("WAN Access Zerotier"))
+e:value("ztfwwan", translate("Remote Access WAN"))
+e:value("ztfwlan", translate("Remote Access LAN"))
+e.widget = "checkbox"
+
+e = t:option(DummyValue, "opennewwindow", translate(
+    "<input type=\"button\" class=\"cbi-button cbi-button-apply\" value=\"Zerotier.com\" onclick=\"window.open('https://my.zerotier.com/network')\" />"))
 e.description = translate("Create or manage your zerotier network, and auth clients who could access")
 
 return a
