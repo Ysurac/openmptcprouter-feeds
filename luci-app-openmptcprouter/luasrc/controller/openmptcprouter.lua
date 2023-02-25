@@ -167,7 +167,7 @@ function wizard_add()
 			ucic:set("network","wan" .. i .. "_dev","mode","vepa")
 			ucic:set("network","wan" .. i .. "_dev","ifname",defif)
 			ucic:set("network","wan" .. i .. "_dev","name","wan" .. i)
-			ucic:set("network","wan" .. i .. "_dev","txqueuelen","20")
+			ucic:set("network","wan" .. i .. "_dev","txqueuelen","1000")
 		end
 		ucic:set("network","wan" .. i,"ip4table","wan")
 		if multipath_master then
