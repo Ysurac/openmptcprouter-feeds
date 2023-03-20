@@ -879,10 +879,10 @@ function wizard_add()
 		ucic:set("glorytun","vpn","mptcp",1)
 		if default_vpn == "glorytun_tcp" then
 			ucic:set("glorytun","vpn","proto","tcp")
-			ucic:set("glorytun","vpn","localip","10.255.255.2")
-			ucic:set("glorytun","vpn","remoteip","10.255.255.1")
-			ucic:set("network","omr6in4","ipaddr","10.255.255.2")
-			ucic:set("network","omr6in4","peeraddr","10.255.255.1")
+			ucic:set("glorytun","vpn","localip","172.255.255.2")
+			ucic:set("glorytun","vpn","remoteip","172.255.255.1")
+			ucic:set("network","omr6in4","ipaddr","172.255.255.2")
+			ucic:set("network","omr6in4","peeraddr","172.255.255.1")
 			ucic:set("network","omrvpn","proto","none")
 		end
 	else
@@ -904,10 +904,10 @@ function wizard_add()
 		ucic:set("glorytun-udp","vpn","port","65001")
 		ucic:set("glorytun-udp","vpn","key",glorytun_key)
 		if default_vpn == "glorytun_udp" then
-			ucic:set("glorytun-udp","vpn","localip","10.255.254.2")
-			ucic:set("glorytun-udp","vpn","remoteip","10.255.254.1")
-			ucic:set("network","omr6in4","ipaddr","10.255.254.2")
-			ucic:set("network","omr6in4","peeraddr","10.255.254.1")
+			ucic:set("glorytun-udp","vpn","localip","172.255.254.2")
+			ucic:set("glorytun-udp","vpn","remoteip","172.255.254.1")
+			ucic:set("network","omr6in4","ipaddr","172.255.254.2")
+			ucic:set("network","omr6in4","peeraddr","172.255.254.1")
 			ucic:set("network","omrvpn","proto","none")
 		end
 	else
