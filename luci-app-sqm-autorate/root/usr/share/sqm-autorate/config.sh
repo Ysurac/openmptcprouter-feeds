@@ -19,7 +19,8 @@ output_processing_stats=$(uci -q get sqm.${INTERFACE}.output_processing_stats ||
 #output_cake_changes=0     # enable (1) or disable (0) output monitoring lines showing cake bandwidth changes
 output_cake_changes=$(uci -q get sqm.${INTERFACE}.output_cake_changes || echo "0")
 #debug=0			  # enable (1) or disable (0) out of debug lines
-debug=$(uci -q get sqm.common.debug || echo "0")
+#debug=$(uci -q get sqm.common.debug || echo "0")
+debug=1
 
 # *** STANDARD CONFIGURATION OPTIONS ***
 
@@ -128,32 +129,3 @@ global_ping_response_timeout_s=10 # timeout to set shaper rates to min on no pin
 
 if_up_check_interval_s=10 # time to wait before re-checking if rx/tx bytes files exist (e.g. from boot state)
 
-# verify these are correct using 'cat /sys/class/...'
-case "${dl_if}" in
-    \veth*)
-        rx_bytes_path="/sys/class/net/${dl_if}/statistics/tx_bytes"
-        ;;
-    \ifb*)
-        rx_bytes_path="/sys/class/net/${dl_if}/statistics/tx_bytes"
-        ;;
-    *)
-        rx_bytes_path="/sys/class/net/${dl_if}/statistics/rx_bytes"
-        ;;
-esac
-
-case "${ul_if}" in
-    \veth*)
-        tx_bytes_path="/sys/class/net/${ul_if}/statistics/rx_bytes"
-        ;;
-    \ifb*)
-        tx_bytes_path="/sys/class/net/${ul_if}/statistics/rx_bytes"
-        ;;
-    *)
-        tx_bytes_path="/sys/class/net/${ul_if}/statistics/tx_bytes"
-        ;;
-esac
-
-if (( $debug )) ; then
-    echo "DEBUG: rx_bytes_path: $rx_bytes_path"
-    echo "DEBUG: tx_bytes_path: $tx_bytes_path"
-fi
