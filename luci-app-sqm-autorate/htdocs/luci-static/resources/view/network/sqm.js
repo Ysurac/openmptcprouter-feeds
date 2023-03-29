@@ -260,6 +260,10 @@ return view.extend({
 		o.default = false;
 		o.depends("autorate","1");
 
+		o = s.taboption("tab_autorate", form.Flag, "sss_compensation", _("Starlink support"));
+		o.default = false;
+		o.depends("autorate","1");
+
 		o = s.taboption("tab_autorate", form.Value, "reflector_ping_interval_s", _("Reflector ping interval in seconds:"));
 		o.default = "0.2";
 		o.depends("autorate","1");
