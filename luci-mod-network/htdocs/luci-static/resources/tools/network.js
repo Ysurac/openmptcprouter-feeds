@@ -625,6 +625,21 @@ return baseclass.extend({
 		o = this.replaceOption(s, 'devadvanced', form.Flag, 'autoneg', _('Autonegociation'));
 		o.default = o.enabled;
 
+		o = this.replaceOption(s, 'devadvanced', form.Flag, 'gro', _('Generic Receive Offload (GRO)'));
+		o.default = o.enabled;
+
+		o = this.replaceOption(s, 'devadvanced', form.Flag, 'gso', _('Generic Segmentation Offload (GSO)'));
+		o.default = o.enabled;
+
+		o = this.replaceOption(s, 'devadvanced', form.Flag, 'tso', _('TCP Segmentation Offload (TSO)'));
+		o.default = o.enabled;
+
+		o = this.replaceOption(s, 'devadvanced', form.Flag, 'lro', _('Large Receive Offload (LRO)'));
+		o.default = o.enabled;
+
+		o = this.replaceOption(s, 'devadvanced', form.Flag, 'ufo', _('UDP Fragmentation Offload (UFO)'));
+		o.default = o.enabled;
+
 		o = this.replaceOption(s, 'devadvanced', form.Value, 'speed', _('Speed'));
 		o.placeholder = dev ? dev.getSpeed() : '';
 		o.default = '';

@@ -258,6 +258,8 @@ function wizard_add()
 	end
 
 	-- Set interfaces settings
+	local downloadmax = 0
+	local uploadmax = 0
 	local interfaces = luci.http.formvaluetable("intf")
 	for intf, _ in pairs(interfaces) do
 		local label = luci.http.formvalue("cbid.network.%s.label" % intf) or ""
@@ -462,6 +464,7 @@ function wizard_add()
 			end
 			ucic:set("network",intf,"downloadspeed",downloadspeed)
 			ucic:set("qos",intf,"download",math.ceil(downloadspeed*95/100))
+			downloadmax = downloadmax + tonumber(downloadspeed)
 		else
 			ucic:delete("network",intf,"downloadspeed")
 			ucic:set("sqm",intf,"download","0")
@@ -477,6 +480,7 @@ function wizard_add()
 			end
 			ucic:set("network",intf,"uploadspeed",uploadspeed)
 			ucic:set("qos",intf,"upload",math.ceil(uploadspeed*95/100))
+			uploadmax = uploadmax + tonumber(uploadspeed)
 		else
 			ucic:delete("network",intf,"uploadspeed")
 			ucic:set("sqm",intf,"upload","0")
@@ -546,6 +550,14 @@ function wizard_add()
 	elseif default_vpn == "openvpn_bonding" then
 		vpn_intf = "bonding-omrvpn"
 		ucic:set("network","omrvpn","proto","bonding")
+	end
+	if downloadmax ~= 0 and uploadmax ~= 0 then
+		ucic:set("sqm","omrvpn","max_download",downloadmax)
+		ucic:set("sqm","omrvpn","max_upload",uploadmax)
+		ucic:set("sqm","omrvpn","download",math.ceil(downloadmax*50/100))
+		ucic:set("sqm","omrvpn","min_download",math.ceil(downloadmax*8/100))
+		ucic:set("sqm","omrvpn","upload",math.ceil(uploadmax*50/100))
+		ucic:set("sqm","omrvpn","min_upload",math.ceil(uploadmax*8/100))
 	end
 	if vpn_intf ~= "" then
 		ucic:set("network","omrvpn","device",vpn_intf)
