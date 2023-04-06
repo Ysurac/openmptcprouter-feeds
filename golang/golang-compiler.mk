@@ -27,7 +27,10 @@ define GoCompiler/Default/Make
 		cd "$(1)/src" ; \
 		$(if $(2),GOROOT_FINAL="$(2)/lib/go-$(3)") \
 		$(4) \
-		$(BASH) make.bash --no-banner ; \
+		$(BASH) make.bash \
+		$(if $(findstring s,$(OPENWRT_VERBOSE)),-v) \
+		--no-banner \
+		; \
 	)
 endef
 
@@ -73,8 +76,10 @@ define GoCompiler/Default/Install/Bin
 	$(INSTALL_BIN) -p "$(1)/bin/$(4)"/* "$(2)/lib/go-$(3)/bin/"
   endif
 
-	$(INSTALL_DIR) "$(2)/lib/go-$(3)/pkg"
-	$(CP) "$(1)/pkg/$(4)$(if $(5),_$(5))" "$(2)/lib/go-$(3)/pkg/"
+	if [ -d "$(1)/pkg/$(4)$(if $(5),_$(5))" ]; then \
+		$(INSTALL_DIR) "$(2)/lib/go-$(3)/pkg" ; \
+		$(CP) "$(1)/pkg/$(4)$(if $(5),_$(5))" "$(2)/lib/go-$(3)/pkg/" ; \
+	fi
 
 	$(INSTALL_DIR) "$(2)/lib/go-$(3)/pkg/tool/$(4)"
 	$(INSTALL_BIN) -p "$(1)/pkg/tool/$(4)"/* "$(2)/lib/go-$(3)/pkg/tool/$(4)/"
@@ -95,8 +100,6 @@ define GoCompiler/Default/Install/Doc
 	$(call GoCompiler/Default/Install/make-dirs,$(2),$(3))
 
 	$(call GoCompiler/Default/Install/install-share-data,$(1),$(2),$(3),doc)
-	$(call GoCompiler/Default/Install/install-share-data,$(1),$(2),$(3),favicon.ico)
-	$(call GoCompiler/Default/Install/install-share-data,$(1),$(2),$(3),robots.txt)
 endef
 
 # $(1) source go root
