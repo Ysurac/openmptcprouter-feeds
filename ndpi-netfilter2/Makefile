@@ -11,7 +11,7 @@ include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=ndpi-netfilter2
 PKG_RELEASE:=4
-PKG_REV:=845399a0acb423e940c67a881a10f30f4c6a5fb7
+PKG_REV:=2fc0c86e58d56c8f9c5da3883a09732fc902e5e7
 PKG_VERSION:=4-$(PKG_REV)
 
 PKG_SOURCE_PROTO:=git
@@ -31,7 +31,7 @@ define Package/iptables-mod-ndpi
 	TITLE:=ndpi successor of OpenDPI
 	URL:=http://www.ntop.org/products/ndpi/
 #	DEPENDS:=+iptables +iptables-mod-conntrack-extra +kmod-ipt-ndpi +libpcap
-	DEPENDS:=+iptables +kmod-ipt-ndpi +libpcap
+	DEPENDS:=+iptables +kmod-ipt-ndpi +libpcap @(LINUX_5_4||LINUX_5_15||TARGET_x86_64)
 	MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 endef
 
@@ -51,13 +51,15 @@ MAKE_FLAGS += \
     KERNEL_RELEASE="$(KERNEL_PATCHVER)" \
     CROSS_COMPILE="$(TARGET_CROSS)" \
     CC="$(TARGET_CC)" \
-    NDPI_PATH=$(PKG_BUILD_DIR)/ndpi-netfilter
+#MAKE_FLAGS += \
+#    NDPI_PATH=$(PKG_BUILD_DIR)/ndpi-netfilter
 
 define Build/Compile
 	(cd $(PKG_BUILD_DIR)/src/lib &&\
 	    gcc -g -O2 -fPIC -DPIC -DNDPI_LIB_COMPILATION -I../../src/include/ -I../../src/lib/third_party/include/ ndpi_network_list_compile.c -o ndpi_network_list_compile &&\
 	    ./ndpi_network_list_compile -o ndpi_network_list.c.inc ndpi_network_list_*.yaml)
-	$(MAKE) $(MAKE_FLAGS) -C $(PKG_BUILD_DIR)/ndpi-netfilter
+#	$(MAKE) $(MAKE_FLAGS) -C $(PKG_BUILD_DIR)/ndpi-netfilter
+	+$(KERNEL_MAKE) $(MAKE_FLAGS) -C $(PKG_BUILD_DIR)/ndpi-netfilter
 endef
 
 define Package/iptables-mod-ndpi/install
@@ -68,11 +70,16 @@ endef
 define KernelPackage/ipt-ndpi
 	SUBMENU:=Netfilter Extensions
 	TITLE:= nDPI net netfilter module
-	DEPENDS:=+kmod-nf-conntrack +kmod-nf-conntrack-netlink +kmod-ipt-compat-xtables +libpcap
+	DEPENDS:=+kmod-nf-conntrack +kmod-nf-conntrack-netlink +kmod-ipt-compat-xtables +libpcap @(LINUX_5_4||LINUX_5_15||TARGET_x86_64)
 	KCONFIG:=CONFIG_NF_CONNTRACK_LABELS=y \
 	    CONFIG_NETFILTER_XT_MATCH_CONNLABEL=y
 	FILES:= $(PKG_BUILD_DIR)/ndpi-netfilter/src/xt_ndpi.ko
 	AUTOLOAD:=$(call AutoProbe,xt_ndpi)
+	KCONFIG:=\
+	    CONFIG_LIVEPATCH=y \
+	    CONFIG_NF_CONNTRACK=y \
+	    CONFIG_NF_CONNTRACK_LABELS=y \
+	    CONFIG_NETFILTER_XT_MATCH_CONNLABEL=y
 endef
 
 $(eval $(call BuildPackage,iptables-mod-ndpi))
