@@ -10,7 +10,7 @@ include $(INCLUDE_DIR)/package.mk
 define KernelPackage/phy-aquantia
   SUBMENU:=Network Devices
   TITLE:=aQuantia device support
-  DEPENDS:=@PCI_SUPPORT @TARGET_x86_64 +kmod-i2c-core +kmod-i2c-algo-bit +kmod-ptp +kmod-hwmon-core +kmod-libphy
+  DEPENDS:=@PCI_SUPPORT @TARGET_x86_64 @KERNEL_5_4 +kmod-i2c-core +kmod-i2c-algo-bit +kmod-ptp +kmod-hwmon-core +kmod-libphy
   KCONFIG:=CONFIG_AQUANTIA_PHY
   HIDDEN:=1
   FILES:=$(LINUX_DIR)/drivers/net/phy/aquantia.ko
