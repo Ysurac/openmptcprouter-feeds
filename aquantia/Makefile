@@ -24,7 +24,7 @@ endef
 define KernelPackage/atlantic
   SUBMENU:=Network Devices
   TITLE:=aQuantia AQtion(tm) Support
-  DEPENDS:=@PCI_SUPPORT @TARGET_x86_64 +kmod-i2c-core +kmod-i2c-algo-bit +kmod-ptp +kmod-phy-aquantia
+  DEPENDS:=@PCI_SUPPORT @TARGET_x86_64 @KERNEL_5_4 +kmod-i2c-core +kmod-i2c-algo-bit +kmod-ptp +kmod-phy-aquantia
   KCONFIG:=CONFIG_AQTION
   FILES:=$(LINUX_DIR)/drivers/net/ethernet/aquantia/atlantic/atlantic.ko
   AUTOLOAD:=$(call AutoProbe,atlantic)
