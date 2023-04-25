@@ -44,15 +44,15 @@ CONFIGURE_ARGS += --with-pic
 
 MAKE_PATH:=ndpi-netfilter
 
-MAKE_FLAGS += \
-    KERNEL_DIR="$(LINUX_DIR)" \
-    MODULES_DIR="$(TARGET_MODULES_DIR)" \
-    ARCH="$(LINUX_KARCH)" \
-    KERNEL_RELEASE="$(KERNEL_PATCHVER)" \
-    CROSS_COMPILE="$(TARGET_CROSS)" \
-    CC="$(TARGET_CC)" \
 #MAKE_FLAGS += \
-#    NDPI_PATH=$(PKG_BUILD_DIR)/ndpi-netfilter
+#    KERNEL_DIR="$(LINUX_DIR)" \
+#    MODULES_DIR="$(TARGET_MODULES_DIR)" \
+#    ARCH="$(LINUX_KARCH)" \
+#    KERNEL_RELEASE="$(KERNEL_PATCHVER)" \
+#    CROSS_COMPILE="$(TARGET_CROSS)" \
+#    CC="$(TARGET_CC)" \
+MAKE_FLAGS += \
+    NDPI_PATH=$(PKG_BUILD_DIR)/ndpi-netfilter
 
 define Build/Compile
 	(cd $(PKG_BUILD_DIR)/src/lib &&\
