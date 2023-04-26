@@ -65,8 +65,13 @@ _bypass_domains() {
 	config_get domain $1 name
 	config_get intf $1 interface
 	config_get enabled $1 enabled
+	config_get noipv6 $1 noipv6
+	config_get family $1 family
+	[ -z "$intf" ] && intf="all"
 	[ "$enabled" = "0" ] && return
 	[ -z "$domain" ] && return
+	[ -z "$family" ] && family="ipv4ipv6"
+	[ -z "$noipv6" ] && noipv6="0"
 	if [ "$(echo $domain | grep '\.$')" != "" ] || [ "$(echo $domain | grep '\.\*$')" != "" ]; then
 		tlds=`curl --max-time 4 -s -k https://data.iana.org/TLD/tlds-alpha-by-domain.txt`
 		domain="$(echo '"$domain"' | sed 's:*::')"
@@ -91,16 +96,18 @@ _bypass_domains() {
 			| grep $domain                `# grep, only keep wanted domain` \
 			| awk '{for (i=1;i<=NF;i++) if (!a[$i]++) printf("%s%s",$i,FS)}{printf("\n")}')" # deduplicate
 		for validdomain in $domainlist; do
-			_bypass_domain $validdomain $intf
+			_bypass_domain $validdomain $intf $family $noipv6
 		done
 	else
-		_bypass_domain $domain $intf
+		_bypass_domain $domain $intf $family $noipv6
 	fi
 }
 
 _bypass_domain() {
 	local domain=$1
 	local intf=$2
+	local family=$3
+	local noipv6=$4
 	intf=$(echo $intf | sed -e 's/\./_/')
 	[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
 	[ -z "$intf" ] && intf="all"
@@ -120,18 +127,34 @@ _bypass_domain() {
 			fi
 		fi
 		if [ "$(uci -q get dhcp.@dnsmasq[0].ipset | grep /$domain/)" = "" ]; then
-			uci -q add_list dhcp.@dnsmasq[0].ipset="/$domain/omr_dst_bypass_$intf,omr6_dst_bypass_$intf"
+			if [ "$family" = "ipv4ipv6" ]; then
+				uci -q add_list dhcp.@dnsmasq[0].ipset="/$domain/omr_dst_bypass_$intf,omr6_dst_bypass_$intf"
+			elif [ "$family" = "ipv4" ]; then
+				uci -q add_list dhcp.@dnsmasq[0].ipset="/$domain/omr_dst_bypass_$intf"
+			elif [ "$family" = "ipv6" ]; then
+				uci -q add_list dhcp.@dnsmasq[0].ipset="/$domain/omr6_dst_bypass_$intf"
+			fi
 			add_domains="true"
 		else
 			dnsmasqipset=$(uci -q get dhcp.@dnsmasq[0].ipset | sed 's/ /\n/g')
 			for dnsipset in $dnsmasqipset; do
 				if [ "$(echo $dnsipset | cut -d/ -f2)" = "$domain" ]; then
 					uci -q del_list dhcp.@dnsmasq[0].ipset=$dnsipset
-					uci -q add_list dhcp.@dnsmasq[0].ipset="$dnsipset,omr_dst_bypass_$intf,omr6_dst_bypass_$intf"
+					if [ "$family" = "ipv4ipv6" ]; then
+						uci -q add_list dhcp.@dnsmasq[0].ipset="$dnsipset,omr_dst_bypass_$intf,omr6_dst_bypass_$intf"
+					elif [ "$family" = "ipv4" ]; then
+						uci -q add_list dhcp.@dnsmasq[0].ipset="$dnsipset,omr_dst_bypass_$intf"
+					elif [ "$family" = "ipv6" ]; then
+						uci -q add_list dhcp.@dnsmasq[0].ipset="$dnsipset,omr6_dst_bypass_$intf"
+					fi
 					add_domains="true"
 				fi
 			done
 		fi
+		if [ "$(uci -q get dhcp.@dnsmasq[0].noipv6 | grep /$domain/)" = "" ] && [ "$noipv6" = "1" ]; then
+			uci -q add_list dhcp.@dnsmasq[0].noipv6="$domain"
+		fi
+		
 		#logger -t "omr-bypass" "Get IPs of $domain... Done"
 	fi
 }
@@ -358,7 +381,11 @@ _bypass_proto() {
 	config_get intf $1 interface
 	config_get enabled $1 enabled
 	config_get ndpi $1 ndpi
+	config_get noipv6 $1 noipv6
+	config_get family $1 family
 	[ "$enabled" = "0" ] && return
+	[ -z "$noipv6" ] && noipv6="0"
+	[ -z "$family" ] && family="ipv4ipv6"
 	intf=$(echo $intf | sed -e 's/\./_/')
 	[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
 	local intfid="$(uci -q get omr-bypass.$intf.id)"
@@ -367,13 +394,15 @@ _bypass_proto() {
 	[ -z "$proto" ] && return
 	if [ "$(uci -q get openmptcprouter.settings.ndpi)" != "0" ] && [ "$ndpi" != "0" ]; then
 		if [ "$intf" = "all" ]; then
-			$IPTABLESRESTORE -w --wait=60  --noflush <<-EOF
-			*mangle
-			-A omr-bypass-dpi -m ndpi --proto $proto -j MARK --set-mark 0x539
-			-A omr-bypass-dpi -m mark --mark 0x539 -j RETURN
-			COMMIT
-			EOF
-			if [ "$disableipv6" = "0" ]; then
+			if [ "$family" = "ipv4" ] || [ "$family" = "ipv4ipv6" ]; then
+				$IPTABLESRESTORE -w --wait=60  --noflush <<-EOF
+				*mangle
+				-A omr-bypass-dpi -m ndpi --proto $proto -j MARK --set-mark 0x539
+				-A omr-bypass-dpi -m mark --mark 0x539 -j RETURN
+				COMMIT
+				EOF
+			fi
+			if [ "$disableipv6" = "0" ] && ([ "$family" = "ipv6" ] || [ "$family" = "ipv4ipv6" ]); then
 				$IP6TABLESRESTORE -w --wait=60  --noflush <<-EOF
 				*mangle
 				-A omr-bypass6-dpi -m ndpi --proto $proto -j MARK --set-mark 0x6539
@@ -382,13 +411,15 @@ _bypass_proto() {
 				EOF
 			fi
 		else
-			$IPTABLESRESTORE -w --wait=60  --noflush <<-EOF
-			*mangle
-			-A omr-bypass-dpi -m ndpi --proto $proto -j MARK --set-mark 0x539$intfid
-			-A omr-bypass-dpi -m mark --mark 0x539$intfid -j RETURN
-			COMMIT
-			EOF
-			if [ "$disableipv6" = "0" ]; then
+			if [ "$family" = "ipv4" ] || [ "$family" = "ipv4ipv6" ]; then
+				$IPTABLESRESTORE -w --wait=60  --noflush <<-EOF
+				*mangle
+				-A omr-bypass-dpi -m ndpi --proto $proto -j MARK --set-mark 0x539$intfid
+				-A omr-bypass-dpi -m mark --mark 0x539$intfid -j RETURN
+				COMMIT
+				EOF
+			fi
+			if [ "$disableipv6" = "0" ] && ([ "$family" = "ipv6" ] || [ "$family" = "ipv4ipv6" ]); then
 				$IP6TABLESRESTORE -w --wait=60  --noflush <<-EOF
 				*mangle
 				-A omr-bypass6-dpi -m ndpi --proto $proto -j MARK --set-mark 0x6539$intfid
@@ -428,10 +459,10 @@ _bypass_proto() {
 						| grep $domain                `# grep, only keep wanted domain` \
 						| awk '{for (i=1;i<=NF;i++) if (!a[$i]++) printf("%s%s",$i,FS)}{printf("\n")}')" # deduplicate
 					for validdomain in $domainlist; do
-						_bypass_domain $validdomain $intf
+						_bypass_domain $validdomain $intf $family $noipv6
 					done
 				else
-					_bypass_domain $domain $intf
+					_bypass_domain $domain $intf $family $noipv6
 				fi
 			fi
 		done
@@ -593,9 +624,12 @@ _intf_rule() {
 		COMMIT
 		EOF
 	fi
-	config_load shadowsocks-libev
-	config_foreach _intf_rule_ss_rules ss_rules
-	_intf_rule_v2ray_rules
+	if [ "$(uci -q openmptcprouter.settings.proxy)" = "shadowsocks" ]; then
+		config_load shadowsocks-libev
+		config_foreach _intf_rule_ss_rules ss_rules
+	else
+		_intf_rule_v2ray_rules
+	fi
 
 	uci -q set omr-bypass.$intf=interface
 	uci -q set omr-bypass.$intf.id=$count
@@ -726,9 +760,10 @@ start_service() {
 	#local count
 	logger -t "omr-bypass" "Starting OMR-ByPass..."
 	add_domains="false"
-	config_load omr-bypass
+	[ -d /proc/net/xt_ndpi ] && config_load omr-bypass
 	config_foreach _add_proto proto
 	disableipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
+	#noipv6="$(uci -q get omr-bypass.global.noipv6)"
 
 	[ -n "$RELOAD" ] && [ "$(ipset --list | grep omr_dst_bypass_all)" = "" ] && {
 		unset RELOAD
@@ -780,6 +815,7 @@ start_service() {
 	config_foreach _bypass_asn asns
 	dnsmasqipset=$(uci -q get dhcp.@dnsmasq[0].ipset | sed 's/ /\n/g' | grep -v dst_bypass)
 	uci -q delete dhcp.@dnsmasq[0].ipset
+	uci -q delete dhcp.@dnsmasq[0].noipv6
 	if [ -n "$dnsmasqipset" ]; then
 		for dnsipset in $dnsmasqipset; do
 			ipsets=""
@@ -840,7 +876,7 @@ start_service() {
 		EOF
 	fi
 	config_load omr-bypass
-	config_foreach _bypass_proto dpis
+	[ -d /proc/net/xt_ndpi/proto ] && config_foreach _bypass_proto dpis
 	uci -q commit omr-bypass
 
 	[ -z "$RELOAD" ] && [ "$add_domains" = "true" ] && {
