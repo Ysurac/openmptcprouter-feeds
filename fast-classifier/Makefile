@@ -24,7 +24,7 @@ define KernelPackage/fast-classifier/Default
   SECTION:=kernel
   CATEGORY:=Kernel modules
   SUBMENU:=Network Support
-  DEPENDS:=+kmod-ipt-conntrack +kmod-shortcut-fe
+  DEPENDS:=@KERNEL_5_4 +kmod-ipt-conntrack +kmod-shortcut-fe
   TITLE:=Kernel driver for FAST Classifier
   FILES:=$(PKG_BUILD_DIR)/fast-classifier.ko
   KCONFIG:= \
@@ -59,7 +59,7 @@ endef
 
 define Package/fast-classifier-example
   TITLE:=Example user space program for fast-classifier
-  DEPENDS:=+libnl +kmod-fast-classifier
+  DEPENDS:=@KERNEL_5_4 +libnl +kmod-fast-classifier
 endef
 
 define Package/fast-classifier-example/description
