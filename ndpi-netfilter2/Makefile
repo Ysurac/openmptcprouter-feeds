@@ -11,7 +11,7 @@ include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=ndpi-netfilter2
 PKG_RELEASE:=4
-PKG_REV:=2fc0c86e58d56c8f9c5da3883a09732fc902e5e7
+PKG_REV:=fbb2104d125a13db3b8c7fdc34ea0e3fcfe92d12
 PKG_VERSION:=4-$(PKG_REV)
 
 PKG_SOURCE_PROTO:=git
@@ -58,7 +58,7 @@ define Build/Compile
 	$(MAKE) $(MAKE_FLAGS) -C $(PKG_BUILD_DIR)/ndpi-netfilter
 endef
 
-define KernelPackage/iptables-mod-ndpi/install
+define Package/iptables-mod-ndpi/install
 	$(INSTALL_DIR) $(1)/usr/lib/iptables
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/ndpi-netfilter/ipt/libxt_ndpi.so $(1)/usr/lib/iptables
 endef
@@ -66,7 +66,8 @@ endef
 define KernelPackage/ipt-ndpi
 	SUBMENU:=Netfilter Extensions
 	TITLE:= nDPI net netfilter module
-	DEPENDS:=+kmod-nf-conntrack +kmod-nf-conntrack-netlink +kmod-ipt-compat-xtables +libpcap @(LINUX_5_4||LINUX_5_15||TARGET_x86_64)
+#	DEPENDS:=+kmod-nf-conntrack +kmod-nf-conntrack-netlink +kmod-ipt-compat-xtables +libpcap @(LINUX_5_4||LINUX_5_15||TARGET_x86_64)
+	DEPENDS:=+kmod-nf-conntrack +kmod-nf-conntrack-netlink +kmod-ipt-compat-xtables +libpcap @(LINUX_5_4||LINUX_5_15)
 	KCONFIG:=CONFIG_NF_CONNTRACK_LABELS=y \
 	    CONFIG_NETFILTER_XT_MATCH_CONNLABEL=y
 	FILES:= $(PKG_BUILD_DIR)/ndpi-netfilter/src/xt_ndpi.ko
