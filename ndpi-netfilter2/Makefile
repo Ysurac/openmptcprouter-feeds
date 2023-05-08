@@ -49,7 +49,12 @@ MAKE_FLAGS += \
     KERNEL_DIR="$(LINUX_DIR)" \
     MODULES_DIR="$(TARGET_MODULES_DIR)" \
     NDPI_PATH=$(PKG_BUILD_DIR)/ndpi-netfilter \
-    ARCH="$(LINUX_KARCH)"
+
+ifeq ($ARCH),aarch64)
+    MAKE_FLAGS += ARCH="arm64"
+else
+    MAKE_FLAGS += ARCH="$(LINUX_KARCH)"
+endif
 
 define Build/Compile
 	(cd $(PKG_BUILD_DIR)/src/lib &&\
