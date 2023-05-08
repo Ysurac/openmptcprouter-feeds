@@ -23,6 +23,16 @@ return L.view.extend({
 
 		m = new form.Map('omr-bypass', _('OMR-Bypass'),_('OpenMPTCProuter IP must be used as DNS.'));
 
+		/*
+		s = m.section(form.TypedSection, 'global', _('Global settings'));
+		s.addremove = false;
+		s.anonymous = true;
+
+		o = s.option(form.Flag, 'noipv6', _('Disable IPv6 AAAA DNS results for bypassed domains'));
+		o.default = o.disabled;
+		o.optional = true;
+		*/
+		
 		s = m.section(form.GridSection, 'domains', _('Domains'));
 		s.addremove = true;
 		s.anonymous = true;
@@ -41,6 +51,17 @@ return L.view.extend({
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
+
+		o = s.option(form.ListValue, 'family', _('Restrict to address family'));
+		o.value('ipv4ipv6', _('IPv4 and IPv6'));
+		o.value('ipv4', _('IPv4 only'));
+		o.value('ipv4', _('IPv6 only'));
+		o.default = 'ipv4ipv6';
+		o.modalonly = true
+
+		o = s.option(form.Flag, 'noipv6', _('Disable AAAA IPv6 DNS'));
+		o.default = o.enabled;
+		o.modalonly = true
 
 		s = m.section(form.GridSection, 'ips', _('IPs and Networks'));
 		s.addremove = true;
@@ -223,11 +244,23 @@ return L.view.extend({
 		o.noinactive = true;
 		o.nocreate    = true;
 
-		o = s.option(form.Flag, 'ndpi', _('Enable ndpi'));
-		o.default = o.enabled;
-
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
+
+		o = s.option(form.ListValue, 'family', _('Restrict to address family'));
+		o.value('ipv4ipv6', _('IPv4 and IPv6'));
+		o.value('ipv4', _('IPv4 only'));
+		o.value('ipv4', _('IPv6 only'));
+		o.default = 'ipv4ipv6';
+		o.modalonly = true
+
+		o = s.option(form.Flag, 'noipv6', _('Disable AAAA IPv6 DNS'));
+		o.default = o.enabled;
+		o.modalonly = true
+
+		o = s.option(form.Flag, 'ndpi', _('Enable ndpi'));
+		o.default = o.enabled;
+		o.modalonly = true
 
 		return m.render();
 	}
