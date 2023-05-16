@@ -30,7 +30,7 @@ unexport \
   GOPATH \
   GOROOT \
   GOTMPDIR \
-  GOWORK
+  GOWORK GOPROXY
 # Unmodified:
 #   GOINSECURE
 #   GOPRIVATE
