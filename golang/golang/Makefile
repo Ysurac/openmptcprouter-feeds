@@ -7,8 +7,10 @@
 
 include $(TOPDIR)/rules.mk
 
+#GO_VERSION_MAJOR_MINOR:=1.20
+#GO_VERSION_PATCH:=3
 GO_VERSION_MAJOR_MINOR:=1.20
-GO_VERSION_PATCH:=3
+GO_VERSION_PATCH:=999
 
 PKG_NAME:=golang
 PKG_VERSION:=$(GO_VERSION_MAJOR_MINOR)$(if $(GO_VERSION_PATCH),.$(GO_VERSION_PATCH))
@@ -18,9 +20,14 @@ GO_SOURCE_URLS:=https://dl.google.com/go/ \
                 https://mirrors.ustc.edu.cn/golang/ \
                 https://mirrors.nju.edu.cn/golang/
 
-PKG_SOURCE:=go$(PKG_VERSION).src.tar.gz
-PKG_SOURCE_URL:=$(GO_SOURCE_URLS)
-PKG_HASH:=e447b498cde50215c4f7619e5124b0fc4e25fb5d16ea47271c47f278e7aa763a
+#PKG_SOURCE:=go$(PKG_VERSION).src.tar.gz
+#PKG_SOURCE_URL:=$(GO_SOURCE_URLS)
+#PKG_HASH:=e447b498cde50215c4f7619e5124b0fc4e25fb5d16ea47271c47f278e7aa763a
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_URL:=https://github.com/golang/go.git
+PKG_SOURCE_VERSION:=a5350558e6e2db16bfe09f2ba8104549c6598c46
+PKG_SOURCE_DATE:=2023-05-05
+PKG_SOURCE_SUBDIR:=go-$(PKG_VERSION)
 
 PKG_MAINTAINER:=Jeffery To <jeffery.to@gmail.com>
 PKG_LICENSE:=BSD-3-Clause
@@ -100,7 +107,7 @@ include ../golang-compiler.mk
 include ../golang-package.mk
 
 PKG_UNPACK:=$(HOST_TAR) -C "$(PKG_BUILD_DIR)" --strip-components=1 -xzf "$(DL_DIR)/$(PKG_SOURCE)"
-HOST_UNPACK:=$(HOST_TAR) -C "$(HOST_BUILD_DIR)" --strip-components=1 -xzf "$(DL_DIR)/$(PKG_SOURCE)"
+#HOST_UNPACK:=$(HOST_TAR) -C "$(HOST_BUILD_DIR)" --strip-components=1 -xzf "$(DL_DIR)/$(PKG_SOURCE)"
 BOOTSTRAP_UNPACK:=$(HOST_TAR) -C "$(BOOTSTRAP_BUILD_DIR)" --strip-components=1 -xzf "$(DL_DIR)/$(BOOTSTRAP_SOURCE)"
 BOOTSTRAP_1_17_UNPACK:=$(HOST_TAR) -C "$(BOOTSTRAP_1_17_BUILD_DIR)" --strip-components=1 -xzf "$(DL_DIR)/$(BOOTSTRAP_1_17_SOURCE)"
 
@@ -234,10 +241,13 @@ HOST_GO_VARS= \
 	CXX="$(HOSTCXX_NOCACHE)"
 
 define Host/Configure
+	sed -i 's/1\.21/1.20/g' $(HOST_BUILD_DIR)/src/go.mod
+	sed -i 's/21/20/g' $(HOST_BUILD_DIR)/src/internal/goversion/goversion.go
 	$(call GoCompiler/Bootstrap/CheckHost,$(BOOTSTRAP_GO_VALID_OS_ARCH))
 	$(call GoCompiler/Host/CheckHost,$(HOST_GO_VALID_OS_ARCH))
 
 	mkdir -p "$(GO_BUILD_CACHE_DIR)"
+	echo "go$(PKG_VERSION)" > $(HOST_BUILD_DIR)/VERSION
 endef
 
 define Host/Compile
@@ -334,12 +344,14 @@ PKG_GO_INSTALL_ARGS= \
 	$(if $(filter $(GO_PKG_ENABLE_PIE),1),-buildmode pie)
 
 define Build/Configure
+	sed -i 's/1\.21/1.20/g' $(HOST_BUILD_DIR)/src/go.mod
+	sed -i 's/21/20/g' $(HOST_BUILD_DIR)/src/internal/goversion/goversion.go
 	mkdir -p "$(GO_BUILD_CACHE_DIR)"
+	echo "go$(PKG_VERSION)" > $(PKG_BUILD_DIR)/VERSION
 endef
 
 define Build/Compile
 	@echo "Building target Go first stage"
-
 	$(call GoCompiler/Package/Make, \
 		GOROOT_BOOTSTRAP="$(HOST_GO_ROOT)" \
 		GO_GCC_HELPER_CC="$(HOSTCC)" \
