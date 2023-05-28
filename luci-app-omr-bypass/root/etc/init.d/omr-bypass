@@ -495,47 +495,49 @@ _bypass_proto_without_ndpi() {
 	[ -z "$intf" ] && intf="all"
 	[ -z "$proto" ] && return
 	if [ "$(uci -q get openmptcprouter.settings.ndpi)" == "0" ] || [ "$ndpi" == "0" ]; then
-		ipset -q flush bypass_$proto > /dev/null 2>&1
-		ipset -q --exist restore <<-EOF
-		create bypass_$proto hash:net hashsize 64
-		EOF
-		ALLIPS=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select ip from ipproto where proto='"$proto"';" ".exit")
-		for ip in $ALLIPS; do
-			ipset -q add bypass_$proto $ip
-		done
-		if [ "$intf" = "all" ]; then
-			if [ "$family" = "ipv4" ] || [ "$family" = "ipv4ipv6" ]; then
-				$IPTABLESRESTORE -w --wait=60  --noflush <<-EOF
-				*mangle
-				-A omr-bypass-dpi -m set --match-set bypass_$proto dst -j MARK --set-mark 0x539
-				-A omr-bypass-dpi -m mark --mark 0x539 -j RETURN
-				COMMIT
-				EOF
-			fi
-			if [ "$disableipv6" = "0" ] && ([ "$family" = "ipv6" ] || [ "$family" = "ipv4ipv6" ]); then
-				$IP6TABLESRESTORE -w --wait=60  --noflush <<-EOF
-				*mangle
-				-A omr-bypass6-dpi -m set --match-set bypass_$proto dst -j MARK --set-mark 0x6539
-				-A omr-bypass6-dpi -m mark --mark 0x6539 -j RETURN
-				COMMIT
-				EOF
-			fi
-		else
-			if [ "$family" = "ipv4" ] || [ "$family" = "ipv4ipv6" ]; then
-				$IPTABLESRESTORE -w --wait=60  --noflush <<-EOF
-				*mangle
-				-A omr-bypass-dpi -m set --match-set bypass_$proto dst -j MARK --set-mark 0x539$intfid
-				-A omr-bypass-dpi -m mark --mark 0x539$intfid -j RETURN
-				COMMIT
-				EOF
-			fi
-			if [ "$disableipv6" = "0" ] && ([ "$family" = "ipv6" ] || [ "$family" = "ipv4ipv6" ]); then
-				$IP6TABLESRESTORE -w --wait=60  --noflush <<-EOF
-				*mangle
-				-A omr-bypass6-dpi -m set --match-set bypass_$proto dst -j MARK --set-mark 0x6539$intfid
-				-A omr-bypass6-dpi -m mark --mark 0x6539$intfid -j RETURN
-				COMMIT
-				EOF
+		ALLIPS=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select ip from ipproto where proto=\"$proto\";" ".exit")
+		if [ -n "$ALLIPS" ]; then
+			ipset -q flush bypass_$proto > /dev/null 2>&1
+			ipset -q --exist restore <<-EOF
+			create bypass_$proto hash:net hashsize 64
+			EOF
+			for ip in $ALLIPS; do
+				ipset -q add bypass_$proto $ip
+			done
+			if [ "$intf" = "all" ]; then
+				if [ "$family" = "ipv4" ] || [ "$family" = "ipv4ipv6" ]; then
+					$IPTABLESRESTORE -w --wait=60  --noflush <<-EOF
+					*mangle
+					-A omr-bypass-dpi -m set --match-set bypass_$proto dst -j MARK --set-mark 0x539
+					-A omr-bypass-dpi -m mark --mark 0x539 -j RETURN
+					COMMIT
+					EOF
+				fi
+				if [ "$disableipv6" = "0" ] && ([ "$family" = "ipv6" ] || [ "$family" = "ipv4ipv6" ]); then
+					$IP6TABLESRESTORE -w --wait=60  --noflush <<-EOF
+					*mangle
+					-A omr-bypass6-dpi -m set --match-set bypass_$proto dst -j MARK --set-mark 0x6539
+					-A omr-bypass6-dpi -m mark --mark 0x6539 -j RETURN
+					COMMIT
+					EOF
+				fi
+			else
+				if [ "$family" = "ipv4" ] || [ "$family" = "ipv4ipv6" ]; then
+					$IPTABLESRESTORE -w --wait=60  --noflush <<-EOF
+					*mangle
+					-A omr-bypass-dpi -m set --match-set bypass_$proto dst -j MARK --set-mark 0x539$intfid
+					-A omr-bypass-dpi -m mark --mark 0x539$intfid -j RETURN
+					COMMIT
+					EOF
+				fi
+				if [ "$disableipv6" = "0" ] && ([ "$family" = "ipv6" ] || [ "$family" = "ipv4ipv6" ]); then
+					$IP6TABLESRESTORE -w --wait=60  --noflush <<-EOF
+					*mangle
+					-A omr-bypass6-dpi -m set --match-set bypass_$proto dst -j MARK --set-mark 0x6539$intfid
+					-A omr-bypass6-dpi -m mark --mark 0x6539$intfid -j RETURN
+					COMMIT
+					EOF
+				fi
 			fi
 		fi
 	fi
