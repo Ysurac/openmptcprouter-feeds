@@ -7,8 +7,6 @@
 # Author: @Lynx (OpenWrt forum)
 # Inspiration taken from: @moeller0 (OpenWrt forum)
 
-cake_autorate_version="2.0.0"
-
 # *** OUTPUT AND LOGGING OPTIONS ***
 
 output_processing_stats=1 	# enable (1) or disable (0) output monitoring lines showing processing stats
@@ -44,7 +42,7 @@ ul_if=wan     # upload interface
 # fping - round robin pinging (rtts)
 # ping - (iputils-ping) individual pinging (rtts)
 # hping3 - individidual pinging (owds)
-pinger_binary=ping
+pinger_binary=fping
 
 # list of reflectors to use and number of pingers to initiate
 # pingers will be initiated with reflectors in the order specified in the list 
@@ -187,9 +185,9 @@ reflector_misbehaving_detection_thr=3
 
 reflector_replacement_interval_mins=60 # how often to replace a random reflector from the present list
 
-reflector_comparison_interval_mins=1       # how often to compare reflectors 
-reflector_owd_baseline_delta_thr_ms=10     # max increase from min baseline before reflector rotated
-reflector_owd_delta_ewma_delta_thr_ms=10   # mac increase from min delta ewma before reflector rotated
+reflector_comparison_interval_mins=1		# how often to compare reflectors 
+reflector_sum_owd_baselines_delta_thr_ms=20	# max increase from min sum owd baselines before reflector rotated
+reflector_owd_delta_ewma_delta_thr_ms=10	# max increase from min delta ewma before reflector rotated
 
 # stall is detected when the following two conditions are met:
 # 1) no reflector responses within $stall_detection_thr*$ping_response_interval_us; and

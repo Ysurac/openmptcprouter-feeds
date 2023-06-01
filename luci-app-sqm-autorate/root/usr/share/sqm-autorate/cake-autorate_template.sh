@@ -7,17 +7,21 @@
 # Author: @Lynx (OpenWrt forum)
 # Inspiration taken from: @moeller0 (OpenWrt forum)
 
-INTERFACE=$(basename "$0" | cut -d. -f2)
+INTERFACE=$(basename "$1" | cut -d. -f2)
 
 cake_autorate_version="2.0.0"
 
 # *** OUTPUT AND LOGGING OPTIONS ***
 
-output_processing_stats=$(uci -q get sqm.${INTERFACE}.output_processing_stats || echo '0')	# enable (1) or disable (0) output monitoring lines showing processing stats
-output_load_stats=$(uci -q get sqm.${INTERFACE}.output_load_stats || echo '0')			# enable (1) or disable (0) output monitoring lines showing achieved loads
+output_processing_stats=1
+#$(uci -q get sqm.${INTERFACE}.output_processing_stats || echo '0')	# enable (1) or disable (0) output monitoring lines showing processing stats
+output_load_stats=0
+#$(uci -q get sqm.${INTERFACE}.output_load_stats || echo '0')			# enable (1) or disable (0) output monitoring lines showing achieved loads
 output_reflector_stats=$(uci -q get sqm.${INTERFACE}.output_reflector_stats || echo '0')	# enable (1) or disable (0) output monitoring lines showing reflector stats
-output_cake_changes=$(uci -q get sqm.${INTERFACE}.output_cake_changes || echo '0')		# enable (1) or disable (0) output monitoring lines showing cake bandwidth changes
-debug=$(uci -q get sqm.${INTERFACE}.debug || echo '0')						# enable (1) or disable (0) out of debug lines
+output_cake_changes=0
+#$(uci -q get sqm.${INTERFACE}.output_cake_changes || echo '0')		# enable (1) or disable (0) output monitoring lines showing cake bandwidth changes
+debug=0
+#$(uci -q get sqm.${INTERFACE}.debug || echo '0')						# enable (1) or disable (0) out of debug lines
 
 # This can generate a LOT of records so be careful:
 log_DEBUG_messages_to_syslog=0	# enable (1) or disable (0) logging of all DEBUG records into the system log. 
@@ -26,7 +30,7 @@ log_DEBUG_messages_to_syslog=0	# enable (1) or disable (0) logging of all DEBUG 
 # every write the cumulative write time and bytes associated with each log line are checked
 # and if either exceeds the configured values below, the log log file is rotated
 log_to_file=1              # enable (1) or disable (0) output logging to file (/tmp/cake-autorate.log)
-log_file_max_time_mins=10  # maximum time between log file rotations
+log_file_max_time_mins=10000  # maximum time between log file rotations
 log_file_max_size_KB=2000  # maximum KB (i.e. bytes/1024) worth of log lines between log file rotations
 
 # log file path defaults to /var/log/
@@ -46,7 +50,7 @@ ul_if=$(uci -q get sqm.${INTERFACE}.interface)		# upload interface
 # fping - round robin pinging (rtts)
 # ping - (iputils-ping) individual pinging (rtts)
 # hping3 - individidual pinging (owds)
-pinger_binary=ping
+pinger_binary=tsping
 
 # list of reflectors to use and number of pingers to initiate
 # pingers will be initiated with reflectors in the order specified in the list 
@@ -54,16 +58,16 @@ pinger_binary=ping
 # so e.g. if 6 reflectors are specified and the number of pingers is set to 4, the first 4 reflectors will be used initially
 # and the remaining 2 reflectors in the list will be used in the event any of the first 4 go bad
 # a bad reflector will go to the back of the queue on reflector rotation
-reflectors=($(uci -q get omr-tracker.defaults.hosts))
-#reflectors=(
-#"1.1.1.1" "1.0.0.1"  # Cloudflare
-#"8.8.8.8" "8.8.4.4"  # Google
-#"9.9.9.9" "9.9.9.10" "9.9.9.11" # Quad9
-#"94.140.14.15" "94.140.14.140" "94.140.14.141" "94.140.15.15" "94.140.15.16" # AdGuard
-#"64.6.65.6" "156.154.70.1" "156.154.70.2" "156.154.70.3" "156.154.70.4" "156.154.70.5" "156.154.71.1" "156.154.71.2" "156.154.71.3" "156.154.71.4" "156.154.71.5" # Neustar
-#"208.67.220.2" "208.67.220.123" "208.67.220.220" "208.67.222.2" "208.67.222.123" # OpenDNS
-#"185.228.168.9" "185.228.168.10" # CleanBrowsing
-#)
+#reflectors=$(uci -q get omr-tracker.defaults.hosts)
+reflectors=(
+"1.1.1.1" "1.0.0.1"  # Cloudflare
+"8.8.8.8" "8.8.4.4"  # Google
+"9.9.9.9" "9.9.9.10" "9.9.9.11" # Quad9
+"94.140.14.15" "94.140.14.140" "94.140.14.141" "94.140.15.15" "94.140.15.16" # AdGuard
+"64.6.65.6" "156.154.70.1" "156.154.70.2" "156.154.70.3" "156.154.70.4" "156.154.70.5" "156.154.71.1" "156.154.71.2" "156.154.71.3" "156.154.71.4" "156.154.71.5" # Neustar
+"208.67.220.2" "208.67.220.123" "208.67.220.220" "208.67.222.2" "208.67.222.123" # OpenDNS
+"185.228.168.9" "185.228.168.10" # CleanBrowsing
+)
 
 randomize_reflectors=1 # enable (1) or disable (0) randomization of reflectors on startup
 
@@ -71,14 +75,14 @@ randomize_reflectors=1 # enable (1) or disable (0) randomization of reflectors o
 # to avoid excessive CPU use (proportional with ping interval / number of pingers)
 # and to avoid abusive network activity (excessive ICMP frequency to one reflector)
 # The author has found an ICMP rate of 1/(0.2/4) = 20 Hz to give satisfactory performance on 4G
-no_pingers=$(uci -q get sqm.${INTERFACE}.no_pingers || echo "6")					# number of pingers to maintain
-reflector_ping_interval_s=$(uci -q get sqm.${INTERFACE}.reflector_ping_interval_s || echo "0.3")	# (seconds, e.g. 0.2s or 2s)
+no_pingers=$(uci -q get sqm.${INTERFACE}.no_pingers || echo "4")					# number of pingers to maintain
+reflector_ping_interval_s=$(uci -q get sqm.${INTERFACE}.reflector_ping_interval_s || echo "1")	# (seconds, e.g. 0.2s or 2s)
 
 # delay threshold in ms is the extent of OWD increase to classify as a delay
 # these are automatically adjusted based on maximum on the wire packet size
 # (adjustment significant at sub 12Mbit/s rates, else negligible)  
-dl_delay_thr_ms=$(uci -q get sqm.${INTERFACE}.delay_thr_ms || echo "30") # (milliseconds)
-ul_delay_thr_ms=$(uci -q get sqm.${INTERFACE}.delay_thr_ms || echo "30") # (milliseconds)
+dl_delay_thr_ms=$(uci -q get sqm.${INTERFACE}.delay_thr_ms || echo "100") # (milliseconds)
+ul_delay_thr_ms=$(uci -q get sqm.${INTERFACE}.delay_thr_ms || echo "100") # (milliseconds)
 
 # Set either of the below to 0 to adjust one direction only 
 # or alternatively set both to 0 to simply use cake-autorate to monitor a connection
@@ -97,11 +101,11 @@ max_ul_shaper_rate_kbps=$(uci -q get sqm.${INTERFACE}.max_upload || echo "35000"
 # pausing all active pingers when connection is not in active use
 enable_sleep_function=$(uci -q get sqm.${INTERFACE}.enable_sleep_functions || echo "1")			# enable (1) or disable (0) sleep functonality 
 connection_active_thr_kbps=$(uci -q get sqm.${INTERFACE}.connection_active_thr_kpbs || echo "1000")	# threshold in Kbit/s below which dl/ul is considered idle
-sustained_idle_sleep_thr_s=$(uci -q get sqm.${INTERFACE}.sustained_idle_sleep_thr || echo "60.0")	# time threshold to put pingers to sleep on sustained dl/ul achieved rate < idle_thr (seconds)
+sustained_idle_sleep_thr_s=$(uci -q get sqm.${INTERFACE}.sustained_idle_sleep_thr || echo "150.0")	# time threshold to put pingers to sleep on sustained dl/ul achieved rate < idle_thr (seconds)
 
 min_shaper_rates_enforcement=$(uci -q get sqm.${INTERFACE}.min_shaper_rates_enforcement || echo "0")	# enable (1) or disable (0) dropping down to minimum shaper rates on connection idle or stall
 
-startup_wait_s=$(uci -q get sqm.${INTERFACE}.startup_wait_s || echo "60.0")	# number of seconds to wait on startup (e.g. to wait for things to settle on router reboot)
+startup_wait_s=$(uci -q get sqm.${INTERFACE}.startup_wait_s || echo "0.0")	# number of seconds to wait on startup (e.g. to wait for things to settle on router reboot)
 
 # *** ADVANCED CONFIGURATION OPTIONS ***
 
@@ -126,7 +130,8 @@ log_file_export_compress=1 # compress log file exports using gzip and append .gz
 # Unfortunately, fping does not offer a command line switch to set
 # the firewall mark.
 # WARNING: no error checking so use at own risk!
-ping_extra_args="- B -I ${INTERFACE}"
+#ping_extra_args="-B -I ${INTERFACE}"
+ping_extra_args=""
 
 # a wrapper for ping binary - used as a prefix for the real command
 # e.g., when using mwan3, it is recommended to set it like this:
@@ -172,13 +177,13 @@ high_load_thr=0.75   # % of currently set bandwidth for detecting high load
 # the bufferbloat refractory period should be greater than the 
 # average time it would take to replace the bufferbloat
 # detection window with new samples upon a bufferbloat event
-bufferbloat_refractory_period_ms=300 # (milliseconds)
+bufferbloat_refractory_period_ms=2000 # (milliseconds)
 decay_refractory_period_ms=1000 # (milliseconds)
 
 # interval for checking reflector health
 reflector_health_check_interval_s=1.0 # (seconds)
 # deadline for reflector response not to be classified as an offence against reflector
-reflector_response_deadline_s=1.0 # (seconds)
+reflector_response_deadline_s=2.0 # (seconds)
 
 # reflector misbehaving is detected when $reflector_misbehaving_detection_thr samples
 # out of the last (reflector misbehaving detection window) samples are offences
@@ -190,7 +195,7 @@ reflector_misbehaving_detection_thr=3
 reflector_replacement_interval_mins=60 # how often to replace a random reflector from the present list
 
 reflector_comparison_interval_mins=1       # how often to compare reflectors 
-reflector_owd_baseline_delta_thr_ms=10     # max increase from min baseline before reflector rotated
+reflector_sum_owd_baseline_delta_thr_ms=30     # max increase from min sum owd baselines before reflector rotated
 reflector_owd_delta_ewma_delta_thr_ms=10   # mac increase from min delta ewma before reflector rotated
 
 # stall is detected when the following two conditions are met:
@@ -199,7 +204,7 @@ reflector_owd_delta_ewma_delta_thr_ms=10   # mac increase from min delta ewma be
 stall_detection_thr=5
 connection_stall_thr_kbps=10
 
-global_ping_response_timeout_s=10.0 # timeout to set shaper rates to min on no ping response whatsoever (seconds)
+global_ping_response_timeout_s=100.0 # timeout to set shaper rates to min on no ping response whatsoever (seconds)
 
 if_up_check_interval_s=10.0 # time to wait before re-checking if rx/tx bytes files exist (e.g. from boot state or sleep recovery)
 
