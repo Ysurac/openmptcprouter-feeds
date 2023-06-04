@@ -13,15 +13,11 @@ cake_autorate_version="2.0.0"
 
 # *** OUTPUT AND LOGGING OPTIONS ***
 
-output_processing_stats=1
-#$(uci -q get sqm.${INTERFACE}.output_processing_stats || echo '0')	# enable (1) or disable (0) output monitoring lines showing processing stats
-output_load_stats=0
-#$(uci -q get sqm.${INTERFACE}.output_load_stats || echo '0')			# enable (1) or disable (0) output monitoring lines showing achieved loads
+output_processing_stats=$(uci -q get sqm.${INTERFACE}.output_processing_stats || echo '0')	# enable (1) or disable (0) output monitoring lines showing processing stats
+output_load_stats=$(uci -q get sqm.${INTERFACE}.output_load_stats || echo '0')			# enable (1) or disable (0) output monitoring lines showing achieved loads
 output_reflector_stats=$(uci -q get sqm.${INTERFACE}.output_reflector_stats || echo '0')	# enable (1) or disable (0) output monitoring lines showing reflector stats
-output_cake_changes=0
-#$(uci -q get sqm.${INTERFACE}.output_cake_changes || echo '0')		# enable (1) or disable (0) output monitoring lines showing cake bandwidth changes
-debug=0
-#$(uci -q get sqm.${INTERFACE}.debug || echo '0')						# enable (1) or disable (0) out of debug lines
+output_cake_changes=$(uci -q get sqm.${INTERFACE}.output_cake_changes || echo '0')		# enable (1) or disable (0) output monitoring lines showing cake bandwidth changes
+debug=$(uci -q get sqm.${INTERFACE}.debug || echo '0')						# enable (1) or disable (0) out of debug lines
 
 # This can generate a LOT of records so be careful:
 log_DEBUG_messages_to_syslog=0	# enable (1) or disable (0) logging of all DEBUG records into the system log. 
@@ -76,13 +72,17 @@ randomize_reflectors=1 # enable (1) or disable (0) randomization of reflectors o
 # and to avoid abusive network activity (excessive ICMP frequency to one reflector)
 # The author has found an ICMP rate of 1/(0.2/4) = 20 Hz to give satisfactory performance on 4G
 no_pingers=$(uci -q get sqm.${INTERFACE}.no_pingers || echo "4")					# number of pingers to maintain
-reflector_ping_interval_s=$(uci -q get sqm.${INTERFACE}.reflector_ping_interval_s || echo "1")	# (seconds, e.g. 0.2s or 2s)
+reflector_ping_interval_s=$(uci -q get sqm.${INTERFACE}.reflector_ping_interval_s || echo "0.5")	# (seconds, e.g. 0.2s or 2s)
 
 # delay threshold in ms is the extent of OWD increase to classify as a delay
 # these are automatically adjusted based on maximum on the wire packet size
-# (adjustment significant at sub 12Mbit/s rates, else negligible)  
-dl_delay_thr_ms=$(uci -q get sqm.${INTERFACE}.delay_thr_ms || echo "100") # (milliseconds)
-ul_delay_thr_ms=$(uci -q get sqm.${INTERFACE}.delay_thr_ms || echo "100") # (milliseconds)
+# (adjustment significant at sub 12Mbit/s rates, else negligible)
+latency=$(uci -q get sqm.${INTERFACE}.delay_thr_ms)
+[ -z "$latency" ] && latency="$(($(ping -B -w 5 -c 5 -I ${ul_if} 1.1.1.1 | cut -d '/' -s -f6 | cut -d '.' -f1 | tr -d '\n' 2>/dev/null)+30))"
+[ -z "$latency" ] && latency="100"
+logger -t "sqm" "latency $INTERFACE: $latency"
+dl_delay_thr_ms="$latency" # (milliseconds)
+ul_delay_thr_ms="$latency" # (milliseconds)
 
 # Set either of the below to 0 to adjust one direction only 
 # or alternatively set both to 0 to simply use cake-autorate to monitor a connection
@@ -131,7 +131,7 @@ log_file_export_compress=1 # compress log file exports using gzip and append .gz
 # the firewall mark.
 # WARNING: no error checking so use at own risk!
 #ping_extra_args="-B -I ${INTERFACE}"
-ping_extra_args=""
+ping_extra_args="-i ${ul_if}"
 
 # a wrapper for ping binary - used as a prefix for the real command
 # e.g., when using mwan3, it is recommended to set it like this:
