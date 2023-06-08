@@ -24,7 +24,7 @@ define KernelPackage/shortcut-fe
   SECTION:=kernel
   CATEGORY:=Kernel modules
   SUBMENU:=Network Support
-  DEPENDS:=@KERNEL_5_4 @IPV6 +kmod-nf-conntrack
+  DEPENDS:=@IPV6 +kmod-nf-conntrack
   TITLE:=Kernel driver for SFE
   FILES:= \
 	   $(PKG_BUILD_DIR)/shortcut-fe.ko \
@@ -53,7 +53,7 @@ define KernelPackage/shortcut-fe-cm
   SECTION:=kernel
   CATEGORY:=Kernel modules
   SUBMENU:=Network Support
-  DEPENDS:=@KERNEL_5_4 +kmod-ipt-conntrack +kmod-shortcut-fe
+  DEPENDS:=+kmod-ipt-conntrack +kmod-shortcut-fe
   TITLE:=Kernel driver for SFE
   FILES:=$(PKG_BUILD_DIR)/shortcut-fe-cm.ko
   KCONFIG:= \
@@ -79,7 +79,7 @@ endef
 
 ifneq ($(CONFIG_PACKAGE_kmod-shortcut-fe)$(CONFIG_PACKAGE_kmod-shortcut-fe-cm),)
 define Build/InstallDev
-	$(INSTALL_DIR) $(1)/usr/include
+    $(INSTALL_DIR) $(1)/usr/include
 	$(INSTALL_DIR) $(1)/usr/include/shortcut-fe
 	$(CP) -rf $(PKG_BUILD_DIR)/sfe.h $(1)/usr/include/shortcut-fe
 	$(CP) -rf $(PKG_BUILD_DIR)/sfe.h $(1)/usr/include
