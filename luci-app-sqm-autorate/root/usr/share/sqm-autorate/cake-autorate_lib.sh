@@ -24,22 +24,16 @@ sleep_s()
 	# - https://github.com/lynxthecat/cake-autorate/issues/174#issuecomment-1460057382
 	# - https://github.com/lynxthecat/cake-autorate/issues/174#issuecomment-1460074498
 
-	log_msg "DEBUG" "sleep_s"
 	local sleep_duration_s=${1} # (seconds, e.g. 0.5, 1 or 1.5)
-	log_msg "DEBUG" "sleep_s read ${sleep_duration_s} - ${__sleep_fd}"
-#	read -r -t "${sleep_duration_s}" -u "${__sleep_fd}" || :
-	read -r -t "${sleep_duration_s}" -u "${__sleep_fd}" || true
-	log_msg "DEBUG" "sleep_s read done"
+	read -r -t "${sleep_duration_s}" -u "${__sleep_fd}" || : 
 }
 
 sleep_us()
 {
-	log_msg "DEBUG" "WTF ?"
 	local sleep_duration_us=${1} # (microseconds)
-	log_msg "DEBUG" "sleep_us"
+
 	sleep_duration_s=000000${sleep_duration_us}
 	sleep_duration_s=$((10#${sleep_duration_s::-6})).${sleep_duration_s: -6}
-	log_msg "DEBUG" "go to sleep_s"
 	sleep_s "${sleep_duration_s}"
 }
 
@@ -125,8 +119,6 @@ terminate()
 	done
 
 	kill -9 "${pids[@]}" 2> /dev/null
-
-	wait "${@:-}"
 }
 
 
