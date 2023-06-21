@@ -131,7 +131,7 @@ log_file_export_compress=1 # compress log file exports using gzip and append .gz
 # the firewall mark.
 # WARNING: no error checking so use at own risk!
 #ping_extra_args="-B -I ${INTERFACE}"
-ping_extra_args="-i ${ul_if}"
+ping_extra_args="-i ${ul_if} -e"
 
 # a wrapper for ping binary - used as a prefix for the real command
 # e.g., when using mwan3, it is recommended to set it like this:
