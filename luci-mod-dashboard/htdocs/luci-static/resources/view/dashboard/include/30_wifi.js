@@ -78,20 +78,20 @@ return baseclass.extend({
 
 		container_box.appendChild(container_radio);
 
-		var container_devices = E('div', { 'class': 'table assoclist devices-info' }, [
-			E('div', { 'class': 'tr table-titles  dashboard-bg' }, [
-				E('div', { 'class': 'th nowrap' }, _('Hostname')),
-				E('div', { 'class': 'th' }, _('Wireless')),
-				E('div', { 'class': 'th' }, _('Signal')),
-				E('div', { 'class': 'th' }, '%s / %s'.format( _('Up.'), _('Down.')))
+		var container_devices = E('table', { 'class': 'table assoclist devices-info' }, [
+			E('tr', { 'class': 'tr table-titles  dashboard-bg' }, [
+				E('th', { 'class': 'th nowrap' }, _('Hostname')),
+				E('th', { 'class': 'th' }, _('Wireless')),
+				E('th', { 'class': 'th' }, _('Signal')),
+				E('th', { 'class': 'th' }, '%s / %s'.format( _('Up.'), _('Down.')))
 			])
 		]);
 
 		var container_devices_item;
-		var container_devices_list = E('div', { 'class': 'table assoclist devices-info' });
+		var container_devices_list = E('table', { 'class': 'table assoclist devices-info' });
 
 		for (var i =0; i < this.params.wifi.devices.length; i++) {
-			container_devices_item = E('div', { 'class': 'tr cbi-rowstyle-1' });
+			container_devices_item = E('tr', { 'class': 'tr cbi-rowstyle-1' });
 
 			for(var idx in this.params.wifi.devices[i]) {
 				var device = this.params.wifi.devices[i];
@@ -109,7 +109,7 @@ return baseclass.extend({
 						])
 					]);
 				} else if ('rate' == idx) {
-					container_content = E('div', { 'class': 'td device-info'  }, [
+					container_content = E('td', { 'class': 'td device-info'  }, [
 						E('p', {}, [
 							E('span', { 'class': ''}, [ device[idx].value.rx ]),
 							E('br'),
@@ -117,7 +117,7 @@ return baseclass.extend({
 						])
 					]);
 				} else {
-					container_content = E('div', { 'class': 'td device-info'}, [
+					container_content = E('td', { 'class': 'td device-info'}, [
 						E('p', {}, [
 							E('span', { 'class': ''}, [ device[idx].value ]),
 						])
@@ -130,13 +130,11 @@ return baseclass.extend({
 			container_devices_list.appendChild(container_devices_item);
 		}
 
-		if (this.params.wifi.devices.length > 0) {
-			container_devices.appendChild(container_devices_list);
-			container_box.appendChild(E('hr'));
-			container_box.appendChild(container_devices);
-			container_box.appendChild(container_devices_list);
-			container_wapper.appendChild(container_box);
-		}
+		container_devices.appendChild(container_devices_list);
+		container_box.appendChild(E('hr'));
+		container_box.appendChild(container_devices);
+		container_box.appendChild(container_devices_list);
+		container_wapper.appendChild(container_box);
 
 		return container_wapper;
 	},
@@ -149,7 +147,7 @@ return baseclass.extend({
 			for (var j = 0; j < network_items.length; j++) {
 				 var net = network_items[j],
 					 is_assoc = (net.getBSSID() != '00:00:00:00:00:00' && net.getChannel() && !net.isDisabled()),
-	 				 chan = net.getChannel(),
+					 chan = net.getChannel(),
 					 freq = net.getFrequency(),
 					 rate = net.getBitRate();
 
@@ -264,6 +262,8 @@ return baseclass.extend({
 
 		this.renderUpdateData(data[0], data[1], data[2]);
 
-		return this.renderHtml();
+		if (this.params.wifi.radios.length)
+			return this.renderHtml();
+		return E([]);
 	}
 });

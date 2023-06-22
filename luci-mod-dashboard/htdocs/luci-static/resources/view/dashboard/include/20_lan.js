@@ -70,13 +70,11 @@ return baseclass.extend({
 			]));
 		}
 
-		if (this.params.lan.devices.length > 0) {
-			container_box.appendChild(E('hr'));
-			container_box.appendChild(container_devices);
-			container_box.appendChild(E('hr'));
-			container_box.appendChild(container_deviceslist);
-			container_wapper.appendChild(container_box);
-		}
+		container_box.appendChild(E('hr'));
+		container_box.appendChild(container_devices);
+		container_box.appendChild(E('hr'));
+		container_box.appendChild(container_deviceslist);
+		container_wapper.appendChild(container_box);
 
 		return container_wapper;
 	},
