@@ -6,7 +6,7 @@ if [ -f /usr/sbin/iptables-legacy ]; then
 	IPTABLESRESTORE="/usr/sbin/iptables-legacy-restore"
 else
 	IPTABLESSAVE="/usr/sbin/iptables-save"
-	IPTABLESRESTORE="/usr/sbin/iptables-restore"
+	IPTABLESRESTORE="/usr/sbin/iptables-restore --noflush"
 fi
 
 _setup_rules() {
@@ -39,7 +39,7 @@ _setup_fw() {
 	[ -n "$ifnames" ] && rule="$rule -i $(echo "${ifnames}" | sed 's/ /-i /g')"
 	if [ -n "$rule" ] && [ -n "$lookup" ]; then
 		$IPTABLESAVE --counters | grep -v "0x${lookup}" | $IPTABLERESTORE -w --counters
-		$IPTABLERESTORE --noflush <<-EOF
+		$IPTABLERESTORE <<-EOF
 			*mangle
 			-A omr-gre-tunnel ${rule} -j MARK --set-mark 0x${lookup}
 			COMMIT
@@ -48,7 +48,7 @@ _setup_fw() {
 }
 
 if [ -z "$($IPTABLESAVE | grep omr-gre-tunnel)" ]; then
-	$IPTABLERESTORE --noflush <<-EOF
+	$IPTABLERESTORE <<-EOF
 		*mangle
 		:omr-gre-tunnel -
 		-I PREROUTING 1 -m addrtype ! --dst-type LOCAL -j omr-gre-tunnel
