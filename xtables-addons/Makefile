@@ -1,26 +1,26 @@
+# SPDX-License-Identifier: GPL-2.0-only
 #
 # Copyright (C) 2009-2013 OpenWrt.org
-#
-# This is free software, licensed under the GNU General Public License v2.
-# See /LICENSE for more information.
 #
 
 include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=xtables-addons
-PKG_VERSION:=3.22
-PKG_RELEASE:=$(AUTORELEASE)
-PKG_HASH:=faa16a27166275afbfe8df605f55c3a81ac693bf19da674d45ceded4137ae217
+PKG_VERSION:=3.24
+PKG_RELEASE:=1
+PKG_HASH:=3e823f71720519ced31c4c7d2bfaf7120d9c01c59a0843dfcbe93c95c64d81c1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
 PKG_SOURCE_URL:=https://inai.de/files/xtables-addons/
 PKG_BUILD_DEPENDS:=iptables
+
 PKG_INSTALL:=1
 PKG_BUILD_PARALLEL:=1
 
 PKG_MAINTAINER:=Jo-Philipp Wich <jo@mein.io>
 PKG_LICENSE:=GPL-2.0
+PKG_LICENSE_FILES:=COPYING
 
 PKG_FIXUP:=autoreconf
 PKG_ASLR_PIE:=0
@@ -162,7 +162,7 @@ define Package/iptgeoip/install
 		$(1)/usr/lib/xtables-addons/
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(CP) \
-		$(PKG_INSTALL_DIR)/usr/bin/xt_geoip_fetch \
+		$(PKG_INSTALL_DIR)/usr/bin/xt_geoip_query \
 		$(1)/usr/bin/
 	$(INSTALL_DIR) $(1)/usr/share/xt_geoip
 	touch $(1)/usr/share/xt_geoip/.keep
