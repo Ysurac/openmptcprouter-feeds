@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cake_instances=(/usr/share/sqm-autorate/cake-autorate_config*sh)
+cake_instances=(/root/cake-autorate/config.*.sh)
 cake_instance_pids=()
 
 trap kill_cake_instances INT TERM EXIT
@@ -20,7 +20,7 @@ kill_cake_instances()
 
 for cake_instance in "${cake_instances[@]}"
 do
-	/usr/share/sqm-autorate/cake-autorate.sh "${cake_instance}" &
+	/root/cake-autorate/cake-autorate.sh "${cake_instance}" &
 	cake_instance_pids+=(${!})
 done
 wait
