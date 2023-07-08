@@ -1,6 +1,7 @@
 #
 # Copyright (C) 2009 David Cooper <dave@kupesoft.com>
 # Copyright (C) 2009-2016 OpenWrt.org
+# Copyright (C) 2021 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -9,12 +10,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=msmtp
-PKG_VERSION:=1.8.19
-PKG_RELEASE:=1
+PKG_VERSION:=1.8.14
+PKG_RELEASE:=2
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
 PKG_SOURCE_URL:=https://marlam.de/msmtp/releases
-PKG_HASH:=34a1e1981176874dbe4ee66ee0d9103c90989aa4dcdc4861e4de05ce7e44526b
+PKG_HASH:=d56f065d711486e9c234618515a02a48a48dab4051b34f3e108fbecb6fb773b4
 
 PKG_MAINTAINER:=
 PKG_LICENSE:=GPL-3.0-or-later
@@ -108,7 +109,7 @@ CONFIGURE_ARGS += \
 	--without-msmtpd
 
 ifeq ($(BUILD_VARIANT),ssl)
-	CONFIGURE_ARGS += --with-tls=gnutls
+	CONFIGURE_ARGS += --with-tls=openssl
 else
 	CONFIGURE_ARGS += --without-tls
 endif
