@@ -197,7 +197,7 @@ reflector_owd_delta_ewma_delta_thr_ms=10	# max increase from min delta ewma befo
 stall_detection_thr=5
 connection_stall_thr_kbps=10
 
-global_ping_response_timeout_s=10.0 # timeout to set shaper rates to min on no ping response whatsoever (seconds)
+global_ping_response_timeout_s=10 # timeout to set shaper rates to min on no ping response whatsoever (seconds)
 
 if_up_check_interval_s=10.0 # time to wait before re-checking if rx/tx bytes files exist (e.g. from boot state or sleep recovery)
 
