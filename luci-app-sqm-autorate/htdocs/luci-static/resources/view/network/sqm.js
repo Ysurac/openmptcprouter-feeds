@@ -289,7 +289,8 @@ return view.extend({
 		o.depends("autorate","1");
 
 		o = s.taboption("tab_autorate", form.Value, "startup_wait_s",_("Number of seconds to wait on startup:"));
-		o.default = "60";
+		o.default = "60.0";
+		o.datatype = 'float'
 		o.depends("autorate","1");
 
 
