@@ -11,7 +11,7 @@ include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=ndpi-netfilter2
 PKG_RELEASE:=4
-PKG_REV:=fbb2104d125a13db3b8c7fdc34ea0e3fcfe92d12
+PKG_REV:=3deea541af037b663b1b83a055b80d9a06a0afd2
 PKG_VERSION:=4-$(PKG_REV)
 
 PKG_SOURCE_PROTO:=git
@@ -21,6 +21,7 @@ PKG_SOURCE_URL:=https://github.com/vel21ripn/nDPI.git
 PKG_SOURCE_VERSION:=$(PKG_REV)
 
 PKG_BUILD_PARALLEL:=0
+PKG_FORTIFY_SOURCE:=0
 
 PKG_BUILD_DIR:=$(KERNEL_BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 
@@ -34,7 +35,8 @@ define Package/iptables-mod-ndpi
 	URL:=http://www.ntop.org/products/ndpi/
 #	DEPENDS:=+iptables +iptables-mod-conntrack-extra +kmod-ipt-ndpi +libpcap
 #	DEPENDS:=+iptables +kmod-ipt-ndpi +libpcap @(LINUX_5_4||LINUX_5_15||TARGET_x86_64)
-	DEPENDS:=+iptables +kmod-ipt-ndpi +libpcap @(LINUX_5_4||LINUX_5_15)
+#	DEPENDS:=+iptables +kmod-ipt-ndpi +libpcap @(LINUX_5_4||LINUX_5_15) @!TARGET_ramips
+	DEPENDS:=+iptables +kmod-ipt-ndpi +libpcap @!TARGET_ramips
 	MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 endef
 
@@ -50,7 +52,7 @@ MAKE_PATH:=ndpi-netfilter
 MAKE_FLAGS += \
     KERNEL_DIR="$(LINUX_DIR)" \
     MODULES_DIR="$(TARGET_MODULES_DIR)" \
-    NDPI_PATH=$(PKG_BUILD_DIR)/ndpi-netfilter \
+    NDPI_PATH=$(PKG_BUILD_DIR)/ndpi-netfilter
 
 ifeq ($ARCH),aarch64)
     MAKE_FLAGS += ARCH="arm64"
@@ -74,14 +76,15 @@ define KernelPackage/ipt-ndpi
 	SUBMENU:=Netfilter Extensions
 	TITLE:= nDPI net netfilter module
 #	DEPENDS:=+kmod-nf-conntrack +kmod-nf-conntrack-netlink +kmod-ipt-compat-xtables +libpcap @(LINUX_5_4||LINUX_5_15||TARGET_x86_64)
-	DEPENDS:=+kmod-nf-conntrack +kmod-nf-conntrack-netlink +kmod-ipt-compat-xtables +libpcap @(LINUX_5_4||LINUX_5_15)
+#	DEPENDS:=+kmod-nf-conntrack +kmod-nf-conntrack-netlink +kmod-ipt-compat-xtables +libpcap @(LINUX_5_4||LINUX_5_15) @!TARGET_ramips
+	DEPENDS:=+kmod-nf-conntrack +kmod-nf-conntrack-netlink +kmod-ipt-compat-xtables +libpcap @!TARGET_ramips
 	KCONFIG:=CONFIG_NF_CONNTRACK_LABELS=y \
 	    CONFIG_NETFILTER_XT_MATCH_CONNLABEL=y
 	FILES:= $(PKG_BUILD_DIR)/ndpi-netfilter/src/xt_ndpi.ko
 	AUTOLOAD:=$(call AutoProbe,xt_ndpi)
 #	MODPARAMS.xt_ndpi:=ndpi_enable_flow=1
 	KCONFIG:=\
-	    CONFIG_LIVEPATCH=y \
+	    CONFIG_NDPI_HOOK=y \
 	    CONFIG_NF_CONNTRACK=y \
 	    CONFIG_NF_CONNTRACK_LABELS=y \
 	    CONFIG_NETFILTER_XT_MATCH_CONNLABEL=y \
