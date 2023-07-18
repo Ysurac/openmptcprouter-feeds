@@ -8,7 +8,6 @@
 # Inspiration taken from: @moeller0 (OpenWrt forum)
 
 INTERFACE=$(basename "$1" | cut -d. -f2)
-
 #cake_autorate_version="2.0.0"
 
 # *** OUTPUT AND LOGGING OPTIONS ***
@@ -77,9 +76,9 @@ reflector_ping_interval_s=$(uci -q get sqm.${INTERFACE}.reflector_ping_interval_
 # delay threshold in ms is the extent of OWD increase to classify as a delay
 # these are automatically adjusted based on maximum on the wire packet size
 # (adjustment significant at sub 12Mbit/s rates, else negligible)
-dl_delay_thr_ms=$(uci -q get sqm.${INTERFACE}.delay_thr_ms) || $(($(ping -B -w 5 -c 5 -I ${ul_if} 1.1.1.1 | cut -d '/' -s -f6 | cut -d '.' -f1 | tr -d '\n' 2>/dev/null)+30)) || echo 100 # (milliseconds)
+#logger -t "sqm-autorate" "ping for ${INTERFACE} (${ul_if}): $(echo $(/sbin/uci -q get sqm.${INTERFACE}.delay_thr_ms || echo '100'))"
+dl_delay_thr_ms=$(echo $(uci -q get sqm.${INTERFACE}.delay_thr_ms || echo $(($(/usr/bin/ping -B -w 5 -c 5 -I ${ul_if} 1.1.1.1 | cut -d '/' -s -f6 | cut -d '.' -f1 | tr -d '\n' 2>/dev/null)+30)) || echo "100")) # (milliseconds)
 ul_delay_thr_ms=${dl_delay_thr_ms}
-
 # Set either of the below to 0 to adjust one direction only 
 # or alternatively set both to 0 to simply use cake-autorate to monitor a connection
 adjust_dl_shaper_rate=1 # enable (1) or disable (0) actually changing the dl shaper rate
