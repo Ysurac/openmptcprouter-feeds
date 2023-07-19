@@ -1,0 +1,190 @@
+From 9e2bc31b8c330dc6ad0e6e478103652cd72dc3c8 Mon Sep 17 00:00:00 2001
+From: Sebastian Gottschall <s.gottschall@dd-wrt.com>
+Date: Sun, 9 Jul 2023 12:22:02 +0600
+Subject: [PATCH] add ndpi support for arm/arm64 etc. in 6.1
+
+ndpi is not supported in more recent kernels without livepatch support
+however. livepatch is only supported for x86_64 architectures.
+so ndpi cannot be used on any other platform anymore.
+we solve this by adding a simple hook to nf_ct_destroy
+
+Signed-off-by: Sebastian Gottschall <s.gottschall@dd-wrt.com>
+---
+ ndpi-netfilter/kernel-patch/v6.1.38.diff | 81 ++++++++++++++++++++++++
+ ndpi-netfilter/src/main.c                | 23 +++++--
+ 2 files changed, 98 insertions(+), 6 deletions(-)
+ create mode 100644 ndpi-netfilter/kernel-patch/v6.1.38.diff
+
+diff --git a/ndpi-netfilter/kernel-patch/v6.1.38.diff b/ndpi-netfilter/kernel-patch/v6.1.38.diff
+new file mode 100644
+index 0000000000..6846dc84fc
+--- /dev/null
++++ b/ndpi-netfilter/kernel-patch/v6.1.38.diff
+@@ -0,0 +1,81 @@
++diff -urpN linux-6.1.38.old/include/net/netfilter/nf_conntrack.h linux-6.1.38/include/net/netfilter/nf_conntrack.h
++--- linux-6.1.38.old/include/net/netfilter/nf_conntrack.h	2023-07-05 23:27:38.000000000 +0600
+++++ linux-6.1.38/include/net/netfilter/nf_conntrack.h	2023-07-14 12:34:56.663750711 +0600
++@@ -362,6 +362,11 @@ static inline struct nf_conntrack_net *n
++ 	return net_generic(net, nf_conntrack_net_id);
++ }
++ 
+++#ifdef CONFIG_NDPI_HOOK
+++void register_ndpi_hook(void (*hook)(struct nf_conn *));
+++void unregister_ndpi_hook(void);
+++#endif
+++
++ #define NF_CT_STAT_INC(net, count)	  __this_cpu_inc((net)->ct.stat->count)
++ #define NF_CT_STAT_INC_ATOMIC(net, count) this_cpu_inc((net)->ct.stat->count)
++ #define NF_CT_STAT_ADD_ATOMIC(net, count, v) this_cpu_add((net)->ct.stat->count, (v))
++diff -urpN linux-6.1.38.old/net/netfilter/Kconfig linux-6.1.38/net/netfilter/Kconfig
++--- linux-6.1.38.old/net/netfilter/Kconfig	2023-07-05 23:27:38.000000000 +0600
+++++ linux-6.1.38/net/netfilter/Kconfig	2023-07-14 12:34:11.966879899 +0600
++@@ -76,11 +76,15 @@ config NETFILTER_NETLINK_OSF
++ 	  If this option is enabled, the kernel will include support
++ 	  for passive OS fingerprint via NFNETLINK.
++ 
+++config NDPI_HOOK
+++	bool
+++
++ config NF_CONNTRACK
++ 	tristate "Netfilter connection tracking support"
++ 	default m if NETFILTER_ADVANCED=n
++ 	select NF_DEFRAG_IPV4
++ 	select NF_DEFRAG_IPV6 if IPV6 != n
+++	select NDPI_HOOK
++ 	help
++ 	  Connection tracking keeps a record of what packets have passed
++ 	  through your machine, in order to figure out how they are related
++diff -urpN linux-6.1.38.old/net/netfilter/nf_conntrack_core.c linux-6.1.38/net/netfilter/nf_conntrack_core.c
++--- linux-6.1.38.old/net/netfilter/nf_conntrack_core.c	2023-07-05 23:27:38.000000000 +0600
+++++ linux-6.1.38/net/netfilter/nf_conntrack_core.c	2023-07-14 12:33:45.580092713 +0600
++@@ -582,9 +582,30 @@ static void destroy_gre_conntrack(struct
++ #endif
++ }
++ 
+++#ifdef CONFIG_NDPI_HOOK
+++
+++static void (*ndpi_hook)(struct nf_conn *) __rcu __read_mostly = NULL;
+++
+++void register_ndpi_hook(void (*hook)(struct nf_conn *))
+++{
+++	rcu_assign_pointer(ndpi_hook, hook);
+++}
+++EXPORT_SYMBOL(register_ndpi_hook);
+++
+++void unregister_ndpi_hook(void)
+++{
+++	rcu_assign_pointer(ndpi_hook, NULL);
+++}
+++
+++EXPORT_SYMBOL(unregister_ndpi_hook);
+++#endif
+++
++ void nf_ct_destroy(struct nf_conntrack *nfct)
++ {
++ 	struct nf_conn *ct = (struct nf_conn *)nfct;
+++#ifdef CONFIG_NDPI_HOOK
+++	void (*hook)(struct nf_conn *);
+++#endif
++ 
++ 	pr_debug("%s(%p)\n", __func__, ct);
++ 	WARN_ON(refcount_read(&nfct->use) != 0);
++@@ -594,6 +615,12 @@ void nf_ct_destroy(struct nf_conntrack *
++ 		return;
++ 	}
++ 
+++#ifdef CONFIG_NDPI_HOOK
+++	hook = rcu_dereference(ndpi_hook);
+++	if (hook)
+++		hook(ct);
+++#endif
+++
++ 	if (unlikely(nf_ct_protonum(ct) == IPPROTO_GRE))
++ 		destroy_gre_conntrack(ct);
++ 
+diff --git a/ndpi-netfilter/src/main.c b/ndpi-netfilter/src/main.c
+index 024ca4bb79..e8ae3912d7 100644
+--- a/ndpi-netfilter/src/main.c
++++ b/ndpi-netfilter/src/main.c
+@@ -102,7 +102,9 @@ static char proto_name[]="proto";
+ static char debug_name[]="debug";
+ static char risk_name[]="risks";
+ 
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(5,19,0)
++#ifdef CONFIG_NDPI_HOOK
++#define USE_NDPI_HOOK
++#elif LINUX_VERSION_CODE > KERNEL_VERSION(5,19,0)
+ #ifndef USE_LIVEPATCH
+ #define USE_LIVEPATCH
+ #endif
+@@ -162,15 +164,17 @@ static inline const struct net_device *xt_out(const struct xt_action_param *par)
+ // for testing only!
+ // #define USE_CONNLABELS
+ 
+-#if !defined(USE_CONNLABELS) && defined(CONFIG_NF_CONNTRACK_CUSTOM) && CONFIG_NF_CONNTRACK_CUSTOM > 0
++#if !defined(USE_CONNLABELS) && !defined(USE_NDPI_HOOK) && defined(CONFIG_NF_CONNTRACK_CUSTOM) && CONFIG_NF_CONNTRACK_CUSTOM > 0
+ #define NF_CT_CUSTOM
+ #else
++#ifndef USE_NDPI_HOOK
+ #undef NF_CT_CUSTOM
+ #include <net/netfilter/nf_conntrack_labels.h>
+ #ifndef CONFIG_NF_CONNTRACK_LABELS
+ #error NF_CONNTRACK_LABELS not defined
+ #endif
+ #endif
++#endif
+ 
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,19,0)
+ #define nf_ct_l3proto_try_module_get(a) 0
+@@ -3187,7 +3191,7 @@ static int __net_init ndpi_net_init(struct net *net)
+ 	return -ENOMEM;
+ }
+ 
+-#ifndef USE_LIVEPATCH
++#if !defined(USE_LIVEPATCH) && !defined(USE_NDPI_HOOK)
+ static struct nf_ct_ext_type ndpi_extend = {
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(4,8,0)
+        .seq_print = seq_print_ndpi,
+@@ -3197,7 +3201,7 @@ static struct nf_ct_ext_type ndpi_extend = {
+        .align  = __alignof__(uint32_t),
+        .id     = 0,
+ };
+-#else
++#elif !defined(USE_NDPI_HOOK)
+ 
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(5,17,0)
+ #error "not implemented"
+@@ -3266,6 +3270,8 @@ static int __init ndpi_mt_init(void)
+ 		return -EBUSY;
+ 	}
+ 	nf_ct_ext_id_ndpi = ndpi_extend.id;
++#elif defined(USE_NDPI_HOOK)
++	register_ndpi_hook(&nf_ndpi_free_flow);
+ #else
+ #ifdef USE_LIVEPATCH
+ 	nf_ct_ext_id_ndpi = NF_CT_EXT_LABELS;
+@@ -3389,8 +3395,11 @@ static int __init ndpi_mt_init(void)
+ unreg_pernet:
+ 	unregister_pernet_subsys(&ndpi_net_ops);
+ unreg_ext:
+-#ifndef USE_LIVEPATCH
++#if !defined(USE_LIVEPATCH) && !defined(USE_NDPI_HOOK)
+ 	nf_ct_extend_unregister(&ndpi_extend);
++#endif
++#if defined(USE_NDPI_HOOK)
++	unregister_ndpi_hook();
+ #endif
+        	return ret;
+ }
+@@ -3401,8 +3410,10 @@ static void __exit ndpi_mt_exit(void)
+ 	xt_unregister_target(&ndpi_tg_reg);
+ 	xt_unregister_match(&ndpi_mt_reg);
+ 	unregister_pernet_subsys(&ndpi_net_ops);
+-#ifndef USE_LIVEPATCH
++#if !defined(USE_LIVEPATCH) && !defined(USE_NDPI_HOOK)
+ 	nf_ct_extend_unregister(&ndpi_extend);
++#elif defined(USE_NDPI_HOOK)
++	unregister_ndpi_hook();
+ #else
+ 	rcu_assign_pointer(nf_conntrack_destroy_cb,NULL);
+ #endif
