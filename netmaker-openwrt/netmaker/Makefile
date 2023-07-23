@@ -19,7 +19,7 @@ PKG_MIRROR_HASH:=skip
 
 PKG_LICENSE:=MIT
 PKG_LICENSE_FILES:=LICENSE
-PKG_MAINTAINER:=neo <neo@matrix.earth>
+PKG_MAINTAINER:=sbilly <superli_1980@hotmail.com>
 
 PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_PARALLEL:=1
@@ -31,7 +31,7 @@ GO_PKG_EXCLUDES:=excluded
 GO_PKG_LDFLAGS:=-s -w
 
 include $(INCLUDE_DIR)/package.mk
-include $(TOPDIR)/feeds/openmptcprouter/golang/golang-package.mk
+include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
 
 define Package/netmaker
 $(call Package/netmaker/Default)
