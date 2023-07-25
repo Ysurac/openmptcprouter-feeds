@@ -20,7 +20,7 @@ GO_PKG:=github.com/fatedier/frp
 GO_PKG_BUILD_PKG:=github.com/fatedier/frp/cmd/...
 
 include $(INCLUDE_DIR)/package.mk
-include ../../lang/golang/golang-package.mk
+include $(TOPDIR)/feeds/openmptcprouter/golang/golang-package.mk
 
 define Package/frp/install
 	$(INSTALL_DIR) $(1)/usr/bin/
