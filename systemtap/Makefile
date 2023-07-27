@@ -40,11 +40,11 @@ endef
 CONFIGURE_ARGS += --without-rpm \
             --without-nss --without-avahi --without-dyninst \
             --disable-server --disable-grapher --enable-prologues \
-            --without-python2-probes --disable-translator \
+            --without-python2-probes \
             --disable-libvirt --disable-sqlite --disable-monitor --without-python3-probes \
             ac_cv_prog_have_javac=no \
             ac_cv_prog_have_jar=no
-
+# --disable-translator
 HOST_CONFIGURE_ARGS += --without-rpm \
             --without-nss --without-avahi --without-dyninst \
             --disable-server --disable-grapher --enable-prologues \
