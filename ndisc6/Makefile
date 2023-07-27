@@ -1,6 +1,7 @@
 #
 # Copyright (C) 2006-2012 OpenWrt.org
 # Copyright (C) 2018-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2023 TMP-Networks (Marek Templin) <info@tmp-networks.de>
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -12,9 +13,9 @@ PKG_NAME:=ndisc6
 PKG_VERSION:=1.0.3
 PKG_RELEASE:=1
 
-PKG_SOURCE:=$(PKG_NAME)_$(PKG_VERSION).orig.tar.bz2
-PKG_SOURCE_URL:=http://deb.debian.org/debian/pool/main/n/ndisc6
-PKG_HASH:=0f41d6caf5f2edc1a12924956ae8b1d372e3b426bd7b11eed7d38bc974eec821
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.bz2
+PKG_SOURCE_URL:=https://tmp-networks.de/openwrtsource
+PKG_MD5SUM:=21afdaa3a5a5c1ce50eb7f2b7d795989
 
 PKG_INSTALL:=1
 
