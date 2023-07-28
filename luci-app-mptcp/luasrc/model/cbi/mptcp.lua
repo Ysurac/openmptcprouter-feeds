@@ -75,6 +75,12 @@ if uname.release:sub(1,4) == "5.15" or uname.release:sub(1,1) == "6" then
     o.datatype = "uinteger"
     o.rmempty = false
     o.default = 4
+
+    o = s:option(Value, "mptcp_add_addr_timeout", translate("Set the timeout after which an ADD_ADDR control message will be resent to an MPTCP peer that has not acknowledged a previous ADD_ADDR message."))
+    o.datatype = "uinteger"
+    o.rmempty = false
+    o.default = 120
+
 else
     o = s:option(Value, "mptcp_fullmesh_num_subflows", translate("Fullmesh subflows for each pair of IP addresses"))
     o.datatype = "uinteger"
