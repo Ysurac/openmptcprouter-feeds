@@ -31,7 +31,7 @@ MY_DEPENDS := \
     libnetfilter-conntrack ip-full nstat \
     iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace iptables-mod-conntrack-extra iptables-mod-account \
     kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra iptables-mod-extra conntrack kmod-ipt-offload \
-    iptables-mod-ipsec kmod-crypto-authenc kmod-ipsec kmod-ipsec4 kmod-ipsec6 kmod-ipt-ipsec \
+    kmod-crypto-authenc \
     wireless-tools \
     libiwinfo-lua \
     ca-bundle ca-certificates \
