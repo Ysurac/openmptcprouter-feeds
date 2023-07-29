@@ -150,6 +150,10 @@ return view.extend({
 		o.editable = true;
 		o.depends('masq', '1');
 
+		o = s.taboption('general', form.Flag, 'fullcone6', _('Full Cone IPv6'));
+		o.editable = true;
+		o.depends('masq', '1');
+
 		o = s.taboption('general', form.Flag, 'mtu_fix', _('MSS clamping'));
 		o.modalonly = true;
 
