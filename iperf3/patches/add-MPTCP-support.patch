@@ -1,0 +1,208 @@
+From 26b066b9d4e92442d55950689dbd9fd101b429a7 Mon Sep 17 00:00:00 2001
+From: Paolo Abeni <pabeni@redhat.com>
+Date: Mon, 14 Jun 2021 16:13:02 +0200
+Subject: [PATCH] Add MPTCP support with the --multipath flag
+
+Also available with the short option '-m'.
+The MPTCP protocol is really a TCP variant, so this change
+does not implement a new 'struct protocol'. Instead it just
+extend the TCP support to optionally enable multipath.
+
+The only required dependency is IPPROTO_MPTCP definition,
+which should be provided by the netinet/in.h header.
+To keep things simple, just conditionally provide the required
+protocol, if the system header does not have it yet
+---
+ src/iperf.h        |  1 +
+ src/iperf3.1       |  4 ++++
+ src/iperf_api.c    | 11 ++++++++++-
+ src/iperf_locale.c |  1 +
+ src/iperf_tcp.c    | 18 +++++++++++++++---
+ 5 files changed, 31 insertions(+), 4 deletions(-)
+
+diff --git a/src/iperf.h b/src/iperf.h
+index 3fc91d0c0..e753df944 100644
+--- a/src/iperf.h
++++ b/src/iperf.h
+@@ -315,6 +315,7 @@ struct iperf_test
+     int	      udp_counters_64bit;		/* --use-64-bit-udp-counters */
+     int       forceflush; /* --forceflush - flushing output at every interval */
+     int	      multisend;
++    int	      multipath;			/* -m option - multi-path variant */
+     int	      repeating_payload;                /* --repeating-payload */
+     int       timestamps;			/* --timestamps */
+     char     *timestamp_format;
+diff --git a/src/iperf3.1 b/src/iperf3.1
+index f5eef6eb3..205a8337e 100644
+--- a/src/iperf3.1
++++ b/src/iperf3.1
+@@ -228,6 +228,10 @@ run in client mode, connecting to the specified server.
+ By default, a test consists of sending data from the client to the
+ server, unless the \-R flag is specified.
+ .TP
++.BR -m ", " --multipath " "
++use multipath variant for the current protocol. This only applies to
++TCP and enables MPTCP usage.
++.TP
+ .BR --sctp
+ use SCTP rather than TCP (FreeBSD and Linux)
+ .TP
+diff --git a/src/iperf_api.c b/src/iperf_api.c
+index f8f2321ec..bea53e397 100644
+--- a/src/iperf_api.c
++++ b/src/iperf_api.c
+@@ -1007,7 +1007,8 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+ 	{"connect-timeout", required_argument, NULL, OPT_CONNECT_TIMEOUT},
+         {"idle-timeout", required_argument, NULL, OPT_IDLE_TIMEOUT},
+         {"rcv-timeout", required_argument, NULL, OPT_RCV_TIMEOUT},
+         {"snd-timeout", required_argument, NULL, OPT_SND_TIMEOUT},
++        {"multipath", no_argument, NULL, 'm'},
+         {"debug", optional_argument, NULL, 'd'},
+         {"help", no_argument, NULL, 'h'},
+         {NULL, 0, NULL, 0}
+@@ -1030,7 +1031,7 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+     char *client_username = NULL, *client_rsa_public_key = NULL, *server_rsa_private_key = NULL;
+ #endif /* HAVE_SSL */
+ 
+-    while ((flag = getopt_long(argc, argv, "p:f:i:D1VJvsc:ub:t:n:k:l:P:Rw:B:M:N46S:L:ZO:F:A:T:C:dI:hX:", longopts, NULL)) != -1) {
++    while ((flag = getopt_long(argc, argv, "p:f:i:D1VJvsc:ub:t:n:k:l:P:Rw:B:mM:N46S:L:ZO:F:A:T:C:dI:hX:", longopts, NULL)) != -1) {
+         switch (flag) {
+             case 'p':
+ 		portno = atoi(optarg);
+@@ -1103,6 +1104,10 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+ 		iperf_set_test_role(test, 'c');
+ 		iperf_set_test_server_hostname(test, optarg);
+                 break;
++            case 'm':
++                set_protocol(test, Ptcp);
++                test->multipath = 1;
++                break;
+             case 'u':
+                 set_protocol(test, Pudp);
+ 		client_flag = 1;
+@@ -2000,6 +2005,8 @@ send_parameters(struct iperf_test *test)
+ 	    cJSON_AddTrueToObject(j, "reverse");
+ 	if (test->bidirectional)
+ 	            cJSON_AddTrueToObject(j, "bidirectional");
++	if (test->multipath)
++	    cJSON_AddTrueToObject(j, "multipath");
+ 	if (test->settings->socket_bufsize)
+ 	    cJSON_AddNumberToObject(j, "window", test->settings->socket_bufsize);
+ 	if (test->settings->blksize)
+@@ -2112,6 +2119,8 @@ get_parameters(struct iperf_test *test)
+ 	    iperf_set_test_reverse(test, 1);
+         if ((j_p = cJSON_GetObjectItem(j, "bidirectional")) != NULL)
+             iperf_set_test_bidirectional(test, 1);
++	if ((j_p = cJSON_GetObjectItem(j, "multipath")) != NULL)
++	    test->multipath = 1;
+ 	if ((j_p = cJSON_GetObjectItem(j, "window")) != NULL)
+ 	    test->settings->socket_bufsize = j_p->valueint;
+ 	if ((j_p = cJSON_GetObjectItem(j, "len")) != NULL)
+diff --git a/src/iperf_locale.c b/src/iperf_locale.c
+index e1e9dc5b6..a70bd73b9 100644
+--- a/src/iperf_locale.c
++++ b/src/iperf_locale.c
+@@ -146,6 +146,7 @@ const char usage_longstr[] = "Usage: iperf3 [-s|-c host] [options]\n"
+                            "  --nstreams      #         number of SCTP streams\n"
+ #endif /* HAVE_SCTP_H */
+                            "  -u, --udp                 use UDP rather than TCP\n"
++                           "  -m, --multipath           use MPTCP rather than plain TCP\n"
+                            "  --connect-timeout #       timeout for control connection setup (ms)\n"
+                            "  -b, --bitrate #[KMG][/#]  target bitrate in bits/sec (0 for unlimited)\n"
+                            "                            (default %d Mbit/sec for UDP, unlimited for TCP)\n"
+--- a/src/iperf_tcp.c	2023-07-07 23:47:41.000000000 +0200
++++ b/src/iperf_tcp.c	2023-08-01 14:53:57.832072168 +0200
+@@ -44,6 +44,10 @@
+ #include "net.h"
+ #include "cjson.h"
+ 
++#ifndef IPPROTO_MPTCP
++#define IPPROTO_MPTCP 262
++#endif
++
+ #if defined(HAVE_FLOWLABEL)
+ #include "flowlabel.h"
+ #endif /* HAVE_FLOWLABEL */
+@@ -154,6 +158,7 @@
+     socklen_t optlen;
+     int saved_errno;
+     int rcvbuf_actual, sndbuf_actual;
++    int protocol = 0;
+ 
+     s = test->listener;
+ 
+@@ -166,7 +171,7 @@
+      *
+      * It's not clear whether this is a requirement or a convenience.
+      */
+-    if (test->no_delay || test->settings->mss || test->settings->socket_bufsize) {
++    if (test->multipath || test->no_delay || test->settings->mss || test->settings->socket_bufsize) {
+ 	struct addrinfo hints, *res;
+ 	char portstr[6];
+ 
+@@ -194,7 +199,10 @@
+             return -1;
+         }
+ 
+-        if ((s = socket(res->ai_family, SOCK_STREAM, 0)) < 0) {
++        if (test->multipath)
++            protocol = IPPROTO_MPTCP;
++
++        if ((s = socket(res->ai_family, SOCK_STREAM, protocol)) < 0) {
+ 	    freeaddrinfo(res);
+             i_errno = IESTREAMLISTEN;
+             return -1;
+@@ -374,8 +382,12 @@
+     socklen_t optlen;
+     int saved_errno;
+     int rcvbuf_actual, sndbuf_actual;
++    int protocol = 0;
++
++    if (test->multipath)
++	protocol = IPPROTO_MPTCP;
+ 
+-    s = create_socket(test->settings->domain, SOCK_STREAM, test->bind_address, test->bind_dev, test->bind_port, test->server_hostname, test->server_port, &server_res);
++    s = create_socket(test->settings->domain, SOCK_STREAM, test->bind_address, test->bind_dev, test->bind_port, test->server_hostname, test->server_port, &server_res, protocol);
+     if (s < 0) {
+ 	i_errno = IESTREAMCONNECT;
+ 	return -1;
+--- a/src/net.c	2023-08-01 14:54:14.175802546 +0200
++++ b/src/net.c	2023-08-01 14:54:40.831362812 +0200
+@@ -121,7 +121,7 @@
+ 
+ /* create a socket */
+ int
+-create_socket(int domain, int proto, const char *local, const char *bind_dev, int local_port, const char *server, int port, struct addrinfo **server_res_out)
++create_socket(int domain, int proto, const char *local, const char *bind_dev, int local_port, const char *server, int port, struct addrinfo **server_res_out, int protocol)
+ {
+     struct addrinfo hints, *local_res = NULL, *server_res = NULL;
+     int s, saved_errno;
+@@ -145,7 +145,7 @@
+         return -1;
+     }
+ 
+-    s = socket(server_res->ai_family, proto, 0);
++    s = socket(server_res->ai_family, proto, protocol);
+     if (s < 0) {
+ 	if (local)
+ 	    freeaddrinfo(local_res);
+@@ -235,7 +235,7 @@
+     struct addrinfo *server_res = NULL;
+     int s, saved_errno;
+ 
+-    s = create_socket(domain, proto, local, bind_dev, local_port, server, port, &server_res);
++    s = create_socket(domain, proto, local, bind_dev, local_port, server, port, &server_res, 0);
+     if (s < 0) {
+       return -1;
+     }
+--- a/src/net.h	2023-08-01 15:01:58.208159540 +0200
++++ b/src/net.h	2023-08-01 15:00:46.521337885 +0200
+@@ -28,7 +28,7 @@
+ #define __NET_H
+ 
+ int timeout_connect(int s, const struct sockaddr *name, socklen_t namelen, int timeout);
+-int create_socket(int domain, int proto, const char *local, const char *bind_dev, int local_port, const char *server, int port, struct addrinfo **server_res_out);
++int create_socket(int domain, int proto, const char *local, const char *bind_dev, int local_port, const char *server, int port, struct addrinfo **server_res_out, int protocol);
+ int netdial(int domain, int proto, const char *local, const char *bind_dev, int local_port, const char *server, int port, int timeout);
+ int netannounce(int domain, int proto, const char *local, const char *bind_dev, int port);
+ int Nread(int fd, char *buf, size_t count, int prot);
