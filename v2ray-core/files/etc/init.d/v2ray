@@ -51,6 +51,17 @@ _err() {
 	_log "err" $@
 }
 
+version_over_5_4() {
+	MAJOR_VERSION=$(uname -r | awk -F '.' '{print $1}')
+	MINOR_VERSION=$(uname -r | awk -F '.' '{print $2}')
+	if [ $MAJOR_VERSION -ge 5 ] && [ $MINOR_VERSION -gt 13 ] || [ $MAJOR_VERSION -gt 5 ] ; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+
 get_value_from_json() {
 	local json="$1"
 	local key="$2"
@@ -1295,6 +1306,9 @@ add_inbound_setting() {
 		test -n "$ss_sockopt_tproxy" && \
 			json_add_string "tproxy" "$ss_sockopt_tproxy"
 #	fi
+	if version_over_5_4; then
+		json_add_boolean "mptcp" "1"
+	fi
 
 	json_close_object # sockopt
 
@@ -1944,16 +1958,6 @@ clear_transparent_proxy() {
 	fi
 }
 
-version_over_5_4() {
-	MAJOR_VERSION=$(uname -r | awk -F '.' '{print $1}')
-	MINOR_VERSION=$(uname -r | awk -F '.' '{print $2}')
-	if [ $MAJOR_VERSION -ge 5 ] && [ $MINOR_VERSION -gt 13 ] || [ $MAJOR_VERSION -gt 5 ] ; then
-		return 0
-	else
-		return 1
-	fi
-}
-
 start_instance() {
 	local section="$1"
 
@@ -2068,9 +2072,6 @@ start_instance() {
 	PROG="$NAME.$section"
 
 	TRANSPARENT_PROXY_EXPECTED=1
-	if version_over_5_4; then
-		PROG="mptcpize run ${PROG}"
-	fi
 	procd_open_instance "$PROG"
 	procd_set_param command "$v2ray_file"
 	procd_append_param command run
