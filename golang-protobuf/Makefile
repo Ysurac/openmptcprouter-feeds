@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2019-2023 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -12,8 +12,8 @@ PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/golang/protobuf.git
-PKG_SOURCE_VERSION:=347cf4a86c1cb8d262994d8ef5924d4576c5b331
-PKG_SOURCE_DATE:=20190109
+PKG_SOURCE_VERSION:=5d5e8c018a13017f9d5b8bf4fad64aaa42a87308
+PKG_SOURCE_DATE:=20210916
 
 PKG_LICENSE:=BSD-3-Clause
 PKG_LICENSE_FILES:=LICENSE

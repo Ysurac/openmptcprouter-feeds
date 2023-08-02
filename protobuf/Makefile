@@ -1,21 +1,23 @@
 #
 # Copyright (C) 2007-2015 OpenWrt.org
+# Copyright (C) 2017-2023 Yannick Chabanois <ycarus@zugaina.org> for OpenMPTCProuter
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
 #
-
+# Original ebuild from Ken Keys <kkeys@caida.org>
+# Updated by Yannick Chabanois <ycarus@zugaina.org> for OpenMPTCProuter
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=protobuf
-PKG_VERSION:=3.14.0
+PKG_VERSION:=3.17.3
 PKG_RELEASE:=2
 
 PKG_SOURCE:=$(PKG_NAME)-cpp-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://github.com/google/protobuf/releases/download/v$(PKG_VERSION)
-PKG_HASH:=50ec5a07c0c55d4ec536dd49021f2e194a26bfdbc531d03d1e9d4d3e27175659
+PKG_HASH:=51cec99f108b83422b7af1170afd7aeb2dd77d2bcbb7b6bad1f92509e9ccf8cb
 
-PKG_MAINTAINER:=Ken Keys <kkeys@caida.org>
+PKG_MAINTAINER:=Yannick Chabanois <ycarus@zugaina.org>
 PKG_LICENSE:=BSD-3-Clause
 PKG_LICENSE_FILES:=LICENSE
 PKG_CPE_ID:=cpe:/a:google:protobuf

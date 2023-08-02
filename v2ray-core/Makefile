@@ -8,9 +8,12 @@ PKG_NAME:=v2ray-core
 PKG_VERSION:=5.7.0
 PKG_RELEASE:=1
 
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://codeload.github.com/v2fly/v2ray-core/tar.gz/v$(PKG_VERSION)?
-PKG_HASH:=599fcd264537e39178b6008a11af68816dfd1609e19a9cf8adc8b2a4240ee370
+#PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+#PKG_SOURCE_URL:=https://codeload.github.com/v2fly/v2ray-core/tar.gz/v$(PKG_VERSION)?
+#PKG_HASH:=599fcd264537e39178b6008a11af68816dfd1609e19a9cf8adc8b2a4240ee370
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_URL:=https://github.com/v2fly/v2ray-core.git
+PKG_SOURCE_VERSION:=d58649764e3afa52234ada9a28b7ae79577a23a9
 
 PKG_LICENSE:=MIT
 PKG_LICENSE_FILES:=LICENSE
