@@ -107,6 +107,7 @@ _set_json() {
 _set_glorytun_vps() {
 	local enabled port key
 	enabled="$(uci -q get glorytun.vpn.enable)"
+	[ "$enabled" != "1" ] && enabled="$(uci -q get glorytun-udp.vpn.enable)"
 	[ "$enabled" != "1" ] && echo "Glorytun disabled" && return
 	port="$(uci -q get glorytun.vpn.port)"
 	key="$(uci -q get glorytun.vpn.key)"
@@ -1909,17 +1910,16 @@ _config_service() {
 	[ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] && {
 		_get_vps_config
 	}
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
-	[ -z "$vps_config" ] && return
-	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
 
 	if [ "$(uci -q get openmptcprouter.settings.firstboot)" != "0" ]; then
-		[ -n "$vps_config" ] && [ -n "$(cat /proc/cpuinfo | grep aes)" ] && {
+		[ -n "$(cat /proc/cpuinfo | grep aes)" ] && {
 			vps_aes="$(echo "$vps_config" | jsonfilter -q -e '@.vps.aes')"
 			if [ "$vps_aes" != "false" ] && [ "$user_permission" != "ro" ]; then
 				logger -t "OMR-VPS" "CPU support AES, set it by default"
 				method="$(uci -q get shadowsocks-libev.sss0.method)"
 				uci -q batch <<-EOF >/dev/null
+					set openmptcprouter.settings.encryption="aes-256-gcm"
+					commit openmptcprouter
 					set glorytun.vpn.chacha20="0"
 					commit glorytun
 					set glorytun-udp.vpn.chacha="0"
@@ -1934,6 +1934,11 @@ _config_service() {
 			fi
 		}
 	fi
+
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
+
 	if [ "$user_permission" != "ro" ]; then
 		#config_load shadowsocks-libev
 		#config_foreach _set_ss_server_vps server

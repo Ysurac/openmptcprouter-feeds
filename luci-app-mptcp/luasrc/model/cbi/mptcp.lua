@@ -61,22 +61,22 @@ end
 
 -- if tonumber(uname.release:sub(1,4)) >= 5.15 then
 if uname.release:sub(1,4) == "5.15" or uname.release:sub(1,1) == "6" then
-    o = s:option(Value, "mptcp_subflows", translate("specifies the maximum number of additional subflows allowed for each MPTCP connection"))
+    o = s:option(Value, "mptcp_subflows", translate("Max subflows"),translate("specifies the maximum number of additional subflows allowed for each MPTCP connection"))
     o.datatype = "uinteger"
     o.rmempty = false
     o.default = 3
-    
-    o = s:option(Value, "mptcp_add_addr_accepted", translate("specifies the maximum number of ADD_ADDR suboptions accepted for each MPTCP connection"))
-    o.datatype = "uinteger"
-    o.rmempty = false
-    o.default = 1
 
-    o = s:option(Value, "mptcp_stale_loss_cnt", translate("The number of MPTCP-level retransmission intervals with no traffic and pending outstanding data on a given subflow required to declare it stale"))
+    o = s:option(Value, "mptcp_stale_loss_cnt", translate("Retranmission intervals"),translate("The number of MPTCP-level retransmission intervals with no traffic and pending outstanding data on a given subflow required to declare it stale"))
     o.datatype = "uinteger"
     o.rmempty = false
     o.default = 4
 
-    o = s:option(Value, "mptcp_add_addr_timeout", translate("Set the timeout after which an ADD_ADDR control message will be resent to an MPTCP peer that has not acknowledged a previous ADD_ADDR message."))
+    o = s:option(Value, "mptcp_add_addr_accepted", translate("Max add address"),translate("specifies the maximum number of ADD_ADDR (add address) suboptions accepted for each MPTCP connection"))
+    o.datatype = "uinteger"
+    o.rmempty = false
+    o.default = 1
+
+    o = s:option(Value, "mptcp_add_addr_timeout", translate("Control message timeout"),translate("Set the timeout after which an ADD_ADDR (add address) control message will be resent to an MPTCP peer that has not acknowledged a previous ADD_ADDR message."))
     o.datatype = "uinteger"
     o.rmempty = false
     o.default = 120
