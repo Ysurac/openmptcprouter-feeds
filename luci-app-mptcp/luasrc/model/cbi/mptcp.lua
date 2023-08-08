@@ -15,9 +15,13 @@ o:value("disable", translate("disable"))
 o = s:option(ListValue, "mptcp_checksum", translate("Multipath TCP checksum"))
 o:value(1, translate("enable"))
 o:value(0, translate("disable"))
-o = s:option(ListValue, "mptcp_debug", translate("Multipath Debug"))
-o:value(1, translate("enable"))
-o:value(0, translate("disable"))
+
+if uname.release:sub(1,4) ~= "5.15" and uname.release:sub(1,1) ~= "6" then
+    o = s:option(ListValue, "mptcp_debug", translate("Multipath Debug"))
+    o:value(1, translate("enable"))
+    o:value(0, translate("disable"))
+end
+
 o = s:option(ListValue, "mptcp_path_manager", translate("Multipath TCP path-manager"), translate("Default is fullmesh"))
 o:value("default", translate("default"))
 o:value("fullmesh", "fullmesh")
@@ -61,12 +65,17 @@ end
 
 -- if tonumber(uname.release:sub(1,4)) >= 5.15 then
 if uname.release:sub(1,4) == "5.15" or uname.release:sub(1,1) == "6" then
+    o = s:option(ListValue, "mptcp_pm_type", translate("Path Manager type"))
+    o:value(0, translate("In-kernel path manager"))
+    o:value(1, translate("Userspace path manager"))
+    o.default = 0
+
     o = s:option(Value, "mptcp_subflows", translate("Max subflows"),translate("specifies the maximum number of additional subflows allowed for each MPTCP connection"))
     o.datatype = "uinteger"
     o.rmempty = false
     o.default = 3
 
-    o = s:option(Value, "mptcp_stale_loss_cnt", translate("Retranmission intervals"),translate("The number of MPTCP-level retransmission intervals with no traffic and pending outstanding data on a given subflow required to declare it stale"))
+    o = s:option(Value, "mptcp_stale_loss_cnt", translate("Retranmission intervals"),translate("The number of MPTCP-level retransmission intervals with no traffic and pending outstanding data on a given subflow required to declare it stale. A low stale_loss_cnt value allows for fast active-backup switch-over, an high value maximize links utilization on edge scenarios e.g. lossy link with high BER or peer pausing the data processing."))
     o.datatype = "uinteger"
     o.rmempty = false
     o.default = 4
