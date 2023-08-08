@@ -415,6 +415,7 @@ function wizard_add()
 
 		local downloadspeed = luci.http.formvalue("cbid.sqm.%s.download" % intf) or "0"
 		local uploadspeed = luci.http.formvalue("cbid.sqm.%s.upload" % intf) or "0"
+		local testspeed = luci.http.formvalue("cbid.sqm.%s.testspeed" % intf) or "0"
 
 		if not ucic:get("qos",intf) ~= "" then
 			ucic:set("qos",intf,"interface")
@@ -438,7 +439,7 @@ function wizard_add()
 			ucic:set("sqm",intf,"script","piece_of_cake.qos")
 			ucic:set("sqm",intf,"qdisc_advanced","0")
 			ucic:set("sqm",intf,"linklayer","atm")
-			ucic:set("sqm",intf,"overhead","40")
+			ucic:set("sqm",intf,"overhead","44")
 			ucic:set("sqm",intf,"enabled","0")
 			ucic:set("sqm",intf,"debug_logging","0")
 			ucic:set("sqm",intf,"verbosity","5")
@@ -453,6 +454,10 @@ function wizard_add()
 		if sqmautorate == "1" then
 			ucic:set("sqm",intf,"qdisc","cake")
 			ucic:set("sqm",intf,"script","piece_of_cake.qos")
+		end
+		ucic:set("openmptcprouter",intf,"testspeed",testspeed)
+		if testspeed == "1" then
+			ucic:set("openmptcprouter",intf,"testspeed_lc")
 		end
 		if downloadspeed ~= "0" and downloadspeed ~= "" then
 			if sqmautorate == "1" and (ucic:get("network",intf,"downloadspeed") ~= downloadspeed or ucic:get("sqm",intf,"max_download") == "" or ucic:get("sqm",intf,"download") == "0") then

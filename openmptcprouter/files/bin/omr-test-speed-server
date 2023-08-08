@@ -1,6 +1,10 @@
 #!/bin/sh
 SERVER=$1
 INTERFACE=$2
+[ "$3" = "upload" ] && UPLOAD=$3
+[ "$3" = "fasttest" ] && FASTTEST=$3
+[ "$4" = "upload" ] && UPLOAD=$4
+[ "$4" = "fasttest" ] && FASTTEST=$4
 [ -z "$SERVER" ] && SERVER="vps"
 KEY=$(uci -q get openmptcprouter.$SERVER.token)
 HOST=$(uci -q get openmptcprouter.$SERVER.ip | awk '{print $1}')
@@ -8,19 +12,37 @@ PORT=$(uci -q get openmptcprouter.$SERVER.port)
 MP=false
 if [ -n "$KEY" ] && [ -n "$HOST" ] && [ -n "$PORT" ]; then
 	trap : HUP INT TERM
-	echo "Download test via server ${SERVER}:"
+	[ -z "$FASTTEST" ] && echo "Disable SQM bandwidth limit on $INTERFACE"
+	: /etc/init.d/sqm stop $INTERFACE 2>&1 >/dev/null
+	[ -z "$FASTTEST" ] && echo "Download test via server ${SERVER}:"
 	if [ -n "$INTERFACE" ]; then
-		if [ "$(multipath ${INTERFACE} | grep default)" ]; then
-			MP=true
-			/etc/init.d/omr-tracker stop 2>&1 >/dev/null
-			multipath ${INTERFACE} off
+		#if [ "$(multipath ${INTERFACE} | grep default)" ]; then
+		#	MP=true
+		#	/etc/init.d/omr-tracker stop 2>&1 >/dev/null
+		#	multipath ${INTERFACE} off
+		#fi
+		if [ -n "$FASTTEST" ]; then
+			if [ -n "$UPLOAD" ]; then
+				avg_speed=$(curl -k --max-time 30 -o /dev/null -qfsS -w '%{speed_upload}' -X POST -d @/boot/vmlinuz -d @/boot/vmlinuz --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest 2>/dev/null)
+				echo -n "$avg_speed"
+			else
+				avg_speed=$(curl -k --max-time 30 -o /dev/null -qfsS -w '%{speed_download}' --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest 2>/dev/null)
+				echo -n "$avg_speed"
+			fi
+		else
+			if [ -n "$UPLOAD" ]; then
+				curl -k -o /dev/null -X POST -d @/boot/vmlinuz -d @/boot/vmlinuz --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest || echo
+			else
+				curl -k -o /dev/null --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest || echo
+			fi
 		fi
-		curl -k -o /dev/null --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest || echo
-		if [ $MP ]; then
-			multipath ${INTERFACE} on
-			/etc/init.d/omr-tracker start & 2>&1 >/dev/null
-		fi
+		#if [ $MP ]; then
+		#	multipath ${INTERFACE} on
+		#	/etc/init.d/omr-tracker start & 2>&1 >/dev/null
+		#fi
 	else
 		curl -k -o /dev/null -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest || echo
 	fi
+	[ -z "$FASTTEST" ] && echo "Restart SQM on $INTERFACE"
+	: /etc/init.d/sqm start $INTERFACE 2>&1 >/dev/null
 fi
