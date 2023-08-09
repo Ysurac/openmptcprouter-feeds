@@ -13,7 +13,14 @@ MP=false
 if [ -n "$KEY" ] && [ -n "$HOST" ] && [ -n "$PORT" ]; then
 	trap : HUP INT TERM
 	[ -z "$FASTTEST" ] && echo "Disable SQM bandwidth limit on $INTERFACE"
-	: /etc/init.d/sqm stop $INTERFACE 2>&1 >/dev/null
+	[ -n "$(tc qdisc | grep $INTERFACE | grep bandwidth)" ] && {
+		export SQM_VERBOSITY_MIN=10
+		export SQM_VERBOSITY_MAX=0
+		export SQM_SYSLOG=1
+		/etc/init.d/sqm stop $INTERFACE 2>&1 >/dev/null
+		#tc qdisc delete dev $INTERFACE root 2>&1 >/dev/null
+		#tc qdisc delete dev ifb4$INTERFACE root 2>&1 >/dev/null
+	}
 	[ -z "$FASTTEST" ] && echo "Download test via server ${SERVER}:"
 	if [ -n "$INTERFACE" ]; then
 		#if [ "$(multipath ${INTERFACE} | grep default)" ]; then
@@ -44,5 +51,5 @@ if [ -n "$KEY" ] && [ -n "$HOST" ] && [ -n "$PORT" ]; then
 		curl -k -o /dev/null -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest || echo
 	fi
 	[ -z "$FASTTEST" ] && echo "Restart SQM on $INTERFACE"
-	: /etc/init.d/sqm start $INTERFACE 2>&1 >/dev/null
+	/etc/init.d/sqm start $INTERFACE 2>&1 >/dev/null
 fi
