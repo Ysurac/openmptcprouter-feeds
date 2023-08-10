@@ -1291,7 +1291,7 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$multipath_config" = "on" ] || [ "$mul
 	config_load openmptcprouter
 	config_foreach glorytunudppath server
 fi
-[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" != "1" ] && {
+[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" != "1" ] && [ "$(uci -q get openmptcprouter.settings.force_multipath)" != "0" ] && {
 	[ "$multipath_status" = "$multipath_config" ] || {
 		if [ "$(sysctl -qen net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ] || [ "$(sysctl -qen net.mptcp.enabled | tr -d '\n')" = "1" ]; then
 			if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.force_link)" != "0" ]; then
@@ -1610,48 +1610,55 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
 fi
 
 if [ "$(pgrep -f omr-test-speed-server)" = "" ] && [ "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed)" = "1" ] && [ -z "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed_lc)" ]; then
-	download_speed=$(/bin/omr-test-speed-server vps ${OMR_TRACKER_DEVICE} fasttest)
-	download_speed2=$(/bin/omr-test-speed-server vps ${OMR_TRACKER_DEVICE} fasttest)
-	download_speed3=$(/bin/omr-test-speed-server vps ${OMR_TRACKER_DEVICE} fasttest)
-	[ "$download_speed2" -gt "$download_speed" ] && download_speed=${download_speed2}
-	[ "$download_speed3" -gt "$download_speed" ] && download_speed=${download_speed3}
-	download_speed=$((download_speed/1000))
-	if [ -n "$download_speed" ] && [ "$download_speed" != "0" ]; then
-		upload_speed=$(/bin/omr-test-speed-server vps ${OMR_TRACKER_DEVICE} fasttest upload)
-		upload_speed2=$(/bin/omr-test-speed-server vps ${OMR_TRACKER_DEVICE} fasttest upload)
-		upload_speed3=$(/bin/omr-test-speed-server vps ${OMR_TRACKER_DEVICE} fasttest upload)
-		[ "$upload_speed2" -gt "$upload_speed" ] && upload_speed=${upload_speed2}
-		[ "$upload_speed3" -gt "$upload_speed" ] && upload_speed=${upload_speed3}
-		
-		# Set Download speed settings
-		if [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.autorate)" = "1" ]; then
-			uci -q set sqm.${OMR_TRACKER_INTERFACE}.download=$((download_speed*65/100))
-			uci -q set sqm.${OMR_TRACKER_INTERFACE}.max_download=${download_speed}
-			uci -q set sqm.${OMR_TRACKER_INTERFACE}.min_download=$((download_speed*10/100))
-		else
-			uci -q set sqm.${OMR_TRACKER_INTERFACE}.download=$((download_speed*95/100))
-		fi
-		_log "Calculated ${OMR_TRACKER_INTERFACE} download speed: ${download_speed}"
-		uci -q set network.${OMR_TRACKER_INTERFACE}.downloadspeed=${download_speed}
+	launch_speedtest() {
+		local server=$1
+		[ "$(uci -q get openmptcprouter.${server}.current)" != "1" ] && return
+		download_speed=$(/bin/omr-test-speed-server ${server} ${OMR_TRACKER_DEVICE} fasttest)
+		download_speed2=$(/bin/omr-test-speed-server ${server} ${OMR_TRACKER_DEVICE} fasttest)
+		download_speed3=$(/bin/omr-test-speed-server ${server} ${OMR_TRACKER_DEVICE} fasttest)
+		[ "$download_speed2" -gt "$download_speed" ] && download_speed=${download_speed2}
+		[ "$download_speed3" -gt "$download_speed" ] && download_speed=${download_speed3}
+		download_speed=$((download_speed/1000))
+		if [ -n "$download_speed" ] && [ "$download_speed" != "0" ]; then
+			upload_speed=$(/bin/omr-test-speed-server ${server} ${OMR_TRACKER_DEVICE} fasttest upload)
+			upload_speed2=$(/bin/omr-test-speed-server ${server} ${OMR_TRACKER_DEVICE} fasttest upload)
+			upload_speed3=$(/bin/omr-test-speed-server ${server} ${OMR_TRACKER_DEVICE} fasttest upload)
+			[ "$upload_speed2" -gt "$upload_speed" ] && upload_speed=${upload_speed2}
+			[ "$upload_speed3" -gt "$upload_speed" ] && upload_speed=${upload_speed3}
 
-		# Set Upload speed settings
-		upload_speed=$((upload_speed/1000))
-		if [ -n "$upload_speed" ] && [ "$upload_speed" != "0" ]; then
+			# Set Download speed settings
 			if [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.autorate)" = "1" ]; then
-				uci -q set sqm.${OMR_TRACKER_INTERFACE}.upload=$((upload_speed*65/100))
-				uci -q set sqm.${OMR_TRACKER_INTERFACE}.max_upload=${upload_speed}
-				uci -q set sqm.${OMR_TRACKER_INTERFACE}.min_upload=$((upload_speed*10/100))
+				uci -q set sqm.${OMR_TRACKER_INTERFACE}.download=$((download_speed*65/100))
+				uci -q set sqm.${OMR_TRACKER_INTERFACE}.max_download=${download_speed}
+				uci -q set sqm.${OMR_TRACKER_INTERFACE}.min_download=$((download_speed*10/100))
 			else
-				uci -q set sqm.${OMR_TRACKER_INTERFACE}.upload=$((upload_speed*95/100))
+				uci -q set sqm.${OMR_TRACKER_INTERFACE}.download=$((download_speed*95/100))
 			fi
-			_log "Calculated ${OMR_TRACKER_INTERFACE} upload speed: ${upload_speed}"
-			uci -q set network.${OMR_TRACKER_INTERFACE}.uploadspeed=${upload_speed}
+			_log "Calculated ${OMR_TRACKER_INTERFACE} download speed: ${download_speed}"
+			uci -q set network.${OMR_TRACKER_INTERFACE}.downloadspeed=${download_speed}
+
+			# Set Upload speed settings
+			upload_speed=$((upload_speed/1000))
+			if [ -n "$upload_speed" ] && [ "$upload_speed" != "0" ]; then
+				if [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.autorate)" = "1" ]; then
+					uci -q set sqm.${OMR_TRACKER_INTERFACE}.upload=$((upload_speed*65/100))
+					uci -q set sqm.${OMR_TRACKER_INTERFACE}.max_upload=${upload_speed}
+					uci -q set sqm.${OMR_TRACKER_INTERFACE}.min_upload=$((upload_speed*10/100))
+				else
+					uci -q set sqm.${OMR_TRACKER_INTERFACE}.upload=$((upload_speed*95/100))
+				fi
+				_log "Calculated ${OMR_TRACKER_INTERFACE} upload speed: ${upload_speed}"
+				uci -q set network.${OMR_TRACKER_INTERFACE}.uploadspeed=${upload_speed}
+				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.testspeed_lc=$(date +"%s")
+				uci commit network
+				uci commit sqm
+				uci commit openmptcprouter
+			fi
 		fi
-		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.testspeed_lc=$(date +"%s")
-		uci commit network
-		uci commit sqm
-		uci commit openmptcprouter
-	fi
+	}
+	config_load openmptcprouter
+	config_foreach launch_speedtest server
+
 	sleep 5
 fi
 
