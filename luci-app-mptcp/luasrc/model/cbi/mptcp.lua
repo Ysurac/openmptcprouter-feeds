@@ -65,10 +65,13 @@ end
 
 -- if tonumber(uname.release:sub(1,4)) >= 5.15 then
 if uname.release:sub(1,4) == "5.15" or uname.release:sub(1,1) == "6" then
-    o = s:option(ListValue, "mptcp_pm_type", translate("Path Manager type"))
-    o:value(0, translate("In-kernel path manager"))
-    o:value(1, translate("Userspace path manager"))
-    o.default = 0
+    if uname.release:sub(1,1) == "6" then
+	-- Only available since 5.19
+        o = s:option(ListValue, "mptcp_pm_type", translate("Path Manager type"))
+        o:value(0, translate("In-kernel path manager"))
+        o:value(1, translate("Userspace path manager"))
+        o.default = 0
+    end
 
     o = s:option(Value, "mptcp_subflows", translate("Max subflows"),translate("specifies the maximum number of additional subflows allowed for each MPTCP connection"))
     o.datatype = "uinteger"
