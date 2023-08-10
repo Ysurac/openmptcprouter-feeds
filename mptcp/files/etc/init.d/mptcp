@@ -30,6 +30,7 @@ global_multipath_settings() {
 	config_get mptcp_rr_num_segments globals mptcp_rr_num_segments
 	config_get mptcp_version globals mptcp_version "0"
 	config_get mptcp_stale_loss_cnt globals mptcp_stale_loss_cnt "4"
+	config_get mptcp_pm_type globals mptcp_pm_type "1"
 	
 	[ "$multipath" = "enable" ] && multipath_status=1
 
@@ -52,11 +53,10 @@ global_multipath_settings() {
 		ip mptcp limits set add_addr_accepted $mptcp_add_addr_accepted subflows $mptcp_subflows 2>&1 >/dev/null
 		#[ -z "$mptcp_debug" ] || sysctl -qew net.mptcp.mptcp_debug="$mptcp_debug"
 		[ -z "$mptcp_checksum" ] || sysctl -qew net.mptcp.mptcp_checksum="$mptcp_checksum"
-		[ -z "$mptcp_path_manager" ] || sysctl -qew net.mptcp.mptcp_path_manager="$mptcp_path_manager"
-		[ -z "$mptcp_scheduler" ] || sysctl -qew net.mptcp.mptcp_scheduler="$mptcp_scheduler"
 		[ -z "$mptcp_add_addr_timeout" ] || sysctl -qew net.mptcp.add_addr_timeout="$mptcp_add_addr_timeout"
 		[ -z "$mptcp_checksum" ] || sysctl -qew net.mptcp.checksum_enabled="$mptcp_checksum"
 		[ -z "$mptcp_stale_loss_cnt" ] || sysctl -qew net.mptcp.stale_loss_cnt="$mptcp_stale_loss_cnt"
+		[ -z "$mptcp_pm_type" ] || sysctl -qew net.mptcp.pm_type="$mptcp_pm_type"
 	fi
 	[ -z "$congestion" ] || sysctl -qew net.ipv4.tcp_congestion_control="$congestion"
 }
@@ -195,10 +195,12 @@ interface_multipath_settings() {
 	
 	#echo "îface: $iface"
 	
-	if [ "$mode" = "master" ]; then
+	if [ "$(uci -q get openmptcprouter.settings.force_multipath)" != "0" ]; then
+		if [ "$mode" = "master" ]; then
 		multipath "$iface" "on"
-	else
-		multipath "$iface" "$mode"
+		else
+			multipath "$iface" "$mode"
+		fi
 	fi
 	#[ "$mode" = "off" ] && {
 	#	ip rule del table $id > /dev/null 2>&1

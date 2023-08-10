@@ -457,7 +457,7 @@ function wizard_add()
 		end
 		ucic:set("openmptcprouter",intf,"testspeed",testspeed)
 		if testspeed == "1" then
-			ucic:set("openmptcprouter",intf,"testspeed_lc")
+			ucic:delete("openmptcprouter",intf,"testspeed_lc")
 		end
 		if downloadspeed ~= "0" and downloadspeed ~= "" then
 			if sqmautorate == "1" and (ucic:get("network",intf,"downloadspeed") ~= downloadspeed or ucic:get("sqm",intf,"max_download") == "" or ucic:get("sqm",intf,"download") == "0") then
