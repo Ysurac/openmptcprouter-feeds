@@ -1,0 +1,71 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2023 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter project
+
+START=10
+STOP=10
+
+USE_PROCD=1
+PROG_NAME=mptcpd
+PROG=/usr/bin/${PROG_NAME}
+
+_log() {
+	logger -p daemon.info -t ${PROG_NAME} "$@"
+}
+
+_err() {
+	logger -p daemon.err -t ${PROG_NAME} "$@"
+}
+
+version_over_5_4() {
+	MAJOR_VERSION=$(uname -r | awk -F '.' '{print $1}')
+	MINOR_VERSION=$(uname -r | awk -F '.' '{print $2}')
+	if [ $MAJOR_VERSION -ge 5 ] && [ $MINOR_VERSION -gt 13 ] || [ $MAJOR_VERSION -gt 5 ] ; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+validate_section() {
+    uci_validate_section network globals "${1}" \
+	'mptcpd_enable:string:"disabled"'                  \
+	'mptcp_pm_type:bool:0'                  \
+	'mptcpd_path_manager:list(string)'      \
+	'mptcpd_plugins:list(string)'           \
+	'mptcpd_addr_flags:list(string)'        \
+	'mptcpd_notify_flags:list(string)'
+}
+
+start_service() {
+	local mptcpd_enable mptcp_pm_type mptcpd_path_manager mptcpd_plugins mptcpd_addr_flags mptcpd_notify_flags
+	validate_section "globals" || {
+		_err "validation failed"
+		return 1
+	}
+
+	[ "${mptcp_pm_type}" = "1" ] || return 1
+	[ "${mptcpd_enable}" = "enable" ] || return 1
+
+	[ version_over_5_4 ] || return 1
+
+	procd_open_instance
+
+	procd_set_param command ${PROG}
+	[ "${mptcpd_path_manager}" ] && procd_append_param command --path-manager=${mptcpd_path_manager// /,}
+	[ "${mptcpd_plugins}" ] && procd_append_param command --load-plugins=${mptcpd_plugins// /,}
+	[ "${mptcpd_add_flags}" ] && procd_append_param command --addr-flags=${mptcpd_addr_flags// /,}
+	[ "${mptcpd_notify_flags}" ] && procd_append_param command --notify-flags=${mptcpd_notify_flags// /,}
+
+	procd_set_param respawn 0 30 5
+
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+
+	procd_close_instance
+
+}
+
+
+service_triggers() {
+	procd_add_reload_trigger network
+}

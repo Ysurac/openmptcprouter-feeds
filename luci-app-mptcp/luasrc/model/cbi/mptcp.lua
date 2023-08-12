@@ -73,6 +73,49 @@ if uname.release:sub(1,4) == "5.15" or uname.release:sub(1,1) == "6" then
         o.default = 0
     end
 
+    o = s:option(ListValue, "mptcp_disable_initial_config", translate("Initial MPTCP configuration"))
+    o:depends("mptcp_pm_type",1)
+    o:value("0", translate("enable"))
+    o:value("1", translate("disable"))
+    o.default = "0"
+
+    o = s:option(ListValue, "mptcp_force_multipath", translate("Force Multipath configuration"))
+    o:depends("mptcp_pm_type",1)
+    o:value("1", translate("enable"))
+    o:value("0", translate("disable"))
+    o.default = "1"
+
+    o = s:option(ListValue, "mptcpd_enable", translate("Enable MPTCPd"))
+    o:depends("mptcp_pm_type",1)
+    o:value("enable", translate("enable"))
+    o:value("disable", translate("disable"))
+    o.default = "disable"
+
+    o = s:option(DynamicList, "mptcpd_path_manager", translate("MPTCPd path managers"))
+    for dir in io.popen([[cd /usr/lib/mptcpd && ls -1 *.so | sed 's/.so//g']]):lines() do 
+	o:value(dir, dir)
+    end
+    o:depends("mptcp_pm_type",1)
+
+    o = s:option(DynamicList, "mptcpd_plugins", translate("MPTCPd plugins"))
+    for dir in io.popen([[cd /usr/lib/mptcpd && ls -1 *.so | sed 's/.so//g']]):lines() do 
+	o:value(dir, dir)
+    end
+    o:depends("mptcp_pm_type",1)
+
+    o = s:option(DynamicList, "mptcpd_addr_flags", translate("MPTCPd Address annoucement flags"))
+    o:value("subflow","subflow")
+    o:value("signal","signal")
+    o:value("backup","backup")
+    o:value("fullmesh","fullmesh")
+    o:depends("mptcp_pm_type",1)
+
+    o = s:option(DynamicList, "mptcpd_notify_flags", translate("MPTCPd Address notification flags"))
+    o:value("existing","existing")
+    o:value("skip_link_local","skip_link_local")
+    o:value("skip_loopback","skip_loopback")
+    o:depends("mptcp_pm_type",1)
+
     o = s:option(Value, "mptcp_subflows", translate("Max subflows"),translate("specifies the maximum number of additional subflows allowed for each MPTCP connection"))
     o.datatype = "uinteger"
     o.rmempty = false

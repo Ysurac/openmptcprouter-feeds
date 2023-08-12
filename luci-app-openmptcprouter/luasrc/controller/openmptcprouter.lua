@@ -556,17 +556,22 @@ function wizard_add()
 		vpn_intf = "bonding-omrvpn"
 		ucic:set("network","omrvpn","proto","bonding")
 	end
-	if downloadmax ~= 0 and uploadmax ~= 0 then
-		--ucic:set("sqm","omrvpn","enabled","1")
-		ucic:set("sqm","omrvpn","max_download",downloadmax)
-		ucic:set("sqm","omrvpn","max_upload",uploadmax)
-		ucic:set("sqm","omrvpn","download",math.ceil(downloadmax*50/100))
-		ucic:set("sqm","omrvpn","min_download",math.ceil(downloadmax*8/100))
-		ucic:set("sqm","omrvpn","upload",math.ceil(uploadmax*50/100))
-		ucic:set("sqm","omrvpn","min_upload",math.ceil(uploadmax*8/100))
-	else
-		ucic:set("sqm","omrvpn","enabled","0")
-	end
+	--if downloadmax ~= 0 and uploadmax ~= 0 then
+	--	ucic:set("sqm","omrvpn","enabled","1")
+	--	ucic:set("sqm","omrvpn","max_download",downloadmax)
+	--	ucic:set("sqm","omrvpn","max_upload",uploadmax)
+	--	ucic:set("sqm","omrvpn","download",math.ceil(downloadmax*50/100))
+	--	ucic:set("sqm","omrvpn","min_download",math.ceil(downloadmax*8/100))
+	--	ucic:set("sqm","omrvpn","upload",math.ceil(uploadmax*50/100))
+	--	ucic:set("sqm","omrvpn","min_upload",math.ceil(uploadmax*8/100))
+	--else
+	--	ucic:set("sqm","omrvpn","enabled","0")
+	--end
+
+	ucic:set("sqm","omrvpn","enabled","1")
+	ucic:set("sqm","omrvpn","download","0")
+	ucic:set("sqm","omrvpn","upload","0")
+
 	if vpn_intf ~= "" then
 		ucic:set("network","omrvpn","device",vpn_intf)
 		ucic:set("sqm","omrvpn","interface",vpn_intf)
