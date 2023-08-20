@@ -415,6 +415,7 @@ function wizard_add()
 
 		local downloadspeed = luci.http.formvalue("cbid.sqm.%s.download" % intf) or "0"
 		local uploadspeed = luci.http.formvalue("cbid.sqm.%s.upload" % intf) or "0"
+		local testspeed = luci.http.formvalue("cbid.sqm.%s.testspeed" % intf) or "0"
 
 		if not ucic:get("qos",intf) ~= "" then
 			ucic:set("qos",intf,"interface")
@@ -438,7 +439,7 @@ function wizard_add()
 			ucic:set("sqm",intf,"script","piece_of_cake.qos")
 			ucic:set("sqm",intf,"qdisc_advanced","0")
 			ucic:set("sqm",intf,"linklayer","atm")
-			ucic:set("sqm",intf,"overhead","40")
+			ucic:set("sqm",intf,"overhead","44")
 			ucic:set("sqm",intf,"enabled","0")
 			ucic:set("sqm",intf,"debug_logging","0")
 			ucic:set("sqm",intf,"verbosity","5")
@@ -453,6 +454,10 @@ function wizard_add()
 		if sqmautorate == "1" then
 			ucic:set("sqm",intf,"qdisc","cake")
 			ucic:set("sqm",intf,"script","piece_of_cake.qos")
+		end
+		ucic:set("openmptcprouter",intf,"testspeed",testspeed)
+		if testspeed == "1" then
+			ucic:delete("openmptcprouter",intf,"testspeed_lc")
 		end
 		if downloadspeed ~= "0" and downloadspeed ~= "" then
 			if sqmautorate == "1" and (ucic:get("network",intf,"downloadspeed") ~= downloadspeed or ucic:get("sqm",intf,"max_download") == "" or ucic:get("sqm",intf,"download") == "0") then
@@ -551,17 +556,22 @@ function wizard_add()
 		vpn_intf = "bonding-omrvpn"
 		ucic:set("network","omrvpn","proto","bonding")
 	end
-	if downloadmax ~= 0 and uploadmax ~= 0 then
-		ucic:set("sqm","omrvpn","enabled","1")
-		ucic:set("sqm","omrvpn","max_download",downloadmax)
-		ucic:set("sqm","omrvpn","max_upload",uploadmax)
-		ucic:set("sqm","omrvpn","download",math.ceil(downloadmax*50/100))
-		ucic:set("sqm","omrvpn","min_download",math.ceil(downloadmax*8/100))
-		ucic:set("sqm","omrvpn","upload",math.ceil(uploadmax*50/100))
-		ucic:set("sqm","omrvpn","min_upload",math.ceil(uploadmax*8/100))
-	else
-		ucic:set("sqm","omrvpn","enabled","0")
-	end
+	--if downloadmax ~= 0 and uploadmax ~= 0 then
+	--	ucic:set("sqm","omrvpn","enabled","1")
+	--	ucic:set("sqm","omrvpn","max_download",downloadmax)
+	--	ucic:set("sqm","omrvpn","max_upload",uploadmax)
+	--	ucic:set("sqm","omrvpn","download",math.ceil(downloadmax*50/100))
+	--	ucic:set("sqm","omrvpn","min_download",math.ceil(downloadmax*8/100))
+	--	ucic:set("sqm","omrvpn","upload",math.ceil(uploadmax*50/100))
+	--	ucic:set("sqm","omrvpn","min_upload",math.ceil(uploadmax*8/100))
+	--else
+	--	ucic:set("sqm","omrvpn","enabled","0")
+	--end
+
+	ucic:set("sqm","omrvpn","enabled","1")
+	ucic:set("sqm","omrvpn","download","0")
+	ucic:set("sqm","omrvpn","upload","0")
+
 	if vpn_intf ~= "" then
 		ucic:set("network","omrvpn","device",vpn_intf)
 		ucic:set("sqm","omrvpn","interface",vpn_intf)
@@ -619,7 +629,7 @@ function wizard_add()
 		ucic:set("openmptcprouter",server,"username",openmptcprouter_vps_username:gsub("%s+", ""))
 		ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key:gsub("%s+", ""))
 		ucic:set("openmptcprouter",server,"disabled",openmptcprouter_vps_disabled)
-		if ucic:get("openmptcprouter",server,"ip") ~= aserverips then
+		if ucic:get_list("openmptcprouter",server,"ip") ~= aserverips then
 			ucic:set_list("openmptcprouter",server,"ip",aserverips)
 			if ucic:get("openmptcprouter",server,"master") == "1" then
 				ucic:set("openmptcprouter",server,"get_config","1")
@@ -805,6 +815,7 @@ function wizard_add()
 
 	local encryption = luci.http.formvalue("encryption")
 	if encryption == "none" then
+		ucic:set("openmptcprouter","settings","encryption","none")
 		ucic:set("shadowsocks-libev","sss0","method","none")
 		ucic:set("shadowsocks-libev","sss1","method","none")
 		ucic:set("openvpn","omr","cipher","none")
@@ -812,6 +823,7 @@ function wizard_add()
 		ucic:set("v2ray","omrout","s_vmess_user_security","none")
 		ucic:set("v2ray","omrout","s_vless_user_security","none")
 	elseif encryption == "aes-256-gcm" then
+		ucic:set("openmptcprouter","settings","encryption","aes-256-gcm")
 		ucic:set("shadowsocks-libev","sss0","method","aes-256-gcm")
 		ucic:set("shadowsocks-libev","sss1","method","aes-256-gcm")
 		ucic:set("glorytun","vpn","chacha20","0")
@@ -821,6 +833,7 @@ function wizard_add()
 		ucic:set("v2ray","omrout","s_vmess_user_security","aes-128-gcm")
 		ucic:set("v2ray","omrout","s_vless_user_security","aes-128-gcm")
 	elseif encryption == "aes-256-cfb" then
+		ucic:set("openmptcprouter","settings","encryption","aes-256-cfb")
 		ucic:set("shadowsocks-libev","sss0","method","aes-256-cfb")
 		ucic:set("shadowsocks-libev","sss1","method","aes-256-cfb")
 		ucic:set("glorytun","vpn","chacha20","0")
@@ -830,6 +843,7 @@ function wizard_add()
 		ucic:set("v2ray","omrout","s_vmess_user_security","aes-128-gcm")
 		ucic:set("v2ray","omrout","s_vless_user_security","aes-128-gcm")
 	elseif encryption == "chacha20-ietf-poly1305" then
+		ucic:set("openmptcprouter","settings","encryption","chacha20")
 		ucic:set("shadowsocks-libev","sss0","method","chacha20-ietf-poly1305")
 		ucic:set("shadowsocks-libev","sss1","method","chacha20-ietf-poly1305")
 		ucic:set("glorytun","vpn","chacha20","1")
@@ -838,6 +852,8 @@ function wizard_add()
 		ucic:set("mlvpn","general","cleartext_data","0")
 		ucic:set("v2ray","omrout","s_vmess_user_security","chacha20-poly1305")
 		ucic:set("v2ray","omrout","s_vless_user_security","chacha20-poly1305")
+	else
+		ucic:set("openmptcprouter","settings","encryption","other")
 	end
 	ucic:save("openvpn")
 	ucic:save("glorytun")

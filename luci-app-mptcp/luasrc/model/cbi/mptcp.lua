@@ -15,9 +15,13 @@ o:value("disable", translate("disable"))
 o = s:option(ListValue, "mptcp_checksum", translate("Multipath TCP checksum"))
 o:value(1, translate("enable"))
 o:value(0, translate("disable"))
-o = s:option(ListValue, "mptcp_debug", translate("Multipath Debug"))
-o:value(1, translate("enable"))
-o:value(0, translate("disable"))
+
+if uname.release:sub(1,4) ~= "5.15" and uname.release:sub(1,1) ~= "6" then
+    o = s:option(ListValue, "mptcp_debug", translate("Multipath Debug"))
+    o:value(1, translate("enable"))
+    o:value(0, translate("disable"))
+end
+
 o = s:option(ListValue, "mptcp_path_manager", translate("Multipath TCP path-manager"), translate("Default is fullmesh"))
 o:value("default", translate("default"))
 o:value("fullmesh", "fullmesh")
@@ -61,22 +65,73 @@ end
 
 -- if tonumber(uname.release:sub(1,4)) >= 5.15 then
 if uname.release:sub(1,4) == "5.15" or uname.release:sub(1,1) == "6" then
-    o = s:option(Value, "mptcp_subflows", translate("specifies the maximum number of additional subflows allowed for each MPTCP connection"))
+    if uname.release:sub(1,1) == "6" then
+	-- Only available since 5.19
+        o = s:option(ListValue, "mptcp_pm_type", translate("Path Manager type"))
+        o:value(0, translate("In-kernel path manager"))
+        o:value(1, translate("Userspace path manager"))
+        o.default = 0
+    end
+
+    o = s:option(ListValue, "mptcp_disable_initial_config", translate("Initial MPTCP configuration"))
+    o:depends("mptcp_pm_type",1)
+    o:value("0", translate("enable"))
+    o:value("1", translate("disable"))
+    o.default = "0"
+
+    o = s:option(ListValue, "mptcp_force_multipath", translate("Force Multipath configuration"))
+    o:depends("mptcp_pm_type",1)
+    o:value("1", translate("enable"))
+    o:value("0", translate("disable"))
+    o.default = "1"
+
+    o = s:option(ListValue, "mptcpd_enable", translate("Enable MPTCPd"))
+    o:depends("mptcp_pm_type",1)
+    o:value("enable", translate("enable"))
+    o:value("disable", translate("disable"))
+    o.default = "disable"
+
+    o = s:option(DynamicList, "mptcpd_path_manager", translate("MPTCPd path managers"))
+    for dir in io.popen([[cd /usr/lib/mptcpd && ls -1 *.so | sed 's/.so//g']]):lines() do 
+	o:value(dir, dir)
+    end
+    o:depends("mptcp_pm_type",1)
+
+    o = s:option(DynamicList, "mptcpd_plugins", translate("MPTCPd plugins"))
+    for dir in io.popen([[cd /usr/lib/mptcpd && ls -1 *.so | sed 's/.so//g']]):lines() do 
+	o:value(dir, dir)
+    end
+    o:depends("mptcp_pm_type",1)
+
+    o = s:option(DynamicList, "mptcpd_addr_flags", translate("MPTCPd Address annoucement flags"))
+    o:value("subflow","subflow")
+    o:value("signal","signal")
+    o:value("backup","backup")
+    o:value("fullmesh","fullmesh")
+    o:depends("mptcp_pm_type",1)
+
+    o = s:option(DynamicList, "mptcpd_notify_flags", translate("MPTCPd Address notification flags"))
+    o:value("existing","existing")
+    o:value("skip_link_local","skip_link_local")
+    o:value("skip_loopback","skip_loopback")
+    o:depends("mptcp_pm_type",1)
+
+    o = s:option(Value, "mptcp_subflows", translate("Max subflows"),translate("specifies the maximum number of additional subflows allowed for each MPTCP connection"))
     o.datatype = "uinteger"
     o.rmempty = false
     o.default = 3
-    
-    o = s:option(Value, "mptcp_add_addr_accepted", translate("specifies the maximum number of ADD_ADDR suboptions accepted for each MPTCP connection"))
-    o.datatype = "uinteger"
-    o.rmempty = false
-    o.default = 1
 
-    o = s:option(Value, "mptcp_stale_loss_cnt", translate("The number of MPTCP-level retransmission intervals with no traffic and pending outstanding data on a given subflow required to declare it stale"))
+    o = s:option(Value, "mptcp_stale_loss_cnt", translate("Retranmission intervals"),translate("The number of MPTCP-level retransmission intervals with no traffic and pending outstanding data on a given subflow required to declare it stale. A low stale_loss_cnt value allows for fast active-backup switch-over, an high value maximize links utilization on edge scenarios e.g. lossy link with high BER or peer pausing the data processing."))
     o.datatype = "uinteger"
     o.rmempty = false
     o.default = 4
 
-    o = s:option(Value, "mptcp_add_addr_timeout", translate("Set the timeout after which an ADD_ADDR control message will be resent to an MPTCP peer that has not acknowledged a previous ADD_ADDR message."))
+    o = s:option(Value, "mptcp_add_addr_accepted", translate("Max add address"),translate("specifies the maximum number of ADD_ADDR (add address) suboptions accepted for each MPTCP connection"))
+    o.datatype = "uinteger"
+    o.rmempty = false
+    o.default = 1
+
+    o = s:option(Value, "mptcp_add_addr_timeout", translate("Control message timeout"),translate("Set the timeout after which an ADD_ADDR (add address) control message will be resent to an MPTCP peer that has not acknowledged a previous ADD_ADDR message."))
     o.datatype = "uinteger"
     o.rmempty = false
     o.default = 120

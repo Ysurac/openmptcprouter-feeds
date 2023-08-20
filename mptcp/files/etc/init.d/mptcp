@@ -2,7 +2,7 @@
 # Copyright (C) 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 # Released under GPL 3. See LICENSE for the full terms.
 
-START=90
+START=50
 
 USE_PROCD=1
 
@@ -30,6 +30,7 @@ global_multipath_settings() {
 	config_get mptcp_rr_num_segments globals mptcp_rr_num_segments
 	config_get mptcp_version globals mptcp_version "0"
 	config_get mptcp_stale_loss_cnt globals mptcp_stale_loss_cnt "4"
+	config_get mptcp_pm_type globals mptcp_pm_type "1"
 	
 	[ "$multipath" = "enable" ] && multipath_status=1
 
@@ -50,9 +51,12 @@ global_multipath_settings() {
 	elif [ -f /proc/sys/net/mptcp/enabled ]; then
 		sysctl -qew net.mptcp.enabled="$multipath_status"
 		ip mptcp limits set add_addr_accepted $mptcp_add_addr_accepted subflows $mptcp_subflows 2>&1 >/dev/null
+		#[ -z "$mptcp_debug" ] || sysctl -qew net.mptcp.mptcp_debug="$mptcp_debug"
+		[ -z "$mptcp_checksum" ] || sysctl -qew net.mptcp.mptcp_checksum="$mptcp_checksum"
 		[ -z "$mptcp_add_addr_timeout" ] || sysctl -qew net.mptcp.add_addr_timeout="$mptcp_add_addr_timeout"
 		[ -z "$mptcp_checksum" ] || sysctl -qew net.mptcp.checksum_enabled="$mptcp_checksum"
 		[ -z "$mptcp_stale_loss_cnt" ] || sysctl -qew net.mptcp.stale_loss_cnt="$mptcp_stale_loss_cnt"
+		[ -z "$mptcp_pm_type" ] || sysctl -qew net.mptcp.pm_type="$mptcp_pm_type"
 	fi
 	[ -z "$congestion" ] || sysctl -qew net.ipv4.tcp_congestion_control="$congestion"
 }
@@ -77,9 +81,9 @@ interface_max_metric() {
 		fi
 	elif [ "$1" = "omrvpn" ]; then
 		uci -q batch <<-EOF >/dev/null
-			set network.${config}.metric=1200
+			set network.${config}.metric=9000
 			commit network
-			set openmptcprouter.${config}.metric=1200
+			set openmptcprouter.${config}.metric=9000
 			commit openmptcprouter
 		EOF
 	elif [ "$1" = "omr6in4" ]; then
@@ -191,10 +195,12 @@ interface_multipath_settings() {
 	
 	#echo "îface: $iface"
 	
-	if [ "$mode" = "master" ]; then
+	if [ "$(uci -q get openmptcprouter.settings.force_multipath)" != "0" ]; then
+		if [ "$mode" = "master" ]; then
 		multipath "$iface" "on"
-	else
-		multipath "$iface" "$mode"
+		else
+			multipath "$iface" "$mode"
+		fi
 	fi
 	#[ "$mode" = "off" ] && {
 	#	ip rule del table $id > /dev/null 2>&1
@@ -514,10 +520,12 @@ start_service() {
 		ip route flush cache
 		ip -6 route flush cache
 	}
-	config_foreach interface_multipath_settings interface $intf
+	if [ "$(uci -q get network.globals.mptcp_disable_initial_config)" != "1" ]; then
+		config_foreach interface_multipath_settings interface $intf
+		config_foreach add_route route
+		config_foreach add_route6 route6
+	fi
 	set_multipath
-	config_foreach add_route route
-	config_foreach add_route6 route6
 	# If no master is defined, one interface is defined as master
 	if [ "$master" = "" ] && [ "$intf" = "" ]; then
 		intfmaster="$mptcpmintf"
