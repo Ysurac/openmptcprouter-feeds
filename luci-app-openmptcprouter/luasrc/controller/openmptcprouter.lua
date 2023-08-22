@@ -541,7 +541,7 @@ function wizard_add()
 		vpn_intf = "mlvpn0"
 		ucic:set("network","omrvpn","proto","dhcp")
 	elseif default_vpn == "ubond" then
-		vpn_port = 65201
+		vpn_port = 65251
 		vpn_intf = "ubond0"
 		ucic:set("network","omrvpn","proto","dhcp")
 	elseif default_vpn == "dsvpn" then
@@ -1003,7 +1003,7 @@ function wizard_add()
 	local ubond_password = luci.http.formvalue("ubond_password")
 	if ubond_password ~= "" then
 		ucic:set("ubond","general","password",ubond_password)
-		ucic:set("ubond","general","firstport","65201")
+		ucic:set("ubond","general","firstport","65251")
 		ucic:set("ubond","general","interface_name","ubond0")
 	else
 		--ucic:set("ubond","general","enable",0)
@@ -1054,7 +1054,7 @@ function wizard_add()
 		luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
-		--luci.sys.call("/etc/init.d/ubond restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/ubond restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/mptcpovervpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/openvpnbonding restart >/dev/null 2>/dev/null")
@@ -1063,6 +1063,7 @@ function wizard_add()
 		luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/v2ray restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/sqm restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/sqm-autorate restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/sysntpd restart >/dev/null 2>/dev/null")
 		luci.http.redirect(luci.dispatcher.build_url("admin/system/" .. menuentry:lower() .. "/status"))
