@@ -15,6 +15,7 @@ INTERFACE=$(basename "$1" | cut -d. -f2)
 output_processing_stats=$(uci -q get sqm.${INTERFACE}.output_processing_stats || echo '0')	# enable (1) or disable (0) output monitoring lines showing processing stats
 output_load_stats=$(uci -q get sqm.${INTERFACE}.output_load_stats || echo '0')			# enable (1) or disable (0) output monitoring lines showing achieved loads
 output_reflector_stats=$(uci -q get sqm.${INTERFACE}.output_reflector_stats || echo '0')	# enable (1) or disable (0) output monitoring lines showing reflector stats
+output_summary_stats=1										# enable (1) or disable (0) output monitoring lines showing summary stats
 output_cake_changes=$(uci -q get sqm.${INTERFACE}.output_cake_changes || echo '0')		# enable (1) or disable (0) output monitoring lines showing cake bandwidth changes
 debug=$(uci -q get sqm.${INTERFACE}.debug || echo '0')						# enable (1) or disable (0) out of debug lines
 
@@ -77,8 +78,14 @@ reflector_ping_interval_s=$(uci -q get sqm.${INTERFACE}.reflector_ping_interval_
 # these are automatically adjusted based on maximum on the wire packet size
 # (adjustment significant at sub 12Mbit/s rates, else negligible)
 #logger -t "sqm-autorate" "ping for ${INTERFACE} (${ul_if}): $(echo $(/sbin/uci -q get sqm.${INTERFACE}.delay_thr_ms || echo '100'))"
-dl_delay_thr_ms=$(echo $(uci -q get sqm.${INTERFACE}.delay_thr_ms || echo $(($(/usr/bin/ping -B -w 5 -c 5 -I ${ul_if} 1.1.1.1 | cut -d '/' -s -f6 | cut -d '.' -f1 | tr -d '\n' 2>/dev/null)+30)) || echo "100")) # (milliseconds)
-ul_delay_thr_ms=${dl_delay_thr_ms}
+dl_owd_delta_thr_ms=$(echo $(echo $(uci -q get sqm.${INTERFACE}.delay_thr_ms || echo $(($(/usr/bin/ping -B -w 5 -c 5 -I ${ul_if} 1.1.1.1 | cut -d '/' -s -f6 | tr -d '\n' 2>/dev/null)+30)) || echo "100")) + "0.1" | bc)  # (milliseconds)
+ul_owd_delta_thr_ms=${dl_owd_delta_thr_ms}
+
+# average owd delta threshold in ms at which maximum adjust_down_bufferbloat is applied
+# set value(s) to 0 to disable and always apply maximum adjust_down_bufferbloat
+dl_avg_owd_delta_thr_ms=$(echo "$dl_owd_delta_thr_ms * 2" | bc) # (milliseconds)
+ul_avg_owd_delta_thr_ms=$(echo "$ul_owd_delta_thr_ms * 2" | bc) # (milliseconds)
+
 # Set either of the below to 0 to adjust one direction only 
 # or alternatively set both to 0 to simply use cake-autorate to monitor a connection
 adjust_dl_shaper_rate=1 # enable (1) or disable (0) actually changing the dl shaper rate
@@ -159,8 +166,7 @@ alpha_delta_ewma=0.095
 # bufferbloat adjustment works with the lower of the adjusted achieved rate and adjusted shaper rate
 # to exploit that transfer rates during bufferbloat provide an indication of line capacity
 # otherwise shaper rate is adjusted up on load high, and down on load idle or low
-achieved_rate_adjust_down_bufferbloat=0.9 # how rapidly to reduce achieved rate upon detection of bufferbloat 
-shaper_rate_adjust_down_bufferbloat=0.9   # how rapidly to reduce shaper rate upon detection of bufferbloat 
+#shaper_rate_adjust_down_bufferbloat=0.75   # how rapidly to reduce shaper rate upon detection of bufferbloat 
 shaper_rate_adjust_up_load_high=1.01      # how rapidly to increase shaper rate upon high load detected 
 shaper_rate_adjust_down_load_low=0.99     # how rapidly to return down to base shaper rate upon idle or low load detected 
 shaper_rate_adjust_up_load_low=1.01       # how rapidly to return up to base shaper rate upon idle or low load detected 
@@ -191,7 +197,7 @@ reflector_replacement_interval_mins=60 # how often to replace a random reflector
 
 reflector_comparison_interval_mins=1       # how often to compare reflectors 
 #reflector_sum_owd_baseline_delta_thr_ms=30     # max increase from min sum owd baselines before reflector rotated
-reflector_owd_delta_ewma_delta_thr_ms=10   # mac increase from min delta ewma before reflector rotated
+reflector_owd_delta_ewma_delta_thr_ms=10.0   # mac increase from min delta ewma before reflector rotated
 
 # stall is detected when the following two conditions are met:
 # 1) no reflector responses within $stall_detection_thr*$ping_response_interval_us; and
@@ -199,7 +205,7 @@ reflector_owd_delta_ewma_delta_thr_ms=10   # mac increase from min delta ewma be
 stall_detection_thr=5
 connection_stall_thr_kbps=10
 
-global_ping_response_timeout_s=${dl_delay_thr_ms} # timeout to set shaper rates to min on no ping response whatsoever (seconds)
+global_ping_response_timeout_s=${dl_owd_delta_thr_ms} # timeout to set shaper rates to min on no ping response whatsoever (seconds)
 
 if_up_check_interval_s=10.0 # time to wait before re-checking if rx/tx bytes files exist (e.g. from boot state or sleep recovery)
 

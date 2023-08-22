@@ -273,7 +273,7 @@ return view.extend({
 		o.depends("autorate","1");
 
 		o = s.taboption("tab_autorate", form.Value, "delay_thr_ms",_("delay threshold in ms:"));
-		o.default = "25";
+		o.default = "25.0";
 		o.depends("autorate","1");
 
 		o = s.taboption("tab_autorate", form.Flag, "enable_sleep_function", _("Sleep functionnality"));
