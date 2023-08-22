@@ -5,8 +5,8 @@
 
 include $(TOPDIR)/rules.mk
 
-LUCI_TITLE:=LuCI Interface to Glorytun TCP
-LUCI_DEPENDS:=+glorytun
+LUCI_TITLE:=LuCI Interface to MLVPN
+LUCI_DEPENDS:=+mlvpn
 
 PKG_LICENSE:=GPLv3
 
