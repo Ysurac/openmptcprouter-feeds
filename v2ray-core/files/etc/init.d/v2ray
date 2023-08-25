@@ -290,6 +290,8 @@ inbound_section_validate() {
 		's_trojan_default_user_level:uinteger' \
 		's_trojan_detour_to:string' \
 		's_trojan_disable_insecure_encryption:bool:0' \
+		's_socks_client_id:string' \
+		's_socks_client_email:string:"openmptcprouter"' \
 		'ss_network:or("tcp", "kcp", "ws", "http", "domainsocket", "quic")' \
 		'ss_security:or("none", "tls")' \
 		'ss_tls_server_name:host' \
@@ -383,6 +385,10 @@ outbound_section_validate() {
 		's_trojan_user_security:or("auto", "aes-128-gcm", "chacha20-poly1305", "none")' \
 		's_trojan_user_encryption:or("auto", "none")' \
 		's_trojan_user_level:uinteger' \
+		's_socks_address:host' \
+		's_socks_port:port' \
+		's_socks_user_id:string' \
+		's_socks_email:string:openmptcprouter' \
 		'ss_network:or("tcp", "kcp", "ws", "http", "domainsocket", "quic")' \
 		'ss_security:or("none", "tls")' \
 		'ss_tls_server_name:host' \
@@ -1003,6 +1009,14 @@ add_inbound_setting() {
 				json_close_object
 				json_close_array # accounts
 			fi
+			if [ -n "$s_socks_client_id" ] ; then
+				json_add_array "accounts"
+				json_add_object ""
+				json_add_string "user" "$s_socks_email"
+				json_add_string "pass" "$s_socks_client_id"
+				json_close_object
+				json_close_array # accounts
+			fi
 
 			json_add_boolean "udp" "$s_socks_udp"
 
@@ -1506,36 +1520,6 @@ add_outbound_setting() {
 			json_close_array # servers
 			json_close_object # settings
 			;;
-		"socks")
-			json_add_object "settings"
-			json_add_array "servers"
-
-			json_add_object ""
-
-			json_add_string "address" "$s_socks_server_address"
-			append_server_address "$s_socks_server_address"
-
-			json_add_int "port" "$s_socks_server_port"
-
-			if [ -n "$s_socks_account_user" ] ; then
-				json_add_array "users"
-				json_add_object ""
-
-				json_add_string "user" "$s_socks_account_user"
-				json_add_string "pass" "$s_socks_account_pass"
-
-				test -n "$s_socks_user_level" && \
-					json_add_int "level" "$s_socks_user_level"
-
-				json_close_object
-				json_close_array # users
-			fi
-
-			json_close_object
-
-			json_close_array # servers
-			json_close_object # settings
-			;;
 		"vmess")
 			json_add_object "settings"
 
@@ -1608,6 +1592,29 @@ add_outbound_setting() {
 			json_close_object
 
 			json_close_array # trojan
+			json_close_object # settings
+			;;
+		"socks")
+			json_add_object "settings"
+
+			json_add_array "servers"
+			json_add_object ""
+
+			json_add_string "address" "$s_socks_address"
+			append_server_address "$s_socks_address"
+
+			json_add_int "port" "$s_socks_port"
+
+			json_add_array "users"
+			json_add_object ""
+			json_add_string "pass" "$s_socks_user_id"
+			json_add_string "user" "$s_socks_email"
+			json_close_object
+			json_close_array # users
+
+			json_close_object
+
+			json_close_array # socks
 			json_close_object # settings
 			;;
 	esac
@@ -1878,7 +1885,7 @@ init_transparent_proxy() {
 	TRANSPARENT_PROXY_PORT="$redirect_port"
 	TRANSPARENT_PROXY_USE_TPROXY="$use_tproxy"
 
-	if [ "x$redirect_udp" = "x1" ] && [ "$(uci -q get v2ray.omrout.protocol)" = "vless" ]; then
+	if [ "x$redirect_udp" = "x1" ] && [ "$(uci -q get v2ray.omrout.protocol)" != "trojan" ] && [ "$(uci -q get v2ray.omrout.protocol)" != "socks" ]; then
 		TRANSPARENT_PROXY_ADDITION="udp"
 	elif [ "x$redirect_dns" = "x1" ] ; then
 		TRANSPARENT_PROXY_ADDITION="dns"
@@ -2196,6 +2203,9 @@ rules_up() {
 	elif [ "$(uci -q get v2ray.omrout.protocol)" = "trojan" ]; then
 		OUTBOUND_SERVERS_V4="$(uci -q get v2ray.omrout.s_trojan_address)"
 		OUTBOUND_SERVERS_V6="$(uci -q get v2ray.omrout.s_trojan_address)"
+	elif [ "$(uci -q get v2ray.omrout.protocol)" = "socks" ]; then
+		OUTBOUND_SERVERS_V4="$(uci -q get v2ray.omrout.s_socks_address)"
+		OUTBOUND_SERVERS_V6="$(uci -q get v2ray.omrout.s_socks_address)"
 	fi
 	TRANSPARENT_PROXY_PORT="$(uci -q get v2ray.omr.port)"
 	[ -n "$OUTBOUND_SERVERS_V4" ] || [ -n "$OUTBOUND_SERVERS_V6" ] && {

@@ -675,7 +675,7 @@ function wizard_add()
 				ucic:set("shadowsocks-libev",sectionname,"disabled","0")
 			end
 		end)
-	elseif (default_proxy == "v2ray" or default_proxy == "v2ray-vmess" or default_proxy == "v2ray-trojan") and serversnb > 0 and serversnb > disablednb then
+	elseif (default_proxy == "v2ray" or default_proxy == "v2ray-vmess" or default_proxy == "v2ray-trojan" or default_proxy == "v2ray-socks") and serversnb > 0 and serversnb > disablednb then
 		--ucic:set("shadowsocks-libev","sss0","disabled","1")
 		ucic:set("v2ray","main","enabled","1")
 		if default_proxy == "v2ray" then
@@ -684,6 +684,8 @@ function wizard_add()
 			ucic:set("v2ray","omrout","protocol","vmess")
 		elseif default_proxy == "v2ray-trojan" then
 			ucic:set("v2ray","omrout","protocol","trojan")
+		elseif default_proxy == "v2ray-socks" then
+			ucic:set("v2ray","omrout","protocol","socks")
 		end
 		ucic:foreach("shadowsocks-libev", "server", function(s)
 			local sectionname = s[".name"]
@@ -741,6 +743,7 @@ function wizard_add()
 					ucic:set("v2ray","omrout","s_vmess_address",server_ip)
 					ucic:set("v2ray","omrout","s_vless_address",server_ip)
 					ucic:set("v2ray","omrout","s_trojan_address",server_ip)
+					ucic:set("v2ray","omrout","s_socks_address",server_ip)
 					luci.sys.call("uci -q del openvpn.omr.remote")
 					luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
 					ucic:set("qos","serverin","srchost",server_ip)
@@ -780,6 +783,7 @@ function wizard_add()
 				ucic:set("v2ray","omrout","s_vmess_address",server_ip)
 				ucic:set("v2ray","omrout","s_vless_address",server_ip)
 				ucic:set("v2ray","omrout","s_trojan_address",server_ip)
+				ucic:set("v2ray","omrout","s_socks_address",server_ip)
 				luci.sys.call("uci -q del openvpn.omr.remote")
 				luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
 				ucic:set("qos","serverin","srchost",server_ip)
@@ -832,6 +836,7 @@ function wizard_add()
 		ucic:set("v2ray","omrout","s_vmess_user_security","none")
 		ucic:set("v2ray","omrout","s_vless_user_security","none")
 		ucic:set("v2ray","omrout","s_trojan_user_security","none")
+		ucic:set("v2ray","omrout","s_socks_user_security","none")
 	elseif encryption == "aes-256-gcm" then
 		ucic:set("openmptcprouter","settings","encryption","aes-256-gcm")
 		ucic:set("shadowsocks-libev","sss0","method","aes-256-gcm")
@@ -843,6 +848,7 @@ function wizard_add()
 		ucic:set("v2ray","omrout","s_vmess_user_security","aes-128-gcm")
 		ucic:set("v2ray","omrout","s_vless_user_security","aes-128-gcm")
 		ucic:set("v2ray","omrout","s_trojan_user_security","aes-128-gcm")
+		ucic:set("v2ray","omrout","s_socks_user_security","aes-128-gcm")
 	elseif encryption == "aes-256-cfb" then
 		ucic:set("openmptcprouter","settings","encryption","aes-256-cfb")
 		ucic:set("shadowsocks-libev","sss0","method","aes-256-cfb")
@@ -854,6 +860,7 @@ function wizard_add()
 		ucic:set("v2ray","omrout","s_vmess_user_security","aes-128-gcm")
 		ucic:set("v2ray","omrout","s_vless_user_security","aes-128-gcm")
 		ucic:set("v2ray","omrout","s_trojan_user_security","aes-128-gcm")
+		ucic:set("v2ray","omrout","s_socks_user_security","aes-128-gcm")
 	elseif encryption == "chacha20-ietf-poly1305" then
 		ucic:set("openmptcprouter","settings","encryption","chacha20")
 		ucic:set("shadowsocks-libev","sss0","method","chacha20-ietf-poly1305")
@@ -865,6 +872,7 @@ function wizard_add()
 		ucic:set("v2ray","omrout","s_vmess_user_security","chacha20-poly1305")
 		ucic:set("v2ray","omrout","s_vless_user_security","chacha20-poly1305")
 		ucic:set("v2ray","omrout","s_trojan_user_security","chacha20-poly1305")
+		ucic:set("v2ray","omrout","s_socks_user_security","chacha20-poly1305")
 	else
 		ucic:set("openmptcprouter","settings","encryption","other")
 	end
@@ -906,6 +914,7 @@ function wizard_add()
 	ucic:set("v2ray","omrout","s_vmess_user_id",v2ray_user)
 	ucic:set("v2ray","omrout","s_vless_user_id",v2ray_user)
 	ucic:set("v2ray","omrout","s_trojan_user_id",v2ray_user)
+	ucic:set("v2ray","omrout","s_socks_user_id",v2ray_user)
 	ucic:save("v2ray")
 	ucic:commit("v2ray")
 
