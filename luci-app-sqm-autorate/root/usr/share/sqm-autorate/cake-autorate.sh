@@ -45,7 +45,7 @@ declare -A proc_pids
 ## Disable globbing (expansion of *).
 set -f
 ## Forbid using unset variables.
-set -u
+#set -u
 ## The exit status of a pipeline is the status of the last
 ## command to exit with a non-zero status, or zero if no
 ## command exited with a non-zero status.
@@ -2254,7 +2254,7 @@ do
 
 				log_msg "DEBUG" "Warning: no reflector response within: ${stall_detection_timeout_s} seconds. Checking loads."
 
-				log_msg "DEBUG" "load check is: (( ${achieved_rate_kbps[dl]} kbps > ${connection_stall_thr_kbps} kbps for download && ${achieved_rate_kbps[ul]} kbps > ${connection_stall_thr_kbps} kbps for upload ))"
+				#log_msg "DEBUG" "load check is: (( ${achieved_rate_kbps[dl]} kbps > ${connection_stall_thr_kbps} kbps for download && ${achieved_rate_kbps[ul]} kbps > ${connection_stall_thr_kbps} kbps for upload ))"
 
 				# non-zero load so despite no reflector response within stall interval, the connection not considered to have stalled
 				# and therefore resume normal operation
