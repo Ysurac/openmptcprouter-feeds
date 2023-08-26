@@ -83,8 +83,25 @@ while true; do
 		nocontact=""
 		[ "${last}" -ge "${retry}" ] || [ "$(uci -q get openmptcprouter.omr.ss_${server})" = "" ] && {
 			_log "Shadowsocks ${server} is up (can contact via http ${host})"
+			OMR_TRACKER_STATUS_MSG="Shadowsocks ${server} is up (can contact via http ${host})"
 			uci -q set openmptcprouter.omr.ss_${server}="up"
 			uci -q commit openmptcprouter.omr
+			mail_alert="$(uci -q get omr-tracker.proxy.mail_alert)"
+			#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
+			[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
+				OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
+				if [ "$(uci -q get omr-tracker.defaults.mail_up_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_up_message)" != "" ]; then
+					mail_subject="$(uci -q get omr-tracker.defaults.mail_up_subject)"
+					mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Shadowsocks Proxy/g" -e "s/%DEVICE%/Shadowsocks Proxy/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+					mail_message="$(uci -q get omr-tracker.defaults.mail_up_message)"
+					mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Shadowsocks Proxy/g" -e "s/%DEVICE%/Shadowsocks Proxy/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+					echo -e "Subject: ${mail_subject}\n\n${mail_message}" | sendmail $(uci -q get mail.default.to)
+				else
+					echo -e "Subject: $OMR_SYSNAME: Shadowsocks Proxy is UP." | sendmail $(uci -q get mail.default.to)
+				fi
+			}
+			script_alert_up="$(uci -q get omr-tracker.proxy.script_alert_up)"
+			[ -n "$script_alert_up" ] && eval $script_alert_up
 		}
 		if [ -z "$($IPTABLESSAVE 2>/dev/null | grep :ssr)" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.disabled)" != "1" ]; then
 			_log "Reload Shadowsocks rules"
@@ -99,6 +116,7 @@ while true; do
 		[ "${last}" -ge "${retry}" ] && {
 			if [ -n "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep ssr)" ]; then
 				_log "Shadowsocks ${server} is down (can't contact via http ${nocontact})"
+				OMR_TRACKER_STATUS_MSG="Shadowsocks ${server} is down (can't contact via http ${nocontact})"
 				uci -q set openmptcprouter.omr.ss_${server}="down"
 				uci -q commit openmptcprouter.omr
 				[ "$(uci show openmptcprouter.omr | grep ss_ | grep up)" = "" ] && /etc/init.d/shadowsocks-libev rules_down 2> /dev/null
@@ -109,7 +127,25 @@ while true; do
 				_ping_server $serverip
 				if [ "$server_ping" = false ]; then
 					_log "Server $server ($serverip) seems down, no answer to ping"
+					OMR_TRACKER_STATUS_MSG="${OMR_TRACKER_STATUS_MSG} - Server $server ($serverip) seems down, no answer to ping"
 				fi
+				mail_alert="$(uci -q get omr-tracker.proxy.mail_alert)"
+				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
+				[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
+					OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
+					if [ "$(uci -q get omr-tracker.defaults.mail_down_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_down_message)" != "" ]; then
+						mail_subject="$(uci -q get omr-tracker.defaults.mail_down_subject)"
+						mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Shadowsocks Proxy/g" -e "s/%DEVICE%/Shadowsocks Proxy/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+						mail_message="$(uci -q get omr-tracker.defaults.mail_down_message)"
+						mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Shadowsocks Proxy/g" -e "s/%DEVICE%/Shadowsocks Proxy/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+						echo -e "Subject: ${mail_subject}\n\n${mail_message}" | sendmail $(uci -q get mail.default.to)
+					else
+						echo -e "Subject: $OMR_SYSNAME: Shadowsocks Proxy is down\n\nConnection failure of ShadowSocks proxy detected. The reason is \"$OMR_TRACKER_STATUS_MSG\"." | sendmail $(uci -q get mail.default.to)
+					fi
+				}
+				script_alert_down="$(uci -q get omr-tracker.proxy.script_alert_down)"
+				[ -n "$script_alert_down" ] && eval $script_alert_down
+
 				if [ "$disabled" != "1" ] && [ "$(pgrep ss-redir)" = "" ] && [ "$(uci -q get shadowsocks-libev.${server}.key)" != "" ]; then
 					_log "Can't find shadowsocks, restart it..."
 					/etc/init.d/shadowsocks-libev restart

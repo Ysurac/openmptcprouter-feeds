@@ -41,6 +41,13 @@ o.default     = "0"
 o.datatype    = "range(0, 100)"
 o.rmempty     = false
 
+o = s:option(Flag, "mail_alert", translate("Mail alert"), translate("Send a mail when connection state change"))
+o.optional    = false
+o.rmempty     = false
+o.default     = false
+o.disabled    = 0
+o.enabled     = 1
+
 o = s:option(DynamicList, "hosts", translate("Hosts"), translate("IPs or domains must be available over http"))
 o.placeholder = "bing.com"
 o.default     = { "bing.com", "google.com" }
@@ -83,6 +90,13 @@ o.placeholder = "0"
 o.default     = "0"
 o.datatype    = "range(0, 100)"
 o.rmempty     = false
+
+o = s:option(Flag, "mail_alert", translate("Mail alert"), translate("Send a mail when connection state change"))
+o.optional    = false
+o.rmempty     = false
+o.default     = false
+o.disabled    = 0
+o.enabled     = 1
 
 s = m:section(TypedSection, "defaults", translate("Defaults Settings"), translate("OMR-Tracker create needed routes and detect when a connection is down or up"))
 s.anonymous   = true

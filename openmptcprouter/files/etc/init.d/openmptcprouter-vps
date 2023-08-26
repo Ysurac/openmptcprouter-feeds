@@ -942,7 +942,7 @@ _vps_firewall_redirect_port() {
 		#uci -q delete firewall.$1
 		#return
 	fi
-	[ "$(uci -q get v2ray.main.enabled)" = "0" ] && v2ray="0"
+	[ "$(uci -q get v2ray.main.enabled)" = "0" ] && [ "$(uci -q get openmptcprouter.omr.v2ray)" != "down" ] && v2ray="0"
 	[ "$proto" = "all" ] && proto="tcp udp"
 	[ "$proto" = "" ] && proto="tcp udp"
 	[ "$src" = "vpn" ] && [ -n "$proto" ] && [ -n "$src_dport" ] && [ "$enabled" != "0" ] && [ "$name" != "Allow-DHCP-Request-VPN" ] && {
@@ -1425,14 +1425,20 @@ _set_config_from_vps() {
 	v2ray_port="65228"
 	if ([ -n "$v2ray_key" ] && [ "$v2ray_key" != "$(uci -q get v2ray.omrout.s_vmess_user_id)" ]) || ([ -n "$v2ray_port" ] && [ "$v2ray_port" != "$(uci -q get v2ray.omrout.s_vmess.port)" ]); then
 		uci -q batch <<-EOF >/dev/null
+			set v2ray.omrout.s_socks_user_id="$v2ray_key"
+			set v2ray.omrout.s_socks_port="$((v2ray_port+1))"
+			set v2ray.omrout.s_trojan_user_id="$v2ray_key"
+			set v2ray.omrout.s_trojan_port="$((v2ray_port+1))"
 			set v2ray.omrout.s_vmess_user_id="$v2ray_key"
-			set v2ray.omrout.s_vmess_port="$v2ray_port"
+			set v2ray.omrout.s_vmess_port="$((v2ray_port+2))"
 			set v2ray.omrout.s_vless_user_id="$v2ray_key"
 			set v2ray.omrout.s_vless_port="$v2ray_port"
 		EOF
 		if [ "$(uci -q get v2ray.omrout.s_vmess_address)" != "127.0.0.1" ]; then
 			uci -q set v2ray.omrout.s_vmess_address="$vpsip"
 			uci -q set v2ray.omrout.s_vless_address="$vpsip"
+			uci -q set v2ray.omrout.s_trojan_address="$vpsip"
+			uci -q set v2ray.omrout.s_socks_address="$vpsip"
 		fi
 		uci -q commit v2ray
 		logger -t "OMR-VPS" "V2ray restart..."
