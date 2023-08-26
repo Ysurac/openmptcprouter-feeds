@@ -65,6 +65,8 @@ _check_master() {
 	[ "$master" = "1" ] && [ -n "$ip" ] && [ "$disabled" != "1" ] && {
 		set_ip() {
 			local ip=$1
+			ipresolve="$(resolveip -4 $ip | head -n 1)"
+			[ -z "$ipresolve" ] && ip="$ipresolve"
 			#_ping_server $ip
 			_check_server $ip $port
 			if [ "$server_ping" = true ]; then
@@ -91,7 +93,7 @@ _check_master() {
 							del openvpn.omr.remote
 							add_list openvpn.omr.remote=$ip
 							commit openvpn
-							set openmptcprouter.vps.current='1'
+							set openmptcprouter.${name}.current='1'
 							commit openmptcprouter
 						EOF
 						/etc/init.d/openmptcprouter-vps get_openvpn_key $name >/dev/null 2>/dev/null
@@ -106,15 +108,49 @@ _check_master() {
 				fi
 				config_load shadowsocks-libev
 				config_foreach _enable_redir ss_redir
+				OMR_TRACKER_STATUS_MSG="Answer to ping and to API check"
+				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
+				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
+				[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
+					OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
+					if [ "$(uci -q get omr-tracker.defaults.mail_up_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_up_message)" != "" ]; then
+						mail_subject="$(uci -q get omr-tracker.defaults.mail_up_subject)"
+						mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+						mail_message="$(uci -q get omr-tracker.defaults.mail_up_message)"
+						mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+						echo -e "Subject: ${mail_subject}\n\n${mail_message}" | sendmail $(uci -q get mail.default.to)
+					else
+						echo -e "Subject: $OMR_SYSNAME: Server ${name} (${ip}) is UP\n. The reason is \"$OMR_TRACKER_STATUS_MSG\"." | sendmail $(uci -q get mail.default.to)
+					fi
+				}
+				script_alert_down="$(uci -q get omr-tracker.proxy.script_alert_up)"
+				[ -n "$script_alert_down" ] && eval $script_alert_up
 				count=$((count+1))
 			else
 				logger -t "OMR-Tracker-Server" "Master server ${name} down ($ip)"
+				OMR_TRACKER_STATUS_MSG="No answer to ping and API check"
 				uci -q batch <<-EOF >/dev/null
-					set openmptcprouter.vps.current='0'
+					set openmptcprouter.${name}.current='0'
 					commit openmptcprouter
 				EOF
 				config_load shadowsocks-libev
 				config_foreach _disable_redir ss_redir
+				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
+				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
+				[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
+					OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
+					if [ "$(uci -q get omr-tracker.defaults.mail_down_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_down_message)" != "" ]; then
+						mail_subject="$(uci -q get omr-tracker.defaults.mail_down_subject)"
+						mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+						mail_message="$(uci -q get omr-tracker.defaults.mail_down_message)"
+						mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+						echo -e "Subject: ${mail_subject}\n\n${mail_message}" | sendmail $(uci -q get mail.default.to)
+					else
+						echo -e "Subject: $OMR_SYSNAME: Server ${name} (${ip}) is down\n. The reason is \"$OMR_TRACKER_STATUS_MSG\"." | sendmail $(uci -q get mail.default.to)
+					fi
+				}
+				script_alert_down="$(uci -q get omr-tracker.proxy.script_alert_down)"
+				[ -n "$script_alert_down" ] && eval $script_alert_down
 			fi
 			countips=$((countips+1))
 		}
@@ -143,6 +179,9 @@ _check_backup() {
 	config_get disabled $1 disabled
 	[ "$backup" = "1" ] && [ -n "$ip" ] && [ "$disabled" != "1" ] && {
 		set_ip() {
+			local ip=$1
+			ipresolve="$(resolveip -4 $ip | head -n 1)"
+			[ -z "$ipresolve" ] && ip="$ipresolve"
 			#_ping_server $ip
 			_check_server $ip $port
 			#[ "$server_ping" = true ] && [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" = "$ip" ] && break
@@ -169,7 +208,7 @@ _check_backup() {
 							del openvpn.omr.remote
 							add_list openvpn.omr.remote=$ip
 							commit openvpn
-							set openmptcprouter.vps.current='1'
+							set openmptcprouter.${name}.current='1'
 							commit openmptcprouter
 						EOF
 						/etc/init.d/openmptcprouter-vps get_openvpn_key $name >/dev/null 2>/dev/null
@@ -185,14 +224,48 @@ _check_backup() {
 				fi
 				config_load shadowsocks-libev
 				config_foreach _enable_redir ss_redir
+				OMR_TRACKER_STATUS_MSG="Answer to ping and to API check"
+				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
+				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
+				[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
+					OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
+					if [ "$(uci -q get omr-tracker.defaults.mail_up_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_up_message)" != "" ]; then
+						mail_subject="$(uci -q get omr-tracker.defaults.mail_up_subject)"
+						mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+						mail_message="$(uci -q get omr-tracker.defaults.mail_up_message)"
+						mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+						echo -e "Subject: ${mail_subject}\n\n${mail_message}" | sendmail $(uci -q get mail.default.to)
+					else
+						echo -e "Subject: $OMR_SYSNAME: Server ${name} (${ip}) is UP\n. The reason is \"$OMR_TRACKER_STATUS_MSG\"." | sendmail $(uci -q get mail.default.to)
+					fi
+				}
+				script_alert_down="$(uci -q get omr-tracker.proxy.script_alert_up)"
+				[ -n "$script_alert_down" ] && eval $script_alert_up
 				count=$((count+1))
 			else
 				uci -q batch <<-EOF >/dev/null
-					set openmptcprouter.vps.current='0'
+					set openmptcprouter.${name}.current='0'
 					commit openmptcprouter
 				EOF
 				config_load shadowsocks-libev
 				config_foreach _disable_redir ss_redir
+				OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
+				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
+				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
+				[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
+					OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
+					if [ "$(uci -q get omr-tracker.defaults.mail_down_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_down_message)" != "" ]; then
+						mail_subject="$(uci -q get omr-tracker.defaults.mail_down_subject)"
+						mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+						mail_message="$(uci -q get omr-tracker.defaults.mail_down_message)"
+						mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+						echo -e "Subject: ${mail_subject}\n\n${mail_message}" | sendmail $(uci -q get mail.default.to)
+					else
+						echo -e "Subject: $OMR_SYSNAME: Server ${name} (${ip}) is down\n. The reason is \"$OMR_TRACKER_STATUS_MSG\"." | sendmail $(uci -q get mail.default.to)
+					fi
+				}
+				script_alert_down="$(uci -q get omr-tracker.proxy.script_alert_down)"
+				[ -n "$script_alert_down" ] && eval $script_alert_down
 			fi
 			countips=$((countips+1))
 		}
