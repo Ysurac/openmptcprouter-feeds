@@ -1,0 +1,184 @@
+#
+# Copyright (C) 2018-2023 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+# This script check services status and do appropriate actions
+
+# If a service is down, force restart it
+if [ -f /etc/init.d/shadowsocks-libev ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep -f ss-redir)" = "" ] && [ "$(pgrep -f ss-local)" = "" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "192.18.1.3" ] && [ "$(uci -q get shadowsocks-libev.sss0.key)" != "" ]; then
+	_log "Can't find Shadowsocks, restart it..."
+	/etc/init.d/shadowsocks-libev restart 2>&1 >/dev/null
+	sleep 5
+fi
+if [ -f /etc/init.d/glorytun ] && [ "$(pgrep glorytun)" = "" ] && [ "$(uci -q get glorytun.vpn.enable)" = "1" ] && [ -f /etc/init.d/glorytun ] && [ "$(uci -q get glorytun.vpn.key)" != "" ]; then
+	_log "Can't find Glorytun, restart it..."
+	/etc/init.d/glorytun restart 2>&1 >/dev/null
+	sleep 5
+fi
+if [ -f /etc/init.d/glorytun-udp ] && [ "$(pgrep glorytun-udp)" = "" ] && [ "$(uci -q get glorytun-usp.vpn.enable)" = "1" ] && [ -f /etc/init.d/glorytun-udp ] && [ "$(uci -q get glorytun-udp.vpn.key)" != "" ]; then
+	_log "Can't find Glorytun UDP, restart it..."
+	/etc/init.d/glorytun-udp restart 2>&1 >/dev/null
+	sleep 5
+fi
+
+if [ "$(pgrep -f dnsmasq)" = "" ] && [ -f /etc/init.d/dnsmasq ]; then
+	_log "Can't find dnsmasq, restart it..."
+	/etc/init.d/dnsmasq restart 2>&1 >/dev/null
+	sleep 5
+fi
+if [ "$(pgrep -f unbound)" = "" ] && [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" = "1" ]; then
+	_log "Can't find unbound, restart it..."
+	/etc/init.d/unbound restart 2>&1 >/dev/null
+	sleep 5
+fi
+
+if [ "$(pgrep openvpn)" = "" ] && [ -f /etc/init.d/openvpn ]; then
+	openvpn_enable=0
+	openvpn_enabled() {
+		[ "$(uci -q get openvpn.$1.enabled)" = "1" ] && openvpn_enable=1
+	}
+	config_load openvpn
+	config_foreach openvpn_enabled openvpn
+	if [ "$openvpn_enable" = "1" ]; then
+		_log "Can't find OpenVPN, restart it"
+		/etc/init.d/openvpn restart 2>&1 >/dev/null
+		sleep 5
+	fi
+fi
+
+if [ "$(pgrep mlvpn)" = "" ] && [ "$(uci -q get mlvpn.general.enable)" = "1" ] && [ -f /etc/init.d/mlvpn ] && [ "$(uci -q get mlvpn.general.password)" != "" ]; then
+	_log "Can't find MLVPN, restart it..."
+	/etc/init.d/mlvpn restart 2>&1 >/dev/null
+	sleep 5
+fi
+if [ "$(pgrep dsvpn)" = "" ] && [ "$(uci -q get dsvpn.vpn.enable)" = "1" ] && [ -f /etc/init.d/dsvpn ] && [ "$(uci -q get dsvpn.vpn.key)" != "" ]; then
+	_log "Can't find DSVPN, restart it..."
+	/etc/init.d/dsvpn restart 2>&1 >/dev/null
+	sleep 5
+fi
+if [ "$(pgrep -f v2ray)" = "" ] && [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ -f /etc/init.d/v2ray ]; then
+	_log "Can't find V2Ray, restart it..."
+	/etc/init.d/v2ray restart 2>&1 >/dev/null
+	sleep 5
+fi
+if [ "$(pgrep miniupnpd)" = "" ] && [ "$(uci -q get upnpd.config.enabled)" = "1" ] && [ -f /etc/init.d/miniupnpd ]; then
+	_log "Can't find miniupnpd, restart it..."
+	/etc/init.d/miniupnpd restart 2>&1 >/dev/null
+	sleep 5
+fi
+
+if [ "$(pgrep rpcd)" = "" ] && [ -f /etc/init.d/rpcd ]; then
+	_log "Can't find rpcd, restart it..."
+	/etc/init.d/rpcd restart 2>&1 >/dev/null
+	sleep 5
+fi
+
+if [ "$(pgrep uhttpd)" = "" ] && [ -f /etc/init.d/uhttpd ]; then
+	_log "Can't find uhttpd, restart it..."
+	/etc/init.d/uhttpd restart 2>&1 >/dev/null
+	sleep 5
+fi
+
+#if [ "$(pgrep ModemManager)" = "" ] && [ -f /etc/init.d/modemmanager ] && [ -n "$(uci -q show network | grep modemmanager)" ] && [ "$(uci -q get openmptcprouter.settings.modemmanager)" != "0" ]; then
+#	_log "Can't find ModemManager, restart it..."
+#	/etc/init.d/modemmanager restart 2>&1 >/dev/null
+#	sleep 5
+#fi
+
+if [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ -f /etc/init.d/v2ray ] && [ "$(pgrep -f omr-tracker-v2ray)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
+	_log "Can't find omr-tracker-v2ray, restart omr-tracker..."
+	/etc/init.d/omr-tracker restart 2>&1 >/dev/null
+fi
+
+set_get_config() {
+	local server=$1
+	[ -n "$server" ] && uci -q set openmptcprouter.${server}.get_config=1
+}
+
+if [ -f /etc/init.d/shadowsocks-libev ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.key)" = "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "192.18.1.3" ]; then
+	config_load openmptcprouter
+	config_foreach set_get_config server
+	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
+fi
+
+if [ -f /etc/init.d/shadowsocks-libev ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.key)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "192.18.1.3" ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
+	_log "Can't find omr-tracker-ss, restart omr-tracker..."
+	/etc/init.d/omr-tracker restart 2>&1 >/dev/null
+fi
+
+if [ "$(uci -q get glorytun.vpn.enable)" = "1" ] && [ "$(uci -q get glorytun.vpn.key)" = "" ]; then
+	config_load openmptcprouter
+	config_foreach set_get_config server
+	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
+fi
+
+if [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ "$(uci -q get v2ray.omrout.s_vless_user_id)" = "" ]; then
+	config_load openmptcprouter
+	config_foreach set_get_config server
+	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
+fi
+
+if [ -n "$(logread | tail -n 2 | grep 'Ring expansion failed')" ]; then
+	_log "Workaround Ring expansion failed problem"
+	echo 1 > /sys/bus/pci/devices/0000:00:00.0/remove
+	sleep 2
+	echo 1 > /sys/bus/pci/rescan
+fi
+
+if [ -f /etc/init.d/omr-bypass ] && (([ -f /usr/sbin/iptables-legacy-save ] && [ "$(iptables-legacy-save 2>/dev/null | grep omr-bypass)" = "" ]) || [ "$(iptables-save 2>/dev/null | grep omr-bypass)" = "" ]) && [ "$(pgrep -f omr-bypass)" = "" ]; then
+	_log "Can't find omr-bypass rules, restart omr-bypass..."
+	/etc/init.d/omr-bypass 2>&1 >/dev/null
+	sleep 5
+fi
+
+if [ -f /etc/backup/installed_packages.txt ] && [ -n "$(grep overlay /etc/backup/installed_packages.txt)" ] && ([ "$(uci -q get openmptcprouter.settings.sysupgrade_lc)" = "" ] || [ $(($(date +"%s") + $((30 + RANDOM % 31)) - $(uci -q get openmptcprouter.settings.sysupgrade_lc))) -gt 3600 ]) && [ $(($(date +"%s") - $(stat -c "%Y" /etc/backup/installed_packages.txt))) -gt 86400 ]; then
+	_log "Reinstall packages..."
+	uci -q set openmptcprouter.settings.sysupgrade_lc=$(date +"%s")
+	/etc/init.d/sysupgrade restart 2>&1 >/dev/null
+	sleep 10
+fi
+
+if [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep token_error=\'1\')" != "" ]; then
+	/etc/init.d/openmptcprouter-vps token >/dev/null 2>&1 &
+	sleep 5
+fi
+if [ "$(pgrep -f openmptcprouter-vps)" = "" ] && ([ "$(uci -q show openmptcprouter | grep get_config=\'1\')" != "" ] || [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" != "" ]); then
+	/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &
+	sleep 5
+fi
+
+if [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.enabled)" = "1" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.autorate)" = "1" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ -z $(pgrep -f "config.${OMR_TRACKER_INTERFACE}") ]; then
+	if [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.max_download)" != "0" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.download)" != "0" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.max_upload)" != "0" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.upload)" != "0" ]; then
+		_log "Restart SQM Autorate"
+		/etc/init.d/sqm-autorate restart >/dev/null 2>&1
+		sleep 5
+	fi
+fi
+
+#if [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && ([ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ] || (([ -f /usr/sbin/iptables-legacy-save ] && [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ]) || [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ])); then
+if [ "$(pgrep -f set_vps_firewall)" = "" ] && [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && [ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ]; then
+	check_server_fw() {
+		[ "$(uci -q get openmptcprouter.$1.set_firewall)" = "1" ] && {
+			_log "Set firewall on server $1"
+			/etc/init.d/openmptcprouter-vps set_vps_firewall $1 >/dev/null 2>&1
+		}
+	}
+	config_load openmptcprouter
+	config_foreach check_server_fw server
+
+
+	run_fw_include() {
+		[ -n "$1" ] && [ "$(uci -q get firewall.$1.reload)" = "0" ] && sh $(uci -q get firewall.$1.path) >/dev/null 2>&1
+	}
+	config_load firewall
+	config_foreach run_fw_include include
+
+	#/etc/init.d/shadowsocks-libev rules_up >/dev/null 2>&1
+	#/etc/init.d/v2ray rules_up >/dev/null 2>&1
+	#/etc/init.d/omr-bypass reload_rules >/dev/null 2>&1
+	#sh /etc/firewall.gre-tunnel >/dev/null 2>&1
+	/bin/blocklanfw >/dev/null 2>&1
+	sleep 5
+fi
