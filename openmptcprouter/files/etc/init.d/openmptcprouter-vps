@@ -1770,6 +1770,7 @@ _backup_get() {
 
 _backup_get_and_apply() {
 	servername=$1
+	backupfile=$2
 	token=""
 	vps_config=""
 	_login
@@ -1780,7 +1781,12 @@ _backup_get_and_apply() {
 		EOF
 		return
 	}
-	vps_backup=$(_get_json "backupget")
+	if [ -n "$backupfile" ]; then
+		echo "get $backupfile"
+		vps_backup=$(_get_json "backupget?filename=${backupfile}")
+	else
+		vps_backup=$(_get_json "backupget")
+	fi
 	[ -z "$vps_backup" ] && return
 	backup_data="$(echo "$vps_backup" | jsonfilter -q -e '@.data')"
 	backup_sha256sum="$(echo "$vps_backup" | jsonfilter -q -e '@.sha256sum')"
@@ -1791,11 +1797,16 @@ _backup_get_and_apply() {
 }
 
 backup_get() {
-	lastbackup=""
-	serverbackup=""
-	config_load openmptcprouter
-	config_foreach _backup_get server
-	[ -n "$serverbackup" ] && _backup_get_and_apply $serverbackup
+	backuptoapply=$2
+	if [ -n "$backuptoapply" ]; then
+		_backup_get_and_apply $1 $2
+	else
+		lastbackup=""
+		serverbackup=""
+		config_load openmptcprouter
+		config_foreach _backup_get server
+		[ -n "$serverbackup" ] && _backup_get_and_apply $serverbackup
+	fi
 }
 
 _backup_list() {
@@ -1819,6 +1830,13 @@ _backup_list() {
 	backup_lastmodif="$(echo "$vps_backup" | jsonfilter -q -e '@.modif')"
 	[ -n "$backup_lastmodif" ] && {
 		uci -q set openmptcprouter.$servername.lastbackup=$backup_lastmodif
+		backup_all="$(echo "$vps_backup" | jsonfilter -q -e '@.sorted[*]')"
+		uci -q del openmptcprouter.$servername.allbackup
+		echo "$vps_backup" | jsonfilter -q -e '@.sorted[*]' | while read backup; do
+			name=$(echo "$backup" | jsonfilter -q -e '@[0]' | tr -d '\n')
+			modiftime=$(echo "$backup" | jsonfilter -q -e '@[1]' | tr -d '\n')
+			uci -q add_list openmptcprouter.$servername.allbackup="${name}|${modiftime}"
+		done
 	}
 }
 
