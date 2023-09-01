@@ -1321,7 +1321,18 @@ end
 function backupgr()
 	local get_backup = luci.http.formvalue("restore") or ""
 	if get_backup ~= "" then
-		luci.sys.call("/etc/init.d/openmptcprouter-vps backup_get >/dev/null 2>/dev/null")
+		local dobackup = 0
+		ucic:foreach("openmptcprouter","server", function(s)
+			servername = s[".name"]
+			local get_selected_backup = luci.http.formvalue(servername .. "") or ""
+			if get_selected_backup ~= "" then
+				dobackup = 1
+				luci.sys.call("/etc/init.d/openmptcprouter-vps backup_get " .. servername .. " " .. get_selected_backup .. ">/dev/null 2>/dev/null")
+			end
+		end)
+		if dobackup == 0 then
+			luci.sys.call("/etc/init.d/openmptcprouter-vps backup_get >/dev/null 2>/dev/null")
+		end
 	end
 	local send_backup = luci.http.formvalue("save") or ""
 	if send_backup ~= "" then
