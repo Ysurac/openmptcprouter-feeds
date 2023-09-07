@@ -60,7 +60,11 @@ end
 o = s:option(ListValue, "congestion", translate("Congestion Control"),translate("Default is cubic"))
 local availablecong = sys.exec("sysctl -n net.ipv4.tcp_available_congestion_control | xargs -n1 | sort | xargs")
 for cong in string.gmatch(availablecong, "[^%s]+") do
-	o:value(cong, translate(cong))
+	if cong == "bbr" and string.match(availablecong, "bbr1") then
+		o:value(cong, "bbr3")
+	else
+		o:value(cong, cong)
+	end
 end
 
 -- if tonumber(uname.release:sub(1,4)) >= 5.15 then
