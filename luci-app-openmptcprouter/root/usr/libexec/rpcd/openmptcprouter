@@ -334,6 +334,10 @@ function server_settings(server,server_ip,openmptcprouter_vps_key)
 		ucic:set("v2ray","omrout","s_vless_address",server_ip)
 		ucic:set("v2ray","omrout","s_socks_address",server_ip)
 		ucic:set("v2ray","omrout","s_trojan_address",server_ip)
+		ucic:set("xray","omrout","s_vmess_address",server_ip)
+		ucic:set("xray","omrout","s_vless_address",server_ip)
+		ucic:set("xray","omrout","s_socks_address",server_ip)
+		ucic:set("xray","omrout","s_trojan_address",server_ip)
 		ucic:save("qos")
 		ucic:commit("qos")
 		ucic:save("mlvpn")
@@ -341,7 +345,9 @@ function server_settings(server,server_ip,openmptcprouter_vps_key)
 		ucic:save("dsvpn")
 		ucic:commit("dsvpn")
 		ucic:save("v2ray")
+		ucic:save("xray")
 		ucic:commit("v2ray")
+		ucic:commit("xray")
 		ucic:save("glorytun")
 		ucic:commit("glorytun")
 		ucic:save("shadowsocks-libev")
@@ -428,6 +434,7 @@ function restart_all()
 	sys.exec("/etc/init.d/mptcpovervpn restart >/dev/null 2>/dev/null")
 	sys.exec("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
 	sys.exec("/etc/init.d/v2ray restart >/dev/null 2>/dev/null")
+	sys.exec("/etc/init.d/xray restart >/dev/null 2>/dev/null")
 end
 
 function redirectports(server,redirect_ports)
@@ -822,9 +829,9 @@ function interfaces_status()
 		-- shadowsocksaddr
 		mArray.openmptcprouter["proxy_addr"] = uci:get("openmptcprouter","omr","detected_ss_ipv4") or ""
 		if mArray.openmptcprouter["proxy_addr"] == "" and mArray.openmptcprouter["service_addr"] ~= "" then
-			tracker_ip = uci:get("shadowsocks-libev","tracker_sss0","local_address") or ""
+			tracker_ip = uci:get("shadowsocks-libev","tracker_sss0","local_address") or "127.0.0.1"
 			if tracker_ip ~= "" then
-				local tracker_port = uci:get("shadowsocks-libev","tracker_sss0","local_port")
+				local tracker_port = uci:get("shadowsocks-libev","tracker_sss0","local_port") or "1111"
 				if mArray.openmptcprouter["external_check"] ~= false then
 					mArray.openmptcprouter["proxy_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m " .. timeout .. " " .. check_ipv4_website))
 					if mArray.openmptcprouter["proxy_addr"] == "" then
@@ -930,7 +937,16 @@ function interfaces_status()
 							mArray.openmptcprouter["v2ray_traffic_tx"] = "0"
 							mArray.openmptcprouter["v2ray_traffic"] = "0"
 						end
-						mArray.openmptcprouter["proxy_traffic"] = mArray.openmptcprouter["ss_traffic"] + mArray.openmptcprouter["v2ray_traffic"]
+						if status and vpsinfo.xray ~= nil then
+							mArray.openmptcprouter["xray_traffic_rx"] = vpsinfo.xray.rx or "0"
+							mArray.openmptcprouter["xray_traffic_tx"] = vpsinfo.xray.tx or "0"
+							mArray.openmptcprouter["xray_traffic"] = mArray.openmptcprouter["xray_traffic_tx"] + mArray.openmptcprouter["xray_traffic_rx"]
+						else
+							mArray.openmptcprouter["xray_traffic_rx"] = "0"
+							mArray.openmptcprouter["xray_traffic_tx"] = "0"
+							mArray.openmptcprouter["xray_traffic"] = "0"
+						end
+						mArray.openmptcprouter["proxy_traffic"] = mArray.openmptcprouter["ss_traffic"] + mArray.openmptcprouter["v2ray_traffic"] + mArray.openmptcprouter["xray_traffic"]
 						mArray.openmptcprouter["total_traffic"] = mArray.openmptcprouter["proxy_traffic"] + mArray.openmptcprouter["vpn_traffic"]
 					else
 						mArray.openmptcprouter["vps_admin"] = false
@@ -1048,6 +1064,11 @@ function interfaces_status()
 	if string.find(sys.exec("/usr/bin/pgrep ss-redir"), "%d+") then
 		mArray.openmptcprouter["shadowsocks_service"] = true
 	end
+	-- check Shadowsocks Rust is running
+	mArray.openmptcprouter["shadowsocksrust_service"] = false
+	if string.find(sys.exec("/usr/bin/pgrep sslocal"), "%d+") then
+		mArray.openmptcprouter["shadowsocksrust_service"] = true
+	end
 
 	mArray.openmptcprouter["shadowsocks_enabled"] = true
 	local ss_server = "1"
@@ -1061,6 +1082,18 @@ function interfaces_status()
 		mArray.openmptcprouter["shadowsocks_enabled"] = false
 	end
 
+	mArray.openmptcprouter["shadowsocksrust_enabled"] = true
+	local ss_server = "1"
+	ucic:foreach("shadowsocks-rust", "server", function(s)
+		local ss_server_disabled = uci:get("shadowsocks-rust",s[".name"],"disabled") or "0"
+		if ss_server_disabled == "0" then
+			ss_server = "0"
+		end
+	end)
+	if ss_server == "1" then
+		mArray.openmptcprouter["shadowsocksrust_enabled"] = false
+	end
+
 	-- check V2Ray is running
 	mArray.openmptcprouter["v2ray_service"] = false
 	if string.find(sys.exec("/usr/bin/pgrep v2ray"), "%d+") then
@@ -1071,12 +1104,29 @@ function interfaces_status()
 	if v2ray == "1" then
 		mArray.openmptcprouter["v2ray_enabled"] = true
 	end
+	-- check XRay is running
+	mArray.openmptcprouter["xray_service"] = false
+	if string.find(sys.exec("/usr/bin/pgrep xray"), "%d+") then
+		mArray.openmptcprouter["xray_service"] = true
+	end
+	mArray.openmptcprouter["xray_enabled"] = false
+	local xray = uci:get("xray","main","enabled") or "0"
+	if xray == "1" then
+		mArray.openmptcprouter["xray_enabled"] = true
+	end
 	local ss_key = uci:get("shadowsocks-libev","sss0","key") or ""
 	mArray.openmptcprouter["shadowsocks_service_method"] = uci:get("shadowsocks-libev","sss0","method")
 	if ss_key == "" then
 		mArray.openmptcprouter["shadowsocks_service_key"] = false
 	else
 		mArray.openmptcprouter["shadowsocks_service_key"] = true
+	end
+	local ssr_key = uci:get("shadowsocks-rust","sss0","key") or ""
+	mArray.openmptcprouter["shadowsocksrust_service_method"] = uci:get("shadowsocks-rust","sss0","method")
+	if ssr_key == "" then
+		mArray.openmptcprouter["shadowsocksrust_service_key"] = false
+	else
+		mArray.openmptcprouter["shadowsocksrust_service_key"] = true
 	end
 
 	-- Add DHCP infos by parsing dnsmasq config file
