@@ -6,12 +6,9 @@ basename="$(basename $0)"
 
 if [ -f /usr/sbin/iptables-legacy ]; then
 	IPTABLES="/usr/sbin/iptables-legacy"
-	IPTABLESSAVE="/usr/sbin/iptables-legacy-save"
 else
 	IPTABLES="/usr/sbin/iptables"
-	IPTABLESSAVE="/usr/sbin/iptables-save"
 fi
-
 
 
 _log() {
@@ -39,11 +36,11 @@ _get_ip() {
 		[ -z "$check_ipv6_website" ] && check_ipv6_website="http://ipv6.openmptcprouter.com"
 		public_ipv4="$(curl -s -4 -m 3 $check_ipv4_website)"
 		uci -q set openmptcprouter.omr.detected_public_ipv4="${public_ipv4}"
-		[ -n "$public_ipv4" ] && {
+		[ -n "${public_ipv4}" ] && {
 			uci -q set upnpd.config.external_ip="${public_ipv4}"
 			uci -q commit upnpd
 		}
-		if [ "$(uci -q get openmptcprouter.omr.shadowsocks)" != "down" ]; then
+		if [ "$(uci -q get openmptcprouter.omr.xray)" != "down" ]; then
 			uci -q set openmptcprouter.omr.detected_ss_ipv4="$(curl -s -4 --socks5 "${proxy}" --max-time 3 $check_ipv4_website)"
 		else
 			uci -q del openmptcprouter.omr.detected_ss_ipv4
@@ -64,14 +61,13 @@ retry=${OMR_TRACKER_TRIES:-4}
 proxy=${OMR_TRACKER_PROXY:-127.0.0.1:1111}
 hosts=${OMR_TRACKER_HOSTS:-1.1.1.1 1.0.0.1}
 wait_test=${OMR_TRACKER_WAIT_TEST:-0}
-server=${OMR_TRACKER_SERVER:-sss0}
-type=${OMR_TRACKER_SS_TYPE:-libev}
+
 nodns=0
 
 last=0
 nocontact=""
 uci -q set openmptcprouter.omr=router
-uci -q delete openmptcprouter.omr.shadowsocks=""
+uci -q delete openmptcprouter.omr.xray
 _get_ip
 
 while true; do
@@ -81,38 +77,33 @@ while true; do
 	}
 	if [ "$(curl -s -I -w %{http_code} --socks5 ${proxy} --max-time ${timeout} $host -o /dev/null)" != "000" ]; then
 		nocontact=""
-		[ "${last}" -ge "${retry}" ] || [ "$(uci -q get openmptcprouter.omr.ss_${server})" = "" ] && {
-			_log "Shadowsocks ${server} is up (can contact via http ${host})"
-			OMR_TRACKER_STATUS_MSG="Shadowsocks ${server} is up (can contact via http ${host})"
-			uci -q set openmptcprouter.omr.ss_${server}="up"
+		[ "${last}" -ge "${retry}" ] || [ "$(uci -q get openmptcprouter.omr.xray)" = "" ] && {
+			_log "xray is up (can contact via http ${host})"
+			OMR_TRACKER_STATUS_MSG="xray is up (can contact via http ${host})"
+			uci -q set openmptcprouter.omr.xray="up"
 			uci -q commit openmptcprouter.omr
+			/etc/init.d/openmptcprouter-vps set_vps_firewall
 			mail_alert="$(uci -q get omr-tracker.proxy.mail_alert)"
 			#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
 			[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
 				OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
 				if [ "$(uci -q get omr-tracker.defaults.mail_up_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_up_message)" != "" ]; then
 					mail_subject="$(uci -q get omr-tracker.defaults.mail_up_subject)"
-					mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Shadowsocks Proxy/g" -e "s/%DEVICE%/Shadowsocks Proxy/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+					mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/xray Proxy/g" -e "s/%DEVICE%/Shadowsocks Proxy/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
 					mail_message="$(uci -q get omr-tracker.defaults.mail_up_message)"
-					mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Shadowsocks Proxy/g" -e "s/%DEVICE%/Shadowsocks Proxy/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+					mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/xray Proxy/g" -e "s/%DEVICE%/Shadowsocks Proxy/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
 					echo -e "Subject: ${mail_subject}\n\n${mail_message}" | sendmail $(uci -q get mail.default.to)
 				else
-					echo -e "Subject: $OMR_SYSNAME: Shadowsocks Proxy is UP." | sendmail $(uci -q get mail.default.to)
+					echo -e "Subject: $OMR_SYSNAME: xray Proxy is UP." | sendmail $(uci -q get mail.default.to)
 				fi
 			}
 			script_alert_up="$(uci -q get omr-tracker.proxy.script_alert_up)"
 			[ -n "$script_alert_up" ] && eval $script_alert_up
 		}
-		if [ -z "$($IPTABLESSAVE 2>/dev/null | grep :ssr)" ]; then
-			if [ "$type" = "libev" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.disabled)" != "1" ]; then
-				_log "Reload Shadowsocks rules"
-				/etc/init.d/shadowsocks-libev rules_up 2> /dev/null
-				_get_ip
-			elif [ "$type" = "rust" ] && [ "$(uci -q get shadowsocks-rust.ss_rules.disabled)" != "1" ]; then
-				_log "Reload Shadowsocks Rust rules"
-				/etc/init.d/shadowsocks-rust rules_up 2> /dev/null
-				_get_ip
-			fi
+		if [ -z "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep ^xr)" ]; then
+			_log "Reload xray rules"
+			/etc/init.d/xray rules_up 2> /dev/null
+			_get_ip
 		fi
 		[ "$(uci -q get openmptcprouter.omr.detected_public_ipv4)" = "" ] || ([ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.detected_public_ipv6)" = "" ]) && _get_ip
 		last=0
@@ -120,28 +111,20 @@ while true; do
 		last=$((last + 1 ))
 		[ -z "$nocontact" ] && nocontact="$host" || nocontact="$nocontact, $host"
 		[ "${last}" -ge "${retry}" ] && {
-			if [ -n "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep ssr)" ]; then
-				_log "Shadowsocks ${server} is down (can't contact via http ${nocontact})"
-				OMR_TRACKER_STATUS_MSG="Shadowsocks ${server} is down (can't contact via http ${nocontact})"
-				uci -q set openmptcprouter.omr.ss_${server}="down"
+			if [ -n "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep ^xr)" ]; then
+				_log "xray is down (can't contact via http ${nocontact})"
+				OMR_TRACKER_STATUS_MSG="xray is down (can't contact via http ${nocontact})"
+				uci -q set openmptcprouter.omr.xray="down"
 				uci -q commit openmptcprouter.omr
-				if [ "$(uci show openmptcprouter.omr | grep ss_ | grep up)" = "" ]; then
-					[ "$type" = "libev" ] && /etc/init.d/shadowsocks-libev rules_down 2> /dev/null
-					[ "$type" = "rust" ] && /etc/init.d/shadowsocks-rust rules_down 2> /dev/null
-				fi
+				/etc/init.d/openmptcprouter-vps set_vps_firewall
+				/etc/init.d/xray rules_down 2> /dev/null
 				_get_ip
 				server_ping=false
-				if [ "$type" = "libev" ]; then
-					serverip="$(uci -q get shadowsocks-libev.${server}.server)"
-					disabled="$(uci -q get shadowsocks-libev.${server}.disabled)"
-				elif [ "$type" = "rust" ]; then
-					serverip="$(uci -q get shadowsocks-rust.${server}.server)"
-					disabled="$(uci -q get shadowsocks-rust.${server}.disabled)"
-				fi
-				_ping_server $serverip
+				server="$(uci -q get xray.omrout.s_vless_address)"
+				_ping_server $server
 				if [ "$server_ping" = false ]; then
-					_log "Server $server ($serverip) seems down, no answer to ping"
-					OMR_TRACKER_STATUS_MSG="${OMR_TRACKER_STATUS_MSG} - Server $server ($serverip) seems down, no answer to ping"
+					_log "Server ($server) seems down, no answer to ping"
+					OMR_TRACKER_STATUS_MSG="${OMR_TRACKER_STATUS_MSG} - Server ($server) seems down, no answer to ping"
 				fi
 				mail_alert="$(uci -q get omr-tracker.proxy.mail_alert)"
 				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
@@ -149,29 +132,16 @@ while true; do
 					OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
 					if [ "$(uci -q get omr-tracker.defaults.mail_down_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_down_message)" != "" ]; then
 						mail_subject="$(uci -q get omr-tracker.defaults.mail_down_subject)"
-						mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Shadowsocks Proxy/g" -e "s/%DEVICE%/Shadowsocks Proxy/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+						mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/xray Proxy/g" -e "s/%DEVICE%/xray Proxy/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
 						mail_message="$(uci -q get omr-tracker.defaults.mail_down_message)"
-						mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Shadowsocks Proxy/g" -e "s/%DEVICE%/Shadowsocks Proxy/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+						mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/xray Proxy/g" -e "s/%DEVICE%/xray Proxy/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
 						echo -e "Subject: ${mail_subject}\n\n${mail_message}" | sendmail $(uci -q get mail.default.to)
 					else
-						echo -e "Subject: $OMR_SYSNAME: Shadowsocks Proxy is down\n\nConnection failure of ShadowSocks proxy detected. The reason is \"$OMR_TRACKER_STATUS_MSG\"." | sendmail $(uci -q get mail.default.to)
+						echo -e "Subject: $OMR_SYSNAME: xray Proxy is down\n\nConnection failure of xray proxy detected. The reason is \"$OMR_TRACKER_STATUS_MSG\"." | sendmail $(uci -q get mail.default.to)
 					fi
 				}
 				script_alert_down="$(uci -q get omr-tracker.proxy.script_alert_down)"
 				[ -n "$script_alert_down" ] && eval $script_alert_down
-
-				if [ "$disabled" != "1" ]; then
-					if [ "$type" = "libev" ] && [ "$(pgrep ss-redir)" = "" ] && [ "$(uci -q get shadowsocks-libev.${server}.key)" != "" ]; then
-						_log "Can't find shadowsocks, restart it..."
-						/etc/init.d/shadowsocks-libev restart
-						sleep 5
-					fi
-					if [ "$type" = "rust" ] && [ "$(pgrep ss-redir)" = "" ] && [ "$(uci -q get shadowsocks-libev.${server}.key)" != "" ]; then
-						_log "Can't find shadowsocks rust, restart it..."
-						/etc/init.d/shadowsocks-rust restart
-						sleep 5
-					fi
-				fi
 				sleep $wait_test
 			fi
 		}
