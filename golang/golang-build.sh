@@ -1,4 +1,10 @@
 #!/bin/sh
+#
+# Copyright (C) 2020, 2022 Jeffery To
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
 
 nl="
 "
@@ -56,7 +62,7 @@ configure() {
 	if [ "$GO_INSTALL_ALL" != 1 ]; then
 		code="$(printf '%s\n' "$files" | grep '\.\(c\|cc\|cpp\|go\|h\|hh\|hpp\|proto\|s\)$')"
 		testdata="$(printf '%s\n' "$files" | grep '/testdata/')"
-		gomod="$(printf '%s\n' "$files" | grep '/go\.\(mod\|sum\)$')"
+		gomod="$(printf '%s\n' "$files" | grep '/go\.\(mod\|sum\|work\)$')"
 
 		for pattern in $GO_INSTALL_EXTRA; do
 			extra="$(printf '%s\n' "$extra"; printf '%s\n' "$files" | grep -e "$pattern")"
