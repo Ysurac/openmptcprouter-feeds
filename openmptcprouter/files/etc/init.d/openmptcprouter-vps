@@ -293,6 +293,44 @@ _set_ss_server_vps() {
 	fi
 }
 
+_set_ssgo_server_vps() {
+	local disabled port key method
+	config_load shadowsocks-rust
+	config_get disabled sss0 disabled
+	[ "$disabled" = "1" ] && return
+	config_get port sss0 server_port
+	#config_get server $1 server
+	config_get key sss0 key
+	key="$(echo $key | sed 's/+/-/g; s/\//_/g;')"
+	[ -z "$key" ] && return
+	config_get method sss0 method
+	local current_port current_key current_method
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks-go.port')"
+	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks-go.key')"
+	current_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks-go.method')"
+	current_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks-go.fast_open')"
+	current_mptcp="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks-go.mptcp')"
+	
+	ebpf="false"
+	fast_open="false"
+	no_delay="false"
+	mptcp="false"
+	obfs="false"
+	obfs_plugin="v2ray"
+	obfs_type="http"
+	config_load shadowsocks-rust
+	config_foreach _get_ss_redir ss_redir
+	config_foreach _get_ss_server server
+
+	if [ "$current_mptcp" != "$mptcp" ] || [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_fast_open" != "$fast_open" ]; then
+		local settings
+		settings='{"port": '$port',"method":"'$method'","fast_open":'$fast_open',"reuse_port":true,"mptcp":'$mptcp'}'
+		result=$(_set_json "shadowsocks-go" "$settings")
+	fi
+}
+
 _set_v2ray_server_vps() {
 	enabled=$(uci -q get v2ray.main.enabled)
 	[ "$enabled" != "1" ] && return
@@ -306,6 +344,22 @@ _set_v2ray_server_vps() {
 		local settings
 		settings='{"userid": "'$userid'"}'
 		echo $(_set_json "v2ray" "$settings")
+	fi
+}
+
+_set_xray_server_vps() {
+	enabled=$(uci -q get xray.main.enabled)
+	[ "$enabled" != "1" ] && return
+	userid=$(uci -q get xray.omrout.s_vless_user_id)
+	[ -z "$userid" ] && return
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	current_userid="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.key')"
+
+	if [ "$current_userid" != "$userid" ]; then
+		local settings
+		settings='{"userid": "'$userid'"}'
+		echo $(_set_json "xray" "$settings")
 	fi
 }
 
@@ -450,6 +504,17 @@ _get_vps_config() {
 			/etc/init.d/shadowsocks-libev restart
 		fi
 	fi
+	if [ "$(uci -q get shadowsocks-rust.sss0.server)" != "127.0.0.1" ] && [ "$(uci -q get shadowsocks-rust.sss0.server)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
+		config_foreach _set_ssrust_server server "server" $vpsip
+		uci -q batch <<-EOF >/dev/null
+			set shadowsocks-rust.sss0.server="$vpsip"
+			commit shadowsocks-rust
+		EOF
+		if [ "$(uci -q get shadowsocks-rust.sss0.disabled)" = "0" ]; then
+			logger -t "OMR-VPS" "Restart shadowsocks Rust..."
+			/etc/init.d/shadowsocks-rust restart
+		fi
+	fi
 	if [ "$(uci -q get v2ray.omrout.s_vmess_address)" != "127.0.0.1" ] && [ "$(uci -q get v2ray.omrout.s_vmess_address)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set v2ray.omrout.s_vmess_address="$vpsip"
@@ -459,6 +524,17 @@ _get_vps_config() {
 		if [ "$(uci -q get v2ray.main.enabled)" = "1" ]; then
 			logger -t "OMR-VPS" "Restart V2Ray..."
 			/etc/init.d/v2ray restart
+		fi
+	fi
+	if [ "$(uci -q get xray.omrout.s_vmess_address)" != "127.0.0.1" ] && [ "$(uci -q get xray.omrout.s_vmess_address)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set xray.omrout.s_vmess_address="$vpsip"
+			set xray.omrout.s_vless_address="$vpsip"
+			commit xray
+		EOF
+		if [ "$(uci -q get xray.main.enabled)" = "1" ]; then
+			logger -t "OMR-VPS" "Restart XRay..."
+			/etc/init.d/xray restart
 		fi
 	fi
 	if [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ] && [ "$(uci -q get openvpn.omr.remote)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
@@ -942,12 +1018,14 @@ _vps_firewall_redirect_port() {
 		#uci -q delete firewall.$1
 		#return
 	fi
+	xray="$v2ray"
 	[ "$(uci -q get v2ray.main.enabled)" = "0" ] && [ "$(uci -q get openmptcprouter.omr.v2ray)" != "down" ] && v2ray="0"
+	[ "$(uci -q get xray.main.enabled)" = "0" ] && [ "$(uci -q get openmptcprouter.omr.xray)" != "down" ] && xray="0"
 	[ "$proto" = "all" ] && proto="tcp udp"
 	[ "$proto" = "" ] && proto="tcp udp"
 	[ "$src" = "vpn" ] && [ -n "$proto" ] && [ -n "$src_dport" ] && [ "$enabled" != "0" ] && [ "$name" != "Allow-DHCP-Request-VPN" ] && {
 		for protoi in $proto; do
-			if [ "$v2ray" = "0" ]; then
+			if [ "$v2ray" = "0" ] && [ "$xray" = "0" ]; then
 				checkfw=""
 				if [ "$family" = "ipv4" ]; then
 					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
@@ -1045,7 +1123,8 @@ _vps_firewall_redirect_port() {
 				checkfw=""
 				if [ "$family" = "ipv4" ]; then
 					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
-						checkfw=$(echo "$vpsfwlist" | grep "$src_dport	# OMR $username open router $src_dport port $protoi --- V2Ray to ${dest_ip}:${dest_port}")
+						[ "$v2ray" == "1" ] && checkfw=$(echo "$vpsfwlist" | grep "$src_dport	# OMR $username open router $src_dport port $protoi --- V2Ray to ${dest_ip}:${dest_port}")
+						[ "$xray" == "1" ] && checkfw=$(echo "$vpsfwlist" | grep "$src_dport	# OMR $username open router $src_dport port $protoi --- XRay to ${dest_ip}:${dest_port}")
 					else
 						comment=""
 						[ -n "$src_dip" ] && {
@@ -1065,45 +1144,58 @@ _vps_firewall_redirect_port() {
 							}
 						}
 						[ -n "$src_ip" ] && comment=" from $src_ip"
-						checkfw=$(echo "$vpsfwlist" | grep "# OMR $username open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}")
+						[ "$v2ray" == "1" ] && checkfw=$(echo "$vpsfwlist" | grep "# OMR $username open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}")
+						[ "$xray" == "1" ] && checkfw=$(echo "$vpsfwlist" | grep "# OMR $username open router $src_dport port ${protoi}${comment} --- XRay to ${dest_ip}:${dest_port}")
 					fi
 				else
 					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
-						checkfw=$(echo "$vpsfw6list" | grep "$src_dport	# OMR $username open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}")
+						[ "$v2ray" == "1" ] && checkfw=$(echo "$vpsfw6list" | grep "$src_dport	# OMR $username open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}")
+						[ "$xray" == "1" ] && checkfw=$(echo "$vpsfw6list" | grep "$src_dport	# OMR $username open router $src_dport port ${protoi} --- XRay to ${dest_ip}:${dest_port}")
 					else
 						comment=""
 						[ -n "$src_dip" ] && comment=" to $src_dip"
 						[ -n "$src_ip" ] && comment=" from $src_ip"
-						checkfw=$(echo "$vpsfw6list" | grep "# OMR $username open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}")
+						[ "$v2ray" == "1" ] && checkfw=$(echo "$vpsfw6list" | grep "# OMR $username open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}")
+						[ "$xray" == "1" ] && checkfw=$(echo "$vpsfw6list" | grep "# OMR $username open router $src_dport port ${protoi}${comment} --- XRay to ${dest_ip}:${dest_port}")
 					fi
 				fi
 				if [ "$checkfw" = "" ]; then
-					settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","source_dip" : "'$src_dip'","source_ip" : "'$src_ip'","proto" : "'${protoi}'","fwtype" : "ACCEPT","ipproto" : "'$family'","comment" : "V2Ray to '${dest_ip}':'${dest_port}'"}'
+					[ "$v2ray" == "1" ] && settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","source_dip" : "'$src_dip'","source_ip" : "'$src_ip'","proto" : "'${protoi}'","fwtype" : "ACCEPT","ipproto" : "'$family'","comment" : "V2Ray to '${dest_ip}':'${dest_port}'"}'
+					[ "$xray" == "1" ] && settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","source_dip" : "'$src_dip'","source_ip" : "'$src_ip'","proto" : "'${protoi}'","fwtype" : "ACCEPT","ipproto" : "'$family'","comment" : "XRay to '${dest_ip}':'${dest_port}'"}'
 					result=$(_set_json "shorewallopen" "$settings")
 					[ -z "$dest_port" ] && dest_port="$src_dport"
 					settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","destip" : "'$dest_ip'","destport" : "'$dest_port'","proto" : "'${protoi}'"}'
-					result=$(_set_json "v2rayredirect" "$settings")
+					[ "$v2ray" == "1" ] && result=$(_set_json "v2rayredirect" "$settings")
+					[ "$xray" == "1" ] && result=$(_set_json "xrayredirect" "$settings")
 				fi
 				if [ "$family" = "ipv4" ]; then
 					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
-						vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR $username open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}$")
-						[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}$")
+						[ "$v2ray" == "1"] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR $username open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}$")
+						[ "$xray" == "1" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR $username open router $src_dport port ${protoi} --- XRay to ${dest_ip}:${dest_port}$")
+						[ "$v2ray" == "1" ] && [ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}$")
+						[ "$xray" == "1" ] && [ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR open router $src_dport port ${protoi} --- XRay to ${dest_ip}:${dest_port}$")
 					else
 						comment=""
 						[ -n "$src_dip" ] && comment=" to $src_dip"
 						[ -n "$src_ip" ] && comment=" from $src_ip"
-						vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR $username open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}$")
-						[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}$")
+						[ "$v2ray" == "1" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR $username open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}$")
+						[ "$xray" == "1" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR $username open router $src_dport port ${protoi}${comment} --- XRay to ${dest_ip}:${dest_port}$")
+						[ "$v2ray" == "1" ] && [ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}$")
+						[ "$xray" == "1" ] && [ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR open router $src_dport port ${protoi}${comment} --- XRay to ${dest_ip}:${dest_port}$")
 					fi
 				else
 					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
-						vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR $username open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}$")
-						[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}$")
+						[ "$v2ray" == "1" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR $username open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}$")
+						[ "$xray" == "1" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR $username open router $src_dport port ${protoi} --- XRay to ${dest_ip}:${dest_port}$")
+						[ "$v2ray" == "1" ] && [ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}$")
+						[ "$xray" == "1" ] && [ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR open router $src_dport port ${protoi} --- XRay to ${dest_ip}:${dest_port}$")
 					else
 						[ -n "$src_dip" ] && comment=" to $src_dip"
 						[ -n "$src_ip" ] && comment=" from $src_ip"
-						vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR $username open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}$")
-						[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}$")
+						[ "$v2ray" == "1" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR $username open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}$")
+						[ "$xray" == "1" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR $username open router $src_dport port ${protoi}${comment} --- XRay to ${dest_ip}:${dest_port}$")
+						[ "$v2ray" == "1" ] && [ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}$")
+						[ "$xray" == "1" ] && [ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR open router $src_dport port ${protoi}${comment} --- XRay to ${dest_ip}:${dest_port}$")
 					fi
 				fi
 			fi
@@ -1136,6 +1228,7 @@ _vps_firewall_close_port() {
 					destport=$(echo $comment | awk '{print $3}' | awk -F: '{print $2}')
 					settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","destip" : "'$destip'","destport": "'$destport'"}'
 					result=$(_set_json "v2rayunredirect" "$settings")
+					result=$(_set_json "xrayunredirect" "$settings")
 				}
 			}
 		done
@@ -1162,6 +1255,7 @@ _vps_firewall_close_port() {
 				[ "$type" = "ACCEPT" ] && {
 					settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","proto" : "'$proto'","comment" : "'$comment'"}'
 					result=$(_set_json "v2rayunredirect" "$settings")
+					result=$(_set_json "xrayunredirect" "$settings")
 				}
 			}
 		done
@@ -1276,6 +1370,30 @@ _set_ss_server() {
 	fi
 }
 
+_set_ssrust_redir() {
+	local option=$2
+	local value=$3
+	if [ "$value" = "true" ]; then
+		value=1
+	elif [ "$value" = "false" ]; then
+		value=0
+	fi
+	uci -q set shadowsocks-rust.$1.$option=$value
+}
+
+_set_ssrust_server() {
+	local option=$2
+	local value=$3
+	if [ "$value" = "true" ]; then
+		value=1
+	elif [ "$value" = "false" ]; then
+		value=0
+	fi
+	if [ "$(echo $1 | grep omr)" != "" ] || [ "$(echo $1 | grep sss)" ]; then 
+		uci -q set shadowsocks-rust.$1.$option=$value
+	fi
+}
+
 _set_config_from_vps() {
 	local shadowsocks_disabled vpn glorytun_state redirect shorewall_redirect mlvpn_key openvpn_key dsvpn_key
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
@@ -1331,28 +1449,66 @@ _set_config_from_vps() {
 			EOF
 			if [ "$current_proxy" = "shadowsocks" ]; then
 				uci -q batch <<-EOF >/dev/null
+					set shadowsocks-rust.sss0.disabled=1
+					commit shadowsocks-rust
 					set shadowsocks-libev.sss0.disabled=0
 					commit shadowsocks-libev
 					set v2ray.main.enabled=0
 					commit v2ray
+					set xray.main.enabled=0
+					commit xray
+					set openmptcprouter.settings.shadowsocks_disable=0
+					commit openmptcprouter
+				EOF
+			elif [ "$current_proxy" = "shadowsocks-rust" ]; then
+				uci -q batch <<-EOF >/dev/null
+					set shadowsocks-rust.sss0.disabled=0
+					commit shadowsocks-rust
+					set shadowsocks-libev.sss0.disabled=1
+					commit shadowsocks-libev
+					set v2ray.main.enabled=0
+					commit v2ray
+					set xray.main.enabled=0
+					commit xray
 					set openmptcprouter.settings.shadowsocks_disable=0
 					commit openmptcprouter
 				EOF
 			elif [ "$current_proxy" = "v2ray" ]; then
 				uci -q batch <<-EOF >/dev/null
+					set shadowsocks-rust.sss0.disabled=1
+					commit shadowsocks-rust
 					set shadowsocks-libev.sss0.disabled=1
 					commit shadowsocks-libev
 					set v2ray.main.enabled=1
 					commit v2ray
+					set xray.main.enabled=0
+					commit xray
+					set openmptcprouter.settings.shadowsocks_disable=1
+					commit openmptcprouter
+				EOF
+			elif [ "$current_proxy" = "xray" ]; then
+				uci -q batch <<-EOF >/dev/null
+					set shadowsocks-rust.sss0.disabled=1
+					commit shadowsocks-rust
+					set shadowsocks-libev.sss0.disabled=1
+					commit shadowsocks-libev
+					set v2ray.main.enabled=0
+					commit v2ray
+					set xray.main.enabled=1
+					commit xray
 					set openmptcprouter.settings.shadowsocks_disable=1
 					commit openmptcprouter
 				EOF
 			elif [ "$current_proxy" = "none" ]; then
 				uci -q batch <<-EOF >/dev/null
+					set shadowsocks-rust.sss0.disabled=1
+					commit shadowsocks-rust
 					set shadowsocks-libev.sss0.disabled=1
 					commit shadowsocks-libev
 					set v2ray.main.enabled=0
 					commit v2ray
+					set xray.main.enabled=0
+					commit xray
 					set openmptcprouter.settings.shadowsocks_disable=1
 					commit openmptcprouter
 				EOF
@@ -1419,6 +1575,34 @@ _set_config_from_vps() {
 		fi
 	fi
 
+	# Shadowsocks Rust settings
+	#shadowsocks_disabled="$(uci -q get openmptcprouter.settings.shadowsocks_disable)"
+	#[ -z "$shadowsocks_disabled" ] && shadowsocks_disabled=0
+	ssgo_sskey="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks_go.config.password')"
+	if [ -n "$ssgo_sskey" ] && [ "$ssgo_sskey" != "$(uci -q get shadowsocks-rust.sss0.password)" ]; then
+		ss_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks_go.config.protocol')"
+		ss_port="65280"
+		#ss_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks-rust.fast_open')"
+		config_load shadowsocks-rust
+		#config_foreach _set_ss_redir ss_redir "fast_open" $ss_fast_open
+		#config_foreach _set_ss_redir ss_local "fast_open" $ss_fast_open
+		uci -q batch <<-EOF >/dev/null
+			set shadowsocks-rust.sss0.password=$ssgo_sskey
+			set shadowsocks-rust.sss0.server_port=$ss_port
+			set shadowsocks-rust.sss0.method=$ss_method
+		EOF
+		config_foreach _set_ss_server server "key" $ssgo_sskey
+		config_foreach _set_ss_server server "method" $ss_method
+		if [ "$(uci -q get shadowsocks-rust.sss0.server)" != "127.0.0.1" ]; then
+			config_foreach _set_ss_server server "server" $vpsip
+		fi
+		uci -q commit shadowsocks-rust
+		if [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ]; then
+			logger -t "OMR-VPS" "Shadowsocks Rust restart..."
+			/etc/init.d/shadowsocks-rust restart >/dev/null 2>&1
+		fi
+	fi
+
 	# V2Ray settings
 	v2ray_key="$(echo "$vps_config" | jsonfilter -q -e '@.v2ray.config.key')"
 	#v2ray_port="$(echo "$vps_config" | jsonfilter -q -e '@.v2ray.config.port')"
@@ -1443,6 +1627,37 @@ _set_config_from_vps() {
 		uci -q commit v2ray
 		logger -t "OMR-VPS" "V2ray restart..."
 		/etc/init.d/v2ray restart >/dev/null 2>&1
+	fi
+
+	# XRay settings
+	xray_key="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.key')"
+	xray_sskey="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.sskey')"
+	#v2ray_port="$(echo "$vps_config" | jsonfilter -q -e '@.v2ray.config.port')"
+	xray_port="65248"
+	if ([ -n "$xray_key" ] && [ "$xray_key" != "$(uci -q get xray.omrout.s_vmess_user_id)" ]) || ([ -n "$xray_port" ] && [ "$xray_port" != "$(uci -q get xray.omrout.s_vmess.port)" ]); then
+		uci -q batch <<-EOF >/dev/null
+			set xray.omrout.s_shadowsocks_port="$((xray_port+4))"
+			set xray.omrout.s_shadowsocks_password="$xray_sskey"
+			set xray.omrout.s_socks_user_id="$xray_key"
+			set xray.omrout.s_socks_port="$((xray_port+3))"
+			set xray.omrout.s_trojan_user_id="$xray_key"
+			set xray.omrout.s_trojan_port="$((xray_port+1))"
+			set xray.omrout.s_vmess_user_id="$xray_key"
+			set xray.omrout.s_vmess_port="$((xray_port+2))"
+			set xray.omrout.s_vless_user_id="$xray_key"
+			set xray.omrout.s_vless_port="$xray_port"
+		EOF
+		uci -q set xray.omrout.s_shadowsocks_password=$ss_key
+		if [ "$(uci -q get xray.omrout.s_vmess_address)" != "127.0.0.1" ]; then
+			uci -q set xray.omrout.s_vmess_address="$vpsip"
+			uci -q set xray.omrout.s_vless_address="$vpsip"
+			uci -q set xray.omrout.s_trojan_address="$vpsip"
+			uci -q set xray.omrout.s_socks_address="$vpsip"
+			uci -q set xray.omrout.s_shadowsocks_address="$vpsip"
+		fi
+		uci -q commit v2ray
+		logger -t "OMR-VPS" "Xray restart..."
+		/etc/init.d/xray restart >/dev/null 2>&1
 	fi
 
 	# Glorytun settings
@@ -1951,9 +2166,12 @@ _config_service() {
 				EOF
 				config_foreach _set_ss_server server "method" "aes-256-gcm"
 				uci -q commit shadowsocks-libev
+				config_foreach _set_ssrust_server server "method" "2022-blake3-aes-256-gcm"
+				uci -q commit shadowsocks-rust
 				[ "$method" != "aes-256-gcm" ] && {
 					logger -t "OMR-VPS" "Shadowsocks restart"
 					/etc/init.d/shadowsocks-libev restart
+					/etc/init.d/shadowsocks-rust restart
 				}
 			fi
 		}
@@ -1967,7 +2185,9 @@ _config_service() {
 		#config_load shadowsocks-libev
 		#config_foreach _set_ss_server_vps server
 		_set_ss_server_vps
+		_set_ssgo_server_vps
 		_set_v2ray_server_vps
+		_set_xray_server_vps
 		[ -z "$(_set_glorytun_vps)" ] && error=1
 		[ -z "$(_set_openvpn_vps)" ] && error=1
 		[ -z "$(_set_mlvpn_vps)" ] && error=1
@@ -2063,7 +2283,7 @@ start_service() {
 
 service_triggers() {
 	#procd_add_reload_trigger openmptcprouter network shadowsocks-libev v2ray glorytun glorytun-udp mlvpn openvpn dsvpn
-	procd_add_reload_trigger shadowsocks-libev v2ray glorytun glorytun-udp mlvpn dsvpn
+	procd_add_reload_trigger shadowsocks-libev shadowsocks-rust v2ray xray glorytun glorytun-udp mlvpn dsvpn
 	procd_add_config_trigger "config.change" "firewall" /etc/init.d/openmptcprouter-vps set_vps_firewall
 	#procd_add_config_trigger "config.change" "network" /etc/init.d/openmptcprouter-vps set_gre_tunnel
 	#procd_add_reload_trigger openmptcprouter shadowsocks-libev network upnpd
