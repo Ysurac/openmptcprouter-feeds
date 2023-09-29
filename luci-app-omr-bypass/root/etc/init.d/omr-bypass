@@ -685,6 +685,59 @@ _intf_rule_v2ray_rules() {
 	fi
 }
 
+_intf_rule_xray_rules() {
+	#rule_name=$1
+	#[ "$rule_name" = "ss_rules" ] && rule_name="def"
+	rule_name="def"
+	if [ "$($IPTABLES --wait=40 -t nat -L -n | grep xr_${rule_name}_dst)" != "" ] && [ "$($IPTABLESSAVE 2>/dev/null | grep xr_${rule_name}_dst | grep omr_dst_bypass_$intf)" = "" ]; then
+		$IPTABLESRESTORE -w --wait=60 --noflush <<-EOF
+		*nat
+		-I xr_${rule_name}_dst 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
+		-I xr_${rule_name}_dst 2 -m mark --mark 0x539$count -j RETURN
+		COMMIT
+		EOF
+	fi
+	if [ "$($IPTABLES --wait=40 -t nat -L -n | grep xr_${rule_name}_local_out)" != "" ] && [ "$($IPTABLESSAVE 2>/dev/null | grep xr_${rule_name}_local_out | grep omr_dst_bypass_$intf)" = "" ]; then
+		$IPTABLESRESTORE -w --wait=60 --noflush <<-EOF
+		*nat
+		-I xr_${rule_name}_local_out 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
+		-I xr_${rule_name}_local_out 2 -m mark --mark 0x539$count -j RETURN
+		COMMIT
+		EOF
+	fi
+	if [ "$($IPTABLES --wait=40 -t nat -L -n | grep xr_${rule_name}_pre_src)" != "" ] && [ "$($IPTABLESSAVE 2</dev/null | grep xr_${rule_name}_pre_src | grep omr_dst_bypass_$intf)" = "" ]; then
+		$IPTABLESRESTORE -w --wait=60 --noflush <<-EOF
+		*nat
+		-I xr_${rule_name}_pre_src 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
+		-I xr_${rule_name}_pre_src 2 -m mark --mark 0x539$count -j RETURN
+		COMMIT
+		EOF
+	fi
+
+
+	if [ "$disableipv6" = "0" ]; then
+		if [ "$($IP6TABLESSAVE | grep omr-bypass6 | grep omr6_dst_bypass_$intf)" = "" ]; then
+			$IP6TABLESRESTORE -w --wait=60 --noflush <<-EOF
+			*mangle
+			-I omr-bypass6 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
+			COMMIT
+			EOF
+		fi
+		if [ "$($IP6TABLES --wait=40 -t nat -L -n | grep xr6_${rule_name}_pre_src)" != "" ] && [ "$($IP6TABLESSAVE 2>/dev/null | grep xr6 | grep omr6_dst_bypass_$intf)" = "" ]; then
+			$IP6TABLESRESTORE -w --wait=60 --noflush <<-EOF
+			*nat
+			-I xr6_${rule_name}_dst 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
+			-I xr6_${rule_name}_dst 2 -m mark --mark 0x6539$count -j RETURN
+			-I xr6_${rule_name}_local_out 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
+			-I xr6_${rule_name}_local_out 2 -m mark --mark 0x6539$count -j RETURN
+			-I xr6_${rule_name}_pre_src 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
+			-I xr6_${rule_name}_pre_src 2 -m mark --mark 0x6539$count -j RETURN
+			COMMIT
+			EOF
+		fi
+	fi
+}
+
 _intf_rule() {
 	local intf
 	intf=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
@@ -740,8 +793,13 @@ _intf_rule() {
 	if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks" ]; then
 		config_load shadowsocks-libev
 		config_foreach _intf_rule_ss_rules ss_rules
+	elif [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks-rust" ]; then
+		config_load shadowsocks-rust
+		config_foreach _intf_rule_ss_rules ss_rules
 	elif [ "$(uci -q get openmptcprouter.settings.proxy)" = "v2ray" ]; then
 		_intf_rule_v2ray_rules
+	elif [ "$(uci -q get openmptcprouter.settings.proxy)" = "xray" ]; then
+		_intf_rule_xray_rules
 	fi
 
 	uci -q set omr-bypass.$intf=interface
@@ -864,6 +922,45 @@ _v2ray_rules_config() {
 	fi
 }
 
+_xray_rules_config() {
+	#rule_name=$1
+	#[ "$rule_name" = "ss_rules" ] && rule_name="def"
+	rule_name="def"
+	if [ "$($IPTABLES --wait=40 -t nat -L -n | grep xr_${rule_name}_pre_src)" != "" ] && [ "$($IPTABLES --wait=40 -t nat -L -n | grep omr_dst_bypass_all)" = "" ]; then
+		$IPTABLESRESTORE -w --wait=60 --noflush <<-EOF
+		*nat
+		-I xr_${rule_name}_dst 1 -m set --match-set omr_dst_bypass_all dst -j  MARK --set-mark 0x539
+		-I xr_${rule_name}_dst 2 -m mark --mark 0x539 -j RETURN
+		-I xr_${rule_name}_local_out 1 -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
+		-I xr_${rule_name}_local_out 2 -m mark --mark 0x539 -j RETURN
+		-I xr_${rule_name}_pre_src 1 -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
+		-I xr_${rule_name}_pre_src 2 -m mark --mark 0x539 -j RETURN
+		COMMIT
+		EOF
+	fi
+	if [ "$disableipv6" = "0" ]; then
+		if [ "$($IP6TABLES --wait=40 -t mangle -L -n | grep 'match-set omr6_dst_bypass_all dst MARK set')" = "" ]; then
+			$IP6TABLESRESTORE -w --wait=60 --noflush <<-EOF
+			*mangle
+			-A omr-bypass6 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
+			COMMIT
+			EOF
+		fi
+		if [ "$($IP6TABLES --wait=40 -t nat -L -n | grep xr6_${rule_name}_pre_src)" != "" ] && [ "$($IP6TABLES --wait=40 -t nat -L -n | grep omr6_dst_bypass_all)" = "" ]; then
+			$IP6TABLESRESTORE -w --wait=60 --noflush <<-EOF
+			*nat
+			-I xr6_${rule_name}_dst 1 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
+			-I xr6_${rule_name}_dst 1 -m mark --mark 0x6539 -j RETURN
+			-I xr6_${rule_name}_local_out 1 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
+			-I xr6_${rule_name}_local_out 2 -m mark --mark 0x6539 -j RETURN
+			-I xr6_${rule_name}_pre_src 1 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
+			-I xr6_${rule_name}_pre_src 2 -m mark --mark 0x6539 -j RETURN
+			COMMIT
+			EOF
+		fi
+	fi
+}
+
 boot() {
 	BOOT=1
 	start "$@"
@@ -970,7 +1067,10 @@ start_service() {
 
 	config_load shadowsocks-libev
 	config_foreach _ss_rules_config
+	config_load shadowsocks-rust
+	config_foreach _ss_rules_config
 	_v2ray_rules_config
+	_xray_rules_config
 
 	$IPTABLESSAVE --counters 2>/dev/null | grep -v omr-bypass-dpi | $IPTABLESRESTORE -w --counters 2>/dev/null
 	$IPTABLESRESTORE -w --wait=60  --noflush <<-EOF
