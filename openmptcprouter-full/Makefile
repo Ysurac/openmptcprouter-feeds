@@ -31,7 +31,7 @@ MY_DEPENDS := \
     libnetfilter-conntrack ip-full nstat \
     iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace iptables-mod-conntrack-extra iptables-mod-account \
     kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra iptables-mod-extra conntrack kmod-ipt-offload \
-    kmod-crypto-authenc \
+    iptables-mod-ipsec kmod-crypto-authenc kmod-ipsec kmod-ipsec4 kmod-ipsec6 kmod-ipt-ipsec \
     wireless-tools \
     libiwinfo-lua \
     ca-bundle ca-certificates \
@@ -84,7 +84,8 @@ MY_DEPENDS := \
     luci-theme-openwrt-2020 luci-proto-wireguard luci-app-wireguard kmod-crypto-lib-blake2s (TARGET_x86||TARGET_x86_64):kmod-r8125 \
     (LINUX_5_15||LINUX_6_1):mptcpd (TARGET_x86||TARGET_x86_64):kmod-igc !TARGET_mvebu:kmod-mmc-spi kmod-macsec usbutils v2ray-core syslogd \
     (TARGET_x86||TARGET_x86_64):kmod-mlx4-core \
-    !(TARGET_ips40xx||TARGET_ramips):iptables-mod-ndpi !(TARGET_ips40xx||TARGET_ramips):kmod-ipt-ndpi libip4tc libip6tc
+    !(TARGET_ips40xx||TARGET_ramips):iptables-mod-ndpi !(TARGET_ips40xx||TARGET_ramips):kmod-ipt-ndpi libip4tc libip6tc \
+    xray-core shadowsocks-rust-sslocal shadowsocks-rust-ssservice shadowsocks-rust-config luci-app-shadowsocks-rust
 # (TARGET_x86_64||aarch64):kmod-tcp-bbr2
 #    !TARGET_mvebu:kmod-usb-net-smsc75xx
 #    libnetfilter-conntrack ebtables ebtables-utils ip-full nstat \

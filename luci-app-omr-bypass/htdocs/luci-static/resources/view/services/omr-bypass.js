@@ -59,7 +59,7 @@ return L.view.extend({
 		o = s.option(form.ListValue, 'family', _('Restrict to address family'));
 		o.value('ipv4ipv6', _('IPv4 and IPv6'));
 		o.value('ipv4', _('IPv4 only'));
-		o.value('ipv4', _('IPv6 only'));
+		o.value('ipv6', _('IPv6 only'));
 		o.default = 'ipv4ipv6';
 		o.modalonly = true
 
