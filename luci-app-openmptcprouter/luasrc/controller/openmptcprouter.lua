@@ -613,6 +613,7 @@ function wizard_add()
 			ucic:set("openmptcprouter",server,"master","1")
 			ucic:set("openmptcprouter",server,"current","1")
 			ucic:set("openmptcprouter",server,"backup","0")
+			ucic:set("xray","omrout","s_shadowsocks_email",openmptcprouter_vps_username:gsub("%s+", ""))
 		else
 			ucic:set("openmptcprouter",server,"get_config","0")
 			ucic:set("openmptcprouter",server,"master","0")
@@ -669,14 +670,34 @@ function wizard_add()
 	if default_proxy == "shadowsocks" and serversnb > 0 and serversnb > disablednb then
 		--ucic:set("shadowsocks-libev","sss0","disabled","0")
 		ucic:set("v2ray","main","enabled","0")
+		ucic:set("xray","main","enabled","0")
 		ucic:foreach("shadowsocks-libev", "server", function(s)
 			local sectionname = s[".name"]
 			if sectionname:match("^sss.*") and ucic:get("shadowsocks-libev",sectionname,"server") ~= "" then
 				ucic:set("shadowsocks-libev",sectionname,"disabled","0")
 			end
 		end)
+		ucic:foreach("shadowsocks-rust", "server", function(s)
+			local sectionname = s[".name"]
+			ucic:set("shadowsocks-rust",sectionname,"disabled","1")
+		end)
+	elseif default_proxy == "shadowsocks-rust" and serversnb > 0 and serversnb > disablednb then
+		--ucic:set("shadowsocks-libev","sss0","disabled","0")
+		ucic:set("v2ray","main","enabled","0")
+		ucic:set("xray","main","enabled","0")
+		ucic:foreach("shadowsocks-rust", "server", function(s)
+			local sectionname = s[".name"]
+			if sectionname:match("^sss.*") and ucic:get("shadowsocks-rust",sectionname,"server") ~= "" then
+				ucic:set("shadowsocks-rust",sectionname,"disabled","0")
+			end
+		end)
+		ucic:foreach("shadowsocks-libev", "server", function(s)
+			local sectionname = s[".name"]
+			ucic:set("shadowsocks-libev",sectionname,"disabled","1")
+		end)
 	elseif (default_proxy == "v2ray" or default_proxy == "v2ray-vmess" or default_proxy == "v2ray-trojan" or default_proxy == "v2ray-socks") and serversnb > 0 and serversnb > disablednb then
 		--ucic:set("shadowsocks-libev","sss0","disabled","1")
+		ucic:set("xray","main","enabled","0")
 		ucic:set("v2ray","main","enabled","1")
 		if default_proxy == "v2ray" then
 			ucic:set("v2ray","omrout","protocol","vless")
@@ -691,18 +712,51 @@ function wizard_add()
 			local sectionname = s[".name"]
 			ucic:set("shadowsocks-libev",sectionname,"disabled","1")
 		end)
-	else
+		ucic:foreach("shadowsocks-rust", "server", function(s)
+			local sectionname = s[".name"]
+			ucic:set("shadowsocks-rust",sectionname,"disabled","1")
+		end)
+	elseif (default_proxy == "xray" or default_proxy == "xray-vmess" or default_proxy == "xray-trojan" or default_proxy == "xray-shadowsocks" or default_proxy == "xray-socks") and serversnb > 0 and serversnb > disablednb then
 		--ucic:set("shadowsocks-libev","sss0","disabled","1")
 		ucic:set("v2ray","main","enabled","0")
+		ucic:set("xray","main","enabled","1")
+		if default_proxy == "xray" then
+			ucic:set("xray","omrout","protocol","vless")
+		elseif default_proxy == "xray-vmess" then
+			ucic:set("xray","omrout","protocol","vmess")
+		elseif default_proxy == "xray-trojan" then
+			ucic:set("xray","omrout","protocol","trojan")
+		elseif default_proxy == "xray-socks" then
+			ucic:set("xray","omrout","protocol","socks")
+		elseif default_proxy == "xray-shadowsocks" then
+			ucic:set("xray","omrout","protocol","shadowsocks")
+		end
 		ucic:foreach("shadowsocks-libev", "server", function(s)
 			local sectionname = s[".name"]
 			ucic:set("shadowsocks-libev",sectionname,"disabled","1")
+		end)
+		ucic:foreach("shadowsocks-rust", "server", function(s)
+			local sectionname = s[".name"]
+			ucic:set("shadowsocks-rust",sectionname,"disabled","1")
+		end)
+	else
+		--ucic:set("shadowsocks-libev","sss0","disabled","1")
+		ucic:set("v2ray","main","enabled","0")
+		ucic:set("xray","main","enabled","0")
+		ucic:foreach("shadowsocks-libev", "server", function(s)
+			local sectionname = s[".name"]
+			ucic:set("shadowsocks-libev",sectionname,"disabled","1")
+		end)
+		ucic:foreach("shadowsocks-rust", "server", function(s)
+			local sectionname = s[".name"]
+			ucic:set("shadowsocks-rust",sectionname,"disabled","1")
 		end)
 	end
 	ucic:set("openmptcprouter","settings","proxy",default_proxy)
 	ucic:save("openmptcprouter")
 	ucic:save("shadowsocks-libev")
 	ucic:save("v2ray")
+	ucic:save("xray")
 
 	ucic:foreach("shadowsocks-libev","server", function(s)
 		local sectionname = s[".name"]
@@ -744,6 +798,11 @@ function wizard_add()
 					ucic:set("v2ray","omrout","s_vless_address",server_ip)
 					ucic:set("v2ray","omrout","s_trojan_address",server_ip)
 					ucic:set("v2ray","omrout","s_socks_address",server_ip)
+					ucic:set("xray","omrout","s_vmess_address",server_ip)
+					ucic:set("xray","omrout","s_vless_address",server_ip)
+					ucic:set("xray","omrout","s_trojan_address",server_ip)
+					ucic:set("xray","omrout","s_socks_address",server_ip)
+					ucic:set("xray","omrout","s_shadowsocks_address",server_ip)
 					luci.sys.call("uci -q del openvpn.omr.remote")
 					luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
 					ucic:set("qos","serverin","srchost",server_ip)
@@ -784,6 +843,11 @@ function wizard_add()
 				ucic:set("v2ray","omrout","s_vless_address",server_ip)
 				ucic:set("v2ray","omrout","s_trojan_address",server_ip)
 				ucic:set("v2ray","omrout","s_socks_address",server_ip)
+				ucic:set("xray","omrout","s_vmess_address",server_ip)
+				ucic:set("xray","omrout","s_vless_address",server_ip)
+				ucic:set("xray","omrout","s_trojan_address",server_ip)
+				ucic:set("xray","omrout","s_socks_address",server_ip)
+				ucic:set("xray","omrout","s_shadowsocks_address",server_ip)
 				luci.sys.call("uci -q del openvpn.omr.remote")
 				luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
 				ucic:set("qos","serverin","srchost",server_ip)
@@ -816,6 +880,7 @@ function wizard_add()
 	ucic:save("mlvpn")
 	ucic:save("ubond")
 	ucic:save("v2ray")
+	ucic:save("xray")
 	--ucic:commit("mlvpn")
 	ucic:save("dsvpn")
 	--ucic:commit("dsvpn")
@@ -831,12 +896,19 @@ function wizard_add()
 		ucic:set("openmptcprouter","settings","encryption","none")
 		ucic:set("shadowsocks-libev","sss0","method","none")
 		ucic:set("shadowsocks-libev","sss1","method","none")
+		ucic:set("shadowsocks-rust","sss0","method","none")
+		ucic:set("shadowsocks-rust","sss1","method","none")
 		ucic:set("openvpn","omr","cipher","none")
 		ucic:set("mlvpn","general","cleartext_data","1")
 		ucic:set("v2ray","omrout","s_vmess_user_security","none")
 		ucic:set("v2ray","omrout","s_vless_user_security","none")
 		ucic:set("v2ray","omrout","s_trojan_user_security","none")
 		ucic:set("v2ray","omrout","s_socks_user_security","none")
+		ucic:set("xray","omrout","s_vmess_user_security","none")
+		ucic:set("xray","omrout","s_vless_user_security","none")
+		ucic:set("xray","omrout","s_trojan_user_security","none")
+		ucic:set("xray","omrout","s_socks_user_security","none")
+		ucic:set("xray","omrout","s_shadowsocks_method","none")
 	elseif encryption == "aes-256-gcm" then
 		ucic:set("openmptcprouter","settings","encryption","aes-256-gcm")
 		ucic:set("shadowsocks-libev","sss0","method","aes-256-gcm")
@@ -849,6 +921,13 @@ function wizard_add()
 		ucic:set("v2ray","omrout","s_vless_user_security","aes-128-gcm")
 		ucic:set("v2ray","omrout","s_trojan_user_security","aes-128-gcm")
 		ucic:set("v2ray","omrout","s_socks_user_security","aes-128-gcm")
+		ucic:set("xray","omrout","s_vmess_user_security","aes-128-gcm")
+		ucic:set("xray","omrout","s_vless_user_security","aes-128-gcm")
+		ucic:set("xray","omrout","s_trojan_user_security","aes-128-gcm")
+		ucic:set("xray","omrout","s_socks_user_security","aes-128-gcm")
+		ucic:set("xray","omrout","s_shadowsocks_method","2022-blake3-aes-256-gcm")
+		ucic:set("shadowsocks-rust","sss0","s_shadowsocks_method","2022-blake3-aes-256-gcm")
+		ucic:set("shadowsocks-rust","sss1","s_shadowsocks_method","2022-blake3-aes-256-gcm")
 	elseif encryption == "aes-256-cfb" then
 		ucic:set("openmptcprouter","settings","encryption","aes-256-cfb")
 		ucic:set("shadowsocks-libev","sss0","method","aes-256-cfb")
@@ -861,6 +940,13 @@ function wizard_add()
 		ucic:set("v2ray","omrout","s_vless_user_security","aes-128-gcm")
 		ucic:set("v2ray","omrout","s_trojan_user_security","aes-128-gcm")
 		ucic:set("v2ray","omrout","s_socks_user_security","aes-128-gcm")
+		ucic:set("xray","omrout","s_vmess_user_security","aes-128-gcm")
+		ucic:set("xray","omrout","s_vless_user_security","aes-128-gcm")
+		ucic:set("xray","omrout","s_trojan_user_security","aes-128-gcm")
+		ucic:set("xray","omrout","s_socks_user_security","aes-128-gcm")
+		ucic:set("xray","omrout","s_shadowsocks_method","2022-blake3-aes-256-gcm")
+		ucic:set("shadowsocks-rust","sss0","s_shadowsocks_method","2022-blake3-aes-256-gcm")
+		ucic:set("shadowsocks-rust","sss1","s_shadowsocks_method","2022-blake3-aes-256-gcm")
 	elseif encryption == "chacha20-ietf-poly1305" then
 		ucic:set("openmptcprouter","settings","encryption","chacha20")
 		ucic:set("shadowsocks-libev","sss0","method","chacha20-ietf-poly1305")
@@ -873,6 +959,13 @@ function wizard_add()
 		ucic:set("v2ray","omrout","s_vless_user_security","chacha20-poly1305")
 		ucic:set("v2ray","omrout","s_trojan_user_security","chacha20-poly1305")
 		ucic:set("v2ray","omrout","s_socks_user_security","chacha20-poly1305")
+		ucic:set("xray","omrout","s_vmess_user_security","chacha20-poly1305")
+		ucic:set("xray","omrout","s_vless_user_security","chacha20-poly1305")
+		ucic:set("xray","omrout","s_trojan_user_security","chacha20-poly1305")
+		ucic:set("xray","omrout","s_socks_user_security","chacha20-poly1305")
+		ucic:set("xray","omrout","s_shadowsocks_method","2022-blake3-chacha20-poly1305")
+		ucic:set("shadowsocks-rust","sss0","s_shadowsocks_method","2022-blake3-chacha20-poly1305")
+		ucic:set("shadowsocks-rust","sss1","s_shadowsocks_method","2022-blake3-chacha20-poly1305")
 	else
 		ucic:set("openmptcprouter","settings","encryption","other")
 	end
@@ -881,6 +974,7 @@ function wizard_add()
 	ucic:save("glorytun-udp")
 	ucic:save("shadowsocks-libev")
 	ucic:save("v2ray")
+	ucic:save("xray")
 
 	-- Set ShadowSocks settings
 	local shadowsocks_key = luci.http.formvalue("shadowsocks_key")
@@ -897,7 +991,7 @@ function wizard_add()
 		ucic:save("shadowsocks-libev")
 		ucic:commit("shadowsocks-libev")
 		if shadowsocks_disable == "1" then
-			luci.sys.call("/etc/init.d/shadowsocks rules_down >/dev/null 2>/dev/null")
+			luci.sys.call("/etc/init.d/shadowsocks-libev rules_down >/dev/null 2>/dev/null")
 		end
 	else
 		if serversnb == 0 then
@@ -908,8 +1002,33 @@ function wizard_add()
 		ucic:set("shadowsocks-libev","sss1","key","")
 		ucic:save("shadowsocks-libev")
 		ucic:commit("shadowsocks-libev")
-		luci.sys.call("/etc/init.d/shadowsocks rules_down >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/shadowsocks-libev rules_down >/dev/null 2>/dev/null")
 	end
+	-- Set ShadowSocks 2022 settings
+	local shadowsocks2022_key = luci.http.formvalue("shadowsocks2022_key")
+	if shadowsocks2022_key ~= "" then
+		ucic:set("shadowsocks-rust","sss0","password",shadowsocks2022_key)
+		ucic:set("shadowsocks-rust","sss1","password",shadowsocks2022_key)
+		ucic:set("xray","omrout","s_shadowsocks_password",shadowsocks2022_key)
+		ucic:save("shadowsocks-rust")
+		ucic:commit("shadowsocks-rust")
+		if shadowsocks_disable == "1" then
+			luci.sys.call("/etc/init.d/shadowsocks-rust rules_down >/dev/null 2>/dev/null")
+		end
+	else
+		if serversnb == 0 then
+			ucic:set("shadowsocks-rust","sss0","disabled","1")
+			ucic:set("shadowsocks-rust","sss1","disabled","1")
+		end
+		ucic:set("shadowsocks-rust","sss0","key","")
+		ucic:set("shadowsocks-rust","sss1","key","")
+		ucic:set("xray","omrout","s_shadowsocks_password","")
+		ucic:save("shadowsocks-rust")
+		ucic:commit("shadowsocks-rust")
+		luci.sys.call("/etc/init.d/shadowsocks-rust rules_down >/dev/null 2>/dev/null")
+	end
+
+
 	local v2ray_user = luci.http.formvalue("v2ray_user")
 	ucic:set("v2ray","omrout","s_vmess_user_id",v2ray_user)
 	ucic:set("v2ray","omrout","s_vless_user_id",v2ray_user)
@@ -917,6 +1036,14 @@ function wizard_add()
 	ucic:set("v2ray","omrout","s_socks_user_id",v2ray_user)
 	ucic:save("v2ray")
 	ucic:commit("v2ray")
+	ucic:set("xray","omrout","s_vmess_user_id",v2ray_user)
+	ucic:set("xray","omrout","s_vless_user_id",v2ray_user)
+	ucic:set("xray","omrout","s_trojan_user_id",v2ray_user)
+	ucic:set("xray","omrout","s_socks_user_id",v2ray_user)
+	ucic:save("xray")
+	ucic:commit("xray")
+	ucic:save("shadowsocks-libev")
+	ucic:commit("shadowsocks-libev")
 
 
 	-- Set Glorytun settings
@@ -1046,6 +1173,8 @@ function wizard_add()
 
 	ucic:save("v2ray")
 	ucic:commit("v2ray")
+	ucic:save("xray")
+	ucic:commit("xray")
 
 	ucic:save("network")
 	ucic:commit("network")
@@ -1086,6 +1215,7 @@ function wizard_add()
 		luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/v2ray restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/xray restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/sqm restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/sqm-autorate restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/sysntpd restart >/dev/null 2>/dev/null")
@@ -1214,11 +1344,14 @@ function settings_add()
 	local shadowsocksudp = luci.http.formvalue("shadowsocksudp") or "0"
 	ucic:set("openmptcprouter","settings","shadowsocksudp",shadowsocksudp)
 
-	-- Enable/disable v2ray udp
+	-- Enable/disable v2ray/xray udp
 	local v2rayudp = luci.http.formvalue("v2rayudp") or "0"
 	ucic:set("v2ray","main_transparent_proxy","redirect_udp",v2rayudp)
 	ucic:save("v2ray")
 	ucic:commit("v2ray")
+	ucic:set("xray","main_transparent_proxy","redirect_udp",v2rayudp)
+	ucic:save("xray")
+	ucic:commit("xray")
 
 	-- Enable/disable nDPI
 	local ndpi = luci.http.formvalue("ndpi") or "1"

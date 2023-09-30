@@ -1,4 +1,5 @@
 #!/bin/sh
+. /usr/lib/unbound/iptools.sh
 SERVER=$1
 INTERFACE=$2
 [ "$3" = "upload" ] && UPLOAD=$3
@@ -6,12 +7,31 @@ INTERFACE=$2
 [ "$4" = "upload" ] && UPLOAD=$4
 [ "$4" = "fasttest" ] && FASTTEST=$4
 [ -z "$SERVER" ] && SERVER="vps"
-KEY=$(uci -q get openmptcprouter.$SERVER.token)
+#KEY=$(uci -q get openmptcprouter.$SERVER.token)
 HOST=$(uci -q get openmptcprouter.$SERVER.ip | awk '{print $1}')
 PORT=$(uci -q get openmptcprouter.$SERVER.port)
+USERNAME=$(uci -q get openmptcprouter.$SERVER.username)
+PASSWORD=$(uci -q get openmptcprouter.$SERVER.password)
 MP=false
-if [ -n "$KEY" ] && [ -n "$HOST" ] && [ -n "$PORT" ]; then
+if [ -n "$HOST" ] && [ -n "$PORT" ] && [ -n "$USERNAME" ] && [ -n "$PASSWORD" ]; then
 	trap : HUP INT TERM
+	[ -z "$FASTTEST" ] && echo "Get API token on $SERVER"
+	resolve="$(resolveip ${HOST})"
+	valid_ip6=$(valid_subnet6 ${HOST})
+	if [ "$resolve" != "${HOST}" ] || [ "$valid_ip6" != "ok" ]; then
+		auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='${USERNAME}'&password='${PASSWORD} https://${HOST}:${PORT}/token`
+	else
+		auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='${USERNAME}'&password='${PASSWORD} https://[${HOST}]:${PORT}/token`
+	fi
+	[ -z "$auth" ] && {
+		[ -z "$FASTTEST" ] && echo "No answer to API request..."
+		exit 1
+	}
+	KEY="$(echo '$auth' | jsonfilter -q -e '@.access_token')"
+	[ -n "$KEY" ] && {
+		[ -z "$FASTTEST" ] && echo "No token..."
+		exit 1
+	}
 	[ -z "$FASTTEST" ] && echo "Disable SQM bandwidth limit on $INTERFACE"
 	[ -z "$FASTTEST" ] && echo "Download test via server ${SERVER}:"
 	if [ -n "$INTERFACE" ]; then

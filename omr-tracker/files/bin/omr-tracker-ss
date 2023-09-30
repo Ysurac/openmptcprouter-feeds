@@ -65,7 +65,7 @@ proxy=${OMR_TRACKER_PROXY:-127.0.0.1:1111}
 hosts=${OMR_TRACKER_HOSTS:-1.1.1.1 1.0.0.1}
 wait_test=${OMR_TRACKER_WAIT_TEST:-0}
 server=${OMR_TRACKER_SERVER:-sss0}
-
+type=${OMR_TRACKER_SS_TYPE:-libev}
 nodns=0
 
 last=0
@@ -103,10 +103,16 @@ while true; do
 			script_alert_up="$(uci -q get omr-tracker.proxy.script_alert_up)"
 			[ -n "$script_alert_up" ] && eval $script_alert_up
 		}
-		if [ -z "$($IPTABLESSAVE 2>/dev/null | grep :ssr)" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.disabled)" != "1" ]; then
-			_log "Reload Shadowsocks rules"
-			/etc/init.d/shadowsocks-libev rules_up 2> /dev/null
-			_get_ip
+		if [ -z "$($IPTABLESSAVE 2>/dev/null | grep :ssr)" ]; then
+			if [ "$type" = "libev" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.disabled)" != "1" ]; then
+				_log "Reload Shadowsocks rules"
+				/etc/init.d/shadowsocks-libev rules_up 2> /dev/null
+				_get_ip
+			elif [ "$type" = "rust" ] && [ "$(uci -q get shadowsocks-rust.ss_rules.disabled)" != "1" ]; then
+				_log "Reload Shadowsocks Rust rules"
+				/etc/init.d/shadowsocks-rust rules_up 2> /dev/null
+				_get_ip
+			fi
 		fi
 		[ "$(uci -q get openmptcprouter.omr.detected_public_ipv4)" = "" ] || ([ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.detected_public_ipv6)" = "" ]) && _get_ip
 		last=0
@@ -119,11 +125,19 @@ while true; do
 				OMR_TRACKER_STATUS_MSG="Shadowsocks ${server} is down (can't contact via http ${nocontact})"
 				uci -q set openmptcprouter.omr.ss_${server}="down"
 				uci -q commit openmptcprouter.omr
-				[ "$(uci show openmptcprouter.omr | grep ss_ | grep up)" = "" ] && /etc/init.d/shadowsocks-libev rules_down 2> /dev/null
+				if [ "$(uci show openmptcprouter.omr | grep ss_ | grep up)" = "" ]; then
+					[ "$type" = "libev" ] && /etc/init.d/shadowsocks-libev rules_down 2> /dev/null
+					[ "$type" = "rust" ] && /etc/init.d/shadowsocks-rust rules_down 2> /dev/null
+				fi
 				_get_ip
 				server_ping=false
-				serverip="$(uci -q get shadowsocks-libev.${server}.server)"
-				disabled="$(uci -q get shadowsocks-libev.${server}.disabled)"
+				if [ "$type" = "libev" ]; then
+					serverip="$(uci -q get shadowsocks-libev.${server}.server)"
+					disabled="$(uci -q get shadowsocks-libev.${server}.disabled)"
+				elif [ "$type" = "rust" ]; then
+					serverip="$(uci -q get shadowsocks-rust.${server}.server)"
+					disabled="$(uci -q get shadowsocks-rust.${server}.disabled)"
+				fi
 				_ping_server $serverip
 				if [ "$server_ping" = false ]; then
 					_log "Server $server ($serverip) seems down, no answer to ping"
@@ -146,10 +160,17 @@ while true; do
 				script_alert_down="$(uci -q get omr-tracker.proxy.script_alert_down)"
 				[ -n "$script_alert_down" ] && eval $script_alert_down
 
-				if [ "$disabled" != "1" ] && [ "$(pgrep ss-redir)" = "" ] && [ "$(uci -q get shadowsocks-libev.${server}.key)" != "" ]; then
-					_log "Can't find shadowsocks, restart it..."
-					/etc/init.d/shadowsocks-libev restart
-					sleep 5
+				if [ "$disabled" != "1" ]; then
+					if [ "$type" = "libev" ] && [ "$(pgrep ss-redir)" = "" ] && [ "$(uci -q get shadowsocks-libev.${server}.key)" != "" ]; then
+						_log "Can't find shadowsocks, restart it..."
+						/etc/init.d/shadowsocks-libev restart
+						sleep 5
+					fi
+					if [ "$type" = "rust" ] && [ "$(pgrep ss-redir)" = "" ] && [ "$(uci -q get shadowsocks-libev.${server}.key)" != "" ]; then
+						_log "Can't find shadowsocks rust, restart it..."
+						/etc/init.d/shadowsocks-rust restart
+						sleep 5
+					fi
 				fi
 				sleep $wait_test
 			fi
