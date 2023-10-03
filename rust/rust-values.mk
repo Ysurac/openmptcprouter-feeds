@@ -54,6 +54,6 @@ ifeq ($(ARCH),arm)
   endif
 endif
 
-ifeq ($(ARCH),aarch64)
-    RUST_CFLAGS:=-mno-outline-atomics
-endif
+#ifeq ($(ARCH),aarch64)
+#    RUST_CFLAGS:=-mno-outline-atomics
+#endif
