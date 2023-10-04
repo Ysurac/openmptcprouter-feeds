@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018, 2020 Jeffery To
+# Copyright (C) 2018-2023 Jeffery To
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -7,10 +7,8 @@
 
 include $(TOPDIR)/rules.mk
 
-#GO_VERSION_MAJOR_MINOR:=1.20
-#GO_VERSION_PATCH:=3
-GO_VERSION_MAJOR_MINOR:=1.20
-GO_VERSION_PATCH:=999
+GO_VERSION_MAJOR_MINOR:=1.21
+GO_VERSION_PATCH:=1
 
 PKG_NAME:=golang
 PKG_VERSION:=$(GO_VERSION_MAJOR_MINOR)$(if $(GO_VERSION_PATCH),.$(GO_VERSION_PATCH))
@@ -20,14 +18,9 @@ GO_SOURCE_URLS:=https://dl.google.com/go/ \
                 https://mirrors.ustc.edu.cn/golang/ \
                 https://mirrors.nju.edu.cn/golang/
 
-#PKG_SOURCE:=go$(PKG_VERSION).src.tar.gz
-#PKG_SOURCE_URL:=$(GO_SOURCE_URLS)
-#PKG_HASH:=e447b498cde50215c4f7619e5124b0fc4e25fb5d16ea47271c47f278e7aa763a
-PKG_SOURCE_PROTO:=git
-PKG_SOURCE_URL:=https://github.com/golang/go.git
-PKG_SOURCE_VERSION:=a5350558e6e2db16bfe09f2ba8104549c6598c46
-PKG_SOURCE_DATE:=2023-05-05
-PKG_SOURCE_SUBDIR:=go-$(PKG_VERSION)
+PKG_SOURCE:=go$(PKG_VERSION).src.tar.gz
+PKG_SOURCE_URL:=$(GO_SOURCE_URLS)
+PKG_HASH:=bfa36bf75e9a1e9cbbdb9abcf9d1707e479bd3a07880a8ae3564caee5711cb99
 
 PKG_MAINTAINER:=Jeffery To <jeffery.to@gmail.com>
 PKG_LICENSE:=BSD-3-Clause
@@ -37,7 +30,6 @@ PKG_CPE_ID:=cpe:/a:golang:go
 PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_DIR:=$(BUILD_DIR)/go-$(PKG_VERSION)
 PKG_BUILD_PARALLEL:=1
-#PKG_USE_MIPS16:=0
 PKG_BUILD_FLAGS:=no-mips16
 
 PKG_GO_PREFIX:=/usr
@@ -70,6 +62,7 @@ HOST_GO_VALID_OS_ARCH:= \
   \
   aix_ppc64 \
   js_wasm \
+  wasip1_wasm \
   \
   freebsd_riscv64 \
   \
@@ -108,7 +101,7 @@ include ../golang-compiler.mk
 include ../golang-package.mk
 
 PKG_UNPACK:=$(HOST_TAR) -C "$(PKG_BUILD_DIR)" --strip-components=1 -xzf "$(DL_DIR)/$(PKG_SOURCE)"
-#HOST_UNPACK:=$(HOST_TAR) -C "$(HOST_BUILD_DIR)" --strip-components=1 -xzf "$(DL_DIR)/$(PKG_SOURCE)"
+HOST_UNPACK:=$(HOST_TAR) -C "$(HOST_BUILD_DIR)" --strip-components=1 -xzf "$(DL_DIR)/$(PKG_SOURCE)"
 BOOTSTRAP_UNPACK:=$(HOST_TAR) -C "$(BOOTSTRAP_BUILD_DIR)" --strip-components=1 -xzf "$(DL_DIR)/$(BOOTSTRAP_SOURCE)"
 BOOTSTRAP_1_17_UNPACK:=$(HOST_TAR) -C "$(BOOTSTRAP_1_17_BUILD_DIR)" --strip-components=1 -xzf "$(DL_DIR)/$(BOOTSTRAP_1_17_SOURCE)"
 
@@ -242,13 +235,10 @@ HOST_GO_VARS= \
 	CXX="$(HOSTCXX_NOCACHE)"
 
 define Host/Configure
-	sed -i 's/1\.21/1.20/g' $(HOST_BUILD_DIR)/src/go.mod
-	sed -i 's/21/20/g' $(HOST_BUILD_DIR)/src/internal/goversion/goversion.go
 	$(call GoCompiler/Bootstrap/CheckHost,$(BOOTSTRAP_GO_VALID_OS_ARCH))
 	$(call GoCompiler/Host/CheckHost,$(HOST_GO_VALID_OS_ARCH))
 
 	mkdir -p "$(GO_BUILD_CACHE_DIR)"
-	echo "go$(PKG_VERSION)" > $(HOST_BUILD_DIR)/VERSION
 endef
 
 define Host/Compile
@@ -307,7 +297,7 @@ $(eval $(call GoCompiler/AddProfile,Package,$(PKG_BUILD_DIR),$(PKG_GO_PREFIX),$(
 PKG_GO_ZBOOTSTRAP_MODS:= \
 	s/defaultGO386 = `[^`]*`/defaultGO386 = `$(or $(GO_386),sse2)`/; \
 	s/defaultGOAMD64 = `[^`]*`/defaultGOAMD64 = `$(or $(GO_AMD64),v1)`/; \
-	s/defaultGOARM = `[^`]*`/defaultGOARM = `$(or $(GO_ARM),5)`/; \
+	s/defaultGOARM = `[^`]*`/defaultGOARM = `$(or $(GO_ARM),7)`/; \
 	s/defaultGOMIPS = `[^`]*`/defaultGOMIPS = `$(or $(GO_MIPS),hardfloat)`/; \
 	s/defaultGOMIPS64 = `[^`]*`/defaultGOMIPS64 = `$(or $(GO_MIPS64),hardfloat)`/; \
 	s/defaultGOPPC64 = `[^`]*`/defaultGOPPC64 = `$(or $(GO_PPC64),power8)`/;
@@ -345,14 +335,12 @@ PKG_GO_INSTALL_ARGS= \
 	$(if $(filter $(GO_PKG_ENABLE_PIE),1),-buildmode pie)
 
 define Build/Configure
-	sed -i 's/1\.21/1.20/g' $(HOST_BUILD_DIR)/src/go.mod
-	sed -i 's/21/20/g' $(HOST_BUILD_DIR)/src/internal/goversion/goversion.go
 	mkdir -p "$(GO_BUILD_CACHE_DIR)"
-	echo "go$(PKG_VERSION)" > $(PKG_BUILD_DIR)/VERSION
 endef
 
 define Build/Compile
 	@echo "Building target Go first stage"
+
 	$(call GoCompiler/Package/Make, \
 		GOROOT_BOOTSTRAP="$(HOST_GO_ROOT)" \
 		GO_GCC_HELPER_CC="$(HOSTCC)" \
