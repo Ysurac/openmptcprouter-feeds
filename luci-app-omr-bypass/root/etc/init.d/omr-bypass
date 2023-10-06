@@ -498,11 +498,19 @@ _bypass_proto_without_ndpi() {
 		ALLIPS=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select ip from ipproto where proto=\"$proto\";" ".exit")
 		if [ -n "$ALLIPS" ]; then
 			ipset -q flush bypass_$proto > /dev/null 2>&1
+			ipset -q flush bypass6_$proto > /dev/null 2>&1
 			ipset -q --exist restore <<-EOF
 			create bypass_$proto hash:net hashsize 64
+			create bypass6_$proto hash:net hashsize 64
 			EOF
 			for ip in $ALLIPS; do
-				ipset -q add bypass_$proto $ip
+				valid_ip4=$( valid_subnet4 $ip)
+				valid_ip6=$( valid_subnet6 $ip)
+				if [ "$valid_ip4" = "ok" ]; then
+					ipset -q add bypass_$proto $ip
+				elif [ "$valid_ip6" = "ok" ]; then
+					ipset -q add bypass6_$proto $ip
+				fi
 			done
 			if [ "$intf" = "all" ]; then
 				if [ "$family" = "ipv4" ] || [ "$family" = "ipv4ipv6" ]; then
@@ -516,7 +524,7 @@ _bypass_proto_without_ndpi() {
 				if [ "$disableipv6" = "0" ] && ([ "$family" = "ipv6" ] || [ "$family" = "ipv4ipv6" ]); then
 					$IP6TABLESRESTORE -w --wait=60  --noflush <<-EOF
 					*mangle
-					-A omr-bypass6-dpi -m set --match-set bypass_$proto dst -j MARK --set-mark 0x6539
+					-A omr-bypass6-dpi -m set --match-set bypass6_$proto dst -j MARK --set-mark 0x6539
 					-A omr-bypass6-dpi -m mark --mark 0x6539 -j RETURN
 					COMMIT
 					EOF
@@ -533,7 +541,7 @@ _bypass_proto_without_ndpi() {
 				if [ "$disableipv6" = "0" ] && ([ "$family" = "ipv6" ] || [ "$family" = "ipv4ipv6" ]); then
 					$IP6TABLESRESTORE -w --wait=60  --noflush <<-EOF
 					*mangle
-					-A omr-bypass6-dpi -m set --match-set bypass_$proto dst -j MARK --set-mark 0x6539$intfid
+					-A omr-bypass6-dpi -m set --match-set bypass6_$proto dst -j MARK --set-mark 0x6539$intfid
 					-A omr-bypass6-dpi -m mark --mark 0x6539$intfid -j RETURN
 					COMMIT
 					EOF
