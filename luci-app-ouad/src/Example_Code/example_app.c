@@ -63,6 +63,13 @@ SOFTWARE.
 #define IPSIZE 20
 //netspeed
 #define NETPATH "cat /tmp/netspeed"
+//interfaces status
+#define INTFPATH "/usr/sbin/status_interfaces.sh"
+//VPS IP
+#define VPSIPPATH "/usr/sbin/status_server.sh"
+#define INFO1PATH "/usr/sbin/status_page1.sh"
+#define INFO2PATH "/usr/sbin/status_page2.sh"
+#define INFO3PATH "/usr/sbin/status_page3.sh"
 
 /* Extern volatile */
 extern volatile unsigned char flag;
@@ -87,6 +94,128 @@ static const unsigned char logo16_glcd_bmp[] =
  0b01110000, 0b01110000,
  0b00000000, 0b00110000
 };
+
+
+#define jiantou_xiangshang_width  16
+#define jiantou_xiangshang_height 16
+
+static const unsigned char jiantou_xiangshang_data[] = {
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000001,0b10000000,
+  0b00000011,0b11000000,
+  0b00000011,0b11000000,
+  0b00000101,0b10100000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+};
+
+static const unsigned char jiantou_xiangshangd_data[] = {
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000101,0b10100000,
+  0b00000011,0b11000000,
+  0b00000011,0b11000000,
+  0b00000001,0b10000000,
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+};
+
+static const unsigned char level4_data[] = {
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000000,0b00000111,
+  0b00000000,0b00000111,
+  0b00000000,0b01110111,
+  0b00000000,0b01110111,
+  0b00000111,0b01110111,
+  0b00000111,0b01110111,
+  0b01110111,0b01110111,
+  0b01110111,0b01110111,
+};
+
+static const unsigned char level3_data[] = {
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000000,0b01110000,
+  0b00000000,0b01110000,
+  0b00000111,0b01110000,
+  0b00000111,0b01110000,
+  0b01110111,0b01110000,
+  0b01110111,0b01110000,
+};
+
+static const unsigned char level2_data[] = {
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000111,0b00000000,
+  0b00000111,0b00000000,
+  0b01110111,0b00000000,
+  0b01110111,0b00000000,
+};
+
+static const unsigned char level1_data[] = {
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b01110000,0b00000000,
+  0b01110000,0b00000000,
+};
+
+static const unsigned char level0_data[] = {
+  0b00000000,0b00000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+  0b00000000,0b00000000,
+  0b00000001,0b10000000,
+  0b00000001,0b10000000,
+};
+
+static const unsigned char levelok_data[] = {
+  0b00000000,0b00000000,
+  0b00000000,0b00000000,
+  0b00000000,0b00011000,
+  0b00000000,0b00110000,
+  0b00000000,0b01100000,
+  0b00000000,0b11000000,
+  0b00000001,0b10000000,
+  0b01100011,0b00000000,
+  0b00110110,0b00000000,
+  0b00011100,0b00000000,
+};
+
+
 
 FILE *fp;
 char content_buff[BUFMAX];
@@ -324,6 +453,13 @@ void display_bitmap()
     drawBitmap(30, 16,  logo16_glcd_bmp, 16, 16, 1);
 }
 
+/* Display miniature bitmap */
+void display_bitmap_uploaddownload()
+{
+    drawBitmap(10, 18,  jiantou_xiangshang_data, 16, 16, 1);
+    drawBitmap(10, 35,  jiantou_xiangshangd_data, 16, 16, 1);
+}
+
 /* Invert Display and Normalize it */
 void display_invert_normal()
 {
@@ -458,6 +594,117 @@ void testlanip(int mode, int y)
 
 }
 
+void testvpsip(int mode, int y)
+{
+    if((fp=popen(VPSIPPATH,"r"))!=NULL)
+    {
+        while(fgets(content_buff, sizeof(content_buff),fp) != NULL) {
+	    setTextSize(1);
+	    sprintf(buf,"%s",content_buff);
+	    setCursor(0, y);
+	    print_strln(buf);
+	}
+	fclose(fp);
+    }
+}
+
+void testinfo1(int mode, int y)
+{
+    int i = 0;
+    setTextSize(1);
+    if((fp=popen(INFO1PATH,"r"))!=NULL)
+    {
+        while(fgets(content_buff, sizeof(content_buff),fp) != NULL) {
+		sprintf(buf," %s",content_buff);
+		setCursor(0, y + i * 10);
+		print_strln(buf);
+		i++;
+	}
+        fclose(fp);
+    }
+
+}
+void testinfo2(int mode, int y)
+{
+    int i = 0;
+    setTextSize(1);
+    if((fp=popen(INFO2PATH,"r"))!=NULL)
+    {
+        while(fgets(content_buff, sizeof(content_buff),fp) != NULL) {
+		sprintf(buf," %s",content_buff);
+		setCursor(0, y + i * 10);
+		print_strln(buf);
+		i++;
+	}
+        fclose(fp);
+    }
+
+}
+
+void testinfo3(int mode, int y)
+{
+    int i = 0;
+    setTextSize(1);
+    if((fp=popen(INFO3PATH,"r"))!=NULL)
+    {
+        while(fgets(content_buff, sizeof(content_buff),fp) != NULL) {
+		sprintf(buf," %s",content_buff);
+		setCursor(0, y + i * 10);
+		print_strln(buf);
+		i++;
+	}
+        fclose(fp);
+    }
+
+}
+
+void testintfstatus(int mode, int y)
+{
+    char intf[BUFMAX];
+    char status[BUFMAX];
+    char level[BUFMAX];
+    int i = 0;
+
+    setTextSize(1);
+    if((fp=popen(INTFPATH,"r"))!=NULL)
+    {
+	while (true) {
+	    int ret = fscanf(fp,"%s %s %s",intf,status,level);
+	    if (ret != EOF) {
+		setTextSize(1);
+		//sprintf(buf,"%s %s %s",intf,status,level);
+		sprintf(buf,"%s",intf);
+		setCursor(display_offset + i * 32, y);
+		print_strln(buf);
+		if (strcmp(level,"4/4") == 0) {
+			drawBitmap(display_offset + i * 32, y + 7,  level4_data, 16, 10, 1);
+		} else if (strcmp(level,"3/4") == 0) {
+			drawBitmap(display_offset + i * 32, y + 7,  level3_data, 16, 10, 1);
+		} else if (strcmp(level,"2/4") == 0) {
+			drawBitmap(display_offset + i * 32, y + 7,  level2_data, 16, 10, 1);
+		} else if (strcmp(level,"1/4") == 0) {
+			drawBitmap(display_offset + i * 32, y + 7,  level1_data, 16, 10, 1);
+		} else if (strcmp(level,"0/4") == 0) {
+			drawBitmap(display_offset + i * 32, y + 7,  level0_data, 16, 10, 1);
+		} else if (strcmp(level,"none") == 0) {
+			drawBitmap(display_offset + i * 32, y + 7,  level0_data, 16, 10, 1);
+		} else if (strcmp(level,"up") == 0) {
+			drawBitmap(display_offset + i * 32, y + 7,  levelok_data, 16, 10, 1);
+		//} else {
+		//	drawBitmap(display_offset + i * 32, y + 8,  level2_data, 16, 10, 1);
+		}
+		//sprintf(buf,"%s",level);
+		//setCursor(display_offset + i * 32, y + 8);
+		//print_strln(buf);
+		i++;
+	    } else {
+		break;
+	    }
+	}
+        fclose(fp);
+    }
+}
+
 
 void testcputemp(int mode, int y)
 {
@@ -527,18 +774,18 @@ void testnetspeed(int mode, int y)
         {
         case SPLIT:
             setTextSize(2);
-            if (tx < 1000) sprintf(buf, "%03dB", tx);
-            else if (tx > 1000000) sprintf(buf, "%03dM", tx/1000000);
-            else sprintf(buf, "%03dK", tx/1000);
-            setCursor((127-(strlen(buf)+1)*11)/2,0);
-            oled_write(24);
+            if (tx < 1000) sprintf(buf, "%dB/s", tx);
+            else if (tx > 1000000) sprintf(buf, "%dMb/s", tx/1000000);
+            else sprintf(buf, "%dKb/s", tx/1000);
+            setCursor(30,19);
+            //oled_write(24);
             print_str(buf);
 
-            if (rx < 1000) sprintf(buf, "%03dB", rx);
-            else if (rx > 1000000) sprintf(buf, "%03dM", rx/1000000);
-            else sprintf(buf, "%03dK", rx/1000);
-            setCursor((127-(strlen(buf)+1)*11)/2,16);
-            oled_write(25);
+            if (rx < 1000) sprintf(buf, "%dB/s", rx);
+            else if (rx > 1000000) sprintf(buf, "%dMb/s", rx/1000000);
+            else sprintf(buf, "%dKb/s", rx/1000);
+            setCursor(30,35);
+            //oled_write(25);
             print_str(buf);
             break;
         case MERGE:
@@ -599,6 +846,7 @@ void testcpu(int y)
 	drawCircle(getCursorX()-8, getCursorY()+1, 1, WHITE);
     }
 }
+
 
 void testprintinfo()
 {
