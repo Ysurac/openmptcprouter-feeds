@@ -20,11 +20,16 @@ void testdrawbitmap(const unsigned char *bitmap, unsigned char w, unsigned char 
 void testdrawbitmap_eg();
 void deeplyembedded_credits();
 void testprintinfo();
+void testinfo1();
+void testinfo2();
 void testdate(int mode, int y);
 void testlanip(int mode, int y);
+void testvpsip(int mode, int y);
 void testcpufreq(int mode, int y);
 void testcputemp(int mode, int y);
 void testnetspeed(int mode, int y);
+void testintfstatus(int mode, int y);
 void testcpu(int y);
+void display_bitmap_uploaddownload();
 
  
