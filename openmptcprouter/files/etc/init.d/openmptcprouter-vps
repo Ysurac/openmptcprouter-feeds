@@ -351,16 +351,22 @@ _set_v2ray_server_vps() {
 
 _set_xray_server_vps() {
 	enabled=$(uci -q get xray.main.enabled)
-	[ "$enabled" != "1" ] && return
 	userid=$(uci -q get xray.omrout.s_vless_user_id)
+	protocol=$(uci -q get xray.omrout.protocol)
+	if [ "$protocol" = "vless-reality" ] && [ "$enabled" = "1" ]; then
+		vless_reality='true'
+	else
+		vless_reality='false'
+	fi
 	[ -z "$userid" ] && return
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 	current_userid="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.key')"
+	current_vlessreality="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.vless_reality')"
 
-	if [ "$current_userid" != "$userid" ]; then
+	if [ "$current_userid" != "$userid" ] || [ "$current_vlessreality" != "$vless_reality" ]; then
 		local settings
-		settings='{"userid": "'$userid'"}'
+		settings='{"userid": "'$userid'","vless_reality": '$vless_reality'}'
 		echo $(_set_json "xray" "$settings")
 	fi
 }
@@ -521,6 +527,8 @@ _get_vps_config() {
 		uci -q batch <<-EOF >/dev/null
 			set v2ray.omrout.s_vmess_address="$vpsip"
 			set v2ray.omrout.s_vless_address="$vpsip"
+			set v2ray.omrout.s_trojan_address="$vpsip"
+			set v2ray.omrout.s_socks_address="$vpsip"
 			commit v2ray
 		EOF
 		if [ "$(uci -q get v2ray.main.enabled)" = "1" ]; then
@@ -532,6 +540,10 @@ _get_vps_config() {
 		uci -q batch <<-EOF >/dev/null
 			set xray.omrout.s_vmess_address="$vpsip"
 			set xray.omrout.s_vless_address="$vpsip"
+			set xray.omrout.s_trojan_address="$vpsip"
+			set xray.omrout.s_socks_address="$vpsip"
+			set xray.omrout.s_shadowsocks_address="$vpsip"
+			set xray.omrout.s_vless_reality_address="$vpsip"
 			commit xray
 		EOF
 		if [ "$(uci -q get xray.main.enabled)" = "1" ]; then
@@ -1635,6 +1647,7 @@ _set_config_from_vps() {
 	# XRay settings
 	xray_key="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.key')"
 	xray_sskey="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.sskey')"
+	xray_vless_reality_key="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.vless_reality_key')"
 	#v2ray_port="$(echo "$vps_config" | jsonfilter -q -e '@.v2ray.config.port')"
 	xray_port="65248"
 	if ([ -n "$xray_key" ] && [ "$xray_key" != "$(uci -q get xray.omrout.s_vmess_user_id)" ]) || ([ -n "$xray_port" ] && [ "$xray_port" != "$(uci -q get xray.omrout.s_vmess.port)" ]); then
@@ -1649,11 +1662,14 @@ _set_config_from_vps() {
 			set xray.omrout.s_vmess_port="$((xray_port+2))"
 			set xray.omrout.s_vless_user_id="$xray_key"
 			set xray.omrout.s_vless_port="$xray_port"
+			set xray.omrout.s_vless_reality_user_id="$xray_key"
+			set xray.omrout.s_vless_reality_public_key="$xray_vless_reality_key"
 		EOF
 		#uci -q set xray.omrout.s_shadowsocks_password=$xray_sskey
 		if [ "$(uci -q get xray.omrout.s_vmess_address)" != "127.0.0.1" ]; then
 			uci -q set xray.omrout.s_vmess_address="$vpsip"
 			uci -q set xray.omrout.s_vless_address="$vpsip"
+			uci -q set xray.omrout.s_vless_reality_address="$vpsip"
 			uci -q set xray.omrout.s_trojan_address="$vpsip"
 			uci -q set xray.omrout.s_socks_address="$vpsip"
 			uci -q set xray.omrout.s_shadowsocks_address="$vpsip"

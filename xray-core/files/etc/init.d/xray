@@ -379,6 +379,15 @@ outbound_section_validate() {
 		's_vless_user_security:or("auto", "aes-128-gcm", "chacha20-poly1305", "none")' \
 		's_vless_user_encryption:or("auto", "none")' \
 		's_vless_user_level:uinteger' \
+		's_vless_reality_address:host' \
+		's_vless_reality_port:port' \
+		's_vless_reality_user_id:string' \
+		's_vless_reality_user_alter_id:and(uinteger, max(65535))' \
+		's_vless_user_security:or("auto", "aes-128-gcm", "chacha20-poly1305", "none")' \
+		's_vless_reality_user_encryption:or("auto", "none")' \
+		's_vless_reality_flow:string' \
+		's_vless_reality_public_key:string' \
+		's_vless_reality_user_level:uinteger' \
 		's_trojan_address:host' \
 		's_trojan_port:port' \
 		's_trojan_user_id:string' \
@@ -455,7 +464,7 @@ add_xray_redirect_rules() {
 	[ "$(uci -q get xray.main.inbounds | grep omr6)" != "" ] && [ -n "$OUTBOUND_SERVERS_V6" ] && {
 		xray-rules6 -f
 		commandline="-l $((port+1)) -L $((port+1)) -s $OUTBOUND_SERVERS_V6 --rule-name def --src-default forward --dst-default forward --local-default forward"
-		[ "$(uci -q get xray.main_transparent_proxy.redirect_udp)" = "1" ] && ([ "$(uci -q get xray.omrout.protocol)" = "vless" ] || [ "$(uci -q get xray.omrout.protocol)" = "vmess" ]) && commandline="$commandline -L ${port+1}"
+		[ "$(uci -q get xray.main_transparent_proxy.redirect_udp)" = "1" ] && ([ "$(uci -q get xray.omrout.protocol)" = "vless-reality" ] || [ "$(uci -q get xray.omrout.protocol)" = "vless" ] || [ "$(uci -q get xray.omrout.protocol)" = "vmess" ]) && commandline="$commandline -L ${port+1}"
 		xray-rules6 $commandline
 	}
 	[ -f /etc/init.d/omr-bypass ] && [ -z "$(pgrep -f omr-bypass)" ] && {
@@ -1428,7 +1437,11 @@ add_outbound_setting() {
 
 	test -n "$send_through" && \
 		json_add_string "sendThrough" "$send_through"
-	json_add_string "protocol" "$protocol"
+	if [ "$protocol" = "vless-reality" ]; then
+		json_add_string "protocol" "vless"
+	else
+		json_add_string "protocol" "$protocol"
+	fi
 
 	case "${protocol:-x}" in
 		"blackhole")
@@ -1579,6 +1592,37 @@ add_outbound_setting() {
 			json_close_array # vnext
 			json_close_object # settings
 			;;
+		"vless-reality")
+			json_add_object "settings"
+
+			json_add_array "vnext"
+			json_add_object ""
+
+			json_add_string "address" "$s_vless_reality_address"
+			append_server_address "$s_vless_reality_address"
+
+			json_add_int "port" "$s_vless_reality_port"
+
+			json_add_array "users"
+			json_add_object ""
+			json_add_string "id" "$s_vless_reality_user_id"
+			json_add_int "alterId" "$s_vless_reality_user_alter_id"
+			test -n "$s_vless_reality_user_security" && \
+				json_add_string "security" "$s_vless_reality_user_security"
+			test -n "$s_vless_reality_user_encryption" && \
+				json_add_string "encryption" "$s_vless_reality_user_encryption"
+			test -n "$s_vless_reality_user_level" && \
+				json_add_int "level" "$s_vless_reality_user_level"
+			test -n "$s_vless_reality_flow" && \
+				json_add_string "flow" "$s_vless_reality_flow"
+			json_close_object
+			json_close_array # users
+
+			json_close_object
+
+			json_close_array # vnext
+			json_close_object # settings
+			;;
 		"trojan")
 			json_add_object "settings"
 
@@ -1659,6 +1703,16 @@ add_outbound_setting() {
 
 			json_close_object # tlsSettings
 		fi
+	fi
+	if [ "x$protocol" = "xvless-reality" ]; then
+		json_add_string "security" "reality"
+		json_add_object "realitySettings"
+		json_add_string "fingerprint" "chrome"
+		json_add_string "serverName" ""
+		json_add_string "publicKey" "$s_vless_reality_public_key"
+		json_add_string "spiderX" ""
+		json_add_string "shortId" ""
+		json_close_object
 	fi
 
 	case "${ss_network:-x}" in
@@ -2206,6 +2260,9 @@ rules_up() {
 	if [ "$(uci -q get xray.omrout.protocol)" = "vless" ]; then
 		OUTBOUND_SERVERS_V4="$(uci -q get xray.omrout.s_vless_address)"
 		OUTBOUND_SERVERS_V6="$(uci -q get xray.omrout.s_vless_address)"
+	elif [ "$(uci -q get xray.omrout.protocol)" = "vless-reality" ]; then
+		OUTBOUND_SERVERS_V4="$(uci -q get xray.omrout.s_vless_reality_address)"
+		OUTBOUND_SERVERS_V6="$(uci -q get xray.omrout.s_vless_reality_address)"
 	elif [ "$(uci -q get xray.omrout.protocol)" = "vmess" ]; then
 		OUTBOUND_SERVERS_V4="$(uci -q get xray.omrout.s_vmess_address)"
 		OUTBOUND_SERVERS_V6="$(uci -q get xray.omrout.s_vmess_address)"
@@ -2215,6 +2272,9 @@ rules_up() {
 	elif [ "$(uci -q get xray.omrout.protocol)" = "socks" ]; then
 		OUTBOUND_SERVERS_V4="$(uci -q get xray.omrout.s_socks_address)"
 		OUTBOUND_SERVERS_V6="$(uci -q get xray.omrout.s_socks_address)"
+	elif [ "$(uci -q get xray.omrout.protocol)" = "shadowsocks" ]; then
+		OUTBOUND_SERVERS_V4="$(uci -q get xray.omrout.s_shadowsocks_address)"
+		OUTBOUND_SERVERS_V6="$(uci -q get xray.omrout.s_shadowsocks_address)"
 	fi
 	TRANSPARENT_PROXY_PORT="$(uci -q get xray.omr.port)"
 	[ -n "$OUTBOUND_SERVERS_V4" ] || [ -n "$OUTBOUND_SERVERS_V6" ] && {
