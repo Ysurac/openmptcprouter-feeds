@@ -6,9 +6,9 @@ include $(TOPDIR)/rules.mk
 LUCI_TITLE:=LuCI Support for SQM Scripts with autorate
 LUCI_DESCRIPTION:=Luci interface for the SQM scripts queue management package with SQM autorate
 
-PKG_MAINTAINER:=Toke Høiland-Jørgensen <toke@toke.dk>
+PKG_MAINTAINER:=Yannick Chabanoois <contact@openmptcprouter.com>
 
-LUCI_DEPENDS:=+sqm-scripts +bash +tsping
+LUCI_DEPENDS:=+sqm-scripts +sqm-autorate
 LUCI_PKGARCH:=all
 
 include $(TOPDIR)/feeds/luci/luci.mk
