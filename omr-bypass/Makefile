@@ -16,7 +16,7 @@ include $(INCLUDE_DIR)/package.mk
 define Package/$(PKG_NAME)
 SECTION:=net
 CATEGORY:=Network
-DEPENDS:=+curl +dnsmasq-full +sqlite3-cli +iptables +iptables-mod-extra
+DEPENDS:=+curl +dnsmasq-full +sqlite3-cli +iptables +iptables-mod-extra +ipset
 TITLE:=OMR-ByPass
 endef
 
