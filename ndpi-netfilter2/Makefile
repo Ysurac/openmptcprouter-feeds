@@ -77,7 +77,8 @@ define KernelPackage/ipt-ndpi
 	TITLE:= nDPI net netfilter module
 #	DEPENDS:=+kmod-nf-conntrack +kmod-nf-conntrack-netlink +kmod-ipt-compat-xtables +libpcap @(LINUX_5_4||LINUX_5_15||TARGET_x86_64)
 #	DEPENDS:=+kmod-nf-conntrack +kmod-nf-conntrack-netlink +kmod-ipt-compat-xtables +libpcap @(LINUX_5_4||LINUX_5_15) @!TARGET_ramips
-	DEPENDS:=+kmod-nf-conntrack +kmod-nf-conntrack-netlink +kmod-ipt-compat-xtables +libpcap @!TARGET_ramips
+	DEPENDS:=+kmod-nf-conntrack +kmod-nf-conntrack-netlink +(LINUX_5_4||LINUX_6_1):kmod-ipt-compat-xtables +libpcap @!TARGET_ramips
+#	DEPENDS:=+kmod-nf-conntrack +kmod-nf-conntrack-netlink +kmod-ipt-compat-xtables +libpcap
 	KCONFIG:=CONFIG_NF_CONNTRACK_LABELS=y \
 	    CONFIG_NETFILTER_XT_MATCH_CONNLABEL=y
 	FILES:= $(PKG_BUILD_DIR)/ndpi-netfilter/src/xt_ndpi.ko
