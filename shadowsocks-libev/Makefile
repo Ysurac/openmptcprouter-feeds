@@ -88,8 +88,9 @@ define Package/shadowsocks-libev-ss-rules/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) ./files/ss-rules $(1)/usr/bin
 	$(INSTALL_BIN) ./files/ss-rules6 $(1)/usr/bin
-	$(INSTALL_DIR) $(1)/etc/uci-defaults
+	$(INSTALL_DIR) $(1)/etc
 	$(INSTALL_DATA) ./files/firewall.ss-rules $(1)/etc
+	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/ss-rules.defaults $(1)/etc/uci-defaults
 	$(INSTALL_DIR) $(1)/etc/sysctl.d
 	$(INSTALL_DATA) ./files/shadowsocks.conf $(1)/etc/sysctl.d
