@@ -44,7 +44,7 @@ MY_DEPENDS := \
     luci-app-uhttpd \
     luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
     luci-app-openvpn \
-    shadowsocks-libev-ss-server shadowsocks-libev-ss-tunnel \
+    shadowsocks-libev-ss-server shadowsocks-libev-ss-redir shadowsocks-libev-ss-rules shadowsocks-libev-ss-tunnel \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd ip6tables \
     !TARGET_mvebu:speedtestcpp \
     iftop \
