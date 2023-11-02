@@ -35,8 +35,8 @@ proto_dhcp_setup() {
 	local config="$1"
 	local iface="$2"
 
-	local ipaddr hostname clientid vendorid broadcast norelease reqopts defaultreqopts iface6rd sendopts delegate zone6rd zone mtu6rd customroutes classlessroute defaultroute
-	json_get_vars ipaddr hostname clientid vendorid broadcast norelease reqopts defaultreqopts iface6rd delegate zone6rd zone mtu6rd customroutes classlessroute defaultroute
+	local ipaddr hostname clientid vendorid broadcast norelease reqopts defaultreqopts iface6rd sendopts delegate zone6rd zone mtu6rd customroutes classlessroute
+	json_get_vars ipaddr hostname clientid vendorid broadcast norelease reqopts defaultreqopts iface6rd delegate zone6rd zone mtu6rd customroutes classlessroute
 
 	local opt dhcpopts
 	for opt in $reqopts; do
@@ -58,7 +58,6 @@ proto_dhcp_setup() {
 	[ -n "$zone" ] && proto_export "ZONE=$zone"
 	[ -n "$mtu6rd" ] && proto_export "MTU6RD=$mtu6rd"
 	[ -n "$customroutes" ] && proto_export "CUSTOMROUTES=$customroutes"
-	[ -n "$defaultroute" ] && proto_export "DEFAULTROUTE=$defaultroute"
 	[ "$delegate" = "0" ] && proto_export "IFACE6RD_DELEGATE=0"
 	# Request classless route option (see RFC 3442) by default
 	[ "$classlessroute" = "0" ] || append dhcpopts "-O 121"
