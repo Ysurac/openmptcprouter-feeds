@@ -8,12 +8,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=modemmanager
-PKG_SOURCE_VERSION:=1.20.6
-PKG_RELEASE:=8
+PKG_SOURCE_VERSION:=1.22.0
+PKG_RELEASE:=5
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://gitlab.freedesktop.org/mobile-broadband/ModemManager.git
-PKG_MIRROR_HASH:=e90103e2e42bb826bbbac83937a9a69f50348cd6ce0d8da655a12b65494ce7c9
+PKG_MIRROR_HASH:=98daa1a15075c88afb3ed0de20dc83fe51d2ba3c66318ce3f731da4616a2e192
 
 PKG_MAINTAINER:=Nicholas Smith <nicholas@nbembedded.com>
 PKG_LICENSE:=GPL-2.0-or-later
