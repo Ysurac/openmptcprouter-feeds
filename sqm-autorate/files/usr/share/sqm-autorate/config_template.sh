@@ -78,7 +78,7 @@ reflector_ping_interval_s=$(uci -q get sqm.${INTERFACE}.reflector_ping_interval_
 # these are automatically adjusted based on maximum on the wire packet size
 # (adjustment significant at sub 12Mbit/s rates, else negligible)
 #logger -t "sqm-autorate" "ping for ${INTERFACE} (${ul_if}): $(echo $(/sbin/uci -q get sqm.${INTERFACE}.delay_thr_ms || echo '100'))"
-dl_owd_delta_thr_ms=$(echo $(echo $(uci -q get sqm.${INTERFACE}.delay_thr_ms || echo $(($(/usr/bin/ping -B -w 5 -c 5 -I ${ul_if} 1.1.1.1 | cut -d '/' -s -f6 | tr -d '\n' 2>/dev/null)+30)) || echo "100")) + "0.1" | bc)  # (milliseconds)
+dl_owd_delta_thr_ms=$(echo $(echo $(uci -q get sqm.${INTERFACE}.delay_thr_ms || echo $(echo "$(/usr/bin/ping -B -w 5 -c 5 -I ${ul_if} 1.1.1.1 | cut -d '/' -s -f6 | tr -d '\n' 2>/dev/null)+30" | bc) || echo "100")) + "0.1" | bc)  # (milliseconds)
 ul_owd_delta_thr_ms=${dl_owd_delta_thr_ms}
 
 # average owd delta threshold in ms at which maximum adjust_down_bufferbloat is applied
