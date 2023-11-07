@@ -56,7 +56,7 @@ pinger_binary=$(uci -q get sqm.${INTERFACE}.pinger || echo 'tsping')
 # a bad reflector will go to the back of the queue on reflector rotation
 reflectors=( $(uci -q get omr-tracker.defaults.hosts) )
 #reflectors=(
-#"1.1.1.1" "1.0.0.1"  # Cloudflare
+#"223.5.5.5" "1.0.0.1"  # Cloudflare
 #"8.8.8.8" "8.8.4.4"  # Google
 #"9.9.9.9" "9.9.9.10" "9.9.9.11" # Quad9
 #"94.140.14.15" "94.140.14.140" "94.140.14.141" "94.140.15.15" "94.140.15.16" # AdGuard
@@ -78,7 +78,7 @@ reflector_ping_interval_s=$(uci -q get sqm.${INTERFACE}.reflector_ping_interval_
 # these are automatically adjusted based on maximum on the wire packet size
 # (adjustment significant at sub 12Mbit/s rates, else negligible)
 #logger -t "sqm-autorate" "ping for ${INTERFACE} (${ul_if}): $(echo $(/sbin/uci -q get sqm.${INTERFACE}.delay_thr_ms || echo '100'))"
-dl_owd_delta_thr_ms=$(echo $(echo $(uci -q get sqm.${INTERFACE}.delay_thr_ms || echo $(echo "$(/usr/bin/ping -B -w 5 -c 5 -I ${ul_if} 1.1.1.1 | cut -d '/' -s -f6 | tr -d '\n' 2>/dev/null)+30" | bc) || echo "100")) + "0.1" | bc)  # (milliseconds)
+dl_owd_delta_thr_ms=$(echo $(echo $(uci -q get sqm.${INTERFACE}.delay_thr_ms || echo $(echo "$(/usr/bin/ping -B -w 5 -c 5 -I ${ul_if} 223.5.5.5 | cut -d '/' -s -f6 | tr -d '\n' 2>/dev/null)+30" | bc) || echo "100")) + "0.1" | bc)  # (milliseconds)
 ul_owd_delta_thr_ms=${dl_owd_delta_thr_ms}
 
 # average owd delta threshold in ms at which maximum adjust_down_bufferbloat is applied
