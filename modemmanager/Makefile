@@ -64,6 +64,7 @@ MESON_ARGS += \
 	-Dintrospection=false \
 	-Dman=false \
 	-Dbash_completion=false \
+	-Dbuiltin_plugins=true \
 	-Db_lto=true \
 	-Dmbim=$(if $(CONFIG_MODEMMANAGER_WITH_MBIM),true,false) \
 	-Dqmi=$(if $(CONFIG_MODEMMANAGER_WITH_QMI),true,false) \
@@ -80,6 +81,8 @@ define Build/InstallDev
 	$(INSTALL_DIR) $(1)/usr/lib/pkgconfig
 	$(CP) $(PKG_INSTALL_DIR)/usr/lib/pkgconfig/ModemManager.pc $(1)/usr/lib/pkgconfig
 	$(CP) $(PKG_INSTALL_DIR)/usr/lib/pkgconfig/mm-glib.pc $(1)/usr/lib/pkgconfig
+	$(INSTALL_DIR) $(1)/usr/share/dbus-1/interfaces
+	$(CP) $(PKG_BUILD_DIR)/introspection/org.freedesktop.ModemManager1.* $(1)/usr/share/dbus-1/interfaces
 endef
 
 define Package/modemmanager/install
@@ -96,10 +99,6 @@ define Package/modemmanager/install
 	$(INSTALL_DIR) $(1)/usr/lib
 	$(CP) $(PKG_INSTALL_DIR)/usr/lib/libmm-glib.so.* $(1)/usr/lib
 
-	$(INSTALL_DIR) $(1)/usr/lib/ModemManager
-	$(CP) $(PKG_INSTALL_DIR)/usr/lib/ModemManager/libmm-shared-*.so* $(1)/usr/lib/ModemManager
-	$(CP) $(PKG_INSTALL_DIR)/usr/lib/ModemManager/libmm-plugin-*.so* $(1)/usr/lib/ModemManager
-
 	$(INSTALL_DIR) $(1)/usr/lib/ModemManager/connection.d
 	$(INSTALL_BIN) ./files/10-report-down $(1)/usr/lib/ModemManager/connection.d
 
@@ -110,7 +109,7 @@ define Package/modemmanager/install
 	$(INSTALL_DATA) $(PKG_INSTALL_DIR)/usr/share/dbus-1/system-services/org.freedesktop.ModemManager1.service $(1)/usr/share/dbus-1/system-services
 
 	$(INSTALL_DIR) $(1)/usr/share/ModemManager
-	$(INSTALL_DATA) $(PKG_INSTALL_DIR)/usr/share/ModemManager/*.conf $(1)/usr/share/ModemManager
+	$$(if $$(wildcard $(PKG_INSTALL_DIR)/usr/share/ModemManager/*.conf),$(INSTALL_DATA) $(PKG_INSTALL_DIR)/usr/share/ModemManager/*.conf $(1)/usr/share/ModemManager,)
 	$(INSTALL_DATA) ./files/modemmanager.common $(1)/usr/share/ModemManager
 
 	$(INSTALL_DIR) $(1)/usr/share/ModemManager/fcc-unlock.available.d
