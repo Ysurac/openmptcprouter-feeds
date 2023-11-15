@@ -8,7 +8,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=z8102
 PKG_VERSION:=0.1
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_MAINTAINER:=Yannick Chabanois <contact@openmptcprouter.com>
 
@@ -31,8 +31,6 @@ endef
 
 define Package/z8102/install
 	$(CP) ./files/* $(1)/
-
-
 endef
 
 $(eval $(call BuildPackage,z8102))
