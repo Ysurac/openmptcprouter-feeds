@@ -378,6 +378,7 @@ function wizard_add()
 		end
 		ucic:set("network",intf,"defaultroute",0)
 		ucic:set("network",intf,"peerdns",0)
+		ucic:set("network",intf,"delegate",0)
 		if ipaddr ~= "" then
 			ucic:set("network",intf,"ipaddr",ipaddr:gsub("%s+", ""))
 			ucic:set("network",intf,"netmask",netmask:gsub("%s+", ""))
