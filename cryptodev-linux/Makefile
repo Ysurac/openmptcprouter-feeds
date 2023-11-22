@@ -1,5 +1,6 @@
 #
 # Copyright (C) 2014 OpenWrt.org
+# Copyright (C) 2023 Yannick Chabanois (Ycarus) for OpenMPTCProuter
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -10,18 +11,17 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=cryptodev-linux
-PKG_VERSION:=1.12
 PKG_RELEASE:=1
 
-PKG_SOURCE_URL:=https://codeload.github.com/$(PKG_NAME)/$(PKG_NAME)/tar.gz/$(PKG_NAME)-$(PKG_VERSION)?
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_HASH:=f51c2254749233b1b1d7ec9445158bd709f124f88e1c650fe2faac83c3a81938
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_URL:=https://github.com/$(PKG_NAME)/$(PKG_NAME).git
+PKG_SOURCE_VERSION:=bb8bc7cf60d2c0b097c8b3b0e807f805b577a53f
+PKG_VERSION:=1.13-$(PKG_SOURCE_VERSION)
 PKG_LICENSE:=GPL-2.0
 PKG_LICENSE_FILES:=COPYING
 
-PKG_MAINTAINER:=Ansuel Smith <ansuelsmth@gmail.com>
+PKG_MAINTAINER:=Yannick Chabanois <contact@openmptcprouter.com>
 
-PKG_BUILD_DIR:=$(KERNEL_BUILD_DIR)/$(PKG_NAME)-$(PKG_NAME)-$(PKG_VERSION)
 
 include $(INCLUDE_DIR)/package.mk
 
