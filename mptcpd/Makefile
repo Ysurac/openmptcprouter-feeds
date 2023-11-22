@@ -15,6 +15,9 @@ PKG_VERSION:=0.12-$(PKG_SOURCE_VERSION)
 PKG_RELEASE:=1
 PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 
+PKG_LICENSE:=BSD-3-Clause
+PKG_LICENSE_FILES:=COPYING
+
 PKG_FORTIFY_SOURCE:=2
 PKG_INSTALL:=1
 PKG_BUILD_PARALLEL:=1
@@ -25,7 +28,7 @@ include $(INCLUDE_DIR)/package.mk
 define Package/$(PKG_NAME)
 SECTION:=net
 CATEGORY:=Network
-DEPENDS:=+libell @(LINUX_5_15||LINUX_6_1)
+DEPENDS:=+libell @(LINUX_5_15||LINUX_6_1||LINUX_6_6)
 TITLE:=mptcpd
 URL:=https://github.com/intel/mptcpd
 endef
