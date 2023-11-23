@@ -22,6 +22,9 @@ PKG_SOURCE_PROTO:=git
 PKG_SOURCE_VERSION:=4ad40ea43354038a04ad90aedae5874801c223e8
 #v0.4.4
 
+PKG_LICENSE:=GPL-2.0-only
+PKG_LICENSE_FILES:=LICENSE
+
 PKG_FIXUP:=autoreconf
 
 include $(INCLUDE_DIR)/package.mk
@@ -43,7 +46,7 @@ CONFIGURE_VARS += \
 	ac_cv_header_lua_h=no \
 	ax_header_version_match=yes
 
-CONFIGURE_ARGS += --enable-sniffer --enable-curl --with-libpcap="$(STAGING_DIR)/usr/include/"
+CONFIGURE_ARGS += --enable-sniffer --enable-curl --with-libpcap="$(STAGING_DIR)/usr/include/" --disable-tests
 
 EXTRA_CPPFLAGS += -fpermissive -Wno-variadic-macros -std=c++14
 

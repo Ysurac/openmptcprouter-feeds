@@ -10,15 +10,17 @@ include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=systemtap
 PKG_RELEASE:=1
-PKG_VERSION:=4.9
+PKG_VERSION:=5.0
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://sourceware.org/systemtap/ftp/releases/
-PKG_HASH:=d01033baea9d0af52a65e70167816931f4b856427a53ff2ab30e4b45f6ad3a98
+PKG_HASH:=a8b43408895fee2b0023483b02f861700b0139629050666dfe4dfa1e49d59939
 
 PKG_BUILD_DIR:=$(KERNEL_BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 PKG_BUILD_DEPENDS:=systemtap/host
 PKG_INSTALL:=1
+
+PKG_LICENSE:=GPL-2.0-or-later
 
 include $(INCLUDE_DIR)/host-build.mk
 include $(INCLUDE_DIR)/package.mk
