@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018-2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Copyright (C) 2018-2023 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -10,11 +10,12 @@ include $(TOPDIR)/rules.mk
 PKG_NAME:=ipcalc
 PKG_RELEASE:=1
 
-PKG_SOURCE_URL:=https://github.com/nmav/ipcalc.git
+PKG_SOURCE_URL:=https://gitlab.com/ipcalc/ipcalc.git
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_VERSION:=e9f88461f2585575d12fc95f5eeb9996b863f5af
+PKG_SOURCE_VERSION:=d8a2fe29a89f0f9f0d44a7b15e260c74f0e8388b
 PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 PKG_LICENSE:=GPL-2.0
+PKG_LICENSE_FILE:=COPYING
 
 include $(INCLUDE_DIR)/package.mk
 
