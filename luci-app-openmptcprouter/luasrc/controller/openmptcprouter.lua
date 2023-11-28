@@ -358,6 +358,7 @@ function wizard_add()
 		uci_device = uci_device_from_interface(intf)
 		if uci_device == "" then
 			uci_device = intf .. "_dev"
+			ucic:set("network",uci_device,"device")
 		end
 		ucic:set("network",uci_device,"ttl",ttl)
 
