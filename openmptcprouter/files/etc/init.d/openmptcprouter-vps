@@ -1936,8 +1936,10 @@ _set_config_from_vps() {
 
 	# Get available server
 	available_vpn="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.available' | sed -e 's/\[ //' -e 's/ \]//' -e 's/,//g')"
+	available_proxy="$(echo "$vps_config" | jsonfilter -q -e '@.proxy.available' | sed -e 's/\[ //' -e 's/ \]//' -e 's/,//g')"
 	uci -q batch <<-EOF >/dev/null
 		del openmptcprouter.${servername}.available_vpn
+		del openmptcprouter.${servername}.available_proxy
 	EOF
 
 	if [ "$user_permission" = "ro" ]; then
@@ -1947,12 +1949,25 @@ _set_config_from_vps() {
 				set openmptcprouter.${servername}.available_vpn=${current_vpn}
 			EOF
 		fi
+		current_proxy="$(echo "$vps_config" | jsonfilter -q -e '@.proxy.current')"
+		if [ -n "$current_proxy" ]; then
+			uci -q batch <<-EOF >/dev/null
+				set openmptcprouter.${servername}.available_proxy=${current_proxy}
+			EOF
+		fi
 	
 	else
 		if [ -n "$available_vpn" ]; then
 			for vpn in $available_vpn; do
 				uci -q batch <<-EOF >/dev/null
 					add_list openmptcprouter.${servername}.available_vpn=$vpn
+				EOF
+			done
+		fi
+		if [ -n "$available_proxy" ]; then
+			for proxy in $available_proxy; do
+				uci -q batch <<-EOF >/dev/null
+					add_list openmptcprouter.${servername}.available_proxy=$proxy
 				EOF
 			done
 		fi
