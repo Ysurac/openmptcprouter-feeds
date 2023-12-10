@@ -134,6 +134,16 @@ restart_omrtracker() {
 config_load network
 config_foreach restart_omrtracker interface
 
+mutlipath_fix() {
+	config_get multipath "$1" multipath
+	[ "$multipath" != "off" ] && return
+	interface="$(ifstatus $1 | jsonfilter -q -e '@.l3_device' | tr -d '\n')"
+	[ -n "$interface"] && [ -z "$(multipath $interface | grep deactivated)" ] && /etc/init.d/mptcp reload $interface 2>&1 >/dev/null
+}
+
+config_load network
+config_foreach multipath_fix interface
+
 if [ -f /etc/init.d/shadowsocks-libev ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.key)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "192.18.1.3" ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
 	_log "Can't find omr-tracker-ss for Shadowsocks libev, restart omr-tracker..."
 	/etc/init.d/omr-tracker restart 2>&1 >/dev/null
