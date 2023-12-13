@@ -1,19 +1,19 @@
 -- Copyright 2008 Steven Barth <steven@midlink.org>
 -- Copyright 2011 Jo-Philipp Wich <jow@openwrt.org>
--- Copyright 2018 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+-- Copyright 2018-2023 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 -- Licensed to the public under the Apache License 2.0.
 
 module("luci.controller.mptcp", package.seeall)
 
-local uname = nixio.uname()
 
 function index()
+	local uname = nixio.uname()
 	entry({"admin", "network", "mptcp"}, alias("admin", "network", "mptcp", "settings"), _("MPTCP"))
 	entry({"admin", "network", "mptcp", "settings"}, cbi("mptcp"), _("Settings"),2).leaf = true
 	entry({"admin", "network", "mptcp", "bandwidth"}, template("mptcp/multipath"), _("Bandwidth"), 3).leaf = true
 	entry({"admin", "network", "mptcp", "multipath_bandwidth"}, call("multipath_bandwidth")).leaf = true
 	entry({"admin", "network", "mptcp", "interface_bandwidth"}, call("interface_bandwidth")).leaf = true
-	if uname.release:sub(1,1) == "5" then
+	if uname ~= nil and uname.release:sub(1,1) == "5" then
 		entry({"admin", "network", "mptcp", "mptcp_check"}, template("mptcp/mptcp_check"), _("MPTCP Support Check"), 4).leaf = true
 	end
 	entry({"admin", "network", "mptcp", "mptcp_check_trace"}, post("mptcp_check_trace")).leaf = true
