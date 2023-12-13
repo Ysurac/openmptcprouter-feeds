@@ -10,7 +10,7 @@
 # Modified by Ycarus (Yannick Chabanois) for OpenMPTCProuter:
 #  * Get configuration via uci
 
-INTERFACE=$1
+INTERFACE="$1"
 
 # *** OUTPUT OPTIONS ***
 
@@ -26,10 +26,10 @@ debug=1
 
 #dl_if=ifb4eth1 # download interface
 #dl_if=$(uci -q get sqm.${INTERFACE}.download_interface)
-dl_if=ifb4$(uci -q get sqm.${INTERFACE}.interface)
+dl_if="ifb4$(uci -q get sqm.${INTERFACE}.interface)"
 #ul_if=eth1        # upload interface
 #ul_if=$(uci -q get sqm.${INTERFACE}.upload_interface)
-ul_if=$(uci -q get sqm.${INTERFACE}.interface)
+ul_if="$(uci -q get sqm.${INTERFACE}.interface)"
 
 #reflector_ping_interval_s=0.2 # (seconds, e.g. 0.2s or 2s)
 reflector_ping_interval_s=$(uci -q get sqm.${INTERFACE}.reflector_ping_interval_s || echo "0.2")
