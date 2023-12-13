@@ -13,9 +13,10 @@ if [ "$1" = "fasttest" ]; then
 fi
 for i in $@; do :; done
 INTERFACE="$i"
+[ "$INTERFACE" = "forcevps" ] || [ "$INTERFACE" = "fasttest" ] && INTERFACE=""
 
 [ -n "$INTERFACE" ] && [ ! -d "/sys/class/net/$INTERFACE" ] && {
-	echo "You must use a real interface. You wan find them using 'ip a' for example"
+	echo "You must use a real interface. You wan find them using 'ip a' for example (not $INTERFACE)"
 	exit 0
 }
 
@@ -41,7 +42,12 @@ done
 [ "$FASTTEST" = true ] || echo "Best server is $HOST, running test:"
 trap : HUP INT TERM
 if [ -z "$INTERFACE" ]; then
-	curl -4 -o /dev/null $HOST || echo
+	if [ "$FASTTEST" = true ]; then 
+		avg_speed=$(curl -4 --max-time 10 -o /dev/null -qfsS -w '%{speed_download}' $HOST 2>/dev/null)
+		echo "$avg_speed"
+	else
+		curl -4 -o /dev/null $HOST || echo
+	fi
 else
 	[ -n "$(tc qdisc show dev $INTERFACE | grep ingress)" ] && /etc/init.d/sqm stop $INTERFACE
 	domain=$(echo $HOST | awk -F/ '{print $3}')

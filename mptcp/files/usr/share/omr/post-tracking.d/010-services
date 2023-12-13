@@ -33,10 +33,16 @@ if [ "$(pgrep -f dnsmasq)" = "" ] && [ -f /etc/init.d/dnsmasq ]; then
 	/etc/init.d/dnsmasq restart 2>&1 >/dev/null
 	sleep 5
 fi
-if [ "$(pgrep -f unbound)" = "" ] && [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" = "1" ]; then
-	_log "Can't find unbound, restart it..."
-	/etc/init.d/unbound restart 2>&1 >/dev/null
-	sleep 5
+if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" = "1" ]; then
+	if [ "$(pgrep -f unbound)" = "" ]; then
+		_log "Can't find unbound, restart it..."
+		/etc/init.d/unbound restart 2>&1 >/dev/null
+		sleep 5
+	elif [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ] && [ "$(uci -q get unbound.ub_main.listen_port)" = "5353" ] && [ -n "$(dig +timeout=4 +tries=1 openmptcprouter.com -p 5353 | grep 'ANSWER: 0')" ]; then
+		_log "Can't resolve via unbound, restart it..."
+		/etc/init.d/unbound restart 2>&1 >/dev/null
+		sleep 5
+	fi
 fi
 
 if [ "$(pgrep openvpn)" = "" ] && [ -f /etc/init.d/openvpn ]; then
