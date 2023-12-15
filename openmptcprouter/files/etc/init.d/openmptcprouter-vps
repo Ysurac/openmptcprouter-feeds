@@ -2124,7 +2124,7 @@ _get_token() {
 	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
 	token=""
 	_login
-	[ -z "$token" ] && {
+	if [ -z "$token" ]; then
 		reason=""
 		test_ping() {
 			_ping_server $1
@@ -2163,7 +2163,12 @@ _get_token() {
 		uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
-	}
+	else
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.${servername}.token_error=0
+			commit openmptcprouter
+		EOF
+	fi
 	echo "$server:$serverport:$token"
 }
 
@@ -2306,6 +2311,10 @@ token() {
 	config_foreach _get_token server
 }
 
+_fix_server() {
+	uci -q rename openmptcprouter.$1=server
+}
+
 start_service() {
 	serversnb=0
 	wanips=""
@@ -2313,6 +2322,7 @@ start_service() {
 	[ -z "$serial" ] && [ -f "/usr/sbin/dmidecode" ] && serial=$(/usr/sbin/dmidecode -t 1 | egrep 'Serial' | awk '{print $3}')
 	uci -q set openmptcprouter.settings.serial=${serial}
 	config_load openmptcprouter
+	config_foreach _fix_server openmptcprouter
 	config_foreach _count_server server
 	config_foreach _get_local_wan_ip interface
 	config_foreach _config_service server
