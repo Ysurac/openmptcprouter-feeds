@@ -27,8 +27,8 @@ if [ -n "$HOST" ] && [ -n "$PORT" ] && [ -n "$USERNAME" ] && [ -n "$PASSWORD" ];
 		[ -z "$FASTTEST" ] && echo "No answer to API request..."
 		exit 1
 	}
-	KEY="$(echo '$auth' | jsonfilter -q -e '@.access_token')"
-	[ -n "$KEY" ] && {
+	KEY=$(echo "$auth" | jsonfilter -q -e '@.access_token')
+	[ -z "$KEY" ] && {
 		[ -z "$FASTTEST" ] && echo "No token..."
 		exit 1
 	}
@@ -63,17 +63,33 @@ if [ -n "$HOST" ] && [ -n "$PORT" ] && [ -n "$USERNAME" ] && [ -n "$PASSWORD" ];
 		fi
 		if [ -n "$FASTTEST" ]; then
 			if [ -n "$UPLOAD" ]; then
-				avg_speed=$(curl -k --max-time 30 -o /dev/null -qfsS -w '%{speed_upload}' -X POST -d @${upload_file} -d @${upload_file} --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest 2>/dev/null)
+				if [ "$resolve" != "${HOST}" ] || [ "$valid_ip6" != "ok" ]; then
+					avg_speed=$(curl -k --max-time 30 -o /dev/null -qfsS -w '%{speed_upload}' -X POST -d @${upload_file} -d @${upload_file} --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest 2>/dev/null)
+				else
+					avg_speed=$(curl -k --max-time 30 -o /dev/null -qfsS -w '%{speed_upload}' -X POST -d @${upload_file} -d @${upload_file} --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://[${HOST}]:${PORT}/speedtest 2>/dev/null)
+				fi
 				echo -n "$avg_speed"
 			else
-				avg_speed=$(curl -k --max-time 30 -o /dev/null -qfsS -w '%{speed_download}' --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest 2>/dev/null)
+				if [ "$resolve" != "${HOST}" ] || [ "$valid_ip6" != "ok" ]; then
+					avg_speed=$(curl -k --max-time 30 -o /dev/null -qfsS -w '%{speed_download}' --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest 2>/dev/null)
+				else
+					avg_speed=$(curl -k --max-time 30 -o /dev/null -qfsS -w '%{speed_download}' --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://[${HOST}]:${PORT}/speedtest 2>/dev/null)
+				fi
 				echo -n "$avg_speed"
 			fi
 		else
 			if [ -n "$UPLOAD" ]; then
-				curl -k -o /dev/null -X POST -d @${upload_file} -d @${upload_file} --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest || echo
+				if [ "$resolve" != "${HOST}" ] || [ "$valid_ip6" != "ok" ]; then
+					curl -k -o /dev/null -X POST -d @${upload_file} -d @${upload_file} --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest || echo
+				else
+					curl -k -o /dev/null -X POST -d @${upload_file} -d @${upload_file} --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://[${HOST}]:${PORT}/speedtest || echo
+				fi
 			else
-				curl -k -o /dev/null --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest || echo
+				if [ "$resolve" != "${HOST}" ] || [ "$valid_ip6" != "ok" ]; then
+					curl -k -o /dev/null --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest || echo
+				else
+					curl -k -o /dev/null --interface $INTERFACE -H "Authorization: Bearer ${KEY}" https://[${HOST}]:${PORT}/speedtest || echo
+				fi
 			fi
 		fi
 		#if [ $MP ]; then
@@ -83,6 +99,10 @@ if [ -n "$HOST" ] && [ -n "$PORT" ] && [ -n "$USERNAME" ] && [ -n "$PASSWORD" ];
 		[ -z "$FASTTEST" ] && echo "Restart SQM on $INTERFACE"
 		/etc/init.d/sqm start $INTERFACE 2>&1 >/dev/null
 	else
-		curl -k -o /dev/null -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest || echo
+		if [ "$resolve" != "${HOST}" ] || [ "$valid_ip6" != "ok" ]; then
+			curl -k -o /dev/null -H "Authorization: Bearer ${KEY}" https://${HOST}:${PORT}/speedtest || echo
+		else
+			curl -k -o /dev/null -H "Authorization: Bearer ${KEY}" https://[${HOST}]:${PORT}/speedtest || echo
+		fi
 	fi
 fi
