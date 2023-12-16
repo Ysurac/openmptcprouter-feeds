@@ -148,10 +148,10 @@ _ping() {
 	if [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]); then
 		ret=$(ping -I "${device}" \
 			-w "$OMR_TRACKER_TIMEOUT" \
-			-c 2 \
+			-c "$OMR_TRACKER_COUNT" \
 			-Q 184 \
 			"${host}" 2>&1
-		) && echo "$ret" | grep -sq "bytes from" && {
+		) && echo "$ret" | grep -sq " 0% packet loss" && {
 			if [ "$localip" = "yes" ]; then
 				OMR_TRACKER_LATENCY=$(echo "$ret" | cut -d "/" -s -f5 | cut -d "." -f1 | tr -d '\n')
 				_update_rto "$OMR_TRACKER_LATENCY"
@@ -161,16 +161,17 @@ _ping() {
 	else
 		ret=$(ping -B -I "${device}" \
 			-w "$OMR_TRACKER_TIMEOUT" \
-			-c 2 \
+			-c "$OMR_TRACKER_COUNT" \
 			-Q 184 \
 			"${host}" 2>&1
-		) && echo "$ret" | grep -sq "bytes from" && {
+		) && echo "$ret" | grep -sq " 0% packet loss" && {
 			if [ "$localip" = "yes" ]; then
 				OMR_TRACKER_LATENCY=$(echo "$ret" | cut -d "/" -s -f5 | cut -d "." -f1 | tr -d '\n')
 				_update_rto "$OMR_TRACKER_LATENCY"
 			fi
 			return
 		}
+		#) && echo "$ret" | grep -sq "bytes from" && {
 	fi
 	false
 }
@@ -184,7 +185,7 @@ _httping() {
 		ret=$(httping "${host}" \
 			-y "${deviceip}" \
 			-t "$OMR_TRACKER_TIMEOUT" \
-			-c 1 2>&1
+			-c "$OMR_TRACKER_COUNT" 2>&1
 		) && echo "$ret" | grep -sq "1 ok" && {
 			if [ "$localip" = "yes" ]; then
 				OMR_TRACKER_LATENCY=$(echo "$ret" | cut -d "/" -s -f5 | cut -d "." -f1 | tr -d '\n')
@@ -196,7 +197,7 @@ _httping() {
 		ret=$(httping -l "${host}" \
 			-y "${deviceip}" \
 			-t "$OMR_TRACKER_TIMEOUT" \
-			-c 1 2>&1
+			-c "$OMR_TRACKER_COUNT" 2>&1
 		) && echo "$ret" | grep -sq "1 ok" && {
 			if [ "$localip" = "yes" ]; then
 				OMR_TRACKER_LATENCY=$(echo "$ret" | cut -d "/" -s -f5 | cut -d "." -f1 | tr -d '\n')
@@ -214,7 +215,7 @@ _dns() {
 	ret=$(dig @"${host}" \
 		-b "${deviceip}" \
 		    +time="$OMR_TRACKER_TIMEOUT" \
-		    +tries=1 \
+		    +tries="$OMR_TRACKER_COUNT" \
 		    one.one.one.one
 	) && echo "$ret" | grep -sq "1.1.1.1" && {
 		OMR_TRACKER_LATENCY=$(echo "$ret" | awk '/Query time/{print $4}')

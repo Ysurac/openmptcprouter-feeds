@@ -16,13 +16,14 @@
 . /lib/functions/network.sh
 
 _validate_section() {
-	local tmp_hosts=$hosts tmp_hosts6=$hosts6 tmp_timeout=$timeout tmp_tries=$tries
+	local tmp_hosts=$hosts tmp_hosts6=$hosts6 tmp_timeout=$timeout tmp_count=$count tmp_tries=$tries
 	local tmp_interval=$interval tmp_interval_tries=$interval_tries tmp_options=$options tmp_type=$type tmp_enabled=$enabled tmp_wait_test=$wait_test tmp_server_http_test=$server_http_test
 
 	uci_validate_section omr-tracker "$1" "$2" \
 		'hosts:list(host)'  \
 		'hosts6:list(host)'  \
 		'timeout:uinteger'  \
+		'count:uinteger'  \
 		'tries:uinteger'    \
 		'interval:uinteger' \
 		'interval_tries:uinteger' \
@@ -35,6 +36,7 @@ _validate_section() {
 	[ -z "$hosts"    ] && hosts=$tmp_hosts
 	[ -z "$hosts6"    ] && hosts6=$tmp_hosts6
 	[ -z "$timeout"  ] && timeout=$tmp_timeout
+	[ -z "$count"  ] && count=$tmp_count
 	[ -z "$tries"    ] && tries=$tmp_tries
 	[ -z "$interval" ] && interval=$tmp_interval
 	[ -z "$interval_tries" ] && interval_tries=$tmp_interval_tries
@@ -50,7 +52,7 @@ _launch_tracker() {
 		loopback|lan*|if0*) return;;
 	esac
 	[ -z "$1" ] && return
-	local hosts hosts6 timeout tries interval interval_tries options type enabled wait_test ipv6 proto server_http_test
+	local hosts hosts6 timeout count tries interval interval_tries options type enabled wait_test ipv6 proto server_http_test
 	_validate_section "defaults" "defaults"
 	_validate_section "interface" "$1"
 
@@ -75,8 +77,9 @@ _launch_tracker() {
 	[ -z "${hosts}" ] && [ "$type" != "none" ] && return
 	ifstatus=$(ifstatus "$1" | jsonfilter -q -e '@["up"]')
 	ifdevice=$(ifstatus "$1" | jsonfilter -q -e '@["device"]')
-	[ "${ifstatus}" = "false" ] && [ -z "${ifdevice}" ] && return
+	#[ "${ifstatus}" = "false" ] && [ -z "${ifdevice}" ] && return
 	[ -z "${interval_tries}" ] && interval_tries=1
+	[ -z "${count}" ] && count=2
 
 	procd_open_instance
 	# shellcheck disable=SC2086
@@ -84,6 +87,7 @@ _launch_tracker() {
 	procd_append_param env "OMR_TRACKER_HOSTS=$hosts"
 	procd_append_param env "OMR_TRACKER_HOSTS6=$hosts6"
 	procd_append_param env "OMR_TRACKER_TIMEOUT=$timeout"
+	procd_append_param env "OMR_TRACKER_COUNT=$count"
 	procd_append_param env "OMR_TRACKER_TRIES=$tries"
 	procd_append_param env "OMR_TRACKER_INTERVAL=$interval"
 	procd_append_param env "OMR_TRACKER_INTERVAL_TRIES=$interval_tries"
