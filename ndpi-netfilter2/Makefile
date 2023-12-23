@@ -11,7 +11,8 @@ include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=ndpi-netfilter2
 PKG_RELEASE:=4
-PKG_REV:=3deea541af037b663b1b83a055b80d9a06a0afd2
+#PKG_REV:=3deea541af037b663b1b83a055b80d9a06a0afd2
+PKG_REV:=5cf35a64c8296b69099d3bd4c8cb9222f3174901
 PKG_VERSION:=4-$(PKG_REV)
 
 PKG_SOURCE_PROTO:=git
@@ -55,7 +56,8 @@ MAKE_PATH:=ndpi-netfilter
 MAKE_FLAGS += \
     KERNEL_DIR="$(LINUX_DIR)" \
     MODULES_DIR="$(TARGET_MODULES_DIR)" \
-    NDPI_PATH=$(PKG_BUILD_DIR)/ndpi-netfilter
+    NDPI_PATH=$(PKG_BUILD_DIR)/ndpi-netfilter \
+    CONFIG_NDPI_HOOK="yes"
 
 ifeq ($ARCH),aarch64)
     MAKE_FLAGS += ARCH="arm64"
@@ -64,9 +66,9 @@ else
 endif
 
 define Build/Compile
-	(cd $(PKG_BUILD_DIR)/src/lib &&\
-	    gcc -g -O2 -fPIC -DPIC -DNDPI_LIB_COMPILATION -I../../src/include/ -I../../src/lib/third_party/include/ ndpi_network_list_compile.c -o ndpi_network_list_compile &&\
-	    ./ndpi_network_list_compile -o ndpi_network_list.c.inc ndpi_network_list_*.yaml)
+#	(cd $(PKG_BUILD_DIR)/src/lib &&\
+#	    gcc -g -O2 -fPIC -DPIC -DNDPI_LIB_COMPILATION -I../../src/include/ -I../../src/lib/third_party/include/ ndpi_network_list_compile.c -o ndpi_network_list_compile &&\
+#	    ./ndpi_network_list_compile -o ndpi_network_list.c.inc ndpi_network_list_*.yaml)
 	$(MAKE) $(MAKE_FLAGS) -C $(PKG_BUILD_DIR)/ndpi-netfilter
 endef
 
