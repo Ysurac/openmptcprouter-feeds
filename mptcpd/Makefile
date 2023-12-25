@@ -28,7 +28,7 @@ include $(INCLUDE_DIR)/package.mk
 define Package/$(PKG_NAME)
 SECTION:=net
 CATEGORY:=Network
-DEPENDS:=+libell @(LINUX_5_15||LINUX_6_1||LINUX_6_6)
+DEPENDS:=+libell @!(LINUX_5_4)
 TITLE:=mptcpd
 URL:=https://github.com/intel/mptcpd
 endef
