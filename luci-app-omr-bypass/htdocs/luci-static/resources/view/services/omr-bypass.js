@@ -48,10 +48,13 @@ return L.view.extend({
 		o = s.option(form.Value, 'name', _('Domain'));
 		o.rmempty = false;
 
+		o = s.option(form.Flag, 'vpn', _('VPN on server'),_('Bypass using VPN configured on server.'));
+
 		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
+		o.depends('vpn', '0');
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -78,10 +81,13 @@ return L.view.extend({
 		o = s.option(form.Value, 'ip', _('IP'));
 		o.rmempty = false;
 
+		o = s.option(form.Flag, 'vpn', _('VPN on server'),_('Bypass using VPN configured on server.'));
+
 		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
+		o.depends('vpn', '0');
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -199,10 +205,14 @@ return L.view.extend({
 		o = s.option(form.Value, 'asn', _('ASN'));
 		o.rmempty = false;
 
+		o = s.option(form.Flag, 'vpn', _('VPN on server'),_('Bypass using VPN configured on server.'));
+
+
 		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
+		o.depends('vpn', '0');
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -255,10 +265,13 @@ return L.view.extend({
 			},this));
 		};
 
+		o = s.option(form.Flag, 'vpn', _('VPN on server'),_('Bypass using VPN configured on server.'));
+
 		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used (or an other interface if master is down).'));
 		o.noaliases = true;
 		o.noinactive = true;
 		o.nocreate    = true;
+		o.depends('vpn', '0');
 
 		o = s.option(form.Value, 'note', _('Note'));
 		o.rmempty = true;
@@ -278,6 +291,7 @@ return L.view.extend({
 			o = s.option(form.Flag, 'ndpi', _('Enable ndpi'));
 			o.default = o.enabled;
 			o.modalonly = true
+			o.depends('vpn', '0');
 		}
 
 		return m.render();

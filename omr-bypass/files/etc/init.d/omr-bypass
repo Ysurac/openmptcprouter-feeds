@@ -73,8 +73,8 @@ _bypass_domains() {
 	config_get enabled $1 enabled
 	config_get noipv6 $1 noipv6
 	config_get family $1 family
-	config_get vpn $1 vpn
 	[ -z "$intf" ] && intf="all"
+	config_get vpn $1 vpn
 	[ "$vpn" = "1" ] && intf="srv_vpn1"
 	[ "$enabled" = "0" ] && return
 	[ -z "$domain" ] && return
@@ -391,6 +391,9 @@ _bypass_proto() {
 	config_get ndpi $1 ndpi
 	config_get noipv6 $1 noipv6
 	config_get family $1 family
+	config_get vpn $1 vpn
+	[ "$vpn" = "1" ] && intf="srv_vpn1"
+
 	[ "$enabled" = "0" ] && return
 	[ -z "$noipv6" ] && noipv6="0"
 	[ -z "$family" ] && family="ipv4ipv6"
@@ -400,7 +403,7 @@ _bypass_proto() {
 
 	[ -z "$intf" ] && intf="all"
 	[ -z "$proto" ] && return
-	if [ "$(uci -q get openmptcprouter.settings.ndpi)" != "0" ] && [ "$ndpi" != "0" ]; then
+	if [ "$(uci -q get openmptcprouter.settings.ndpi)" != "0" ] && [ "$ndpi" != "0" ] && [ "$vpn" != "1" ]; then
 		if [ "$intf" = "all" ]; then
 			if [ "$family" = "ipv4" ] || [ "$family" = "ipv4ipv6" ]; then
 				$IPTABLESRESTORE -w --wait=60  --noflush <<-EOF
@@ -487,6 +490,9 @@ _bypass_proto_without_ndpi() {
 	config_get ndpi $1 ndpi "0"
 	config_get noipv6 $1 noipv6
 	config_get family $1 family
+	config_get vpn $1 vpn
+	[ "$vpn" = "1" ] && intf="srv_vpn1"
+
 	[ "$enabled" = "0" ] && return
 	[ -z "$noipv6" ] && noipv6="0"
 	[ -z "$family" ] && family="ipv4ipv6"
@@ -496,22 +502,32 @@ _bypass_proto_without_ndpi() {
 
 	[ -z "$intf" ] && intf="all"
 	[ -z "$proto" ] && return
-	if [ "$(uci -q get openmptcprouter.settings.ndpi)" == "0" ] || [ "$ndpi" == "0" ]; then
+	if [ "$(uci -q get openmptcprouter.settings.ndpi)" == "0" ] || [ "$ndpi" == "0" ] || [ "$vpn" = "1" ]; then
 		ALLIPS=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select ip from ipproto where proto=\"$proto\";" ".exit")
 		if [ -n "$ALLIPS" ]; then
-			ipset -q flush bypass_$proto > /dev/null 2>&1
-			ipset -q flush bypass6_$proto > /dev/null 2>&1
-			ipset -q --exist restore <<-EOF
-			create bypass_$proto hash:net hashsize 64
-			create bypass6_$proto hash:net family inet6 hashsize 64
-			EOF
+			if [ "$vpn" != "1" ]; then
+				ipset -q flush bypass_$proto > /dev/null 2>&1
+				ipset -q flush bypass6_$proto > /dev/null 2>&1
+				ipset -q --exist restore <<-EOF
+				create bypass_$proto hash:net hashsize 64
+				create bypass6_$proto hash:net family inet6 hashsize 64
+				EOF
+			fi
 			for ip in $ALLIPS; do
 				valid_ip4=$( valid_subnet4 $ip)
 				valid_ip6=$( valid_subnet6 $ip)
 				if [ "$valid_ip4" = "ok" ]; then
-					ipset -q add bypass_$proto $ip
+					if [ "$vpn" != "1" ]; then
+						ipset -q add bypass_$proto $ip
+					else
+						ipset -q add omr_dst_bypass_$intf $ip
+					fi
 				elif [ "$valid_ip6" = "ok" ]; then
-					ipset -q add bypass6_$proto $ip
+					if [ "$vpn" != "1" ]; then
+						ipset -q add bypass6_$proto $ip
+					else
+						ipset -q add omr6_dst_bypass_$intf $ip
+					fi
 				fi
 			done
 			if [ "$intf" = "all" ]; then
@@ -531,7 +547,7 @@ _bypass_proto_without_ndpi() {
 					COMMIT
 					EOF
 				fi
-			else
+			elif [ "$vpn" != "1" ]; then
 				if [ "$family" = "ipv4" ] || [ "$family" = "ipv4ipv6" ]; then
 					$IPTABLESRESTORE -w --wait=60  --noflush <<-EOF
 					*mangle
@@ -1025,6 +1041,12 @@ start_service() {
 		-A PREROUTING -j omr-bypass6
 		COMMIT
 		EOF
+		$IP6TABLESRESTORE -w --wait=60  --noflush <<-EOF
+		*mangle
+		:omr-bypass6-local -
+		-A OUTPUT -m addrtype ! --dst-type LOCAL -j omr-bypass6-local
+		COMMIT
+		EOF
 	fi
 	
 	config_load network
@@ -1080,7 +1102,22 @@ start_service() {
 		COMMIT
 		EOF
 	fi
-
+	if [ "$disableipv6" = "0" ]; then
+		if [ "$($IP6TABLES --wait=40 -t mangle -L -n | grep 'match-set omr6_dst_bypass_all dst MARK set')" = "" ]; then
+			$IP6TABLESRESTORE -w --wait=60 --noflush <<-EOF
+			*mangle
+			-A omr-bypass6 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x539
+			-A omr-bypass6 -m mark --mark 0x539 -j RETURN
+			COMMIT
+			EOF
+			$IP6TABLESRESTORE -w --wait=60 --noflush <<-EOF
+			*mangle
+			-A omr-bypass6-local -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x539
+			-A omr-bypass6-local -m mark --mark 0x539 -j RETURN
+			COMMIT
+			EOF
+		fi
+	fi
 	config_load shadowsocks-libev
 	config_foreach _ss_rules_config
 	config_load shadowsocks-rust
