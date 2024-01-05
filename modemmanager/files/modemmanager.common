@@ -6,6 +6,7 @@
 
 . /lib/functions.sh
 . /lib/netifd/netifd-proto.sh
+INCLUDE_ONLY=1 . /lib/netifd/proto/modemmanager.sh
 
 ################################################################################
 # Runtime state
@@ -20,7 +21,8 @@ MODEMMANAGER_EVENTS_CACHE="${MODEMMANAGER_RUNDIR}/events.cache"
 # Common logging
 
 mm_log() {
-	[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && logger -t "ModemManager" "hotplug: $*"
+	local level="$1"; shift
+	[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && logger -p "daemon.${level}" -t "ModemManager[$$]" "hotplug: $*"
 }
 
 ################################################################################
@@ -39,14 +41,14 @@ mm_find_physdev_sysfs_path() {
 		# avoid infinite loops iterating
 		[ -z "${tmp_path}" ] || [ "${tmp_path}" = "/" ] && return
 
-		# for USB devices, the physical device will be that with a idVendor
-		#  and idProduct pair of files
+		# For USB devices, the physical device will be that with a idVendor
+		# and idProduct pair of files
 		[ -f "${tmp_path}"/idVendor ] && [ -f "${tmp_path}"/idProduct ] && {
 			tmp_path=$(readlink -f "$tmp_path")
 			echo "${tmp_path}"
 			return
 		}
-		
+
 		# For PCI devices, the physical device will be that with a vendor
 		# and device pair of files
 		[ -f "${tmp_path}"/vendor ] && [ -f "${tmp_path}"/device ] && {
@@ -138,10 +140,6 @@ mm_get_modem_config_foreach_cb() {
 	local cfg="$1"
 	local sysfspath="$2"
 
-	local proto
-	config_get proto "${cfg}" proto
-	[ "${proto}" = modemmanager ] || return 0
-
 	local dev
 	dev=$(uci_get network "${cfg}" device)
 	[ "${dev}" = "${sysfspath}" ] || return 0
@@ -169,7 +167,7 @@ mm_wait_for_modem() {
 
 	while [ $n -ge 0 ]; do
 		[ -d "${sysfspath}" ] || {
-			mm_log "error: ignoring modem detection request: no device at ${sysfspath}"
+			mm_log "error" "ignoring modem detection request: no device at ${sysfspath}"
 			proto_set_available "${cfg}" 0
 			return 1
 		}
@@ -177,10 +175,10 @@ mm_wait_for_modem() {
 		# Check if the modem exists at the given sysfs path
 		if ! mmcli -m "${sysfspath}" > /dev/null 2>&1
 		then
-			mm_log "error: modem not detected at sysfs path"
+			mm_log "error" "modem not detected at sysfs path"
 		else
-			mm_log "modem exported successfully at ${sysfspath}"
-			mm_log "setting interface '${cfg}' as available"
+			mm_log "info" "modem exported successfully at ${sysfspath}"
+			mm_log "info" "setting interface '${cfg}' as available"
 			proto_set_available "${cfg}" 1
 			return 0
 		fi
@@ -189,7 +187,7 @@ mm_wait_for_modem() {
 		n=$((n-step))
 	done
 
-	mm_log "error: timed out waiting for the modem to get exported at ${sysfspath}"
+	mm_log "error" "timed out waiting for the modem to get exported at ${sysfspath}"
 	proto_set_available "${cfg}" 0
 	return 2
 }
@@ -201,7 +199,7 @@ mm_report_modem_wait() {
 
 	parent_sysfspath=$(mm_find_physdev_sysfs_path "$sysfspath")
 	[ -n "${parent_sysfspath}" ] || {
-		mm_log "error: parent device sysfspath not found"
+		mm_log "error" "parent device sysfspath not found"
 		return
 	}
 
@@ -212,23 +210,23 @@ mm_report_modem_wait() {
 
 			cfg=$(mm_get_modem_config "${parent_sysfspath}")
 			if [ -n "${cfg}" ]; then
-				mm_log "interface '${cfg}' is set to configure device '${parent_sysfspath}'"
-				mm_log "now waiting for modem at sysfs path ${parent_sysfspath}"
+				mm_log "info" "interface '${cfg}' is set to configure device '${parent_sysfspath}'"
+				mm_log "info" "now waiting for modem at sysfs path ${parent_sysfspath}"
 				mm_set_modem_wait_status "${parent_sysfspath}" "processed"
 				# Launch subshell for the explicit wait
 				( mm_wait_for_modem "${cfg}" "${parent_sysfspath}" ) > /dev/null 2>&1 &
 			else
-				mm_log "no need to wait for modem at sysfs path ${parent_sysfspath}"
+				mm_log "info" "no need to wait for modem at sysfs path ${parent_sysfspath}"
 				mm_set_modem_wait_status "${parent_sysfspath}" "ignored"
 			fi
 			;;
 		"processed")
-			mm_log "already waiting for modem at sysfs path ${parent_sysfspath}"
+			mm_log "info" "already waiting for modem at sysfs path ${parent_sysfspath}"
 			;;
 		"ignored")
 			;;
 		*)
-			mm_log "error: unknown status read for device at sysfs path ${parent_sysfspath}"
+			mm_log "error" "unknown status read for device at sysfs path ${parent_sysfspath}"
 			;;
 	esac
 }
@@ -236,19 +234,21 @@ mm_report_modem_wait() {
 ################################################################################
 # Cleanup interfaces
 
-mm_cleanup_interface_cb() {
-	local cfg="$1"
-
-	local proto
-	config_get proto "${cfg}" proto
-	[ "${proto}" = modemmanager ] || return 0
-
-	proto_set_available "${cfg}" 0
-}
-
 mm_cleanup_interfaces() {
-	config_load network
-	config_foreach mm_cleanup_interface_cb interface
+	local sysfs_path status
+
+	# Do nothing if there is no sysfs cache
+	[ -f "${MODEMMANAGER_SYSFS_CACHE}" ] || return
+
+	while IFS= read -r sysfs_cache_line; do
+		sysfs_path=$(echo "${sysfs_cache_line}" | awk '{print $1}')
+		status=$(echo "${sysfs_cache_line}" | awk '{print $2}')
+
+		if [ "${status}" = "processed" ]; then
+			mm_log "debug" "call cleanup for: ${sysfs_path}"
+			mm_cleanup_interface_by_sysfspath "${sysfs_path}"
+		fi
+	done < ${MODEMMANAGER_SYSFS_CACHE}
 }
 
 mm_cleanup_interface_by_sysfspath() {
@@ -258,7 +258,7 @@ mm_cleanup_interface_by_sysfspath() {
 	cfg=$(mm_get_modem_config "$dev")
 	[ -n "${cfg}" ] || return
 
-	mm_log "setting interface '$cfg' as unavailable"
+	mm_log "info" "setting interface '$cfg' as unavailable"
 	proto_set_available "${cfg}" 0
 }
 
@@ -273,7 +273,7 @@ mm_report_event() {
 	local sysfspath="$4"
 
 	# Do not save virtual devices
-	local virtual
+	local virtual result
 	virtual="$(echo "$sysfspath" | cut -d'/' -f4)"
 	[ "$virtual" = "virtual" ] && {
 		mm_log "debug" "sysfspath is a virtual device ($sysfspath)"
@@ -294,11 +294,15 @@ mm_report_event() {
 	esac
 
 	# Report the event
-	mm_log "event reported: action=${action}, name=${name}, subsystem=${subsystem}"
-	mmcli --report-kernel-event="action=${action},name=${name},subsystem=${subsystem}" 1>/dev/null 2>&1 &
+	mm_log "debug" "Report event: action=${action}, name=${name}, subsystem=${subsystem}"
+	result=$(mmcli --report-kernel-event="action=${action},name=${name},subsystem=${subsystem}" 2>&1)
+	if [ "$?" -eq "0" ]; then
+		# Wait for added modem if a sysfspath is given
+		[ -n "${sysfspath}" ] && [ "$action" = "add" ] && mm_report_modem_wait "${sysfspath}"
+	else
+		mm_log "error" "Couldn't report kernel event: ${result}"
+	fi
 
-	# Wait for added modem if a sysfspath is given
-	[ -n "${sysfspath}" ] && [ "$action" = "add" ] && mm_report_modem_wait "${sysfspath}"
 }
 
 mm_report_event_from_cache_line() {
@@ -310,14 +314,11 @@ mm_report_event_from_cache_line() {
 	subsystem=$(echo "${event_line}" | awk -F ',' '{ print $3 }')
 	sysfspath=$(echo "${event_line}" | awk -F ',' '{ print $4 }')
 
-	mm_log "cached event found: action=${action}, name=${name}, subsystem=${subsystem}, sysfspath=${sysfspath}"
+	mm_log "debug" "cached event found: action=${action}, name=${name}, subsystem=${subsystem}, sysfspath=${sysfspath}"
 	mm_report_event "${action}" "${name}" "${subsystem}" "${sysfspath}"
 }
 
 mm_report_events_from_cache() {
-	# Remove the sysfs cache
-	rm -f "${MODEMMANAGER_SYSFS_CACHE}"
-
 	local n=60
 	local step=1
 	local mmrunning=0
@@ -325,11 +326,11 @@ mm_report_events_from_cache() {
 	# Wait for ModemManager to be available in the bus
 	while [ $n -ge 0 ]; do
 		sleep $step
-		mm_log "checking if ModemManager is available..."
+		mm_log "info" "checking if ModemManager is available..."
 
 		if ! mmcli -L >/dev/null 2>&1
 		then
-			mm_log "ModemManager not yet available"
+			mm_log "info" "ModemManager not yet available"
 		else
 			mmrunning=1
 			break
@@ -338,9 +339,12 @@ mm_report_events_from_cache() {
 	done
 
 	[ ${mmrunning} -eq 1 ] || {
-		mm_log "error: couldn't report initial kernel events: ModemManager not running"
+		mm_log "error" "couldn't report initial kernel events: ModemManager not running"
 		return
 	}
+
+	# Remove the sysfs cache
+	rm -f "${MODEMMANAGER_SYSFS_CACHE}"
 
 	# Report cached kernel events
 	while IFS= read -r event_line; do

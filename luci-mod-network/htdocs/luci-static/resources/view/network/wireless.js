@@ -314,23 +314,15 @@ var CBIWifiFrequencyValue = form.Value.extend({
 			this.channels = {
 				'2g': L.hasSystemFeature('hostapd', 'acs') ? [ 'auto', 'auto', true ] : [],
 				'5g': L.hasSystemFeature('hostapd', 'acs') ? [ 'auto', 'auto', true ] : [],
-				'6g': [],
+				'6g': L.hasSystemFeature('hostapd', 'acs') ? [ 'auto', 'auto', true ] : [],
 				'60g': []
 			};
 
 			for (var i = 0; i < data[1].length; i++) {
-				var band;
-
-				if (data[1][i].mhz >= 2412 && data[1][i].mhz <= 2484)
-					band = '2g';
-				else if (data[1][i].mhz >= 5160 && data[1][i].mhz <= 5885)
-					band = '5g';
-				else if (data[1][i].mhz >= 5925 && data[1][i].mhz <= 7125)
-					band = '6g';
-				else if (data[1][i].mhz >= 58329 && data[1][i].mhz <= 69120)
-					band = '60g';
-				else
+				if (!data[1][i].band)
 					continue;
+
+				var band = '%dg'.format(data[1][i].band);
 
 				this.channels[band].push(
 					data[1][i].channel,
@@ -343,10 +335,10 @@ var CBIWifiFrequencyValue = form.Value.extend({
 				.reduce(function(o, v) { o[v] = true; return o }, {});
 
 			this.modes = [
-				'', 'Legacy', true,
+				'', 'Legacy', hwmodelist.a || hwmodelist.b || hwmodelist.g,
 				'n', 'N', hwmodelist.n,
-				'ac', 'AC', hwmodelist.ac,
-				'ax', 'AX', hwmodelist.ax
+				'ac', 'AC', L.hasSystemFeature('hostapd', '11ac') && hwmodelist.ac,
+				'ax', 'AX', L.hasSystemFeature('hostapd', '11ax') && hwmodelist.ax
 			];
 
 			var htmodelist = L.toArray(data[0] ? data[0].getHTModes() : null)
@@ -375,7 +367,8 @@ var CBIWifiFrequencyValue = form.Value.extend({
 			this.bands = {
 				'': [
 					'2g', '2.4 GHz', this.channels['2g'].length > 3,
-					'5g', '5 GHz', this.channels['5g'].length > 3
+					'5g', '5 GHz', this.channels['5g'].length > 3,
+					'60g', '60 GHz', this.channels['60g'].length > 0
 				],
 				'n': [
 					'2g', '2.4 GHz', this.channels['2g'].length > 3,
@@ -386,7 +379,8 @@ var CBIWifiFrequencyValue = form.Value.extend({
 				],
 				'ax': [
 					'2g', '2.4 GHz', this.channels['2g'].length > 3,
-					'5g', '5 GHz', this.channels['5g'].length > 3
+					'5g', '5 GHz', this.channels['5g'].length > 3,
+					'6g', '6 GHz', this.channels['6g'].length > 3
 				]
 			};
 		}, this));
@@ -479,7 +473,7 @@ var CBIWifiFrequencyValue = form.Value.extend({
 		this.toggleWifiBand(elem);
 
 		bwdt.value = htval;
-		chan.value = chval || chan.options[0].value;
+		chan.value = chval || (chan.options[0] ? chan.options[0].value : 'auto');
 
 		return elem;
 	},
@@ -741,7 +735,8 @@ return view.extend({
 	load: function() {
 		return Promise.all([
 			uci.changes(),
-			uci.load('wireless')
+			uci.load('wireless'),
+			uci.load('system')
 		]);
 	},
 
@@ -941,7 +936,7 @@ return view.extend({
 
 				if (hwtype == 'mac80211') {
 					o = ss.taboption('general', form.Flag, 'legacy_rates', _('Allow legacy 802.11b rates'), _('Legacy or badly behaving devices may require legacy 802.11b rates to interoperate. Airtime efficiency may be significantly reduced where these are used. It is recommended to not allow 802.11b rates where possible.'));
-					o.depends({'_freq': '11g', '!contains': true});
+					o.depends({'_freq': '2g', '!contains': true});
 
 					o = ss.taboption('general', CBIWifiTxPowerValue, 'txpower', _('Maximum transmit power'), _('Specifies the maximum transmit power the wireless radio may use. Depending on regulatory requirements and wireless usage, the actual transmit power may be reduced by the driver.'));
 					o.wifiNetwork = radioNet;
@@ -985,6 +980,7 @@ return view.extend({
 				ss.tab('encryption', _('Wireless Security'));
 				ss.tab('macfilter', _('MAC-Filter'));
 				ss.tab('advanced', _('Advanced Settings'));
+				ss.tab('roaming', _('WLAN roaming'), _('Settings for assisting wireless clients in roaming between multiple APs: 802.11r, 802.11k and 802.11v'));
 
 				o = ss.taboption('general', form.ListValue, 'mode', _('Mode'));
 				o.value('ap', _('Access Point'));
@@ -1089,6 +1085,7 @@ return view.extend({
 
 					o = ss.taboption('macfilter', form.DynamicList, 'maclist', _('MAC-List'));
 					o.datatype = 'macaddr';
+					o.retain = true;
 					o.depends('macfilter', 'allow');
 					o.depends('macfilter', 'deny');
 					o.load = function(section_id) {
@@ -1144,15 +1141,27 @@ return view.extend({
 					o.depends('mode', 'ap-wds');
 					o.default = o.enabled;
 
+					/* https://w1.fi/cgit/hostap/commit/?id=34f7c699a6bcb5c45f82ceb6743354ad79296078  */
+					/* multicast_to_unicast https://github.com/openwrt/openwrt/commit/7babb978ad9d7fc29acb1ff86afb1eb343af303a */
+					o = ss.taboption('advanced', form.Flag, 'multicast_to_unicast_all', _('Multi To Unicast'), _('ARP, IPv4 and IPv6 (even 802.1Q) with multicast destination MACs are unicast to the STA MAC address. Note: This is not Directed Multicast Service (DMS) in 802.11v. Note: might break receiver STA multicast expectations.'));
+					o.rmempty = true;
+
 					o = ss.taboption('advanced', form.Flag, 'isolate', _('Isolate Clients'), _('Prevents client-to-client communication'));
 					o.depends('mode', 'ap');
 					o.depends('mode', 'ap-wds');
 
 					o = ss.taboption('advanced', form.Value, 'ifname', _('Interface name'), _('Override default interface name'));
 					o.optional = true;
+					o.datatype = 'netdevname';
 					o.placeholder = radioNet.getIfname();
 					if (/^radio\d+\.network/.test(o.placeholder))
 						o.placeholder = '';
+
+					var macaddr = uci.get('wireless', radioNet.getName(), 'macaddr');
+					o = ss.taboption('advanced', form.Value, 'macaddr', _('MAC address'), _('Override default MAC address - the range of usable addresses might be limited by the driver'));
+					o.value('', _('driver default (%s)').format(!macaddr ? radioNet.getActiveBSSID() : _('no override')));
+					o.value('random', _('randomly generated'));
+					o.datatype = "or('random',macaddr)";
 
 					o = ss.taboption('advanced', form.Flag, 'short_preamble', _('Short Preamble'));
 					o.default = o.enabled;
@@ -1171,7 +1180,7 @@ return view.extend({
 					o.optional    = true;
 					o.datatype    = 'uinteger';
 
-					o = ss.taboption('advanced', form.Value, 'max_inactivity', _('Station inactivity limit'), _('sec'));
+					o = ss.taboption('advanced', form.Value, 'max_inactivity', _('Station inactivity limit'), _('802.11v: BSS Max Idle. Units: seconds.'));
 					o.optional    = true;
 					o.placeholder = 300;
 					o.datatype    = 'uinteger';
@@ -1274,7 +1283,7 @@ return view.extend({
 					if (has_hostapd || has_supplicant) {
 						crypto_modes.push(['psk2',      'WPA2-PSK',                    35]);
 						crypto_modes.push(['psk-mixed', 'WPA-PSK/WPA2-PSK Mixed Mode', 22]);
-						crypto_modes.push(['psk',       'WPA-PSK',                     21]);
+						crypto_modes.push(['psk',       'WPA-PSK',                     12]);
 					}
 					else {
 						encr.description = _('WPA-Encryption requires wpa_supplicant (for client mode) or hostapd (for AP and ad-hoc mode) to be installed.');
@@ -1374,7 +1383,7 @@ return view.extend({
 				else if (hwtype == 'broadcom') {
 					crypto_modes.push(['psk2',     'WPA2-PSK',                    33]);
 					crypto_modes.push(['psk+psk2', 'WPA-PSK/WPA2-PSK Mixed Mode', 22]);
-					crypto_modes.push(['psk',      'WPA-PSK',                     21]);
+					crypto_modes.push(['psk',      'WPA-PSK',                     12]);
 					crypto_modes.push(['wep-open',   _('WEP Open System'),        11]);
 					crypto_modes.push(['wep-shared', _('WEP Shared Key'),         10]);
 				}
@@ -1392,50 +1401,88 @@ return view.extend({
 				}
 
 
-				o = ss.taboption('encryption', form.Value, 'auth_server', _('Radius-Authentication-Server'));
+				o = ss.taboption('encryption', form.Value, 'auth_server', _('RADIUS Authentication Server'));
 				add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed'] });
 				o.rmempty = true;
 				o.datatype = 'host(0)';
 
-				o = ss.taboption('encryption', form.Value, 'auth_port', _('Radius-Authentication-Port'), _('Default %d').format(1812));
+				o = ss.taboption('encryption', form.Value, 'auth_port', _('RADIUS Authentication Port'));
 				add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed'] });
 				o.rmempty = true;
 				o.datatype = 'port';
+				o.placeholder = '1812';
 
-				o = ss.taboption('encryption', form.Value, 'auth_secret', _('Radius-Authentication-Secret'));
+				o = ss.taboption('encryption', form.Value, 'auth_secret', _('RADIUS Authentication Secret'));
 				add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed'] });
 				o.rmempty = true;
 				o.password = true;
 
-				o = ss.taboption('encryption', form.Value, 'acct_server', _('Radius-Accounting-Server'));
+				o = ss.taboption('encryption', form.Value, 'acct_server', _('RADIUS Accounting Server'));
 				add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed'] });
 				o.rmempty = true;
 				o.datatype = 'host(0)';
 
-				o = ss.taboption('encryption', form.Value, 'acct_port', _('Radius-Accounting-Port'), _('Default %d').format(1813));
+				o = ss.taboption('encryption', form.Value, 'acct_port', _('RADIUS Accounting Port'));
 				add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed'] });
 				o.rmempty = true;
 				o.datatype = 'port';
+				o.placeholder = '1813';
 
-				o = ss.taboption('encryption', form.Value, 'acct_secret', _('Radius-Accounting-Secret'));
+				o = ss.taboption('encryption', form.Value, 'acct_secret', _('RADIUS Accounting Secret'));
 				add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed'] });
 				o.rmempty = true;
 				o.password = true;
 
-				o = ss.taboption('encryption', form.Value, 'dae_client', _('DAE-Client'));
+				/* extra RADIUS settings start */
+				o = ss.taboption('encryption', form.ListValue, 'dynamic_vlan', _('RADIUS Dynamic VLAN Assignment'), _('Required: Rejects auth if RADIUS server does not provide appropriate VLAN attributes.'));
+				add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed'] });
+				o.value('0', _('Disabled'));
+				o.value('1', _('Optional'));
+				o.value('2', _('Required'));
+				o.write = function (section_id, value) {
+					return this.super('write', [section_id, (value == 0) ? null: value]);
+				}
+
+				o = ss.taboption('encryption', form.Flag, 'per_sta_vif', _('RADIUS Per STA VLAN'), _('Each STA is assigned its own AP_VLAN interface.'));
+				add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed'] });
+
+				//hostapd internally defaults to vlan_naming=1 even with dynamic VLAN off
+				o = ss.taboption('encryption', form.Flag, 'vlan_naming', _('RADIUS VLAN Naming'), _('Off: <code>vlanXXX</code>, e.g., <code>vlan1</code>. On: <code>vlan_tagged_interface.XXX</code>, e.g. <code>eth0.1</code>.'));
+				add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed'] });
+
+				o = ss.taboption('encryption', widgets.DeviceSelect, 'vlan_tagged_interface', _('RADIUS VLAN Tagged Interface'), _('E.g. eth0, eth1'));
+				add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed'] });
+				o.size = 1;
+				o.rmempty = true;
+				o.multiple = false;
+				o.noaliases = true;
+				o.nocreate = true;
+				o.noinactive = true;
+
+				o = ss.taboption('encryption', form.Value, 'vlan_bridge', _('RADIUS VLAN Bridge Naming Scheme'), _('E.g. <code>br-vlan</code> or <code>brvlan</code>.'));
+				add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed'] });
+				o.rmempty = true;
+				/* extra RADIUS settings end */
+
+				o = ss.taboption('encryption', form.Value, 'dae_client', _('DAE-Client'), _('Dynamic Authorization Extension client.'));
 				add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed'] });
 				o.rmempty = true;
 				o.datatype = 'host(0)';
 
-				o = ss.taboption('encryption', form.Value, 'dae_port', _('DAE-Port'), _('Default %d').format(3799));
+				o = ss.taboption('encryption', form.Value, 'dae_port', _('DAE-Port'), _('Dynamic Authorization Extension port.'));
 				add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed'] });
 				o.rmempty = true;
 				o.datatype = 'port';
+				o.placeholder = '3799';
 
-				o = ss.taboption('encryption', form.Value, 'dae_secret', _('DAE-Secret'));
+				o = ss.taboption('encryption', form.Value, 'dae_secret', _('DAE-Secret'), _('Dynamic Authorization Extension secret.'));
 				add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed'] });
 				o.rmempty = true;
 				o.password = true;
+
+				//WPA(1) has only WPA IE. Only >= WPA2 has RSN IE Preauth frames.
+				o = ss.taboption('encryption', form.Flag, 'rsn_preauth', _('RSN Preauth'), _('Robust Security Network (RSN): Allow roaming preauth for WPA2-EAP networks (and advertise it in WLAN beacons). Only works if the specified network interface is a bridge. Shortens the time-critical reassociation process.'));
+				add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa2', 'wpa3', 'wpa3-mixed'] });
 
 
 				o = ss.taboption('encryption', form.Value, '_wpa_key', _('Key'));
@@ -1500,66 +1547,117 @@ return view.extend({
 					// Probe 802.11r support (and EAP support as a proxy for Openwrt)
 					var has_80211r = L.hasSystemFeature('hostapd', '11r') || L.hasSystemFeature('hostapd', 'eap');
 
-					o = ss.taboption('encryption', form.Flag, 'ieee80211r', _('802.11r Fast Transition'), _('Enables fast roaming among access points that belong to the same Mobility Domain'));
+					o = ss.taboption('roaming', form.Flag, 'ieee80211r', _('802.11r Fast Transition'), _('Enables fast roaming among access points that belong to the same Mobility Domain'));
 					add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed'] });
 					if (has_80211r)
 						add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['psk', 'psk2', 'psk-mixed', 'sae', 'sae-mixed'] });
 					o.rmempty = true;
 
-					o = ss.taboption('encryption', form.Value, 'nasid', _('NAS ID'), _('Used for two different purposes: RADIUS NAS ID and 802.11r R0KH-ID. Not needed with normal WPA(2)-PSK.'));
+					o = ss.taboption('roaming', form.Value, 'nasid', _('NAS ID'), _('Used for two different purposes: RADIUS NAS ID and 802.11r R0KH-ID. Not needed with normal WPA(2)-PSK.'));
 					add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed'] });
 					o.depends({ ieee80211r: '1' });
 					o.rmempty = true;
 
-					o = ss.taboption('encryption', form.Value, 'mobility_domain', _('Mobility Domain'), _('4-character hexadecimal ID'));
+					o = ss.taboption('roaming', form.Value, 'mobility_domain', _('Mobility Domain'), _('4-character hexadecimal ID'));
 					o.depends({ ieee80211r: '1' });
 					o.placeholder = '4f57';
 					o.datatype = 'and(hexstring,length(4))';
 					o.rmempty = true;
 
-					o = ss.taboption('encryption', form.Value, 'reassociation_deadline', _('Reassociation Deadline'), _('time units (TUs / 1.024 ms) [1000-65535]'));
+					o = ss.taboption('roaming', form.Value, 'reassociation_deadline', _('Reassociation Deadline'), _('time units (TUs / 1.024 ms) [1000-65535]'));
 					o.depends({ ieee80211r: '1' });
 					o.placeholder = '1000';
 					o.datatype = 'range(1000,65535)';
 					o.rmempty = true;
 
-					o = ss.taboption('encryption', form.ListValue, 'ft_over_ds', _('FT protocol'));
+					o = ss.taboption('roaming', form.ListValue, 'ft_over_ds', _('FT protocol'));
 					o.depends({ ieee80211r: '1' });
-					o.value('1', _('FT over DS'));
 					o.value('0', _('FT over the Air'));
+					o.value('1', _('FT over DS'));
 					o.rmempty = true;
 
-					o = ss.taboption('encryption', form.Flag, 'ft_psk_generate_local', _('Generate PMK locally'), _('When using a PSK, the PMK can be automatically generated. When enabled, the R0/R1 key options below are not applied. Disable this to use the R0 and R1 key options.'));
+					o = ss.taboption('roaming', form.Flag, 'ft_psk_generate_local', _('Generate PMK locally'), _('When using a PSK, the PMK can be automatically generated. When enabled, the R0/R1 key options below are not applied. Disable this to use the R0 and R1 key options.'));
 					o.depends({ ieee80211r: '1' });
 					o.default = o.enabled;
 					o.rmempty = false;
 
-					o = ss.taboption('encryption', form.Value, 'r0_key_lifetime', _('R0 Key Lifetime'), _('minutes'));
+					o = ss.taboption('roaming', form.Value, 'r0_key_lifetime', _('R0 Key Lifetime'), _('minutes'));
 					o.depends({ ieee80211r: '1' });
 					o.placeholder = '10000';
 					o.datatype = 'uinteger';
 					o.rmempty = true;
 
-					o = ss.taboption('encryption', form.Value, 'r1_key_holder', _('R1 Key Holder'), _('6-octet identifier as a hex string - no colons'));
+					o = ss.taboption('roaming', form.Value, 'r1_key_holder', _('R1 Key Holder'), _('6-octet identifier as a hex string - no colons'));
 					o.depends({ ieee80211r: '1' });
 					o.placeholder = '00004f577274';
 					o.datatype = 'and(hexstring,length(12))';
 					o.rmempty = true;
 
-					o = ss.taboption('encryption', form.Flag, 'pmk_r1_push', _('PMK R1 Push'));
+					o = ss.taboption('roaming', form.Flag, 'pmk_r1_push', _('PMK R1 Push'));
 					o.depends({ ieee80211r: '1' });
 					o.placeholder = '0';
 					o.rmempty = true;
 
-					o = ss.taboption('encryption', form.DynamicList, 'r0kh', _('External R0 Key Holder List'), _('List of R0KHs in the same Mobility Domain. <br />Format: MAC-address,NAS-Identifier,128-bit key as hex string. <br />This list is used to map R0KH-ID (NAS Identifier) to a destination MAC address when requesting PMK-R1 key from the R0KH that the STA used during the Initial Mobility Domain Association.'));
+					o = ss.taboption('roaming', form.DynamicList, 'r0kh', _('External R0 Key Holder List'), _('List of R0KHs in the same Mobility Domain. <br />Format: MAC-address,NAS-Identifier,256-bit key as hex string. <br />This list is used to map R0KH-ID (NAS Identifier) to a destination MAC address when requesting PMK-R1 key from the R0KH that the STA used during the Initial Mobility Domain Association.'));
 					o.depends({ ieee80211r: '1' });
 					o.rmempty = true;
 
-					o = ss.taboption('encryption', form.DynamicList, 'r1kh', _('External R1 Key Holder List'), _ ('List of R1KHs in the same Mobility Domain. <br />Format: MAC-address,R1KH-ID as 6 octets with colons,128-bit key as hex string. <br />This list is used to map R1KH-ID to a destination MAC address when sending PMK-R1 key from the R0KH. This is also the list of authorized R1KHs in the MD that can request PMK-R1 keys.'));
+					o = ss.taboption('roaming', form.DynamicList, 'r1kh', _('External R1 Key Holder List'), _ ('List of R1KHs in the same Mobility Domain. <br />Format: MAC-address,R1KH-ID as 6 octets with colons,256-bit key as hex string. <br />This list is used to map R1KH-ID to a destination MAC address when sending PMK-R1 key from the R0KH. This is also the list of authorized R1KHs in the MD that can request PMK-R1 keys.'));
 					o.depends({ ieee80211r: '1' });
 					o.rmempty = true;
 					// End of 802.11r options
 
+					// Probe 802.11k and 802.11v support via EAP support (full hostapd has EAP)
+					if (L.hasSystemFeature('hostapd', 'eap')) {
+						/* 802.11k settings start */						o =
+						 ss.taboption('roaming', form.Flag, 'ieee80211k', _('802.11k RRM'), _('Radio Resource Measurement - Sends beacons to assist roaming. Not all clients support this.'));
+						// add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['psk', 'psk2', 'psk-mixed', 'sae', 'sae-mixed'] });
+						o.depends('mode', 'ap');
+						o.depends('mode', 'ap-wds');
+
+						o = ss.taboption('roaming', form.Flag, 'rrm_neighbor_report', _('Neighbour Report'), _('802.11k: Enable neighbor report via radio measurements.'));
+						o.depends({ ieee80211k: '1' });
+						o.default = o.enabled;
+
+						o = ss.taboption('roaming', form.Flag, 'rrm_beacon_report', _('Beacon Report'), _('802.11k: Enable beacon report via radio measurements.'));
+						o.depends({ ieee80211k: '1' });
+						o.default = o.enabled;
+						/* 802.11k settings end */
+
+						/* 802.11v settings start */
+						o = ss.taboption('roaming', form.ListValue, 'time_advertisement', _('Time advertisement'), _('802.11v: Time Advertisement in management frames.'));
+						o.value('0', _('Disabled'));
+						o.value('2', _('Enabled'));
+						o.write = function (section_id, value) {
+							return this.super('write', [section_id, (value == 2) ? value: null]);
+						}
+
+						//Pull current System TZ setting
+						var tz = uci.get('system', '@system[0]', 'timezone');
+						o = ss.taboption('roaming', form.Value, 'time_zone', _('Time zone'), _('802.11v: Local Time Zone Advertisement in management frames.'));
+						o.value(tz);
+						o.rmempty = true;
+
+						o = ss.taboption('roaming', form.Flag, 'wnm_sleep_mode', _('WNM Sleep Mode'), _('802.11v: Wireless Network Management (WNM) Sleep Mode (extended sleep mode for stations).'));
+						o.rmempty = true;
+
+						/* wnm_sleep_mode_no_keys: https://git.openwrt.org/?p=openwrt/openwrt.git;a=commitdiff;h=bf98faaac8ed24cf7d3d93dd4fcd7304d109363b */
+						o = ss.taboption('roaming', form.Flag, 'wnm_sleep_mode_no_keys', _('WNM Sleep Mode Fixes'), _('802.11v: Wireless Network Management (WNM) Sleep Mode Fixes: Prevents reinstallation attacks.'));
+						o.rmempty = true;
+
+						o = ss.taboption('roaming', form.Flag, 'bss_transition', _('BSS Transition'), _('802.11v: Basic Service Set (BSS) transition management.'));
+						o.rmempty = true;
+
+						/* in master, but not 21.02.1: proxy_arp */
+						o = ss.taboption('roaming', form.Flag, 'proxy_arp', _('ProxyARP'), _('802.11v: Proxy ARP enables non-AP STA to remain in power-save for longer.'));
+						o.rmempty = true;
+
+						/* TODO: na_mcast_to_ucast is missing: needs adding to hostapd.sh - nice to have */
+					}
+					/* 802.11v settings end */
+				}
+
+				if (hwtype == 'mac80211') {
 					o = ss.taboption('encryption', form.ListValue, 'eap_type', _('EAP-Method'));
 					o.value('tls',  'TLS');
 					o.value('ttls', 'TTLS');
@@ -1676,7 +1774,7 @@ return view.extend({
 					if (hwtype == 'mac80211') {
 						// ieee802.11w options
 						o = ss.taboption('encryption', form.ListValue, 'ieee80211w', _('802.11w Management Frame Protection'), _("Note: Some wireless drivers do not fully support 802.11w. E.g. mwlwifi may have problems"));
-						o.value('', _('Disabled'));
+						o.value('0', _('Disabled'));
 						o.value('1', _('Optional'));
 						o.value('2', _('Required'));
 						add_dependency_permutations(o, { mode: ['ap', 'ap-wds', 'sta', 'sta-wds'], encryption: ['owe', 'psk2', 'psk-mixed', 'sae', 'sae-mixed', 'wpa2', 'wpa3', 'wpa3-mixed'] });
@@ -1684,7 +1782,14 @@ return view.extend({
 						o.defaults = {
 							'2': [{ encryption: 'sae' }, { encryption: 'owe' }, { encryption: 'wpa3' }, { encryption: 'wpa3-mixed' }],
 							'1': [{ encryption: 'sae-mixed'}],
-							'':  []
+							'0': []
+						};
+
+						o.write = function(section_id, value) {
+							if (value != this.default)
+								return form.ListValue.prototype.write.call(this, section_id, value);
+							else
+								return form.ListValue.prototype.remove.call(this, section_id);
 						};
 
 						o = ss.taboption('encryption', form.Value, 'ieee80211w_max_timeout', _('802.11w maximum timeout'), _('802.11w Association SA Query maximum timeout'));
@@ -1956,6 +2061,8 @@ return view.extend({
 					});
 				});
 			}).then(L.bind(function() {
+				ui.showModal(null, E('p', { 'class': 'spinning' }, [ _('Loading data…') ]));
+
 				return this.renderMoreOptionsModal(section_id);
 			}, this));
 		};
@@ -2157,5 +2264,7 @@ return view.extend({
 
 			return E([ nodes, E('h3', _('Associated Stations')), table ]);
 		}, this, m));
-	}
+	},
+
+	handleReset: null
 });

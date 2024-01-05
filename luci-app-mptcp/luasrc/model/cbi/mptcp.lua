@@ -183,5 +183,8 @@ o:value("backup", translate("backup"))
 --o:value("handover", translate("handover"))
 o.default = "off"
 
+function m.on_after_apply(self,map)
+    sys.call('/etc/init.d/mptcp reload')
+end
 
 return m

@@ -110,10 +110,16 @@ o.default     = "1"
 o.datatype    = "range(1, 100)"
 o.rmempty     = false
 
-o = s:option(Value, "tries", translate("Tries"))
+o = s:option(Value, "tries", translate("Tries"), translate("How many times repeat test"))
 o.placeholder = "4"
 o.default     = "4"
 o.datatype    = "range(1, 10)"
+o.rmempty     = false
+
+o = s:option(Value, "count", translate("Count"), translate("How many packets send on each test"))
+o.placeholder = "2"
+o.default     = "2"
+o.datatype    = "range(1, 100)"
 o.rmempty     = false
 
 o = s:option(Value, "interval", translate("Retry interval (s)"))
@@ -189,6 +195,12 @@ o = s:option(Value, "tries", translate("Tries"))
 o.placeholder = "4"
 o.default     = "4"
 o.datatype    = "range(1, 10)"
+o.rmempty     = false
+
+o = s:option(Value, "count", translate("Count"), translate("How many packets send on each test, one wrong make test fail, one wrong make tail fail"))
+o.placeholder = "2"
+o.default     = "2"
+o.datatype    = "range(1, 100)"
 o.rmempty     = false
 
 o = s:option(Value, "interval", translate("Retry interval (s)"))

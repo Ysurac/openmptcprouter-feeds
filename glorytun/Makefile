@@ -15,7 +15,8 @@ PKG_SOURCE_VERSION:=0c3b03cf0215e0896fd8e7e91be92efa77f6a2d1
 PKG_SOURCE:=glorytun-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://github.com/Ysurac/glorytun.git
 PKG_VERSION:=0.0.35-$(PKG_SOURCE_VERSION)
-
+PKG_LICENSE:=BSD-2-Clause
+PKG_LICENSE_FILES:=LICENSE
 PKG_FIXUP:=autoreconf
 
 include $(INCLUDE_DIR)/package.mk

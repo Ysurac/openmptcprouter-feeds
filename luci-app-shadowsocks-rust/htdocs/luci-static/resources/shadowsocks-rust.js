@@ -133,7 +133,7 @@ return L.Class.extend({
 		o.datatype = 'port';
 		o.size = 5;
 
-		o = optfunc(form.ListValue, 'method', _('Method'));
+		o = optfunc(form.ListValue, 'method', _('Method'),_('Only 2022-blake3-aes-256-gcm is supported by OpenMPTCProuter Shadowsocks-GO'));
 		methods.forEach(function(m) {
 			o.value(m);
 		});

@@ -25,7 +25,7 @@ _check_server() {
 	local port=$2
 	local k=0
 	while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
-		ret=$(curl -4 \
+		ret=$(curl \
 		    --max-time "$OMR_TRACKER_TIMEOUT" \
 		    -s \
 		    -k \
@@ -35,6 +35,11 @@ _check_server() {
 		k=$((k+1))
 		sleep "${intervaltries}"
 	done
+}
+
+_disable_current() {
+	local serv=$1
+	config_set $serv current "0"
 }
 
 _disable_redir() {
@@ -64,9 +69,16 @@ _check_master() {
 	config_get disabled $1 disabled
 	[ "$master" = "1" ] && [ -n "$ip" ] && [ "$disabled" != "1" ] && {
 		set_ip() {
-			local ip=$1
-			ipresolve="$(resolveip -4 $ip | head -n 1)"
-			[ -z "$ipresolve" ] && ip="$ipresolve"
+			local ipd=$1
+			local ip=""
+			ipresolve="$(resolveip -4 $ipd | head -n 1)"
+			if [ -n "$ipresolve" ]; then
+				ip="$ipresolve"
+			else
+				ip6resolve="$(resolveip -6 $ipd | head -n 1)"
+				[ -n "$ip6resolve" ] && ip="$ip6resolve"
+			fi
+			[ -z "$ip" ] && return
 			#_ping_server $ip
 			_check_server $ip $port
 			if [ "$server_ping" = true ]; then
@@ -76,12 +88,24 @@ _check_master() {
 					#logger -t "OMR-Tracker-Server" "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n') - $ip"
 					uci -q batch <<-EOF >/dev/null
 						set shadowsocks-libev.sss${count}.server=$ip
+						set shadowsocks-rust.sss${count}.server=$ip
 					EOF
 					if [ "$count" -eq "0" ]; then
+						config_load openmptcprouter
+						config_foreach _disable_current server
 						uci -q batch <<-EOF >/dev/null
+							set xray.omrout.s_vmess_address=$ip
+							set xray.omrout.s_vless_address=$ip
+							set xray.omrout.s_vless_reality_address=$ip
+							set xray.omrout.s_trojan_address=$ip
+							set xray.omrout.s_socks_address=$ip
+							set xray.omrout.s_shadowsocks_address=$ip
 							set v2ray.omrout.s_vmess_address=$ip
 							set v2ray.omrout.s_vless_address=$ip
+							set v2ray.omrout.s_trojan_address=$ip
+							set v2ray.omrout.s_socks_address=$ip
 							commit v2ray
+							commit xray
 							set glorytun.vpn.host=$ip
 							commit glorytun
 							glorytun-udp.vpn.host=$ip
@@ -98,6 +122,7 @@ _check_master() {
 						EOF
 						/etc/init.d/openmptcprouter-vps get_openvpn_key $name >/dev/null 2>/dev/null
 						/etc/init.d/v2ray restart >/dev/null 2>/dev/null
+						/etc/init.d/xray restart >/dev/null 2>/dev/null
 						/etc/init.d/glorytun restart >/dev/null 2>/dev/null
 						/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null
 						/etc/init.d/mlvpn restart >/dev/null 2>/dev/null
@@ -107,6 +132,8 @@ _check_master() {
 					fi
 				fi
 				config_load shadowsocks-libev
+				config_foreach _enable_redir ss_redir
+				config_load shadowsocks-rust
 				config_foreach _enable_redir ss_redir
 				OMR_TRACKER_STATUS_MSG="Answer to ping and to API check"
 				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
@@ -134,6 +161,8 @@ _check_master() {
 					commit openmptcprouter
 				EOF
 				config_load shadowsocks-libev
+				config_foreach _disable_redir ss_redir
+				config_load shadowsocks-rust
 				config_foreach _disable_redir ss_redir
 				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
 				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
@@ -163,7 +192,11 @@ _check_master() {
 		#	config_foreach _enable_redir ss_redir
 		#fi
 		uci -q commit shadowsocks-libev
-		[ "$changes" = "1" ] && /etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null
+		uci -q commit shadowsocks-rust
+		[ "$changes" = "1" ] && {
+			/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null
+			/etc/init.d/shadowsocks-rust restart >/dev/null 2>/dev/null
+		}
 		break
 	}
 }
@@ -181,7 +214,12 @@ _check_backup() {
 		set_ip() {
 			local ip=$1
 			ipresolve="$(resolveip -4 $ip | head -n 1)"
-			[ -z "$ipresolve" ] && ip="$ipresolve"
+			if [ -n "$ipresolve" ]; then
+				ip="$ipresolve"
+			else
+				ip6resolve="$(resolveip -6 $ip | head -n 1)"
+				[ -n "$ip6resolve" ] && ip="$ip6resolve"
+			fi
 			#_ping_server $ip
 			_check_server $ip $port
 			#[ "$server_ping" = true ] && [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" = "$ip" ] && break
@@ -191,12 +229,24 @@ _check_backup() {
 					changes="1"
 					uci -q batch <<-EOF >/dev/null
 						set shadowsocks-libev.sss${count}.server=$ip
+						set shadowsocks-rust.sss${count}.server=$ip
 					EOF
 					if [ "$count" -eq "0" ]; then
+						config_load openmptcprouter
+						config_foreach _disable_current server
 						uci -q batch <<-EOF >/dev/null
+							set xray.omrout.s_vmess_address=$ip
+							set xray.omrout.s_vless_address=$ip
+							set xray.omrout.s_vless_reality_address=$ip
+							set xray.omrout.s_trojan_address=$ip
+							set xray.omrout.s_socks_address=$ip
+							set xray.omrout.s_shadowsocks_address=$ip
 							set v2ray.omrout.s_vmess_address=$ip
 							set v2ray.omrout.s_vless_address=$ip
+							set v2ray.omrout.s_trojan_address=$ip
+							set v2ray.omrout.s_socks_address=$ip
 							commit v2ray
+							commit xray
 							set glorytun.vpn.host=$ip
 							commit glorytun
 							glorytun-udp.vpn.host=$ip
@@ -213,6 +263,7 @@ _check_backup() {
 						EOF
 						/etc/init.d/openmptcprouter-vps get_openvpn_key $name >/dev/null 2>/dev/null
 						/etc/init.d/v2ray restart >/dev/null 2>/dev/null
+						/etc/init.d/xray restart >/dev/null 2>/dev/null
 						/etc/init.d/glorytun restart >/dev/null 2>/dev/null
 						/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null
 						/etc/init.d/mlvpn restart >/dev/null 2>/dev/null
@@ -223,6 +274,8 @@ _check_backup() {
 					sleep $waittest
 				fi
 				config_load shadowsocks-libev
+				config_foreach _enable_redir ss_redir
+				config_load shadowsocks-rust
 				config_foreach _enable_redir ss_redir
 				OMR_TRACKER_STATUS_MSG="Answer to ping and to API check"
 				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
@@ -248,6 +301,8 @@ _check_backup() {
 					commit openmptcprouter
 				EOF
 				config_load shadowsocks-libev
+				config_foreach _disable_redir ss_redir
+				config_load shadowsocks-rust
 				config_foreach _disable_redir ss_redir
 				OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
 				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
@@ -278,7 +333,11 @@ _check_backup() {
 		#	config_foreach _enable_redir ss_redir
 		#fi
 		uci -q commit shadowsocks-libev
-		[ "$changes" = "1" ] && /etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null
+		uci -q commit shadowsocks-rust
+		[ "$changes" = "1" ] && {
+			/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null
+			/etc/init.d/shadowsocks-rust restart >/dev/null 2>/dev/null
+		}
 		[ "$server_ping" = true ] && break
 	}
 }
