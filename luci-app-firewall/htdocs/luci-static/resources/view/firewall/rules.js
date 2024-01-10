@@ -183,7 +183,8 @@ return view.extend({
 		s.tab('timed', _('Time Restrictions'));
 
 		s.filter = function(section_id) {
-			return (uci.get('firewall', section_id, 'target') != 'SNAT');
+			//return (uci.get('firewall', section_id, 'target') != 'SNAT');
+			return (uci.get('firewall', section_id, 'target') != 'SNAT' && section_id.startsWith('omr_dst') == false && section_id.startsWith('omr_dscp') == false);
 		};
 
 		s.sectiontitle = function(section_id) {
