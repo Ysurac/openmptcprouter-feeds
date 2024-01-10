@@ -20,15 +20,33 @@ DEPENDS:=+curl +dnsmasq-full +sqlite3-cli +iptables +iptables-mod-extra +ipset
 TITLE:=OMR-ByPass
 endef
 
+define Package/$(PKG_NAME)-nft
+SECTION:=net
+CATEGORY:=Network
+DEPENDS:=+curl +dnsmasq-full +sqlite3-cli +firewall4
+TITLE:=OMR-ByPass NFT
+endef
+
 define Package/$(PKG_NAME)/description
 OMR-ByPass
+endef
+
+define Package/$(PKG_NAME)/description
+OMR-ByPass nft support
 endef
 
 define Build/Compile
 endef
 
 define Package/$(PKG_NAME)/install
-    $(CP) ./files/* $(1)/
+	$(CP) ./files/* $(1)/
+	rm -f $(1)/etc/init.d/omr-bypass-nft
+endef
+
+define Package/$(PKG_NAME)-nft/install
+	$(CP) ./files/* $(1)/
+	mv $(1)/etc/init.d/omr-bypass-nft $(1)/etc/init.d/omr-bypass
 endef
 
 $(eval $(call BuildPackage,$(PKG_NAME)))
+$(eval $(call BuildPackage,$(PKG_NAME)-nft))
