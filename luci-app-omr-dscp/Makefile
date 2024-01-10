@@ -6,7 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI Interface to DSCP
-
+LUCI_DEPENDS:=+LINUX_5_4:omr-dscp +!LINUX_5_4:omr-dscp-nft
 PKG_LICENSE:=GPLv3
 
 #include ../luci/luci.mk
