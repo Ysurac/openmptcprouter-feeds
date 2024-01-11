@@ -21,7 +21,7 @@ MY_DEPENDS := \
     mc          \
     f2fs-tools \
     openmptcprouter \
-    dnsmasq-full dnsmasq_full_ipset \
+    dnsmasq-full LINUX_5_4:dnsmasq_full_ipset !LINUX_5_4:dnsmasq_full_nftset \
     uhttpd \
     uhttpd-mod-ubus \
     curl \
@@ -29,9 +29,10 @@ MY_DEPENDS := \
     arptables \
     bind-dig \
     libnetfilter-conntrack ip-full nstat \
-    iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace iptables-mod-conntrack-extra iptables-mod-account \
-    kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra iptables-mod-extra conntrack kmod-ipt-offload \
-    iptables-mod-ipsec kmod-crypto-authenc kmod-ipsec kmod-ipsec4 kmod-ipsec6 kmod-ipt-ipsec \
+    LINUX_5_4:iptables-mod-iface LINUX_5_4:iptables-mod-ipmark LINUX_5_4:iptables-mod-hashlimit LINUX_5_4:iptables-mod-condition LINUX_5_4:iptables-mod-trace LINUX_5_4:iptables-mod-conntrack-extra LINUX_5_4:iptables-mod-account \
+    kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra LINUX_5_4:iptables-mod-extra conntrack LINUX_5_4:kmod-ipt-offload \
+    LINUX_5_4:iptables-mod-ipsec kmod-crypto-authenc kmod-ipsec kmod-ipsec4 kmod-ipsec6 LINUX_5_4:kmod-ipt-ipsec \
+    !LINUX_5_4:nftables-json !LINUX_5_4:iptables-nft !LINUX_5_4:kmod-nft-connlimit !LINUX_5_4:kmod-nft-offload
     wireless-tools \
     libiwinfo-lua \
     ca-bundle ca-certificates \
