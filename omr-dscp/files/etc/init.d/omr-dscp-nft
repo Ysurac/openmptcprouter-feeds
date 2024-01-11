@@ -36,20 +36,24 @@ _add_dscp_domains_rules() {
 			add_list dhcp.omr_dscp_${class}.name="omr_dscp_${class}_4"
 			add_list dhcp.omr_dscp_${class}.name="omr_dscp_${class}_6"
 			commit dhcp
+		EOF
+		uci batch <<-EOF
 			set firewall.omr_dscp_${class}_4=ipset
 			set firewall.omr_dscp_${class}_4.name="omr_dscp_${class}_4"
-			set firewall.omr_dscp_${class}_4.match='dest_ip"
+			set firewall.omr_dscp_${class}_4.match='dest_ip'
 			set firewall.omr_dscp_${class}_6=ipset
 			set firewall.omr_dscp_${class}_6.name="omr_dscp_${class}_6"
-			set firewall.omr_dscp_${class}_6.match='dest_ip"
+			set firewall.omr_dscp_${class}_6.match='dest_ip'
+		EOF
+		uci -q batch <<-EOF
 			set firewall.omr_dscp_${class}=rule
-			set firewall.omr_dscp_${class}.ipset="omr_dscp-${class}_4"
+			set firewall.omr_dscp_${class}.ipset="omr_dscp_${class}_4"
 			set firewall.omr_dscp_${class}.set_dscp="$(echo ${class} | tr '[a-z'] '[A-Z]')"
 			set firewall.omr_dscp_${class}.target='DSCP'
 			set firewall.omr_dscp_${class}.src='lan'
 			set firewall.omr_dscp_${class}.dest='*'
 			set firewall.omr6_dscp_${class}=rule
-			set firewall.omr6_dscp_${class}.ipset="omr_dscp-${class}_6"
+			set firewall.omr6_dscp_${class}.ipset="omr_dscp_${class}_6"
 			set firewall.omr6_dscp_${class}.target='DSCP'
 			set firewall.omr6_dscp_${class}.set_dscp="$(echo ${class} | tr '[a-z'] '[A-Z]')"
 			set firewall.omr6_dscp_${class}.src='lan'
@@ -129,7 +133,7 @@ _remove_ipset_dnsmasq() {
 }
 
 _remove_rules() {
-	[ -n "$(echo $1 | grep omr_dscp)" ] && uci -q delete firewall.$1
+	([ -n "$(echo $1 | grep omr_dscp)" ] || [ -n "$(echo $1 | grep omr6_dscp)" ]) && uci -q delete firewall.$1
 }
 
 _setup_tunnel() {
