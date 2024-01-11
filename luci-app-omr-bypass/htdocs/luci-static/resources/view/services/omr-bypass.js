@@ -49,6 +49,7 @@ return L.view.extend({
 		o.rmempty = false;
 
 		o = s.option(form.Flag, 'vpn', _('VPN on server'),_('Bypass using VPN configured on server.'));
+		o.modalonly = true
 
 		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
 		o.noaliases = true;
@@ -82,6 +83,7 @@ return L.view.extend({
 		o.rmempty = false;
 
 		o = s.option(form.Flag, 'vpn', _('VPN on server'),_('Bypass using VPN configured on server.'));
+		o.modalonly = true
 
 		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
 		o.noaliases = true;
@@ -206,7 +208,7 @@ return L.view.extend({
 		o.rmempty = false;
 
 		o = s.option(form.Flag, 'vpn', _('VPN on server'),_('Bypass using VPN configured on server.'));
-
+		o.modalonly = true
 
 		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used.'));
 		o.noaliases = true;
@@ -266,6 +268,7 @@ return L.view.extend({
 		};
 
 		o = s.option(form.Flag, 'vpn', _('VPN on server'),_('Bypass using VPN configured on server.'));
+		o.modalonly = true
 
 		o = s.option(widgets.DeviceSelect, 'interface', _('Interface'),_('When none selected, MPTCP master interface is used (or an other interface if master is down).'));
 		o.noaliases = true;

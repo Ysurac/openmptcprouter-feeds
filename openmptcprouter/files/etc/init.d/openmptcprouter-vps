@@ -10,13 +10,13 @@ EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall g
 
 . /usr/lib/unbound/iptools.sh
 
-if [ -f /usr/sbin/iptables-legacy ]; then
-	IPTABLES="/usr/sbin/iptables-legacy"
-	IPTABLESRESTORE="/usr/sbin/iptables-legacy-restore"
-	IPTABLESSAVE="/usr/sbin/iptables-legacy-save"
-	IP6TABLES="/usr/sbin/ip6tables-legacy"
-	IP6TABLESRESTORE="/usr/sbin/ip6tables-legacy-restore"
-	IP6TABLESSAVE="/usr/sbin/ip6tables-legacy-save"
+if [ -e /usr/sbin/iptables-nft ]; then
+	IPTABLES="/usr/sbin/iptables-nft"
+	IPTABLESRESTORE="/usr/sbin/iptables-nft-restore"
+	IPTABLESSAVE="/usr/sbin/iptables-nft-save"
+	IP6TABLES="/usr/sbin/ip6tables-nft"
+	IP6TABLESRESTORE="/usr/sbin/ip6tables-nft-restore"
+	IP6TABLESSAVE="/usr/sbin/ip6tables-nft-save"
 else
 	IPTABLES="/usr/sbin/iptables"
 	IPTABLESRESTORE="/usr/sbin/iptables-restore"
@@ -947,8 +947,11 @@ _set_lan_ip() {
 _set_bypass_ips() {
 	local settings
 	[ -z "$servername" ] && servername=$1
-	bypassipv4s=$(ipset -q -o save list omr_dst_bypass_srv_vpn1 | awk '/add/ NF {print "\""$3"\""}' | tr '\n' ',' | sed 's/,$//')
-	bypassipv6s=$(ipset -q -o save list omr6_dst_bypass_srv_vpn1 | awk '/add/ NF {print "\""$3"\""}' | tr '\n' ',' | sed 's/,$//')
+	bypassipv4s=$(ipset -q -o save list omr_dst_bypass_srv_vpn1_4 | awk '/add/ NF {print "\""$3"\""}' | tr '\n' ',' | sed 's/,$//')
+	[ -z "$bypassipvs4" ] && bypassipv4s=$(nft -j list set inet fw4 "omr_dst_bypass_srv_vpn1_4" | jsonfilter -e @.nftables[1].set.elem[*].prefix | awk '{gsub(/"/,"",$3);gsub(/,/,"/",$3); print $3 $5}')
+	bypassipv6s=$(ipset -q -o save list omr6_dst_bypass_srv_vpn1_6 | awk '/add/ NF {print "\""$3"\""}' | tr '\n' ',' | sed 's/,$//')
+	[ -z "$bypassipvs6" ] && bypassipv4s=$(nft -j list set inet fw4 "omr_dst_bypass_srv_vpn1_6" | jsonfilter -e @.nftables[1].set.elem[*].prefix | awk '{gsub(/"/,"",$3);gsub(/,/,"/",$3); print $3 $5}')
+	# "
 	if [ "$bypassipv4s" != "" ] || [ "$bypassipv6s" != "" ]; then
 		settings='{"ipv4s" : ['$bypassipv4s'],"ipv6s" : ['$bypassipv6s'],"intf" : "vpn1"}'
 		result=$(_set_json "bypass" "$settings")
@@ -1041,6 +1044,8 @@ _vps_firewall_redirect_port() {
 	config_get name $1 name
 	config_get dmz $1 dmz "0"
 	config_get target $1 target "REDIRECT"
+	[ "$target" = "MARK" ] && return
+	[ "$target" = "DSCP" ] && return
 	if [ -z "$src_dport" ] && [ -n "$dest_port" ]; then
 		src_dport=$dest_port
 	fi

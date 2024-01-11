@@ -33,15 +33,15 @@ if [ "$(pgrep -f dnsmasq)" = "" ] && [ -f /etc/init.d/dnsmasq ]; then
 	/etc/init.d/dnsmasq restart 2>&1 >/dev/null
 	sleep 5
 fi
-if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" = "1" ] && [ "$OMR_TRACKER_STATUS" != "ERROR" ]; then
+if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" = "1" ]; then
 	if [ "$(pgrep -f unbound)" = "" ]; then
 		_log "Can't find unbound, restart it..."
 		/etc/init.d/unbound restart 2>&1 >/dev/null
 		sleep 5
-	elif [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ] && [ "$(uci -q get unbound.ub_main.listen_port)" = "5353" ] && [ -n "$(dig +timeout=4 +tries=1 openmptcprouter.com -p 5353 | grep 'ANSWER: 0')" ]; then
-		_log "Can't resolve via unbound, restart it..."
-		/etc/init.d/unbound restart 2>&1 >/dev/null
-		sleep 20
+#	elif [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ] && [ "$(uci -q get unbound.ub_main.listen_port)" = "5353" ] && [ -n "$(dig +timeout=4 +tries=1 openmptcprouter.com -p 5353 | grep 'ANSWER: 0')" ]; then
+#		_log "Can't resolve via unbound, restart it..."
+#		/etc/init.d/unbound restart 2>&1 >/dev/null
+#		sleep 5
 	fi
 fi
 
@@ -101,10 +101,10 @@ if [ -z "$(pgrep ModemManager)" ] && [ -f /etc/init.d/modemmanager ] && [ -n "$(
 	_log "Can't find ModemManager, restart it..."
 	/etc/init.d/modemmanager restart 2>&1 >/dev/null
 	sleep 5
-#elif [ -n "$(pgrep ModemManager)" ] && [ -f /etc/init.d/modemmanager ] && [ -z "$(uci -q show network | grep modemmanager)" ]; then
-#	_log "ModemManager not used, stop it..."
-#	/etc/init.d/modemmanager stop 2>&1 >/dev/null
-#	sleep 5
+elif [ -n "$(pgrep ModemManager)" ] && [ -f /etc/init.d/modemmanager ] && [ -z "$(uci -q show network | grep modemmanager)" ]; then
+	_log "ModemManager not used, stop it..."
+	/etc/init.d/modemmanager stop 2>&1 >/dev/null
+	sleep 5
 fi
 
 if [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ -f /etc/init.d/v2ray ] && [ "$(pgrep -f omr-tracker-v2ray)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
@@ -138,34 +138,33 @@ restart_omrtracker() {
 }
 
 set_lan_ips() {
-	config_get ip4table "$1" ip4table
-	config_get device "$1" device
-	config_get proto "$1" proto
-	if [ "$ip4table" = "lan" ] && [ -n "$device" ] && ([ "$proto" = "dhcp" ] || [ "$proto" = "static" ]); then
-		[ -z "$(uci -q get shadowsocks-libev.ss_rules.ifnames | grep $device)" ] && {
-			uci -q add_list shadowsocks-libev.ss_rules.ifnames="$device"
-			uci -q add_list shadowsocks-rust.ss_rules.ifnames="$device"
-		}
-	elif [ -n "$device" ] && [ -n "$(uci -q get shadowsocks-libev.ss_rules.ifnames | grep $device)" ]; then
-		uci -q del_list shadowsocks-libev.ss_rules.ifnames="$device"
-		uci -q del_list shadowsocks-rust.ss_rules.ifnames="$device"
-	fi
+    config_get ip4table "$1" ip4table
+    config_get device "$1" device
+    config_get proto "$1" proto
+    if [ "$ip4table" = "lan" ] && [ -n "$device" ] && ([ "$proto" = "dhcp" ] || [ "$proto" = "static" ]); then
+	[ -z "$(uci -q get shadowsocks-libev.ss_rules.ifnames | grep $device)" ] && {
+	    uci -q add_list shadowsocks-libev.ss_rules.ifnames="$device"
+	    uci -q add_list shadowsocks-rust.ss_rules.ifnames="$device"
+	}
+    elif [ -n "$device" ] && [ -n "$(uci -q get shadowsocks-libev.ss_rules.ifnames | grep $device)" ]; then
+	uci -q del_list shadowsocks-libev.ss_rules.ifnames="$device"
+	uci -q del_list shadowsocks-rust.ss_rules.ifnames="$device"
+    fi
 }
-
 config_load network
 config_foreach restart_omrtracker interface
-#config_foreach set_lan_ips interface
-
-mutlipath_fix() {
+config_foreach set_lan_ips interface
+uci -q commit shadowsocks-libev.ss_rules
+uci -q commit shadowsocks-rust.ss_rules
+multipath_fix() {
 	config_get multipath "$1" multipath
 	[ "$multipath" != "off" ] && return
 	interface="$(ifstatus $1 | jsonfilter -q -e '@.l3_device' | tr -d '\n')"
-	[ -n "$interface"] && [ -z "$(multipath $interface | grep deactivated)" ] && /etc/init.d/mptcp reload $interface 2>&1 >/dev/null
+	[ -n "$interface" ] && [ -z "$(multipath $interface | grep deactivated)" ] && /etc/init.d/mptcp reload $interface 2>&1 >/dev/null
 }
 
 config_load network
 config_foreach multipath_fix interface
-
 if [ -f /etc/init.d/shadowsocks-libev ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.key)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "192.18.1.3" ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
 	_log "Can't find omr-tracker-ss for Shadowsocks libev, restart omr-tracker..."
 	/etc/init.d/omr-tracker restart 2>&1 >/dev/null
@@ -201,7 +200,7 @@ if [ -n "$(logread | tail -n 2 | grep 'Ring expansion failed')" ]; then
 	echo 1 > /sys/bus/pci/rescan
 fi
 
-if [ -f /etc/init.d/omr-bypass ] && [ "$(iptables-save 2>/dev/null | grep omr-bypass)" = "" ] && [ "$(pgrep -f omr-bypass)" = "" ]; then
+if [ -f /etc/init.d/omr-bypass ] && (([ -e /usr/sbin/iptables-nft-save ] && [ "$(iptables-nft-save 2>/dev/null | grep omr-bypass)" = "" ]) || [ "$(iptables-save 2>/dev/null | grep omr-bypass)" = "" ]) && [ "$(pgrep -f omr-bypass)" = "" ]; then
 	_log "Can't find omr-bypass rules, restart omr-bypass..."
 	/etc/init.d/omr-bypass 2>&1 >/dev/null
 	sleep 5
@@ -231,7 +230,7 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFAC
 	fi
 fi
 
-#if [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && ([ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ] || [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ]); then
+#if [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && ([ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ] || (([ -e /usr/sbin/iptables-nft-save ] && [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ]) || [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ])); then
 if [ "$(pgrep -f set_vps_firewall)" = "" ] && [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && [ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ]; then
 	check_server_fw() {
 		[ "$(uci -q get openmptcprouter.$1.set_firewall)" = "1" ] && {

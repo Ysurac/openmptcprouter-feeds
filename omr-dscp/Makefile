@@ -7,7 +7,7 @@
 
 include $(TOPDIR)/rules.mk
 
-PKG_NAME:=omr-bypass
+PKG_NAME:=omr-dscp
 PKG_VERSION:=0.1
 PKG_RELEASE:=1
 
@@ -16,22 +16,22 @@ include $(INCLUDE_DIR)/package.mk
 define Package/$(PKG_NAME)
 SECTION:=net
 CATEGORY:=Network
-DEPENDS:=+curl +dnsmasq-full +sqlite3-cli +iptables +iptables-mod-extra +ipset
-TITLE:=OMR-ByPass
+DEPENDS:= +dnsmasq-full +LINUX_5_4:iptables +LINUX_5_4:iptables-mod-extra +LINUX_5_4:ipset
+TITLE:=OMR-DSCP
 endef
 
 define Package/$(PKG_NAME)-nft
 SECTION:=net
 CATEGORY:=Network
-DEPENDS:=+curl +dnsmasq-full +sqlite3-cli +firewall4
-TITLE:=OMR-ByPass NFT
+DEPENDS:= +dnsmasq-full
+TITLE:=OMR-DSCP nft
 endef
 
 define Package/$(PKG_NAME)/description
 OMR-ByPass
 endef
 
-define Package/$(PKG_NAME)/description
+define Package/$(PKG_NAME)-nft/description
 OMR-ByPass nft support
 endef
 
@@ -40,12 +40,12 @@ endef
 
 define Package/$(PKG_NAME)/install
 	$(CP) ./files/* $(1)/
-	rm -f $(1)/etc/init.d/omr-bypass-nft
+	rm -f $(1)/etc/init.d/omr-dscp-nft
 endef
 
 define Package/$(PKG_NAME)-nft/install
 	$(CP) ./files/* $(1)/
-	mv $(1)/etc/init.d/omr-bypass-nft $(1)/etc/init.d/omr-bypass
+	mv $(1)/etc/init.d/omr-dscp-nft $(1)/etc/init.d/omr-dscp
 endef
 
 $(eval $(call BuildPackage,$(PKG_NAME)))

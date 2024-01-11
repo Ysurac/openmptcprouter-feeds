@@ -59,6 +59,20 @@ define Package/v2ray-extra
   PKGARCH:=all
 endef
 
+define Package/v2ray-config
+  $(call Package/v2ray/template)
+  TITLE+= (init script)
+  DEPENDS:=v2ray-core
+  PKGARCH:=all
+endef
+
+define Package/v2ray-config-nft
+  $(call Package/v2ray/template)
+  TITLE+= (init script with nft)
+  DEPENDS:=v2ray-core
+  PKGARCH:=all
+endef
+
 define Package/v2ray/description
   Project V is a set of network tools that help you to build your own computer network.
   It secures your network connections and thus protects your privacy.
@@ -80,6 +94,18 @@ define Package/v2ray-extra/description
   This includes extra resources for v2ray-core.
 endef
 
+define Package/v2ray-config/description
+  $(call Package/v2ray/description)
+
+  This includes init script
+endef
+
+define Package/v2ray-config-nft/description
+  $(call Package/v2ray/description)
+
+  This includes init script with nftables support
+endef
+
 define Package/v2ray-core/conffiles
 /etc/config/v2ray
 /etc/v2ray/
@@ -92,12 +118,17 @@ define Package/v2ray-core/install
 
 	$(INSTALL_DIR) $(1)/etc/v2ray/
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/release/config/config.json $(1)/etc/v2ray/
+endef
 
+
+define Package/v2ray-config/install
 	$(CP) ./files/* $(1)/
-#	$(INSTALL_DIR) $(1)/etc/config/
-#	$(INSTALL_CONF) $(CURDIR)/files/v2ray.conf $(1)/etc/config/v2ray
-#	$(INSTALL_DIR) $(1)/etc/init.d/
-#	$(INSTALL_BIN) $(CURDIR)/files/v2ray.init $(1)/etc/init.d/v2ray
+	rm $(1)/etc/init.d/v2ray-nft
+endef
+
+define Package/v2ray-config-nft/install
+	$(CP) ./files/* $(1)/
+	mv $(1)/etc/init.d/v2ray-nft $(1)/etc/init.d/v2ray
 endef
 
 define Package/v2ray-example/install
@@ -112,5 +143,7 @@ define Package/v2ray-extra/install
 endef
 
 $(eval $(call BuildPackage,v2ray-core))
+$(eval $(call BuildPackage,v2ray-config))
+$(eval $(call BuildPackage,v2ray-config-nft))
 $(eval $(call BuildPackage,v2ray-example))
 $(eval $(call BuildPackage,v2ray-extra))

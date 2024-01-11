@@ -1,6 +1,6 @@
 include $(TOPDIR)/rules.mk
 
-PKG_NAME:=xray-core
+PKG_NAME:=xray
 PKG_VERSION:=1.8.6
 PKG_RELEASE:=1
 
@@ -19,7 +19,7 @@ GO_PKG:=github.com/XTLS/Xray-core
 include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/openmptcprouter/golang/golang-package.mk
 
-define Package/$(PKG_NAME)
+define Package/$(PKG_NAME)/template
 	SECTION:=Custom
 	CATEGORY:=Extra packages
 	TITLE:=Xray-core
@@ -27,13 +27,35 @@ define Package/$(PKG_NAME)
 	PROVIDES:=xray-core
 endef
 
+define Package/$(PKG_NAME)-core
+	$(call Package/$(PKG_NAME)/template)
+endef
+
+define Package/$(PKG_NAME)-config
+	$(call Package/$(PKG_NAME)/template)
+	TITLE+= (init script)
+endef
+
+define Package/$(PKG_NAME)-config-nft
+	$(call Package/$(PKG_NAME)/template)
+	TITLE+= (init script with nft)
+endef
+
 define Package/$(PKG_NAME)/description
 	Xray-core bare bones binary (compiled without cgo)
 endef
 
+define Package/$(PKG_NAME)-config/description
+	Xray-core init script
+endef
+
+define Package/$(PKG_NAME)-config-nft/description
+	Xray-core init script with nft support
+endef
+
 define Package/$(PKG_NAME)/config
 menu "Xray Configuration"
-	depends on PACKAGE_$(PKG_NAME)
+	depends on PACKAGE_$(PKG_NAME)-core
 
 config PACKAGE_XRAY_ENABLE_GOPROXY_IO
 	bool "Use goproxy.io to speed up module fetching (recommended for some network situations)"
@@ -50,19 +72,25 @@ endif
 MAKE_PATH:=$(GO_PKG_WORK_DIR_NAME)/build/src/$(GO_PKG)
 MAKE_VARS += $(GO_PKG_VARS)
 
-#define Build/Patch
-#	$(CP) $(PKG_BUILD_DIR)/../Xray-core-$(PKG_VERSION)/* $(PKG_BUILD_DIR)
-#	$(Build/Patch/Default)
-#endef
-
 define Build/Compile
 	cd $(PKG_BUILD_DIR); $(GO_PKG_VARS) $(USE_GOPROXY) CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o $(PKG_INSTALL_DIR)/bin/xray ./main; 
 endef
 
-define Package/$(PKG_NAME)/install
+define Package/$(PKG_NAME)-core/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/bin/xray $(1)/usr/bin/xray
-	$(CP) ./files/* $(1)/
 endef
 
-$(eval $(call BuildPackage,$(PKG_NAME)))
+define Package/$(PKG_NAME)-config/install
+	$(CP) ./files/* $(1)/
+	rm -f $(1)/etc/init.d/xray-nft
+endef
+
+define Package/$(PKG_NAME)-config-nft/install
+	$(CP) ./files/* $(1)/
+	mv $(1)/etc/init.d/xray-nft $(1)/etc/init.d/xray
+endef
+
+$(eval $(call BuildPackage,$(PKG_NAME)-core))
+$(eval $(call BuildPackage,$(PKG_NAME)-config))
+$(eval $(call BuildPackage,$(PKG_NAME)-config-nft))

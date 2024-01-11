@@ -178,7 +178,7 @@ _bypass_lan_ip() {
 	config_get enabled $1 enabled
 	[ "$enabled" = "0" ] && return
 	intf=$(echo $intf | sed -e 's/\./_/')
-	[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
+	#[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
 	local intfid="$(uci -q get omr-bypass.$intf.id)"
 
 	[ -z "$intf" ] && intf="all"
@@ -214,17 +214,17 @@ _bypass_dest_port() {
 
 	[ -z "$intf" ] && intf="all"
 	[ -z "$dport" ] && return
-	dport="$(echo $dport | sed 's/-/:/')"
+	dport="$(echo $dport | sed 's/:/-/')"
 	[ -z "$proto" ] && return
 	if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
 		uci -q batch <<-EOF
-			add_list firewall.omr_dst_bypass_${intf}_dstport_tcp.dst_port="$dport"
+			add_list firewall.omr_dst_bypass_${intf}_dstport_tcp.dest_port="$dport"
 			set firewall.omr_dst_bypass_${intf}_dstport_tcp.enabled='1'
 		EOF
 	fi
 	if [ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ]; then
 		uci -q batch <<-EOF
-			add_list firewall.omr_dst_bypass_${intf}_dstport_udp.dst_port="$dport"
+			add_list firewall.omr_dst_bypass_${intf}_dstport_udp.dest_port="$dport"
 			set firewall.omr_dst_bypass_${intf}_dstport_udp.enabled='1'
 		EOF
 	fi
@@ -246,17 +246,17 @@ _bypass_src_port() {
 
 	[ -z "$intf" ] && intf="all"
 	[ -z "$sport" ] && return
-	sport="$(echo $sport | sed 's/-/:/')"
+	sport="$(echo $sport | sed 's/:/-/')"
 	[ -z "$proto" ] && return
 	if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
 		uci -q batch <<-EOF
-			add_list firewall.omr_dst_bypass_${intf}_dstport_tcp.dst_port="$dport"
+			add_list firewall.omr_dst_bypass_${intf}_dstport_tcp.src_port="$sport"
 			set firewall.omr_dst_bypass_${intf}_dstport_tcp.enabled='1'
 		EOF
 	fi
 	if [ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ]; then
 		uci -q batch <<-EOF
-			add_list firewall.omr_dst_bypass_${intf}_dstport_udp.dst_port="$dport"
+			add_list firewall.omr_dst_bypass_${intf}_dstport_udp.src_port="$sport"
 			set firewall.omr_dst_bypass_${intf}_dstport_udp.enabled='1'
 		EOF
 	fi
@@ -513,108 +513,28 @@ _intf_rule_ss_rules() {
 }
 
 _intf_rule_v2ray_rules() {
-	#rule_name=$1
-	#[ "$rule_name" = "ss_rules" ] && rule_name="def"
-	rule_name="def"
-	if [ "$($IPTABLES --wait=40 -t nat -L -n | grep v2r_${rule_name}_dst)" != "" ] && [ "$($IPTABLESSAVE 2>/dev/null | grep v2r_${rule_name}_dst | grep omr_dst_bypass_$intf)" = "" ]; then
-		$IPTABLESRESTORE -w --wait=60 --noflush <<-EOF
-		*nat
-		-I v2r_${rule_name}_dst 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
-		-I v2r_${rule_name}_dst 2 -m mark --mark 0x539$count -j RETURN
-		COMMIT
-		EOF
-	fi
-	if [ "$($IPTABLES --wait=40 -t nat -L -n | grep v2r_${rule_name}_local_out)" != "" ] && [ "$($IPTABLESSAVE 2>/dev/null | grep v2r_${rule_name}_local_out | grep omr_dst_bypass_$intf)" = "" ]; then
-		$IPTABLESRESTORE -w --wait=60 --noflush <<-EOF
-		*nat
-		-I v2r_${rule_name}_local_out 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
-		-I v2r_${rule_name}_local_out 2 -m mark --mark 0x539$count -j RETURN
-		COMMIT
-		EOF
-	fi
-	if [ "$($IPTABLES --wait=40 -t nat -L -n | grep v2r_${rule_name}_pre_src)" != "" ] && [ "$($IPTABLESSAVE 2</dev/null | grep v2r_${rule_name}_pre_src | grep omr_dst_bypass_$intf)" = "" ]; then
-		$IPTABLESRESTORE -w --wait=60 --noflush <<-EOF
-		*nat
-		-I v2r_${rule_name}_pre_src 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
-		-I v2r_${rule_name}_pre_src 2 -m mark --mark 0x539$count -j RETURN
-		COMMIT
-		EOF
-	fi
-
-
+	cat >> /etc/firewall.omr-bypass <<-EOF
+		nft insert rule inet fw4 v2r_rules_dst_tcp ip daddr @omr_dst_bypass_${intf}_4 accept
+		nft insert rule inet fw4 v2r_rules_local_out ip daddr @omr_dst_bypass_${intf}_4 accept
+	EOF
 	if [ "$disableipv6" = "0" ]; then
-		if [ "$($IP6TABLESSAVE | grep omr-bypass6 | grep omr6_dst_bypass_$intf)" = "" ]; then
-			$IP6TABLESRESTORE -w --wait=60 --noflush <<-EOF
-			*mangle
-			-I omr-bypass6 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
-			COMMIT
-			EOF
-		fi
-		if [ "$($IP6TABLES --wait=40 -t nat -L -n | grep v2r6_${rule_name}_pre_src)" != "" ] && [ "$($IP6TABLESSAVE 2>/dev/null | grep v2r6 | grep omr6_dst_bypass_$intf)" = "" ]; then
-			$IP6TABLESRESTORE -w --wait=60 --noflush <<-EOF
-			*nat
-			-I v2r6_${rule_name}_dst 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
-			-I v2r6_${rule_name}_dst 2 -m mark --mark 0x6539$count -j RETURN
-			-I v2r6_${rule_name}_local_out 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
-			-I v2r6_${rule_name}_local_out 2 -m mark --mark 0x6539$count -j RETURN
-			-I v2r6_${rule_name}_pre_src 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
-			-I v2r6_${rule_name}_pre_src 2 -m mark --mark 0x6539$count -j RETURN
-			COMMIT
-			EOF
-		fi
+		cat >> /etc/firewall.omr-bypass <<-EOF
+			nft insert rule inet fw4 v2r_rules_dst_tcp ip6 daddr @omr_dst_bypass_${intf}_6 accept
+			nft insert rule inet fw4 v2r_rules_local_out ip6 daddr @omr_dst_bypass_${intf}_6 accept
+		EOF
 	fi
 }
 
 _intf_rule_xray_rules() {
-	#rule_name=$1
-	#[ "$rule_name" = "ss_rules" ] && rule_name="def"
-	rule_name="def"
-	if [ "$($IPTABLES --wait=40 -t nat -L -n | grep xr_${rule_name}_dst)" != "" ] && [ "$($IPTABLESSAVE 2>/dev/null | grep xr_${rule_name}_dst | grep omr_dst_bypass_$intf)" = "" ]; then
-		$IPTABLESRESTORE -w --wait=60 --noflush <<-EOF
-		*nat
-		-I xr_${rule_name}_dst 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
-		-I xr_${rule_name}_dst 2 -m mark --mark 0x539$count -j RETURN
-		COMMIT
-		EOF
-	fi
-	if [ "$($IPTABLES --wait=40 -t nat -L -n | grep xr_${rule_name}_local_out)" != "" ] && [ "$($IPTABLESSAVE 2>/dev/null | grep xr_${rule_name}_local_out | grep omr_dst_bypass_$intf)" = "" ]; then
-		$IPTABLESRESTORE -w --wait=60 --noflush <<-EOF
-		*nat
-		-I xr_${rule_name}_local_out 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
-		-I xr_${rule_name}_local_out 2 -m mark --mark 0x539$count -j RETURN
-		COMMIT
-		EOF
-	fi
-	if [ "$($IPTABLES --wait=40 -t nat -L -n | grep xr_${rule_name}_pre_src)" != "" ] && [ "$($IPTABLESSAVE 2</dev/null | grep xr_${rule_name}_pre_src | grep omr_dst_bypass_$intf)" = "" ]; then
-		$IPTABLESRESTORE -w --wait=60 --noflush <<-EOF
-		*nat
-		-I xr_${rule_name}_pre_src 1 -m set --match-set omr_dst_bypass_$intf dst -j MARK --set-mark 0x539$count
-		-I xr_${rule_name}_pre_src 2 -m mark --mark 0x539$count -j RETURN
-		COMMIT
-		EOF
-	fi
-
-
+	cat >> /etc/firewall.omr-bypass <<-EOF
+		nft insert rule inet fw4 xr_rules_dst_tcp ip daddr @omr_dst_bypass_${intf}_4 accept
+		nft insert rule inet fw4 xr_rules_local_out ip daddr @omr_dst_bypass_${intf}_4 accept
+	EOF
 	if [ "$disableipv6" = "0" ]; then
-		if [ "$($IP6TABLESSAVE | grep omr-bypass6 | grep omr6_dst_bypass_$intf)" = "" ]; then
-			$IP6TABLESRESTORE -w --wait=60 --noflush <<-EOF
-			*mangle
-			-I omr-bypass6 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
-			COMMIT
-			EOF
-		fi
-		if [ "$($IP6TABLES --wait=40 -t nat -L -n | grep xr6_${rule_name}_pre_src)" != "" ] && [ "$($IP6TABLESSAVE 2>/dev/null | grep xr6 | grep omr6_dst_bypass_$intf)" = "" ]; then
-			$IP6TABLESRESTORE -w --wait=60 --noflush <<-EOF
-			*nat
-			-I xr6_${rule_name}_dst 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
-			-I xr6_${rule_name}_dst 2 -m mark --mark 0x6539$count -j RETURN
-			-I xr6_${rule_name}_local_out 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
-			-I xr6_${rule_name}_local_out 2 -m mark --mark 0x6539$count -j RETURN
-			-I xr6_${rule_name}_pre_src 1 -m set --match-set omr6_dst_bypass_$intf dst -j MARK --set-mark 0x6539$count
-			-I xr6_${rule_name}_pre_src 2 -m mark --mark 0x6539$count -j RETURN
-			COMMIT
-			EOF
-		fi
+		cat >> /etc/firewall.omr-bypass <<-EOF
+			nft insert rule inet fw4 xr_rules_dst_tcp ip6 daddr @omr_dst_bypass_${intf}_6 accept
+			nft insert rule inet fw4 xr_rules_local_out ip6 daddr @omr_dst_bypass_${intf}_6 accept
+		EOF
 	fi
 }
 
@@ -643,7 +563,8 @@ _intf_rule() {
 		#echo "$intf ip set dhcp"
 		uci batch <<-EOF
 			set dhcp.omr_dst_bypass_$intf=ipset
-			set dhcp.omr_dst_bypass_$intf.name="omr_dst_bypass_${intf}_4,omr_dst_bypass_${intf}_6"
+			add_list dhcp.omr_dst_bypass_$intf.name="omr_dst_bypass_${intf}_4"
+			add_list dhcp.omr_dst_bypass_$intf.name="omr_dst_bypass_${intf}_6"
 			commit dhcp
 		EOF
 		#echo "firewall omr_dst_bypass ipset"
@@ -815,80 +736,28 @@ _ss_rules_config() {
 }
 
 _v2ray_rules_config() {
-	#rule_name=$1
-	#[ "$rule_name" = "ss_rules" ] && rule_name="def"
-	rule_name="def"
-	if [ "$($IPTABLES --wait=40 -t nat -L -n | grep v2r_${rule_name}_pre_src)" != "" ] && [ "$($IPTABLES --wait=40 -t nat -L -n | grep omr_dst_bypass_all)" = "" ]; then
-		$IPTABLESRESTORE -w --wait=60 --noflush <<-EOF
-		*nat
-		-I v2r_${rule_name}_dst 1 -m set --match-set omr_dst_bypass_all dst -j  MARK --set-mark 0x539
-		-I v2r_${rule_name}_dst 2 -m mark --mark 0x539 -j RETURN
-		-I v2r_${rule_name}_local_out 1 -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
-		-I v2r_${rule_name}_local_out 2 -m mark --mark 0x539 -j RETURN
-		-I v2r_${rule_name}_pre_src 1 -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
-		-I v2r_${rule_name}_pre_src 2 -m mark --mark 0x539 -j RETURN
-		COMMIT
-		EOF
-	fi
+	cat >> /etc/firewall.omr-bypass <<-EOF
+		nft insert rule inet fw4 v2r_rules_dst_tcp ip daddr @omr_dst_bypass_all_4 accept
+		nft insert rule inet fw4 v2r_rules_local_out ip daddr @omr_dst_bypass_all_4 accept
+	EOF
 	if [ "$disableipv6" = "0" ]; then
-		if [ "$($IP6TABLES --wait=40 -t mangle -L -n | grep 'match-set omr6_dst_bypass_all dst MARK set')" = "" ]; then
-			$IP6TABLESRESTORE -w --wait=60 --noflush <<-EOF
-			*mangle
-			-A omr-bypass6 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
-			COMMIT
-			EOF
-		fi
-		if [ "$($IP6TABLES --wait=40 -t nat -L -n | grep v2r6_${rule_name}_pre_src)" != "" ] && [ "$($IP6TABLES --wait=40 -t nat -L -n | grep omr6_dst_bypass_all)" = "" ]; then
-			$IP6TABLESRESTORE -w --wait=60 --noflush <<-EOF
-			*nat
-			-I v2r6_${rule_name}_dst 1 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
-			-I v2r6_${rule_name}_dst 1 -m mark --mark 0x6539 -j RETURN
-			-I v2r6_${rule_name}_local_out 1 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
-			-I v2r6_${rule_name}_local_out 2 -m mark --mark 0x6539 -j RETURN
-			-I v2r6_${rule_name}_pre_src 1 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
-			-I v2r6_${rule_name}_pre_src 2 -m mark --mark 0x6539 -j RETURN
-			COMMIT
-			EOF
-		fi
+		cat >> /etc/firewall.omr-bypass <<-EOF
+			nft insert rule inet fw4 v2r_rules_dst_tcp ip6 daddr @omr_dst_bypass_all_6 accept
+			nft insert rule inet fw4 v2r_rules_local_out ip6 daddr @omr_dst_bypass_all_6 accept
+		EOF
 	fi
 }
 
 _xray_rules_config() {
-	#rule_name=$1
-	#[ "$rule_name" = "ss_rules" ] && rule_name="def"
-	rule_name="def"
-	if [ "$($IPTABLES --wait=40 -t nat -L -n | grep xr_${rule_name}_pre_src)" != "" ] && [ "$($IPTABLES --wait=40 -t nat -L -n | grep omr_dst_bypass_all)" = "" ]; then
-		$IPTABLESRESTORE -w --wait=60 --noflush <<-EOF
-		*nat
-		-I xr_${rule_name}_dst 1 -m set --match-set omr_dst_bypass_all dst -j  MARK --set-mark 0x539
-		-I xr_${rule_name}_dst 2 -m mark --mark 0x539 -j RETURN
-		-I xr_${rule_name}_local_out 1 -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
-		-I xr_${rule_name}_local_out 2 -m mark --mark 0x539 -j RETURN
-		-I xr_${rule_name}_pre_src 1 -m set --match-set omr_dst_bypass_all dst -j MARK --set-mark 0x539
-		-I xr_${rule_name}_pre_src 2 -m mark --mark 0x539 -j RETURN
-		COMMIT
-		EOF
-	fi
+	cat >> /etc/firewall.omr-bypass <<-EOF
+		nft insert rule inet fw4 xr_rules_dst_tcp ip daddr @omr_dst_bypass_all_4 accept
+		nft insert rule inet fw4 xr_rules_local_out ip daddr @omr_dst_bypass_all_4 accept
+	EOF
 	if [ "$disableipv6" = "0" ]; then
-		if [ "$($IP6TABLES --wait=40 -t mangle -L -n | grep 'match-set omr6_dst_bypass_all dst MARK set')" = "" ]; then
-			$IP6TABLESRESTORE -w --wait=60 --noflush <<-EOF
-			*mangle
-			-A omr-bypass6 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
-			COMMIT
-			EOF
-		fi
-		if [ "$($IP6TABLES --wait=40 -t nat -L -n | grep xr6_${rule_name}_pre_src)" != "" ] && [ "$($IP6TABLES --wait=40 -t nat -L -n | grep omr6_dst_bypass_all)" = "" ]; then
-			$IP6TABLESRESTORE -w --wait=60 --noflush <<-EOF
-			*nat
-			-I xr6_${rule_name}_dst 1 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
-			-I xr6_${rule_name}_dst 1 -m mark --mark 0x6539 -j RETURN
-			-I xr6_${rule_name}_local_out 1 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
-			-I xr6_${rule_name}_local_out 2 -m mark --mark 0x6539 -j RETURN
-			-I xr6_${rule_name}_pre_src 1 -m set --match-set omr6_dst_bypass_all dst -j MARK --set-mark 0x6539
-			-I xr6_${rule_name}_pre_src 2 -m mark --mark 0x6539 -j RETURN
-			COMMIT
-			EOF
-		fi
+		cat >> /etc/firewall.omr-bypass <<-EOF
+			nft insert rule inet fw4 xr_rules_dst_tcp ip6 daddr @omr_dst_bypass_all_6 accept
+			nft insert rule inet fw4 xr_rules_local_out ip6 daddr @omr_dst_bypass_all_6 accept
+		EOF
 	fi
 }
 
@@ -899,7 +768,7 @@ _delete_dhcp_ipset() {
 }
 
 _delete_firewall_rules() {
-	[ -n "$(echo $1 | grep omr_dst_bypass)" ] && {
+	([ -n "$(echo $1 | grep omr_dst_bypass)" ] || [ -n "$(echo $1 | grep omr6_dst_bypass)" ]) && {
 		uci -q delete firewall.$1
 	}
 }
@@ -947,6 +816,7 @@ start_service() {
 	config_load network
 	config_foreach _intf_rule interface
 	_intf_rule all
+	_intf_rule srv_vpn1
 	local ndpi_rules=""
 	echo "bypass server"
 	if [ "$(uci -q get openmptcprouter.settings.bypass_servers)" = "1" ]; then
@@ -978,8 +848,8 @@ start_service() {
 	([ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] || [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ]) && _ss_rules_config
 	#config_load shadowsocks-rust
 	#config_foreach _ss_rules_config ss_rules
-	_v2ray_rules_config
-	_xray_rules_config
+	[ "$(uci -q get v2ray.main.enabled)" = "1" ] && _v2ray_rules_config
+	[ "$(uci -q get xray.main.enabled)" = "1" ] && _xray_rules_config
 
 	# NDPI Netfilter is not available for nftables
 	$IPTABLESSAVE --counters 2>/dev/null | grep -v omr-bypass-dpi | $IPTABLESRESTORE -w --counters 2>/dev/null
@@ -1024,18 +894,11 @@ start_service() {
 }
 
 stop_service() {
+	# Rules for ndpi
 	$IPTABLESSAVE --counters 2>/dev/null | grep -v omr-bypass | $IPTABLESRESTORE -w --counters 2>/dev/null
-#	$IPTABLESSAVE --counters 2>/dev/null | grep -v omr_dst | $IPTABLESRESTORE -w --counters 2>/dev/null
 	$IP6TABLESSAVE --counters 2>/dev/null | grep -v omr-bypass6 | $IP6TABLESRESTORE -w --counters 2>/dev/null
-#	$IP6TABLESSAVE --counters 2>/dev/null | grep -v omr6_dst | $IP6TABLESRESTORE -w --counters 2>/dev/null
-	#for setname in $(ipset -n list | grep "omr_"); do
-	#	ipset -q destroy "$setname" 2>/dev/null || true
-	#done
-	#for setname in $(ipset list | awk '/Name: bypass_/ {print $2}'); do
-	#	ipset -q destroy "$setname" 2>/dev/null || true
-	#done
-	# disable all rules ?
-	uci -q set firewall.omr-bypass.enabled='0'
+	# disable all rules
+	uci -q set firewall.omr_bypass.enabled='0'
 	config_load dhcp
 	config_foreach _delete_dhcp_ipset ipset
 	uci -q commit dhcp
@@ -1043,6 +906,7 @@ stop_service() {
 	config_foreach _delete_firewall_rules rule
 	config_foreach _delete_firewall_rules ipset
 	uci -q commit firewall
+	fw4 restart
 	exit 0
 }
 
@@ -1056,7 +920,7 @@ reload_service() {
 }
 
 reload_rules() {
-	[ "$( ipset -n list | grep omr_ )" = "" ] && return 0
+	#[ "$( ipset -n list | grep omr_ )" = "" ] && return 0
 	RELOAD=1
 	start
 }
