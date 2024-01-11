@@ -1,0 +1,25 @@
+#!/bin/sh
+
+bypassipvs4s=$(ipset -o save list omr_dst_bypass_srv_vpn1_4 2>/dev/null)
+[ -z "$bypassipvs4s" ] && {
+	ipv4set=$(nft -j list set inet fw4 "omr_dst_bypass_srv_vpn1_4" 2>/dev/null)
+	[ -n "$ipv4set" ] && bypassipv4s=$(echo "$ipv4set" | jsonfilter -e @.nftables[1].set.elem[*].prefix | awk '{gsub(/"/,"",$3);gsub(/,/,"/",$3); print $3 $5}')
+}
+bypassipvs6s=$(ipset -o save list omr_dst_bypass_srv_vpn1_6 2>/dev/null)
+[ -z "$bypassipvs6s" ] && {
+	ipv6set=$(nft -j list set inet fw4 "omr_dst_bypass_srv_vpn1_6" 2>/dev/null)
+	[ -n "$ipv6set" ] && bypassipv6s=$(echo "$ipv6set" | jsonfilter -e @.nftables[1].set.elem[*].prefix | awk '{gsub(/"/,"",$3);gsub(/,/,"/",$3); print $3 $5}')
+}
+#"
+vpnipv4md5=$(echo "${bypassipv4s}" | md5sum | awk '{print $1}' | tr -d "\n")
+vpnipv6md5=$(echo "${bypassipv6s}" | md5sum | awk '{print $1}' | tr -d "\n")
+if [ "$vpnipv4md5" != "$(uci -q get omr-bypass.global.vpn_ipv4_md5)" ] || [ "$vpnipv6md5" != "$(uci -q get omr-bypass.global.vpn_ipv6_md5)" ]; then
+	_log "Set bypass ip on servers"
+	/etc/init.d/openmptcprouter-vps set_bypass_ips
+	uci -q batch <<-EOF >/dev/null
+		set omr-bypass.global=global
+		set omr-bypass.global.vpn_ipv4_md5=${vpnipv4md5}
+		set omr-bypass.global.vpn_ipv6_md5=${vpnipv6md5}
+		commit omr-bypass
+	EOF
+fi

@@ -37,6 +37,29 @@ _check_server() {
 	done
 }
 
+_check_server_intf() {
+	local host=$1
+	local port=$2
+	local k=0
+	for intf in $(multipath | awk '/default/ {print $1}'); do
+		while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
+			ret=$(curl \
+			    --max-time "$OMR_TRACKER_TIMEOUT" \
+			    -s \
+			    -k \
+			    --interface $intf
+			    "https://${host}:${port}/"
+			)
+			[ -n "$ret" ] && {
+				server_ping=true
+				return
+			}
+			k=$((k+1))
+			sleep "${intervaltries}"
+		done
+	done
+}
+
 _disable_current() {
 	local serv=$1
 	config_set $serv current "0"
@@ -80,7 +103,8 @@ _check_master() {
 			fi
 			[ -z "$ip" ] && return
 			#_ping_server $ip
-			_check_server $ip $port
+			#_check_server $ip $port
+			_check_server_intf $ip $port
 			if [ "$server_ping" = true ]; then
 				if [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ]; then
 					logger -t "OMR-Tracker-Server" "Master server ${name} up ($ip), set it back"
@@ -221,7 +245,8 @@ _check_backup() {
 				[ -n "$ip6resolve" ] && ip="$ip6resolve"
 			fi
 			#_ping_server $ip
-			_check_server $ip $port
+			#_check_server $ip $port
+			_check_server_intf $ip $port
 			#[ "$server_ping" = true ] && [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" = "$ip" ] && break
 			if [ "$server_ping" = true ]; then
 				if [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ]; then

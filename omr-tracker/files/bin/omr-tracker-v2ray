@@ -4,8 +4,8 @@
 name=$0
 basename="$(basename $0)"
 
-if [ -f /usr/sbin/iptables-legacy ]; then
-	IPTABLES="/usr/sbin/iptables-legacy"
+if [ -e /usr/sbin/iptables-nft ]; then
+	IPTABLES="/usr/sbin/iptables-nft"
 else
 	IPTABLES="/usr/sbin/iptables"
 fi
@@ -100,7 +100,7 @@ while true; do
 			script_alert_up="$(uci -q get omr-tracker.proxy.script_alert_up)"
 			[ -n "$script_alert_up" ] && eval $script_alert_up
 		}
-		if [ -z "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep ^v2r)" ]; then
+		if [ -z "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep ^v2r)" ] && [ -z "$(nft list ruleset 2>/dev/null | grep 'chain v2r')" ]; then
 			_log "Reload V2Ray rules"
 			/etc/init.d/v2ray rules_up 2> /dev/null
 			_get_ip
@@ -111,7 +111,7 @@ while true; do
 		last=$((last + 1 ))
 		[ -z "$nocontact" ] && nocontact="$host" || nocontact="$nocontact, $host"
 		[ "${last}" -ge "${retry}" ] && {
-			if [ -n "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep ^v2r)" ]; then
+			if [ -n "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep ^v2r)" ] || [ -n "$(nft list ruleset 2>/dev/null | grep 'chain v2r')" ]; then
 				_log "V2Ray is down (can't contact via http ${nocontact})"
 				OMR_TRACKER_STATUS_MSG="V2Ray is down (can't contact via http ${nocontact})"
 				uci -q set openmptcprouter.omr.v2ray="down"
