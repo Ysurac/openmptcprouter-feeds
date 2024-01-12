@@ -87,7 +87,7 @@ MY_DEPENDS := \
     (TARGET_x86||TARGET_x86_64):kmod-mlx4-core \
     !(TARGET_ips40xx||TARGET_ramips):iptables-mod-ndpi !(TARGET_ips40xx||TARGET_ramips):kmod-ipt-ndpi libip4tc libip6tc \
     xray-core LINUX_5_4:xray-config !LINUX_5_4:xray-config-nft shadowsocks-rust-sslocal shadowsocks-rust-ssservice LINUX_5_4:shadowsocks-rust-config !LINUX_5_4:shadowsocks-rust-config-nft luci-app-shadowsocks-rust (LINUX_5_4&&(TARGET_x86_64||aarch64)):kmod-tcp-bbr2 kmod-ovpn-dco-v2 \
-    (TARGET_x86||TARGET_x86_64):luci-app-keepalived luci-proto-external
+    (TARGET_x86||TARGET_x86_64):luci-app-keepalived luci-proto-external omr-schedule
 
 
 #    !TARGET_mvebu:kmod-usb-net-smsc75xx
