@@ -724,6 +724,7 @@ _bypass_omr_server() {
 
 _ss_rules_config() {
 	cat >> /etc/firewall.omr-bypass <<-EOF
+		[ -z "\$(nft list ruleset | grep ss_rules)" ] && exit 0
 		nft insert rule inet fw4 ss_rules_dst_tcp ip daddr @omr_dst_bypass_all_4 accept
 		nft insert rule inet fw4 ss_rules_local_out ip daddr @omr_dst_bypass_all_4 accept
 	EOF
@@ -737,6 +738,7 @@ _ss_rules_config() {
 
 _v2ray_rules_config() {
 	cat >> /etc/firewall.omr-bypass <<-EOF
+		[ -z "\$(nft list ruleset | grep v2r_rules)" ] && exit 0
 		nft insert rule inet fw4 v2r_rules_dst_tcp ip daddr @omr_dst_bypass_all_4 accept
 		nft insert rule inet fw4 v2r_rules_local_out ip daddr @omr_dst_bypass_all_4 accept
 	EOF
@@ -750,6 +752,7 @@ _v2ray_rules_config() {
 
 _xray_rules_config() {
 	cat >> /etc/firewall.omr-bypass <<-EOF
+		[ -z "\$(nft list ruleset | grep xr_rules)" ] && exit 0
 		nft insert rule inet fw4 xr_rules_dst_tcp ip daddr @omr_dst_bypass_all_4 accept
 		nft insert rule inet fw4 xr_rules_local_out ip daddr @omr_dst_bypass_all_4 accept
 	EOF
@@ -798,7 +801,7 @@ start_service() {
 	}
 	disableipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
 	#noipv6="$(uci -q get omr-bypass.global.noipv6)"
-
+	rm -f /etc/firewall.omr-bypass
 	cat > /etc/firewall.omr-bypass <<-EOF
 	#!/bin/sh
 	#nft insert rule inet fw4 ss_rules_dst_tcp ip daddr @omr_dst_bypass_all accept
@@ -916,11 +919,13 @@ service_triggers() {
 
 reload_service() {
 	RELOAD=1
+	stop
 	start
 }
 
 reload_rules() {
 	#[ "$( ipset -n list | grep omr_ )" = "" ] && return 0
 	RELOAD=1
+	stop
 	start
 }
