@@ -16,34 +16,54 @@
 . /lib/functions/network.sh
 
 _validate_section() {
-	local tmp_hosts=$hosts tmp_hosts6=$hosts6 tmp_timeout=$timeout tmp_count=$count tmp_tries=$tries
-	local tmp_interval=$interval tmp_interval_tries=$interval_tries tmp_options=$options tmp_type=$type tmp_enabled=$enabled tmp_wait_test=$wait_test tmp_server_http_test=$server_http_test
+	local tmp_hosts=$hosts tmp_hosts6=$hosts6 tmp_timeout=$timeout tmp_count=$count tmp_tries=$tries tmp_size=$size tmp_max_ttl=$max_ttl tmp_failure_loss=$failure_loss tmp_failure_latency=$failure_latency tmp_recovery_loss=$recovery_loss tmp_recovery_latency=$recovery_latency
+	local tmp_interval=$interval tmp_interval_tries=$interval_tries tmp_options=$options tmp_type=$type tmp_enabled=$enabled tmp_wait_test=$wait_test tmp_server_http_test=$server_http_test tmp_check_quality=$check_quality tmp_failure_interval=$failure_interval tmp_tries_up=$tries_up tmp_family=$family
 
 	uci_validate_section omr-tracker "$1" "$2" \
 		'hosts:list(host)'  \
 		'hosts6:list(host)'  \
 		'timeout:uinteger'  \
+		'size:uinteger'  \
+		'max_ttl:uinteger'  \
+		'failure_loss:uinteger'  \
+		'failure_latency:uinteger'  \
+		'recovery_loss:uinteger'  \
+		'recovery_latency:uinteger'  \
+		'check_quality:bool:0' \
 		'count:uinteger'  \
 		'tries:uinteger'    \
+		'tries_up:uinteger'    \
 		'interval:uinteger' \
 		'interval_tries:uinteger' \
+		'failure_interval:uinteger' \
 		'wait_test:uinteger' \
 		'type:string:undef'  \
 		'enabled:bool:1'    \
 		'server_http_test:bool:0'    \
+		'family:string'   \
 		'options:string'
 
 	[ -z "$hosts"    ] && hosts=$tmp_hosts
 	[ -z "$hosts6"    ] && hosts6=$tmp_hosts6
 	[ -z "$timeout"  ] && timeout=$tmp_timeout
 	[ -z "$count"  ] && count=$tmp_count
+	[ -z "$size"  ] && size=$tmp_size
+	[ -z "$failure_loss"  ] && failure_loss=$tmp_failure_loss
+	[ -z "$failure_latency"  ] && failure_latency=$tmp_failure_latency
+	[ -z "$failure_interval"  ] && failure_interval=$tmp_failure_interval
+	[ -z "$recovery_loss"  ] && recovery_loss=$tmp_recovery_loss
+	[ -z "$recovery_latency"  ] && recovery_latency=$tmp_recovery_latency
+	[ -z "$check_quality"  ] && check_quality=$tmp_check_quality
+	[ -z "$max_ttl"  ] && max_ttl=$tmp_max_ttl
 	[ -z "$tries"    ] && tries=$tmp_tries
+	[ -z "$tries_up"    ] && tries_up=$tmp_tries_up
 	[ -z "$interval" ] && interval=$tmp_interval
 	[ -z "$interval_tries" ] && interval_tries=$tmp_interval_tries
 	[ -z "$wait_test" ] && wait_test=$tmp_wait_test
 	[ -z "$options"  ] && options=$tmp_options
 	[ "$type" = "undef" ] && type=${tmp_type:-ping}
 	[ -z "$server_http_test"  ] && server_http_test=$tmp_server_http_test
+	[ -z "$family"  ] && family=$tmp_family
 	[ -z "$enabled"  ] && enabled=$tmp_enabled
 }
 
@@ -52,7 +72,7 @@ _launch_tracker() {
 		loopback|lan*|if0*) return;;
 	esac
 	[ -z "$1" ] && return
-	local hosts hosts6 timeout count tries interval interval_tries options type enabled wait_test ipv6 proto server_http_test
+	local hosts hosts6 timeout count tries tries_up interval interval_tries options type enabled wait_test ipv6 proto server_http_test size max_ttl failure_loss failure_interval failure_latency recovery_loss recovery_latency family
 	_validate_section "defaults" "defaults"
 	_validate_section "interface" "$1"
 
@@ -80,6 +100,11 @@ _launch_tracker() {
 	#[ "${ifstatus}" = "false" ] && [ -z "${ifdevice}" ] && return
 	[ -z "${interval_tries}" ] && interval_tries=1
 	[ -z "${count}" ] && count=2
+	[ -z "${max_ttl}" ] && max_ttl=60
+	[ -z "${size}" ] && size=56
+	[ -z "${check_quality}" ] && check_quality=0
+	[ -z "${tries}" ] && tries=5
+	[ -z "${tries_up}" ] && tries_up=${tries}
 
 	procd_open_instance
 	# shellcheck disable=SC2086
@@ -87,14 +112,24 @@ _launch_tracker() {
 	procd_append_param env "OMR_TRACKER_HOSTS=$hosts"
 	procd_append_param env "OMR_TRACKER_HOSTS6=$hosts6"
 	procd_append_param env "OMR_TRACKER_TIMEOUT=$timeout"
+	procd_append_param env "OMR_TRACKER_SIZE=$size"
+	procd_append_param env "OMR_TRACKER_CHECK_QUALITY=$check_quality"
+	procd_append_param env "OMR_TRACKER_MAX_TTL=$max_ttl"
+	procd_append_param env "OMR_TRACKER_FAILURE_LOSS=$failure_loss"
+	procd_append_param env "OMR_TRACKER_FAILURE_LATENCY=$failure_latency"
+	procd_append_param env "OMR_TRACKER_RECOVERY_LOSS=$recovery_loss"
+	procd_append_param env "OMR_TRACKER_RECOVERY_LATENCY=$recovery_latency"
 	procd_append_param env "OMR_TRACKER_COUNT=$count"
 	procd_append_param env "OMR_TRACKER_TRIES=$tries"
+	procd_append_param env "OMR_TRACKER_TRIES_UP=$tries_up"
 	procd_append_param env "OMR_TRACKER_INTERVAL=$interval"
+	procd_append_param env "OMR_TRACKER_FAILURE_INTERVAL=$failure_interval"
 	procd_append_param env "OMR_TRACKER_INTERVAL_TRIES=$interval_tries"
 	procd_append_param env "OMR_TRACKER_TABLE=$ip4table"
 	procd_append_param env "OMR_TRACKER_DEVICE=$ifname"
 	procd_append_param env "OMR_TRACKER_DEVICE_GATEWAY=$gateway"
 	procd_append_param env "OMR_TRACKER_TYPE=$type"
+	procd_append_param env "OMR_TRACKER_FAMILY=$family"
 	procd_append_param env "OMR_TRACKER_IPV6=$ipv6"
 	procd_append_param env "OMR_TRACKER_PROTO=$proto"
 	procd_append_param env "OMR_TRACKER_WAIT_TEST=$wait_test"
