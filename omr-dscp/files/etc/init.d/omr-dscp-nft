@@ -1,0 +1,187 @@
+#!/bin/sh /etc/rc.common
+# vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
+
+# shellcheck disable=SC2034
+START=90
+# shellcheck disable=SC2034
+STOP=10
+# shellcheck disable=SC2034
+USE_PROCD=1
+
+# shellcheck disable=SC1091
+. /lib/functions.sh
+
+# Get the lan interface name
+lan_device=
+config_load network
+config_get lan_device lan ifname
+
+#config_load dscp
+
+_add_dscp_domain() {
+	domain=""; config_get domain "$1" name ""
+	class=""; config_get class "$1" class ""
+	[ -n "$domain" ] && [ -n "$class" ] && [ -z "$(uci -q get dhcp.omr_dscp-$class.domain | grep $domain)" ] && {
+		uci -q batch <<-EOF
+			add_list dhcp.omr_dscp_$class.domain="$domain"
+			commit dhcp
+		EOF
+	}
+}
+
+_add_dscp_domains_rules() {
+	for class in cs0 cs1 cs2 cs3 cs4 cs5 cs6 cs7 ef; do
+		uci -q batch <<-EOF
+			set dhcp.omr_dscp_${class}=ipset
+			add_list dhcp.omr_dscp_${class}.name="omr_dscp_${class}_4"
+			add_list dhcp.omr_dscp_${class}.name="omr_dscp_${class}_6"
+			commit dhcp
+		EOF
+		uci batch <<-EOF
+			set firewall.omr_dscp_${class}_4=ipset
+			set firewall.omr_dscp_${class}_4.name="omr_dscp_${class}_4"
+			set firewall.omr_dscp_${class}_4.match='dest_ip'
+			set firewall.omr_dscp_${class}_6=ipset
+			set firewall.omr_dscp_${class}_6.name="omr_dscp_${class}_6"
+			set firewall.omr_dscp_${class}_6.match='dest_ip'
+		EOF
+		uci -q batch <<-EOF
+			set firewall.omr_dscp_${class}=rule
+			set firewall.omr_dscp_${class}.ipset="omr_dscp_${class}_4"
+			set firewall.omr_dscp_${class}.set_dscp="$(echo ${class} | tr '[a-z'] '[A-Z]')"
+			set firewall.omr_dscp_${class}.target='DSCP'
+			set firewall.omr_dscp_${class}.src='lan'
+			set firewall.omr_dscp_${class}.dest='*'
+			set firewall.omr6_dscp_${class}=rule
+			set firewall.omr6_dscp_${class}.ipset="omr_dscp_${class}_6"
+			set firewall.omr6_dscp_${class}.target='DSCP'
+			set firewall.omr6_dscp_${class}.set_dscp="$(echo ${class} | tr '[a-z'] '[A-Z]')"
+			set firewall.omr6_dscp_${class}.src='lan'
+			set firewall.omr6_dscp_${class}.dest='*'
+			commit firewall
+		EOF
+	done
+}
+
+_add_dscp_rules() {
+	proto=""     ; config_get proto "$1" proto all
+	src_ip=""    ; config_get src_ip "$1" src_ip 0.0.0.0/0
+	src_port=""  ; config_get src_port "$1" src_port 0:65535
+	dest_ip=""   ; config_get dest_ip "$1" dest_ip 0.0.0.0/0
+	dest_port="" ; config_get dest_port "$1" dest_port 0:65535
+	class=""     ; config_get class "$1" class
+	direction="" ; config_get direction "$1" direction "upload"
+	comment=""   ; config_get comment "$1" comment "-"
+
+	src_port="$(echo $src_port | sed 's/:/-/g')"
+	dest_port="$(echo $dest_port | sed 's/:/-/g')"
+	count=$((count + 1))
+	[ "$proto" = "all" ] && proto="tcp udp"
+	case "$direction" in
+		upload|both)
+			# Apply the rule locally
+			uci -q batch <<-EOF
+				set firewall.omr_dscp_rule$count=rule
+				set firewall.omr_dscp_rule$count.name="omr_dscp_rule$count"
+				set firewall.omr_dscp_rule$count.target="DSCP"
+				set firewall.omr_dscp_rule$count.set_dscp="$(echo ${class} | tr '[a-z'] '[A-Z]')"
+				set firewall.omr_dscp_rule$count.src="lan"
+				set firewall.omr_dscp_rule$count.src_ip="$src_ip"
+				set firewall.omr_dscp_rule$count.dest_ip="$dest_ip"
+				set firewall.omr_dscp_rule$count.proto="$proto"
+			EOF
+			src_port="$(echo $src_port | sed 's/,/ /g')"
+			dest_port="$(echo $dest_port | sed 's/,/ /g')"
+			for port in $src_port; do
+				uci -q set firewall.omr_dscp_rule$count.src_port="$src_port"
+			done
+			for port in $src_port; do
+				uci -q set firewall.omr_dscp_rule$count.dest_port="$dest_port"
+			done
+			#_add_dscp_rule -m multiport --sports "$src_port" -m multiport --dports "$dest_port"
+			;;
+		download|both)
+			;;
+	esac
+	uci -q commit firewall
+
+}
+
+
+_add_fwmark_chain() {
+	_ipt4 -N dscp_mark
+	_ipt4 -A PREROUTING -i "$lan_device" -j dscp_mark
+	_ipt4 -A POSTROUTING -j dscp_mark
+	_ipt6 -N dscp_mark
+	_ipt6 -A PREROUTING -i "$lan_device" -j dscp_mark
+	_ipt6 -A POSTROUTING -j dscp_mark
+	for class in cs4 cs5 cs6 cs7; do
+		# xtun (hex) -> 0x7874756e
+		_ipt4 -A dscp_mark \
+			-m comment --comment "$class" \
+			-m dscp --dscp-class "$class" \
+			-j MARK --set-mark 0x7874756e
+		_ipt6 -A dscp_mark \
+			-m comment --comment "$class" \
+			-m dscp --dscp-class "$class" \
+			-j MARK --set-mark 0x7874756e
+	done
+}
+
+_remove_ipset_dnsmasq() {
+	[ -n "$(echo $1 | grep omr_dscp)" ] && uci -q delete dhcp.$1
+}
+
+_remove_rules() {
+	([ -n "$(echo $1 | grep omr_dscp)" ] || [ -n "$(echo $1 | grep omr6_dscp)" ]) && uci -q delete firewall.$1
+}
+
+_setup_tunnel() {
+	# Mark the packets to route through xtun0
+	_add_fwmark_chain
+	# tun0: cs0 (default)
+	# xtun0: cs6
+	_ipt4 -A dscp_output -o "tun0" -j DSCP --set-dscp-class cs6
+	_ipt6 -A dscp_output -o "tun0" -j DSCP --set-dscp-class cs6
+}
+
+_cleanup() {
+	config_load dhcp
+	config_foreach _remove_ipset_dnsmasq
+	config_load firewall
+	config_foreach _remove_rules
+	uci -q commit dhcp
+	uci -q commit firewall
+	fw4 restart
+}
+
+start_service() {
+	# Cleanup
+	_cleanup
+
+	config_load dscp
+	# Add chains
+	_add_dscp_domains_rules
+
+	# Setup the tunnels dscp / marks
+	#_setup_tunnel
+
+	# Add rules base on the user configuration
+	count=0
+	config_foreach _add_dscp_rules classify
+	config_foreach _add_dscp_domain domains
+	uci -q commit dhcp
+	fw4 restart
+}
+
+stop_service() {
+	_cleanup
+}
+
+reload_service() {
+	start
+}
+
+service_triggers() {
+	procd_add_reload_trigger dscp
+}

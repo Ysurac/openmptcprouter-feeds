@@ -21,7 +21,7 @@ MY_DEPENDS := \
     mc          \
     f2fs-tools \
     openmptcprouter \
-    dnsmasq-full dnsmasq_full_ipset \
+    dnsmasq-full LINUX_5_4:dnsmasq_full_ipset !LINUX_5_4:dnsmasq_full_nftset \
     uhttpd \
     uhttpd-mod-ubus \
     curl \
@@ -29,9 +29,10 @@ MY_DEPENDS := \
     arptables \
     bind-dig \
     libnetfilter-conntrack ip-full nstat \
-    iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace iptables-mod-conntrack-extra iptables-mod-account \
-    kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra iptables-mod-extra conntrack kmod-ipt-offload \
-    iptables-mod-ipsec kmod-crypto-authenc kmod-ipsec kmod-ipsec4 kmod-ipsec6 kmod-ipt-ipsec \
+    LINUX_5_4:iptables-mod-iface LINUX_5_4:iptables-mod-ipmark LINUX_5_4:iptables-mod-hashlimit LINUX_5_4:iptables-mod-condition LINUX_5_4:iptables-mod-trace LINUX_5_4:iptables-mod-conntrack-extra LINUX_5_4:iptables-mod-account \
+    kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra LINUX_5_4:iptables-mod-extra conntrack LINUX_5_4:kmod-ipt-offload \
+    LINUX_5_4:iptables-mod-ipsec kmod-crypto-authenc kmod-ipsec kmod-ipsec4 kmod-ipsec6 LINUX_5_4:kmod-ipt-ipsec \
+    !LINUX_5_4:nftables-json !LINUX_5_4:iptables-nft !LINUX_5_4:kmod-nft-connlimit !LINUX_5_4:kmod-nft-offload
     wireless-tools \
     libiwinfo-lua \
     ca-bundle ca-certificates \
@@ -44,7 +45,7 @@ MY_DEPENDS := \
     luci-app-uhttpd \
     luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
     luci-app-openvpn \
-    shadowsocks-libev-ss-server shadowsocks-libev-ss-redir shadowsocks-libev-ss-rules shadowsocks-libev-ss-tunnel \
+    shadowsocks-libev-ss-server shadowsocks-libev-ss-redir LINUX_5_4:shadowsocks-libev-ss-rules !LINUX_5_4:shadowsocks-libev-ss-rules-nft shadowsocks-libev-ss-tunnel \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd ip6tables \
     !TARGET_mvebu:speedtestcpp \
     iftop \
@@ -82,10 +83,10 @@ MY_DEPENDS := \
     luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre tcptraceroute luci-proto-mbim kmod-rtl8xxxu kmod-ath9k-htc luci-app-ttyd luci-mod-dashboard (TARGET_x86||TARGET_x86_64):rtl8192eu-firmware kmod-usb2 libustream-openssl (TARGET_x86||TARGET_x86_64):kmod-ixgbevf (TARGET_x86||TARGET_x86_64):kmod-igbvf \
     hwinfo (TARGET_x86||TARGET_x86_64):dmidecode luci-app-packet-capture kmod-bonding luci-proto-bonding luci-app-sysupgrade \
     luci-theme-openwrt-2020 luci-proto-wireguard luci-app-wireguard kmod-crypto-lib-blake2s (TARGET_x86||TARGET_x86_64):kmod-r8125 \
-    !(LINUX_5_4):mptcpd (TARGET_x86||TARGET_x86_64):kmod-igc !TARGET_mvebu:kmod-mmc-spi kmod-macsec usbutils v2ray-core syslogd \
+    !(LINUX_5_4):mptcpd (TARGET_x86||TARGET_x86_64):kmod-igc !TARGET_mvebu:kmod-mmc-spi kmod-macsec usbutils v2ray-core LINUX_5_4:v2ray-config !LINUX_5_4:v2ray-config-nft syslogd \
     (TARGET_x86||TARGET_x86_64):kmod-mlx4-core \
     !(TARGET_ips40xx||TARGET_ramips):iptables-mod-ndpi !(TARGET_ips40xx||TARGET_ramips):kmod-ipt-ndpi libip4tc libip6tc \
-    xray-core shadowsocks-rust-sslocal shadowsocks-rust-ssservice shadowsocks-rust-config luci-app-shadowsocks-rust (LINUX_5_4&&(TARGET_x86_64||aarch64)):kmod-tcp-bbr2 kmod-ovpn-dco-v2
+    xray-core LINUX_5_4:xray-config !LINUX_5_4:xray-config-nft shadowsocks-rust-sslocal shadowsocks-rust-ssservice LINUX_5_4:shadowsocks-rust-config !LINUX_5_4:shadowsocks-rust-config-nft luci-app-shadowsocks-rust (LINUX_5_4&&(TARGET_x86_64||aarch64)):kmod-tcp-bbr2 kmod-ovpn-dco-v2 keepalived
 #    !TARGET_mvebu:kmod-usb-net-smsc75xx
 #    libnetfilter-conntrack ebtables ebtables-utils ip-full nstat \
 

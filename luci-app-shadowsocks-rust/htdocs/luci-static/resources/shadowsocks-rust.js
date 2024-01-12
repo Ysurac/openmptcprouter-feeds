@@ -41,13 +41,13 @@ var modes = [
 var methods = [
 	'none',
 	// aead
-	'aes-128-gcm',
-	'aes-256-gcm',
-	'chacha20-ietf-poly1305',
-	'2022-blake3-aes-128-gcm',
+//	'aes-128-gcm',
+//	'aes-256-gcm',
+//	'chacha20-ietf-poly1305',
+//	'2022-blake3-aes-128-gcm',
 	'2022-blake3-aes-256-gcm',
-	'2022-blake3-chacha8-poly1305',
-	'2022-blake3-chacha20-poly1305',
+//	'2022-blake3-chacha8-poly1305',
+//	'2022-blake3-chacha20-poly1305',
 ];
 
 function ucival_to_bool(val) {
@@ -72,7 +72,7 @@ return L.Class.extend({
 			}
 		});
 		o.value('', '<unset>');
-		o.value('all', 'all');
+		//o.value('all', 'all');
 		o.default = '';
 	},
 	values_serverlist: function(o) {
@@ -133,7 +133,7 @@ return L.Class.extend({
 		o.datatype = 'port';
 		o.size = 5;
 
-		o = optfunc(form.ListValue, 'method', _('Method'),_('Only 2022-blake3-aes-256-gcm is supported by OpenMPTCProuter Shadowsocks-GO'));
+		o = optfunc(form.ListValue, 'method', _('Method'));
 		methods.forEach(function(m) {
 			o.value(m);
 		});

@@ -2,6 +2,7 @@
 #
 # Copyright (C) 2017-2020 Yousong Zhou <yszhou4tech@gmail.com>
 # Copyright (C) 2021-2023 ImmortalWrt.org
+# Copyright (C) 2023 Yannick Chabanois (Ycarus) for OpenMPTCProuter
 
 include $(TOPDIR)/rules.mk
 
@@ -64,6 +65,34 @@ define Package/shadowsocks-rust-config/install
 	$(INSTALL_BIN) ./files/shadowsocks-rust.init $(1)/etc/init.d/shadowsocks-rust
 endef
 
+define Package/shadowsocks-rust-config-nft
+  SECTION:=net
+  CATEGORY:=Network
+  SUBMENU:=Web Servers/Proxies
+  TITLE:=shadowsocks-rust config
+  URL:=https://github.com/shadowsocks/shadowsocks-rust
+  DEPENDS:=+firewall4 \
+       +ip \
+       +resolveip \
+       +ucode \
+       +ucode-mod-fs \
+       +kmod-nft-tproxy
+endef
+
+
+define Package/shadowsocks-rust-config-nft/install
+	$(INSTALL_DIR) $(1)/etc/uci-defaults
+	$(INSTALL_BIN) ./files/ssr-rules.defaults $(1)/etc/uci-defaults
+	$(INSTALL_DIR) $(1)/etc/config
+	$(INSTALL_DATA) ./files/shadowsocks-rust.config $(1)/etc/config/shadowsocks-rust
+	$(INSTALL_DIR) $(1)/etc/init.d
+	$(INSTALL_BIN) ./files/shadowsocks-rust.init-nft $(1)/etc/init.d/shadowsocks-rust
+	$(INSTALL_DIR) $(1)/usr/share/ssr-rules
+	$(INSTALL_DATA) ./files/nft-rules/* $(1)/usr/share/ssr-rules/
+endef
+
+
+
 SHADOWSOCKS_COMPONENTS:=sslocal ssmanager ssserver ssurl ssservice
 define shadowsocks-rust/templates
   $(foreach component,$(SHADOWSOCKS_COMPONENTS),
@@ -73,6 +102,7 @@ endef
 $(eval $(call shadowsocks-rust/templates))
 
 $(eval $(call BuildPackage,shadowsocks-rust-config))
+$(eval $(call BuildPackage,shadowsocks-rust-config-nft))
 $(foreach component,$(SHADOWSOCKS_COMPONENTS), \
   $(eval $(call BuildPackage,shadowsocks-rust-$(component))) \
 )
