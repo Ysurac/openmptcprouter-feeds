@@ -15,7 +15,7 @@ include $(INCLUDE_DIR)/package.mk
 
 define Package/$(PKG_NAME)
 SECTION:=OMR
-CATEGORY:=OMR-Schedule
+CATEGORY:=OpenMPTCProuter
 DEPENDS:=$(foreach p,$(MY_DEPENDS),+$(p))
 TITLE:=OpenMPTCProuter schedule scripts
 endef

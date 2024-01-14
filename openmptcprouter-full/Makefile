@@ -32,7 +32,7 @@ MY_DEPENDS := \
     LINUX_5_4:iptables-mod-iface LINUX_5_4:iptables-mod-ipmark LINUX_5_4:iptables-mod-hashlimit LINUX_5_4:iptables-mod-condition LINUX_5_4:iptables-mod-trace LINUX_5_4:iptables-mod-conntrack-extra LINUX_5_4:iptables-mod-account \
     kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra LINUX_5_4:iptables-mod-extra conntrack LINUX_5_4:kmod-ipt-offload \
     LINUX_5_4:iptables-mod-ipsec kmod-crypto-authenc kmod-ipsec kmod-ipsec4 kmod-ipsec6 LINUX_5_4:kmod-ipt-ipsec \
-    !LINUX_5_4:nftables-json !LINUX_5_4:iptables-nft !LINUX_5_4:kmod-nft-connlimit !LINUX_5_4:kmod-nft-offload
+    !LINUX_5_4:nftables-json !LINUX_5_4:iptables-nft !LINUX_5_4:kmod-nft-connlimit !LINUX_5_4:kmod-nft-offload \
     wireless-tools \
     libiwinfo-lua \
     ca-bundle ca-certificates \
@@ -86,7 +86,10 @@ MY_DEPENDS := \
     !(LINUX_5_4):mptcpd (TARGET_x86||TARGET_x86_64):kmod-igc !TARGET_mvebu:kmod-mmc-spi kmod-macsec usbutils v2ray-core LINUX_5_4:v2ray-config !LINUX_5_4:v2ray-config-nft syslogd \
     (TARGET_x86||TARGET_x86_64):kmod-mlx4-core \
     !(TARGET_ips40xx||TARGET_ramips):iptables-mod-ndpi !(TARGET_ips40xx||TARGET_ramips):kmod-ipt-ndpi libip4tc libip6tc \
-    xray-core LINUX_5_4:xray-config !LINUX_5_4:xray-config-nft shadowsocks-rust-sslocal shadowsocks-rust-ssservice LINUX_5_4:shadowsocks-rust-config !LINUX_5_4:shadowsocks-rust-config-nft luci-app-shadowsocks-rust (LINUX_5_4&&(TARGET_x86_64||aarch64)):kmod-tcp-bbr2 kmod-ovpn-dco-v2 keepalived
+    xray-core LINUX_5_4:xray-config !LINUX_5_4:xray-config-nft shadowsocks-rust-sslocal shadowsocks-rust-ssservice LINUX_5_4:shadowsocks-rust-config !LINUX_5_4:shadowsocks-rust-config-nft luci-app-shadowsocks-rust (LINUX_5_4&&(TARGET_x86_64||aarch64)):kmod-tcp-bbr2 kmod-ovpn-dco-v2 \
+    (TARGET_x86||TARGET_x86_64):luci-app-keepalived luci-proto-external omr-schedule
+
+
 #    !TARGET_mvebu:kmod-usb-net-smsc75xx
 #    libnetfilter-conntrack ebtables ebtables-utils ip-full nstat \
 
