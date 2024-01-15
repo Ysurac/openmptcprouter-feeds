@@ -93,8 +93,10 @@ chain ss_rules_src_{{ proto }} {
 
 chain ss_rules_dst_{{ proto }} {
 	ip daddr @ss_rules_dst_bypass accept;
+	ip daddr @ss_rules_remote_servers accept;
 	ip daddr @ss_rules_dst_forward goto ss_rules_forward_{{ proto }};
 	ip6 daddr @ss_rules6_dst_bypass accept;
+	ip6 daddr @ss_rules6_remote_servers accept;
 	ip6 daddr @ss_rules6_dst_forward goto ss_rules_forward_{{ proto }};
 	{{ get_dst_default_verdict() }};
 }
@@ -107,8 +109,10 @@ chain ss_rules_forward_{{ proto }} {
 chain ss_rules_local_out {
 	type {{ type }} hook output priority -1;
 	meta l4proto != tcp accept;
+	ip daddr @ss_rules_remote_servers accept;
 	ip daddr @ss_rules_dst_bypass_ accept;
 	ip daddr @ss_rules_dst_bypass accept;
+	ip6 daddr @ss_rules6_remote_servers accept;
 	ip6 daddr @ss_rules6_dst_bypass_ accept;
 	ip6 daddr @ss_rules6_dst_bypass accept;
 	{{ local_verdict }};
