@@ -90,7 +90,7 @@ MY_DEPENDS := \
     luci-proto-external omr-schedule
 
 # keepalived disabled by default because it's running even with no configuration, would need a default OMR config with some changes
-    (TARGET_x86||TARGET_x86_64):keepalived (TARGET_x86||TARGET_x86_64):keepalived-sync
+#    (TARGET_x86||TARGET_x86_64):keepalived (TARGET_x86||TARGET_x86_64):keepalived-sync
 
 
 #    !TARGET_mvebu:kmod-usb-net-smsc75xx

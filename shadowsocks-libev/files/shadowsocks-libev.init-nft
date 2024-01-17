@@ -15,7 +15,7 @@ ss_confdir=/var/etc/shadowsocks-libev
 ss_bindir=/usr/bin
 
 ssrules_uc="/usr/share/ss-rules/ss-rules.uc"
-ssrules_nft="/etc/nftables.d/90-ss-rules.nft"
+ssrules_nft="/etc/nftables.d/90-proxy-ss-rules.nft"
 
 ss_mkjson_server_conf() {
 	local cfgserver
@@ -219,8 +219,9 @@ ss_rules_nft_gen() {
 }
 
 ss_rules_nft_reset() {
-	if [ -f "$ssrules_nft" ]; then
+	if [ -f "$ssrules_nft" ] || [ -f "${ssrules_nft}.down" ]; then
 		rm -f "$ssrules_nft"
+		rm -f "${ssrules_nft}.down"
 		fw4 -q restart
 	fi
 }
@@ -255,7 +256,10 @@ rules_exist() {
 
 start_service() {
 	local cfgtype
-
+	[ -n "$(uci -q get firewall.ss_rules)" ] && {
+		uci -q del firewall.ss_rules
+		uci -q commit firewall
+	}
 	mkdir -p "$ss_confdir"
 	config_load shadowsocks-libev
 	for cfgtype in ss_local ss_redir ss_server ss_tunnel; do

@@ -28,7 +28,7 @@ define Package/iptables-mod-fullconenat
   SECTION:=net
   CATEGORY:=Network
   TITLE:=FULLCONENAT iptables extension
-  DEPENDS:=+iptables +kmod-ipt-fullconenat
+  DEPENDS:=+iptables +kmod-ipt-fullconenat @LINUX_5_4
 endef
 
 define Package/iptables-mod-fullconenat/install
@@ -39,7 +39,7 @@ endef
 define KernelPackage/ipt-fullconenat
   SUBMENU:=Netfilter Extensions
   TITLE:=FULLCONENAT netfilter module
-  DEPENDS:=+kmod-nf-ipt +kmod-nf-nat
+  DEPENDS:=+kmod-nf-ipt +kmod-nf-nat @LINUX_5_4
   KCONFIG:=  \
 	CONFIG_NF_CONNTRACK_EVENTS=y \
 	CONFIG_NF_CONNTRACK_CHAIN_EVENTS=y

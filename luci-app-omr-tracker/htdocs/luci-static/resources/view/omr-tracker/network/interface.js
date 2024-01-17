@@ -104,11 +104,12 @@ return view.extend({
 		o.rmempty = false;
 		o.modalonly = true;
 		*/
-
+		/*
 		o = s.option(form.Value, 'reliability', _('Tracking reliability'),
 			_('Acceptable values: 1-100. This many Tracking IP addresses must respond for the link to be deemed up'));
 		o.datatype = 'range(1, 100)';
 		o.default = '1';
+		*/
 
 		o = s.option(form.ListValue, 'count', _('Ping count'));
 		o.default = '1';
