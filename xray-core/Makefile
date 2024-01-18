@@ -41,7 +41,7 @@ define Package/$(PKG_NAME)-config-nft
 	TITLE+= (init script with nft)
 endef
 
-define Package/$(PKG_NAME)/description
+define Package/$(PKG_NAME)-core/description
 	Xray-core bare bones binary (compiled without cgo)
 endef
 
@@ -53,7 +53,7 @@ define Package/$(PKG_NAME)-config-nft/description
 	Xray-core init script with nft support
 endef
 
-define Package/$(PKG_NAME)/config
+define Package/$(PKG_NAME)-core/config
 menu "Xray Configuration"
 	depends on PACKAGE_$(PKG_NAME)-core
 
