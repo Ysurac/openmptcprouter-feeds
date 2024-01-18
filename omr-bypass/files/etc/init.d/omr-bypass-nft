@@ -807,6 +807,15 @@ start_service() {
 	#nft insert rule inet fw4 ss_rules_dst_tcp ip daddr @omr_dst_bypass_all accept
 	#nft insert rule inet fw4 ss_rules_local_out ip daddr @omr_dst_bypass_all accept
 	EOF
+	#config_load shadowsocks-libev
+	#config_foreach _ss_rules_config ss_rules
+	([ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] || [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ]) && _ss_rules_config
+	#config_load shadowsocks-rust
+	#config_foreach _ss_rules_config ss_rules
+	[ "$(uci -q get v2ray.main.enabled)" = "1" ] && _v2ray_rules_config
+	[ "$(uci -q get xray.main.enabled)" = "1" ] && _xray_rules_config
+
+
 	uci batch <<-EOF
 		set firewall.omr_bypass=include
 		set firewall.omr_bypass.enabled='1'
@@ -845,14 +854,6 @@ start_service() {
 
 #	ip rule add prio 1 fwmark 0x4539 lookup 991337 > /dev/null 2>&1
 #	ip -6 rule add prio 1 fwmark 0x6539 lookup 6991337 > /dev/null 2>&1
-
-	#config_load shadowsocks-libev
-	#config_foreach _ss_rules_config ss_rules
-	([ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] || [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ]) && _ss_rules_config
-	#config_load shadowsocks-rust
-	#config_foreach _ss_rules_config ss_rules
-	[ "$(uci -q get v2ray.main.enabled)" = "1" ] && _v2ray_rules_config
-	[ "$(uci -q get xray.main.enabled)" = "1" ] && _xray_rules_config
 
 	# NDPI Netfilter is not available for nftables
 	$IPTABLESSAVE --counters 2>/dev/null | grep -v omr-bypass-dpi | $IPTABLESRESTORE -w --counters 2>/dev/null
