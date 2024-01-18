@@ -241,6 +241,9 @@ interface_multipath_settings() {
 			gateway=$(ubus call network.interface.${config}_4 status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
 		fi
 		if [ -z "$gateway" ] || [ "$( valid_subnet4 $gateway )" != "ok" ]; then
+			gateway=$(ip -4 r list dev "$iface" | awk '/via/ {print $3;exit}' | tr -d "\n")
+		fi
+		if [ -z "$gateway" ] || [ "$( valid_subnet4 $gateway )" != "ok" ]; then
 			gateway=$(traceroute -m1 -i $iface 8.8.8.8 2>/dev/null | awk 'FNR==2{ print $2 }')
 			[ "$gateway" = "*" ] && gateway=""
 		fi
@@ -297,7 +300,7 @@ interface_multipath_settings() {
 			ip route replace $network/$netmask dev $iface scope link table $id $initcwrwnd 2>&1 >/dev/null
 			ip route replace default via $gateway dev $iface table $id $initcwrwnd 2>&1 >/dev/null
 			[ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && ip route replace default via $gateway dev $iface metric $id $initcwrwnd 2>&1 >/dev/null
-			ip route flush cache $id 2>&1 >/dev/null
+			#ip route flush cache $id 2>&1 >/dev/null
 		fi
 
 		#config_get mode "$config" multipath ""
@@ -387,7 +390,7 @@ interface_multipath_settings() {
 				ip -6 route replace $network6/$netmask6 dev $iface scope link table 6$id $initcwrwnd 2>&1 >/dev/null
 				ip -6 route replace default via $gateway6 dev $iface table 6$id $initcwrwnd 2>&1 >/dev/null
 				[ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && ip -6 route replace default via $gateway6 dev $iface metric 6$id $initcwrwnd 2>&1 >/dev/null
-				ip -6 route flush cache 6$id 2>&1 >/dev/null
+				#ip -6 route flush cache 6$id 2>&1 >/dev/null
 			fi
 
 			#config_get mode "$config" multipath "off"
@@ -528,14 +531,14 @@ start_service() {
 	#config_foreach remove route6
 	#config_foreach remove rule
 	#config_foreach remove rule6
-	[ -z "$intf" ] && [ -n "$(uci -q get network.@route[-1])" ] && {
-	#	logger -t "MPTCP" "Flush main table"
-	#	ip route flush table main
-	#	ip -6 route flush table main
-		logger -t "MPTCP" "Flush route cache"
-		ip route flush cache
-		ip -6 route flush cache
-	}
+	#[ -z "$intf" ] && [ -n "$(uci -q get network.@route[-1])" ] && {
+	##	logger -t "MPTCP" "Flush main table"
+	##	ip route flush table main
+	##	ip -6 route flush table main
+	#	logger -t "MPTCP" "Flush route cache"
+	#	ip route flush cache
+	#	ip -6 route flush cache
+	#}
 	if [ "$(uci -q get network.globals.mptcp_disable_initial_config)" != "1" ]; then
 		config_foreach interface_multipath_settings interface $intf
 		config_foreach add_route route
