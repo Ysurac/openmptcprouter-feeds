@@ -66,7 +66,7 @@ return view.extend({
 		o.depends('family', 'ipv6');
 		o.rmempty = false;
 
-		o = s.option(form.ListValue, 'type', _('Tracking method'));
+		o = s.option(form.ListValue, 'type', _('Tracking method'),_('Always ping gateway, then test connection by ping, httping or dns. None mode only ping gateway.'));
 		o.default = 'ping';
 		o.value('none');
 		o.value('ping');
