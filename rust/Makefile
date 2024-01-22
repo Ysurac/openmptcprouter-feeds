@@ -30,7 +30,7 @@ define Package/rust
   SUBMENU:=Rust
   TITLE:=Rust Programming Language Compiler
   URL:=https://www.rust-lang.org/
-  DEPENDS:=$(RUST_ARCH_DEPENDS)
+  DEPENDS:=$(RUST_ARCH_DEPENDS) @LINUX_5_4
 endef
 
 define Package/rust/description
