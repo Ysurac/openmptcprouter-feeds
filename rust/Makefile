@@ -70,7 +70,7 @@ HOST_CONFIGURE_ARGS = \
 	--disable-sanitizers \
 	--release-channel=stable \
 	--enable-cargo-native-static \
-	--set=llvm.download-ci-llvm=true \
+	--set=llvm.download-ci-llvm=false \
 	$(TARGET_CONFIGURE_ARGS)
 
 define Host/Uninstall
