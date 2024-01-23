@@ -1303,6 +1303,10 @@ function settings_add()
 	local externalcheck = luci.http.formvalue("externalcheck") or "1"
 	ucic:set("openmptcprouter","settings","external_check",externalcheck)
 
+	-- Enable/disable restrict proxy to LAN
+	local restricttolan = luci.http.formvalue("restricttolan") or "0"
+	ucic:set("openmptcprouter","settings","restrict_to_lan",restricttolan)
+
 	-- Enable/disable debug
 	local debug = luci.http.formvalue("debug") or "0"
 	ucic:set("openmptcprouter","settings","debug",debug)
