@@ -328,6 +328,7 @@ function server_settings(server,server_ip,openmptcprouter_vps_key)
 	ucic:save("openmptcprouter")
 	if ucic:get("openmptcprouter",server,"master") == "1" then
 		ucic:set("shadowsocks-libev","sss0","server",server_ip)
+		ucic:set("shadowsocks-rust","sss0","server",server_ip)
 		ucic:set("glorytun","vpn","host",server_ip)
 		ucic:set("dsvpn","vpn","host",server_ip)
 		ucic:set("mlvpn","general","host",server_ip)
@@ -357,6 +358,8 @@ function server_settings(server,server_ip,openmptcprouter_vps_key)
 		ucic:commit("glorytun")
 		ucic:save("shadowsocks-libev")
 		ucic:commit("shadowsocks-libev")
+		ucic:save("shadowsocks-rust")
+		ucic:commit("shadowsocks-rust")
 	end
 end
 
@@ -559,6 +562,20 @@ function update_vps()
 	end)
 	local vpsgettoken = sys.exec("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
 end
+
+function get_mptcp_config(interface)
+	return ucic:get("network",interface,"multipath")
+end
+
+function set_mptcp_config(interface,state)
+	ucic:set("network",interface,"multipath",state)
+	ucic:save("network")
+	ucic:commit("network")
+	ucic:set("openmptcprouter",interface,"multipath",state)
+	ucic:save("openmptcprouter")
+	ucic:commit("openmptcprouter")
+end
+
 
 function get_rootfs()
 	local rootfs = {}
@@ -1364,7 +1381,7 @@ function interfaces_status()
 		    end
 	    end
 	    if ifname ~= nil and not (ifname:match("^tun.*") or interface:match("^ovpn.*") or interface:match("^wg.*")) then
-		if ipv6 == "1" or ipv6 == "auto" and gateway6 == ""then
+		if (ipv6 == "1" or ipv6 == "auto") and gateway6 == "" then
 			gateway6 = ut.trim(sys.exec("ip -6 r list dev " .. ifname .. " | grep via | grep -v default | grep -v metric | awk '{print $1}' | tr -d '\n'"))
 		end
 	    end
@@ -2324,6 +2341,18 @@ local methods = {
 		args = { key = "" },
 		call = function(args)
 			set_openvpn(args.key)
+		end
+	},
+	getmptcpconfig = {
+		args = { interface = "" },
+		call = function(args)
+			get_mptcp_config(args.interface)
+		end
+	},
+	setmptcpconfig = {
+		args = { interface = "", state = "" },
+		call = function(args)
+			set_mptcp_config(args.interface,args.state)
 		end
 	},
 	
