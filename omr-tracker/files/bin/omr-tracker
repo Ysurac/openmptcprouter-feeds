@@ -323,7 +323,7 @@ while true; do
 			if ([ "$OMR_TRACKER_IPV6" = "1" ] || [ "$OMR_TRACKER_IPV6" = "auto" ] || [ -z "$OMR_TRACKER_IPV6" ]) && ([ "$OMR_TRACKER_FAMILY" = "ipv6" ] || [ "$OMR_TRACKER_FAMILY" = "ipv4ipv6" ]); then
 				#OMR_TRACKER_DEVICE_IP6=$(ip -6 -br addr ls dev "$OMR_TRACKER_DEVICE" | awk -F'[ /]+' '{print $3}')
 				#if [ -z "$OMR_TRACKER_DEVICE_IP6" ]; then
-					OMR_TRACKER_DEVICE_IP6=$(ip -6 addr show dev "$OMR_TRACKER_DEVICE" | sort -r | grep -m 1 inet6 | awk '{print $2}' | cut -d'/' -s -f1)
+					OMR_TRACKER_DEVICE_IP6=$(ip -6 addr show dev "$OMR_TRACKER_DEVICE" scope global | sort -r | grep -m 1 inet6 | awk '{print $2}' | cut -d'/' -s -f1)
 				#fi
 				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
 					OMR_TRACKER_DEVICE_GATEWAY6=$(uci -q get "network.$OMR_TRACKER_INTERFACE.ip6gw")
@@ -501,10 +501,10 @@ while true; do
 									_ping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE" "yes"
 									statusb=$?
 								elif [ "$OMR_TRACKER_TYPE" = "httping" ]; then
-									_httping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP" "yes"
+									_httping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP6" "yes"
 									statusb=$?
 								elif [ "$OMR_TRACKER_TYPE" = "dns" ]; then
-									_dns "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP" "yes"
+									_dns "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP6" "yes"
 									statusb=$?
 								fi
 								ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP6" > /dev/null 2>&1
@@ -530,7 +530,7 @@ while true; do
 						if [ "$serverip_ping" != false ] && [ "$OMR_TRACKER_STATUS" = "OK" ] && [ "$OMR_TRACKER_TYPE" != "httping" ] && [ "$OMR_TRACKER_SERVER_HTTP_TEST" = "1" ]; then
 							serverip_ping=false
 							config_load openmptcprouter
-							config_foreach _httping_server server $OMR_TRACKER_DEVICE_IP
+							config_foreach _httping_server server $OMR_TRACKER_DEVICE_IP6
 							if [ "$serverip_ping" = false ]; then
 								OMR_TRACKER_STATUS_MSG="No access to server API"
 								#OMR_TRACKER_STATUS="ERROR"
@@ -554,7 +554,7 @@ while true; do
 					sleep "${OMR_TRACKER_INTERVAL_TRIES:-1}"
 				done
 			fi
-			if [ -z "$OMR_TRACKER_DEVICE_IP" ] || [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ -z "$OMR_TRACKER_DEVICE_IP6" ] || [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
+			if [ "$OMR_TRACKER_STATUS" = "ERROR" ] && ([ -z "$OMR_TRACKER_DEVICE_IP" ] || [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ -z "$OMR_TRACKER_DEVICE_IP6" ] || [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ]); then
 				[ -z "$OMR_TRACKER_STATUS_MSG" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_INTERFACE may have ip issues"
 				[ -z "$OMR_TRACKER_DEVICE_IP" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG, interface have no IPv4"
 				[ -z "$OMR_TRACKER_DEVICE_GATEWAY" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG, interface have no IPv4 gateway"
@@ -577,9 +577,9 @@ while true; do
 	fi
 	if [ "$OMR_TRACKER_LIST_HOSTS6" != "" ]; then
 		if [ "$OMR_TRACKER_STATUS_MSG" = "" ]; then
-			OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP error ($OMR_TRACKER_LIST_HOSTS6)"
+			OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP6 error ($OMR_TRACKER_LIST_HOSTS6)"
 		else
-			OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG and $OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP error ($OMR_TRACKER_LIST_HOSTS6)"
+			OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG and $OMR_TRACKER_TYPE from $OMR_TRACKER_DEVICE_IP6 error ($OMR_TRACKER_LIST_HOSTS6)"
 		fi
 	fi
 	if [ "$OMR_TRACKER_CHECK_QUALITY" = "1" ]; then
