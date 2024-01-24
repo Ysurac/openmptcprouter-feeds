@@ -95,7 +95,7 @@ DEVICE="$1"
 TYPE="$2"
 #FLAG_PATH=`find /sys/devices/ -path "*/net/$DEVICE/flags"`
 
-[ -d "/sys/class/net/$DEVICE/" ] || {
+[ -e "/sys/class/net/$DEVICE/" ] || {
         #echo "Device '$DEVICE' can't found!"
         #echo "Use the hardware name like in ifconfig"
         exit 1
@@ -133,27 +133,30 @@ if [ -f /proc/sys/net/mptcp/mptcp_enabled ]; then
 else
 	# Remove not needed if* interfaces in MPTCP
 	endpoint="$(ip mptcp endpoint show)"
-	[ -z "$endpoint" ] && exit 0
-	oldintfs=$(echo "${endpoint}" | grep "dev if" | awk '{ print $3 }')
+	[ -n "$endpoint" ] && oldintfs=$(echo "${endpoint}" | grep "dev if" | awk '{ print $3 }')
 	[ -n "$oldintfs" ] && {
 		for oldintf in $oldintfs; do
 			ip mptcp endpoint delete id $oldintf 2>&1 >/dev/null
 		done
 	}
 	endpoint="$(ip mptcp endpoint show)"
-	[ -z "$endpoint" ] && exit 0
-        ID=$(echo "${endpoint}" | sort | grep "dev $DEVICE " | awk '{print $3}')
-        IFF=$(echo "${endpoint}" | sort | grep -m 1 -E "dev $DEVICE " | awk '{print $4}')
-        #IP=$(ip a show $DEVICE | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}[0-9]*).*/\2/p')
-        if [ -f /usr/bin/jsonfilter ]; then
+	if [ -n "$endpoint" ]; then
+		ID=$(echo "${endpoint}" | sort | grep "dev $DEVICE " | awk '{print $3}')
+		IFF=$(echo "${endpoint}" | sort | grep -m 1 -E "dev $DEVICE " | awk '{print $4; exit}')
+	fi
+	#IP=$(ip a show $DEVICE | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}[0-9]*).*/\2/p')
+	if [ -f /usr/bin/jsonfilter ]; then
 		IP=$(ip -j a show $DEVICE scope global | jsonfilter -e '@[0].addr_info[*].local')
 	elif [ -f /usr/bin/jq ]; then
 		IP=$(ip -j a show $DEVICE scope global  | jq -r '.[0].addr_info[].local')
+	else
+		echo "jsonfilter or jq are required"
+		exit 1
 	fi
-        [ -z "$ID" ] && [ -n "$IP" ] && ID=$(echo "${endpoint}" show | grep "$IP " | awk '{print $3}')
-        RMID=$(echo "${endpoint}" | grep '::ffff' | awk '{ print $3 }')
-        [ -n "$RMID" ] && ip mptcp endpoint delete id $RMID 2>&1 >/dev/null
-        case $TYPE in
+	[ -z "$ID" ] && [ -n "$IP" ] && [ -n "$endpoint" ] && ID=$(echo "${endpoint}" show | grep "$IP " | awk '{print $3}')
+	[ -n "$endpoint" ] && RMID=$(echo "${endpoint}" | grep '::ffff' | awk '{ print $3 }')
+	[ -n "$RMID" ] && ip mptcp endpoint delete id $RMID 2>&1 >/dev/null
+	case $TYPE in
                 "off")
                         [ -n "$ID" ] && {
                             for i in $ID; do
