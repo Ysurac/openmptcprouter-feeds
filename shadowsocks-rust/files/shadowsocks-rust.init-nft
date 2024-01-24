@@ -118,6 +118,20 @@ ss_rules_cb() {
 	fi
 }
 
+ss_redir_ports() {
+	port=$(uci -q get shadowsocks-rust.$1.local_port)
+	server=$(uci -q get shadowsocks-rust.$1.server)
+	disabled=$(uci -q get shadowsocks-rust.$1.disabled)
+	if [ "$disabled" != "1" ] && ([ "$server" = "$2" ] || [ "$2" = "" ]); then
+		if [ "$port" -lt "$min_ss_redir_ports" ]; then
+			min_ss_redir_ports=$port
+		fi
+		if [ "$port" -gt "$max_ss_redir_ports" ]; then
+			max_ss_redir_ports=$port
+		fi
+	fi
+}
+
 ss_rules_nft_gen() {
 	local cfg="ss_rules"
 	local cfgtype
@@ -129,8 +143,26 @@ ss_rules_nft_gen() {
 	eval "$(validate_ss_rules_section "$cfg" ss_validate_mklocal)"
 	validate_ss_rules_section "$cfg" || return 1
 	[ "$disabled" = 0 ] || return 2
-	eval local_port_tcp="\$ss_rules_redir_tcp_$redir_tcp"
-	eval local_port_udp="\$ss_rules_redir_udp_$redir_udp"
+
+	if [ "$ss_rules_redir_tcp_$redir_tcp" = "all" ]; then
+		min_ss_redir_ports="65535"
+		max_ss_redir_ports="0"
+		config_load shadowsocks-rust
+		config_foreach ss_redir_ports ss_redir $cfgrulesserver
+		if [ "$min_ss_redir_ports" != "$max_ss_redir_ports" ]; then
+			all_ss_redir_ports=$min_ss_redir_ports-$max_ss_redir_ports
+		else
+			all_ss_redir_ports=$min_ss_redir_ports
+		fi
+		local_port_tcp="$all_ss_redir_ports"
+		if [ "$ss_rules_redir_udp_$redir_udp" = "all" ] || [ "$ss_rules_redir_udp_$redir_udp" = "hi1" ]; then
+			local_port_udp="$min_ss_redir_ports"
+		fi
+	else
+		eval local_port_tcp="\$ss_rules_redir_tcp_$redir_tcp"
+		eval local_port_udp="\$ss_rules_redir_udp_$redir_udp"
+	fi
+
 	[ -n "$local_port_tcp" -o -n "$local_port_udp" ] || return 1
 	remote_servers="$(echo $ss_redir_servers \
 		| tr ' ' '\n' \
@@ -141,8 +173,8 @@ ss_rules_nft_gen() {
 	local tmp="/tmp/ssrrules"
 	json_init
 	json_add_string o_remote_servers "$remote_servers"
-	json_add_int o_redir_tcp_port "$local_port_tcp"
-	json_add_int o_redir_udp_port "$local_port_udp"
+	json_add_string o_redir_tcp_port "$local_port_tcp"
+	json_add_string o_redir_udp_port "$local_port_udp"
 	json_add_string o_ifnames "$ifnames"
 	json_add_string o_local_default "$local_default"
 	json_add_string o_src_bypass "$src_ips_bypass"
@@ -326,8 +358,8 @@ validate_ss_redir_section() {
 validate_ss_rules_section() {
 	"${2:-ss_validate}" ss_rules "$1" \
 		'disabled:bool:0' \
-		'redir_tcp:uci("shadowsocks-rust", "@ss_redir")' \
-		'redir_udp:uci("shadowsocks-rust", "@ss_redir")' \
+		'redir_tcp:or(uci("shadowsocks-rust", "@ss_redir"),"all")' \
+		'redir_udp:or(uci("shadowsocks-rust", "@ss_redir"),"all")' \
 		'src_ips_bypass:or(ipaddr,cidr)' \
 		'src_ips_forward:or(ipaddr,cidr)' \
 		'src_ips_checkdst:or(ipaddr,cidr)' \
