@@ -226,7 +226,7 @@ interface_multipath_settings() {
 		[ -n "$ipaddr" ] && [ -n "$netmask" ] && network=`ipcalc.sh $ipaddr/$netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 	elif [ "$proto" != "gre" ]; then
 		network_get_ipaddr ipaddr $config
-		[ -z "$ipaddr" ] && ipaddr=$(ip -4 addr show dev $iface | grep inet | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
+		[ -z "$ipaddr" ] && ipaddr=$(ip -4 addr show dev $iface | awk '/inet / {print $2; exit}' | cut -d/ -f1 | tr -d "\n")
 		network_get_gateway gateway $config true
 		[ -z "$gateway" ] && gateway=$(ip -4 r list dev $iface | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
 		[ -z "$gateway" ] && gateway=$(uci -q get "network.$config.gateway")
@@ -249,8 +249,8 @@ interface_multipath_settings() {
 		fi
 		network_get_subnet netmask $config
 		[ -n "$netmask" ] && [ "$(echo $netmask | grep '/')" != "" ] && netmask=""
-		[ -z "$netmask" ] && netmask=$(ip -4 addr show dev $iface | grep peer | awk '{print $4}' | cut -d/ -f2 | tr -d "\n")
-		[ -z "$netmask" ] && netmask=$(ip -4 addr show dev $iface | grep 'inet ' | awk '{print $2}' | cut -d/ -f2 | tr -d "\n")
+		[ -z "$netmask" ] && netmask=$(ip -4 addr show dev $iface | awk '/peer/ {print $4; exit}' | cut -d/ -f2 | tr -d "\n")
+		[ -z "$netmask" ] && netmask=$(ip -4 addr show dev $iface | awk '/inet / {print $2;exit}' | cut -d/ -f2 | tr -d "\n")
 		[ -n "$ipaddr" ] && ipaddr=$(echo $ipaddr | cut -d/ -f1 | tr -d "\n")
 		[ -n "$ipaddr" ] && [ -n "$netmask" ] && netmask=`ipcalc.sh $ipaddr/$netmask | sed -n '/PREFIX=/{;s/.*=//;s/ .*//;p;}'`
 		[ -n "$ipaddr" ] && [ -n "$netmask" ] && network=`ipcalc.sh $ipaddr/$netmask | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
@@ -331,9 +331,9 @@ interface_multipath_settings() {
 		fi
 		if [ -z "$ip6addr" ] || [ -z "$gateway6" ]; then
 			[ -z "$ip6addr" ] && network_get_ipaddr6 ip6addr $config
-			[ -z "$ip6addr" ] && ip6addr=$(ip -6 addr show dev $iface | grep -v 'scope link' | grep inet6 | awk '{print $2}' | cut -d/ -f1 | tr -d "\n")
+			[ -z "$ip6addr" ] && ip6addr=$(ip -6 addr show dev $iface | grep -v 'scope link' | awk '/inet6/ {print $2; exit}' | cut -d/ -f1 | tr -d "\n")
 			[ -z "$gateway6" ] && network_get_gateway6 gateway6 $config true
-			[ -z "$gateway6" ] && gateway6=$(ip -6 r list dev $iface | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
+			[ -z "$gateway6" ] && gateway6=$(ip -6 r list dev $iface | grep -v default | awk '/proto static/ {print $1; exit}' | tr -d "\n")
 			[ -z "$gateway6" ] && gateway6=$(uci -q get "network.$config.ip6gw")
 			[ -z "$gateway6" ] && gateway6=$(ubus call network.interface.$config status | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
 			#if [ -z "$gateway6" ] || [ "$( valid_subnet6 $gateway6 )" != "ok" ]; then 
@@ -344,7 +344,7 @@ interface_multipath_settings() {
 			#	gateway6=$(ubus call network.interface.${config}_6 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
 			#fi
 			gateway6=$(echo $gateway6 | cut -d/ -f1 | tr -d "\n")
-			[ -n "$ip6addr" ] && netmask6=$(ip -6 addr show dev $iface | grep $ip6addr | grep -m 1 inet6 | awk '{print $2}' | cut -d/ -f2 | tr -d "\n")
+			[ -n "$ip6addr" ] && netmask6=$(ip -6 addr show dev $iface | grep $ip6addr | awk '/inet6/ {print $2; exit}' | cut -d/ -f2 | tr -d "\n")
 			[ -n "$ip6addr" ] && [ -n "$netmask6" ] && network6=`/usr/sbin/ipcalc -n ${ip6addr}/${netmask6} | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 		fi
 		if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
@@ -410,10 +410,10 @@ interface_multipath_settings() {
 		if ([ "$mode" = "master" ] || [ "$mode" = "on" ]) && [ -z "$(multipath $iface | grep default)" ]; then
 			logger -t "MPTCP" "Set $iface to $mode"
 			multipath "$iface" "on"
-		elif [ "$mode" = "off" ] && [ -z "$(multipath $iface | grep deactivated)" ]
+		elif [ "$mode" = "off" ] && [ -z "$(multipath $iface | grep deactivated)" ]; then
 			logger -t "MPTCP" "Set $iface to $mode"
 			multipath "$iface" "$mode"
-		elif [ "$mode" = "backup" ] && [ -z "$(multipath $iface | grep backup)" ]
+		elif [ "$mode" = "backup" ] && [ -z "$(multipath $iface | grep backup)" ]; then
 			logger -t "MPTCP" "Set $iface to $mode"
 			multipath "$iface" "$mode"
 		fi
