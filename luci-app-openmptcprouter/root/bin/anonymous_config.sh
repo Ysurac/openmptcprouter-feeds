@@ -14,10 +14,15 @@ uci show | \
 	-e "/openvpn\.omr\.remote=/s/......$/xxxxxx'/" \
 	-e "/shadowsocks-libev\.sss.*\.server=/s/......$/xxxxxx'/" \
 	-e "/shadowsocks-libev\.sss.*\.key=/s/......$/xxxxxx'/" \
+	-e "/shadowsocks-rust\.sss.*\.server=/s/......$/xxxxxx'/" \
+	-e "/shadowsocks-rust\.sss.*\.key=/s/......$/xxxxxx'/" \
 	-e "/external_ip=/s/......$/xxxxxx'/" \
 	-e "/obfs_host=/s/..........$/xxxxxx'/" \
 	-e "/vmess_address=/s/......$/xxxxxx'/" \
 	-e "/vless_address=/s/......$/xxxxxx'/" \
+	-e "/trojan_address=/s/......$/xxxxxx'/" \
+	-e "/socks_address=/s/......$/xxxxxx'/" \
+	-e "/vless_reality_address=/s/......$/xxxxxx'/" \
 	-e "/vpn\.key=/s/......$/xxxxxx'/" \
 	-e "/vps\.key=/s/......$/xxxxxx'/" \
 	-e "/wgkey=/s/......$/xxxxxx'/" \
