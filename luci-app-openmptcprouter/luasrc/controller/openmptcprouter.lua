@@ -257,6 +257,11 @@ function wizard_add()
 		end
 	end
 
+	-- Enable/disable IPv6
+	local disableipv6 = luci.http.formvalue("enableipv6") or "1"
+	ucic:set("openmptcprouter","settings","disable_ipv6",disableipv6)
+
+
 	-- Set interfaces settings
 	local downloadmax = 0
 	local uploadmax = 0
@@ -393,6 +398,10 @@ function wizard_add()
 			ucic:set("network",intf,"ip6addr",ip6addr:gsub("%s+", ""))
 			ucic:set("network",intf,"ip6gw",ip6gw:gsub("%s+", ""))
 			ucic:set("network",intf,"ipv6","1")
+		elseif proto ~= "static" and proto ~= "dhcp" and disableipv6 ~= "1" then
+			ucic:set("network",intf,"ip6addr","")
+			ucic:set("network",intf,"ip6gw","")
+			ucic:set("network",intf,"ipv6","1")
 		else
 			ucic:set("network",intf,"ip6addr","")
 			ucic:set("network",intf,"ip6gw","")
@@ -521,9 +530,6 @@ function wizard_add()
 	ucic:save("network")
 	ucic:commit("network")
 
-	-- Enable/disable IPv6
-	local disableipv6 = luci.http.formvalue("enableipv6") or "1"
-	ucic:set("openmptcprouter","settings","disable_ipv6",disableipv6)
 	--local ut = require "luci.util"
 	--local result = ut.ubus("openmptcprouter", "set_ipv6_state", { disable_ipv6 = disableipv6 })
 	local ula = luci.http.formvalue("ula") or ""
@@ -759,6 +765,7 @@ function wizard_add()
 	ucic:set("openmptcprouter","settings","proxy",default_proxy)
 	ucic:save("openmptcprouter")
 	ucic:save("shadowsocks-libev")
+	ucic:save("shadowsocks-rust")
 	ucic:save("v2ray")
 	ucic:save("xray")
 
@@ -767,6 +774,14 @@ function wizard_add()
 		if sectionname:match("^sss.*") then
 			ucic:delete("shadowsocks-libev",sectionname,"ip")
 			ucic:set("shadowsocks-libev",sectionname,"disabled","1")
+			ucic:delete("openmptcprouter","omr","ss_" .. sectionname)
+		end
+	end)
+	ucic:foreach("shadowsocks-rust","server", function(s)
+		local sectionname = s[".name"]
+		if sectionname:match("^sss.*") then
+			ucic:delete("shadowsocks-rust",sectionname,"ip")
+			ucic:set("shadowsocks-rust",sectionname,"disabled","1")
 			ucic:delete("openmptcprouter","omr","ss_" .. sectionname)
 		end
 	end)
@@ -818,15 +833,21 @@ function wizard_add()
 						if default_proxy == "shadowsocks" and serversnb > disablednb and ssip ~= "" then
 							ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","0")
 						end
+						ucic:set("shadowsocks-rust","sss" .. nbip,"server",ssip)
+						if default_proxy == "shadowsocks-rust" and serversnb > disablednb and ssip ~= "" then
+							ucic:set("shadowsocks-rust","sss" .. nbip,"disabled","0")
+						end
 						nbip = nbip + 1
 						if disableipv6 == "1" and nbip > 0 then
 							ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","1")
+							ucic:set("shadowsocks-rust","sss" .. nbip,"disabled","1")
 							break
 						end
 					end
 					if nbip == 1 then
 						--ucic:set("shadowsocks-libev","sss" .. nbip,"server",server_ip)
 						ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","1")
+						ucic:set("shadowsocks-rust","sss" .. nbip,"disabled","1")
 					end
 				end
 				k = k + 1
@@ -864,6 +885,10 @@ function wizard_add()
 					if default_proxy == "shadowsocks" and serversnb > disablednb and ssip ~= "" then
 						ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","0")
 					end
+					ucic:set("shadowsocks-rust","sss" .. nbip,"server",ssip)
+					if default_proxy == "shadowsocks-rust" and serversnb > disablednb and ssip ~= "" then
+						ucic:set("shadowsocks-rust","sss" .. nbip,"disabled","0")
+					end
 					nbip = nbip + 1
 					if disableipv6 == "1" and nbip > 0 then
 						break
@@ -872,6 +897,7 @@ function wizard_add()
 				if nbip == 1 then
 				--	ucic:set("shadowsocks-libev","sss" .. nbip,"server",server_ip)
 					ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","1")
+					ucic:set("shadowsocks-rust","sss" .. nbip,"disabled","1")
 				end
 			end
 		end
@@ -894,6 +920,7 @@ function wizard_add()
 	ucic:save("glorytun-udp")
 	--ucic:commit("glorytun")
 	ucic:save("shadowsocks-libev")
+	ucic:save("shadowsocks-rust")
 	--ucic:commit("shadowsocks-libev")
 
 
@@ -1059,6 +1086,8 @@ function wizard_add()
 	ucic:commit("xray")
 	ucic:save("shadowsocks-libev")
 	ucic:commit("shadowsocks-libev")
+	ucic:save("shadowsocks-rust")
+	ucic:commit("shadowsocks-rust")
 
 
 	-- Set Glorytun settings
@@ -1218,6 +1247,7 @@ function wizard_add()
 		--	luci.sys.call("sleep 2")
 		--end
 		luci.sys.call("/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/shadowsocks-rust restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")

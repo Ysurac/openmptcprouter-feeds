@@ -889,7 +889,7 @@ function interfaces_status()
 		local master = uci:get("openmptcprouter",s[".name"],"master") or "1"
 		local current = uci:get("openmptcprouter",s[".name"],"current") or "0"
 		for key, value in pairs(serverips) do
-			serverip = sys.exec('resolveip ' .. value .. ' | head -n 1')
+			serverip = sys.exec('resolveip ' .. value .. ' | head -n 1 | tr -d "\n"')
 			if serverip ~= "" and (current == "1" or mArray.openmptcprouter["wan_addr"] == serverip or mArray.openmptcprouter["wan_addr6"] == serverip) and mArray.openmptcprouter["vps_admin"] == false then
 				mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter", s[".name"], "omr_version") or ""
 				mArray.openmptcprouter["vps_kernel"] = uci:get("openmptcprouter",s[".name"],"kernel") or ""
@@ -904,8 +904,7 @@ function interfaces_status()
 					local vpsinfo_json = ""
 					if mArray.openmptcprouter["service_addr_ip"] ~= "" then
 						vpsinfo_json = sys.exec('curl --max-time ' .. timeout .. ' -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ':' .. adminport .. '/status')
-					end
-					if mArray.openmptcprouter["service_addr_ip6"] ~= "" then
+					elseif mArray.openmptcprouter["service_addr_ip6"] ~= "" then
 						vpsinfo_json = sys.exec('curl --max-time ' .. timeout .. ' -s -k -H "Authorization: Bearer ' .. token .. '" https://[' .. serverip .. ']:' .. adminport .. '/status')
 		    			end
 	    				if vpsinfo_json ~= "" and vpsinfo_json ~= nil then
@@ -991,7 +990,7 @@ function interfaces_status()
 						mArray.openmptcprouter["vps_admin_error_msg"] = "No result"
 						uci:set("openmptcprouter",s[".name"],"token_error","1")
 						mArray.openmptcprouter["vps_admin_error"] = true
-						uci:delete("openmptcprouter",s[".name"],"token")
+						--uci:delete("openmptcprouter",s[".name"],"token")
 						uci:save("openmptcprouter",s[".name"])
 						uci:commit("openmptcprouter",s[".name"])
 					end
@@ -1477,26 +1476,41 @@ function interfaces_status()
 	    local server_ping = ""
 	    local server_http = ""
 	    --if connectivity ~= "ERROR" and ifname ~= "" and gateway ~= "" and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" and ipaddr ~= "" then
-	    if ifname ~= "" and (gateway ~= "" or gateway6 ~= "") and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" and (ipaddr ~= "" or ip6addr ~= "") and connectivity ~= "ERROR" then
-		    local serverip = mArray.openmptcprouter["service_addr"]
-		    if serverip == "127.0.0.1" then
-			    serverip = mArray.openmptcprouter["wan_addr"]
-		    end
-		    if serverip ~= "" and uci:get("openmptcprouter", "settings", "disableserverping") ~= "1" then
-			    local server_ping_test = sys.exec("ping -B -w 1 -c 1 -I " .. ifname .. " " .. serverip)
-			    local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
-			    if server_ping_result ~= "" then
-				    server_ping = "DOWN"
-				    if connectivity == "OK" then
-					    connectivity = "WARNING"
-				    end
-			    else
-				    mArray.openmptcprouter["vps_status"] = "UP"
-				    server_ping = "UP"
-				    latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f5 | cut -d '.' -f1"))
-			    end
-		    end
-		    
+	    if ifname ~= "" and (gateway ~= "" or gateway6 ~= "") and ifname ~= nil and (ipaddr ~= "" or ip6addr ~= "") and connectivity ~= "ERROR" then
+		if uci:get("openmptcprouter", "settings", "disableserverping") ~= "1" then
+		    uci:foreach("openmptcprouter", "server", function(s)
+			local serverips = uci:get("openmptcprouter",s[".name"],"ip") or { "" }
+			local master = uci:get("openmptcprouter",s[".name"],"master") or "1"
+			local current = uci:get("openmptcprouter",s[".name"],"current") or "0"
+			if current == "1" then
+				for key, value in pairs(serverips) do
+					local serverip = mArray.openmptcprouter["service_addr"]
+					if serverip == "127.0.0.1" then
+						serverip = mArray.openmptcprouter["wan_addr"]
+					end
+					if gateway ~= "" then
+						serverip = sys.exec('resolveip -4 ' .. value .. ' | head -n 1')
+					elseif gateway6 ~= "" then
+						serverip = sys.exec('resolveip -6 ' .. value .. ' | head -n 1')
+					end
+					if serverip ~= "" then
+						local server_ping_test = sys.exec("ping -B -w 1 -c 1 -I " .. ifname .. " " .. serverip)
+						local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
+						if server_ping_result ~= "" then
+							server_ping = "DOWN"
+							if connectivity == "OK" then
+								connectivity = "WARNING"
+							end
+						else
+							mArray.openmptcprouter["vps_status"] = "UP"
+							server_ping = "UP"
+							latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f5 | cut -d '.' -f1"))
+						end
+					end
+				end
+			end
+		    end)
+		end
 		    if adminport == "" then
 			    adminport = "65500"
 		    end
