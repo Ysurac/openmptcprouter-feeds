@@ -24,11 +24,11 @@ define Package/$(PKG_NAME)/template
 	CATEGORY:=Extra packages
 	TITLE:=Xray-core
 	DEPENDS:=$(GO_ARCH_DEPENDS)
-	PROVIDES:=xray-core
 endef
 
 define Package/$(PKG_NAME)-core
 	$(call Package/$(PKG_NAME)/template)
+	PROVIDES:=xray-core
 endef
 
 define Package/$(PKG_NAME)-config
