@@ -87,7 +87,7 @@ MY_DEPENDS := \
     (TARGET_x86||TARGET_x86_64):kmod-mlx4-core \
     !(TARGET_ips40xx||TARGET_ramips):iptables-mod-ndpi !(TARGET_ips40xx||TARGET_ramips):kmod-ipt-ndpi libip4tc libip6tc \
     xray-core LINUX_5_4:xray-config !LINUX_5_4:xray-config-nft shadowsocks-rust-sslocal shadowsocks-rust-ssservice LINUX_5_4:shadowsocks-rust-config !LINUX_5_4:shadowsocks-rust-config-nft luci-app-shadowsocks-rust (LINUX_5_4&&(TARGET_x86_64||aarch64)):kmod-tcp-bbr2 kmod-ovpn-dco-v2 \
-    luci-proto-external omr-schedule
+    luci-proto-external omr-schedule jq luci-app-ddns
 
 # keepalived disabled by default because it's running even with no configuration, would need a default OMR config with some changes
 #    (TARGET_x86||TARGET_x86_64):keepalived (TARGET_x86||TARGET_x86_64):keepalived-sync
