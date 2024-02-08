@@ -20,8 +20,8 @@ include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/openmptcprouter/golang/golang-package.mk
 
 define Package/$(PKG_NAME)/template
-	SECTION:=Custom
-	CATEGORY:=Extra packages
+	SECTION:=net
+	CATEGORY:=Network
 	TITLE:=Xray-core
 	DEPENDS:=$(GO_ARCH_DEPENDS)
 endef
