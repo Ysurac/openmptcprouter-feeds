@@ -31,7 +31,6 @@ unexport \
   GOROOT \
   GOTOOLCHAIN \
   GOTMPDIR \
-  GOPROXY \
   GOWORK
 # Unmodified:
 #   GOINSECURE
