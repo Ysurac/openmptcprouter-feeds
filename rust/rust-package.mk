@@ -15,22 +15,28 @@ ifeq ($(origin RUST_INCLUDE_DIR),undefined)
 endif
 include $(RUST_INCLUDE_DIR)/rust-values.mk
 
-CARGO_PKG_VARS= \
-	$(CARGO_PKG_CONFIG_VARS) \
-	CC=$(HOSTCC_NOCACHE) \
-	MAKEFLAGS="$(PKG_JOBS)"
+# Support only a subset for now.
+RUST_ARCH_DEPENDS:=@(aarch64||arm||i386||i686||mips||mipsel||mips64||mips64el||mipsel||powerpc64||riscv64||x86_64)
 
 # $(1) path to the package (optional)
 # $(2) additional arguments to cargo (optional)
 define Build/Compile/Cargo
-	+$(CARGO_PKG_VARS) \
-	cargo install -v \
-		--profile $(CARGO_PKG_PROFILE) \
-		$(if $(strip $(RUST_PKG_FEATURES)),--features "$(strip $(RUST_PKG_FEATURES))") \
-		--root $(PKG_INSTALL_DIR) \
-		--path "$(PKG_BUILD_DIR)/$(if $(strip $(1)),$(strip $(1)))" \
-		$(if $(filter --jobserver%,$(PKG_JOBS)),,-j1) \
-		$(2)
+	( \
+		cd $(PKG_BUILD_DIR) ; \
+		export PATH="$(CARGO_HOME)/bin:$(PATH)" ; \
+		CARGO_HOME=$(CARGO_HOME) \
+		TARGET_CFLAGS="$(TARGET_CFLAGS) $(RUST_CFLAGS)" \
+		TARGET_CC=$(TARGET_CC_NOCACHE) \
+		CC=$(HOSTCC_NOCACHE) \
+		$(CARGO_VARS) \
+		cargo install -v \
+			--profile stripped \
+			--target $(RUSTC_TARGET_ARCH) \
+			$(if $(strip $(RUST_PKG_FEATURES)),--features "$(strip $(RUST_PKG_FEATURES))") \
+			--root $(PKG_INSTALL_DIR) \
+			--path "$(if $(strip $(1)),$(strip $(1)),.)" \
+			$(2) ; \
+	)
 endef
 
 define RustBinPackage
