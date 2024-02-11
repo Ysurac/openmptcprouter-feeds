@@ -8,13 +8,8 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=shadowsocks-rust
-ifneq ($(word 1,$(subst ., ,$(LINUX_VERSION))),"5")
-  PKG_VERSION:=1.17.1
-  PKG_HASH:=97a1c8ebf7fd19de94cd6d0dfee398667e1f4e131ec8a37ecb7c3191af7cc75e
-else
-  PKG_VERSION:=1.18.0
-  PKG_HASH:=e854743ecef9ab3b371fdcb139e6f4452831b487d449c97c2129abbf4f51e863
-endif
+PKG_VERSION:=1.18.0
+PKG_HASH:=e854743ecef9ab3b371fdcb139e6f4452831b487d449c97c2129abbf4f51e863
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
@@ -29,11 +24,7 @@ PKG_BUILD_DEPENDS:=rust/host
 RUST_PKG_FEATURES:=local-redir
 
 include $(INCLUDE_DIR)/package.mk
-ifneq ($(word 1,$(subst ., ,$(LINUX_VERSION))),"5")
 include $(TOPDIR)/feeds/openmptcprouter/rust/rust-package.mk
-else
-include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
-endif
 
 define Package/shadowsocks-rust/Default
   define Package/shadowsocks-rust-$(1)
