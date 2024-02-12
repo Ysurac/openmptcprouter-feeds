@@ -100,9 +100,7 @@ endef
 define Host/Install
 	( \
 		cd $(HOST_BUILD_DIR)/build/dist ; \
-		for targz in *.tar.gz; do \
-			$(STAGING_DIR_HOST)/bin/libdeflate-gzip -dc "$$$$targz" | tar -xf - ; \
-		done ; \
+		find -iname "*.tar.gz" -exec tar -xzf {} \; ; \
 		find . -mindepth 2 -maxdepth 2 -type f -name install.sh \
 			-execdir bash '{}' --prefix=$(STAGING_DIR)/host --disable-ldconfig \; ; \
 	)
