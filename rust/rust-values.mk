@@ -11,7 +11,8 @@ unexport RUSTC_WRAPPER
 # Rust Environmental Vars
 RUSTC_HOST_SUFFIX:=$(word 4, $(subst -, ,$(GNU_HOST_NAME)))
 RUSTC_HOST_ARCH:=$(HOST_ARCH)-unknown-linux-$(RUSTC_HOST_SUFFIX)
-CARGO_HOME:=$(DL_DIR)/cargo
+#CARGO_HOME:=$(DL_DIR)/cargo
+CARGO_HOME:=$(STAGING_DIR)/cargo
 
 ifeq ($(CONFIG_USE_MUSL),y)
   # Force linking of the SSP library for musl
@@ -62,9 +63,9 @@ ifeq ($(ARCH),arm)
   endif
 endif
 
-ifeq ($(ARCH),aarch64)
-    RUSTC_CFLAGS:=-mno-outline-atomics
-endif
+#ifeq ($(ARCH),aarch64)
+#    RUSTC_CFLAGS:=-mno-outline-atomics
+#endif
 
 # Support only a subset for now.
 RUST_ARCH_DEPENDS:=@(aarch64||arm||i386||i686||mips||mipsel||mips64||mips64el||mipsel||powerpc64||riscv64||x86_64)
