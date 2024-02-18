@@ -11,6 +11,8 @@ START=99
 
 EXTRA_COMMANDS="rules_up rules_down rules_exist"
 
+. /usr/lib/unbound/iptools.sh
+
 ss_confdir=/var/etc/shadowsocks-rust
 ss_bindir=/usr/bin
 
@@ -108,7 +110,11 @@ ss_rules_cb() {
 	if [ "$cfgtype" = ss_redir ]; then
 		config_get cfgserver "$cfg" server
 		config_get server "$cfgserver" server
-		ss_redir_servers="$ss_redir_servers $server"
+		if [ -z "$ss_redir_servers" ]; then
+			ss_redir_servers="$server"
+		else
+			ss_redir_servers="$ss_redir_servers $server"
+		fi
 		if [ "$mode" = tcp_only -o "$mode" = "tcp_and_udp" ]; then
 			eval "ss_rules_redir_tcp_$cfg=$local_port"
 		fi
@@ -164,7 +170,15 @@ ss_rules_nft_gen() {
 	fi
 
 	[ -n "$local_port_tcp" -o -n "$local_port_udp" ] || return 1
-	remote_servers="$(echo $ss_redir_servers \
+
+	if [ -z "$(echo $ss_redir_servers | grep ' ')" ]; then
+		valid_ip4=$( valid_subnet4 $ss_redir_servers)
+		valid_ip6=$( valid_subnet6 $ss_redir_servers)
+		if [ "$valid_ip4" = "ok" ] || [ "$valid_ip6" = "ok" ]; then
+			remote_servers=$ss_redir_servers
+		fi
+	fi
+	[ -z "$remote_servers" ] && remote_servers="$(echo $ss_redir_servers \
 		| tr ' ' '\n' \
 		| sort -u \
 		| xargs -n 1 resolveip \
