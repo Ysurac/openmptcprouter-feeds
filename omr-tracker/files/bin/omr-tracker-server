@@ -4,6 +4,8 @@
 name=$0
 basename="$(basename $0)"
 
+. /usr/lib/unbound/iptools.sh
+
 _log() {
 	logger -p daemon.info -t "${basename}" "$@"
 }
@@ -24,13 +26,23 @@ _check_server() {
 	local host=$1
 	local port=$2
 	local k=0
+	local valid_ip6=$(valid_subnet6 $host)
 	while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
-		ret=$(curl \
-		    --max-time "$OMR_TRACKER_TIMEOUT" \
-		    -s \
-		    -k \
-		    "https://${host}:${port}/"
-		)
+		if [ "$valid_ip6" != "ok" ]; then
+			ret=$(curl \
+			    --max-time "$OMR_TRACKER_TIMEOUT" \
+			    -s \
+			    -k \
+			    "https://${host}:${port}/"
+			)
+		else
+			ret=$(curl \
+			    --max-time "$OMR_TRACKER_TIMEOUT" \
+			    -s \
+			    -k \
+			    "https://[${host}]:${port}/"
+			)
+		fi
 		[ -n "$ret" ] && server_ping=true
 		k=$((k+1))
 		sleep "${intervaltries}"
@@ -40,16 +52,26 @@ _check_server() {
 _check_server_intf() {
 	local host=$1
 	local port=$2
+	local valid_ip6=$(valid_subnet6 $host)
 	for intf in $(multipath | awk '/default/ {print $1}'); do
 		local k=0
 		while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
-			ret=$(curl \
-			    --max-time "$OMR_TRACKER_TIMEOUT" \
-			    -s \
-			    -k \
-			    --interface $intf \
-			    "https://${host}:${port}/"
-			)
+			if [ "$valid_ip6" != "ok" ]; then
+				ret=$(curl \
+				    --max-time "$OMR_TRACKER_TIMEOUT" \
+				    -s \
+				    -k \
+				    --interface $intf \
+				    "https://${host}:${port}/"
+				)
+			else
+				ret=$(curl \
+				    --max-time "$OMR_TRACKER_TIMEOUT" \
+				    -s \
+				    -k \
+				    "https://[${host}%${intf}]:${port}/"
+				)
+			fi
 			[ -n "$ret" ] && {
 				server_ping=true
 			}
@@ -89,21 +111,26 @@ _check_master() {
 	config_get ip $1 ip
 	config_get port $1 port "65500"
 	config_get disabled $1 disabled
+	serverip=""
 	[ "$master" = "1" ] && [ -n "$ip" ] && [ "$disabled" != "1" ] && {
-		set_ip() {
+		check_ip() {
 			local ipd=$1
-			local ip=""
 			ipresolve="$(resolveip -4 $ipd | head -n 1)"
 			if [ -n "$ipresolve" ]; then
-				ip="$ipresolve"
+				serverip="$ipresolve"
 			else
 				ip6resolve="$(resolveip -6 $ipd | head -n 1)"
-				[ -n "$ip6resolve" ] && ip="$ip6resolve"
+				[ -n "$ip6resolve" ] && serverip="$ip6resolve"
 			fi
-			[ -z "$ip" ] && return
-			#_ping_server $ip
-			#_check_server $ip $port
-			_check_server_intf $ip $port
+			[ -z "$serverip" ] && return
+			#_ping_server $serverip
+			#_check_server $serverip $port
+			_check_server_intf $serverip $port
+			[ "$server_ping" = true ] && return
+			countips=$((countips+1))
+		}
+		set_ip() {
+			ip="$serverip"
 			if [ "$server_ping" = true ]; then
 				if [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ]; then
 					logger -t "OMR-Tracker-Server" "Master server ${name} up ($ip), set it back"
@@ -204,10 +231,10 @@ _check_master() {
 				script_alert_down="$(uci -q get omr-tracker.proxy.script_alert_down)"
 				[ -n "$script_alert_down" ] && eval $script_alert_down
 			fi
-			countips=$((countips+1))
 		}
 		config_load openmptcprouter
-		config_list_foreach $1 ip set_ip
+		config_list_foreach $1 ip check_ip
+		set_ip
 		#if [ "$server_ping" = true ] && [ "$countips" = "1" ]; then
 		#	uci -q batch <<-EOF >/dev/null
 		#		set shadowsocks-libev.sss${count}.server=$ip
@@ -233,19 +260,26 @@ _check_backup() {
 	config_get ip $1 ip
 	config_get port $1 port
 	config_get disabled $1 disabled
+	serverip=""
 	[ "$backup" = "1" ] && [ -n "$ip" ] && [ "$disabled" != "1" ] && {
-		set_ip() {
-			local ip=$1
-			ipresolve="$(resolveip -4 $ip | head -n 1)"
+		check_ip() {
+			local ipd=$1
+			ipresolve="$(resolveip -4 $ipd | head -n 1)"
 			if [ -n "$ipresolve" ]; then
-				ip="$ipresolve"
+				serverip="$ipresolve"
 			else
-				ip6resolve="$(resolveip -6 $ip | head -n 1)"
-				[ -n "$ip6resolve" ] && ip="$ip6resolve"
+				ip6resolve="$(resolveip -6 $ipd | head -n 1)"
+				[ -n "$ip6resolve" ] && serverip="$ip6resolve"
 			fi
-			#_ping_server $ip
-			#_check_server $ip $port
-			_check_server_intf $ip $port
+			[ -z "$serverip" ] && return
+			#_ping_server $serverip
+			#_check_server $serverip $port
+			_check_server_intf $serverip $port
+			[ "$server_ping" = true ] && return
+			countips=$((countips+1))
+		}
+		set_ip() {
+			ip="$serverip"
 			#[ "$server_ping" = true ] && [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" = "$ip" ] && break
 			if [ "$server_ping" = true ]; then
 				if [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ]; then
@@ -349,7 +383,8 @@ _check_backup() {
 			countips=$((countips+1))
 		}
 		config_load openmptcprouter
-		config_list_foreach $1 ip set_ip
+		config_list_foreach $1 ip check_ip
+		set_ip
 		#if [ "$server_ping" = true ] && [ "$countips" = "1" ]; then
 		#	uci -q batch <<-EOF >/dev/null
 		#		set shadowsocks-libev.sss${count}.server=$ip
