@@ -708,6 +708,7 @@ dns_flush() {
 # Get the current multipath status
 multipath_status="off"
 [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] && multipath $OMR_TRACKER_DEVICE off 2>&1 >/dev/null
+[ "$OMR_TRACKER_INTERFACE" = "omr6in4" ] && multipath $OMR_TRACKER_DEVICE off 2>&1 >/dev/null
 if [ -e "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
 	case "$(multipath "$OMR_TRACKER_DEVICE")" in
 		*default*)      multipath_status="on"       ;;
@@ -878,7 +879,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || [ "$interface_up" != "true" ]; then
 		ifup $OMR_TRACKER_INTERFACE 2>&1 >/dev/null
 	}
 
-	if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
+	if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] || [ "$OMR_TRACKER_INTERFACE" = "omr6in4" ]; then
 		if [ "$OMR_TRACKER_STATUS_MSG" = "" ]; then
 			_log "$OMR_TRACKER_INTERFACE down"
 		else
@@ -917,7 +918,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || [ "$interface_up" != "true" ]; then
 		fi
 		if [ "$(uci -q get openvpn.omr.enabled)" = "1" ]; then
 			_log "OpenVPN down, restart it"
-			/etc/init.d/openvpn restart 2>&1 >/dev/null
+			/etc/init.d/openvpn restart omr 2>&1 >/dev/null
 		fi
 		config_load openmptcprouter
 		config_foreach disable_pihole server
@@ -944,7 +945,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || [ "$interface_up" != "true" ]; then
 	exit 0
 fi
 
-if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
+if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] || [ "$OMR_TRACKER_INTERFACE" = "omr6in4" ]; then
 	if [ "$(uci -q get openmptcprouter.settings.shadowsocksudp)" = "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ -n "$(uci -q get shadowsocks-libev.sss0)" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "hi1" ]; then
 		_log "Tunnel up disable use of ShadowSocks for UDP"
 		uci -q delete shadowsocks-libev.ss_rules.redir_udp
@@ -1149,7 +1150,7 @@ if [ "$multipath_config" = "master" ]; then
 			config_load network
 			config_foreach set_route_balancing6 interface
 			[ -n "$routesbalancing6" ] && {
-				([ "$nbintf6" -gt "1" ] && [ "$(ip -6 r show default metric 1 | tr -d '\t' | tr -d '\n')" != "default via $routesbalancing6 " ] && [ "$(ip -6 r show default metric 1 | tr -d '\t' | tr -d '\n')" != "default $routesbalancing6 " ]) || ([ "$nbintf6" = "1" ] && [ "$(ip -6 r show default metric 1 | grep $OMR_TRACKER_DEVICE)" = "" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ]) && {
+				([ "$nbintf6" -gt "1" ] && [ "$(ip -6 r show default metric 1 | tr -d '\t' | tr -d '\n')" != "default via $routesbalancing6 " ] && [ "$(ip -6 r show default metric 1 | tr -d '\t' | tr -d '\n')" != "default $routesbalancing6 " ]) || ([ "$nbintf6" = "1" ] && [ "$(ip -6 r show default metric 1 | grep $OMR_TRACKER_DEVICE)" = "" ] && [ "$(ip -6 r show default metric 1 | grep omr6in4)" = "" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ]) && {
 					_log "Set ip -6 route replace default scope global metric 1 $routesbalancing6"
 					ip -6 route replace default scope global metric 1 $routesbalancing6 2>&1 >/dev/null
 				}
