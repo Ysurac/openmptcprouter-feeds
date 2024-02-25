@@ -837,7 +837,6 @@ start_service() {
 		set firewall.omr_bypass.type='script'
 		set firewall.omr_bypass.path='/etc/firewall.omr-bypass'
 		set firewall.omr_bypass.fw4_compatible='1'
-		commit firewall
 	EOF
 	#echo "intf_rule"
 	config_load network
@@ -865,7 +864,6 @@ start_service() {
 	config_foreach _bypass_asn asns
 	#echo "bypass domains"
 	config_foreach _bypass_domains domains
-	uci -q commit dhcp
 
 #	ip rule add prio 1 fwmark 0x4539 lookup 991337 > /dev/null 2>&1
 #	ip -6 rule add prio 1 fwmark 0x6539 lookup 6991337 > /dev/null 2>&1
@@ -893,6 +891,9 @@ start_service() {
 	[ -d /proc/net/xt_ndpi/proto ] && config_foreach _bypass_proto dpis
 	config_foreach _bypass_proto_without_ndpi dpis
 	uci -q commit omr-bypass
+	uci -q commit dhcp
+	uci -q commit firewall
+	fw4 -q restart
 
 	[ -z "$RELOAD" ] && [ "$add_domains" = "true" ] && {
 		logger -t "omr-bypass" "Restart dnsmasq..."
@@ -902,7 +903,6 @@ start_service() {
 		logger -t "omr-bypass" "Reload dnsmasq..."
 		/etc/init.d/dnsmasq reload
 	}
-	fw4 -q restart
 	# Create a protocol list for UI from a sqlite DB when NDPI is not available
 	sqlite3 /usr/share/omr-bypass/omr-bypass.db "select distinct(proto) from (select proto from hostproto union all select proto from ipproto) a order by proto;" ".exit" > /usr/share/omr-bypass/omr-bypass-proto.lst
 	config_load omr-bypass
