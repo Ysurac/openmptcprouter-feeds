@@ -166,6 +166,7 @@ _bypass_mac() {
 	[ -z "$mac" ] && return
 	uci -q batch <<-EOF
 		add_list firewall.omr_dst_bypass_$intf_mac.src_mac="$mac"
+		set firewall.omr_dst_bypass_$intf_mac.enabled='1'
 	EOF
 }
 
@@ -250,14 +251,14 @@ _bypass_src_port() {
 	[ -z "$proto" ] && return
 	if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
 		uci -q batch <<-EOF
-			add_list firewall.omr_dst_bypass_${intf}_dstport_tcp.src_port="$sport"
-			set firewall.omr_dst_bypass_${intf}_dstport_tcp.enabled='1'
+			add_list firewall.omr_dst_bypass_${intf}_srcport_tcp.src_port="$sport"
+			set firewall.omr_dst_bypass_${intf}_srcport_tcp.enabled='1'
 		EOF
 	fi
 	if [ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ]; then
 		uci -q batch <<-EOF
-			add_list firewall.omr_dst_bypass_${intf}_dstport_udp.src_port="$sport"
-			set firewall.omr_dst_bypass_${intf}_dstport_udp.enabled='1'
+			add_list firewall.omr_dst_bypass_${intf}_srcport_udp.src_port="$sport"
+			set firewall.omr_dst_bypass_${intf}_srcport_udp.enabled='1'
 		EOF
 	fi
 }
@@ -501,8 +502,8 @@ _bypass_proto_without_ndpi() {
 
 _intf_rule_ss_rules() {
 	cat >> /etc/firewall.omr-bypass <<-EOF
-		nft insert rule inet fw4 ss_rules_pre_tcp ip daddr @omr_dst_bypass_${intf}_4 meta mark set 0x00004539 accept
-		nft insert rule inet fw4 ss_rules_local_out ip daddr @omr_dst_bypass_${intf}_4 meta mark set 0x00004539 accept
+		nft insert rule inet fw4 ss_rules_pre_tcp ip daddr @omr_dst_bypass_${intf}_4 accept
+		nft insert rule inet fw4 ss_rules_local_out ip daddr @omr_dst_bypass_${intf}_4 accept
 	EOF
 	if [ "$disableipv6" = "0" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
@@ -639,7 +640,6 @@ _intf_rule() {
 				set firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}.target='MARK'
 				set firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}.enabled='0'
 				set firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}.set_xmark="0x${ipv46}539${count}"
-				commit firewall
 			EOF
 		done
 		if [ "$intf" = "all" ]; then
@@ -654,7 +654,6 @@ _intf_rule() {
 				set network.${intf}_fw_rule6.priority=1
 				set network.${intf}_fw_rule6.mark=0x6539
 				set network.${intf}_fw_rule6.lookup=6991337
-				commit network
 			EOF
 		else
 			uci -q batch <<-EOF >/dev/null
@@ -668,14 +667,12 @@ _intf_rule() {
 				set network.${intf}_fw_rule6.priority=1
 				set network.${intf}_fw_rule6.mark=0x6539${count}
 				set network.${intf}_fw_rule6.lookup=${count}
-				commit network
 			EOF
 		fi
 		uci batch <<-EOF
 			set dhcp.omr_dst_bypass_$intf=ipset
 			add_list dhcp.omr_dst_bypass_$intf.name="omr_dst_bypass_${intf}_4"
 			add_list dhcp.omr_dst_bypass_$intf.name="omr_dst_bypass_${intf}_6"
-			commit dhcp
 		EOF
 
 	if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks" ]; then
@@ -889,6 +886,10 @@ start_service() {
 	config_load omr-bypass
 	[ -d /proc/net/xt_ndpi/proto ] && config_foreach _bypass_proto dpis
 	config_foreach _bypass_proto_without_ndpi dpis
+	[ -n "$(uci change network)" ] && {
+		uci -q commit network
+		/etc/init.d/network reload
+	}
 	uci -q commit omr-bypass
 	uci -q commit dhcp
 	uci -q commit firewall
