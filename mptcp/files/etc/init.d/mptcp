@@ -82,10 +82,6 @@ interface_max_metric() {
 	local config="$1"
 	if [ "$1" != "omrvpn" ] && [ "$1" != "omr6in4" ] && [ "$1" != "lan" ]; then
 		config_get metric "$config" metric
-		if [ "$metric" = "$count" ]; then
-			count=$((count+1))
-			config_set "$config" metric $count
-		fi
 		if [ "$metric" -gt "$count" ]; then
 			count=$metric
 		fi
@@ -119,15 +115,19 @@ interface_multipath_settings() {
 	[ -z "$iface" ] && config_get iface "$config" ifname
 	config_get txqueuelen "$config" txqueuelen
 	[ -n "$(echo $iface | grep '@')" ] && iface=$(ifstatus "$config" | jsonfilter -q -e '@["device"]')
-	if [ "$(uci -q get openmptcprouter.${config}.metric)" = "" ]; then
+	if [ "$(uci -q get openmptcprouter.${config}.metric)" = "" ] || [ "$(uci -q get openmptcprouter.${config}.metric)" = "1" ]; then
 		count=$((count+1))
 		metric=$count
 	else
 		metric="$(uci -q get openmptcprouter.${config}.metric)"
 	fi
-	[ "$metric" -gt 1000 ] && metric=$((metric-1000))
+	[ "$metric" -gt 1000 ] && [ "${config}" != "omrvpn" ] && [ "${config}" != "omr6in4" ] && metric=$((metric-1000))
 	if [ "${config}" = "lan" ] || [ "$(uci -q get network.${config}.ip4table)" = "lan" ]; then
 		metric="9999"
+	elif [ "${config}" = "omrvpn" ]; then
+		metric="1500"
+	elif [ "${config}" = "omr6in4" ]; then
+		metric="1201"
 	fi
 	config_set "$config" metric $metric
 	uci -q set network.${config}.metric=$metric
@@ -513,7 +513,7 @@ remove() {
 
 start_service() {
 	local intf=$1
-	local id count intfmaster
+	local id intfmaster
 	. /lib/functions.sh
 	. /lib/functions/network.sh
 	#[ -n "$intf" ] && multipath "${intf}" off 2>&1 >/dev/null
@@ -530,7 +530,7 @@ start_service() {
 	mptcpintf=""
 	mptcpmintf=""
 	master=""
-	count="0"
+	count=0
 	config_load openmptcprouter
 	config_foreach interface_max_metric interface
 	
