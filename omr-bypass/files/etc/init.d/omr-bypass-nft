@@ -59,11 +59,11 @@ _bypass_ip() {
 	valid_ip4=$( valid_subnet4 $ip)
 	valid_ip6=$( valid_subnet6 $ip)
 	if [ "$valid_ip4" = "ok" ]; then
-		uci -q add_list firewall.omr_dst_bypass_${type}_4.entry=$ip
+		uci -q add_list firewall.omr_dst_bypass_${type}_4.entry="$ip"
 		uci -q set firewall.omr_dst_bypass_${type}_4.enabled='1'
 		uci -q set firewall.omr_dst_bypass_${type}_dstip_4.enabled='1'
 	elif [ "$valid_ip6" = "ok" ]; then
-		uci -q add_list firewall.omr_dst_bypass_${type}_6.entry=$ip
+		uci -q add_list firewall.omr_dst_bypass_${type}_6.entry="$ip"
 		uci -q set firewall.omr_dst_bypass_${type}_6.enabled='1'
 		uci -q set firewall.omr_dst_bypass_${type}_dstip_6.enabled='1'
 	fi
@@ -141,7 +141,7 @@ _bypass_domain() {
 			fi
 		fi
 		if [ "$(uci -q get dhcp.omr_dst_bypass_$intf | grep /$domain/)" = "" ]; then
-			uci -q add_list dhcp.omr_dst_bypass_$intf.domain=$domain
+			uci -q add_list dhcp.omr_dst_bypass_$intf.domain="$domain"
 			add_domains="true"
 		fi
 		if [ "$(uci -q get dhcp.@dnsmasq[0].noipv6 | grep /$domain/)" = "" ] && [ "$noipv6" = "1" ]; then
@@ -420,6 +420,7 @@ _bypass_proto_without_ndpi() {
 					set firewall.bypass_$proto=ipset
 					set firewall.bypass_$proto.name="bypass_$proto"
 					set firewall.bypass_$proto.match='dest_ip'
+					set firewall.bypass_$proto.family='ipv4'
 					set firewall.bypass_$proto_rule=rule
 					set firewall.bypass_$proto_rule.name="bypass_$proto"
 					set firewall.bypass_$proto_rule.src='lan'
@@ -432,6 +433,7 @@ _bypass_proto_without_ndpi() {
 					set firewall.bypass6_$proto=ipset
 					set firewall.bypass6_$proto.name="bypas6s_$proto"
 					set firewall.bypass6_$proto.match='dest_ip'
+					set firewall.bypass6_$proto.family='ipv6'
 					set firewall.bypass6_$proto_rule=rule
 					set firewall.bypass6_$proto_rule.name="bypass6_$proto"
 					set firewall.bypass6_$proto_rule.src='lan'
@@ -469,10 +471,10 @@ _bypass_proto_without_ndpi() {
 				if [ "$valid_ip4" = "ok" ]; then
 					if [ "$vpn" != "1" ]; then
 						#ipset -q add bypass_$proto $ip
-						uci -q add_list firewall.bypass_$proto.entry=$ip
+						uci -q add_list firewall.bypass_$proto.entry="$ip"
 					else
 						#ipset -q add omr_dst_bypass_$intf $ip
-						uci -q add_list firewall.omr_dst_bypass_${intf}_4.entry=$ip
+						uci -q add_list firewall.omr_dst_bypass_${intf}_4.entry="$ip"
 					fi
 				elif [ "$valid_ip6" = "ok" ]; then
 					if [ "$vpn" != "1" ]; then
@@ -480,7 +482,7 @@ _bypass_proto_without_ndpi() {
 						uci -q add_list firewall.bypass6_$proto.entry=$ip
 					else
 						#ipset -q add omr6_dst_bypass_$intf $ip
-						uci -q add_list firewall.omr_dst_bypass_${intf}_6.entry=$ip
+						uci -q add_list firewall.omr_dst_bypass_${intf}_6.entry="$ip"
 					fi
 				fi
 			done
@@ -593,10 +595,12 @@ _intf_rule() {
 			set firewall.omr_dst_bypass_${intf}_4=ipset
 			set firewall.omr_dst_bypass_${intf}_4.name="omr_dst_bypass_${intf}_4"
 			set firewall.omr_dst_bypass_${intf}_4.match='dest_ip'
+			set firewall.omr_dst_bypass_${intf}_4.family='ipv4'
 			set firewall.omr_dst_bypass_${intf}_4.enabled='1'
 			set firewall.omr_dst_bypass_${intf}_6=ipset
 			set firewall.omr_dst_bypass_${intf}_6.name="omr_dst_bypass_${intf}_6"
 			set firewall.omr_dst_bypass_${intf}_6.match='dest_ip'
+			set firewall.omr_dst_bypass_${intf}_6.family='ipv6'
 			set firewall.omr_dst_bypass_${intf}_6.enabled='1'
 		EOF
 		#echo "firewall omr_dst_bypass rules"
@@ -614,12 +618,14 @@ _intf_rule() {
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}.target='MARK'
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}.src='lan'
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}.dest='*'
+				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}.family="ipv${ipv46}"
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}.enabled='0'
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}.set_mark="0x${ipv46}539${count}"
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}_accept=rule
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}_accept.name="omr_dst_bypass_${intf}_rule_accept"
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}_accept.target='ACCEPT'
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}_accept.dest='*'
+				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}_accept.family="ipv${ipv46}"
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}_accept.enabled='0'
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}_accept.mark="0x${ipv46}539${count}"
 				set firewall.omr_dst_bypass_${intf}_srcip_${ipv46}=rule
@@ -627,6 +633,7 @@ _intf_rule() {
 				set firewall.omr_dst_bypass_${intf}_srcip_${ipv46}.ipset="omr_dst_bypass_${intf}_${ipv46}"
 				set firewall.omr_dst_bypass_${intf}_srcip_${ipv46}.src='lan'
 				set firewall.omr_dst_bypass_${intf}_srcip_${ipv46}.dest='*'
+				set firewall.omr_dst_bypass_${intf}_srcip_${ipv46}.family="ipv${ipv46}"
 				set firewall.omr_dst_bypass_${intf}_srcip_${ipv46}.target='MARK'
 				set firewall.omr_dst_bypass_${intf}_srcip_${ipv46}.enabled='0'
 				set firewall.omr_dst_bypass_${intf}_srcip_${ipv46}.set_xmark="0x${ipv46}539${count}"

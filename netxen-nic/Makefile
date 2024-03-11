@@ -34,6 +34,6 @@ define KernelPackage/netxen-nic
   KCONFIG := CONFIG_NETXEN_NIC=m
   FILES := $(PKG_BUILD_DIR)/drivers/net/ethernet/qlogic/netxen/netxen_nic.ko
   AUTOLOAD := $(call AutoProbe,netxen_nic)
-  DEPENDS := @PCI_SUPPORT
+  DEPENDS := @PCI_SUPPORT +netxen-firmware
 endef
 $(eval $(call KernelPackage,netxen-nic))
