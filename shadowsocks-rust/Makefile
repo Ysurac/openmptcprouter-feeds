@@ -8,8 +8,8 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=shadowsocks-rust
-PKG_VERSION:=1.18.0
-PKG_HASH:=e854743ecef9ab3b371fdcb139e6f4452831b487d449c97c2129abbf4f51e863
+PKG_VERSION:=1.18.1
+PKG_HASH:=c2e1d8838e4578c0a6b0de6e1da00e9ece2d780dc452117fd109bb091e5d106f
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
@@ -48,7 +48,6 @@ define Package/shadowsocks-rust-config
   SUBMENU:=Web Servers/Proxies
   TITLE:=shadowsocks-rust config
   URL:=https://github.com/shadowsocks/shadowsocks-rust
-  DEPENDS:=$$(RUST_ARCH_DEPENDS)
 endef
 
 
