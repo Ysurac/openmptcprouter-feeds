@@ -104,8 +104,10 @@ elif [ -d /sys/class/net/lan0 -o -n "$(ip link | grep ' lan0')" ] && [ -d /sys/c
 	lanif="wan"
 elif [ -d /sys/class/net/lan1 -o -n "$(ip link | grep ' lan1')" ] && [ -d /sys/class/net/wan -o -n "$(ip link | grep ' wan@')" -o -n "$(ip link | grep ' wan:')" ]; then
 	lanif="wan"
-elif [ -d /sys/class/net/lan ] || [ -n "$(ip link | grep ' lan')" ]; then
+elif [ -d /sys/class/net/lan ] || [ -n "$(ip link | grep ' lan:')" ]; then
 	lanif="lan"
+elif [ -d /sys/class/net/lan1] || [ -n "$(ip link | grep ' lan1:')" ]; then
+	lanif="lan1"
 elif [ "$(swconfig list 2>&1 | grep switch0)" != "" ] && [ "$(cat /etc/board.json | jsonfilter -q -e '@.model.platform' | tr -d '\n')" = "RUTX" ]; then
 	lanif="eth1"
 	uci -q batch <<-EOF
@@ -288,7 +290,7 @@ if [ "$(uci -q show network.wan1 | grep multipath)" = "" ] && [ -z "$(uci -q get
 			_setup_macvlan wan1
 			_setup_macvlan wan2
 		fi
-	elif [ -d /sys/class/net/lan1 -o -n "$(ip link | grep ' lan1')" ] && [ -d /sys/class/net/lan2 -o -n "$(ip link | grep ' lan2')" ] && [ -d /sys/class/net/lan3 -o -n "$(ip link | grep ' lan3')" ] && [ -d /sys/class/net/lan4 -o -n "$(ip link | grep ' lan4')" ]; then
+	elif [ "$lanif" != "lan1" ] && [ -d /sys/class/net/lan1 -o -n "$(ip link | grep ' lan1')" ] && [ -d /sys/class/net/lan2 -o -n "$(ip link | grep ' lan2')" ] && [ -d /sys/class/net/lan3 -o -n "$(ip link | grep ' lan3')" ] && [ -d /sys/class/net/lan4 -o -n "$(ip link | grep ' lan4')" ]; then
 		_setup_wan_interface wan1 lan1 master
 		_setup_wan_interface wan2 lan2 on
 		_macaddr=$(uci -q get "network.lan1.macaddr")
@@ -358,6 +360,14 @@ if [ "$(uci -q show network.wan1 | grep multipath)" = "" ] && [ -z "$(uci -q get
 	elif [ -d /sys/class/net/eth0.1 ] && [ -d /sys/class/net/eth0.2 ]; then
 		_setup_wan_interface wan1 eth0.1 master
 		_setup_wan_interface wan2 eth0.2 on
+	elif [ "$lanif" = "lan1" ] && [ -d /sys/class/net/lan2 -o -n "$(ip link | grep ' lan2')" ] && [ -d /sys/class/net/lan3 -o -n "$(ip link | grep ' lan3')" ] && [ -d /sys/class/net/lan4 -o -n "$(ip link | grep ' lan4')" ]; then
+		_setup_wan_interface wan1 lan2 master
+		_setup_wan_interface wan2 lan3 on
+		_setup_wan_interface wan3 lan4 on
+		if [ -d /sys/class/net/10g-1 ] && [ -d /sys/class/net/10g-2 ]; then
+			_setup_wan_interface wan3 10g-1 on
+			_setup_wan_interface wan3 10g-2 on
+		fi
 	else
 		_setup_wan_interface wan1 eth0 master macvlan
 		_setup_wan_interface wan2 eth0 on macvlan
