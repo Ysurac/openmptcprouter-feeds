@@ -43,7 +43,7 @@ let type, hook, priority, redir_port;
 if (proto == "tcp") {
 	type = "nat";
 	hook = "prerouting";
-	priority = -1;
+	priority = 1;
 	redir_port = o_redir_tcp_port;
 } else if (proto == "udp") {
 	type = "filter";
