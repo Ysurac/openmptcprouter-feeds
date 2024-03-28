@@ -10,6 +10,18 @@ _log() {
 	logger -p daemon.info -t "${basename}" "$@"
 }
 
+_post_tracking() {
+	[ ! -d /usr/share/omr/server-post-tracking.d/ ] && return
+	for tracker_bin in /usr/share/omr/server-post-tracking.d/*; do
+		[ -x "$tracker_bin" ] && (
+			_log() {
+				logger -t "post-tracking-${tracker_bin##*/}" "$*"
+			}
+			. "$tracker_bin" 2>&1
+		)
+	done
+}
+
 _ping_server() {
 	local host=$1
 	ret=$(ping \
@@ -132,7 +144,7 @@ _check_master() {
 		set_ip() {
 			ip="$serverip"
 			if [ "$server_ping" = true ]; then
-				if [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ]; then
+				if [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ] && [ "$(uci -q get shadowsocks-rust.sss${count}.server | tr -d '\n')" != "$ip" ]; then
 					logger -t "OMR-Tracker-Server" "Master server ${name} up ($ip), set it back"
 					changes="1"
 					#logger -t "OMR-Tracker-Server" "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n') - $ip"
@@ -283,7 +295,7 @@ _check_backup() {
 			ip="$serverip"
 			#[ "$server_ping" = true ] && [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" = "$ip" ] && break
 			if [ "$server_ping" = true ]; then
-				if [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ]; then
+				if [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ] && [ "$(uci -q get shadowsocks-rust.sss${count}.server | tr -d '\n')" != "$ip" ]; then
 					logger -t "OMR-Tracker-Server" "Use backup server $1 ($ip)"
 					changes="1"
 					uci -q batch <<-EOF >/dev/null
