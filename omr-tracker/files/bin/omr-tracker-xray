@@ -15,6 +15,19 @@ _log() {
 	logger -p daemon.info -t "${basename}" "$@"
 }
 
+_post_tracking() {
+	[ ! -d /usr/share/omr/xray-post-tracking.d ] && return
+	for tracker_bin in /usr/share/omr/xray-post-tracking.d/*; do
+		[ -x "$tracker_bin" ] && (
+			_log() {
+				logger -t "xray-post-tracking-${tracker_bin##*/}" "$*"
+			}
+			. "$tracker_bin" 2>&1
+		)
+	done
+}
+
+
 _ping_server() {
 	local host=$1
 	ret=$(ping \
@@ -70,6 +83,7 @@ uci -q set openmptcprouter.omr=router
 uci -q delete openmptcprouter.omr.xray
 _get_ip
 
+OMR_TRACKER_PREV_STATUS=""
 while true; do
 	host="${hosts%% *}"
 	[ "$host" = "$hosts" ] || {
@@ -107,6 +121,7 @@ while true; do
 		fi
 		[ "$(uci -q get openmptcprouter.omr.detected_public_ipv4)" = "" ] || ([ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.detected_public_ipv6)" = "" ]) && _get_ip
 		last=0
+		OMR_TRACKER_STATUS="OK"
 	else
 		last=$((last + 1 ))
 		[ -z "$nocontact" ] && nocontact="$host" || nocontact="$nocontact, $host"
@@ -145,6 +160,9 @@ while true; do
 				sleep $wait_test
 			fi
 		}
+		OMR_TRACKER_STATUS="ERROR"
 	fi
+	_post_tracking
+	OMR_TRACKER_PREV_STATUS="$OMR_TRACKER_STATUS"
 	sleep "${interval}"
 done
