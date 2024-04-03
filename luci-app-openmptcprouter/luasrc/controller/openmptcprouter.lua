@@ -1482,6 +1482,7 @@ function settings_add()
 
 	-- Apply all settings
 	luci.sys.call("/etc/init.d/openmptcprouter restart >/dev/null 2>/dev/null")
+	luci.sys.call("/etc/init.d/openmptcprouter-vps set_vps_firewall >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
 
 	-- Done, redirect
