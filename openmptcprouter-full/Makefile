@@ -85,7 +85,7 @@ MY_DEPENDS := \
     luci-theme-openwrt-2020 luci-proto-wireguard luci-app-wireguard kmod-crypto-lib-blake2s (TARGET_x86||TARGET_x86_64):kmod-r8125 \
     !(LINUX_5_4):mptcpd (TARGET_x86||TARGET_x86_64):kmod-igc !TARGET_mvebu:kmod-mmc-spi kmod-macsec usbutils v2ray-core LINUX_5_4:v2ray-config !LINUX_5_4:v2ray-config-nft syslogd \
     (TARGET_x86||TARGET_x86_64):kmod-mlx4-core \
-    !(TARGET_ips40xx||TARGET_ramips||KERNEL_6_6):iptables-mod-ndpi !(TARGET_ips40xx||TARGET_ramips||KERNEL_6_6):kmod-ipt-ndpi libip4tc libip6tc \
+    !(TARGET_ipq40xx||TARGET_ramips||KERNEL_6_6||TARGET_mvebu||TARGET_ipq806x||TARGET_mediatek):iptables-mod-ndpi !(TARGET_ipq40xx||TARGET_ramips||KERNEL_6_6||TARGET_mvebu||TARGET_ipq806x||TARGET_mediatek):kmod-ipt-ndpi libip4tc libip6tc \
     xray-core LINUX_5_4:xray-config !LINUX_5_4:xray-config-nft (LINUX_5_4&&(TARGET_x86_64||aarch64)):kmod-tcp-bbr2 kmod-ovpn-dco-v2 \
     shadowsocks-rust-sslocal shadowsocks-rust-ssservice LINUX_5_4:shadowsocks-rust-config !LINUX_5_4:shadowsocks-rust-config-nft luci-app-shadowsocks-rust \
     luci-proto-external omr-schedule jq luci-app-ddns
