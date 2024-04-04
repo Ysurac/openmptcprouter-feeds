@@ -428,7 +428,8 @@ function wizard_add()
 		local uploadspeed = luci.http.formvalue("cbid.sqm.%s.upload" % intf) or "0"
 		local testspeed = luci.http.formvalue("cbid.sqm.%s.testspeed" % intf) or "0"
 
-		if not ucic:get("qos",intf) ~= "" then
+		local qos_settings = ucic:get("qos",intf) or ""
+		if qos_settings == "" then
 			ucic:set("qos",intf,"interface")
 			ucic:set("qos",intf,"classgroup","Default")
 			ucic:set("qos",intf,"enabled","0")
@@ -436,7 +437,8 @@ function wizard_add()
 			ucic:set("qos",intf,"download","100000")
 		end
 
-		if not ucic:get("sqm",intf) ~= "" then
+		local sqm_settings = ucic:get("sqm",intf) or ""
+		if sqm_settings == "" then
 			local defif = get_device(intf)
 			if defif == "" then
 				defif = ucic:get("network",intf,"device") or ""
