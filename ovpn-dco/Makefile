@@ -10,13 +10,13 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=ovpn-dco
-PKG_VERSION:=0.2.20231127
+PKG_VERSION:=0.2.20240320
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://github.com/OpenVPN/ovpn-dco.git
-PKG_SOURCE_VERSION:=c24380cdb8f5eef5a04059bbe82ad4ba4d3616c3
+PKG_SOURCE_VERSION:=2aa7f931803f81d2745b0cefafb63654a35cc3d5
 
 PKG_MAINTAINER:=Yannick Chabanois <contact@openmptcprouter.com>
 PKG_LICENSE:=GPL-2.0-only

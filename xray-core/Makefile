@@ -1,7 +1,14 @@
+#
+# Copyright (C) 2023-2024 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=xray
-PKG_VERSION:=1.8.6
+PKG_VERSION:=1.8.10
 PKG_RELEASE:=1
 
 PKG_LICENSE:=MPLv2
@@ -9,7 +16,7 @@ PKG_LICENSE_FILES:=LICENSE
 PKG_MAINTAINER:=Yannick Chabanois <contact@openmptcprouter.com>
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/XTLS/Xray-core.git
-PKG_SOURCE_VERSION:=5a5e615b46369579240dac1fdfe2b5e122c4c4ce
+PKG_SOURCE_VERSION:=284316776148c5442fb25975d05cbbfd25b8c88d
 
 PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_PARALLEL:=1
