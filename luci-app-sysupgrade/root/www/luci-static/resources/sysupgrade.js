@@ -64,6 +64,7 @@ function setup() {
     ubus_call("rpc-sys", "packagelist", {}, "packages");
     ubus_call("system", "board", {}, "release");
     ubus_call("system", "board", {}, "board_name");
+    ubus_call("system", "board", {}, "kernel");
     ubus_call("system", "info", {}, "memory");
     ubus_call("openmptcprouter", "getrootfs", {}, "format");
     ubus_call("openmptcprouter", "getefi", {}, "efi_enabled");
@@ -231,6 +232,7 @@ function upgrade_request() {
     // add board info to let server determine profile
     request_dict.target = data.release.target
     request_dict.profile = data.board_name
+    request_dict.kernel = data.kernel
     request_dict.rootfs = data.format
     request_dict.efi = data.efi_enabled
 

@@ -2,16 +2,15 @@
 # Copyright (C) 2013 OpenWrt.org
 # Copyright (C) 2023 Yannick Chabanois (Ycarus) for OpenMPTCProuter
 
-START=10
+START=58
 USE_PROCD=1
 
 log() {
 	logger -t "z8102" "$@"
 }
 
-start_service()
+modem1()
 {
-	log "Enable SIMs and reboot modems..."
 	# sim 1
 	#i=461
 	#echo $i > /sys/class/gpio/export
@@ -21,16 +20,6 @@ start_service()
 		echo "0" > /sys/class/gpio/sim1/value
 	else
 		gpioset `gpiofind "sim1"`=0
-	fi
-	# sim 2
-	#i=462
-	#echo $i > /sys/class/gpio/export
-	#echo "out" > /sys/class/gpio/gpio${i}/direction
-	#echo "0" > /sys/class/gpio/gpio${i}/value
-	if [ -e /sys/class/gpio/sim2/value ]; then
-		echo "0" > /sys/class/gpio/sim2/value
-	else
-		gpioset `gpiofind "sim2"`=0
 	fi
 
 	# stop modem 1
@@ -42,6 +31,29 @@ start_service()
 		echo "0" > /sys/class/gpio/modem1/value
 	else
 		gpioset `gpiofind "modem1"`=0
+	fi
+
+	sleep 1
+	# run modem 1
+	#i=459
+	#echo "1" > /sys/class/gpio/gpio${i}/value
+	if [ -e /sys/class/gpio/modem1/value ]; then
+		echo "1" > /sys/class/gpio/modem1/value
+	else
+		gpioset `gpiofind "modem1"`=1
+	fi
+}
+modem2()
+{
+	# sim 2
+	#i=462
+	#echo $i > /sys/class/gpio/export
+	#echo "out" > /sys/class/gpio/gpio${i}/direction
+	#echo "0" > /sys/class/gpio/gpio${i}/value
+	if [ -e /sys/class/gpio/sim2/value ]; then
+		echo "0" > /sys/class/gpio/sim2/value
+	else
+		gpioset `gpiofind "sim2"`=0
 	fi
 
 	# stop modem 2
@@ -56,15 +68,6 @@ start_service()
 	fi
 
 	sleep 1
-	# run modem 1
-	#i=459
-	#echo "1" > /sys/class/gpio/gpio${i}/value
-	if [ -e /sys/class/gpio/modem1/value ]; then
-		echo "1" > /sys/class/gpio/modem1/value
-	else
-		gpioset `gpiofind "modem1"`=1
-	fi
-	sleep 3
 	# run modem 2
 	#i=460
 	#echo "1" > /sys/class/gpio/gpio${i}/value
@@ -72,5 +75,20 @@ start_service()
 		echo "1" > /sys/class/gpio/modem2/value
 	else
 		gpioset `gpiofind "modem2"`=1
+	fi
+}
+start_service()
+{
+	modem="$1"
+	if [ -z "$modem" ]; then
+		log "Enable SIMs and reboot modems..."
+		modem1
+		modem2
+	elif [ "$modem" = "modem1" ]; then
+		log "Enable SIM1 and reboot modem1..."
+		modem1
+	elif [ "$modem" = "modem2" ]; then
+		log "Enable SIM2 and reboot modem2..."
+		modem2
 	fi
 }
