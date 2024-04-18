@@ -578,7 +578,7 @@ function wizard_add()
 	--	ucic:set("sqm","omrvpn","enabled","0")
 	--end
 
-	ucic:set("sqm","omrvpn","enabled","1")
+	ucic:set("sqm","omrvpn","enabled","0")
 	ucic:set("sqm","omrvpn","download","0")
 	ucic:set("sqm","omrvpn","upload","0")
 
