@@ -199,14 +199,15 @@ return view.extend({
 		o.value('25');
 		o.modalonly = true;
 
-		o = s.option(form.ListValue, "timeout", _("Ping timeout"));
+		o = s.option(form.Value, "timeout", _("Ping timeout"));
 		o.default = '4';
 		o.value('1', _('%d second').format('1'));
 		for (var i = 2; i <= 10; i++)
 			o.value(String(i), _('%d seconds').format(i));
+		o.rmempty = false;
 		o.modalonly = true;
 
-		o = s.option(form.ListValue, 'interval', _('Ping interval'));
+		o = s.option(form.Value, 'interval', _('Ping interval'));
 		o.default = '10';
 		o.value('1', _('%d second').format('1'));
 		o.value('3', _('%d seconds').format('3'));
@@ -220,6 +221,8 @@ return view.extend({
 		o.value('900', _('%d minutes').format('15'));
 		o.value('1800', _('%d minutes').format('30'));
 		o.value('3600', _('%d hour').format('1'));
+		o.modalonly = true;
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'failure_interval', _('Failure interval'),
 			_('Ping interval during failure detection'));
