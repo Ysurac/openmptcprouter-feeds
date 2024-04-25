@@ -71,7 +71,7 @@ MY_DEPENDS := \
     dejavu-fonts-ttf-DejaVuSerif dejavu-fonts-ttf-DejaVuSerif-Bold dejavu-fonts-ttf-DejaVuSerif-Italic dejavu-fonts-ttf-DejaVuSerif-BoldItalic \
     luci-app-snmpd \
     iputils-tracepath netcat simple-obfs \
-    (TARGET_x86||TARGET_x86_64):kmod-e1000 (TARGET_x86||TARGET_x86_64):kmod-e1000e (TARGET_x86||TARGET_x86_64):kmod-igb (TARGET_x86||TARGET_x86_64):kmod-ne2k-pci (TARGET_x86||TARGET_x86_64):kmod-r8169 (TARGET_x86||TARGET_x86_64):kmod-8139too (TARGET_x86||TARGET_x86_64):kmod-bnx2 \
+    (TARGET_x86||TARGET_x86_64):kmod-e1000 (TARGET_x86||TARGET_x86_64):kmod-e1000e (TARGET_x86||TARGET_x86_64):kmod-igb (TARGET_x86||TARGET_x86_64):kmod-ne2k-pci (TARGET_x86||TARGET_x86_64):kmod-bnx2 \
     TARGET_mvebu:kmod-mwlwifi TARGET_mvebu:mwlwifi-firmware-88w8864 TARGET_mvebu:mwlwifi-firmware-88w8897 TARGET_mvebu:mwlwifi-firmware-88w8964 TARGET_mvebu:mwlwifi-firmware-88w8997 \
     !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-serial !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-serial-option !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-serial-wwan !(TARGET_mvebu||TARGET_ipq40xx):usb-modeswitch !TARGET_mvebu:uqmi \
     !TARGET_mvebu:umbim !TARGET_mvebu:kmod-mii !TARGET_mvebu:kmod-usb-net !TARGET_mvebu:kmod-usb-wdm !TARGET_mvebu:kmod-usb-net-qmi-wwan !TARGET_mvebu:kmod-usb-net-cdc-mbim !TARGET_mvebu:umbim \
@@ -80,7 +80,7 @@ MY_DEPENDS := \
     !TARGET_mvebu:luci-app-mlvpn !TARGET_mvebu:mlvpn 464xlat kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-https-dns-proxy kmod-tcp-nanqinlang iptables-mod-ipopt igmpproxy ss iptraf-ng \
     luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre tcptraceroute luci-proto-mbim kmod-rtl8xxxu !TARGET_x86_64:kmod-ath9k-htc luci-app-ttyd luci-mod-dashboard (TARGET_x86||TARGET_x86_64):rtl8192eu-firmware kmod-usb2 libustream-openssl (TARGET_x86||TARGET_x86_64):kmod-ixgbevf (TARGET_x86||TARGET_x86_64):kmod-igbvf \
     hwinfo (TARGET_x86||TARGET_x86_64):dmidecode luci-app-packet-capture kmod-bonding luci-proto-bonding luci-app-sysupgrade \
-    luci-theme-openwrt-2020 luci-proto-wireguard luci-app-wireguard kmod-crypto-lib-blake2s (TARGET_x86||TARGET_x86_64):kmod-r8125 \
+    luci-theme-openwrt-2020 luci-proto-wireguard luci-app-wireguard kmod-crypto-lib-blake2s  \
     !(LINUX_5_4):mptcpd (TARGET_x86||TARGET_x86_64):kmod-igc !TARGET_mvebu:kmod-mmc-spi kmod-macsec usbutils v2ray-core LINUX_5_4:v2ray-config !LINUX_5_4:v2ray-config-nft syslogd \
     (TARGET_x86||TARGET_x86_64):kmod-mlx4-core \
     !(TARGET_ipq40xx||TARGET_ramips||LINUX_6_6):iptables-mod-ndpi !(TARGET_ipq40xx||TARGET_ramips||LINUX_6_6):kmod-ipt-ndpi libip4tc libip6tc \
@@ -89,7 +89,7 @@ MY_DEPENDS := \
     luci-proto-external omr-schedule jq luci-app-ddns
 
 #    !TARGET_ipq40xx:kmod-rt2800-usb (TARGET_x86||TARGET_x86_64):kmod-iwlwifi (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl1000 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl100 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl105 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl135 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl2000 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl2030 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl3160 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl3168 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl5000 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl5150 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl6000g2 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl6000g2a (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl6000g2b (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl6050 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl7260 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl7265 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl7265d (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl8260c (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl8265 \
-#    !TARGET_ipq40xx:kmod-rtl8xxxu !TARGET_ipq40xx:kmod-rtl8192cu !TARGET_ipq40xx:kmod-net-rtl8192su !LINUX_6_1:kmod-rtl8812au-ct \
+#    !TARGET_ipq40xx:kmod-rtl8xxxu !TARGET_ipq40xx:kmod-rtl8192cu !TARGET_ipq40xx:kmod-net-rtl8192su !LINUX_6_1:kmod-rtl8812au-ct (TARGET_x86||TARGET_x86_64):kmod-r8169 (TARGET_x86||TARGET_x86_64):kmod-8139too (TARGET_x86||TARGET_x86_64):kmod-r8125 \
 
 #    shadowsocks-rust-sslocal shadowsocks-rust-ssservice LINUX_5_4:shadowsocks-rust-config !LINUX_5_4:shadowsocks-rust-config-nft luci-app-shadowsocks-rust \
 # keepalived disabled by default because it's running even with no configuration, would need a default OMR config with some changes
