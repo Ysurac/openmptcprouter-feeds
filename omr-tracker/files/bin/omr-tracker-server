@@ -96,24 +96,36 @@ _check_server_intf() {
 	done
 }
 
+_get_server_name() {
+	local serverid=$1
+	local serverip=$2
+	config_get serveripc $serverid server
+	if [ "$serveripc" = "$serverip" ]; then
+		servername=$serverid
+	fi
+}
+
 _disable_current() {
 	local serv=$1
-	config_set $serv current "0"
+	uci -q set openmptcprouter.${server}.current=0
 }
 
 _disable_redir() {
 	local redir=$1
-	config_get server $redir server
-	if [ "$server" = "sss${count}" ]; then
-		config_set $redir disabled "1"
+	local serverdisable=$2
+	local shadowsocks="$3"
+	config_get serverss $redir server
+	if [ "$serverss" = "$serverdisable" ]; then
+		uci -q set ${shadowsocks}.${redir}.disabled=1
 	fi
 }
 
 _enable_redir() {
 	local redir=$1
-	config_get server $redir server
-	if [ "$server" = "sss${count}" ]; then
-		config_set $redir disabled "0"
+	local shadowsocks="$2"
+	config_get serverss $redir server
+	if [ "$serverss" = "sss${count}" ]; then
+		uci -q set ${shadowsocks}.${redir}.disabled=0
 	fi
 }
 
@@ -122,6 +134,7 @@ _check_master() {
 	local count=0
 	local countips=0
 	local changes="0"
+	local oneserverup="0"
 	config_get master $1 master
 	config_get ip $1 ip
 	config_get port $1 port "65500"
@@ -130,7 +143,7 @@ _check_master() {
 	[ "$master" = "1" ] && [ -n "$ip" ] && [ "$disabled" != "1" ] && {
 		check_ip() {
 			local ipd=$1
-			[ -n "$serverip" ] && [ "$server_ping" = true ] && return
+			#[ -n "$serverip" ] && [ "$server_ping" = true ] && return
 			ipresolve="$(resolveip -4 $ipd | head -n 1)"
 			if [ -n "$ipresolve" ]; then
 				serverip="$ipresolve"
@@ -142,8 +155,11 @@ _check_master() {
 			#_ping_server $serverip
 			#_check_server $serverip $port
 			_check_server_intf $serverip $port
-			[ "$server_ping" = true ] && return
+			[ "$server_ping" = true ] && {
+				oneserverup=1
+			}
 			countips=$((countips+1))
+			set_ip
 		}
 		set_ip() {
 			ip="$serverip"
@@ -199,9 +215,9 @@ _check_master() {
 					fi
 				fi
 				config_load shadowsocks-libev
-				config_foreach _enable_redir ss_redir
+				config_foreach _enable_redir ss_redir "shadowsocks-libev"
 				config_load shadowsocks-rust
-				config_foreach _enable_redir ss_redir
+				config_foreach _enable_redir ss_redir "shadowsocks-rust"
 				OMR_TRACKER_STATUS_MSG="Answer to ping and to API check"
 				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
 				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
@@ -222,16 +238,18 @@ _check_master() {
 				[ -n "$script_alert_up" ] && eval $script_alert_up
 				count=$((count+1))
 			else
-				logger -t "OMR-Tracker-Server" "Master server ${name} down ($ip)"
+				[ -z "$(logread | tail -n 10 | grep "Master server ${name} down" | grep $ip)" ] && logger -t "OMR-Tracker-Server" "Master server ${name} down ($ip)"
 				OMR_TRACKER_STATUS_MSG="No answer to ping and API check"
-				uci -q batch <<-EOF >/dev/null
-					set openmptcprouter.${name}.current='0'
-					commit openmptcprouter
-				EOF
+				servername=""
 				config_load shadowsocks-libev
-				config_foreach _disable_redir ss_redir
+				config_foreach _get_server_name server $ip
+				[ -n "$servername" ] && config_foreach _disable_redir ss_redir $servername "shadowsocks-libev"
+				servername=""
 				config_load shadowsocks-rust
-				config_foreach _disable_redir ss_redir
+				config_foreach _get_server_name server $ip
+				[ -n "$servername" ] && config_foreach _disable_redir ss_redir $servername "shadowsocks-rust"
+
+				OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
 				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
 				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
 				[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
@@ -253,13 +271,21 @@ _check_master() {
 		}
 		config_load openmptcprouter
 		config_list_foreach $1 ip check_ip
-		set_ip
+		#set_ip
 		#if [ "$server_ping" = true ] && [ "$countips" = "1" ]; then
 		#	uci -q batch <<-EOF >/dev/null
 		#		set shadowsocks-libev.sss${count}.server=$ip
 		#	EOF
 		#	config_foreach _enable_redir ss_redir
 		#fi
+		if [ "$oneserverup" != "0" ]; then
+			uci -q batch <<-EOF >/dev/null
+				set openmptcprouter.${name}.current='0'
+				commit openmptcprouter
+			EOF
+		fi
+		[ -n "$(uci changes shadowsocks-libev)" ] && changes="1"
+		[ -n "$(uci changes shadowsocks-rust)" ] && changes="1"
 		uci -q commit shadowsocks-libev
 		uci -q commit shadowsocks-rust
 		[ "$changes" = "1" ] && {
@@ -275,6 +301,7 @@ _check_backup() {
 	local count=0
 	local countips=0
 	local changes="0"
+	local oneserverup="0"
 	config_get backup $1 backup
 	config_get ip $1 ip
 	config_get port $1 port
@@ -352,10 +379,12 @@ _check_backup() {
 					fi
 					sleep $waittest
 				fi
+				
 				config_load shadowsocks-libev
-				config_foreach _enable_redir ss_redir
+				config_foreach _enable_redir ss_redir "shadowsocks-libev"
 				config_load shadowsocks-rust
-				config_foreach _enable_redir ss_redir
+				config_foreach _enable_redir ss_redir "shadowsocks-rust"
+				
 				OMR_TRACKER_STATUS_MSG="Answer to ping and to API check"
 				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
 				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
@@ -375,14 +404,19 @@ _check_backup() {
 				[ -n "$script_alert_up" ] && eval $script_alert_up
 				count=$((count+1))
 			else
+				[ -z "$(logread | tail -n 10 | grep "Backup server ${name} down" | grep $ip)" ] && logger -t "OMR-Tracker-Server" "Backup server ${name} down ($ip)"
 				uci -q batch <<-EOF >/dev/null
 					set openmptcprouter.${name}.current='0'
 					commit openmptcprouter
 				EOF
 				config_load shadowsocks-libev
-				config_foreach _disable_redir ss_redir
+				config_foreach _get_server_name server $ip
+				[ -n "$servername" ] && config_foreach _disable_redir ss_redir $servername "shadowsocks-libev"
+				servername=""
 				config_load shadowsocks-rust
-				config_foreach _disable_redir ss_redir
+				config_foreach _get_server_name server $ip
+				[ -n "$servername" ] && config_foreach _disable_redir ss_redir $servername "shadowsocks-rust"
+
 				OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
 				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
 				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
@@ -412,6 +446,15 @@ _check_backup() {
 		#	EOF
 		#	config_foreach _enable_redir ss_redir
 		#fi
+		if [ "$oneserverup" != "0" ]; then
+			uci -q batch <<-EOF >/dev/null
+				set openmptcprouter.${name}.current='0'
+				commit openmptcprouter
+			EOF
+		fi
+
+		[ -n "$(uci changes shadowsocks-libev)" ] && changes="1"
+		[ -n "$(uci changes shadowsocks-rust)" ] && changes="1"
 		uci -q commit shadowsocks-libev
 		uci -q commit shadowsocks-rust
 		[ "$changes" = "1" ] && {
