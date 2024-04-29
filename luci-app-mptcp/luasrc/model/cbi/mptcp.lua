@@ -44,6 +44,12 @@ if uname.release:sub(1,4) ~= "5.15" and uname.release:sub(1,1) ~= "6" then
 	o:value("ecf", "ECF")
     end
 end
+if uname.release:sub(1,3) == "6.6" then
+    for dir in io.popen([[cd /usr/share/bpf/scheduler && ls -1 *.o | sed -e 's/.o//g' -e 's/mptcp_//g']]):lines() do 
+	o:value(dir, dir)
+    end
+end
+
 -- if tonumber(uname.release:sub(1,4)) <= 5.15 then
 if uname.release:sub(1,4) ~= "5.15" and uname.release:sub(1,1) ~= "6" then
     o = s:option(Value, "mptcp_syn_retries", translate("Multipath TCP SYN retries"))
