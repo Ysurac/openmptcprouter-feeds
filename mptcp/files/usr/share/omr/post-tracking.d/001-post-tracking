@@ -723,16 +723,16 @@ default_gw=$(ip route get 1.1.1.1 | grep via | awk '{print $3}')
 default_gw6=$(ip -6 route get 2606:4700:4700::1111 | grep via | awk '{print $3}')
 #current_interface_gw=$(uci -q get "network.$OMR_TRACKER_INTERFACE.gateway")
 
-interface_autostart=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["autostart"]')
-interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
-interface_available=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["available"]')
-interface_pending=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["pending"]')
-interface_error=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["errors"][0].code')
-
 initcwrwnd=""
 
 # An interface in error will never be used in MPTCP
 if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || ([ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$interface_up" != "true" ]); then
+	interface_autostart=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["autostart"]')
+	interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+	interface_available=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["available"]')
+	interface_pending=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["pending"]')
+	interface_error=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["errors"][0].code')
+
 	#if [ "$interface_available" = "true" ] && [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "modemmanager" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "wireguard" ]) && [ "$interface_error" != "MM_PINCODE_REQUIRED" ] && [ "$interface_error" != "MM_FAILED_REASON_SIM_MISSING" ]; then
 	#	_log "No answer from $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE), restart interface"
 	#	_log "Set $OMR_TRACKER_INTERFACE down"
@@ -1176,7 +1176,11 @@ if [ "$multipath_config" = "master" ]; then
 		#ip -6 route flush cache 2>&1 >/dev/null
 	fi
 	if ([ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ]) || [ $(($(date +"%s") + $((10 + RANDOM % 31)) - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ] || [ "$(uci -q show openmptcprouter | grep get_config=\'1\')" != "" ] || [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" != "" ]; then
-		[ "$(pgrep -f openmptcprouter-vps)" = "" ] && /etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &
+		[ "$(pgrep -f openmptcprouter-vps)" = "" ] && {
+			/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &
+			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+			uci -q commit openmptcprouter.$OMR_TRACKER_INTERFACE
+		}
 	fi
 	multipath_config="on"
 fi
