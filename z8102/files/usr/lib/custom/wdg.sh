@@ -10,14 +10,14 @@ do
 	if [ -f /usr/bin/gpiofind ]; then
 		gpioset `gpiofind "watchdog"`=1 2>&1 >/dev/null
 	else
-		gpioset --hold-period 100ms -t0 watchdog=1 2>&1 >/dev/null
+		gpioset -t0 watchdog=1 2>&1 >/dev/null
 	fi
 	sleep 1
 	#echo "0" > /sys/class/gpio/gpio${i}/value
 	if [ -f /usr/bin/gpiofind ]; then
 		gpioset `gpiofind "watchdog"`=0 2>&1 >/dev/null
 	else
-		gpioset --hold-period 100ms -t0 watchdog=0 2>&1 >/dev/null
+		gpioset -t0 watchdog=0 2>&1 >/dev/null
 	fi
 	sleep 1
 done
