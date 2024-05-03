@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=modemmanager
-PKG_SOURCE_VERSION:=1.23.5-dev
+PKG_SOURCE_VERSION:=1.23.6-dev
 PKG_RELEASE:=20
 
 PKG_SOURCE_PROTO:=git

@@ -35,6 +35,13 @@ return view.extend({
 				.map(function(s) { return s['.name']; });
 		};
 
+		s.handleAdd = function(ev) {
+			this.sectiontype = 'interface';
+			var promise = form.GridSection.prototype.handleAdd.apply(this, arguments);
+			this.sectiontype = undefined;
+			return promise;
+		};
+
 		o = s.option(form.Flag, 'enabled', _('Enabled'));
 		o.default = false;
 
@@ -54,13 +61,13 @@ return view.extend({
 
 		o = s.option(form.DynamicList, 'hosts', _('Tracking hostname or IP address'),
 			_('This hostname or IP address will be pinged to determine if the link is up or down. Leave blank to use defaults settings.'));
-		o.datatype = 'hosts';
+		//o.datatype = 'hosts';
 		o.modalonly = true;
 		o.rmempty = false;
 
 		o = s.option(form.DynamicList, 'hosts6', _('Tracking hostname or IP address for IPv6'),
 			_('This hostname or IP address will be pinged to determine if the link is up or down. Leave blank to use defaults settings.'));
-		o.datatype = 'hosts';
+		//o.datatype = 'hosts';
 		o.modalonly = true;
 		o.depends('family', 'ipv4ipv6');
 		o.depends('family', 'ipv6');
