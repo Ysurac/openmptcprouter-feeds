@@ -749,9 +749,20 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || ([ "$OMR_TRACKER_INTERFACE" != "omrvpn
 			device="$(uci -q get network.$OMR_TRACKER_INTERFACE.device)"
 			if [ -n "$(echo $modeminfo | grep $device)" ]; then
 				modemfind="1"
-				if [ -n "$(echo $modeminfo | grep 'modem.generic.state ' | grep failed)" ] && [ -n "$(echo $modeminfo | grep 'modem.generic.state-failed-reason' | grep 'unknown-capabilities')" ]; then
-					_log "Interface $OMR_TRACKER_INTERFACE in failed state in ModemManager, reset modem..."
-					/usr/bin/mmcli -m ${modem} -r 2>&1 >/dev/null
+				if [ -n "$(echo $modeminfo | grep 'modem.generic.state ' | grep failed)" ]; then
+					if [ -n "$(echo $modeminfo | grep 'modem.generic.state-failed-reason' | grep 'unknown-capabilities')" ]; then
+						_log "Interface $OMR_TRACKER_INTERFACE in failed state in ModemManager, reset modem..."
+						/usr/bin/mmcli -m ${modem} -r 2>&1 >/dev/null
+						sleep 30
+					fi
+				elif [ -n "$(echo $modeminfo | grep 'modem.generic.state ' | grep connected)" ] || [ -n "$(echo $modeminfo | grep 'modem.generic.state ' | grep enabled)" ]; then
+				# [ -n "$(echo $modeminfo | grep 'modem.3gpp.registration-state ' | grep home)" ]; then
+					_log "No answer from $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE), restart interface"
+					_log "Set $OMR_TRACKER_INTERFACE down"
+					ifdown $OMR_TRACKER_INTERFACE
+					sleep 5
+					_log "Set $OMR_TRACKER_INTERFACE up"
+					ifup $OMR_TRACKER_INTERFACE
 					sleep 30
 				fi
 			fi
