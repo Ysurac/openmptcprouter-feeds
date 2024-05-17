@@ -784,11 +784,15 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || ([ "$OMR_TRACKER_INTERFACE" != "omrvpn
 					sleep 30
 				elif [ "$mm_state" = "locked" ]; then
 					# Sometimes PIN is not correctly sent to modem
-					if [ -z "$(uci -q get network.$OMR_TRACKER_INTERFACE.pin_retry)" ]; then
+					if [ -z "$(uci -q get network.$OMR_TRACKER_INTERFACE.pin_retry)" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.pin_retry)" -lt "$(uci -q get openmptcprouter.settings.max_pin_retry || echo '2')" ]; then
 						_log "Interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) locked, set PIN"
 						mmcli -i $(timeout 2 mmcli -m $modem -K | awk '/modem.generic.sim / {print $3}') --pin=$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode)
 						sleep 30
-						uci -q set network.$OMR_TRACKER_INTERFACE.pin_retry=1
+						if [ -z "$(uci -q get network.$OMR_TRACKER_INTERFACE.pin_retry)" ]; then
+							uci -q set network.$OMR_TRACKER_INTERFACE.pin_retry=1
+						else
+							uci -q set network.$OMR_TRACKER_INTERFACE.pin_retry=$(($(uci -q get network.$OMR_TRACKER_INTERFACE.pin_retry) + 1))
+						fi
 					fi
 				fi
 			fi
