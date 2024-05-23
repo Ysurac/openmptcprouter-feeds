@@ -13,6 +13,9 @@
 set_shadowsocks_address() {
 	uci -q set shadowsocks-libev.$1.local_address="$2"
 }
+set_shadowsocks_rust_address() {
+	uci -q set shadowsocks-rust.$1.local_address="$2"
+}
 
 set_ipv6_state() {
 	local disable_ipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
@@ -39,8 +42,11 @@ set_ipv6_state() {
 		EOF
 		config_load shadowsocks-libev
 		config_foreach set_shadowsocks_address ss_redir "0.0.0.0"
+		config_load shadowsocks-rust
+		config_foreach set_shadowsocks_rust_address ss_redir "0.0.0.0"
 		uci -q batch <<-EOF >/dev/null
 			commit shadowsocks-libev
+			commit shadowsocks-rust
 		EOF
 		[ ! -f /etc/wgetrc ] && cp /etc/wgetrc4 /etc/wgetrc
 	else
@@ -62,12 +68,16 @@ set_ipv6_state() {
 		
 		config_load shadowsocks-libev
 		config_foreach set_shadowsocks_address ss_redir "::"
+		config_load shadowsocks-rust
+		config_foreach set_shadowsocks_rust_address ss_redir "::"
 		uci -q batch <<-EOF >/dev/null
 			commit network
 			commit dhcp
 			commit shadowsocks-libev
+			commit shadowsocks-rust
 		EOF
 		/etc/init.d/shadowsocks-libev restart
+		/etc/init.d/shadowsocks-rust restart
 		if [ "$(uci -q get v2ray.main.inbounds | grep omr6)" = "" ]; then
 			uci -q batch <<-EOF >/dev/null
 				add_list v2ray.main.inbounds="omr6"
