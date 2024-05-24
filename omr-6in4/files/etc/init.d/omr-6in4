@@ -18,6 +18,7 @@ set_shadowsocks_rust_address() {
 }
 
 set_ipv6_state() {
+	local disable_6in4="$(uci -q get openmptcprouter.settings.disable_6in4)"
 	local disable_ipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
 	[ -z "$disable_ipv6" ] && disable_ipv6="1"
 	#previous=$(sysctl -qn net.ipv6.conf.all.disable_ipv6 | tr -d "\n")
@@ -34,12 +35,14 @@ set_ipv6_state() {
 
 	if [ "$disable_ipv6" = "1" ]; then
 		logger -t "omr-6in4" "Disable IPv6"
-		uci -q batch <<-EOF >/dev/null
-			set unbound.@unbound[-1].protocol='ip4_only'
-			commit unbound
-			del_list v2ray.main.inbounds="omr6"
-			commit v2ray
-		EOF
+		if [ "$disable_6in4" != "1" ]; then
+			uci -q batch <<-EOF >/dev/null
+				set unbound.@unbound[-1].protocol='ip4_only'
+				commit unbound
+				del_list v2ray.main.inbounds="omr6"
+				commit v2ray
+			EOF
+		fi
 		config_load shadowsocks-libev
 		config_foreach set_shadowsocks_address ss_redir "0.0.0.0"
 		config_load shadowsocks-rust
@@ -51,21 +54,22 @@ set_ipv6_state() {
 		[ ! -f /etc/wgetrc ] && cp /etc/wgetrc4 /etc/wgetrc
 	else
 		logger -t "omr-6in4" "Enable IPv6"
-		uci -q batch <<-EOF >/dev/null
-			set network.lan.delegate="0"
-			set network.omr6in4.force_link=1
-			set network.omr6in4.metric=1
-			delete network.omr6in4.auto
-			set unbound.@unbound[-1].protocol='mixed'
-			commit unbound
-		EOF
-		if [ "$(uci -q get network.globals.ula_prefix)" = "" ]; then
-			r1=$(dd if=/dev/urandom bs=1 count=1 |hexdump -e '1/1 "%02x"')
-			r2=$(dd if=/dev/urandom bs=2 count=1 |hexdump -e '2/1 "%02x"')
-			r3=$(dd if=/dev/urandom bs=2 count=1 |hexdump -e '2/1 "%02x"')
-			uci -q set network.globals.ula_prefix=fd$r1:$r2:$r3::/48
+		if [ "$disable_6in4" != "1" ]; then
+			uci -q batch <<-EOF >/dev/null
+				set network.lan.delegate="0"
+				set network.omr6in4.force_link=1
+				set network.omr6in4.metric=1
+				delete network.omr6in4.auto
+				set unbound.@unbound[-1].protocol='mixed'
+				commit unbound
+			EOF
+			if [ "$(uci -q get network.globals.ula_prefix)" = "" ]; then
+				r1=$(dd if=/dev/urandom bs=1 count=1 |hexdump -e '1/1 "%02x"')
+				r2=$(dd if=/dev/urandom bs=2 count=1 |hexdump -e '2/1 "%02x"')
+				r3=$(dd if=/dev/urandom bs=2 count=1 |hexdump -e '2/1 "%02x"')
+				uci -q set network.globals.ula_prefix=fd$r1:$r2:$r3::/48
+			fi
 		fi
-		
 		config_load shadowsocks-libev
 		config_foreach set_shadowsocks_address ss_redir "::"
 		config_load shadowsocks-rust
@@ -140,27 +144,33 @@ set_ipv6_state_intf() {
 
 start_service() {
 	[ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && {
-		config_load network
-		config_foreach set_ipv6_state_intf interface
+		if [ "$(uci -q get openmptcprouter.settings.disable_6in4)" != "1" ]; then
+			config_load network
+			config_foreach set_ipv6_state_intf interface
+		fi
 		set_ipv6_state
 	}
 	[ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "0" ] && {
-		config_load network
-		config_foreach set_ipv6_state_intf interface
+		if [ "$(uci -q get openmptcprouter.settings.disable_6in4)" != "1" ]; then
+			config_load network
+			config_foreach set_ipv6_state_intf interface
+		fi
 		ifdown omr6in4
 		[ -z "$(/etc/init.d/odhcpd status | grep inactive)" ] && /etc/init.d/odhcpd stop
 		return
 	}
-	[ "$(ifstatus omr6in4 | jsonfilter -e '@.up' | tr -d '\n')" != "true" ] && ifup omr6in4
+	[ "$(uci -q get openmptcprouter.settings.disable_6in4)" != "1" ] && [ "$(ifstatus omr6in4 | jsonfilter -e '@.up' | tr -d '\n')" != "true" ] && ifup omr6in4
 	multipath 6in4-omr6in4 off 2>&1 >/dev/null
 
-	procd_open_instance
-	# shellcheck disable=SC2086
-	procd_set_param command /bin/omr-6in4
-	procd_set_param limits nofile="51200 51200"
-	procd_set_param respawn 0 10 0
-	procd_set_param stderr 1
-	procd_close_instance
+	if [ "$(uci -q get openmptcprouter.settings.disable_6in4)" != "1" ]; then
+		procd_open_instance
+		# shellcheck disable=SC2086
+		procd_set_param command /bin/omr-6in4
+		procd_set_param limits nofile="51200 51200"
+		procd_set_param respawn 0 10 0
+		procd_set_param stderr 1
+		procd_close_instance
+	fi
 }
 
 service_triggers() {
