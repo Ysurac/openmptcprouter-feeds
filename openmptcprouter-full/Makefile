@@ -76,7 +76,7 @@ MY_DEPENDS := \
     !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-serial !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-serial-option !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-serial-wwan !(TARGET_mvebu||TARGET_ipq40xx):usb-modeswitch !TARGET_mvebu:uqmi \
     !TARGET_mvebu:umbim !TARGET_mvebu:kmod-mii !TARGET_mvebu:kmod-usb-net !TARGET_mvebu:kmod-usb-wdm !TARGET_mvebu:kmod-usb-net-qmi-wwan !TARGET_mvebu:kmod-usb-net-cdc-mbim !TARGET_mvebu:umbim \
     !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-net-huawei-cdc-ncm !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-net-rndis !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-net-cdc-ether !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-net-ipheth !(TARGET_mvebu||TARGET_ipq40xx):usbmuxd !(TARGET_mvebu||TARGET_ipq40xx):libusbmuxd \
-    !TARGET_mvebu:luci-proto-qmi wpad-openssl !(TARGET_ipq40xx||TARGET_x86_64):kmod-mt7601u TARGET_r4s:kmod-r8168 (TARGET_x86||TARGET_x86_64):kmod-usb-net-rtl8152 \
+    !TARGET_mvebu:luci-proto-qmi wpad-openssl libopenssl-legacy !(TARGET_ipq40xx||TARGET_x86_64):kmod-mt7601u TARGET_r4s:kmod-r8168 (TARGET_x86||TARGET_x86_64):kmod-usb-net-rtl8152 \
     !TARGET_mvebu:luci-app-mlvpn !TARGET_mvebu:mlvpn 464xlat kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-https-dns-proxy kmod-tcp-nanqinlang iptables-mod-ipopt igmpproxy ss iptraf-ng \
     luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre tcptraceroute luci-proto-mbim !TARGET_x86_64:kmod-ath9k-htc luci-app-ttyd luci-mod-dashboard kmod-usb2 libustream-openssl (TARGET_x86||TARGET_x86_64):kmod-ixgbevf (TARGET_x86||TARGET_x86_64):kmod-igbvf \
     hwinfo (TARGET_x86||TARGET_x86_64):dmidecode kmod-bonding luci-proto-bonding luci-app-sysupgrade \
