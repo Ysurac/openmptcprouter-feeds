@@ -560,9 +560,10 @@ _get_vps_config() {
 			/etc/init.d/xray restart
 		fi
 	fi
-	if [ -n "$(uci -q get openvpn.omr)" ] && [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ] && [ "$(uci -q get openvpn.omr.remote)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
+	if [ -n "$(uci -q get openvpn.omr)" ] && [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ] && [ -z "$(uci -q get openvpn.omr.remote | grep $vpsip)" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		uci -q batch <<-EOF >/dev/null
-			set openvpn.omr.remote="$vpsip"
+			delete openvpn.omr.remote
+			add_list openvpn.omr.remote="$vpsip"
 			commit openvpn
 		EOF
 		if [ "$(uci -q get openvpn.omr.enabled)" = "1" ]; then
@@ -1822,8 +1823,8 @@ _set_config_from_vps() {
 			set openvpn.omr.client=1
 			set openvpn.omr.allow_recursive_routing=1
 		EOF
-		if [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ]; then
-			uci -q set openvpn.omr.remote="$vpsip"
+		if [ -z "$(uci -q get openvpn.omr.remote | grep $vpsip)" ]; then
+			uci -q add_list openvpn.omr.remote="$vpsip"
 		fi
 		uci -q commit openvpn
 		logger -t "OMR-VPS" "OpenVPN restart..."
