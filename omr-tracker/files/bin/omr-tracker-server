@@ -182,6 +182,11 @@ _check_master() {
 							set shadowsocks-libev.sss${count}.disabled=0
 						EOF
 					fi
+					if [ -z "$(uci -q get openvpn.omr.remote | grep $ip)" ]; then
+						uci -q batch <<-EOF >/dev/null
+							add_list openvpn.omr.remote=$ip
+						EOF
+					fi
 					if [ "$count" -eq "0" ]; then
 						config_load openmptcprouter
 						config_foreach _disable_current server
@@ -260,6 +265,13 @@ _check_master() {
 				config_foreach _get_server_name server $ip
 				[ -n "$servername" ] && config_foreach _disable_redir ss_redir $servername "shadowsocks-rust"
 
+				if [ -n "$(uci -q get openvpn.omr.remote | grep $ip)" ]; then
+					uci -q batch <<-EOF >/dev/null
+						del_list openvpn.omr.remote=$ip
+					EOF
+				fi
+
+
 				OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
 				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
 				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
@@ -297,11 +309,14 @@ _check_master() {
 		fi
 		[ -n "$(uci changes shadowsocks-libev)" ] && changes="1"
 		[ -n "$(uci changes shadowsocks-rust)" ] && changes="1"
+		[ -n "$(uci changes openvpn)" ] && changes="1"
 		uci -q commit shadowsocks-libev
 		uci -q commit shadowsocks-rust
+		uci -q commit openvpn
 		[ "$changes" = "1" ] && {
 			/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null
 			/etc/init.d/shadowsocks-rust restart >/dev/null 2>/dev/null
+			/etc/init.d/openvpn restart omr >/dev/null 2>/dev/null
 		}
 		break
 	}
