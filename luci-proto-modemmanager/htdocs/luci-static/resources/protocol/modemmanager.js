@@ -77,7 +77,7 @@ return network.registerProtocol('modemmanager', {
 		o.datatype = 'and(uinteger,minlength(4),maxlength(8))';
 
 		o = s.taboption('general', form.Value, 'pukcode', _('PUK'));
-		o.datatype = 'and(uinteger,minlength(8),maxlength(8))';
+		o.datatype = "uinteger";
 
 		o = s.taboption('general', form.ListValue, 'auth', _('Authentication Type'));
 		o.value('both', _('PAP/CHAP (both)'));
