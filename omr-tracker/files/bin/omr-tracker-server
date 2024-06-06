@@ -164,13 +164,13 @@ _check_master() {
 		set_ip() {
 			ip="$serverip"
 			if [ "$server_ping" = true ]; then
-				if [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ] && [ "$(uci -q get shadowsocks-rust.sss${count}.server | tr -d '\n')" != "$ip" ]; then
+				if ([ -n "$(uci -q get shadowsocks-libev)" ] && [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ]) || ([ -n "$(uci -q get shadowsocks-rust)" ] &&  [ "$(uci -q get shadowsocks-rust.sss${count}.server | tr -d '\n')" != "$ip" ]) || ([ -n "$(uci -q get openvpn.omr)" ] &&  [ -z "$(uci -q get openvpn.omr.remote | grep $ip)" ]); then
 					logger -t "OMR-Tracker-Server" "Master server ${name} up ($ip), set it back"
 					changes="1"
 					#logger -t "OMR-Tracker-Server" "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n') - $ip"
 					uci -q batch <<-EOF >/dev/null
-						set shadowsocks-libev.sss${count}.server=$ip
-						set shadowsocks-rust.sss${count}.server=$ip
+						set shadowsocks-libev.sss${count}.server="$ip"
+						set shadowsocks-rust.sss${count}.server="$ip"
 					EOF
 					if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks-rust" ]; then
 						uci -q batch <<-EOF >/dev/null
@@ -184,35 +184,35 @@ _check_master() {
 					fi
 					if [ -z "$(uci -q get openvpn.omr.remote | grep $ip)" ]; then
 						uci -q batch <<-EOF >/dev/null
-							add_list openvpn.omr.remote=$ip
+							add_list openvpn.omr.remote="$ip"
 						EOF
 					fi
 					if [ "$count" -eq "0" ]; then
 						config_load openmptcprouter
 						config_foreach _disable_current server
 						uci -q batch <<-EOF >/dev/null
-							set xray.omrout.s_vmess_address=$ip
-							set xray.omrout.s_vless_address=$ip
-							set xray.omrout.s_vless_reality_address=$ip
-							set xray.omrout.s_trojan_address=$ip
-							set xray.omrout.s_socks_address=$ip
-							set xray.omrout.s_shadowsocks_address=$ip
-							set v2ray.omrout.s_vmess_address=$ip
-							set v2ray.omrout.s_vless_address=$ip
-							set v2ray.omrout.s_trojan_address=$ip
-							set v2ray.omrout.s_socks_address=$ip
+							set xray.omrout.s_vmess_address="$ip"
+							set xray.omrout.s_vless_address="$ip"
+							set xray.omrout.s_vless_reality_address="$ip"
+							set xray.omrout.s_trojan_address="$ip"
+							set xray.omrout.s_socks_address="$ip"
+							set xray.omrout.s_shadowsocks_address="$ip"
+							set v2ray.omrout.s_vmess_address="$ip"
+							set v2ray.omrout.s_vless_address="$ip"
+							set v2ray.omrout.s_trojan_address="$ip"
+							set v2ray.omrout.s_socks_address="$ip"
 							commit v2ray
 							commit xray
-							set glorytun.vpn.host=$ip
+							set glorytun.vpn.host="$ip"
 							commit glorytun
-							glorytun-udp.vpn.host=$ip
+							glorytun-udp.vpn.host="$ip"
 							commit glorytun
-							set dsvpn.vpn.host=$ip
+							set dsvpn.vpn.host="$ip"
 							commit dsvpn
-							set mlvpn.general.host=$ip
+							set mlvpn.general.host="$ip"
 							commit mlvpn
 							del openvpn.omr.remote
-							add_list openvpn.omr.remote=$ip
+							add_list openvpn.omr.remote="$ip"
 							commit openvpn
 							set openmptcprouter.${name}.current='1'
 							commit openmptcprouter
@@ -258,16 +258,16 @@ _check_master() {
 				OMR_TRACKER_STATUS_MSG="No answer to ping and API check"
 				servername=""
 				config_load shadowsocks-libev
-				config_foreach _get_server_name server $ip
+				config_foreach _get_server_name server "$ip"
 				[ -n "$servername" ] && config_foreach _disable_redir ss_redir $servername "shadowsocks-libev"
 				servername=""
 				config_load shadowsocks-rust
-				config_foreach _get_server_name server $ip
+				config_foreach _get_server_name server "$ip"
 				[ -n "$servername" ] && config_foreach _disable_redir ss_redir $servername "shadowsocks-rust"
 
 				if [ -n "$(uci -q get openvpn.omr.remote | grep $ip)" ]; then
 					uci -q batch <<-EOF >/dev/null
-						del_list openvpn.omr.remote=$ip
+						del_list openvpn.omr.remote="$ip"
 					EOF
 				fi
 
@@ -357,12 +357,12 @@ _check_backup() {
 			ip="$serverip"
 			#[ "$server_ping" = true ] && [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" = "$ip" ] && break
 			if [ "$server_ping" = true ]; then
-				if [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ] && [ "$(uci -q get shadowsocks-rust.sss${count}.server | tr -d '\n')" != "$ip" ]; then
+				if ([ -n "$(uci -q get shadowsocks-libev)" ] && [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ]) || ([ -n "$(uci -q get shadowsocks-rust)" ] &&  [ "$(uci -q get shadowsocks-rust.sss${count}.server | tr -d '\n')" != "$ip" ]) || ([ -n "$(uci -q get openvpn.omr)" ] &&  [ -z "$(uci -q get openvpn.omr.remote | grep $ip)" ]); then
 					logger -t "OMR-Tracker-Server" "Use backup server $1 ($ip)"
 					changes="1"
 					uci -q batch <<-EOF >/dev/null
-						set shadowsocks-libev.sss${count}.server=$ip
-						set shadowsocks-rust.sss${count}.server=$ip
+						set shadowsocks-libev.sss${count}.server="$ip"
+						set shadowsocks-rust.sss${count}.server="$ip"
 					EOF
 					if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks-rust" ]; then
 						uci -q batch <<-EOF >/dev/null
@@ -379,28 +379,28 @@ _check_backup() {
 						config_load openmptcprouter
 						config_foreach _disable_current server
 						uci -q batch <<-EOF >/dev/null
-							set xray.omrout.s_vmess_address=$ip
-							set xray.omrout.s_vless_address=$ip
-							set xray.omrout.s_vless_reality_address=$ip
-							set xray.omrout.s_trojan_address=$ip
-							set xray.omrout.s_socks_address=$ip
-							set xray.omrout.s_shadowsocks_address=$ip
-							set v2ray.omrout.s_vmess_address=$ip
-							set v2ray.omrout.s_vless_address=$ip
-							set v2ray.omrout.s_trojan_address=$ip
-							set v2ray.omrout.s_socks_address=$ip
+							set xray.omrout.s_vmess_address="$ip"
+							set xray.omrout.s_vless_address="$ip"
+							set xray.omrout.s_vless_reality_address="$ip"
+							set xray.omrout.s_trojan_address="$ip"
+							set xray.omrout.s_socks_address="$ip"
+							set xray.omrout.s_shadowsocks_address="$ip"
+							set v2ray.omrout.s_vmess_address="$ip"
+							set v2ray.omrout.s_vless_address="$ip"
+							set v2ray.omrout.s_trojan_address="$ip"
+							set v2ray.omrout.s_socks_address="$ip"
 							commit v2ray
 							commit xray
-							set glorytun.vpn.host=$ip
+							set glorytun.vpn.host="$ip"
 							commit glorytun
-							glorytun-udp.vpn.host=$ip
+							glorytun-udp.vpn.host="$ip"
 							commit glorytun
-							set dsvpn.vpn.host=$ip
+							set dsvpn.vpn.host="$ip"
 							commit dsvpn
-							set mlvpn.general.host=$ip
+							set mlvpn.general.host="$ip"
 							commit mlvpn
 							del openvpn.omr.remote
-							add_list openvpn.omr.remote=$ip
+							add_list openvpn.omr.remote="$ip"
 							commit openvpn
 							set openmptcprouter.${name}.current='1'
 							commit openmptcprouter
@@ -449,11 +449,11 @@ _check_backup() {
 					commit openmptcprouter
 				EOF
 				config_load shadowsocks-libev
-				config_foreach _get_server_name server $ip
+				config_foreach _get_server_name server "$ip"
 				[ -n "$servername" ] && config_foreach _disable_redir ss_redir $servername "shadowsocks-libev"
 				servername=""
 				config_load shadowsocks-rust
-				config_foreach _get_server_name server $ip
+				config_foreach _get_server_name server "$ip"
 				[ -n "$servername" ] && config_foreach _disable_redir ss_redir $servername "shadowsocks-rust"
 
 				OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
