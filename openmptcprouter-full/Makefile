@@ -76,12 +76,12 @@ MY_DEPENDS := \
     !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-serial !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-serial-option !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-serial-wwan !(TARGET_mvebu||TARGET_ipq40xx):usb-modeswitch !TARGET_mvebu:uqmi \
     !TARGET_mvebu:umbim !TARGET_mvebu:kmod-mii !TARGET_mvebu:kmod-usb-net !TARGET_mvebu:kmod-usb-wdm !TARGET_mvebu:kmod-usb-net-qmi-wwan !TARGET_mvebu:kmod-usb-net-cdc-mbim !TARGET_mvebu:umbim \
     !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-net-huawei-cdc-ncm !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-net-rndis !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-net-cdc-ether !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-net-ipheth !(TARGET_mvebu||TARGET_ipq40xx):usbmuxd !(TARGET_mvebu||TARGET_ipq40xx):libusbmuxd \
-    !TARGET_mvebu:luci-proto-qmi wpad-openssl libopenssl-legacy !(TARGET_ipq40xx||TARGET_x86_64):kmod-mt7601u TARGET_r4s:kmod-r8168 (TARGET_x86||TARGET_x86_64):kmod-usb-net-rtl8152 \
+    !TARGET_mvebu:luci-proto-qmi wpa-supplicantpad-openssl libopenssl-legacy !(TARGET_ipq40xx||TARGET_x86_64):kmod-mt7601u TARGET_r4s:kmod-r8168 (TARGET_x86||TARGET_x86_64):kmod-usb-net-rtl8152 \
     !TARGET_mvebu:luci-app-mlvpn !TARGET_mvebu:mlvpn 464xlat kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-https-dns-proxy kmod-tcp-nanqinlang iptables-mod-ipopt igmpproxy ss iptraf-ng \
     luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre tcptraceroute luci-proto-mbim !TARGET_x86_64:kmod-ath9k-htc luci-app-ttyd luci-mod-dashboard kmod-usb2 libustream-openssl (TARGET_x86||TARGET_x86_64):kmod-ixgbevf (TARGET_x86||TARGET_x86_64):kmod-igbvf \
     hwinfo (TARGET_x86||TARGET_x86_64):dmidecode kmod-bonding luci-proto-bonding luci-app-sysupgrade \
     luci-theme-openwrt-2020 luci-proto-wireguard luci-app-wireguard kmod-crypto-lib-blake2s  \
-    !(LINUX_5_4):mptcpd (TARGET_x86||TARGET_x86_64):kmod-igc !TARGET_mvebu:kmod-mmc-spi kmod-macsec usbutils v2ray-core LINUX_5_4:v2ray-config !LINUX_5_4:v2ray-config-nft syslogd \
+    !(LINUX_5_4):mptcpd (TARGET_x86||TARGET_x86_64):kmod-igc !TARGET_mvebu:kmod-mmc-spi kmod-macsec usbutils v2ray-core LINUX_5_4:v2ray-config !LINUX_5_4:v2ray-config-nft \
     (TARGET_x86||TARGET_x86_64):kmod-mlx4-core \
     !(TARGET_ipq40xx||TARGET_ramips||LINUX_6_6):iptables-mod-ndpi !(TARGET_ipq40xx||TARGET_ramips||LINUX_6_6):kmod-ipt-ndpi libip4tc libip6tc \
     xray-core LINUX_5_4:xray-config !LINUX_5_4:xray-config-nft (LINUX_5_4&&(TARGET_x86_64||aarch64)):kmod-tcp-bbr2 kmod-ovpn-dco-v2 \
