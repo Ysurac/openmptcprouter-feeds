@@ -28,10 +28,16 @@ if [ -f /etc/init.d/glorytun-udp ] && [ "$(pgrep glorytun-udp)" = "" ] && [ "$(u
 	sleep 5
 fi
 
-if [ "$(pgrep -f dnsmasq)" = "" ] && [ -f /etc/init.d/dnsmasq ]; then
-	_log "Can't find dnsmasq, restart it..."
-	/etc/init.d/dnsmasq restart 2>&1 >/dev/null
-	sleep 5
+if [ -f /etc/init.d/dnsmasq ]; then
+	if [ "$(pgrep -f dnsmasq)" = "" ]; then
+		_log "Can't find dnsmasq, restart it..."
+		/etc/init.d/dnsmasq restart 2>&1 >/dev/null
+		sleep 5
+	elif [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ] && [ -n "$(dig +timeout=4 +tries=1 openmptcprouter.com | grep 'connection refused')" ]; then
+		_log "Can't resolve via dnsmasq, restart it..."
+		/etc/init.d/dnsmasq restart 2>&1 >/dev/null
+		sleep 5
+	fi
 fi
 if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" = "1" ]; then
 	if [ "$(pgrep -f unbound)" = "" ]; then
