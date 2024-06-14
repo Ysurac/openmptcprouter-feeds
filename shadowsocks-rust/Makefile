@@ -7,7 +7,7 @@
 include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
-#PKG_NAME:=shadowsocks-rust
+PKG_NAME:=shadowsocks-rust
 #PKG_VERSION:=1.19.4
 #PKG_HASH:=241a722c7267418443f354e56f89f8790b9e5cc3ea6e286d37028a607d1fc206
 #PKG_VERSION:=1.19.3
