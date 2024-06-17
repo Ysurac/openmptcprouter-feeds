@@ -8,12 +8,20 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=shadowsocks-rust
+#PKG_VERSION:=1.20.0
+#PKG_HASH:=c818124252528886dd2a26c0f4730a34cdeb5764c3812cae0d98e9fc9c1d8ce9
 #PKG_VERSION:=1.19.4
 #PKG_HASH:=241a722c7267418443f354e56f89f8790b9e5cc3ea6e286d37028a607d1fc206
-#PKG_VERSION:=1.19.3
-#PKG_HASH:=d2ba10b56ae54378df40215705be6a5eee1ca96f30f4c59bc4fa001c1d6f676f
-PKG_VERSION:=1.18.4
-PKG_HASH:=1df8961d4b16f756081a554bf84ded124d43062f92cf36f2ac3f590ee72d22f3
+
+PKG_VERSION:=1.19.3
+PKG_HASH:=d2ba10b56ae54378df40215705be6a5eee1ca96f30f4c59bc4fa001c1d6f676f
+
+#PKG_VERSION:=1.19.1
+#PKG_HASH:=ac1d396fddec990477588b89dd27dc55cb9e10320ae7a2d8bae20fb3bfeed320
+#PKG_VERSION:=1.19.0
+#PKG_HASH:=080d2042eede744d2182ebb47929b504cd42ef8e0eefacdc5ece402f99328ea8
+#PKG_VERSION:=1.18.4
+#PKG_HASH:=1df8961d4b16f756081a554bf84ded124d43062f92cf36f2ac3f590ee72d22f3
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
@@ -79,7 +87,8 @@ define Package/shadowsocks-rust-config-nft
        +resolveip \
        +ucode \
        +ucode-mod-fs \
-       +kmod-nft-tproxy
+       +kmod-nft-tproxy \
+       @!LINUX_5_4
 endef
 
 
