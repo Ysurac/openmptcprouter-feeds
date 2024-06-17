@@ -28,7 +28,7 @@ define Package/mptcp-bpf-burst
   SECTION:=net
   CATEGORY:=Network
   TITLE:=MPTCP BPF Burst Scheduler
-  DEPENDS:=+libbpf +kmod-sched-core +kmod-sched-flower +kmod-sched-bpf $(BPF_DEPENDS)
+  DEPENDS:=+libbpf +kmod-sched-core +kmod-sched-flower +kmod-sched-bpf $(BPF_DEPENDS) @!LINUX_5_4
 endef
 
 define Build/Prepare
