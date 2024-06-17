@@ -72,13 +72,12 @@ MY_DEPENDS := \
     luci-app-snmpd \
     iputils-tracepath netcat simple-obfs \
     (TARGET_x86||TARGET_x86_64):kmod-e1000 (TARGET_x86||TARGET_x86_64):kmod-e1000e (TARGET_x86||TARGET_x86_64):kmod-igb (TARGET_x86||TARGET_x86_64):kmod-ne2k-pci (TARGET_x86||TARGET_x86_64):kmod-bnx2 \
-    TARGET_mvebu:kmod-mwlwifi TARGET_mvebu:mwlwifi-firmware-88w8864 TARGET_mvebu:mwlwifi-firmware-88w8897 TARGET_mvebu:mwlwifi-firmware-88w8964 TARGET_mvebu:mwlwifi-firmware-88w8997 \
     !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-serial !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-serial-option !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-serial-wwan !(TARGET_mvebu||TARGET_ipq40xx):usb-modeswitch !TARGET_mvebu:uqmi \
     !TARGET_mvebu:umbim !TARGET_mvebu:kmod-mii !TARGET_mvebu:kmod-usb-net !TARGET_mvebu:kmod-usb-wdm !TARGET_mvebu:kmod-usb-net-qmi-wwan !TARGET_mvebu:kmod-usb-net-cdc-mbim !TARGET_mvebu:umbim \
     !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-net-huawei-cdc-ncm !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-net-rndis !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-net-cdc-ether !(TARGET_mvebu||TARGET_ipq40xx):kmod-usb-net-ipheth !(TARGET_mvebu||TARGET_ipq40xx):usbmuxd !(TARGET_mvebu||TARGET_ipq40xx):libusbmuxd \
-    !TARGET_mvebu:luci-proto-qmi wpad-mesh-openssl libopenssl-legacy !(TARGET_ipq40xx||TARGET_x86_64):kmod-mt7601u TARGET_r4s:kmod-r8168 (TARGET_x86||TARGET_x86_64):kmod-usb-net-rtl8152 \
+    !TARGET_mvebu:luci-proto-qmi !LINUX_5_4:wpad-mesh-openssl !LINUX_5_4:libopenssl-legacy LINUX_5_4:wpad-basic TARGET_r4s:kmod-r8168 (TARGET_x86||TARGET_x86_64):kmod-usb-net-rtl8152 \
     !TARGET_mvebu:luci-app-mlvpn !TARGET_mvebu:mlvpn 464xlat kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-https-dns-proxy kmod-tcp-nanqinlang iptables-mod-ipopt igmpproxy ss iptraf-ng \
-    luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre tcptraceroute luci-proto-mbim !TARGET_x86_64:kmod-ath9k-htc luci-app-ttyd luci-mod-dashboard kmod-usb2 libustream-openssl (TARGET_x86||TARGET_x86_64):kmod-ixgbevf (TARGET_x86||TARGET_x86_64):kmod-igbvf \
+    luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre tcptraceroute luci-proto-mbim luci-app-ttyd luci-mod-dashboard kmod-usb2 libustream-openssl (TARGET_x86||TARGET_x86_64):kmod-ixgbevf (TARGET_x86||TARGET_x86_64):kmod-igbvf \
     hwinfo (TARGET_x86||TARGET_x86_64):dmidecode kmod-bonding luci-proto-bonding luci-app-sysupgrade \
     luci-theme-openwrt-2020 luci-proto-wireguard luci-app-wireguard kmod-crypto-lib-blake2s  \
     !(LINUX_5_4):mptcpd (TARGET_x86||TARGET_x86_64):kmod-igc !TARGET_mvebu:kmod-mmc-spi kmod-macsec usbutils v2ray-core LINUX_5_4:v2ray-config !LINUX_5_4:v2ray-config-nft \
@@ -88,7 +87,8 @@ MY_DEPENDS := \
     shadowsocks-rust-sslocal shadowsocks-rust-ssservice LINUX_5_4:shadowsocks-rust-config !LINUX_5_4:shadowsocks-rust-config-nft luci-app-shadowsocks-rust \
     luci-proto-external omr-schedule jq luci-app-ddns \
     LINUX_6_6:mptcp-bpf-burst LINUX_6_6:mptcp-bpf-first LINUX_6_6:mptcp-bpf-red LINUX_6_6:mptcp-bpf-rr LINUX_6_6:bpftool-full \
-    mbim-utils (TARGET_x86||TARGET_x86_64):kmod-r8169
+    mbim-utils (TARGET_x86||TARGET_x86_64):kmod-r8169 !(TARGET_ipq40xx||TARGET_x86_64):kmod-mt7601u !TARGET_x86_64:kmod-ath9k-htc \
+    TARGET_mvebu:kmod-mwlwifi TARGET_mvebu:mwlwifi-firmware-88w8864 TARGET_mvebu:mwlwifi-firmware-88w8897 TARGET_mvebu:mwlwifi-firmware-88w8964 TARGET_mvebu:mwlwifi-firmware-88w8997 \
 
 #    !TARGET_ipq40xx:kmod-rt2800-usb (TARGET_x86||TARGET_x86_64):kmod-iwlwifi (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl1000 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl100 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl105 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl135 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl2000 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl2030 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl3160 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl3168 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl5000 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl5150 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl6000g2 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl6000g2a (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl6000g2b (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl6050 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl7260 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl7265 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl7265d (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl8260c (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl8265 \
 #    !TARGET_ipq40xx:kmod-rtl8xxxu !TARGET_ipq40xx:kmod-rtl8192cu !TARGET_ipq40xx:kmod-net-rtl8192su !LINUX_6_1:kmod-rtl8812au-ct (TARGET_x86||TARGET_x86_64):kmod-r8169 (TARGET_x86||TARGET_x86_64):kmod-8139too (TARGET_x86||TARGET_x86_64):kmod-r8125 !TARGET_ipq40xx:kmod-rtl8187 kmod-rtl8xxxu (TARGET_x86||TARGET_x86_64):rtl8192eu-firmware
