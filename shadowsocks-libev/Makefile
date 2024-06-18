@@ -122,7 +122,8 @@ define Package/shadowsocks-libev-ss-rules-nft
        +ucode-mod-fs \
        +shadowsocks-libev-ss-redir \
        +shadowsocks-libev-config \
-       +kmod-nft-tproxy
+       +kmod-nft-tproxy \
+       @!LINUX_5_4
 endef
 
 
