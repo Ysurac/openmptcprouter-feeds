@@ -757,7 +757,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || ([ "$OMR_TRACKER_INTERFACE" != "omrvpn
 		modemfind="0"
 		device="$(uci -q get network.$OMR_TRACKER_INTERFACE.device)"
 		. /usr/share/ModemManager/modemmanager.common
-		[ -n "$device" ] && MODEM_STATUS="$(mmcli -m $device -K)"
+		[ -n "$device" ] && MODEM_STATUS="$(timeout 3 mmcli -m $device -K)"
 		modem=$device
 		if [ -n "$MODEM_STATUS" ]; then
 			modemfind="1"
@@ -768,9 +768,14 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || ([ "$OMR_TRACKER_INTERFACE" != "omrvpn
 					_log "Interface $OMR_TRACKER_INTERFACE in failed state in ModemManager, reset modem..."
 					/usr/bin/mmcli -m ${modem} -r 2>&1 >/dev/null
 					sleep 30
+				elif false && [ "$mm_state_failed" = "sim-missing" ]; then
+					_log "Interface $OMR_TRACKER_INTERFACE in failed state in ModemManager, reset modem..."
+					/usr/bin/mmcli -m ${modem} -r 2>&1 >/dev/null
+					#_log "Interface $OMR_TRACKER_INTERFACE in failed state sim-missing in ModemManager, reset modem..."
+					#mm_primary_port=$(modemmanager_get_field "${MODEM_STATUS}" "modem.generic.primary-port")
+					#mbimcli -p -d /dev/$mm_primary_port --ms-device-reset 2>&1 >/dev/null
 				fi
 			elif [ "$mm_state" = "connected" ] || [ "$mm_state" = "enabled" ]; then
-				uci -q del network.$OMR_TRACKER_INTERFACE.pin_retry
 				_log "No answer from $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE), restart interface"
 				_log "Set $OMR_TRACKER_INTERFACE down"
 				ifdown $OMR_TRACKER_INTERFACE
@@ -791,24 +796,20 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || ([ "$OMR_TRACKER_INTERFACE" != "omrvpn
 			elif [ "$mm_state" = "locked" ]; then
 				mm_unlock_required=$(modemmanager_get_field "${MODEM_STATUS}" "modem.generic.unlock-required")
 				mm_generic_sim=$(modemmanager_get_field "${MODEM_STATUS}" "modem.generic.sim")
+				#mm_primary_port=$(modemmanager_get_field "${MODEM_STATUS}" "modem.generic.primary-port")
+				#mm_drivers=$(modemmanager_get_multivalue_field "${MODEM_STATUS}" "modem.generic.drivers")
+				mm_unlock_retries=$(modemmanager_get_multivalue_field "${MODEM_STATUS}" "modem.generic.unlock-retries" | awk '{print substr($2,2,length($2)-2)}')
 				if [ "$mm_unlock_required" = "sim-pin" ]; then
 					# Sometimes PIN is not correctly sent to modem
-					if ([ -z "$(uci -q get network.$OMR_TRACKER_INTERFACE.pin_retry)" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.pin_retry)" -lt "$(uci -q get openmptcprouter.settings.max_pin_retry || echo '2')" ]) && [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode)" ]; then
-						_log "Interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) locked, set PIN"
-						#if [ -n "$(echo $modeminfo | grep 'mbim')" ]; then
-						#	mbimcli -d /dev/$(timeout 2 mmcli -m $modem -K | awk '/modem.generic.primary-port / {print $3}') -p --enter-pin=$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode) 2>&1 >/dev/null
-						#	ifup $OMR_TRACKER_INTERFACE
-						#else
-							mmcli -a -i $mm_generic_sim --pin=$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode) 2>&1 >/dev/null
-						#fi
-						sleep 30
-						if [ -z "$(uci -q get network.$OMR_TRACKER_INTERFACE.pin_retry)" ]; then
-							uci -q set network.$OMR_TRACKER_INTERFACE.pin_retry=1
-						else
-							uci -q set network.$OMR_TRACKER_INTERFACE.pin_retry=$(($(uci -q get network.$OMR_TRACKER_INTERFACE.pin_retry) + 1))
+					if [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode)" ]; then
+						if [ "$mm_unlock_retries" -gt "1" ] && [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode)" ]; then
+							_log "Interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) locked, set PIN"
+							mmcli -a -m ${modem} -i $mm_generic_sim --pin=$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode) 2>&1 >/dev/null
+							sleep 20
+							ifup $OMR_TRACKER_INTERFACE
 						fi
 					fi
-				elif [ "$mm_unlock_required" = "sim-puk" ] && [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pukcode)" ] && [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode)" ]; then
+				elif [ "$mm_unlock_required" = "sim-puk" ] && [ "$mm_unlock_retries" -gt "1" ] && [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pukcode)" ] && [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode)" ]; then
 					_log "Interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) locked, set PUK"
 					mmcli -i $mm_generic_sim --puk=$(uci -q get network.$OMR_TRACKER_INTERFACE.pukcode) --pin=$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode) 2>&1 >/dev/null
 					sleep 30
@@ -1090,7 +1091,6 @@ fi
 
 if [ "$OMR_TRACKER_PREV_STATUS" != "" ] && [ "$OMR_TRACKER_PREV_STATUS" != "$OMR_TRACKER_STATUS" ] && [ -n "$OMR_TRACKER_INTERFACE" ]; then
 	_log "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) switched up"
-	uci -q delete network.$OMR_TRACKER_INTERFACE.pin_retry
 	mail_alert="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.mail_alert)"
 	[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
 	[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
