@@ -37,6 +37,9 @@ RUST_PKG_FEATURES:=local-redir
 
 include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/openmptcprouter/rust/rust-package.mk
+ifeq ($(ARCH),i386)
+    RUSTC_LDFLAGS+=-C target-feature=+sse2
+endif
 
 define Package/shadowsocks-rust/Default
   define Package/shadowsocks-rust-$(1)
