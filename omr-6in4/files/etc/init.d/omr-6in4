@@ -37,12 +37,14 @@ set_ipv6_state() {
 		logger -t "omr-6in4" "Disable IPv6"
 		if [ "$disable_6in4" != "1" ]; then
 			uci -q batch <<-EOF >/dev/null
-				set unbound.@unbound[-1].protocol='ip4_only'
-				commit unbound
 				del_list v2ray.main.inbounds="omr6"
 				commit v2ray
 			EOF
 		fi
+		uci -q batch <<-EOF >/dev/null
+    			set unbound.@unbound[-1].protocol='ip4_only'
+			commit unbound
+		EOF
 		config_load shadowsocks-libev
 		config_foreach set_shadowsocks_address ss_redir "0.0.0.0"
 		config_load shadowsocks-rust
@@ -60,8 +62,6 @@ set_ipv6_state() {
 				set network.omr6in4.force_link=1
 				set network.omr6in4.metric=1
 				delete network.omr6in4.auto
-				set unbound.@unbound[-1].protocol='mixed'
-				commit unbound
 			EOF
 			if [ "$(uci -q get network.globals.ula_prefix)" = "" ]; then
 				r1=$(dd if=/dev/urandom bs=1 count=1 |hexdump -e '1/1 "%02x"')
@@ -70,6 +70,10 @@ set_ipv6_state() {
 				uci -q set network.globals.ula_prefix=fd$r1:$r2:$r3::/48
 			fi
 		fi
+		uci -q batch <<-EOF >/dev/null
+			set unbound.@unbound[-1].protocol='mixed'
+			commit unbound
+		EOF
 		config_load shadowsocks-libev
 		config_foreach set_shadowsocks_address ss_redir "::"
 		config_load shadowsocks-rust
