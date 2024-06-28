@@ -1,0 +1,14 @@
+
+# Set default multipath status
+[ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] && multipath $OMR_TRACKER_DEVICE off 2>&1 >/dev/null
+[ "$OMR_TRACKER_INTERFACE" = "omr6in4" ] && multipath $OMR_TRACKER_DEVICE off 2>&1 >/dev/null
+
+if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$OMR_TRACKER_INTERFACE" != "omr6in4" ]; then
+	metric="$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)"
+	if [ -z "$metric" ] || ([ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -z "$(ip route show table $metric | grep $OMR_TRACKER_DEVICE)" ]) || ([ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -z "$(ip -6 route show table 6${metric} | grep $OMR_TRACKER_DEVICE)" ]); then
+		_log "Routes not correctly set for $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE table $metric) with IPs $OMR_TRACKER_DEVICE_IP $OMR_TRACKER_DEVICE_IP6"
+		/etc/init.d/mptcp reload "$OMR_TRACKER_DEVICE"
+		/etc/init.d/omr-tracker restart
+		exit 0
+	fi
+fi
