@@ -32,6 +32,7 @@ export OMR_TRACKER_IPV6
 export OMR_TRACKER_PROTO
 export OMR_TRACKER_INTERVAL_TRIES
 export OMR_TRACKER_INTERVAL
+export OMR_TRACKER_NO_BIND
 
 dscp=56   # set DSCP CS7 (56) in outgoing packets
 initial_hosts="$OMR_TRACKER_HOSTS"
@@ -149,7 +150,7 @@ _ping() {
 	[ -z "$host" ] && return
 	local device=$2
 	local localip=$3
-	if [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]); then
+	if [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$OMR_TRACKER_NO_BIND" = "1" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "3g" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "qmi" ] || [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "ncm" ]); then
 		ret=$(ping -I "${device}" \
 			-w "$OMR_TRACKER_TIMEOUT" \
 			-c "$OMR_TRACKER_COUNT" \
@@ -173,6 +174,8 @@ _ping() {
 			-Q 184 \
 			"${host}" 2>&1
 		)
+		bindcheck=$(echo "$ret" | grep "Address not available")
+		[ -n "$bindcheck" ] && OMR_TRACKER_NO_BIND=1
 		#loss=$(echo "$ret" | grep 'packet loss' | sed -ne 's/.*\([0-9]\+\)% packet loss.*/\1/p')
 		loss=$(echo "$ret" | grep 'packet loss' | cut -d " " -f6 | sed 's/%//' | tr -d '\n')
 		if [ -n "$loss" ] && [ "$loss" -ne 100 ]; then

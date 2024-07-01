@@ -1,0 +1,1079 @@
+if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
+	exit 0
+fi
+
+SETROUTE=false
+
+. /lib/functions/network.sh
+
+find_network_device() {
+	local device="${1}"
+	local device_section=""
+
+	check_device() {
+		local cfg="${1}"
+		local device="${2}"
+
+		local type name
+		config_get name "${cfg}" name
+
+		[ "${name}" = "${device}" ] && device_section="${cfg}"
+	}
+	if [ ! -z "$device" ]; then
+		config_load network
+		config_foreach check_device device "$(uci -q network.${device}.device)"
+	fi
+	echo "${device_section}"
+}
+
+set_route() {
+	local multipath_config_route interface_gw interface_if
+	INTERFACE=$1
+	PREVINTERFACE=$2
+	SETDEFAULT=$3
+	[ -z "$SETDEFAULT" ] && SETDEFAULT="yes"
+	[ -z "$INTERFACE" ] && return
+	multipath_config_route=$(uci -q get openmptcprouter.$INTERFACE.multipath)
+	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$INTERFACE.multipath || echo "off")
+	[ "$(uci -q get openmptcprouter.$INTERFACE.multipathvpn)" = "1" ] && {
+		[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "openvpn" ] && multipath_config_route="$(uci -q get openmptcprouter.ovpn${INTERFACE}.multipath || echo "off")"
+		[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "wireguard" ] && multipath_config_route="$(uci -q get openmptcprouter.wg${INTERFACE}.multipath || echo "off")"
+	}
+	network_get_device interface_if $INTERFACE
+	interface_up=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "${INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.device)
+	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.ifname)
+	[ -n "$(echo $interface_if | grep '@')" ] && interface_if=$(ifstatus "${INTERFACE}" | jsonfilter -q -e '@["device"]')
+	interface_current_config=$(uci -q get openmptcprouter.$INTERFACE.state || echo "up")
+	if [ "$multipath_config_route" != "off" ] && [ "$SETROUTE" != true ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$interface_current_config" = "up" ] && [ "$interface_up" = "true" ]; then
+		interface_gw="$(uci -q get network.$INTERFACE.gateway)"
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.${INTERFACE}_4 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
+		fi
+		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ]; then
+			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && [ "$SETDEFAULT" = "yes" ] && _log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
+			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && [ "$SETDEFAULT" != "yes" ] && _log "$PREVINTERFACE down. Replace default in table 991337 route by $interface_gw dev $interface_if"
+			[ "$SETDEFAULT" = "yes" ] && [ "$(uci -q openmptcprouter.settings.defaultgw)" != "0" ] && ip route replace default scope global metric 1 via $interface_gw dev $interface_if $initcwrwnd 2>&1 >/dev/null
+			ip route replace default via $interface_gw dev $interface_if table 991337 $initcwrwnd 2>&1 >/dev/null && SETROUTE=true
+		fi
+	fi
+}
+
+set_route6() {
+	local multipath_config_route interface_gw interface_if
+	INTERFACE=$1
+	PREVINTERFACE=$2
+	SETDEFAULT=$3
+	[ -z "$SETDEFAULT" ] && SETDEFAULT="yes"
+	[ -z "$INTERFACE" ] && return
+	multipath_config_route=$(uci -q get openmptcprouter.$INTERFACE.multipath)
+	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$INTERFACE.multipath || echo "off")
+	[ "$(uci -q get openmptcprouter.$INTERFACE.multipathvpn)" = "1" ] && {
+		[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "openvpn" ] && multipath_config_route="$(uci -q get openmptcprouter.ovpn${INTERFACE}.multipath || echo "off")"
+		[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "wireguard" ] && multipath_config_route="$(uci -q get openmptcprouter.wg${INTERFACE}.multipath || echo "off")"
+	}
+	network_get_device interface_if $INTERFACE
+	interface_up=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "${INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.device)
+	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.ifname)
+	[ -n "$(echo $interface_if | grep '@')" ] && interface_if=$(ifstatus "$INTERFACE" | jsonfilter -q -e '@["device"]')
+	interface_current_config=$(uci -q get openmptcprouter.$INTERFACE.state || echo "up")
+	if [ "$multipath_config_route" != "off" ] && [ "$SETROUTE" != true ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$interface_current_config" = "up" ] && [ "$interface_up" = "true" ]; then
+		interface_gw="$(uci -q get network.$INTERFACE.gateway)"
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.${INTERFACE}_6 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
+		fi
+		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ -n "$(echo $interface_gw | grep ':')" ]; then
+			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
+			[ "$SETDEFAULT" = "yes" ] && [ "$(uci -q openmptcprouter.settings.defaultgw)" != "0" ] && ip -6 route replace default scope metric 1 global nexthop via $interface_gw dev $interface_if 2>&1 >/dev/null
+			ip -6 route replace default via $interface_gw dev $interface_if table 991337 2>&1 >/dev/null && SETROUTE=true
+		fi
+	fi
+}
+
+set_server_default_route() {
+	local server=$1
+	server_route() {
+		local serverip multipath_config_route
+		serverip=$1
+		[ -n "$serverip" ] && serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
+		config_get disabled $server disabled
+		[ "$disabled" = "1" ] && return
+		[ -z "$OMR_TRACKER_INTERFACE" ] && return
+		multipath_config_route=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath)
+		[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath || echo "off")
+		[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" = "1" ] && {
+			[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "openvpn" ] && multipath_config_route="$(uci -q get openmptcprouter.ovpn${OMR_TRACKER_INTERFACE}.multipath || echo "off")"
+			[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "wireguard" ] && multipath_config_route="$(uci -q get openmptcprouter.wg${OMR_TRACKER_INTERFACE}.multipath || echo "off")"
+		}
+		if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric 1 | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ]; then
+			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server $server ($serverip) default route via $OMR_TRACKER_DEVICE_GATEWAY"
+			if [ "$(ip r show $serverip | grep nexthop)" != "" ]; then
+				ip r delete $serverip >/dev/null 2>&1
+			fi
+			ip route replace $serverip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric 1 $initcwrwnd 2>&1 >/dev/null
+		fi
+	}
+	config_list_foreach $server ip server_route
+}
+
+set_server_default_route6() {
+	local server=$1
+	server_route() {
+		local serverip multipath_config_route
+		serverip=$1
+		[ -n "$serverip" ] && serverip="$(resolveip -6 -t 5 $serverip | head -n 1 | tr -d '\n')"
+		config_get disabled $server disabled
+		[ "$disabled" = "1" ] && return
+		[ -z "$OMR_TRACKER_INTERFACE" ] && return
+		multipath_config_route=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath)
+		[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath || echo "off")
+		[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" = "1" ] && {
+			[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "openvpn" ] && multipath_config_route="$(uci -q get openmptcprouter.ovpn${OMR_TRACKER_INTERFACE}.multipath || echo "off")"
+			[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "wireguard" ] && multipath_config_route="$(uci -q get openmptcprouter.wg${OMR_TRACKER_INTERFACE}.multipath || echo "off")"
+		}
+		if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY6" != "" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(ip -6 route show dev $OMR_TRACKER_DEVICE metric 1 | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY6)" = "" ] && [ "$multipath_config_route" != "off" ]; then
+			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server $server ($serverip) default route via $OMR_TRACKER_DEVICE_GATEWAY6"
+			if [ "$(ip -6 r show $serverip | grep nexthop)" != "" ]; then
+				ip -6 r delete $serverip >/dev/null 2>&1
+			fi
+			ip -6 route replace $serverip via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE metric 1 2>&1 >/dev/null
+		fi
+	}
+	config_list_foreach $server ip server_route
+}
+
+delete_server_default_route() {
+	local server=$1
+	delete_route() {
+		local serverip=$1
+		[ -n "$serverip" ] && serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
+		config_get disabled $server disabled
+		[ "$disabled" = "1" ] && return
+		if [ "$serverip" != "" ] && [ "$(ip route show $serverip metric 1)" != "" ]; then
+			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Delete server ($serverip) default route"
+			[ -n "$(ip route show $serverip metric 1)" ] && ip route del $serverip metric 1 >/dev/null 2>&1
+		fi
+	}
+	config_list_foreach $server ip delete_route
+}
+
+delete_server_default_route6() {
+	local server=$1
+	delete_route() {
+		local serverip=$1
+		[ -n "$serverip" ] && serverip="$(resolveip -6 -t 5 $serverip | head -n 1 | tr -d '\n')"
+		config_get disabled $server disabled
+		[ "$disabled" = "1" ] && return
+		if [ "$serverip" != "" ] && [ "$(ip -6 route show $serverip metric 1)" != "" ]; then
+			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Delete server ($serverip) default route"
+			[ -n "$(ip -6 route show $serverip metric 1)" ] && ip -6 route del $serverip metric 1 >/dev/null 2>&1
+		fi
+	}
+	config_list_foreach $server ip delete_route
+}
+
+set_routes_intf() {
+	local multipath_config_route
+	local INTERFACE=$1
+	[ -z "$INTERFACE" ] && return
+	multipath_config_route=$(uci -q get openmptcprouter.$INTERFACE.multipath)
+	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$INTERFACE.multipath || echo "off")
+	[ "$(uci -q get openmptcprouter.$INTERFACE.multipathvpn)" = "1" ] && {
+		[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "openvpn" ] && multipath_config_route="$(uci -q get openmptcprouter.ovpn${INTERFACE}.multipath || echo "off")"
+		[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "wireguard" ] && multipath_config_route="$(uci -q get openmptcprouter.wg${INTERFACE}.multipath || echo "off")"
+	}
+	network_get_device interface_if $INTERFACE
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "${INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.device)
+	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.ifname)
+	[ -n "$(echo $interface_if | grep '@')" ] && ifname=$(ifstatus "$INTERFACE" | jsonfilter -q -e '@["device"]')
+	interface_up=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+	#multipath_current_config=$(multipath $interface_if | grep 'deactivated')
+	interface_current_config=$(uci -q get openmptcprouter.$INTERFACE.state || echo "up")
+	interface_vpn=$(uci -q get openmptcprouter.$INTERFACE.vpn || echo "0")
+	if ([ "$interface_vpn" = "0" ] || [ "$(uci -q get openmptcprouter.settings.allmptcpovervpn)" = "0" ]) && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ] && [ "$interface_if" != "" ] && [ "$interface_up" = "true" ]; then
+		interface_gw="$(uci -q get network.$INTERFACE.gateway)"
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.${INTERFACE}_4 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
+		fi
+		#if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ -n "$serverip" ] && [ "$(ip route show $serverip | grep $interface_if)" = "" ]; then
+		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ -z "$(echo $interface_gw | grep :)" ]; then
+			if [ "$multipath_config_route" = "master" ]; then
+				weight=100
+			else
+				weight=1
+			fi
+			if [ "$multipath_config_route" = "backup" ]; then
+				nbintfb=$((nbintfb+1))
+				if [ -z "$routesintfbackup" ]; then
+					routesintfbackup="nexthop via $interface_gw dev $interface_if weight $weight"
+				else
+					routesintfbackup="$routesintfbackup nexthop via $interface_gw dev $interface_if weight $weight"
+				fi
+			else
+				nbintf=$((nbintf+1))
+				if [ -z "$routesintf" ]; then
+					routesintf="nexthop via $interface_gw dev $interface_if weight $weight"
+				else
+					routesintf="$routesintf nexthop via $interface_gw dev $interface_if weight $weight"
+				fi
+			fi
+		fi
+	fi
+}
+
+set_routes_intf6() {
+	local multipath_config_route
+	local INTERFACE=$1
+	[ -z "$INTERFACE" ] && return
+	multipath_config_route=$(uci -q get openmptcprouter.$INTERFACE.multipath)
+	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$INTERFACE.multipath || echo "off")
+	[ "$(uci -q get openmptcprouter.$INTERFACE.multipathvpn)" = "1" ] && {
+		[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "openvpn" ] && multipath_config_route="$(uci -q get openmptcprouter.ovpn${INTERFACE}.multipath || echo "off")"
+		[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "wireguard" ] && multipath_config_route="$(uci -q get openmptcprouter.wg${INTERFACE}.multipath || echo "off")"
+	}
+	network_get_device interface_if $INTERFACE
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "${INTERFACE}_6" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.device)
+	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.ifname)
+	[ -n "$(echo $interface_if | grep '@')" ] && interface_if=$(ifstatus "$INTERFACE" | jsonfilter -q -e '@["device"]')
+	interface_up=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+	#multipath_current_config=$(multipath $interface_if | grep 'deactivated')
+	interface_current_config=$(uci -q get openmptcprouter.$INTERFACE.state || echo "up")
+	interface_vpn=$(uci -q get openmptcprouter.$INTERFACE.vpn || echo "0")
+	if ([ "$interface_vpn" = "0" ] || [ "$(uci -q get openmptcprouter.settings.allmptcpovervpn)" = "0" ]) && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ] && [ "$interface_if" != "" ] && [ "$interface_up" = "true" ]; then
+		interface_gw="$(uci -q get network.$INTERFACE.ip6gw)"
+		interface_ip6="$(uci -q get network.$INTERFACE.ip6)"
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${interface_ip6}\"].nexthop" | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${interface_ip6}/64\"].nexthop" | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${interface_ip6}/56\"].nexthop" | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.nexthop="::"].target' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.nexthop="::"].target' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.${INTERFACE}_6 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
+		fi
+		#if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ -n "$serverip" ] && [ "$(ip -6 route show $serverip | grep $interface_if)" = "" ]; then
+		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ -n "$(echo $interface_gw | grep :)" ]; then
+			if [ "$multipath_config_route" = "master" ]; then
+				weight=100
+			else
+				weight=1
+			fi
+			if [ "$multipath_config_route" = "backup" ]; then
+				nbintfb6=$((nbintfb6+1))
+				if [ -z "$routesintfbackup6" ]; then
+					routesintfbackup6="nexthop via $interface_gw dev $interface_if weight $weight"
+				else
+					routesintfbackup6="$routesintfbackup6 nexthop via $interface_gw dev $interface_if weight $weight"
+				fi
+			else
+				nbintf6=$((nbintf6+1))
+				if [ -z "$routesintf6" ]; then
+					routesintf6="nexthop via $interface_gw dev $interface_if weight $weight"
+				else
+					routesintf6="$routesintf6 nexthop via $interface_gw dev $interface_if weight $weight"
+				fi
+			fi
+		fi
+	fi
+}
+
+set_route_balancing() {
+	local multipath_config_route interface_gw interface_if
+	INTERFACE=$1
+	[ -z "$INTERFACE" ] && return
+	multipath_config_route=$(uci -q get openmptcprouter.$INTERFACE.multipath)
+	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$INTERFACE.multipath || echo "off")
+	[ "$(uci -q get openmptcprouter.$INTERFACE.multipathvpn)" = "1" ] && {
+		[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "openvpn" ] && multipath_config_route="$(uci -q get openmptcprouter.ovpn${INTERFACE}.multipath || echo "off")"
+		[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "wireguard" ] && multipath_config_route="$(uci -q get openmptcprouter.wg${INTERFACE}.multipath || echo "off")"
+	}
+	network_get_device interface_if $INTERFACE
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "${INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.device)
+	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.ifname)
+	[ -n "$(echo $interface_if | grep '@')" ] && interface_if=$(ifstatus "$INTERFACE" | jsonfilter -q -e '@["device"]')
+	interface_up=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+	interface_current_config=$(uci -q get openmptcprouter.$INTERFACE.state || echo "up")
+	interface_vpn=$(uci -q get openmptcprouter.$INTERFACE.vpn || echo "0")
+	if ([ "$interface_vpn" = "0" ] || [ "$(uci -q get openmptcprouter.settings.allmptcpovervpn)" = "0" ]) && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ] && [ "$interface_up" = "true" ]; then
+		interface_gw="$(uci -q get network.$INTERFACE.gateway)"
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.${INTERFACE}_4 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
+		fi
+		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ]; then
+			if [ "$(uci -q get network.$INTERFACE.weight)" != "" ]; then
+				weight=$(uci -q get network.$INTERFACE.weight)
+			elif [ "$(uci -q get openmtpcprouter.$INTERFACE.weight)" != "" ]; then
+				weight=$(uci -q get openmtpcprouter.$INTERFACE.weight)
+			elif [ "$multipath_config_route" = "master" ]; then
+				weight=100
+			else
+				weight=1
+			fi
+			if [ "$multipath_config_route" = "backup" ]; then
+				nbintfb=$((nbintfb+1))
+				if [ -z "$routesbalancingbackup" ]; then
+					routesbalancingbackup="nexthop via $interface_gw dev $interface_if weight $weight"
+				else
+					routesbalancingbackup="$routesbalancingbackup nexthop via $interface_gw dev $interface_if weight $weight"
+				fi
+			else
+				nbintf=$((nbintf+1))
+				if [ -z "$routesbalancing" ]; then
+					routesbalancing="nexthop via $interface_gw dev $interface_if weight $weight"
+				else
+					routesbalancing="$routesbalancing nexthop via $interface_gw dev $interface_if weight $weight"
+				fi
+			fi
+		fi
+	fi
+}
+
+set_route_balancing6() {
+	local multipath_config_route interface_gw interface_if
+	INTERFACE=$1
+	[ -z "$INTERFACE" ] && return
+	multipath_config_route=$(uci -q get openmptcprouter.$INTERFACE.multipath)
+	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$INTERFACE.multipath || echo "off")
+	[ "$(uci -q get openmptcprouter.$INTERFACE.multipathvpn)" = "1" ] && {
+		[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "openvpn" ] && multipath_config_route="$(uci -q get openmptcprouter.ovpn${INTERFACE}.multipath || echo "off")"
+		[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "wireguard" ] && multipath_config_route="$(uci -q get openmptcprouter.wg${INTERFACE}.multipath || echo "off")"
+	}
+	network_get_device interface_if $INTERFACE
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(ifstatus "${INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.device)
+	[ -z "$interface_if" ] && interface_if=$(uci -q get network.$INTERFACE.ifname)
+	[ -n "$(echo $interface_if | grep '@')" ] && interface_if=$(ifstatus "$INTERFACE" | jsonfilter -q -e '@["device"]')
+	interface_up=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+	interface_current_config=$(uci -q get openmptcprouter.$INTERFACE.state || echo "up")
+	interface_vpn=$(uci -q get openmptcprouter.$INTERFACE.vpn || echo "0")
+	if ([ "$interface_vpn" = "0" ] || [ "$(uci -q get openmptcprouter.settings.allmptcpovervpn)" = "0" ]) && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ] && [ "$interface_up" = "true" ]; then
+		interface_gw="$(uci -q get network.$INTERFACE.gateway)"
+		interface_ip6="$(uci -q get network.$INTERFACE.ip6)"
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${interface_ip6}\"].nexthop" | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${interface_ip6}/64\"].nexthop" | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${interface_ip6}/56\"].nexthop" | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.nexthop="::"].target' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.$INTERFACE status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.nexthop="::"].target' | tr -d "\n")
+		fi
+		if [ -z "$interface_gw" ]; then
+			interface_gw=$(ubus call network.interface.${INTERFACE}_6 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
+		fi
+		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ -n "$(echo $interface_gw | grep :)" ]; then
+			if [ "$(uci -q get network.$INTERFACE.weight)" != "" ]; then
+				weight=$(uci -q get network.$INTERFACE.weight)
+			elif [ "$(uci -q get openmtpcprouter.$INTERFACE.weight)" != "" ]; then
+				weight=$(uci -q get openmtpcprouter.$INTERFACE.weight)
+			elif [ "$multipath_config_route" = "master" ]; then
+				weight=100
+			else
+				weight=1
+			fi
+			if [ "$multipath_config_route" = "backup" ]; then
+				nbintfb6=$((nbintfb6+1))
+				if [ -z "$routesbalancingbackup6" ]; then
+					routesbalancingbackup6="nexthop via $interface_gw dev $interface_if weight $weight"
+				else
+					routesbalancingbackup6="$routesbalancingbackup6 nexthop via $interface_gw dev $interface_if weight $weight"
+				fi
+			else
+				nbintf6=$((nbintf6+1))
+				if [ -z "$routesbalancing6" ]; then
+					routesbalancing6="nexthop via $interface_gw dev $interface_if weight $weight"
+				else
+					routesbalancing6="$routesbalancing6 nexthop via $interface_gw dev $interface_if weight $weight"
+				fi
+			fi
+		fi
+	fi
+}
+
+set_server_all_routes() {
+	local server=$1
+	[ -z "$OMR_TRACKER_INTERFACE" ] && return
+	server_route() {
+		local serverip multipath_config_route
+		serverip=$1
+		[ -n "$serverip" ] && serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
+		config_get disabled $server disabled
+		[ "$disabled" = "1" ] && return
+		network_get_device interface_if $OMR_TRACKER_INTERFACE
+		[ -z "$interface_if" ] && interface_if=$(uci -q get network.$OMR_TRACKER_INTERFACE.device)
+		[ -z "$interface_if" ] && interface_if=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+		[ -z "$interface_if" ] && interface_if=$(ifstatus "${OMR_TRACKER_INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+		[ -z "$interface_if" ] && interface_if=$(ifstatus "$OMR_TRACKER_INTERFACE" | jsonfilter -q -e '@["device"]')
+		[ -z "$interface_if" ] && interface_if=$(uci -q get network.$OMR_TRACKER_INTERFACE.ifname)
+		interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+		multipath_config_route=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath || echo "off")
+		[ "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath || echo 'off')
+		[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" = "1" ] && {
+			[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "openvpn" ] && multipath_config_route="$(uci -q get openmptcprouter.ovpn${OMR_TRACKER_INTERFACE}.multipath || echo "off")"
+			[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "wireguard" ] && multipath_config_route="$(uci -q get openmptcprouter.wg${OMR_TRACKER_INTERFACE}.multipath || echo "off")"
+		}
+		if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$multipath_config_route" != "off" ] && [ "$interface_up" = "true" ]; then
+			routesintf=""
+			routesintfbackup=""
+			nbintf=0
+			nbintfb=0
+			config_load network
+			config_foreach set_routes_intf interface
+			uintf="$(echo $routesintf | awk '{print $5}')"
+			uintfb="$(echo $routesintfbackup | awk '{print $5}')"
+			if [ -n "$routesintf" ] && ([ "$nbintf" -gt "1" ] && [ "$(ip r show $serverip metric 1 | tr -d '\t' | tr -d '\n' | sed 's/ *$//' | tr ' ' '\n' | sort | tr -d '\n')" != "$(echo $serverip $routesintf | sed 's/ *$//' | tr ' ' '\n' | sort | tr -d '\n')" ]) || ([ "$nbintf" = "1" ] && [ -n "$uintf" ] && [ "$(ip r show $serverip metric 1 | grep $uintf)" = "" ]); then
+				while [ "$(ip r show $serverip | grep -v nexthop | sed 's/ //g' | tr -d '\n')" != "$serverip" ] && [ "$(ip r show $serverip | grep -v nexthop | sed 's/ //g' | tr -d '\n')" != "" ]; do
+					ip r del $serverip
+				done
+				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server $server ($serverip) default route $serverip $routesintf"
+				ip route replace $serverip scope global metric 1 $routesintf 2>&1 >/dev/null
+				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "New server route is $(ip r show $serverip metric 1 | tr -d '\t' | tr -d '\n')"
+			fi
+			if [ -n "$routesintfbackup" ] && ([ "$nbintfb" -gt "1" ] && [ "$(ip r show $serverip metric 999 | tr -d '\t' | tr -d '\n' | sed 's/ *$//' | tr ' ' '\n' | sort | tr -d '\n')" != "$(echo $serverip $routesintfbackup | sed 's/ *$//' | tr ' ' '\n' | sort | tr -d '\n')" ]) || ([ "$nbintfb" = "1" ] && [ -n "$uintfb" ] && [ "$(ip r show $serverip metric 999 | grep $uintfb)" = "" ]); then
+				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server $server ($serverip) backup default route $serverip $routesintfbackup nbintfb $nbintfb $OMR_TRACKER_DEVICE"
+				ip route replace $serverip scope global metric 999 $routesintfbackup 2>&1 >/dev/null
+			fi
+		fi
+	}
+	config_load openmptcprouter
+	config_list_foreach $server ip server_route
+}
+
+set_server_all_routes6() {
+	local server=$1
+	[ -z "$OMR_TRACKER_INTERFACE" ] && return
+	server_route() {
+		local serverip multipath_config_route
+		serverip=$1
+		[ -n "$serverip" ] && serverip="$(resolveip -6 -t 5 $serverip | head -n 1 | tr -d '\n')"
+		config_get disabled $server disabled
+		[ "$disabled" = "1" ] && return
+		network_get_device interface_if $OMR_TRACKER_INTERFACE
+		[ -z "$interface_if" ] && interface_if=$(uci -q get network.$OMR_TRACKER_INTERFACE.device)
+		[ -z "$interface_if" ] && interface_if=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+		[ -z "$interface_if" ] && interface_if=$(ifstatus "${OMR_TRACKER_INTERFACE}_6" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+		[ -z "$interface_if" ] && interface_if=$(ifstatus "$OMR_TRACKER_INTERFACE" | jsonfilter -q -e '@["device"]')
+		[ -z "$interface_if" ] && interface_if=$(uci -q get network.$OMR_TRACKER_INTERFACE.ifname)
+		interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+		multipath_config_route=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath || echo "off")
+		[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" = "1" ] && {
+			[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "openvpn" ] && multipath_config_route="$(uci -q get openmptcprouter.ovpn${OMR_TRACKER_INTERFACE}.multipath || echo "off")"
+			[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "wireguard" ] && multipath_config_route="$(uci -q get openmptcprouter.wg${OMR_TRACKER_INTERFACE}.multipath || echo "off")"
+		}
+		if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY6" != "" ] && [ "$multipath_config_route" != "off" ] && [ "$interface_up" = "true" ]; then
+			routesintf=""
+			routesintfbackup=""
+			nbintf6=0
+			nbintfb6=0
+			config_load network
+			config_foreach set_routes_intf6 interface
+			uintf="$(echo $routesintf6 | awk '{print $5}')"
+			uintfb="$(echo $routesintfbackup6 | awk '{print $5}')"
+			if [ -n "$routesintf6" ] && ([ "$nbintf6" -gt "1" ] && [ "$(ip -6 r show $serverip metric 1 | tr -d '\t' | sort | tr -d '\n' | sed 's/ *$//')" != "$(echo $serverip $routesintf6 | sort | sed 's/ *$//')" ]) || ([ "$nbintf6" = "1" ] && [ -n "$uintf" ] && [ "$(ip -6 r show $serverip metric 1 | grep $uintf)" = "" ]); then
+				while [ "$(ip -6 r show $serverip | grep -v nexthop | sed 's/ //g' | tr -d '\n')" != "$serverip" ] && [ "$(ip -6 r show $serverip | grep -v nexthop | sed 's/ //g' | tr -d '\n')" != "" ]; do
+					ip -6 r del $serverip
+				done
+				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server $server ($serverip) default route $serverip $routesintf6"
+				ip -6 route replace $serverip scope global metric 1 $routesintf6 2>&1 >/dev/null
+				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "New server route is $(ip -6 r show $serverip metric 1 | tr -d '\t' | tr -d '\n')"
+			fi
+			if [ -n "$routesintfbackup6" ] && ([ "$nbintfb6" -gt "1" ] && [ "$(ip -6 r show $serverip metric 999 | tr -d '\t' | tr -d '\n')" != "$serverip $routesintfbackup6 " ]) || ([ "$nbintfb6" = "1" ] && [ -n "$uintfb" ] && [ "$(ip -6 r show $serverip metric 999 | grep $uintfb)" = "" ]); then
+				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server $server ($serverip) backup default route $serverip $routesintfbackup6 nbintfb $nbintfb6 $OMR_TRACKER_DEVICE"
+				ip -6 route replace $serverip scope global metric 999 $routesintfbackup6 2>&1 >/dev/null
+			fi
+		fi
+	}
+	config_load openmptcprouter
+	config_list_foreach $server ip server_route
+}
+
+
+
+set_server_route() {
+	local server=$1
+	[ -z "$OMR_TRACKER_INTERFACE" ] && return
+	server_route() {
+		local serverip multipath_config_route
+		serverip=$1
+		[ -n "$serverip" ] && serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
+		config_get disabled $server disabled
+		[ "$disabled" = "1" ] && return
+		local metric=$2
+		[ -z "$metric" ] && metric=$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)
+		multipath_config_route=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath)
+		[ "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath || echo "off")
+		[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" = "1" ] && {
+			[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "openvpn" ] && multipath_config_route="$(uci -q get openmptcprouter.ovpn${OMR_TRACKER_INTERFACE}.multipath || echo "off")"
+			[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "wireguard" ] && multipath_config_route="$(uci -q get openmptcprouter.wg${OMR_TRACKER_INTERFACE}.multipath || echo "off")"
+		}
+		network_get_device interface_if $OMR_TRACKER_INTERFACE
+		[ -z "$interface_if" ] && interface_if=$(uci -q get network.$OMR_TRACKER_INTERFACE.device)
+		[ -z "$interface_if" ] && interface_if=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+		[ -z "$interface_if" ] && interface_if=$(ifstatus "${OMR_TRACKER_INTERFACE}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+		[ -z "$interface_if" ] && interface_if=$(ifstatus "$OMR_TRACKER_INTERFACE" | jsonfilter -q -e '@["device"]')
+		[ -z "$interface_if" ] && interface_if=$(uci -q get network.$OMR_TRACKER_INTERFACE.ifname)
+		interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+		#multipath_current_config=$(multipath $interface_if | grep "deactivated")
+		interface_current_config=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.state || echo "up")
+		#if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$multipath_current_config" = "" ]; then
+		if [ "$serverip" != "" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ] && [ "$interface_up" = "true" ]; then
+			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server $server ($serverip) route via $OMR_TRACKER_DEVICE_GATEWAY metric $metric"
+			ip route replace $serverip via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric $initcwrwnd 2>&1 >/dev/null
+		fi
+	}
+	config_list_foreach $server ip server_route
+	if [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && [ -n "$metric" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(ip route show dev $OMR_TRACKER_DEVICE metric $metric | grep default | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ] && [ "$interface_up" = "true" ]; then
+		ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $metric $initcwrwnd 2>&1 >/dev/null
+	fi
+}
+
+set_server_route6() {
+	local server=$1
+	[ -z "$OMR_TRACKER_INTERFACE" ] && return
+	server_route() {
+		local serverip multipath_config_route
+		serverip=$1
+		[ -n "$serverip" ] && serverip="$(resolveip -6 -t 5 $serverip | head -n 1 | tr -d '\n')"
+		config_get disabled $server disabled
+		[ "$disabled" = "1" ] && return
+		local metric=$2
+		[ -z "$metric" ] && metric=$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)
+		multipath_config_route=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath)
+		[ "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath || echo "off")
+		[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" = "1" ] && {
+			[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "openvpn" ] && multipath_config_route="$(uci -q get openmptcprouter.ovpn${OMR_TRACKER_INTERFACE}.multipath || echo "off")"
+			[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "wireguard" ] && multipath_config_route="$(uci -q get openmptcprouter.wg${OMR_TRACKER_INTERFACE}.multipath || echo "off")"
+		}
+		network_get_device interface_if $OMR_TRACKER_INTERFACE
+		[ -z "$interface_if" ] && interface_if=$(uci -q get network.$OMR_TRACKER_INTERFACE.device)
+		[ -z "$interface_if" ] && interface_if=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+		[ -z "$interface_if" ] && interface_if=$(ifstatus "${OMR_TRACKER_INTERFACE}_6" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+		[ -z "$interface_if" ] && interface_if=$(ifstatus "$OMR_TRACKER_INTERFACE" | jsonfilter -q -e '@["device"]')
+		[ -z "$interface_if" ] && interface_if=$(uci -q get network.$OMR_TRACKER_INTERFACE.ifname)
+		interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+		#multipath_current_config=$(multipath $interface_if | grep "deactivated")
+		interface_current_config=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.state || echo "up")
+		#if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY6" != "" ] && [ "$(ip -6 route show dev $OMR_TRACKER_DEVICE metric $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$multipath_current_config" = "" ]; then
+		if [ "$serverip" != "" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY6" != "" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(ip -6 route show dev $OMR_TRACKER_DEVICE metric $metric | grep $serverip | grep $OMR_TRACKER_DEVICE_GATEWAY6)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ] && [ "$interface_up" = "true" ]; then
+			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server $server ($serverip) route via $OMR_TRACKER_DEVICE_GATEWAY metric $metric"
+			ip -6 route replace $serverip via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE metric $metric 2>&1 >/dev/null
+		fi
+	}
+	config_list_foreach $server ip server_route
+	if [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && [ "$OMR_TRACKER_DEVICE_GATEWAY6" != "" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$metric" ] && [ "$(ip -6 route show dev $OMR_TRACKER_DEVICE metric $metric | grep default | grep $OMR_TRACKER_DEVICE_GATEWAY6)" = "" ] && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ] && [ "$interface_up" = "true" ]; then
+		ip -6 route replace default via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE metric $metric 2>&1 >/dev/null
+	fi
+}
+
+del_server_route() {
+	local server=$1
+	remove_route() {
+		local serverip="$1"
+		[ -n "$serverip" ] && serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
+		[ -n "$serverip" ] && _log "Delete default route to $serverip dev $OMR_TRACKER_DEVICE"
+		local metric
+		if [ -z "$OMR_TRACKER_INTERFACE" ]; then
+			metric=0
+		else
+			metric=$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)
+		fi
+		[ -n "$metric" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$serverip" ] && [ -n "$(ip route show $serverip dev $OMR_TRACKER_DEVICE metric $metric)" ] && ip route del $serverip dev $OMR_TRACKER_DEVICE metric $metric >/dev/null 2>&1
+		[ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$serverip" ] && [ -n "$(ip route show $serverip dev $OMR_TRACKER_DEVICE)" ] && ip route del $serverip dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
+		[ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$serverip" ] && [ -n "$(ip route show $serverip | grep $OMR_TRACKER_DEVICE)" ] && ip route del $serverip dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
+	}
+	config_list_foreach $server ip remove_route
+	if [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
+		[ -n "$(ip route show default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE)" ] && ip route del default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
+	elif [ -n "$OMR_TRACKER_DEVICE" ]; then
+		[ -n "$(ip route show default dev $OMR_TRACKER_DEVICE)" ] && ip route del default dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
+	fi
+}
+
+del_server_route6() {
+	local server=$1
+	remove_route() {
+		local serverip="$1"
+		[ -n "$serverip" ] && serverip="$(resolveip -6 -t 5 $serverip | head -n 1 | tr -d '\n')"
+		[ -n "$serverip" ] && _log "Delete default route to $serverip via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE"
+		local metric
+		if [ -z "$OMR_TRACKER_INTERFACE" ]; then
+			metric=0
+		else
+			metric=$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)
+		fi
+		[ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$metric" ] && [ -n "$serverip" ] && [ -n "$(ip -6 route show $serverip dev $OMR_TRACKER_DEVICE metric $metric)" ] && ip -6 route del $serverip dev $OMR_TRACKER_DEVICE metric $metric >/dev/null 2>&1
+		[ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$metric" ] && [ -n "$serverip" ] && [ -n "$(ip -6 route show $serverip dev $OMR_TRACKER_DEVICE)" ] && ip -6 route del $serverip dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
+	}
+	config_list_foreach $server ip remove_route
+	if [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
+		[ -n "$(ip -6 route show default via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE)" ] && ip -6 route del default via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
+	elif [ -n "$OMR_TRACKER_DEVICE" ]; then
+		[ -n "$(ip -6 route show default dev $OMR_TRACKER_DEVICE)" ] && ip -6 route del default dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
+	fi
+}
+
+disable_pihole() {
+	local server=$1
+	if [ -n "$(uci -q get dhcp.@dnsmasq[0].server | grep '#53' | grep '10.255.25')" ]; then
+		_log "Disable Pi-Hole..."
+		uci -q del_list dhcp.@dnsmasq[0].server="$(uci -q get dhcp.@dnsmasq[0].server | tr ' ' '\n' | grep '#53' | grep '10.255.25')"
+		if [ -z "$(uci -q get dhcp.@dnsmasq[0].server | grep '127.0.0.1#5353')" ]; then
+			uci -q batch <<-EOF >/dev/null
+				add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+				commit dhcp
+			EOF
+		fi
+		/etc/init.d/dnsmasq restart 2>&1 >/dev/null
+	fi
+}
+
+enable_pihole() {
+	local server=$1
+	nbserver=$((nbserver+1))
+	if [ -n "$server" ] && [ "$(uci -q get openmptcprouter.${server}.pihole)" = "1" ] && [ "$(uci -q get dhcp.@dnsmasq[0].server | grep '127.0.0.1#5353')" != "" ]; then
+		piholeenabled=$((piholeenabled+1))
+	fi
+}
+
+dns_flush() {
+	unbound-control flush-negative >/dev/null 2>&1
+	unbound-control flush-bogus >/dev/null 2>&1
+}
+
+#if [ -n "$RANDOM" ]; then
+#	sleep `expr $RANDOM % 10`
+#else
+#	sleep `awk 'BEGIN{srand();print int(rand()*9)}'`
+#fi
+
+
+# Get the current multipath status
+multipath_status="off"
+[ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] && multipath $OMR_TRACKER_DEVICE off 2>&1 >/dev/null
+[ "$OMR_TRACKER_INTERFACE" = "omr6in4" ] && multipath $OMR_TRACKER_DEVICE off 2>&1 >/dev/null
+if [ -e "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
+	case "$(multipath "$OMR_TRACKER_DEVICE")" in
+		*default*)      multipath_status="on"       ;;
+		*backup*)       multipath_status="backup"   ;;
+		*handover*)     multipath_status="handover" ;;
+	esac
+fi
+
+
+#default_gw=$(ip route show default | awk '/default/ {print $3}')
+#default_gw6=$(ip -6 route show default | awk '/default/ {print $3}')
+default_gw=$(ip route get 1.1.1.1 | grep via | awk '{print $3}')
+default_gw6=$(ip -6 route get 2606:4700:4700::1111 | grep via | awk '{print $3}')
+#current_interface_gw=$(uci -q get "network.$OMR_TRACKER_INTERFACE.gateway")
+
+
+initcwrwnd=""
+interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+
+if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$OMR_TRACKER_INTERFACE" != "omr6in4" ]; then
+	metric="$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)"
+	if [ -z "$metric" ] || ([ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -z "$(ip route show table $metric | grep $OMR_TRACKER_DEVICE)" ]) || ([ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -z "$(ip -6 route show table 6${metric} | grep $OMR_TRACKER_DEVICE)" ]); then
+		_log "Routes not correctly set for $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE table $metric) with IPs $OMR_TRACKER_DEVICE_IP $OMR_TRACKER_DEVICE_IP6"
+		/etc/init.d/mptcp reload "$OMR_TRACKER_DEVICE"
+		/etc/init.d/omr-tracker restart
+		exit 0
+	fi
+fi
+
+
+if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] || [ "$OMR_TRACKER_INTERFACE" = "omr6in4" ]; then
+	if [ "$(uci -q get openmptcprouter.settings.shadowsocksudp)" = "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ -n "$(uci -q get shadowsocks-libev.sss0)" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "hi1" ]; then
+		_log "Tunnel up disable use of ShadowSocks for UDP"
+		uci -q delete shadowsocks-libev.ss_rules.redir_udp
+		if /etc/init.d/shadowsocks-libev rules_exist ; then
+			/etc/init.d/shadowsocks-libev rules_down >/dev/null 2>&1
+			/etc/init.d/shadowsocks-libev rules_up >/dev/null 2>&1
+		fi
+	fi
+	if ([ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]) && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ]; then
+		_log "Tunnel up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE (was $default_gw)"
+		[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Default gw : $default_gw - Current route: $(ip r)"
+		ip route replace default scope global via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE $initcwrwnd 2>&1 >/dev/null
+		if [ "$(pgrep -f openmptcprouter-vps)" = "" ]; then
+			/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &
+		fi
+		[ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && conntrack -D -p udp 2>&1 >/dev/null
+		[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "New route: $(ip r)"
+	fi
+
+	# Set VPN MTU
+	if [ -n "$OMR_TRACKER_LATENCY" ] && [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ]); then
+		_log "Set VPN MTU"
+		local serverip=$(uci -q get shadowsocks-libev.sss0.server)
+		[ -z "$serverip" ] && serverip=$(uci -q get shadowsocks-rust.sss0.server)
+		[ -z "$serverip" ] && serverip=$(uci -q get v2ray.omrout.s_vless_address)
+		[ -n "$serverip" ] && serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
+		if [ "$serverip" = "192.168.1.3" ] || [ "$serverip" = "127.0.0.1" ]; then
+			serverip=""
+		fi
+		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE="interface"
+		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency="$OMR_TRACKER_LATENCY"
+		#if [ "$(uci -q get glorytun.vpn.enable)" != "1" ] || [ "$(uci -q get glorytun-udp.vpn.enable)" != "1" ]; then
+			OMR_NETWORK_DEVICE=$(find_network_device ${OMR_TRACKER_INTERFACE})
+			#_log "OMR_NETWORK_DEVICE: $OMR_NETWORK_DEVICE for $OMR_TRACKER_DEVICE - $OMR_TRACKER_INTERFACE"
+			if [ -n "$OMR_NETWORK_DEVICE" ] && [ -n "$(uci -q get network.$OMR_NETWORK_DEVICE.mtu)" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
+				mtu=$(uci -q get network.$OMR_NETWORK_DEVICE.mtu)
+				uci -q set openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu=$mtu
+				[ -n "$mtu" ] && [ "$(ip --json link show dev eth3 | jsonfilter -e '@[0].mtu' | tr -d '\n')" != "$mtu" ] && ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
+				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+			elif [ -z "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu)" ] && [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
+				if [ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ]; then 
+					local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP $serverip)
+					#local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP 8.8.8.8)
+					[ -n "$mtu" ] && {
+						uci -q set openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu=$mtu
+						ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
+						uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+					}
+				else
+					local mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP 1.1.1.1)
+					[ -n "$mtu" ] && {
+						uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
+						ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
+						uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+					}
+				fi
+			else
+				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+			fi
+		#else
+		#	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+		#fi
+		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
+	fi
+	nbserver=0
+	piholeenabled=0
+	config_load openmptcprouter
+	config_foreach enable_pihole server
+	#config_foreach delete_server_default_route server
+	[ "$nbserver" = "$piholeenabled" ] && /etc/init.d/openmptcprouter-vps set_pihole 2>&1 >/dev/null
+	#ubus call network reload
+	exit 0
+fi
+
+if [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" = "1" ]; then
+	if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.state)" != "up" ]; then
+		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='up'
+		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
+	fi
+	exit 0
+fi
+
+if [ "$OMR_TRACKER_PREV_STATUS" != "" ] && [ "$OMR_TRACKER_PREV_STATUS" != "$OMR_TRACKER_STATUS" ] && [ -n "$OMR_TRACKER_INTERFACE" ]; then
+	_log "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) switched up"
+	mail_alert="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.mail_alert)"
+	[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
+	[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
+		OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
+		if [ "$(uci -q get omr-tracker.defaults.mail_up_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_up_message)" != "" ]; then
+			mail_subject="$(uci -q get omr-tracker.defaults.mail_up_subject)"
+			mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/$OMR_TRACKER_INTERFACE/g" -e "s/%DEVICE%/$OMR_TRACKER_DEVICE/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+			mail_message="$(uci -q get omr-tracker.defaults.mail_up_message)"
+			mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/$OMR_TRACKER_INTERFACE/g" -e "s/%DEVICE%/$OMR_TRACKER_DEVICE/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+			echo -e "Subject: ${mail_subject}\n\n${mail_message}" | sendmail $(uci -q get mail.default.to)
+		else
+			echo -e "Subject: $OMR_SYSNAME: $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) is up\n\nDetected that connection $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) is up again." | sendmail $(uci -q get mail.default.to)
+		fi
+	}
+	script_alert_up="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.script_alert_up)"
+	[ -n "$script_alert_up" ] && eval $script_alert_up
+fi
+if [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.state)" != "up" ]; then
+	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='up'
+	uci -q commit openmptcprouter
+	dns_flush
+fi
+
+if [ -n "$OMR_TRACKER_INTERFACE" ]; then
+	multipath_config=$(uci -q get "openmtpcprouter.$OMR_TRACKER_INTERFACE.multipath")
+	[ -z "$multipath_config" ] && multipath_config=$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath" || echo "off")
+	[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" = "1" ] && {
+		[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "openvpn" ] && multipath_config_route="$(uci -q get openmptcprouter.ovpn${OMR_TRACKER_INTERFACE}.multipath || echo "off")"
+		[ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "wireguard" ] && multipath_config_route="$(uci -q get openmptcprouter.wg${OMR_TRACKER_INTERFACE}.multipath || echo "off")"
+	}
+fi
+
+if [ "$multipath_config" = "master" ]; then
+	#if ([ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]) && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && ([ "$(uci -q get openmptcprouter.settings.master)" != "balancing" ] || [ "$(uci -q get openmptcprouter.settings.vpn)" = "mlvpn" ]); then
+	if ([ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]) && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ] && [ "$(uci -q get openmptcprouter.settings.master)" != "balancing" ]; then
+		omrvpn_intf=$(uci -q get "network.omrvpn.device" || echo "tun0")
+		[ -z "$omrvpn_intf" ] && omrvpn_intf=$(uci -q get "network.omrvpn.ifname" || echo "tun0")
+		if [ -n "$omrvpn_intf" ] && [ "$(ip route show default metric 0 | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
+			_log "Master up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE"
+			ip route replace default scope global metric 1 via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE $initcwrwnd 2>&1 >/dev/null
+		fi
+		config_load openmptcprouter
+		#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ]; then
+		#	config_foreach set_server_all_routes server
+		if [ "$(uci -q get openmptcprouter.settings.master)" != "failover" ]; then
+			config_foreach set_server_default_route server
+			#config_foreach set_server_default_route6 server
+		fi
+		ip route flush cache 2>&1 >/dev/null
+	fi
+	if ([ "$default_gw6" != "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$default_gw6" = "" ]) && [ "$OMR_TRACKER_DEVICE_GATEWAY6" != "" ] && [ "$(uci -q get openmptcprouter.settings.master)" != "balancing" ]; then
+		omrvpn_intf=$(uci -q get "network.omrvpn.device" || echo "tun0")
+		[ -z "$omrvpn_intf" ] && omrvpn_intf=$(uci -q get "network.omrvpn.ifname" || echo "tun0")
+		if [ -n "$omrvpn_intf" ] && [ "$(ip route show default | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
+			_log "Master up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE"
+			ip -6 route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE 2>&1 >/dev/null
+		fi
+		config_load openmptcprouter
+		#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ]; then
+		#	config_foreach set_server_all_routes server
+		if [ "$(uci -q get openmptcprouter.settings.master)" != "failover" ]; then
+			#config_foreach set_server_default_route server
+			config_foreach set_server_default_route6 server
+		fi
+		ip -6 route flush cache 2>&1 >/dev/null
+	fi
+	#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(ip route show default | grep weight)" = "" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" != "mlvpn" ]; then
+	if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && (([ -n "$OMR_TRACKER_DEVICE_IP" ] && [ "$(ip route show default | grep weight)" = "" ]) || ([ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ "$(ip -6 route show default | grep weight)" = "" ])) && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
+		omrvpn_intf=$(uci -q get "network.omrvpn.device" || echo "tun0")
+		[ -z "$omrvpn_intf" ] && omrvpn_intf=$(uci -q get "network.omrvpn.ifname" || echo "tun0")
+		if [ -n "$omrvpn_intf" ] && [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ "$(ip route show default metric 0 | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ]; then
+			routesbalancing=""
+			routesbalancingbackup=""
+			nbintf=0
+			nbintfb=0
+			#nbintf6=0
+			#nbintfb6=0
+			config_load network
+			config_foreach set_route_balancing interface
+			#config_foreach set_route_balancing6 interface
+			[ -n "$routesbalancing" ] && {
+				([ "$nbintf" -gt "1" ] && [ "$(ip r show default metric 1 | tr -d '\t' | tr -d '\n' | sed 's/ *$//')" != "default via $routesbalancing" ] && [ "$(ip r show default metric 1 | tr -d '\t' | tr -d '\n' | sed 's/ *$//')" != "default $routesbalancing" ]) || ([ "$nbintf" = "1" ] && ([ "$(ip r show default metric 1 | grep $OMR_TRACKER_DEVICE)" = "" ] || ([ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" = "1" ])) && [ -n "$OMR_TRACKER_DEVICE_IP" ]) && {
+					_log "Change in routes, set ip route replace default scope global $routesbalancing (omrvpn_intf: $omrvpn_intf)"
+					[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Current route: $(ip r)"
+					ip route replace default scope global metric 1 $routesbalancing 2>&1 >/dev/null
+					[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "New route: $(ip r)"
+				}
+			}
+			#[ -n "$routesbalancing6" ] && {
+			#	([ "$nbintf6" -gt "1" ] && [ "$(ip -6 r show default metric 1 | tr -d '\t' | tr -d '\n')" != "default via $routesbalancing6 " ]) || ([ "$nbintf6" = "1" ] && [ "$(ip -6 r show default metric 1 | grep $OMR_TRACKER_DEVICE)" = "" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ]) && {
+			#		_log "Set ip -6 route replace default scope global metric 1 $routesbalancing6"
+			#		ip -6 route replace default scope global metric 1 $routesbalancing6 2>&1 >/dev/null
+			#	}
+			#}
+			[ -n "$routesbalancingbackup" ] && {
+				([ "$nbintfb" -gt "1" ] && [ "$(ip r show default metric 999 | tr -d '\t' | tr -d '\n')" != "default via $routesbalancingbackup " ] && [ "$(ip r show default metric 999 | tr -d '\t' | tr -d '\n')" != "default $routesbalancingbackup " ]) || ([ "$nbintf" = "1" ] && ([ "$(ip r show default metric 999 | grep $OMR_TRACKER_DEVICE)" = "" ] || ([ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" = "1" ])) && [ -n "$OMR_TRACKER_DEVICE_IP" ]) && {
+					_log "Set backup ip route replace default scope global metric 999 $routesbalancingbackup"
+					ip route replace default scope global metric 999 $routesbalancingbackup 2>&1 >/dev/null
+				}
+			}
+			#[ -n "$routesbalancingbackup6" ] && {
+			#	([ "$nbintfb6" -gt "1" ] && [ "$(ip -6 r show default metric 999 | tr -d '\t' | tr -d '\n')" != "default via $routesbalancingbackup6 " ]) || ([ "$nbintf6" = "1" ] && [ "$(ip -6 r show default metric 999 | grep $OMR_TRACKER_DEVICE)" = "" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ]) && {
+			#		_log "Set backup ip -6 route replace default scope global $routesbalancingbackup6"
+			#		ip -6 route replace default scope global metric 999 $routesbalancingbackup6 2>&1 >/dev/null
+			#	}
+			#}
+		elif [ -n "$omrvpn_intf" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ "$(ip -6 route show default | grep -v metric | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ]; then
+			routesbalancing6=""
+			routesbalancingbackup6=""
+			nbintf6=0
+			nbintfb6=0
+			config_load network
+			config_foreach set_route_balancing6 interface
+			[ -n "$routesbalancing6" ] && {
+				([ "$nbintf6" -gt "1" ] && [ "$(ip -6 r show default metric 1 | tr -d '\t' | tr -d '\n')" != "default via $routesbalancing6 " ] && [ "$(ip -6 r show default metric 1 | tr -d '\t' | tr -d '\n')" != "default $routesbalancing6 " ]) || ([ "$nbintf6" = "1" ] && [ "$(ip -6 r show default metric 1 | grep $OMR_TRACKER_DEVICE)" = "" ] && [ "$(ip -6 r show default metric 1 | grep omr6in4)" = "" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ]) && {
+					_log "Set ip -6 route replace default scope global metric 1 $routesbalancing6"
+					ip -6 route replace default scope global metric 1 $routesbalancing6 2>&1 >/dev/null
+				}
+			}
+			[ -n "$routesbalancingbackup6" ] && {
+				([ "$nbintfb6" -gt "1" ] && [ "$(ip -6 r show default metric 999 | tr -d '\t' | tr -d '\n')" != "default via $routesbalancingbackup6 " ] && [ "$(ip -6 r show default metric 999 | tr -d '\t' | tr -d '\n')" != "default $routesbalancingbackup6 " ]) || ([ "$nbintf6" = "1" ] && [ "$(ip -6 r show default metric 999 | grep $OMR_TRACKER_DEVICE)" = "" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ]) && {
+					_log "Set backup ip -6 route replace default scope global $routesbalancingbackup6"
+					ip -6 route replace default scope global metric 999 $routesbalancingbackup6 2>&1 >/dev/null
+				}
+			}
+		fi
+		#ip route flush cache 2>&1 >/dev/null
+		#ip -6 route flush cache 2>&1 >/dev/null
+	fi
+	if [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(ip r show table 991337)" != "default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE " ]; then
+		ip route replace default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE table 991337 $initcwrwnd 2>&1 >/dev/null
+		#ip route flush cache 2>&1 >/dev/null
+	fi
+	if [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(ip -6 r show table 991337)" != "default via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE " ]; then
+		ip -6 route replace default via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE table 991337 $initcwrwnd 2>&1 >/dev/null
+		#ip -6 route flush cache 2>&1 >/dev/null
+	fi
+	if ([ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ]) || [ $(($(date +"%s") + $((10 + RANDOM % 10)) - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ] || [ "$(uci -q show openmptcprouter | grep get_config=\'1\')" != "" ] || [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" != "" ]; then
+		[ "$(pgrep -f openmptcprouter-vps)" = "" ] && {
+			/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &
+			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+			uci -q commit openmptcprouter.$OMR_TRACKER_INTERFACE
+		}
+	fi
+	multipath_config="on"
+fi
+
+if [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
+	config_load openmptcprouter
+	#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" != "mlvpn" ]; then
+	if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ]; then
+		config_foreach set_server_all_routes server
+	elif [ "$(uci -q get openmptcprouter.settings.master)" != "failover" ]; then
+		config_foreach set_server_route server
+	fi
+	if [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(ip r show dev $OMR_TRACKER_DEVICE | grep default)" = "" ] && [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)" != "" ]; then
+		_log "Interface route not yet set, set route ip r add default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $(uci -q get network.$OMR_TRACKER_INTERFACE.metric)"
+		ip r add default via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE metric $(uci -q get network.$OMR_TRACKER_INTERFACE.metric) >/dev/null 2>&1
+		ip route flush cache 2>&1 >/dev/null
+	fi
+fi
+if [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
+	config_load openmptcprouter
+	#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" != "mlvpn" ]; then
+	if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ]; then
+		config_foreach set_server_all_routes6 server
+	elif [ "$(uci -q get openmptcprouter.settings.master)" != "failover" ]; then
+		config_foreach set_server_route6 server
+	fi
+	if [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(ip -6 r show dev $OMR_TRACKER_DEVICE | grep default)" = "" ] && [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)" != "" ]; then
+		ip -6 r replace default via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE metric 6$(uci -q get network.$OMR_TRACKER_INTERFACE.metric) >/dev/null 2>&1
+		ip -6 route flush cache 2>&1 >/dev/null
+	fi
+fi
+
+if [ -n "$OMR_TRACKER_INTERFACE" ] && ([ "$multipath_config" = "on" ] || [ "$multipath_config" = "backup" ]); then
+	download="$(uci -q get network.$OMR_TRACKER_INTERFACE.downloadspeed)"
+	[ -z "$download" ] && download="$(uci -q get sqm.$OMR_TRACKER_INTERFACE.download)"
+	upload="$(uci -q get network.$OMR_TRACKER_INTERFACE.uploadspeed)"
+	[ -z "$upload" ] && upload="$(uci -q get sqm.$OMR_TRACKER_INTERFACE.upload)"
+	if [ "$(uci -q show | grep mptcpr)" = "" ]; then
+		touch /etc/config/openmptcprouter
+	fi
+	glorytunudppath() {
+		gtudp_port="$(uci -q get glorytun-udp.vpn.port)"
+		gtudp_dev="$(uci -q get glorytun-udp.vpn.dev)"
+		addpath() {
+			serverip=$1
+			#gtudpst="up"
+			#[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" != "1" ] && [ "$multipath_config" = "backup" ] && [ "$(pgrep -f glorytun-udp)" != "" ] && gtudpst="backup"
+			if [ "$OMR_TRACKER_DEVICE_IP" != "" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep -f glorytun-udp)" != "" ] && [ "$(glorytun-udp path | grep $OMR_TRACKER_DEVICE_IP | grep running)" = "" ] && [ -n "$(resolveip -4 -t 5 $serverip)" ]; then
+				serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
+				if [ "$download" != "0" ] && [ "$download" != "" ] && [ "$upload" != "0" ] && [ "$upload" != "" ]; then
+					if [ "$(uci -q get glorytun-udp.vpn.rateauto)" = "1" ]; then
+						glorytun-udp path addr $OMR_TRACKER_DEVICE_IP to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set up rate auto tx $((upload*1000)) rx $((download*1000)) pref 1 > /dev/null 2>&1
+					else
+						glorytun-udp path addr $OMR_TRACKER_DEVICE_IP to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set up rate fixed tx $((upload*1000)) rx $((download*1000)) pref 1 > /dev/null 2>&1
+					fi
+				else
+					if [ "$(uci -q get glorytun-udp.vpn.rateauto)" = "1" ]; then
+						glorytun-udp path addr $OMR_TRACKER_DEVICE_IP to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set up rate auto tx 12500000 rx 12500000 pref 1 > /dev/null 2>&1
+					else
+						glorytun-udp path addr $OMR_TRACKER_DEVICE_IP to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set up rate fixed tx 12500000 rx 12500000 pref 1 > /dev/null 2>&1
+					fi
+				fi
+			fi
+			if [ "$OMR_TRACKER_DEVICE_IP6" != "" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep -f glorytun-udp)" != "" ] && [ "$(glorytun-udp path | grep $OMR_TRACKER_DEVICE_IP6 | grep running)" = "" ] && [ -n "$(resolveip -6 -t 5 $serverip)" ]; then
+				serverip="$(resolveip -6 -t 5 $serverip | head -n 1 | tr -d '\n')"
+				if [ "$download" != "0" ] && [ "$download" != "" ] && [ "$upload" != "0" ] && [ "$upload" != "" ]; then
+					if [ "$(uci -q get glorytun-udp.vpn.rateauto)" = "1" ]; then
+						glorytun-udp path addr $OMR_TRACKER_DEVICE_IP6 to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set up rate auto tx $((upload*1000)) rx $((download*1000)) pref 1 > /dev/null 2>&1
+					else
+						glorytun-udp path addr $OMR_TRACKER_DEVICE_IP6 to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set up rate fixed tx $((upload*1000)) rx $((download*1000)) pref 1 > /dev/null 2>&1
+					fi
+				else
+					if [ "$(uci -q get glorytun-udp.vpn.rateauto)" = "1" ]; then
+						glorytun-udp path addr $OMR_TRACKER_DEVICE_IP6 to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set up rate auto tx 12500000 rx 12500000 pref 1 > /dev/null 2>&1
+					else
+						glorytun-udp path addr $OMR_TRACKER_DEVICE_IP6 to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set up rate fixed tx 12500000 rx 12500000 pref 1 > /dev/null 2>&1
+					fi
+				fi
+			fi
+#			if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep -f glorytun-udp)" != "" ] && [ "$(glorytun-udp set | grep 'kxtimeout 7d')" = "" ]; then
+#				glorytun-udp set dev tun0 kxtimeout 7d > /dev/null 2>&1
+		#	fi
+			[ "$multipath_config" = "backup" ] && [ "$(pgrep -f glorytun-udp)" != "" ] && {
+				[ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$(resolveip -4 -t 5 $serverip)" ] && glorytun-udp path addr $OMR_TRACKER_DEVICE_IP to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set pref 125 > /dev/null 2>&1
+				[ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$(resolveip -6 -t 5 $serverip)" ] && glorytun-udp path addr $OMR_TRACKER_DEVICE_IP6 to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set pref 125 > /dev/null 2>&1
+			}
+		}
+		config_list_foreach $1 ip addpath
+	}
+	config_load openmptcprouter
+	config_foreach glorytunudppath server
+fi
+[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" != "1" ] && [ "$(uci -q get network.globals.mptcp_force_multipath)" != "0" ] && {
+	[ "$multipath_status" = "$multipath_config" ] || {
+		if [ "$(sysctl -qen net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ] || [ "$(sysctl -qen net.mptcp.enabled | tr -d '\n')" = "1" ]; then
+			if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.force_link)" != "0" ]; then
+				_log "Reload MPTCP config for $OMR_TRACKER_DEVICE"
+				/etc/init.d/mptcp reload "$OMR_TRACKER_DEVICE"
+			fi
+			_log "Multipath $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) switched to $multipath_config (from $multipath_status)"
+			multipath "$OMR_TRACKER_DEVICE" "$multipath_config"
+		fi
+	}
+}
+#ubus call network reload
