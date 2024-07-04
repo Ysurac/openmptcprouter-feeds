@@ -80,7 +80,7 @@ define BuildTemplate
     $$(call Package/xtables-addons)
     CATEGORY:=Network
     TITLE:=$(2) iptables extension
-    DEPENDS:=iptables $(if $(4),+kmod-ipt-$(1))
+    DEPENDS:=iptables $(if $(4),+kmod-ipt-$(1)) @!LINUX_6_10
   endef
 
   define Package/iptables-mod-$(1)/install
@@ -99,7 +99,7 @@ define BuildTemplate
   define KernelPackage/ipt-$(1)
     SUBMENU:=Netfilter Extensions
     TITLE:=$(2) netfilter module
-    DEPENDS:=+kmod-ipt-core $(5)
+    DEPENDS:=+kmod-ipt-core $(5) @!LINUX_6_10
     FILES:=$(foreach mod,$(4),$(PKG_BUILD_DIR)/extensions/$(mod).$(LINUX_KMOD_SUFFIX))
     AUTOLOAD:=$(call AutoProbe,$(notdir $(4)))
   endef
@@ -114,7 +114,7 @@ define Package/iptaccount
   $(call Package/xtables-addons)
   CATEGORY:=Network
   TITLE:=iptables-mod-account control utility
-  DEPENDS:=iptables +iptables-mod-account
+  DEPENDS:=iptables +iptables-mod-account @!LINUX_6_10
 endef
 
 define Package/iptaccount/install
@@ -136,7 +136,7 @@ define Package/iptasn
   DEPENDS:=iptables +iptables-mod-asn \
 		+perl +perlbase-getopt +perlbase-io +perl-text-csv_xs \
 		+perl-net-cidr-lite \
-		+wget-ssl +!BUSYBOX_CONFIG_ZCAT:gzip
+		+wget-ssl +!BUSYBOX_CONFIG_ZCAT:gzip @!LINUX_6_10
 endef
 
 define Package/iptasn/config
@@ -172,7 +172,7 @@ define Package/iptgeoip
   DEPENDS:=iptables +iptables-mod-geoip \
 		+perl +perlbase-getopt +perlbase-io +perl-text-csv_xs \
 		+perl-net-cidr-lite \
-		+wget-ssl +!BUSYBOX_CONFIG_ZCAT:gzip
+		+wget-ssl +!BUSYBOX_CONFIG_ZCAT:gzip @!LINUX_6_10
 endef
 
 define Package/iptgeoip/config
