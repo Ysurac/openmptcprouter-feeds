@@ -1,4 +1,4 @@
-
+#!/bin/sh
 
 . /lib/functions/network.sh
 
@@ -8,7 +8,7 @@ default_gw6=$(ip -6 route get 2606:4700:4700::1111 | grep via | awk '{print $3}'
 interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
 
 # An interface in error will never be used in MPTCP
-if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || ([ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$interface_up" != "true" ]); then
+if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$interface_up" != "true" ]; }; then
 	#interface_autostart=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["autostart"]')
 	#interface_available=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["available"]')
 	#interface_pending=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["pending"]')
@@ -37,14 +37,14 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || ([ "$OMR_TRACKER_INTERFACE" != "omrvpn
 				mm_state_failed=$(modemmanager_get_field "${MODEM_STATUS}" "modem.generic.state-failed-reason")
 				if [ "$mm_state_failed" = "unknown-capabilities" ]; then
 					_log "Interface $OMR_TRACKER_INTERFACE in failed state in ModemManager, reset modem..."
-					/usr/bin/mmcli -m ${modem} -r 2>&1 >/dev/null
+					/usr/bin/mmcli -m ${modem} -r >/dev/null 2>&1
 					sleep 30
 				elif false && [ "$mm_state_failed" = "sim-missing" ]; then
 					_log "Interface $OMR_TRACKER_INTERFACE in failed state in ModemManager, reset modem..."
-					/usr/bin/mmcli -m ${modem} -r 2>&1 >/dev/null
+					/usr/bin/mmcli -m ${modem} -r >/dev/null 2>&1
 					#_log "Interface $OMR_TRACKER_INTERFACE in failed state sim-missing in ModemManager, reset modem..."
 					#mm_primary_port=$(modemmanager_get_field "${MODEM_STATUS}" "modem.generic.primary-port")
-					#mbimcli -p -d /dev/$mm_primary_port --ms-device-reset 2>&1 >/dev/null
+					#mbimcli -p -d /dev/$mm_primary_port --ms-device-reset >/dev/null 2>&1
 				fi
 			elif [ "$mm_state" = "connected" ] || [ "$mm_state" = "enabled" ]; then
 				_log "No answer from $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE), restart interface"
@@ -57,7 +57,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || ([ "$OMR_TRACKER_INTERFACE" != "omrvpn
 			elif [ "$mm_state" = "disabled" ]; then
 			# [ -n "$(echo $modeminfo | grep 'modem.3gpp.registration-state ' | grep home)" ]; then
 				_log "Interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) disabled, set it up"
-				/usr/bin/mmcli -m ${modem} -e 2>&1 >/dev/null
+				/usr/bin/mmcli -m ${modem} -e >/dev/null 2>&1
 				ifup $OMR_TRACKER_INTERFACE
 				sleep 30
 			elif [ "$mm_state" = "registered" ]; then
@@ -75,21 +75,21 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || ([ "$OMR_TRACKER_INTERFACE" != "omrvpn
 					if [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode)" ]; then
 						if [ "$mm_unlock_retries" -gt "1" ] && [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode)" ]; then
 							_log "Interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) locked, set PIN"
-							mmcli -a -m ${modem} -i $mm_generic_sim --pin=$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode) 2>&1 >/dev/null
+							mmcli -a -m ${modem} -i $mm_generic_sim --pin=$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode) >/dev/null 2>&1
 							sleep 20
 							ifup $OMR_TRACKER_INTERFACE
 						fi
 					fi
 				elif [ "$mm_unlock_required" = "sim-puk" ] && [ "$mm_unlock_retries" -gt "1" ] && [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pukcode)" ] && [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode)" ]; then
 					_log "Interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) locked, set PUK"
-					mmcli -i $mm_generic_sim --puk=$(uci -q get network.$OMR_TRACKER_INTERFACE.pukcode) --pin=$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode) 2>&1 >/dev/null
+					mmcli -i $mm_generic_sim --puk=$(uci -q get network.$OMR_TRACKER_INTERFACE.pukcode) --pin=$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode) >/dev/null 2>&1
 					sleep 30
 				fi
 			fi
 		fi
 		if [ "$modemfind" = "0" ]; then
 			#_log "Can't find $OMR_TRACKER_INTERFACE in ModemManager, rescan modem..."
-			#/usr/bin/mmcli -S 2>&1 >/dev/null
+			#/usr/bin/mmcli -S >/dev/null 2>&1
 			#_log "Can't find $OMR_TRACKER_INTERFACE in ModemManager, restart modemmanager..."
 			_log "Can't find $OMR_TRACKER_INTERFACE in ModemManager"
 			#/etc/init.d/modemmanager restart
@@ -119,8 +119,8 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || ([ "$OMR_TRACKER_INTERFACE" != "omrvpn
 
 	# Get the current multipath status
 	multipath_status="off"
-#	[ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] && multipath $OMR_TRACKER_DEVICE off 2>&1 >/dev/null
-#	[ "$OMR_TRACKER_INTERFACE" = "omr6in4" ] && multipath $OMR_TRACKER_DEVICE off 2>&1 >/dev/null
+#	[ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] && multipath $OMR_TRACKER_DEVICE off >/dev/null 2>&1
+#	[ "$OMR_TRACKER_INTERFACE" = "omr6in4" ] && multipath $OMR_TRACKER_DEVICE off >/dev/null 2>&1
 	if [ -e "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
 		case "$(multipath "$OMR_TRACKER_DEVICE")" in
 			*default*)      multipath_status="on"       ;;
@@ -129,7 +129,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || ([ "$OMR_TRACKER_INTERFACE" != "omrvpn
 		esac
 	fi
 
-	if [ "$multipath_status" != "off" ] || ([ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" = "1" ]); then
+	if [ "$multipath_status" != "off" ] || { [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipathvpn)" = "1" ]; }; then
 		if [ "$OMR_TRACKER_STATUS_MSG" = "" ]; then
 			_log "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) switched off (interface up status: $interface_up - Tracker status: $OMR_TRACKER_STATUS)"
 		else
@@ -142,22 +142,22 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || ([ "$OMR_TRACKER_INTERFACE" != "omrvpn
 		#	multipath "$OMR_TRACKER_DEVICE" off > /dev/null 2>&1
 		#fi
 		if [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
-			glorytun-udp path addr $OMR_TRACKER_DEVICE_IP dev tun0 set down > /dev/null 2>&1
+			glorytun-udp path addr "$OMR_TRACKER_DEVICE_IP" dev tun0 set down > /dev/null 2>&1
 		fi
 		if [ -n "$OMR_TRACKER_DEVICE_IP6" ]; then
-			glorytun-udp path addr $OMR_TRACKER_DEVICE_IP6 dev tun0 set down > /dev/null 2>&1
+			glorytun-udp path addr "$OMR_TRACKER_DEVICE_IP6" dev tun0 set down > /dev/null 2>&1
 		fi
 		if [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" = "1" ] && [ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "openvpn" ]; then
 			VPN_BASE_INTF="$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.baseintf)"
 			VPN_BASE_INTF_IP=$(ubus call network.interface.$VPN_BASE_INTF status | jsonfilter -e '@["ipv4-address"][0].address' | tr -d "\n")
 			if [ -n "$VPN_BASE_INTF" ]; then
 				uci -q batch <<-EOF >/dev/null
-					set openvpn.$VPN_BASE_INTF.local=$VPN_BASE_INTF_IP
+					set openvpn.$VPN_BASE_INTF.local="$VPN_BASE_INTF_IP"
 					commit openvpn
 				EOF
 			fi
-			[ -z "VPN_BASE_INTF" ] && VPN_BASE_INTF="omr"
-			/etc/init.d/openvpn restart $VPN_BASE_INTF 2>&1 >/dev/null
+			[ -z "$VPN_BASE_INTF" ] && VPN_BASE_INTF="omr"
+			/etc/init.d/openvpn restart "$VPN_BASE_INTF" >/dev/null 2>&1
 		fi
 		config_load openmptcprouter
 		config_foreach del_server_route server
@@ -165,7 +165,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || ([ "$OMR_TRACKER_INTERFACE" != "omrvpn
 		#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" != "mlvpn" ]; then
 
 		if [ -n "$OMR_TRACKER_INTERFACE" ]; then
-			if ([ "$default_gw" = "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ] || [ "$default_gw6" != "$OMR_TRACKER_DEVICE_GATEWAY6" ]) && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
+			if { [ "$default_gw" = "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ] || [ "$default_gw6" != "$OMR_TRACKER_DEVICE_GATEWAY6" ]; } && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
 				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Default gw: $default_gw - Set routes (current: $(ip r) )"
 				config_load network
 				config_foreach set_route interface $OMR_TRACKER_INTERFACE
@@ -219,9 +219,9 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || ([ "$OMR_TRACKER_INTERFACE" != "omrvpn
 	[ -z "$restart_down" ] && restart_down="$(uci -q get omr-tracker.defaults.restart_down)"
 	[ "$restart_down" = "1" ] && {
 		_log "Restart $OMR_TRACKER_INTERFACE"
-		ifdown $OMR_TRACKER_INTERFACE 2>&1 >/dev/null
+		ifdown $OMR_TRACKER_INTERFACE >/dev/null 2>&1
 		sleep 5
-		ifup $OMR_TRACKER_INTERFACE 2>&1 >/dev/null
+		ifup $OMR_TRACKER_INTERFACE >/dev/null 2>&1
 	}
 
 	if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] || [ "$OMR_TRACKER_INTERFACE" = "omr6in4" ]; then
@@ -241,29 +241,29 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || ([ "$OMR_TRACKER_INTERFACE" != "omrvpn
 			_log "Tunnel down use ShadowSocks for UDP"
 			uci -q set shadowsocks-libev.ss_rules.redir_udp='hi1'
 			if /etc/init.d/shadowsocks-libev rules_exist ; then
-				/etc/init.d/shadowsocks-libev rules_down 2>&1 >/dev/null
-				/etc/init.d/shadowsocks-libev rules_up 2>&1 >/dev/null
+				/etc/init.d/shadowsocks-libev rules_down >/dev/null 2>&1
+				/etc/init.d/shadowsocks-libev rules_up >/dev/null 2>&1
 			fi
 		fi
 		if [ "$(uci -q get dsvpn.vpn.enable)" = "1" ]; then
 			_log "DSVPN down, restart it"
-			/etc/init.d/dsvpn restart 2>&1 >/dev/null
+			/etc/init.d/dsvpn restart >/dev/null 2>&1
 		fi
 		if [ "$(uci -q get mlvpn.general.enable)" = "1" ]; then
 			_log "MLVPN down, restart it"
-			/etc/init.d/mlvpn restart 2>&1 >/dev/null
+			/etc/init.d/mlvpn restart >/dev/null 2>&1
 		fi
 		if [ "$(uci -q get glorytun.vpn.enable)" = "1" ]; then
 			_log "Glorytun VPN down, restart it"
-			/etc/init.d/glorytun restart 2>&1 >/dev/null
+			/etc/init.d/glorytun restart >/dev/null 2>&1
 		fi
 		if [ "$(uci -q get glorytun-udp.vpn.enable)" = "1" ]; then
 			_log "Glorytun UDP VPN down, restart it"
-			/etc/init.d/glorytun-udp restart 2>&1 >/dev/null
+			/etc/init.d/glorytun-udp restart >/dev/null 2>&1
 		fi
 		if [ "$(uci -q get openvpn.omr.enabled)" = "1" ]; then
 			_log "OpenVPN down, restart it"
-			/etc/init.d/openvpn restart omr 2>&1 >/dev/null
+			/etc/init.d/openvpn restart omr >/dev/null 2>&1
 		fi
 		config_load openmptcprouter
 		config_foreach disable_pihole server
