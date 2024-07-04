@@ -4,7 +4,7 @@ local ifaces = sys.net:devices()
 local m, s, o
 local uname = nixio.uname()
 
-m = Map("network", translate("MPTCP"), translate("Networks MPTCP settings. Visit <a href='http://multipath-tcp.org/pmwiki.php/Users/ConfigureMPTCP'>http://multipath-tcp.org/pmwiki.php/Users/ConfigureMPTCP</a> for help."))
+m = Map("network", translate("MPTCP"), translate("Networks MPTCP settings."))
 
 local unameinfo = nixio.uname() or { }
 
@@ -48,6 +48,10 @@ if uname.release:sub(1,3) == "6.6" then
     for dir in io.popen([[cd /usr/share/bpf/scheduler && ls -1 *.o | sed -e 's/.o//g' -e 's/mptcp_//g']]):lines() do 
 	o:value(dir, dir)
     end
+    -- bpf_burst => same as the default scheduler
+    -- bpf_red => sends all packets redundantly on all available subflows
+    -- bpf_first => always picks the first subflow to send data
+    -- bpf_rr => always picks the next available subflow to send data (round-robin)
 end
 
 -- if tonumber(uname.release:sub(1,4)) <= 5.15 then
