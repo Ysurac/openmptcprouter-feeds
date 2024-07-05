@@ -1,7 +1,6 @@
-#!/bin/sh
+#!/bin/bash
 # vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
 
-name=$0
 basename="$(basename $0)"
 
 if [ -e /usr/sbin/iptables-nft ]; then
@@ -79,11 +78,11 @@ interval=${OMR_TRACKER_INTERVAL:-10}
 retry=${OMR_TRACKER_TRIES:-4}
 proxy=${OMR_TRACKER_PROXY:-127.0.0.1:1111}
 hosts=${OMR_TRACKER_HOSTS:-1.1.1.1 1.0.0.1}
-hosts6=${OMR_TRACKER_HOSTS6}
+#hosts6=${OMR_TRACKER_HOSTS6}
 wait_test=${OMR_TRACKER_WAIT_TEST:-0}
 server=${OMR_TRACKER_SERVER:-sss0}
 type=${OMR_TRACKER_SS_TYPE:-libev}
-nodns=0
+#nodns=0
 
 last=0
 nocontact=""
@@ -98,7 +97,7 @@ while true; do
 	[ "$host" = "$hosts" ] || {
 		hosts="${hosts#* } $host"
 	}
-	if [ "$(curl -s -I -w %{http_code} --socks5 ${proxy} --max-time ${timeout} $host -o /dev/null)" != "000" ]; then
+	if [ "$(curl -s -I -w %{http_code} --socks5 "${proxy}" --max-time "${timeout}" "$host" -o /dev/null)" != "000" ]; then
 		nocontact=""
 		[ "${last}" -ge "${retry}" ] || [ "$(uci -q get openmptcprouter.omr.ss_${server})" = "" ] && {
 			_log "Shadowsocks $type ${server} is up (can contact via http ${host})"
@@ -127,26 +126,26 @@ while true; do
 				_log "Reload Shadowsocks rules"
 				/etc/init.d/shadowsocks-libev rules_up 2> /dev/null
 				if ! /etc/init.d/shadowsocks-libev rules_exist ; then
-					/etc/init.d/shadowsocks-libev restart 2>&1 >/dev/null
+					/etc/init.d/shadowsocks-libev restart >/dev/null 2>&1
 				fi
 				_get_ip
 			elif [ "$type" = "rust" ] && [ "$(uci -q get shadowsocks-rust.ss_rules.disabled)" != "1" ]; then
 				_log "Reload Shadowsocks Rust rules"
 				/etc/init.d/shadowsocks-rust rules_up 2> /dev/null
 				if ! /etc/init.d/shadowsocks-rust rules_exist ; then
-					/etc/init.d/shadowsocks-rust restart 2>&1 >/dev/null
+					/etc/init.d/shadowsocks-rust restart >/dev/null 2>&1
 				fi
 				_get_ip
 			fi
 		fi
-		[ "$(uci -q get openmptcprouter.omr.detected_public_ipv4)" = "" ] || ([ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.detected_public_ipv6)" = "" ]) && _get_ip
+		[ "$(uci -q get openmptcprouter.omr.detected_public_ipv4)" = "" ] || { [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.detected_public_ipv6)" = "" ]; } && _get_ip
 		last=0
 		OMR_TRACKER_STATUS="OK"
 	else
 		last=$((last + 1 ))
 		[ -z "$nocontact" ] && nocontact="$host" || nocontact="$nocontact, $host"
 		[ "${last}" -ge "${retry}" ] && {
-			if [ "$OMR_TRACKER_PREV_STATUS" != "ERROR" ] && ([ -n "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep ssr)" ] || [ -n "$(nft list ruleset 2>/dev/null | grep ss_r)" ] || [ -n "$(nft list ruleset 2>/dev/null | grep ssr_r)" ]); then
+			if [ "$OMR_TRACKER_PREV_STATUS" != "ERROR" ] && { [ -n "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep ssr)" ] || [ -n "$(nft list ruleset 2>/dev/null | grep ss_r)" ] || [ -n "$(nft list ruleset 2>/dev/null | grep ssr_r)" ]; }; then
 				_log "Shadowsocks $type ${server} is down (can't contact via http ${nocontact})"
 				OMR_TRACKER_STATUS_MSG="Shadowsocks $type ${server} is down (can't contact via http ${nocontact})"
 				uci -q set openmptcprouter.omr.ss_${server}="down"
