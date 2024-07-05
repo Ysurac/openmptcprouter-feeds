@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
 
 name=$0
@@ -41,7 +41,7 @@ _check_server() {
 	local host=$1
 	local port=$2
 	local k=0
-	local valid_ip6=$(valid_subnet6 $host)
+	local valid_ip6=$(valid_subnet6 "$host")
 	while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
 		if [ "$valid_ip6" != "ok" ]; then
 			ret=$(curl \
@@ -67,7 +67,7 @@ _check_server() {
 _check_server_intf() {
 	local host=$1
 	local port=$2
-	local valid_ip6=$(valid_subnet6 $host)
+	local valid_ip6=$(valid_subnet6 "$host")
 	for intf in $(multipath 2>/dev/null | awk '/default/ {print $1}'); do
 		local k=0
 		while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
@@ -76,7 +76,7 @@ _check_server_intf() {
 				    --max-time "$OMR_TRACKER_TIMEOUT" \
 				    -s \
 				    -k \
-				    --interface $intf \
+				    --interface "$intf" \
 				    "https://${host}:${port}/"
 				)
 			else
@@ -99,7 +99,7 @@ _check_server_intf() {
 _get_server_name() {
 	local serverid=$1
 	local serverip=$2
-	config_get serveripc $serverid server
+	config_get serveripc "$serverid" server
 	if [ "$serveripc" = "$serverip" ]; then
 		servername=$serverid
 	fi
@@ -107,25 +107,25 @@ _get_server_name() {
 
 _disable_current() {
 	local serv=$1
-	uci -q set openmptcprouter.${server}.current=0
+	uci -q set openmptcprouter."${server}".current=0
 }
 
 _disable_redir() {
-	local redir=$1
-	local serverdisable=$2
+	local redir="$1"
+	local serverdisable="$2"
 	local shadowsocks="$3"
-	config_get serverss $redir server
+	config_get serverss "$redir" server
 	if [ "$serverss" = "$serverdisable" ]; then
-		uci -q set ${shadowsocks}.${redir}.disabled=1
+		uci -q set "${shadowsocks}"."${redir}".disabled=1
 	fi
 }
 
 _enable_redir() {
-	local redir=$1
+	local redir="$1"
 	local shadowsocks="$2"
-	config_get serverss $redir server
+	config_get serverss "$redir" server
 	if [ "$serverss" = "sss${count}" ]; then
-		uci -q set ${shadowsocks}.${redir}.disabled=0
+		uci -q set "${shadowsocks}"."${redir}".disabled=0
 	fi
 }
 
@@ -164,7 +164,7 @@ _check_master() {
 		set_ip() {
 			ip="$serverip"
 			if [ "$server_ping" = true ]; then
-				if ([ -n "$(uci -q get shadowsocks-libev)" ] && [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ]) || ([ -n "$(uci -q get shadowsocks-rust)" ] &&  [ "$(uci -q get shadowsocks-rust.sss${count}.server | tr -d '\n')" != "$ip" ]) || ([ -n "$(uci -q get openvpn.omr)" ] &&  [ -z "$(uci -q get openvpn.omr.remote | grep $ip)" ]); then
+				if { [ -n "$(uci -q get shadowsocks-libev)" ] && [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ]; } || { [ -n "$(uci -q get shadowsocks-rust)" ] &&  [ "$(uci -q get shadowsocks-rust.sss${count}.server | tr -d '\n')" != "$ip" ]; } || { [ -n "$(uci -q get openvpn.omr)" ] &&  [ -z "$(uci -q get openvpn.omr.remote | grep $ip)" ]; }; then
 					logger -t "OMR-Tracker-Server" "Master server ${name} up ($ip), set it back"
 					changes="1"
 					#logger -t "OMR-Tracker-Server" "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n') - $ip"
@@ -217,7 +217,7 @@ _check_master() {
 							set openmptcprouter.${name}.current='1'
 							commit openmptcprouter
 						EOF
-						/etc/init.d/openmptcprouter-vps get_openvpn_key $name >/dev/null 2>/dev/null
+						/etc/init.d/openmptcprouter-vps get_openvpn_key "$name" >/dev/null 2>/dev/null
 						#/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null
 						/etc/init.d/v2ray restart >/dev/null 2>/dev/null
 						/etc/init.d/xray restart >/dev/null 2>/dev/null
@@ -259,11 +259,11 @@ _check_master() {
 				servername=""
 				config_load shadowsocks-libev
 				config_foreach _get_server_name server "$ip"
-				[ -n "$servername" ] && config_foreach _disable_redir ss_redir $servername "shadowsocks-libev"
+				[ -n "$servername" ] && config_foreach _disable_redir ss_redir "$servername" "shadowsocks-libev"
 				servername=""
 				config_load shadowsocks-rust
 				config_foreach _get_server_name server "$ip"
-				[ -n "$servername" ] && config_foreach _disable_redir ss_redir $servername "shadowsocks-rust"
+				[ -n "$servername" ] && config_foreach _disable_redir ss_redir "$servername" "shadowsocks-rust"
 
 				if [ -n "$(uci -q get openvpn.omr.remote | grep $ip)" ]; then
 					uci -q batch <<-EOF >/dev/null
@@ -329,10 +329,10 @@ _check_backup() {
 	local count=0
 	local countips=0
 	local changes="0"
-	config_get backup $1 backup
-	config_get ip $1 ip
-	config_get port $1 port
-	config_get disabled $1 disabled
+	config_get backup "$1" backup
+	config_get ip "$1" ip
+	config_get port "$1" port
+	config_get disabled "$1" disabled
 	serverip=""
 	[ "$backup" = "1" ] && [ -n "$ip" ] && [ "$disabled" != "1" ] && {
 		check_ip() {
@@ -359,7 +359,7 @@ _check_backup() {
 			ip="$serverip"
 			#[ "$server_ping" = true ] && [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" = "$ip" ] && break
 			if [ "$server_ping" = true ]; then
-				if ([ -n "$(uci -q get shadowsocks-libev)" ] && [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ]) || ([ -n "$(uci -q get shadowsocks-rust)" ] &&  [ "$(uci -q get shadowsocks-rust.sss${count}.server | tr -d '\n')" != "$ip" ]) || ([ -n "$(uci -q get openvpn.omr)" ] &&  [ -z "$(uci -q get openvpn.omr.remote | grep $ip)" ]); then
+				if { [ -n "$(uci -q get shadowsocks-libev)" ] && [ "$(uci -q get shadowsocks-libev.sss${count}.server | tr -d '\n')" != "$ip" ]; } || { [ -n "$(uci -q get shadowsocks-rust)" ] && [ "$(uci -q get shadowsocks-rust.sss${count}.server | tr -d '\n')" != "$ip" ]; } || { [ -n "$(uci -q get openvpn.omr)" ] && [ -z "$(uci -q get openvpn.omr.remote | grep $ip)" ]; }; then
 					logger -t "OMR-Tracker-Server" "Use backup server $1 ($ip)"
 					changes="1"
 					uci -q batch <<-EOF >/dev/null
@@ -407,7 +407,7 @@ _check_backup() {
 							set openmptcprouter.${name}.current='1'
 							commit openmptcprouter
 						EOF
-						/etc/init.d/openmptcprouter-vps get_openvpn_key $name >/dev/null 2>/dev/null
+						/etc/init.d/openmptcprouter-vps get_openvpn_key "$name" >/dev/null 2>/dev/null
 						#/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null
 						/etc/init.d/v2ray restart >/dev/null 2>/dev/null
 						/etc/init.d/xray restart >/dev/null 2>/dev/null
@@ -452,11 +452,11 @@ _check_backup() {
 				EOF
 				config_load shadowsocks-libev
 				config_foreach _get_server_name server "$ip"
-				[ -n "$servername" ] && config_foreach _disable_redir ss_redir $servername "shadowsocks-libev"
+				[ -n "$servername" ] && config_foreach _disable_redir ss_redir "$servername" "shadowsocks-libev"
 				servername=""
 				config_load shadowsocks-rust
 				config_foreach _get_server_name server "$ip"
-				[ -n "$servername" ] && config_foreach _disable_redir ss_redir $servername "shadowsocks-rust"
+				[ -n "$servername" ] && config_foreach _disable_redir ss_redir "$servername" "shadowsocks-rust"
 
 				OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
 				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
