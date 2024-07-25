@@ -37,6 +37,30 @@ _ping_server() {
 	}
 }
 
+_ping_server_intf() {
+	local host=$1
+	local valid_ip6=$(valid_subnet6 "$host")
+	for intf in $(multipath 2>/dev/null | awk '/default/ {print $1}'); do
+		local k=0
+		while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
+			ret=$(ping \
+			    -w "$OMR_TRACKER_TIMEOUT" \
+			    -c 1 \
+			    -q \
+			    "${host}"
+			    -I "$intf" \
+			    "${host}"
+			)
+			echo "$ret" | grep -sq " 0% packet loss" && {
+				server_ping=true
+			}
+			k=$((k+1))
+			sleep "${intervaltries}"
+		done
+	done
+}
+
+
 _check_server() {
 	local host=$1
 	local port=$2
@@ -155,6 +179,9 @@ _check_master() {
 			#_ping_server $serverip
 			#_check_server $serverip $port
 			_check_server_intf $serverip $port
+			[ "$server_ping" = false ] && {
+				_ping_server_intf $serverip
+			}
 			[ "$server_ping" = true ] && {
 				oneserverup="1"
 			}
@@ -265,11 +292,11 @@ _check_master() {
 				config_foreach _get_server_name server "$ip"
 				[ -n "$servername" ] && config_foreach _disable_redir ss_redir "$servername" "shadowsocks-rust"
 
-				if [ -n "$(uci -q get openvpn.omr.remote | grep $ip)" ]; then
-					uci -q batch <<-EOF >/dev/null
-						del_list openvpn.omr.remote="$ip"
-					EOF
-				fi
+				#if [ -n "$(uci -q get openvpn.omr.remote | grep $ip)" ]; then
+				#	uci -q batch <<-EOF >/dev/null
+				#		del_list openvpn.omr.remote="$ip"
+				#	EOF
+				#fi
 
 
 				OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
@@ -350,6 +377,9 @@ _check_backup() {
 			#_ping_server $serverip
 			#_check_server $serverip $port
 			_check_server_intf $serverip $port
+			[ "$server_ping" = false ] && {
+				_ping_server_intf $serverip
+			}
 			[ "$server_ping" = true ] && {
 				oneserverup="1"
 			}
