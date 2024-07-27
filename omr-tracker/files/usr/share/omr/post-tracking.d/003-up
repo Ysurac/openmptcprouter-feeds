@@ -920,7 +920,7 @@ if [ "$multipath_config" = "master" ]; then
 						ip route replace default scope global metric 999 $routesbalancingbackup >/dev/null 2>&1
 					}
 				}
-			elif [ -n "$omrvpn_intf" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ "$(ip -6 route show default | grep -v metric | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ]; then
+			elif [ -n "$omrvpn_intf" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ "$(ip -6 route show default metric 1 | tr -d '\t' | tr -d '\n' | sed 's/ *$//')" != "default via $routesbalancing6" ]; then
 				routesbalancing6=""
 				routesbalancingbackup6=""
 				nbintf6=0
@@ -930,7 +930,9 @@ if [ "$multipath_config" = "master" ]; then
 				[ -n "$routesbalancing6" ] && {
 					{ [ "$nbintf6" -gt "1" ] && [ "$(ip -6 r show default metric 1 | tr -d '\t' | tr -d '\n' | sed 's/ *$//')" != "default via $routesbalancing6 " ] && [ "$(ip -6 r show default metric 1 | tr -d '\t' | tr -d '\n' | sed 's/ *$//')" != "default $routesbalancing6 " ]; } || { [ "$nbintf6" = "1" ] && [ "$(ip -6 r show default metric 1 | grep $OMR_TRACKER_DEVICE)" = "" ] && [ "$(ip -6 r show default metric 1 | grep omr6in4)" = "" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ]; } && {
 						_log "Set ip -6 route replace default scope global metric 1 $routesbalancing6"
+						[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Current route: $(ip -6 r)"
 						ip -6 route replace default scope global metric 1 $routesbalancing6 >/dev/null 2>&1
+						[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "New route: $(ip -6 r)"
 					}
 				}
 				[ -n "$routesbalancingbackup6" ] && {
@@ -1058,7 +1060,7 @@ if [ "$(sysctl -qen net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ] || [ "$(sysct
 			multipath "$OMR_TRACKER_DEVICE" "$multipath_config"
 			[ -n "$OMR_TRACKER_DEVICE_IP" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.local_ipv4="$OMR_TRACKER_DEVICE_IP"
 			[ -n "$OMR_TRACKER_DEVICE_IP6" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.local_ipv6="$OMR_TRACKER_DEVICE_IP6"
-		else
+		elif [ "$multipath_status" != "$multipath_config" ]; then
 			if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.force_link)" != "0" ]; then
 				_log "Reload MPTCP config for $OMR_TRACKER_DEVICE"
 				/etc/init.d/mptcp reload "$OMR_TRACKER_DEVICE"
