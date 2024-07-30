@@ -593,12 +593,17 @@ service_triggers_load_interface() { ifaces="${ifaces}${1} "; }
 
 service_triggers() {
 	local ifaces n
-	config_load network; config_foreach service_triggers_load_interface 'interface';
+	config_load network
+	config_foreach service_triggers_load_interface 'interface';
 	procd_add_reload_trigger "network"
 	procd_open_trigger
-		for n in $ifaces; do 
-			procd_add_reload_interface_trigger "$n"
-			procd_add_interface_trigger "interface.*" "$n" logger -t "MPTCP" "Trigger for $n" && /etc/init.d/mptcp reload
-		done
+	for n in $ifaces; do 
+		network_get_device iface "$n"
+		[ -z "$iface" ] && network_get_physdev iface "$n"
+		[ -z "$iface" ] && iface=$(ifstatus "$n" | jsonfilter -q -e '@["l3_device"]')
+		[ -z "$iface" ] && config_get iface "$n" ifname
+		procd_add_reload_interface_trigger "$n"
+		procd_add_interface_trigger "interface.*" "$n" /etc/init.d/mptcp reload "$iface"
+	done
 	procd_close_trigger
 }
