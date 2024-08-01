@@ -44,6 +44,13 @@ return view.extend({
 		o.value('offline', _('Offline'));
 		o.modalonly = true;
 
+		o = s.option(form.ListValue, 'type', _('Tracking method'),_('Check if VPS api answer or/and ping server IPs.'));
+		o.default = 'apiping';
+		o.value('apiping',_('API & Ping'));
+		o.value('api',_('API'));
+		o.value('ping',_('Ping'));
+		o.value('none',_('None'));
+
 		o = s.option(form.Flag, 'mail_alert', _('Mail alert'),
 			_('Send a mail when connection status change. You need to configure e-mail settings here.'));
 		o.rmempty = false;
