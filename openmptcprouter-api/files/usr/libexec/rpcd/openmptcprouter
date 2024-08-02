@@ -1504,44 +1504,53 @@ function interfaces_status()
 			local current = uci:get("openmptcprouter",s[".name"],"current") or "0"
 			if current == "1" then
 				for key, value in pairs(serverips) do
-					local serverip = mArray.openmptcprouter["service_addr"]
-					if serverip == "127.0.0.1" then
-						serverip = mArray.openmptcprouter["wan_addr"]
-					end
-					if gateway ~= "" then
-						serverip = sys.exec('resolveip -4 ' .. value .. ' | head -n 1')
-					elseif gateway6 ~= "" then
-						serverip = sys.exec('resolveip -6 ' .. value .. ' | head -n 1')
-					end
-					if serverip == "" then
-						serverip = value
-					end
-					if serverip ~= "" then
-						local server_ping_test = sys.exec("ping -B -w 1 -c 1 -I " .. ifname .. " " .. serverip)
-						local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
-						local server_ping_nobind = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep 'Address not available'"))
-						if server_ping_result ~= "" then
-							server_ping = "DOWN"
-							--if connectivity == "OK" then
-							--	connectivity = "WARNING"
-							--end
-						elseif server_ping_nobind ~= "" then
-							server_ping_test = sys.exec("ping -w 1 -c 1 -I " .. ifname .. " " .. serverip)
-							server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
-							if server_ping_result ~= "" then
+					server_ping = value
+					if server_ping ~= "UP" then
+						local serverip = mArray.openmptcprouter["service_addr"]
+						if serverip == "127.0.0.1" then
+							serverip = mArray.openmptcprouter["wan_addr"]
+						end
+						if gateway ~= "" then
+							serverip = sys.exec('resolveip -4 ' .. value .. ' | head -n 1')
+						elseif gateway6 ~= "" then
+							serverip = sys.exec('resolveip -6 ' .. value .. ' | head -n 1')
+						end
+						if serverip == "" then
+							serverip = value
+						end
+						if serverip ~= "" then
+							local server_ping_test = sys.exec("ping -B -w 1 -c 1 -I " .. ifname .. " " .. serverip .. " 2>&1")
+							local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
+							local server_ping_nobind = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep 'Address not available'"))
+							local server_ping_error = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep -i 'error'"))
+							if server_ping_error ~= "" then
 								server_ping = "DOWN"
-								--if connectivity == "OK" then
-								--	connectivity = "WARNING"
-								--end
+								if connectivity == "OK" then
+									connectivity = "WARNING"
+								end
+							elseif server_ping_result ~= "" then
+								server_ping = "DOWN"
+								if connectivity == "OK" then
+									connectivity = "WARNING"
+								end
+							elseif server_ping_nobind ~= "" then
+								server_ping_test = sys.exec("ping -w 1 -c 1 -I " .. ifname .. " " .. serverip)
+								server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
+								if server_ping_result ~= "" then
+									server_ping = "DOWN"
+									if connectivity == "OK" then
+										connectivity = "WARNING"
+									end
+								else
+									mArray.openmptcprouter["vps_status"] = "UP"
+									server_ping = "UP"
+									latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f5 | cut -d '.' -f1"))
+								end
 							else
 								mArray.openmptcprouter["vps_status"] = "UP"
 								server_ping = "UP"
 								latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f5 | cut -d '.' -f1"))
 							end
-						else
-							mArray.openmptcprouter["vps_status"] = "UP"
-							server_ping = "UP"
-							latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f5 | cut -d '.' -f1"))
 						end
 					end
 				end
