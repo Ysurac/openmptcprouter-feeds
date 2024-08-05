@@ -17,6 +17,16 @@ LIST_SEP="
 UCI_STARTED=
 UCI_DISABLED=
 
+version_over_5_4() {
+	MAJOR_VERSION=$(uname -r | awk -F '.' '{print $1}')
+	MINOR_VERSION=$(uname -r | awk -F '.' '{print $2}')
+	if [ $MAJOR_VERSION -ge 5 ] && [ $MINOR_VERSION -gt 13 ] || [ $MAJOR_VERSION -gt 5 ] ; then
+		return 0
+	else
+		return 1
+	fi
+}
+
 append_param() {
 	local s="$1"
 	local v="$2"
@@ -150,6 +160,10 @@ openvpn_add_instance() {
 	local ipchange="$9"
 	local client=$(grep -qEx "client|tls-client" "$dir/$conf" && echo 1)
 
+	#if version_over_5_4; then
+	#	PROG="mptcpize run ${PROG}"
+	#fi
+
 	procd_open_instance "$name"
 	procd_set_param command "$PROG"	\
 		--syslog "openvpn($name)" \
@@ -167,6 +181,7 @@ openvpn_add_instance() {
 		${route_pre_down:+--setenv user_route_pre_down "$route_pre_down"} \
 		${client:+${ipchange:+--setenv user_ipchange "$ipchange"}} \
 		--script-security "${security:-2}" \
+		${mptcp:+--mptcp} \
 		$(openvpn_get_dev "$name" "$conf") \
 		$(openvpn_get_credentials "$name" "$conf")
 	procd_set_param file "$dir/$conf"
@@ -189,13 +204,14 @@ start_uci_instance() {
 		return 1
 	}
 
-	local up down route_up route_pre_down ipchange script_security
+	local up down route_up route_pre_down ipchange script_security mptcp
 	config_get up "$s" up
 	config_get down "$s" down
 	config_get route_up "$s" route_up
 	config_get route_pre_down "$s" route_pre_down
 	config_get ipchange "$s" ipchange
 	config_get script_security "$s" script_security
+	config_get_bool mptcp "$s" mptcp true
 
 	[ ! -d "/var/run" ] && mkdir -p "/var/run"
 
@@ -207,7 +223,7 @@ start_uci_instance() {
 		[ -n "$route_up" ] || get_openvpn_option "$config" route_up route-up
 		[ -n "$route_pre_down" ] || get_openvpn_option "$config" route_pre_down route-pre-down
 		[ -n "$ipchange" ] || get_openvpn_option "$config" ipchange ipchange
-		openvpn_add_instance "$s" "${config%/*}" "$config" "$script_security" "$up" "$down" "$route_up" "$route_pre_down" "$ipchange"
+		openvpn_add_instance "$s" "${config%/*}" "$config" "$script_security" "$up" "$down" "$route_up" "$route_pre_down" "$ipchange" "$mptcp"
 		return
 	fi
 
