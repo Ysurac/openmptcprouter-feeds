@@ -84,11 +84,11 @@ MY_DEPENDS := \
     luci-theme-openwrt-2020 luci-proto-wireguard luci-app-wireguard kmod-crypto-lib-blake2s  \
     !(LINUX_5_4):mptcpd (TARGET_x86||TARGET_x86_64):kmod-igc !TARGET_mvebu:kmod-mmc-spi kmod-macsec usbutils v2ray-core LINUX_5_4:v2ray-config !LINUX_5_4:v2ray-config-nft \
     (TARGET_x86||TARGET_x86_64):kmod-mlx4-core \
-    !(TARGET_ipq40xx||TARGET_ramips||LINUX_6_6):iptables-mod-ndpi !(TARGET_ipq40xx||TARGET_ramips||LINUX_6_6):kmod-ipt-ndpi libip4tc libip6tc \
+    !(TARGET_ipq40xx||TARGET_ramips||LINUX_6_6||LINUX_6_10):iptables-mod-ndpi !(TARGET_ipq40xx||TARGET_ramips||LINUX_6_6||LINUX_6_10):kmod-ipt-ndpi libip4tc libip6tc \
     xray-core LINUX_5_4:xray-config !LINUX_5_4:xray-config-nft (LINUX_5_4&&(TARGET_x86_64||aarch64)):kmod-tcp-bbr2 kmod-ovpn-dco-v2 \
     shadowsocks-rust-sslocal shadowsocks-rust-ssservice LINUX_5_4:shadowsocks-rust-config !LINUX_5_4:shadowsocks-rust-config-nft luci-app-shadowsocks-rust \
     luci-proto-external omr-schedule jq luci-app-ddns \
-    LINUX_6_6:mptcp-bpf-burst LINUX_6_6:mptcp-bpf-first LINUX_6_6:mptcp-bpf-red LINUX_6_6:mptcp-bpf-rr LINUX_6_6:bpftool-full \
+    (LINUX_6_6||LINUX_6_10):mptcp-bpf-burst (LINUX_6_6||LINUX_6_10):mptcp-bpf-first (LINUX_6_6||LINUX_6_10):mptcp-bpf-red (LINUX_6_6||LINUX_6_10):mptcp-bpf-rr (LINUX_6_6||LINUX_6_10):bpftool-full \
     mbim-utils (TARGET_x86||TARGET_x86_64):kmod-r8169 !(TARGET_ipq40xx||TARGET_x86_64):kmod-mt7601u !TARGET_x86_64:kmod-ath9k-htc \
     TARGET_mvebu:kmod-mwlwifi TARGET_mvebu:mwlwifi-firmware-88w8864 TARGET_mvebu:mwlwifi-firmware-88w8897 TARGET_mvebu:mwlwifi-firmware-88w8964 TARGET_mvebu:mwlwifi-firmware-88w8997 \
     TARGET_x86_64:kmod-atlantic
