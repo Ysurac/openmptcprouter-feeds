@@ -313,26 +313,24 @@ _set_ssgo_server_vps() {
 	local current_port current_key current_method
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
-	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks-go.port')"
-	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks-go.key')"
-	current_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks-go.method')"
-	current_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks-go.fast_open')"
-	current_mptcp="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks-go.mptcp')"
+	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks_go.config.port')"
+	current_key="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks_go.config.password')"
+	current_method="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks_go.config.protocol')"
+#	current_fast_open="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks_go.config.fast_open')"
+#	current_mptcp="$(echo "$vps_config" | jsonfilter -q -e '@.shadowsocks_go.config.mptcp')"
 	
 	ebpf="false"
 	fast_open="false"
 	no_delay="false"
 	mptcp="false"
-	obfs="false"
-	obfs_plugin="v2ray"
-	obfs_type="http"
 	config_load shadowsocks-rust
 	config_foreach _get_ss_redir ss_redir
 	config_foreach _get_ss_server server
 	# Force disable fast open for now du to problem on 6.1 with MPTCP
 	fast_open="false"
 
-	if [ "$current_mptcp" != "$mptcp" ] || [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_fast_open" != "$fast_open" ]; then
+	#if [ "$current_mptcp" != "$mptcp" ] || [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ] || [ "$current_fast_open" != "$fast_open" ]; then
+	if [ "$current_port" != "$port" ] || [ "$current_method" != "$method" ]; then
 		local settings
 		settings='{"port": '$port',"method":"'$method'","fast_open":'$fast_open',"reuse_port":false,"mptcp":'$mptcp'}'
 		result=$(_set_json "shadowsocks-go" "$settings")
@@ -943,9 +941,9 @@ _set_lan_ip() {
 	local settings
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
-	#lanip_current="$(echo "$vps_config" | jsonfilter -q -e '@.lan.ips')"
-	#if [ "$lanips" != "" ] && [ "$lanip_current" != "$lanips" ]; then
-	if [ "$lanips" != "" ]; then
+	lanip_current="$(echo "$vps_config" | jsonfilter -q -e '@.lan.ips' | sed -e 's:\\::g' -e 's:\[::g' -e 's:\]::g')"
+	if [ "$lanips" != "" ] && [ "$lanip_current" != "$lanips" ]; then
+	#if [ "$lanips" != "" ]; then
 		settings='{"lanips" : ['$lanips']}'
 		result=$(_set_json "lan" "$settings")
 	fi
