@@ -35,6 +35,7 @@ return L.view.extend({
 	o = s.option(form.ListValue, 'multipath', _('Multipath TCP'));
 	o.value("enable", _("enable"));
 	o.value("disable", _("disable"));
+	o.readonly = true;
 
 	o = s.option(form.ListValue, "mptcp_checksum", _("Multipath TCP checksum"));
 	o.value(1, _("enable"));
