@@ -12,8 +12,8 @@ PKG_VERSION:=1.5beta7
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=http://michael.toren.net/code/tcptraceroute
-PKG_MD5SUM:=65d1001509f971ea986fcbc2dd009643
+PKG_SOURCE_URL:=https://github.com/mct/tcptraceroute/archive/refs/tags/
+PKG_HASH:=57fd2e444935bc5be8682c302994ba218a7c738c3a6cae00593a866cd85be8e7
 
 include $(INCLUDE_DIR)/package.mk
 
