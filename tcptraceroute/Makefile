@@ -11,9 +11,9 @@ PKG_NAME:=tcptraceroute
 PKG_VERSION:=1.5beta7
 PKG_RELEASE:=1
 
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://github.com/mct/tcptraceroute/archive/refs/tags/
-PKG_HASH:=57fd2e444935bc5be8682c302994ba218a7c738c3a6cae00593a866cd85be8e7
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_VERSION:=tcptraceroute-$(PKG_VERSION)
+PKG_SOURCE_URL:=https://github.com/mct/tcptraceroute.git
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -34,11 +34,11 @@ define Build/Configure
         )
 endef
 
-define Build/Compile	
+define Build/Compile
 	$(MAKE) -C $(PKG_BUILD_DIR)
 endef
 
-define Package/tcptraceroute/install	
+define Package/tcptraceroute/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/tcptraceroute $(1)/usr/bin/
 endef
