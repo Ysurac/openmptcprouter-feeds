@@ -44,7 +44,7 @@ _login() {
 		login_on_server() {
 			server=$1
 			#auth=`curl --max-time 10 -s -k -H "Content-Type: application/json" -X POST -d '{"username":"'$username'","password":"'$password'"}' https://$server:$serverport/login`
-			resolve="$(resolveip $server)"
+			resolve="$(resolveip -t 5 $server)"
 			valid_ip6=$(valid_subnet6 $server)
 			if [ "$resolve" != "$server" ] || [ "$valid_ip6" != "ok" ]; then
 				auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://$server:$serverport/token`
@@ -72,7 +72,7 @@ _get_json() {
 	route=$1
 	[ -z "$token" ] && _login
 	[ -n "$token" ] && {
-		resolve="$(resolveip $server)"
+		resolve="$(resolveip -t 5 $server)"
 		valid_ip6=$(valid_subnet6 $server)
 		if [ "$resolve" != "$server" ] || [ "$valid_ip6" != "ok" ]; then
 			result=`curl --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://$server:$serverport/$route`
@@ -94,7 +94,7 @@ _set_json() {
 	settings="$2"
 	[ -z "$token" ] && _login
 	[ -n "$token" ] && {
-		resolve="$(resolveip $server)"
+		resolve="$(resolveip -t 5 $server)"
 		valid_ip6=$(valid_subnet6 $server)
 		if [ "$resolve" != "$server" ] || [ "$valid_ip6" != "ok" ]; then
 			result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
@@ -507,11 +507,11 @@ _get_vps_config() {
 		fi
 	fi
 	vpsip="$(uci -q get openmptcprouter.${servername}.ip | awk '{print $1}')"
-	ipresolve="$(resolveip -4 $vpsip | head -n 1)"
+	ipresolve="$(resolveip -t 5 -4 $vpsip | head -n 1)"
 	if [ -n "$ipresolve" ]; then
 		vpsip="$ipresolve"
 	else
-		ip6resolve="$(resolveip -6 $vpsip | head -n 1)"
+		ip6resolve="$(resolveip -t 5 -6 $vpsip | head -n 1)"
 		[ -n "$ip6resolve" ] && vpsip="$ip6resolve"
 	fi
 	if [ -n "$(uci -q get shadowsocks-libev.sss0)" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "127.0.0.1" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
@@ -941,7 +941,7 @@ _set_lan_ip() {
 	local settings
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
-	lanip_current="$(echo "$vps_config" | jsonfilter -q -e '@.lan.ips' | sed -e 's:\\::g' -e 's:\[::g' -e 's:\]::g')"
+	lanip_current="$(echo "$vps_config" | jsonfilter -q -e '@.lan.ips' | sed -e 's:\\::g' -e 's:\[::g' -e 's:\]::g' -e 's/^[[:blank:]]*//;s/[[:blank:]]*$//')"
 	if [ "$lanips" != "" ] && [ "$lanip_current" != "$lanips" ]; then
 	#if [ "$lanips" != "" ]; then
 		settings='{"lanips" : ['$lanips']}'
@@ -2189,7 +2189,7 @@ _get_token() {
 		port="$(uci -q get openmptcprouter.${servername}.port)"
 		api_test() {
 			server="$1"
-			resolve="$(resolveip $server)"
+			resolve="$(resolveip -t 5 $server)"
 			valid_ip6=$(valid_subnet6 $server)
 			if [ "$resolve" != "$server" ] || [ "$valid_ip6" != "ok" ]; then
 				if [ "$(curl -k -m 3 https://${server}:${port}/)" = "" ]; then
