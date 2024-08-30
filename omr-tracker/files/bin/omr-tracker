@@ -26,6 +26,8 @@ export OMR_TRACKER_PREV_STATUS
 export OMR_TRACKER_DEVICE
 export OMR_TRACKER_DEVICE_IP
 export OMR_TRACKER_DEVICE_IP6
+export OMR_TRACKER_PREV_DEVICE_IP
+export OMR_TRACKER_PREV_DEVICE_IP6
 export OMR_TRACKER_DEVICE_GATEWAY
 export OMR_TRACKER_DEVICE_GATEWAY6
 export OMR_TRACKER_IPV6
@@ -275,9 +277,9 @@ while true; do
 	OMR_TRACKER_DEVICE_GATEWAY=
 	OMR_TRACKER_DEVICE_GATEWAY6=
 	serverip_ping=false
-	[ -z "$OMR_TRACKER_DEVICE" ] && {
-			network_get_device OMR_TRACKER_DEVICE "$OMR_TRACKER_INTERFACE"
-			[ -z "$OMR_TRACKER_DEVICE" ] && network_get_physdev OMR_TRACKER_DEVICE "$OMR_TRACKER_INTERFACE"
+	[ -z "$OMR_TRACKER_DEVICE" ] || [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ] && {
+			network_get_physdev OMR_TRACKER_DEVICE "$OMR_TRACKER_INTERFACE"
+			[ -z "$OMR_TRACKER_DEVICE" ] && network_get_device OMR_TRACKER_DEVICE "$OMR_TRACKER_INTERFACE"
 			[ -z "$OMR_TRACKER_DEVICE" ] && OMR_TRACKER_DEVICE=$(ifstatus "$OMR_TRACKER_INTERFACE" | jsonfilter -q -e '@["l3_device"]')
 			[ -z "$OMR_TRACKER_DEVICE" ] && OMR_TRACKER_DEVICE=$(ifstatus "${OMR_TRACKER_INTERFACE}_4" | jsonfilter -q -e '@["l3_device"]')
 			#[ -z "$OMR_TRACKER_DEVICE" ] && config_get OMR_TRACKER_DEVICE "$OMR_TRACKER_INTERFACE" device
@@ -286,7 +288,7 @@ while true; do
 
 	if [ -n "$OMR_TRACKER_DEVICE" ] && [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
 		#if [ -n "$(ip link show $OMR_TRACKER_DEVICE | grep 'state UP')" ] || [ -n "$(ip link show $OMR_TRACKER_DEVICE | grep 'state UNKNOWN')" ]; then
-		if [ "$(ifstatus $OMR_TRACKER_INTERFACE | jsonfilter -e '@.up')" == "true" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
+		if [ "$(ifstatus $OMR_TRACKER_INTERFACE | jsonfilter -q -e '@.up')" == "true" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
 			# retrieve iface ip and gateway
 			if { [ "$OMR_TRACKER_FAMILY" = "ipv4" ] || [ "$OMR_TRACKER_FAMILY" = "ipv4ipv6" ]; } && [ "$OMR_TRACKER_INTERFACE_PROTO" != "dhcpv6" ]; then
 				OMR_TRACKER_DEVICE_IP=$(ip -4 -br addr ls dev "$OMR_TRACKER_DEVICE" | awk -F'[ /]+' '{print $3}')
@@ -623,6 +625,8 @@ while true; do
 	_post_tracking
 	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && sleep $wait_test
 	OMR_TRACKER_PREV_STATUS="$OMR_TRACKER_STATUS"
+	OMR_TRACKER_PREV_DEVICE_IP="$OMR_TRACKER_DEVICE_IP"
+	OMR_TRACKER_PREV_DEVICE_IP6="$OMR_TRACKER_DEVICE_IP6"
 	_restart
 
 	if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
