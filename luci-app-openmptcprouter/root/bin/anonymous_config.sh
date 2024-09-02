@@ -15,7 +15,7 @@ uci show | \
 	-e "/shadowsocks-libev\.sss.*\.server=/s/......$/xxxxxx'/" \
 	-e "/shadowsocks-libev\.sss.*\.key=/s/......$/xxxxxx'/" \
 	-e "/shadowsocks-rust\.sss.*\.server=/s/......$/xxxxxx'/" \
-	-e "/shadowsocks-rust\.sss.*\.key=/s/......$/xxxxxx'/" \
+	-e "/shadowsocks-rust\.sss.*\.password=/s/......$/xxxxxx'/" \
 	-e "/external_ip=/s/......$/xxxxxx'/" \
 	-e "/obfs_host=/s/..........$/xxxxxx'/" \
 	-e "/vmess_address=/s/......$/xxxxxx'/" \
