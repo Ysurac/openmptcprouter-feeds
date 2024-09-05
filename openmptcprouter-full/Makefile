@@ -36,7 +36,7 @@ MY_DEPENDS := \
     wireless-tools \
     libiwinfo-lua \
     ca-bundle ca-certificates \
-    luci-mod-admin-full luci-app-firewall luci-app-glorytun-tcp luci-app-glorytun-udp luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-theme-argon luci-theme-alpha luci-theme-design luci-base \
+    luci-mod-admin-full luci-app-firewall luci-app-glorytun-tcp luci-app-glorytun-udp luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-theme-argon luci-theme-alpha luci-theme-design luci-base luci-theme-material luci-theme-bootstrap \
     luci-app-omr-tracker luci-app-omr-dscp \
     luci-app-sqm-autorate sqm-scripts-extra \
     luci-app-vnstat2 omr-quota luci-app-omr-quota \
@@ -92,7 +92,7 @@ MY_DEPENDS := \
     TARGET_mvebu:kmod-mwlwifi TARGET_mvebu:mwlwifi-firmware-88w8864 TARGET_mvebu:mwlwifi-firmware-88w8897 TARGET_mvebu:mwlwifi-firmware-88w8964 TARGET_mvebu:mwlwifi-firmware-88w8997 \
     (LINUX_5_4&&(TARGET_x86_64||TARGET_aarch64)):kmod-tcp-bbr2 \
     TARGET_x86_64:kmod-atlantic \
-    (LINUX_6_6||LINUX_6_10):mptcp-bpf-burst (LINUX_6_6||LINUX_6_10):mptcp-bpf-first (LINUX_6_6||LINUX_6_10):mptcp-bpf-red (LINUX_6_6||LINUX_6_10):mptcp-bpf-rr (LINUX_6_6||LINUX_6_10):bpftool-full \
+    !(LINUX_5_4||LINUX_6_1||TARGET_ramips):mptcp-bpf-burst !(LINUX_5_4||LINUX_6_1||TARGET_ramips):mptcp-bpf-first !(LINUX_5_4||LINUX_6_1||TARGET_ramips):mptcp-bpf-red !(LINUX_5_4||LINUX_6_1||TARGET_ramips):mptcp-bpf-rr !(LINUX_5_4||LINUX_6_1||TARGET_ramips):bpftool-full \
     !LINUX_6_10:kmod-ovpn-dco-v2
 
 #    !TARGET_ipq40xx:kmod-rt2800-usb (TARGET_x86||TARGET_x86_64):kmod-iwlwifi (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl1000 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl100 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl105 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl135 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl2000 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl2030 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl3160 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl3168 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl5000 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl5150 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl6000g2 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl6000g2a (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl6000g2b (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl6050 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl7260 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl7265 (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl7265d (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl8260c (TARGET_x86||TARGET_x86_64):iwlwifi-firmware-iwl8265 \
