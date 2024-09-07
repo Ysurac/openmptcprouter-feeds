@@ -280,3 +280,20 @@ if [ "$(pgrep -f set_vps_firewall)" = "" ] && [ "$(uci -q show openmptcprouter |
 	/bin/blocklanfw >/dev/null 2>&1
 	sleep 5
 fi
+if [ "$(uci -q get openmptcprouter.latest_versions.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.latest_versions.lc))) -gt 3600 ]; then
+	distribution="$(ubus call system board | jsonfilter -q -e '@.release.distribution' | tr -d '\n')"
+	version="$(ubus call system board | jsonfilter -q -e '@.release.version' | tr -d '\n')"
+	latestversions="$(curl -4 -s -m 3 -A "${distribution}/${version}" https://www.openmptcprouter.com/version/version.json)"
+	[ -n "$latestversions" ] && {
+		uci -q set openmptcprouter.latest_versions=latest_versions
+		if [ "${distribution}" = "openmptcprouter" ]; then
+			uci -q set openmptcprouter.latest_versions.omr=$(echo $latestversions | jsonfilter -q -e '@.omr')-$(ubus call system board | jsonfilter -e '@.kernel' | cut -d'.' -f1,2)
+			uci -q set openmptcprouter.latest_versions.vps=$(echo $latestversions | jsonfilter -q -e '@.vps')
+		else
+			uci -q del openmptcprouter.latest_versions.omr
+			uci -q del openmptcprouter.latest_versions.vps
+		fi
+		uci -q set openmptcprouter.latest_versions.lc=$(date +"%s")
+		uci -q commit openmptcprouter
+	}
+fi
