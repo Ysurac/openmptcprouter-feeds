@@ -676,7 +676,7 @@ function wizard_add()
 	ucic:commit("unbound")
 
 	-- Get Proxy set by default
-	local default_proxy = luci.http.formvalue("default_proxy") or "shadowsocks"
+	local default_proxy = luci.http.formvalue("default_proxy") or "shadowsocks-rust"
 	if default_proxy == "shadowsocks" and serversnb > 0 and serversnb > disablednb then
 		--ucic:set("shadowsocks-libev","sss0","disabled","0")
 		ucic:set("v2ray","main","enabled","0")
