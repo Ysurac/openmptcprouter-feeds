@@ -86,9 +86,9 @@ interface_macaddr_count() {
 
 interface_max_metric() {
 	local config="$1"
-	if [ "$1" != "omrvpn" ] && [ "$1" != "omr6in4" ] && [ "$1" != "lan" ]; then
+	if [ "$1" != "omrvpn" ] && [ "$1" != "omr6in4" ] && [ "$1" != "lan" ] && [ "$1" != "loopback" ]; then
 		config_get metric "$config" metric
-		if [ "$metric" -gt "$count" ]; then
+		if [ "$metric" -gt "$count" ] && [ "$metric" -lt "1000" ]; then
 			count=$metric
 		fi
 	elif [ "$1" = "omrvpn" ]; then
@@ -114,11 +114,13 @@ interface_multipath_settings() {
 	local intf="$2"
 	local enabled
 
-	config_get enabled "$config" auto "1"
 	network_get_device iface $config
 	[ -z "$iface" ] && network_get_physdev iface $config
 	[ -z "$iface" ] && iface=$(ifstatus "$config" | jsonfilter -q -e '@["l3_device"]')
 	[ -z "$iface" ] && config_get iface "$config" ifname
+	[ -n "$intf" ] && [ "$iface" != "$intf" ] && return 0
+
+	config_get enabled "$config" auto "1"
 	config_get txqueuelen "$config" txqueuelen
 	[ -n "$(echo $iface | grep '@')" ] && iface=$(ifstatus "$config" | jsonfilter -q -e '@["device"]')
 	if [ "$(uci -q get openmptcprouter.${config}.metric)" = "" ] || [ "$(uci -q get openmptcprouter.${config}.metric)" = "1" ]; then
@@ -127,7 +129,7 @@ interface_multipath_settings() {
 	else
 		metric="$(uci -q get openmptcprouter.${config}.metric)"
 	fi
-	[ "$metric" -gt 1000 ] && [ "${config}" != "omrvpn" ] && [ "${config}" != "omr6in4" ] && metric=$((metric-1000))
+	[ "$metric" -gt 1000 ] && [ "${config}" != "omrvpn" ] && [ "${config}" != "omr6in4" ] && [ "${config}" != "loopback" ] && metric=$((metric-1000))
 	if [ "${config}" = "lan" ] || [ "$(uci -q get network.${config}.ip4table)" = "lan" ]; then
 		metric="9999"
 	elif [ "${config}" = "omrvpn" ]; then
