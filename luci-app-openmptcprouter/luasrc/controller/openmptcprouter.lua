@@ -95,6 +95,7 @@ function wizard_add()
 		end)
 		if nbserver == 1 and server_ip ~= "" and server_ip ~= nil then
 			ucic:set("shadowsocks-libev","sss0","server",server_ip)
+			ucic:set("shadowsocks-rust","sss0","server",server_ip)
 			ucic:set("glorytun","vpn","host",server_ip)
 			ucic:set("glorytun-udp","vpn","host",server_ip)
 			ucic:set("dsvpn","vpn","host",server_ip)
