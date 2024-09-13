@@ -257,6 +257,11 @@ function wizard_add()
 		end
 	end
 
+	-- Enable/disable IPv6
+	local disableipv6 = luci.http.formvalue("enableipv6") or "1"
+	ucic:set("openmptcprouter","settings","disable_ipv6",disableipv6)
+
+
 	-- Set interfaces settings
 	local downloadmax = 0
 	local uploadmax = 0
@@ -393,6 +398,10 @@ function wizard_add()
 			ucic:set("network",intf,"ip6addr",ip6addr:gsub("%s+", ""))
 			ucic:set("network",intf,"ip6gw",ip6gw:gsub("%s+", ""))
 			ucic:set("network",intf,"ipv6","1")
+		elseif proto ~= "static" and proto ~= "dhcp" and disableipv6 ~= "1" then
+			ucic:set("network",intf,"ip6addr","")
+			ucic:set("network",intf,"ip6gw","")
+			ucic:set("network",intf,"ipv6","1")
 		else
 			ucic:set("network",intf,"ip6addr","")
 			ucic:set("network",intf,"ip6gw","")
@@ -419,7 +428,8 @@ function wizard_add()
 		local uploadspeed = luci.http.formvalue("cbid.sqm.%s.upload" % intf) or "0"
 		local testspeed = luci.http.formvalue("cbid.sqm.%s.testspeed" % intf) or "0"
 
-		if not ucic:get("qos",intf) ~= "" then
+		local qos_settings = ucic:get("qos",intf) or ""
+		if qos_settings == "" then
 			ucic:set("qos",intf,"interface")
 			ucic:set("qos",intf,"classgroup","Default")
 			ucic:set("qos",intf,"enabled","0")
@@ -427,7 +437,8 @@ function wizard_add()
 			ucic:set("qos",intf,"download","100000")
 		end
 
-		if not ucic:get("sqm",intf) ~= "" then
+		local sqm_settings = ucic:get("sqm",intf) or ""
+		if sqm_settings == "" then
 			local defif = get_device(intf)
 			if defif == "" then
 				defif = ucic:get("network",intf,"device") or ""
@@ -521,9 +532,6 @@ function wizard_add()
 	ucic:save("network")
 	ucic:commit("network")
 
-	-- Enable/disable IPv6
-	local disableipv6 = luci.http.formvalue("enableipv6") or "1"
-	ucic:set("openmptcprouter","settings","disable_ipv6",disableipv6)
 	--local ut = require "luci.util"
 	--local result = ut.ubus("openmptcprouter", "set_ipv6_state", { disable_ipv6 = disableipv6 })
 	local ula = luci.http.formvalue("ula") or ""
@@ -570,7 +578,7 @@ function wizard_add()
 	--	ucic:set("sqm","omrvpn","enabled","0")
 	--end
 
-	ucic:set("sqm","omrvpn","enabled","1")
+	ucic:set("sqm","omrvpn","enabled","0")
 	ucic:set("sqm","omrvpn","download","0")
 	ucic:set("sqm","omrvpn","upload","0")
 
@@ -668,7 +676,7 @@ function wizard_add()
 	ucic:commit("unbound")
 
 	-- Get Proxy set by default
-	local default_proxy = luci.http.formvalue("default_proxy") or "shadowsocks"
+	local default_proxy = luci.http.formvalue("default_proxy") or "shadowsocks-rust"
 	if default_proxy == "shadowsocks" and serversnb > 0 and serversnb > disablednb then
 		--ucic:set("shadowsocks-libev","sss0","disabled","0")
 		ucic:set("v2ray","main","enabled","0")
@@ -759,6 +767,7 @@ function wizard_add()
 	ucic:set("openmptcprouter","settings","proxy",default_proxy)
 	ucic:save("openmptcprouter")
 	ucic:save("shadowsocks-libev")
+	ucic:save("shadowsocks-rust")
 	ucic:save("v2ray")
 	ucic:save("xray")
 
@@ -767,6 +776,14 @@ function wizard_add()
 		if sectionname:match("^sss.*") then
 			ucic:delete("shadowsocks-libev",sectionname,"ip")
 			ucic:set("shadowsocks-libev",sectionname,"disabled","1")
+			ucic:delete("openmptcprouter","omr","ss_" .. sectionname)
+		end
+	end)
+	ucic:foreach("shadowsocks-rust","server", function(s)
+		local sectionname = s[".name"]
+		if sectionname:match("^sss.*") then
+			ucic:delete("shadowsocks-rust",sectionname,"ip")
+			ucic:set("shadowsocks-rust",sectionname,"disabled","1")
 			ucic:delete("openmptcprouter","omr","ss_" .. sectionname)
 		end
 	end)
@@ -818,15 +835,21 @@ function wizard_add()
 						if default_proxy == "shadowsocks" and serversnb > disablednb and ssip ~= "" then
 							ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","0")
 						end
+						ucic:set("shadowsocks-rust","sss" .. nbip,"server",ssip)
+						if default_proxy == "shadowsocks-rust" and serversnb > disablednb and ssip ~= "" then
+							ucic:set("shadowsocks-rust","sss" .. nbip,"disabled","0")
+						end
 						nbip = nbip + 1
 						if disableipv6 == "1" and nbip > 0 then
 							ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","1")
+							ucic:set("shadowsocks-rust","sss" .. nbip,"disabled","1")
 							break
 						end
 					end
 					if nbip == 1 then
 						--ucic:set("shadowsocks-libev","sss" .. nbip,"server",server_ip)
 						ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","1")
+						ucic:set("shadowsocks-rust","sss" .. nbip,"disabled","1")
 					end
 				end
 				k = k + 1
@@ -864,6 +887,10 @@ function wizard_add()
 					if default_proxy == "shadowsocks" and serversnb > disablednb and ssip ~= "" then
 						ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","0")
 					end
+					ucic:set("shadowsocks-rust","sss" .. nbip,"server",ssip)
+					if default_proxy == "shadowsocks-rust" and serversnb > disablednb and ssip ~= "" then
+						ucic:set("shadowsocks-rust","sss" .. nbip,"disabled","0")
+					end
 					nbip = nbip + 1
 					if disableipv6 == "1" and nbip > 0 then
 						break
@@ -872,6 +899,7 @@ function wizard_add()
 				if nbip == 1 then
 				--	ucic:set("shadowsocks-libev","sss" .. nbip,"server",server_ip)
 					ucic:set("shadowsocks-libev","sss" .. nbip,"disabled","1")
+					ucic:set("shadowsocks-rust","sss" .. nbip,"disabled","1")
 				end
 			end
 		end
@@ -894,6 +922,7 @@ function wizard_add()
 	ucic:save("glorytun-udp")
 	--ucic:commit("glorytun")
 	ucic:save("shadowsocks-libev")
+	ucic:save("shadowsocks-rust")
 	--ucic:commit("shadowsocks-libev")
 
 
@@ -974,8 +1003,8 @@ function wizard_add()
 		ucic:set("xray","omrout","s_vless_reality_user_security","chacha20-poly1305")
 		ucic:set("xray","omrout","s_trojan_user_security","chacha20-poly1305")
 		ucic:set("xray","omrout","s_socks_user_security","chacha20-poly1305")
-		ucic:set("xray","omrout","s_shadowsocks_method","2022-blake3-chacha20-poly1305")
-		--ucic:set("xray","omrout","s_shadowsocks_method","2022-blake3-aes-256-gcm")
+		--ucic:set("xray","omrout","s_shadowsocks_method","2022-blake3-chacha20-poly1305")
+		ucic:set("xray","omrout","s_shadowsocks_method","2022-blake3-aes-256-gcm")
 		--ucic:set("shadowsocks-rust","sss0","method","2022-blake3-chacha20-poly1305")
 		--ucic:set("shadowsocks-rust","sss1","method","2022-blake3-chacha20-poly1305")
 		ucic:set("shadowsocks-rust","sss0","method","2022-blake3-aes-256-gcm")
@@ -1034,8 +1063,8 @@ function wizard_add()
 			ucic:set("shadowsocks-rust","sss0","disabled","1")
 			ucic:set("shadowsocks-rust","sss1","disabled","1")
 		end
-		ucic:set("shadowsocks-rust","sss0","key","")
-		ucic:set("shadowsocks-rust","sss1","key","")
+		ucic:set("shadowsocks-rust","sss0","password","")
+		ucic:set("shadowsocks-rust","sss1","password","")
 		ucic:set("xray","omrout","s_shadowsocks_password","")
 		ucic:save("shadowsocks-rust")
 		ucic:commit("shadowsocks-rust")
@@ -1059,6 +1088,8 @@ function wizard_add()
 	ucic:commit("xray")
 	ucic:save("shadowsocks-libev")
 	ucic:commit("shadowsocks-libev")
+	ucic:save("shadowsocks-rust")
+	ucic:commit("shadowsocks-rust")
 
 
 	-- Set Glorytun settings
@@ -1218,6 +1249,7 @@ function wizard_add()
 		--	luci.sys.call("sleep 2")
 		--end
 		luci.sys.call("/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/shadowsocks-rust restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
@@ -1232,6 +1264,7 @@ function wizard_add()
 		luci.sys.call("/etc/init.d/v2ray restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/xray restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/sqm restart >/dev/null 2>/dev/null")
+		luci.sys.call("/etc/init.d/omr-bypass restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/sqm-autorate restart >/dev/null 2>/dev/null")
 		luci.sys.call("/etc/init.d/sysntpd restart >/dev/null 2>/dev/null")
 		luci.http.redirect(luci.dispatcher.build_url("admin/system/" .. menuentry:lower() .. "/status"))
@@ -1299,9 +1332,18 @@ function settings_add()
 	ucic:set("openmptcprouter","settings","disable_ipv6",disable_ipv6)
 	--local dump = require("luci.util").ubus("openmptcprouter", "disableipv6", { disable_ipv6 = tonumber(disable_ipv6)})
 
+	-- Disable 6in4
+	local disable_6in4 = luci.http.formvalue("enable6in4") or "1"
+	ucic:set("openmptcprouter","settings","disable_6in4",disable_6in4)
+
+
 	-- Enable/disable external check
 	local externalcheck = luci.http.formvalue("externalcheck") or "1"
 	ucic:set("openmptcprouter","settings","external_check",externalcheck)
+
+	-- Enable/disable restrict proxy to LAN
+	local restricttolan = luci.http.formvalue("restricttolan") or "0"
+	ucic:set("openmptcprouter","settings","restrict_to_lan",restricttolan)
 
 	-- Enable/disable debug
 	local debug = luci.http.formvalue("debug") or "0"
@@ -1448,6 +1490,7 @@ function settings_add()
 
 	-- Apply all settings
 	luci.sys.call("/etc/init.d/openmptcprouter restart >/dev/null 2>/dev/null")
+	luci.sys.call("/etc/init.d/openmptcprouter-vps set_vps_firewall >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
 
 	-- Done, redirect

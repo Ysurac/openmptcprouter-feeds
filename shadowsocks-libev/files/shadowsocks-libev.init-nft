@@ -11,11 +11,13 @@ START=99
 
 EXTRA_COMMANDS="rules_up rules_down rules_exist"
 
+. /usr/lib/unbound/iptools.sh
+
 ss_confdir=/var/etc/shadowsocks-libev
 ss_bindir=/usr/bin
 
 ssrules_uc="/usr/share/ss-rules/ss-rules.uc"
-ssrules_nft="/etc/nftables.d/90-proxy-rules.nft"
+ssrules_nft="/etc/nftables.d/90-proxy-ss-rules.nft"
 
 ss_mkjson_server_conf() {
 	local cfgserver
@@ -33,10 +35,38 @@ ss_mkjson_server_conf_() {
 	[ -z "$server" ] || json_add_string server "$server"
 	json_add_int server_port "$server_port"
 	[ -z "$method" ] || json_add_string method "$method"
-	[ -z "$key" ] || json_add_string key "$key"
-	[ -z "$password" ] || json_add_string password "$password"
+	[ -z "$key" ] || {
+		key="$(echo $key | sed 's/+/-/g; s/\//_/g;')"
+		json_add_string key "$key"
+	}
+	[ -z "$password" ] || {
+		password="$(echo $password | sed 's/+/-/g; s/\//_/g;')"
+		json_add_string password "$password"
+	}
+	[ -z "$password" ] && [ -z "$key" ] && return 1
 	[ -z "$plugin" ] || json_add_string plugin "$plugin"
 	[ -z "$plugin_opts" ] || json_add_string plugin_opts "$plugin_opts"
+	if [ "$obfs" = 1 ]; then
+		if [ "$obfs_plugin" = "obfs" ]; then
+			obfs_options="obfs=$obfs_type"
+			[ -z "$obfs_host" ] || obfs_options="$obfs_options;obfs-host=$obfs_host"
+			[ -z "$obfs_uri" ] || obfs_options="$obfs_options;obfs-uri=$obfs_uri"
+			[ "$fast_open" = 1 ] && obfs_options="$obfs_options;fast-open"
+			[ "$mptcp" = 1 ] && obfs_options="$obfs_options;mptcp"
+			[ -z "$timeout" ] || obfs_options="$obfs_options;t=$timeout"
+			json_add_string plugin "/usr/bin/obfs-local"
+			json_add_string plugin_opts "$obfs_options"
+		fi
+		if [ "$obfs_plugin" = "v2ray" ]; then
+			obfs_options="loglevel=default"
+			[ "$obfs_type" = "tls" ] && obfs_options="tls"
+			[ -z "$obfs_host" ] || obfs_options="$obfs_options;host=$obfs_host"
+			[ -z "$obfs_uri" ] || obfs_options="$obfs_options;path=$obfs_uri"
+			[ "$fast_open" = 1 ] && obfs_options="$obfs_options;fast-open"
+			json_add_string plugin "/usr/bin/v2ray-plugin"
+			json_add_string plugin_opts "$obfs_options"
+		fi
+	fi
 }
 
 ss_mkjson_ss_local_conf() {
@@ -95,9 +125,18 @@ ss_xxx() {
 		procd_append_param command -b "$bind_address"
 	fi
 	procd_set_param file "$confjson"
+	procd_set_param limits nofile="512000 512000"
 	procd_set_param respawn
 	procd_close_instance
 	ss_rules_cb
+}
+
+ss_omr_servers() {
+	add_ip() {
+		local ip="$1"
+		[ -n "$ip" ] && [ -z "$(echo \"$ss_redir_servers\" | grep \"$ip\")" ] && ss_redir_servers="$ss_redir_servers $ip"
+	}
+	config_list_foreach "$1" ip add_ip
 }
 
 ss_rules_cb() {
@@ -106,12 +145,31 @@ ss_rules_cb() {
 	if [ "$cfgtype" = ss_redir ]; then
 		config_get cfgserver "$cfg" server
 		config_get server "$cfgserver" server
-		ss_redir_servers="$ss_redir_servers $server"
+		if [ -z "$ss_redir_servers" ]; then
+			ss_redir_servers="$server"
+		else
+			ss_redir_servers="$ss_redir_servers $server"
+		fi
 		if [ "$mode" = tcp_only -o "$mode" = "tcp_and_udp" ]; then
 			eval "ss_rules_redir_tcp_$cfg=$local_port"
 		fi
 		if [ "$mode" = udp_only -o "$mode" = "tcp_and_udp" ]; then
 			eval "ss_rules_redir_udp_$cfg=$local_port"
+		fi
+	fi
+}
+
+ss_redir_ports() {
+	port=$(uci -q get shadowsocks-libev.$1.local_port)
+	server=$(uci -q get shadowsocks-libev.$1.server)
+	disabled=$(uci -q get shadowsocks-libev.$1.disabled)
+	server_disabled=$(uci -q get shadowsocks-libev.${server}.disabled)
+	if [ "$disabled" != "1" ] && [ "$server_disabled" != "1" ]; then
+		if [ "$port" -lt "$min_ss_redir_ports" ]; then
+			min_ss_redir_ports=$port
+		fi
+		if [ "$port" -gt "$max_ss_redir_ports" ]; then
+			max_ss_redir_ports=$port
 		fi
 	fi
 }
@@ -131,11 +189,14 @@ ss_rules_nft_gen() {
 	validate_ss_rules_section "$cfg" || return 1
 	[ "$disabled" = 0 ] || return 2
 
+	config_get server "$cfg" server
+	[ "$(uci -q get shadowsocks-libev.${server}.disabled)" = "1" ] && return 2
+
 	if [ "$ss_rules_redir_tcp_$redir_tcp" = "all" ]; then
 		min_ss_redir_ports="65535"
 		max_ss_redir_ports="0"
 		config_load shadowsocks-libev
-		config_foreach ss_redir_ports ss_redir $cfgrulesserver
+		config_foreach ss_redir_ports ss_redir
 		if [ "$min_ss_redir_ports" != "$max_ss_redir_ports" ]; then
 			all_ss_redir_ports=$min_ss_redir_ports-$max_ss_redir_ports
 		else
@@ -150,17 +211,25 @@ ss_rules_nft_gen() {
 		eval local_port_udp="\$ss_rules_redir_udp_$redir_udp"
 	fi
 	[ -n "$local_port_tcp" -o -n "$local_port_udp" ] || return 1
-	remote_servers="$(echo $ss_redir_servers \
+	
+	if [ -z "$(echo $ss_redir_servers | grep ' ')" ]; then
+		valid_ip4=$( valid_subnet4 $ss_redir_servers)
+		valid_ip6=$( valid_subnet6 $ss_redir_servers)
+		if [ "$valid_ip4" = "ok" ] || [ "$valid_ip6" = "ok" ]; then
+			remote_servers=$ss_redir_servers
+		fi
+	fi
+	[ -z "$remote_servers" ] && remote_servers="$(echo $ss_redir_servers \
 		| tr ' ' '\n' \
 		| sort -u \
-		| xargs -n 1 resolveip \
+		| xargs -n 1 resolveip -t 5 \
 		| sort -u)"
 
 	local tmp="/tmp/ssrules"
 	json_init
 	json_add_string o_remote_servers "$remote_servers"
-	json_add_int o_redir_tcp_port "$local_port_tcp"
-	json_add_int o_redir_udp_port "$local_port_udp"
+	json_add_string o_redir_tcp_port "$local_port_tcp"
+	json_add_string o_redir_udp_port "$local_port_udp"
 	json_add_string o_ifnames "$ifnames"
 	json_add_string o_local_default "$local_default"
 	json_add_string o_src_bypass "$src_ips_bypass"
@@ -190,8 +259,9 @@ ss_rules_nft_gen() {
 }
 
 ss_rules_nft_reset() {
-	if [ -f "$ssrules_nft" ]; then
+	if [ -f "$ssrules_nft" ] || [ -f "${ssrules_nft}.down" ]; then
 		rm -f "$ssrules_nft"
+		rm -f "${ssrules_nft}.down"
 		fw4 -q restart
 	fi
 }
@@ -226,12 +296,19 @@ rules_exist() {
 
 start_service() {
 	local cfgtype
-
+	[ -n "$(uci -q get firewall.ss_rules)" ] && {
+		uci -q del firewall.ss_rules
+		uci -q commit firewall
+	}
 	mkdir -p "$ss_confdir"
 	config_load shadowsocks-libev
 	for cfgtype in ss_local ss_redir ss_server ss_tunnel; do
 		config_foreach ss_xxx "$cfgtype" "$cfgtype"
 	done
+	if [ -n "$(uci show openmptcprouter)" ]; then
+		config_load openmptcprouter
+		config_foreach ss_omr_servers server
+	fi
 	ss_rules
 }
 
@@ -240,8 +317,17 @@ stop_service() {
 	rm -rf "$ss_confdir"
 }
 
+restart_service() {
+	stop
+	start
+}
+
+reload_service() {
+	stop
+	start
+}
+
 service_triggers() {
-	procd_add_reload_interface_trigger wan
 	procd_add_reload_trigger shadowsocks-libev
 	procd_open_validate
 	validate_server_section

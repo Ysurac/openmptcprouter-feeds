@@ -10,10 +10,10 @@ let o_dst_bypass4_ = "
 	172.16.0.0/12
 	192.0.0.0/24
 	192.0.2.0/24
+	192.168.0.0/16
 	192.31.196.0/24
 	192.52.193.0/24
 	192.88.99.0/24
-	192.168.0.0/16
 	192.175.48.0/24
 	198.18.0.0/15
 	198.51.100.0/24
@@ -42,6 +42,9 @@ let set_suffix = {
 	},
 	"src_checkdst": {
 		str: o_src_checkdst,
+	},
+	"remote_servers": {
+		str: o_remote_servers
 	},
 	"dst_bypass": {
 		str: o_dst_bypass,

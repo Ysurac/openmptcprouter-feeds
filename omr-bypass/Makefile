@@ -23,7 +23,7 @@ endef
 define Package/$(PKG_NAME)-nft
 SECTION:=net
 CATEGORY:=Network
-DEPENDS:=+curl +dnsmasq-full +sqlite3-cli +firewall4
+DEPENDS:=+curl +dnsmasq-full +sqlite3-cli +firewall4 @!LINUX_5_4
 TITLE:=OMR-ByPass NFT
 endef
 

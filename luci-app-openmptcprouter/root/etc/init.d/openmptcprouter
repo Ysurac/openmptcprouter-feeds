@@ -15,6 +15,7 @@ omr_intf_del() {
 
 omr_intf_check() {
 	[ "$(uci -q get network.$1)" = "" ] && omr_intf_del $1
+	uci -q delete openmptcprouter.$1.publicip
 }
 
 omr_intf_set() {
@@ -79,6 +80,8 @@ omr_set_settings() {
 	config_get disable_ipv6 settings disable_ipv6 "0"
 	if [ "$disable_ipv6" = "1" ]; then
 		uci -q set network.$1.ipv6=0
+	else
+		uci -q set network.$1.ipv6=1
 	fi
 
 	[ -z "$addlatency" ] && addlatency=0
@@ -101,13 +104,13 @@ omr_set_settings() {
 		fi
 
 		if [ "$addlatency" = "0" ] && [ "$(tc qdisc show dev $ifname | grep delay)" != "" ]; then
-			tc qdisc del dev ${ifname} root netem 2>&1 >/dev/null
+			tc qdisc del dev ${ifname} root netem >/dev/null 2>&1
 		fi
 		if [ "$addlatency" != "0" ]; then
 			if [ "$(tc qdisc show dev $ifname | grep delay)" = "" ]; then
-				tc qdisc add dev ${ifname} root netem delay ${addlatency}ms 2>&1 >/dev/null
+				tc qdisc add dev ${ifname} root netem delay ${addlatency}ms >/dev/null 2>&1
 			elif [ "$(tc qdisc show dev $ifname | awk '/delay/ { print $10 }' | sed 's/ms//')" != "$addlatency" ]; then
-				tc qdisc replace dev ${ifname} root netem delay ${addlatency}ms 2>&1 >/dev/null
+				tc qdisc replace dev ${ifname} root netem delay ${addlatency}ms >/dev/null 2>&1
 			fi
 		fi
 	fi
@@ -121,6 +124,7 @@ start_service() {
 	config_load network
 	config_foreach omr_set_settings interface
 	uci -q commit network
+	uci -q del openmptcprouter.omr.vpn
 	uci -q commit openmptcprouter
 
 	[ -d /sys/devices/system/cpu/cpufreq/policy0 ] && {
@@ -165,7 +169,7 @@ start_service() {
 	fi
 
 	if [ "$(uci -q get openmptcprouter.settings.sfe_enabled)" = "1" ]; then
-		[ -z "$(lsmod | grep fast_classifier)" ] && modprobe -q fast_classifier 2>&1 >/dev/null
+		[ -z "$(lsmod | grep fast_classifier)" ] && modprobe -q fast_classifier >/dev/null 2>&1
 		if [ "$(uci -q get openmptcprouter.settings.sfe_bridge)" = "1" ]; then
 			echo 1 >/sys/fast_classifier/skip_to_bridge_ingress
 		else
@@ -173,12 +177,12 @@ start_service() {
 		fi
 		if [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" = "0" ]; then
 			sfe_ipv6=$(cat /sys/sfe_ipv6/debug_dev)
-			[ ! -f /dev/sfe_ipv6 ] && mknod /dev/sfe_ipv6 c $sfe_ipv6 0 2>&1 >/dev/null
+			[ ! -f /dev/sfe_ipv6 ] && mknod /dev/sfe_ipv6 c $sfe_ipv6 0 >/dev/null 2>&1
 		else
 			rm -f /dev/sfe_ipv6
 		fi
 	elif [ -d "/sys/module/fast_classifier" ]; then
-		rmmod fast_classifier 2>&1 >/dev/null
+		rmmod fast_classifier >/dev/null 2>&1
 	fi
 
 	if [ "$(uci -q get openmptcprouter.settings.sipalg)" = "0" ]; then
@@ -188,9 +192,9 @@ start_service() {
 			set firewall.zone_vpn.auto_helper='0'
 			commit firewall
 		EOF
-		[ -n "$(lsmod | grep nf_nat_sip)" ] && rmmod nf_nat_sip 2>&1 >/dev/null
+		[ -n "$(lsmod | grep nf_nat_sip)" ] && rmmod nf_nat_sip >/dev/null 2>&1
 		sleep 2
-		[ -n "$(lsmod | grep nf_conntrack_sip)" ] && rmmod nf_conntrack_sip 2>&1 >/dev/null
+		[ -n "$(lsmod | grep nf_conntrack_sip)" ] && rmmod nf_conntrack_sip >/dev/null 2>&1
 	else
 		uci -q batch <<-EOF >/dev/null
 			set firewall.zone_lan.auto_helper='1'
@@ -198,9 +202,9 @@ start_service() {
 			set firewall.zone_vpn.auto_helper='1'
 			commit firewall
 		EOF
-		modprobe -q nf_conntrack_sip 2>&1 >/dev/null
+		modprobe -q nf_conntrack_sip >/dev/null 2>&1
 		sleep 2
-		modprobe -q nf_nat_sip 2>&1 >/dev/null
+		modprobe -q nf_nat_sip >/dev/null 2>&1
 	fi
 
 	if [ "$(uci -q get rpcd.@rpcd[0].socket)" != "/var/run/ubus/ubus.sock" ]; then
@@ -208,7 +212,7 @@ start_service() {
 			set rpcd.@rpcd[0].socket='/var/run/ubus/ubus.sock'
 			commit rpcd
 		EOF
-		/etc/init.d/rpcd restart 2>&1 >/dev/null
+		/etc/init.d/rpcd restart >/dev/null 2>&1
 	fi
 	if [ "$(pgrep ModemManager)" = "" ] && [ -f /etc/init.d/modemmanager ] && [ -n "$(uci -q show network | grep modemmanager)" ] && [ "$(uci -q openmptcprouter.settings.modemmanager)" != "0" ]; then
 		_log "Can't find ModemManager, start it..."
@@ -229,5 +233,5 @@ reload_service() {
 }
 
 service_triggers() {
-	procd_add_reload_trigger "openmptcprouter" "network"
+	procd_add_reload_trigger "network"
 }

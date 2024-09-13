@@ -328,6 +328,7 @@ function server_settings(server,server_ip,openmptcprouter_vps_key)
 	ucic:save("openmptcprouter")
 	if ucic:get("openmptcprouter",server,"master") == "1" then
 		ucic:set("shadowsocks-libev","sss0","server",server_ip)
+		ucic:set("shadowsocks-rust","sss0","server",server_ip)
 		ucic:set("glorytun","vpn","host",server_ip)
 		ucic:set("dsvpn","vpn","host",server_ip)
 		ucic:set("mlvpn","general","host",server_ip)
@@ -357,6 +358,8 @@ function server_settings(server,server_ip,openmptcprouter_vps_key)
 		ucic:commit("glorytun")
 		ucic:save("shadowsocks-libev")
 		ucic:commit("shadowsocks-libev")
+		ucic:save("shadowsocks-rust")
+		ucic:commit("shadowsocks-rust")
 	end
 end
 
@@ -560,6 +563,20 @@ function update_vps()
 	local vpsgettoken = sys.exec("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
 end
 
+function get_mptcp_config(interface)
+	return ucic:get("network",interface,"multipath")
+end
+
+function set_mptcp_config(interface,state)
+	ucic:set("network",interface,"multipath",state)
+	ucic:save("network")
+	ucic:commit("network")
+	ucic:set("openmptcprouter",interface,"multipath",state)
+	ucic:save("openmptcprouter")
+	ucic:commit("openmptcprouter")
+end
+
+
 function get_rootfs()
 	local rootfs = {}
 	rootfs['format'] = luci.util.trim(sys.exec("mount | awk 'NR==1{print $5}'"))
@@ -760,7 +777,7 @@ function interfaces_status()
 	mArray.openmptcprouter["latest_version_vps"] = uci:get("openmptcprouter", "latest_versions", "vps") or ""
 	mArray.openmptcprouter["proxy"] = uci:get("openmptcprouter", "settings", "proxy") or ""
 	
-	mArray.openmptcprouter["service_addr"] = uci:get("shadowsocks-libev", "sss0", "server") or ""
+	mArray.openmptcprouter["service_addr"] = uci:get("shadowsocks-libev", "sss0", "server") or uci:get("shadowsocks-rust", "sss0", "server") or ""
 	if mArray.openmptcprouter["service_addr"] == "" or mArray.openmptcprouter["service_addr"] == "192.168.1.3" then
 		mArray.openmptcprouter["service_addr"] = ""
 		ucic:foreach("openmptcprouter", "server", function(s)
@@ -775,6 +792,12 @@ function interfaces_status()
 	local ipaddr = ""
 	if net then
 		ipaddr = net:ipaddr()
+	end
+	if ipaddr == "" then
+		net = ntm:get_network("LAN")
+		if net then
+			ipaddr = net:ipaddr()
+		end
 	end
 	mArray.openmptcprouter["local_addr"] = ipaddr
 	--mArray.openmptcprouter["local_addr"] = uci:get("network", "lan", "ipaddr")
@@ -795,6 +818,12 @@ function interfaces_status()
 	end
 	if dns_test == "" then
 		mArray.openmptcprouter["dns"] = true
+	end
+	if uci:get("dhcp","dnsmasq1","filter_aaa") == "1" then
+		mArray.openmptcprouter["dns_filter_aaa"] = true
+	end
+	if uci:get("dhcp","dnsmasq1","filter_a") == "1" then
+		mArray.openmptcprouter["dns_filter_a"] = true
 	end
 
 	mArray.openmptcprouter["ipv6"] = "disabled"
@@ -840,9 +869,9 @@ function interfaces_status()
 		-- shadowsocksaddr
 		mArray.openmptcprouter["proxy_addr"] = uci:get("openmptcprouter","omr","detected_ss_ipv4") or ""
 		if mArray.openmptcprouter["proxy_addr"] == "" and mArray.openmptcprouter["service_addr"] ~= "" then
-			tracker_ip = uci:get("shadowsocks-libev","tracker_sss0","local_address") or "127.0.0.1"
+			tracker_ip = uci:get("shadowsocks-libev","tracker_sss0","local_address") or uci:get("shadowsocks-rust","tracker_sss0","local_address") or "127.0.0.1"
 			if tracker_ip ~= "" then
-				local tracker_port = uci:get("shadowsocks-libev","tracker_sss0","local_port") or "1111"
+				local tracker_port = uci:get("shadowsocks-libev","tracker_sss0","local_port") or uci:get("shadowsocks-rust","tracker_sss0","local_port") or "1111"
 				if mArray.openmptcprouter["external_check"] ~= false then
 					mArray.openmptcprouter["proxy_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m " .. timeout .. " " .. check_ipv4_website))
 					if mArray.openmptcprouter["proxy_addr"] == "" then
@@ -865,6 +894,7 @@ function interfaces_status()
 	mArray.openmptcprouter["vps_admin_error_msg"] = "Not found"
 
 	mArray.openmptcprouter["vps_hostname"] = "Server"
+	mArray.openmptcprouter["vps_kernel"] = ""
 	-- Get VPS info
 	local adminport = ""
 	ucic:foreach("openmptcprouter", "server", function(s)
@@ -872,7 +902,7 @@ function interfaces_status()
 		local master = uci:get("openmptcprouter",s[".name"],"master") or "1"
 		local current = uci:get("openmptcprouter",s[".name"],"current") or "0"
 		for key, value in pairs(serverips) do
-			serverip = value
+			serverip = sys.exec('resolveip -t 1 ' .. value .. ' | head -n 1 | tr -d "\n"')
 			if serverip ~= "" and (current == "1" or mArray.openmptcprouter["wan_addr"] == serverip or mArray.openmptcprouter["wan_addr6"] == serverip) and mArray.openmptcprouter["vps_admin"] == false then
 				mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter", s[".name"], "omr_version") or ""
 				mArray.openmptcprouter["vps_kernel"] = uci:get("openmptcprouter",s[".name"],"kernel") or ""
@@ -887,8 +917,7 @@ function interfaces_status()
 					local vpsinfo_json = ""
 					if mArray.openmptcprouter["service_addr_ip"] ~= "" then
 						vpsinfo_json = sys.exec('curl --max-time ' .. timeout .. ' -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ':' .. adminport .. '/status')
-					end
-					if mArray.openmptcprouter["service_addr_ip6"] ~= "" then
+					elseif mArray.openmptcprouter["service_addr_ip6"] ~= "" then
 						vpsinfo_json = sys.exec('curl --max-time ' .. timeout .. ' -s -k -H "Authorization: Bearer ' .. token .. '" https://[' .. serverip .. ']:' .. adminport .. '/status')
 		    			end
 	    				if vpsinfo_json ~= "" and vpsinfo_json ~= nil then
@@ -974,7 +1003,7 @@ function interfaces_status()
 						mArray.openmptcprouter["vps_admin_error_msg"] = "No result"
 						uci:set("openmptcprouter",s[".name"],"token_error","1")
 						mArray.openmptcprouter["vps_admin_error"] = true
-						uci:delete("openmptcprouter",s[".name"],"token")
+						--uci:delete("openmptcprouter",s[".name"],"token")
 						uci:save("openmptcprouter",s[".name"])
 						uci:commit("openmptcprouter",s[".name"])
 					end
@@ -1032,6 +1061,9 @@ function interfaces_status()
 			if peer == "" then
 				peer = ut.trim(sys.exec("ip -4 r list dev " .. tun_dev .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
 			end
+			if peer == "" then
+				peer = ut.trim(sys.exec("ip -4 r list dev " .. tun_dev .. " | grep -m 1 default | awk '/default via/ {print $3}' | grep -v / | tr -d '\n'"))
+			end
 			if peer ~= "" then
 				local tunnel_ping_test = ut.trim(sys.exec("ping -w 1 -c 1 -I " .. tun_dev .. " " .. peer .. " | grep '100% packet loss'"))
 				if tunnel_ping_test == "" then
@@ -1040,12 +1072,16 @@ function interfaces_status()
 					mArray.openmptcprouter["tun_state"] = "DOWN"
 				end
 				if mArray.openmptcprouter["ipv6"] == "enabled" or mArray.openmptcprouter["service_addr_ip6"] ~= "" then
-					local tunnel_ipv6_gw = uci:get("network","omr6in4","gateway")
-					local tunnel_ping6_test = ut.trim(sys.exec("ping6 -w 1 -c 1 " .. tunnel_ipv6_gw .. "%6in4-omr6in4 | grep '100% packet loss'"))
-					if tunnel_ping6_test == "" then
-						mArray.openmptcprouter["tun6_state"] = "UP"
+					local tunnel_ipv6_gw = uci:get("network","omr6in4","gateway") or ""
+					if tunnel_ipv6_gw ~= "" then
+						local tunnel_ping6_test = ut.trim(sys.exec("ping6 -w 1 -c 1 " .. tunnel_ipv6_gw .. "%6in4-omr6in4 | grep '100% packet loss'"))
+						if tunnel_ping6_test == "" then
+							mArray.openmptcprouter["tun6_state"] = "UP"
+						else
+							mArray.openmptcprouter["tun6_state"] = "DOWN"
+						end
 					else
-						mArray.openmptcprouter["tun6_state"] = "DOWN"
+						mArray.openmptcprouter["tun6_state"] = "UNKNOWN"
 					end
 				end
 			else
@@ -1364,7 +1400,7 @@ function interfaces_status()
 		    end
 	    end
 	    if ifname ~= nil and not (ifname:match("^tun.*") or interface:match("^ovpn.*") or interface:match("^wg.*")) then
-		if ipv6 == "1" or ipv6 == "auto" and gateway6 == ""then
+		if (ipv6 == "1" or ipv6 == "auto") and gateway6 == "" then
 			gateway6 = ut.trim(sys.exec("ip -6 r list dev " .. ifname .. " | grep via | grep -v default | grep -v metric | awk '{print $1}' | tr -d '\n'"))
 		end
 	    end
@@ -1460,26 +1496,67 @@ function interfaces_status()
 	    local server_ping = ""
 	    local server_http = ""
 	    --if connectivity ~= "ERROR" and ifname ~= "" and gateway ~= "" and gw_ping ~= "DOWN" and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" and ipaddr ~= "" then
-	    if ifname ~= "" and (gateway ~= "" or gateway6 ~= "") and ifname ~= nil and mArray.openmptcprouter["service_addr"] ~= "" and (ipaddr ~= "" or ip6addr ~= "") and connectivity ~= "ERROR" then
-		    local serverip = mArray.openmptcprouter["service_addr"]
-		    if serverip == "127.0.0.1" then
-			    serverip = mArray.openmptcprouter["wan_addr"]
-		    end
-		    if serverip ~= "" and uci:get("openmptcprouter", "settings", "disableserverping") ~= "1" then
-			    local server_ping_test = sys.exec("ping -B -w 1 -c 1 -I " .. ifname .. " " .. serverip)
-			    local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
-			    if server_ping_result ~= "" then
-				    server_ping = "DOWN"
-				    if connectivity == "OK" then
-					    connectivity = "WARNING"
-				    end
-			    else
-				    mArray.openmptcprouter["vps_status"] = "UP"
-				    server_ping = "UP"
-				    latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f5 | cut -d '.' -f1"))
-			    end
-		    end
-		    
+	    if ifname ~= "" and (gateway ~= "" or gateway6 ~= "") and ifname ~= nil and (ipaddr ~= "" or ip6addr ~= "") and connectivity ~= "ERROR" then
+		if uci:get("openmptcprouter", "settings", "disableserverping") ~= "1" then
+		    uci:foreach("openmptcprouter", "server", function(s)
+			local serverips = uci:get("openmptcprouter",s[".name"],"ip") or { "" }
+			local master = uci:get("openmptcprouter",s[".name"],"master") or "1"
+			local current = uci:get("openmptcprouter",s[".name"],"current") or "0"
+			if current == "1" then
+				for key, value in pairs(serverips) do
+					server_ping = value
+					if server_ping ~= "UP" then
+						local serverip = mArray.openmptcprouter["service_addr"]
+						if serverip == "127.0.0.1" then
+							serverip = mArray.openmptcprouter["wan_addr"]
+						end
+						if gateway ~= "" then
+							serverip = sys.exec('resolveip -t 1 -4 ' .. value .. ' | head -n 1')
+						elseif gateway6 ~= "" then
+							serverip = sys.exec('resolveip -t 1 -6 ' .. value .. ' | head -n 1')
+						end
+						if serverip == "" then
+							serverip = value
+						end
+						if serverip ~= "" then
+							local server_ping_test = sys.exec("ping -B -w 1 -c 1 -I " .. ifname .. " " .. serverip .. " 2>&1")
+							local server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
+							local server_ping_nobind = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep 'Address not available'"))
+							local server_ping_error = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep -i 'error'"))
+							if server_ping_error ~= "" then
+								server_ping = "DOWN"
+								if connectivity == "OK" then
+									connectivity = "WARNING"
+								end
+							elseif server_ping_result ~= "" then
+								server_ping = "DOWN"
+								if connectivity == "OK" then
+									connectivity = "WARNING"
+								end
+							elseif server_ping_nobind ~= "" then
+								server_ping_test = sys.exec("ping -w 1 -c 1 -I " .. ifname .. " " .. serverip)
+								server_ping_result = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | grep '100% packet loss'"))
+								if server_ping_result ~= "" then
+									server_ping = "DOWN"
+									if connectivity == "OK" then
+										connectivity = "WARNING"
+									end
+								else
+									mArray.openmptcprouter["vps_status"] = "UP"
+									server_ping = "UP"
+									latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f5 | cut -d '.' -f1"))
+								end
+							else
+								mArray.openmptcprouter["vps_status"] = "UP"
+								server_ping = "UP"
+								latency = ut.trim(sys.exec("echo '" .. server_ping_test .. "' | cut -d '/' -s -f5 | cut -d '.' -f1"))
+							end
+						end
+					end
+				end
+			end
+		    end)
+		end
 		    if adminport == "" then
 			    adminport = "65500"
 		    end
@@ -2324,6 +2401,18 @@ local methods = {
 		args = { key = "" },
 		call = function(args)
 			set_openvpn(args.key)
+		end
+	},
+	getmptcpconfig = {
+		args = { interface = "" },
+		call = function(args)
+			get_mptcp_config(args.interface)
+		end
+	},
+	setmptcpconfig = {
+		args = { interface = "", state = "" },
+		call = function(args)
+			set_mptcp_config(args.interface,args.state)
 		end
 	},
 	

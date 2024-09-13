@@ -35,6 +35,13 @@ return view.extend({
 				.map(function(s) { return s['.name']; });
 		};
 
+		s.handleAdd = function(ev) {
+			this.sectiontype = 'interface';
+			var promise = form.GridSection.prototype.handleAdd.apply(this, arguments);
+			this.sectiontype = undefined;
+			return promise;
+		};
+
 		o = s.option(form.Flag, 'enabled', _('Enabled'));
 		o.default = false;
 
@@ -54,19 +61,19 @@ return view.extend({
 
 		o = s.option(form.DynamicList, 'hosts', _('Tracking hostname or IP address'),
 			_('This hostname or IP address will be pinged to determine if the link is up or down. Leave blank to use defaults settings.'));
-		o.datatype = 'hosts';
+		//o.datatype = 'hosts';
 		o.modalonly = true;
 		o.rmempty = false;
 
 		o = s.option(form.DynamicList, 'hosts6', _('Tracking hostname or IP address for IPv6'),
 			_('This hostname or IP address will be pinged to determine if the link is up or down. Leave blank to use defaults settings.'));
-		o.datatype = 'hosts';
+		//o.datatype = 'hosts';
 		o.modalonly = true;
 		o.depends('family', 'ipv4ipv6');
 		o.depends('family', 'ipv6');
 		o.rmempty = false;
 
-		o = s.option(form.ListValue, 'type', _('Tracking method'));
+		o = s.option(form.ListValue, 'type', _('Tracking method'),_('Always ping gateway, then test connection by ping, httping or dns. None mode only ping gateway.'));
 		o.default = 'ping';
 		o.value('none');
 		o.value('ping');
@@ -104,11 +111,12 @@ return view.extend({
 		o.rmempty = false;
 		o.modalonly = true;
 		*/
-
+		/*
 		o = s.option(form.Value, 'reliability', _('Tracking reliability'),
 			_('Acceptable values: 1-100. This many Tracking IP addresses must respond for the link to be deemed up'));
 		o.datatype = 'range(1, 100)';
 		o.default = '1';
+		*/
 
 		o = s.option(form.ListValue, 'count', _('Ping count'));
 		o.default = '1';
@@ -198,14 +206,15 @@ return view.extend({
 		o.value('25');
 		o.modalonly = true;
 
-		o = s.option(form.ListValue, "timeout", _("Ping timeout"));
+		o = s.option(form.Value, "timeout", _("Ping timeout"));
 		o.default = '4';
 		o.value('1', _('%d second').format('1'));
 		for (var i = 2; i <= 10; i++)
 			o.value(String(i), _('%d seconds').format(i));
+		o.rmempty = false;
 		o.modalonly = true;
 
-		o = s.option(form.ListValue, 'interval', _('Ping interval'));
+		o = s.option(form.Value, 'interval', _('Ping interval'));
 		o.default = '10';
 		o.value('1', _('%d second').format('1'));
 		o.value('3', _('%d seconds').format('3'));
@@ -219,6 +228,8 @@ return view.extend({
 		o.value('900', _('%d minutes').format('15'));
 		o.value('1800', _('%d minutes').format('30'));
 		o.value('3600', _('%d hour').format('1'));
+		o.modalonly = true;
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'failure_interval', _('Failure interval'),
 			_('Ping interval during failure detection'));

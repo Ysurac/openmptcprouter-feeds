@@ -8,12 +8,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=iperf
-PKG_VERSION:=3.14
-PKG_RELEASE:=10
+PKG_VERSION:=3.17.1
+PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://github.com/esnet/iperf/archive/refs/tags/
-PKG_HASH:=bbafa2c9687f0f7fe00947dc779b83c91663911e22460005c0ad4623797b3dbd
+PKG_HASH:=105b4fe7fbce31c9b94a3fec10c46e3b4b298adc076e1e3af52b990e1faf2db9
 
 PKG_MAINTAINER:=Yannick Chabanois <ycarus@zugaina.org>
 PKG_LICENSE:=BSD-3-Clause

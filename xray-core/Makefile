@@ -1,7 +1,14 @@
+#
+# Copyright (C) 2023-2024 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=xray
-PKG_VERSION:=1.8.6
+PKG_VERSION:=1.8.24
 PKG_RELEASE:=1
 
 PKG_LICENSE:=MPLv2
@@ -9,7 +16,7 @@ PKG_LICENSE_FILES:=LICENSE
 PKG_MAINTAINER:=Yannick Chabanois <contact@openmptcprouter.com>
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/XTLS/Xray-core.git
-PKG_SOURCE_VERSION:=5a5e615b46369579240dac1fdfe2b5e122c4c4ce
+PKG_SOURCE_VERSION:=6baad79f9881ee2cf75bdc825b3e2e92b289477a
 
 PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_PARALLEL:=1
@@ -20,15 +27,15 @@ include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/openmptcprouter/golang/golang-package.mk
 
 define Package/$(PKG_NAME)/template
-	SECTION:=Custom
-	CATEGORY:=Extra packages
+	SECTION:=net
+	CATEGORY:=Network
 	TITLE:=Xray-core
 	DEPENDS:=$(GO_ARCH_DEPENDS)
-	PROVIDES:=xray-core
 endef
 
 define Package/$(PKG_NAME)-core
 	$(call Package/$(PKG_NAME)/template)
+	PROVIDES:=xray-core
 endef
 
 define Package/$(PKG_NAME)-config
@@ -41,7 +48,7 @@ define Package/$(PKG_NAME)-config-nft
 	TITLE+= (init script with nft)
 endef
 
-define Package/$(PKG_NAME)/description
+define Package/$(PKG_NAME)-core/description
 	Xray-core bare bones binary (compiled without cgo)
 endef
 
@@ -53,7 +60,7 @@ define Package/$(PKG_NAME)-config-nft/description
 	Xray-core init script with nft support
 endef
 
-define Package/$(PKG_NAME)/config
+define Package/$(PKG_NAME)-core/config
 menu "Xray Configuration"
 	depends on PACKAGE_$(PKG_NAME)-core
 

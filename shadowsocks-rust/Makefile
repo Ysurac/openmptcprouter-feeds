@@ -2,19 +2,20 @@
 #
 # Copyright (C) 2017-2020 Yousong Zhou <yszhou4tech@gmail.com>
 # Copyright (C) 2021-2023 ImmortalWrt.org
-# Copyright (C) 2023 Yannick Chabanois (Ycarus) for OpenMPTCProuter
+# Copyright (C) 2023-2024 Yannick Chabanois (Ycarus) for OpenMPTCProuter
 
 include $(TOPDIR)/rules.mk
+include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=shadowsocks-rust
-PKG_VERSION:=1.17.1
+PKG_VERSION:=1.20.4
+PKG_HASH:=cf064ad157974b3e396aab3bb60aab380dbc4e11b736603bfbc8e7a138f6bb26
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/shadowsocks/shadowsocks-rust/tar.gz/v$(PKG_VERSION)?
-PKG_HASH:=97a1c8ebf7fd19de94cd6d0dfee398667e1f4e131ec8a37ecb7c3191af7cc75e
 
-PKG_MAINTAINER:=Tianling Shen <cnsztl@immortalwrt.org>
+PKG_MAINTAINER:=Yannick Chabanois <contact@openmptcprouter.com>
 PKG_LICENSE:=MIT
 PKG_LICENSE_FILES:=LICENSE
 
@@ -23,8 +24,10 @@ PKG_BUILD_DEPENDS:=rust/host
 RUST_PKG_FEATURES:=local-redir
 
 include $(INCLUDE_DIR)/package.mk
-#include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
 include $(TOPDIR)/feeds/openmptcprouter/rust/rust-package.mk
+ifeq ($(ARCH),i386)
+    RUSTC_LDFLAGS+=-C target-feature=+sse2
+endif
 
 define Package/shadowsocks-rust/Default
   define Package/shadowsocks-rust-$(1)
@@ -48,7 +51,6 @@ define Package/shadowsocks-rust-config
   SUBMENU:=Web Servers/Proxies
   TITLE:=shadowsocks-rust config
   URL:=https://github.com/shadowsocks/shadowsocks-rust
-  DEPENDS:=$$(RUST_ARCH_DEPENDS)
 endef
 
 
@@ -76,7 +78,8 @@ define Package/shadowsocks-rust-config-nft
        +resolveip \
        +ucode \
        +ucode-mod-fs \
-       +kmod-nft-tproxy
+       +kmod-nft-tproxy \
+       @!LINUX_5_4
 endef
 
 

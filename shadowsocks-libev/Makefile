@@ -54,7 +54,7 @@ define Package/shadowsocks-libev/Default
     SUBMENU:=Web Servers/Proxies
     TITLE:=shadowsocks-libev $(1)
     URL:=https://github.com/shadowsocks/shadowsocks-libev
-    DEPENDS:=+libcares +libev +libmbedtls +libpcre +libpthread +libsodium +shadowsocks-libev-config +zlib +libpcap +libcap +libstdcpp +libelf
+    DEPENDS:=+libcares +libev +libmbedtls +libpcre2 +libpthread +libsodium +shadowsocks-libev-config +zlib +libpcap +libcap +libstdcpp +libelf
   endef
 
   define Package/shadowsocks-libev-$(1)/install
@@ -122,7 +122,8 @@ define Package/shadowsocks-libev-ss-rules-nft
        +ucode-mod-fs \
        +shadowsocks-libev-ss-redir \
        +shadowsocks-libev-config \
-       +kmod-nft-tproxy
+       +kmod-nft-tproxy \
+       @!LINUX_5_4
 endef
 
 
