@@ -41,7 +41,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 				if [ "$mm_state_failed" = "unknown-capabilities" ]; then
 					_log "Interface $OMR_TRACKER_INTERFACE in failed state in ModemManager, reset modem..."
 					/usr/bin/mmcli -m ${modem} -r >/dev/null 2>&1
-					sleep 30
+				sleep $(uci -q get network.$OMR_TRACKER_INTERFACE.delay || echo '120')
 				elif false && [ "$mm_state_failed" = "sim-missing" ]; then
 					_log "Interface $OMR_TRACKER_INTERFACE in failed state in ModemManager, reset modem..."
 					/usr/bin/mmcli -m ${modem} -r >/dev/null 2>&1
@@ -56,7 +56,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 				sleep 5
 				_log "Set $OMR_TRACKER_INTERFACE up"
 				ifup $OMR_TRACKER_INTERFACE
-				sleep 30
+				sleep $(uci -q get network.$OMR_TRACKER_INTERFACE.delay || echo '120')
 				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.restart_intf=1
 				uci -q commit openmptcprouter
 			elif [ "$mm_state" = "disabled" ]; then
@@ -64,12 +64,12 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 				_log "Interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) disabled, set it up"
 				/usr/bin/mmcli -m ${modem} -e >/dev/null 2>&1
 				ifup $OMR_TRACKER_INTERFACE
-				sleep 30
+				sleep $(uci -q get network.$OMR_TRACKER_INTERFACE.delay || echo '120')
 			elif [ "$mm_state" = "registered" ]; then
 				_log "Interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) registered, reset it"
 				#ifup $OMR_TRACKER_INTERFACE
 				/usr/bin/mmcli -m ${modem} -r >/dev/null 2>&1
-				sleep 30
+				sleep $(uci -q get network.$OMR_TRACKER_INTERFACE.delay || echo '120')
 			elif [ "$mm_state" = "locked" ]; then
 				mm_unlock_required=$(modemmanager_get_field "${MODEM_STATUS}" "modem.generic.unlock-required")
 				mm_generic_sim=$(modemmanager_get_field "${MODEM_STATUS}" "modem.generic.sim")
@@ -82,15 +82,15 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 						if [ "$mm_unlock_retries" -gt "1" ] && [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode)" ]; then
 							_log "Interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) locked, set PIN"
 							mmcli -a -m ${modem} -i $mm_generic_sim --pin=$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode) >/dev/null 2>&1
-							sleep 20
+							sleep 30
 							ifup $OMR_TRACKER_INTERFACE
 						fi
 					fi
 				elif [ "$mm_unlock_required" = "sim-puk" ] && [ "$mm_unlock_retries" -gt "1" ] && [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pukcode)" ] && [ -n "$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode)" ]; then
 					_log "Interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) locked, set PUK"
 					mmcli -i $mm_generic_sim --puk=$(uci -q get network.$OMR_TRACKER_INTERFACE.pukcode) --pin=$(uci -q get network.$OMR_TRACKER_INTERFACE.pincode) >/dev/null 2>&1
-					sleep 30
 				fi
+				sleep $(uci -q get network.$OMR_TRACKER_INTERFACE.delay || echo '120')
 			fi
 		fi
 		if [ "$modemfind" = "0" ]; then
@@ -99,7 +99,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 			#_log "Can't find $OMR_TRACKER_INTERFACE in ModemManager, restart modemmanager..."
 			_log "Can't find $OMR_TRACKER_INTERFACE in ModemManager"
 			#/etc/init.d/modemmanager restart
-			sleep 30
+			sleep $(uci -q get network.$OMR_TRACKER_INTERFACE.delay || echo '120')
 		fi
 	fi
 	#elif [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.proto)" = "modemmanager" ] && [ "$interface_available" = "false" ]; then
