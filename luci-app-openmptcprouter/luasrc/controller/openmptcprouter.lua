@@ -1334,7 +1334,7 @@ function settings_add()
 	--local dump = require("luci.util").ubus("openmptcprouter", "disableipv6", { disable_ipv6 = tonumber(disable_ipv6)})
 
 	-- Disable 6in4
-	local disable_6in4 = luci.http.formvalue("enable6in4") or "1"
+	local disable_6in4 = luci.http.formvalue("enable6in4") or "0"
 	ucic:set("openmptcprouter","settings","disable_6in4",disable_6in4)
 
 

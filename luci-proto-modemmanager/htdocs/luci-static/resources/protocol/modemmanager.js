@@ -159,6 +159,10 @@ return network.registerProtocol('modemmanager', {
 		
 		s.taboption('advanced', form.Flag, 'debugmode', _('Enable Debugmode'));
 
+		o = s.taboption('advanced', form.Value, 'delay', _('Modem init timeout'), _('Amount of seconds to wait for the modem to become ready'));
+		o.datatype = 'uinteger';
+		o.placeholder = '120';
+
 		o = s.taboption('advanced', form.ListValue, 'loglevel', _('Log output level'));
 		o.value('ERR', _('Error'))
 		o.value('WARN', _('Warning'));
