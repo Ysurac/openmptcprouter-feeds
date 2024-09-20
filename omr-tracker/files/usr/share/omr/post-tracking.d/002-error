@@ -10,6 +10,21 @@
 
 interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
 
+disable_pihole() {
+	local server=$1
+	if [ -n "$(uci -q get dhcp.@dnsmasq[0].server | grep '#53' | grep '10.255.25')" ]; then
+		_log "Disable Pi-Hole..."
+		uci -q del_list dhcp.@dnsmasq[0].server="$(uci -q get dhcp.@dnsmasq[0].server | tr ' ' '\n' | grep '#53' | grep '10.255.25')"
+		if [ -z "$(uci -q get dhcp.@dnsmasq[0].server | grep '127.0.0.1#5353')" ]; then
+			uci -q batch <<-EOF >/dev/null
+				add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+				commit dhcp
+			EOF
+		fi
+		/etc/init.d/dnsmasq restart >/dev/null 2>&1
+	fi
+}
+
 # An interface in error will never be used in MPTCP
 if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$interface_up" != "true" ]; }; then
 	#interface_autostart=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["autostart"]')
@@ -221,18 +236,6 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 	fi
 	[ -n "$script_alert_down" ] && eval $script_alert_down
 
-	restart_down=""
-	if [ -n "$OMR_TRACKER_INTERFACE" ]; then
-		restart_down="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.restart_down)"
-	fi
-	[ -z "$restart_down" ] && restart_down="$(uci -q get omr-tracker.defaults.restart_down)"
-	[ "$restart_down" = "1" ] && {
-		_log "Restart $OMR_TRACKER_INTERFACE"
-		ifdown $OMR_TRACKER_INTERFACE >/dev/null 2>&1
-		sleep 5
-		ifup $OMR_TRACKER_INTERFACE >/dev/null 2>&1
-	}
-
 	if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] || [ "$OMR_TRACKER_INTERFACE" = "omr6in4" ]; then
 		if [ "$OMR_TRACKER_STATUS_MSG" = "" ]; then
 			_log "$OMR_TRACKER_INTERFACE down"
@@ -285,6 +288,18 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 			config_foreach set_server_default_route6 server
 		fi
 	fi
+	restart_down=""
+	if [ -n "$OMR_TRACKER_INTERFACE" ]; then
+		restart_down="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.restart_down)"
+	fi
+	[ -z "$restart_down" ] && restart_down="$(uci -q get omr-tracker.defaults.restart_down)"
+	[ "$restart_down" = "1" ] && {
+		_log "Restart $OMR_TRACKER_INTERFACE"
+		ifdown $OMR_TRACKER_INTERFACE >/dev/null 2>&1
+		sleep 5
+		ifup $OMR_TRACKER_INTERFACE >/dev/null 2>&1
+	}
+
 	dns_flush
 	if [ -n "$OMR_TRACKER_INTERFACE" ]; then
 		uci -q delete openmptcprouter.$OMR_TRACKER_INTERFACE.lc
