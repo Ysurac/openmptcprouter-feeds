@@ -305,6 +305,10 @@ return view.extend({
 		o = s.taboption('general', form.DynamicList, 'ipset',
 			_('IP sets'),
 			_('List of IP sets to populate with the IPs of DNS lookup results of the FQDNs also specified here.'));
+		o.filter = function(section_id, name) {
+			return (section_id.startsWith('omr_dscp') == false);
+		};
+
 		o.optional = true;
 		o.placeholder = '/example.org/ipset,ipset6';
 
@@ -754,6 +758,9 @@ return view.extend({
 			_('List of IP sets to populate with the IPs of DNS lookup results of the FQDNs also specified here.'));
 
 		ss = o.subsection;
+		ss.filter = function(section_id, name) {
+			return (section_id.startsWith('omr_') == false);
+		};
 
 		ss.addremove = true;
 		ss.anonymous = true;
