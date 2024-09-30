@@ -1337,6 +1337,12 @@ function settings_add()
 	local disable_6in4 = luci.http.formvalue("enable6in4") or "0"
 	ucic:set("openmptcprouter","settings","disable_6in4",disable_6in4)
 
+	-- Disable ModemManager
+	local disable_modemmanager = luci.http.formvalue("disablemodemmanager") or "0"
+	ucic:set("openmptcprouter","settings","disable_modemmanager",disable_modemmanager)
+	if disable_modemmanager == "1" then
+		luci.sys.exec("/etc/init.d/modemmanager stop")
+	end
 
 	-- Enable/disable external check
 	local externalcheck = luci.http.formvalue("externalcheck") or "1"
