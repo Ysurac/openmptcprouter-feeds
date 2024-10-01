@@ -8,8 +8,8 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=shadowsocks-rust
-PKG_VERSION:=1.20.4
-PKG_HASH:=cf064ad157974b3e396aab3bb60aab380dbc4e11b736603bfbc8e7a138f6bb26
+PKG_VERSION:=1.21.0
+PKG_HASH:=4891475a2389676e4fd3250bb579ffa7d1ad0bc9e3987c3e293c8f3a8a37bded
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
