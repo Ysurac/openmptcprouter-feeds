@@ -155,16 +155,11 @@ set_lan_ips() {
 	config_get proto "$1" proto
 	# No restrict for interfaces with strong name
 	[ -n "$(echo $device | grep -)" ] && uci -q set openmptcprouter.settings.restrict_to_lan="0" && uci commit openmptcprouter
+	uci -q del_list shadowsocks-libev.ss_rules.ifnames="$device"
+	uci -q del_list shadowsocks-rust.ss_rules.ifnames="$device"
 	if [ "$ip4table" != "wan" ] && [ "$ip4table" != "vpn" ] && [ -n "$ip4table" ] && [ -n "$device" ] && ([ "$proto" = "dhcp" ] || [ "$proto" = "static" ]); then
-		# No restrict when vlan
-		[ -n "$(echo $device | grep '\.')" ] && uci -q set openmptcprouter.settings.restrict_to_lan="0" && uci commit openmptcprouter
-		[ -z "$(uci -q get shadowsocks-libev.ss_rules.ifnames | grep $device)" ] && [ -z "$(uci -q get shadowsocks-rust.ss_rules.ifnames | grep $device)" ] && {
-			uci -q add_list shadowsocks-libev.ss_rules.ifnames="$device"
-			uci -q add_list shadowsocks-rust.ss_rules.ifnames="$device"
-		}
-	elif [ -n "$device" ] && [ -n "$(uci -q get shadowsocks-libev.ss_rules.ifnames | grep $device)" ]; then
-		uci -q del_list shadowsocks-libev.ss_rules.ifnames="$device"
-		uci -q del_list shadowsocks-rust.ss_rules.ifnames="$device"
+		uci -q add_list shadowsocks-libev.ss_rules.ifnames="$device"
+		uci -q add_list shadowsocks-rust.ss_rules.ifnames="$device"
 	fi
 }
 config_load network
@@ -176,8 +171,8 @@ config_foreach restart_omrtracker interface
 		delete shadowsocks-rust.ss_rules.ifnames="$device"
 	EOF
 }
-uci -q commit shadowsocks-libev.ss_rules
-uci -q commit shadowsocks-rust.ss_rules
+[ -n "$(uci -q changes shadowsocks-libev)" ] && uci -q commit shadowsocks-libev.ss_rules
+[ -n "$(uci -q changes shadowsocks-rust)" ] && uci -q commit shadowsocks-rust.ss_rules
 multipath_fix() {
 	config_get multipath "$1" multipath
 	[ "$multipath" != "off" ] && return
