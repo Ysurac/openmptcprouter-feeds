@@ -33,7 +33,7 @@ get_mptcp_from_server() {
 	[ -n "$support" ] && break
 }
 
-get_mptcp_from_website() {
+get_mptcpv0_from_website() {
 	multipathip=$(dig +short A multipath-tcp.org | tr -d "\n")
 	ipset add ss_rules_dst_bypass_all $multipathip > /dev/null 2>&1
 	support="$(curl -s -4 -m ${timeout} --interface $intf http://www.multipath-tcp.org)"
@@ -47,7 +47,7 @@ get_mptcp_from_website() {
 	}
 }
 
-get_mptcp_from_website6() {
+get_mptcpv0_from_website6() {
 	multipathip=$(dig +short AAAA multipath-tcp.org | tr -d "\n")
 	ipset add ss_rules6_dst_bypass_all $multipathip > /dev/null 2>&1
 	support="$(curl -s -6 -m ${timeout} --interface $intf http://www.multipath-tcp.org)"
@@ -61,12 +61,68 @@ get_mptcp_from_website6() {
 	}
 }
 
+get_mptcpv1_from_website() {
+	multipathip=$(dig +short A check.mptcp.dev | tr -d "\n")
+	if [ -n "$(ipset list 2>/dev/null | grep ss_rules)" ]; then
+		ipset add ss_rules_dst_bypass_all $multipathip > /dev/null 2>&1
+	fi
+	if [ -n "$(nft list set inet fw4 omr_dst_bypass_all_4 2>/dev/null)" ]; then
+		nft add element inet fw4 omr_dst_bypass_all_4 { $multipathip } >/dev/null 2>&1
+	fi
+	support="$(mptcpize run curl -s -4 -m ${timeout} --interface $intf https://check.mptcp.dev)"
+	if [ -n "$(ipset list 2>/dev/null | grep ss_rules)" ]; then
+		ipset del ss_rules_dst_bypass_all $multipathip > /dev/null 2>&1
+	fi
+	if [ -n "$(nft list set inet fw4 omr_dst_bypass_all_4 2>/dev/null)" ]; then
+		nft delete element inet fw4 omr_dst_bypass_all_4 { $multipathip } >/dev/null 2>&1
+	fi
+	[ -n "$support" ] && {
+		if [ "$support" = "You are using MPTCP." ]; then
+			support="working"
+		else
+			support="not working"
+		fi
+	}
+}
+
+get_mptcpv1_from_website6() {
+	multipathip=$(dig +short AAAA check.mptcp.dev | tr -d "\n")
+	if [ -n "$(ipset list 2>/dev/null | grep ss_rules)" ]; then
+		ipset add ss_rules_dst_bypass_all $multipathip > /dev/null 2>&1
+	fi
+	if [ -n "$(nft list set inet fw4 omr_dst_bypass_all_4 2>/dev/null)" ]; then
+		nft add element inet fw4 omr_dst_bypass_all_4 { $multipathip } >/dev/null 2>&1
+	fi
+	support="$(mptcpize run curl -s -6 -m ${timeout} --interface $intf https://check.mptcp.dev)"
+	if [ -n "$(ipset list 2>/dev/null | grep ss_rules)" ]; then
+		ipset del ss_rules_dst_bypass_all $multipathip > /dev/null 2>&1
+	fi
+	if [ -n "$(nft list set inet fw4 omr_dst_bypass_all_4 2>/dev/null)" ]; then
+		nft delete element inet fw4 omr_dst_bypass_all_4 { $multipathip } >/dev/null 2>&1
+	fi
+	[ -n "$support" ] && {
+		if [ "$support" = "You are using MPTCP." ]; then
+			support="working"
+		else
+			support="not working"
+		fi
+	}
+}
+
 support=""
-config_load openmptcprouter
-config_foreach get_mptcp_from_server server
-if [ ! -f /proc/sys/net/mptcp/enabled ] && [ -z "$support" ]; then
-	[ -n "$(ip -4 a show dev $intf)" ] && get_mptcp_from_website
-	[ -n "$(ip -6 a show dev $intf)" ] && get_mptcp_from_website6
+if [ ! -f /proc/sys/net/mptcp/enabled ]; then
+	# For now API can't give MPTCP status as MPTCP is not correctly enabled on it
+	config_load openmptcprouter
+	config_foreach get_mptcp_from_server server
+fi
+if [ -z "$support" ]; then
+	if [ ! -f /proc/sys/net/mptcp/enabled ]; then
+		[ -n "$(ip -4 a show dev $intf)" ] && get_mptcpv0_from_website
+		[ -z "$support" ] && [ -n "$(ip -6 a show dev $intf)" ] && get_mptcpv0_from_website6
+	else
+		[ -n "$(ip -4 a show dev $intf)" ] && get_mptcpv1_from_website
+		[ -z "$support" ] && [ -n "$(ip -6 a show dev $intf)" ] && get_mptcpv1_from_website6
+	fi
 fi
 if [ "$support" = "working" ]; then
 	echo "MPTCP enabled"
