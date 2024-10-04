@@ -41,7 +41,7 @@ define Package/iptables-mod-ndpi
 #	DEPENDS:=+iptables +iptables-mod-conntrack-extra +kmod-ipt-ndpi +libpcap
 #	DEPENDS:=+iptables +kmod-ipt-ndpi +libpcap @(LINUX_5_4||LINUX_5_15||TARGET_x86_64)
 #	DEPENDS:=+iptables +kmod-ipt-ndpi +libpcap @(LINUX_5_4||LINUX_5_15) @!TARGET_ramips
-	DEPENDS:=+iptables +kmod-ipt-ndpi +libpcap @!TARGET_ramips @!LINUX_6_6 @!LINUX_6_10 @!LINUX_6_11
+	DEPENDS:=+iptables +kmod-ipt-ndpi +libpcap @!TARGET_ramips @!LINUX_6_6 @!LINUX_6_10 @!LINUX_6_11 @!LINUX_6_12
 	MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 endef
 
