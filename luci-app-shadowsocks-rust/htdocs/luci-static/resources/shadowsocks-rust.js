@@ -28,6 +28,7 @@ var names_options_common = [
 	'mode',
 	'mtu',
 	'timeout',
+	'keep_alive',
 	'user',
 	'mptcp',
 ];
@@ -156,6 +157,8 @@ return L.Class.extend({
 		o = s.taboption(tab, form.Value, 'mtu', _('MTU'));
 		o.datatype = 'uinteger';
 		o = s.taboption(tab, form.Value, 'timeout', _('Timeout (sec)'));
+		o.datatype = 'uinteger';
+		o = s.taboption(tab, form.Value, 'keep_alive', _('Keep Alive (sec)'));
 		o.datatype = 'uinteger';
 		s.taboption(tab, form.Value, 'user', _('Run as'));
 
