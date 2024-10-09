@@ -1,6 +1,6 @@
 #
 # Copyright (C) 2021 Jianhui Zhao <zhaojh329@gmail.com>
-# Copyright (C) 2023 Yannick Chabanois (Ycarus) <contact@openmptcprouter.com> for OpenMPTCProuter
+# Copyright (C) 2023-2024 Yannick Chabanois (Ycarus) <contact@openmptcprouter.com> for OpenMPTCProuter
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -27,7 +27,7 @@ include $(INCLUDE_DIR)/package.mk
 define KernelPackage/ovpn-dco-v2
   SUBMENU:=Network Support
   TITLE:=OpenVPN data channel offload
-  DEPENDS:=+kmod-crypto-aead +kmod-udptunnel4 +IPV6:kmod-udptunnel6
+  DEPENDS:=+kmod-crypto-aead +kmod-udptunnel4 +IPV6:kmod-udptunnel6 @!LINUX_6_12
   FILES:=$(PKG_BUILD_DIR)/drivers/net/ovpn-dco/ovpn-dco-v2.ko
   AUTOLOAD:=$(call AutoLoad,30,ovpn-dco-v2)
 endef
