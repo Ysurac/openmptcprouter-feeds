@@ -1809,7 +1809,8 @@ return view.extend({
 						o.placeholder = '201';
 						o.rmempty = true;
 
-						if (not (string.find(uci.get('openmptcprouter','settings','version'), '5.4'))) {
+						var version_omr = uci.get('openmptcprouter', 'settings', 'version') || '';
+						if (!version_omr.includes('5.4')) {
 							if (L.hasSystemFeature('hostapd', 'ocv') || L.hasSystemFeature('wpasupplicant', 'ocv')) {
 								o = ss.taboption('encryption', form.ListValue, 'ocv', _('Operating Channel Validation'), _("Note: Workaround mode allows a STA that claims OCV capability to connect even if the STA doesn't send OCI or negotiate PMF."));
 								o.value('0', _('Disabled'));
