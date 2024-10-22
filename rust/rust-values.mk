@@ -106,4 +106,4 @@ CARGO_PKG_CONFIG_VARS= \
 
 CARGO_PKG_PROFILE:=$(if $(CONFIG_DEBUG),dev,release)
 
-CARGO_RUSTFLAGS+=-Clink-arg=-fuse-ld=$(TARGET_LINKER)
+#CARGO_RUSTFLAGS+=-Clink-arg=-fuse-ld=$(TARGET_LINKER)
