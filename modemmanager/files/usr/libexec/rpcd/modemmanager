@@ -143,6 +143,19 @@ function mm_get_modem_status(modem)
 	table.insert(status["modem"], mstatus["modem"])
 end
 
+function mm_get_modem_gps(modem)
+	location = {}
+	mstatus = {}
+	mm_get_modem_location(modem)
+	if (next(location) ~= nil) then
+		mstatus["location"] = location
+	else
+		mstatus["location"] = {}
+	end
+
+	table.insert(gps["modem"], mstatus["location"])
+end
+
 function aquire_data_modemmanager()
 
 	local command = string.format("/usr/bin/mmcli --list-modems --output-json 2>/dev/null")
@@ -164,6 +177,30 @@ function aquire_data_modemmanager()
 	status["modem"] = {}
 	for k, v in ipairs(modems["modem-list"]) do
 		mm_get_modem_status(modems["modem-list"][k])
+	end
+end
+
+function aquire_data_gps()
+
+	local command = string.format("/usr/bin/mmcli --list-modems --output-json 2>/dev/null")
+
+	local handle = io.popen(command)
+	local output = handle:read("*a")
+	handle:close()
+
+	local ok, modems = pcall(function()
+		return json.decode(output)
+	end)
+
+	if not ok then
+		return
+	end
+
+	entry_cache = {}
+	gps = {}
+	gps["modem"] = {}
+	for k, v in ipairs(modems["modem-list"]) do
+		mm_get_modem_gps(modems["modem-list"][k])
 	end
 end
 
@@ -200,6 +237,7 @@ function main(cmd, call)
 	if cmd == "list" then
 		print(json.encode({
 			dump = {},
+			gps = {},
 			info = {}
 		}))
 	elseif cmd == "call" then
@@ -209,6 +247,9 @@ function main(cmd, call)
 		elseif call == "info" then
 			aquire_data_info()
 			print(json.encode(info))
+		elseif call == "gps" then
+			aquire_data_gps()
+			print(json.encode(gps))
 		end
 	end
 end
