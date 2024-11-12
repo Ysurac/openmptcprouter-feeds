@@ -183,7 +183,8 @@ return L.Class.extend({
 		} else if (stype === 'ss_local' || stype === 'ss_redir' || stype === 'ss_tunnel') {
 			this.cfgvalue_overview_(sdata, lines, names_options_client);
 			if (stype === 'ss_tunnel') {
-				this.cfgvalue_overview_(sdata, lines, ['tunnel_address']);
+				this.cfgvalue_overview_(sdata, lines, ['forward_address']);
+				this.cfgvalue_overview_(sdata, lines, ['forward_port']);
 			}
 			this.cfgvalue_overview_(sdata, lines, names_options_common);
 		} else {
