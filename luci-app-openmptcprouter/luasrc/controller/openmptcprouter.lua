@@ -649,6 +649,10 @@ function wizard_add()
 		end
 		ucic:set("openmptcprouter",server,"port","65500")
 		ucic:set("openmptcprouter",server,"set_firewall","1")
+		ucic:delete("openmptcprouter",server,"detected_ss_ipv4")
+		ucic:delete("openmptcprouter",server,"detected_ss_ipv6")
+		ucic:delete("openmptcprouter",server,"detected_public_ipv4")
+		ucic:delete("openmptcprouter",server,"detected_public_ipv6")
 		ucic:save("openmptcprouter")
 	end
 
