@@ -164,6 +164,7 @@ _ping() {
 			"${host}" 2>&1
 		)
 		loss=$(echo "$ret" | awk '/packet loss/ {gsub("%","");print $6}' | tr -d '\n')
+		
 		if [ -n "$loss" ] && [ "$loss" != "100" ]; then
 			if [ "$localip" = "yes" ]; then
 				latency=$(echo "$ret" | awk -F/ '/rtt/ {print int($5)}' | tr -d '\n')
@@ -205,7 +206,7 @@ _ping() {
 	fi
 	false
 }
-
+#'
 _httping() {
 	local host=$1
 	local deviceip=$2
@@ -216,25 +217,41 @@ _httping() {
 			-y "${deviceip}" \
 			-t "$OMR_TRACKER_TIMEOUT" \
 			-c "$OMR_TRACKER_COUNT" 2>&1
-		) && echo "$ret" | grep -sq "1 ok" && {
+		)
+		bindcheck=$(echo "$ret" | grep "Address not available")
+		[ -n "$bindcheck" ] && OMR_TRACKER_NO_BIND=1
+		loss=$(echo "$ret" | awk '/failed/ {gsub("%",""); print int($5)}' | tr -d '\n')
+		if [ -n "$loss" ] && [ "$loss" != "100" ]; then
 			if [ "$localip" = "yes" ]; then
-				OMR_TRACKER_LATENCY=$(echo "$ret" | cut -d "/" -s -f5 | cut -d "." -f1 | tr -d '\n')
-				#_update_rto "$OMR_TRACKER_LATENCY"
+				latency=$(echo "$ret" | cut -d "/" -s -f5 | cut -d "." -f1 | tr -d '\n')
+				[ -n "$latency" ] && {
+					OMR_TRACKER_LATENCY="$latency"
+					#_update_rto "$OMR_TRACKER_LATENCY"
+				}
+				OMR_TRACKER_LOSS="$loss"
 			fi
 			return
-		}
+		fi
 	else
 		ret=$(httping -l "${host}" \
 			-y "${deviceip}" \
 			-t "$OMR_TRACKER_TIMEOUT" \
 			-c "$OMR_TRACKER_COUNT" 2>&1
-		) && echo "$ret" | grep -sq "1 ok" && {
+		)
+		bindcheck=$(echo "$ret" | grep "Address not available")
+		[ -n "$bindcheck" ] && OMR_TRACKER_NO_BIND=1
+		loss=$(echo "$ret" | awk '/failed/ {gsub("%",""); print int($5)}' | tr -d '\n')
+		if [ -n "$loss" ] && [ "$loss" != "100" ]; then
 			if [ "$localip" = "yes" ]; then
-				OMR_TRACKER_LATENCY=$(echo "$ret" | cut -d "/" -s -f5 | cut -d "." -f1 | tr -d '\n')
-				#_update_rto "$OMR_TRACKER_LATENCY"
+				latency=$(echo "$ret" | cut -d "/" -s -f5 | cut -d "." -f1 | tr -d '\n')
+				[ -n "$latency" ] && {
+					OMR_TRACKER_LATENCY="$latency"
+					#_update_rto "$OMR_TRACKER_LATENCY"
+				}
+				OMR_TRACKER_LOSS="$loss"
 			fi
 			return
-		}
+		fi
 	fi
 	false
 }
