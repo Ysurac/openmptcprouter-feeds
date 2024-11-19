@@ -55,10 +55,15 @@ ss_mkjson_ss_server_conf() {
 
 ss_mkjson_ss_tunnel_conf() {
 	ss_mkjson_server_conf || return 1
-	[ -n "$forward_address" ] || return 1
-	[ -n "$forward_port" ] || return 1
-	json_add_string forward_address "$forward_address"
-	json_add_int forward_port "$forward_port"
+	json_add_array "locals"
+	json_add_object ""
+	json_add_string protocol "${cfgtype/ss_/}"
+	[ -z "$forward_address" ] || json_add_string forward_address "$forward_address"
+	[ -z "$forward_port" ] || json_add_int forward_port "$forward_port"
+	[ -z "$local_address" ] || json_add_string local_address "$local_address"
+	[ -z "$local_port" ] || json_add_int local_port "$local_port"
+	json_close_object
+	json_close_array
 }
 
 ss_xxx() {
@@ -81,11 +86,13 @@ ss_xxx() {
 	json_add_boolean reuse_port "$reuse_port"
 	json_add_boolean no_delay "$no_delay"
 	json_add_boolean mptcp "$mptcp"
-	[ "$cfgtype" != "ss_local" ] && json_add_string protocol "${cfgtype/ss_/}"
-	[ -z "$local_address" ] || json_add_string local_address "$local_address"
-	[ -z "$local_port" ] || json_add_int local_port "$local_port"
-	[ -z "$local_ipv4_address" ] || json_add_string local_ipv4_address "$local_ipv4_address"
-	[ -z "$local_ipv6_address" ] || json_add_string local_ipv6_address "$local_ipv6_address"
+	#[ "$cfgtype" != "ss_local" ] && json_add_string protocol "${cfgtype/ss_/}"
+	if [ "$cfgtype" != "ss_tunnel" ]; then
+		[ -z "$local_address" ] || json_add_string local_address "$local_address"
+		[ -z "$local_port" ] || json_add_int local_port "$local_port"
+		[ -z "$local_ipv4_address" ] || json_add_string local_ipv4_address "$local_ipv4_address"
+		[ -z "$local_ipv6_address" ] || json_add_string local_ipv6_address "$local_ipv6_address"
+	fi
 	[ -z "$mode" ] || json_add_string mode "$mode"
 	[ -z "$mtu" ] || json_add_int mtu "$mtu"
 	[ -z "$timeout" ] || json_add_int timeout "$timeout"
@@ -423,6 +430,6 @@ validate_ss_server_section() {
 validate_ss_tunnel_section() {
 	validate_common_client_options_ ss_tunnel "$1" \
 		"$2" \
-		'forward_address:host'
+		'forward_address:host' \
 		'forward_port:uinteger'
 }
