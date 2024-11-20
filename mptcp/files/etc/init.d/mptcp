@@ -31,6 +31,7 @@ global_multipath_settings() {
 	config_get mptcp_version globals mptcp_version "0"
 	config_get mptcp_stale_loss_cnt globals mptcp_stale_loss_cnt "4"
 	config_get mptcp_pm_type globals mptcp_pm_type "1"
+	config_get mptcp_allow_join_initial_addr_port globals mptcp_allow_join_initial_addr_port "1"
 	
 	[ "$multipath" = "enable" ] && multipath_status=1
 
@@ -62,16 +63,16 @@ global_multipath_settings() {
 		fi
 		ip mptcp limits set add_addr_accepted $mptcp_add_addr_accepted subflows $mptcp_subflows >/dev/null 2>&1
 		#[ -z "$mptcp_debug" ] || sysctl -qew net.mptcp.mptcp_debug="$mptcp_debug"
-		[ -z "$mptcp_checksum" ] || sysctl -qew net.mptcp.mptcp_checksum="$mptcp_checksum"
 		[ -z "$mptcp_add_addr_timeout" ] || sysctl -qew net.mptcp.add_addr_timeout="$mptcp_add_addr_timeout"
 		[ -z "$mptcp_checksum" ] || sysctl -qew net.mptcp.checksum_enabled="$mptcp_checksum"
 		[ -z "$mptcp_stale_loss_cnt" ] || sysctl -qew net.mptcp.stale_loss_cnt="$mptcp_stale_loss_cnt"
 		[ -z "$mptcp_pm_type" ] || sysctl -qew net.mptcp.pm_type="$mptcp_pm_type"
+		[ -z "$mptcp_allow_join_initial_addr_port" ] || sysctl -qew net.mptcp.allow_join_initial_addr_port="$mptcp_allow_initial_addr_port"
 		if [ -n "$mptcp_scheduler" ]; then
 			for scheduler in $(ls -1 /usr/share/bpf/scheduler/*.o); do
 				bpftool struct_ops register $scheduler >/dev/null 2>&1
 			done
-			sysctl -qew net.mptcp.scheduler="$mptcp_scheduler"
+			sysctl -qew net.mptcp.scheduler="$(echo $mptcp_scheduler | sed 's/mptcp_//' 's/.o//')" >/dev/null 2>&1
 		fi
 	fi
 	[ -z "$congestion" ] || sysctl -qew net.ipv4.tcp_congestion_control="$congestion"
@@ -87,13 +88,14 @@ interface_macaddr_count() {
 interface_max_metric() {
 	local config="$1"
 	if [ "$1" != "omrvpn" ] && [ "$1" != "omr6in4" ] && [ "$1" != "lan" ] && [ "$1" != "loopback" ]; then
-		config_get metric "$config" metric
+		config_get metric "$config" ip4table
 		if [ "$metric" -gt "$count" ] && [ "$metric" -lt "1000" ]; then
 			count=$metric
 		fi
 	elif [ "$1" = "omrvpn" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set network.${config}.metric=1500
+			set network.${config}.ip4table=1500
 			commit network
 			set openmptcprouter.${config}.metric=1500
 			commit openmptcprouter
@@ -101,6 +103,7 @@ interface_max_metric() {
 	elif [ "$1" = "omr6in4" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set network.${config}.metric=1201
+			set network.${config}.ip4table=1201
 			commit network
 			set openmptcprouter.${config}.metric=1201
 			commit openmptcprouter
@@ -109,7 +112,7 @@ interface_max_metric() {
 }
 
 interface_multipath_settings() {
-	local mode iface proto metric
+	local mode iface proto metric ip4table
 	local config="$1"
 	local intf="$2"
 	local enabled
@@ -130,20 +133,26 @@ interface_multipath_settings() {
 		metric="$(uci -q get openmptcprouter.${config}.metric)"
 	fi
 	[ "$metric" -gt 1000 ] && [ "${config}" != "omrvpn" ] && [ "${config}" != "omr6in4" ] && [ "${config}" != "loopback" ] && metric=$((metric-1000))
-	if [ "${config}" = "lan" ] || [ "$(uci -q get network.${config}.ip4table)" = "lan" ]; then
+	if [ "${config}" = "lan" ] || [ "$(uci -q get network.${config}.ip4table)" = "lan" ] || [ "$(uci -q get network.${config}.ip4table)" = "9999" ]; then
 		metric="9999"
 	elif [ "${config}" = "omrvpn" ]; then
 		metric="1500"
 	elif [ "${config}" = "omr6in4" ]; then
 		metric="1201"
+	elif [ "$(uci -q get network.${config}.multipath)" = "off" ]; then
+		metric="9998"
 	fi
 	config_set "$config" metric $metric
 	uci -q set network.${config}.metric=$metric
+	uci -q set network.${config}.ip4table=$metric
+	uci -q set network.${config}.ip6table=6$metric
 	uci -q set openmptcprouter.${config}.metric=$metric
 	config_get mode "$config" multipath
 	config_get disabled "$config" disabled
 	[ "$disabled" = "1" ] && mode="off"
 	id=$metric
+	ip4table=$metric
+	ip6table=6$metric
 	[ -n "$iface" ] && {
 		gro=$(uci -q get network.${config}.gro)
 		[ "$gro" = "1" ] && ethtool -K $iface gro on >/dev/null 2>&1
@@ -282,7 +291,7 @@ interface_multipath_settings() {
 			commit network
 		EOF
 	else
-		[ -n "$(ip rule list | grep $id)" ] && ip rule del table $id > /dev/null 2>&1
+		[ -n "$(ip rule list | grep $id)" ] && ip rule del table $ip4table > /dev/null 2>&1
 		ip route flush $id > /dev/null 2>&1
 	fi
 
@@ -300,7 +309,7 @@ interface_multipath_settings() {
 				set network.${config}_route.interface=${config}
 				set network.${config}_route.target=${network}
 				set network.${config}_route.netmask=${netmask}
-				set network.${config}_route.table=${id}
+				set network.${config}_route.table=${ip4table}
 				set network.${config}_route.created=mptcp
 				delete network.${config}_route_default
 				set network.${config}_route_default=route
@@ -308,16 +317,16 @@ interface_multipath_settings() {
 				set network.${config}_route_default.target='0.0.0.0'
 				set network.${config}_route_default.netmask='0.0.0.0'
 				set network.${config}_route_default.gateway=$gateway
-				set network.${config}_route_default.table=${id}
+				set network.${config}_route_default.table=${ip4table}
 				set network.${config}_route_default.created=mptcp
 				commit network
 			EOF
 		else
-			[ -n "$ipaddr" ] && [ -z "$(ip rule show from $ipaddr table $id)" ] && ip rule add from $ipaddr table $id pref 0
-			[ -z "$(ip rule show oif $iface table $id)" ] && ip rule add oif $iface table $id pref 0
+			[ -n "$ipaddr" ] && [ -z "$(ip rule show from $ipaddr table $ip4table)" ] && ip rule add from $ipaddr table $ip4table pref 0
+			[ -z "$(ip rule show oif $iface table $ip4table)" ] && ip rule add oif $iface table $ip4table pref 0
 			ip route replace $network/$netmask dev $iface scope link metric $id $initcwrwnd >/dev/null 2>&1
-			ip route replace $network/$netmask dev $iface scope link table $id $initcwrwnd >/dev/null 2>&1
-			ip route replace default via $gateway dev $iface table $id $initcwrwnd >/dev/null 2>&1
+			ip route replace $network/$netmask dev $iface scope link table $ip4table $initcwrwnd >/dev/null 2>&1
+			ip route replace default via $gateway dev $iface table $ip4table $initcwrwnd >/dev/null 2>&1
 			[ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && ip route replace default via $gateway dev $iface metric $id $initcwrwnd >/dev/null 2>&1
 			#ip route flush cache $id >/dev/null 2>&1
 		fi
@@ -376,7 +385,7 @@ interface_multipath_settings() {
 				commit network
 			EOF
 		else
-			[ -n "$(ip -6 rule list | grep 6$id)" ] && ip -6 rule del table 6$id > /dev/null 2>&1
+			[ -n "$(ip -6 rule list | grep 6$id)" ] && ip -6 rule del table $ip6table > /dev/null 2>&1
 			ip -6 route flush 6$id > /dev/null 2>&1
 		fi
 		if [ -n "$gateway6" ] && [ -n "$network6" ]; then
@@ -393,23 +402,23 @@ interface_multipath_settings() {
 					set network.${config}_route6=route6
 					set network.${config}_route6.interface=${config}
 					set network.${config}_route6.target=${network6}/${netmask6}
-					set network.${config}_route6.table=6${id}
+					set network.${config}_route6.table=${ip6table}
 					set network.${config}_route6.created=mptcp
 					delete network.${config}_route6_default
 					set network.${config}_route6_default=route6
 					set network.${config}_route6_default.interface=${config}
 					set network.${config}_route6_default.target='::'
 					set network.${config}_route6_default.gateway=$gateway6
-					set network.${config}_route6_default.table=6${id}
+					set network.${config}_route6_default.table=${ip6table}
 					set network.${config}_route6_default.created=mptcp
 					commit network
 				EOF
 			else
-				[ -n "$ip6addr" ] && ip -6 rule add from $ip6addr table 6$id pref 0 >/dev/null 2>&1
-				[ -z "$(ip rule show pref 0 table 6$id oif $iface)" ] && ip rule add oif $iface table 6$id pref 0
+				[ -n "$ip6addr" ] && ip -6 rule add from $ip6addr table $ip6table pref 0 >/dev/null 2>&1
+				[ -z "$(ip rule show pref 0 table $ip6table oif $iface)" ] && ip rule add oif $iface table $ip6table pref 0
 				ip -6 route replace $network6/$netmask6 dev $iface scope link metric 6$id $initcwrwnd >/dev/null 2>&1
-				ip -6 route replace $network6/$netmask6 dev $iface scope link table 6$id $initcwrwnd >/dev/null 2>&1
-				ip -6 route replace default via $gateway6 dev $iface table 6$id $initcwrwnd >/dev/null 2>&1
+				ip -6 route replace $network6/$netmask6 dev $iface scope link table $ip6table $initcwrwnd >/dev/null 2>&1
+				ip -6 route replace default via $gateway6 dev $iface table $ip6table $initcwrwnd >/dev/null 2>&1
 				[ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && ip -6 route replace default via $gateway6 dev $iface metric 6$id $initcwrwnd >/dev/null 2>&1
 				#ip -6 route flush cache 6$id >/dev/null 2>&1
 			fi
