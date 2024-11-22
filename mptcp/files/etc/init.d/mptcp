@@ -72,7 +72,7 @@ global_multipath_settings() {
 			for scheduler in $(ls -1 /usr/share/bpf/scheduler/*.o); do
 				bpftool struct_ops register $scheduler >/dev/null 2>&1
 			done
-			sysctl -qew net.mptcp.scheduler="$(echo $mptcp_scheduler | sed 's/mptcp_//' 's/.o//')" >/dev/null 2>&1
+			sysctl -qew net.mptcp.scheduler="$(echo $mptcp_scheduler | sed -e 's/mptcp_//' -e 's/.o//')" >/dev/null 2>&1
 		fi
 	fi
 	[ -z "$congestion" ] || sysctl -qew net.ipv4.tcp_congestion_control="$congestion"
@@ -139,8 +139,8 @@ interface_multipath_settings() {
 		metric="1500"
 	elif [ "${config}" = "omr6in4" ]; then
 		metric="1201"
-	elif [ "$(uci -q get network.${config}.multipath)" = "off" ]; then
-		metric="9998"
+#	elif [ "$(uci -q get network.${config}.multipath)" = "off" ]; then
+#		metric="9998"
 	fi
 	config_set "$config" metric $metric
 	uci -q set network.${config}.metric=$metric
@@ -337,6 +337,41 @@ interface_multipath_settings() {
 		#	#echo "ip route replace default via $gateway dev $iface"
 		#	ip route replace default via $gateway dev $iface >/dev/null 2>&1
 		#}
+		if [ "$txqueuelen" != "" ]; then
+			#ifconfig $iface txqueuelen $txqueuelen > /dev/null 2>&1
+			ip link set dev $iface txqueuelen $txqueuelen > /dev/null 2>&1
+		else
+			#ifconfig $iface txqueuelen 1000 > /dev/null 2>&1
+			ip link set dev $iface txqueuelen 1000 > /dev/null 2>&1
+		fi
+	fi
+	if [ -z "$gateway" ] && [ -n "$network" ]; then
+		if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
+			uci -q batch <<-EOF >/dev/null
+				delete network.${config}_rule
+				set network.${config}_rule=rule
+				set network.${config}_rule.lookup=${id}
+				set network.${config}_rule.priority=0
+				set network.${config}_rule.src="${ipaddr}/32"
+				set network.${config}_rule.created=mptcp
+				delete network.${config}_route
+				set network.${config}_route=route
+				set network.${config}_route.interface=${config}
+				set network.${config}_route.target=${network}
+				set network.${config}_route.netmask=${netmask}
+				set network.${config}_route.table=${ip4table}
+				set network.${config}_route.created=mptcp
+				delete network.${config}_route_default
+				commit network
+			EOF
+		else
+			[ -n "$ipaddr" ] && [ -z "$(ip rule show from $ipaddr table $ip4table)" ] && ip rule add from $ipaddr table $ip4table pref 0
+			[ -z "$(ip rule show oif $iface table $ip4table)" ] && ip rule add oif $iface table $ip4table pref 0
+			ip route replace $network/$netmask dev $iface scope link metric $id $initcwrwnd >/dev/null 2>&1
+			ip route replace $network/$netmask dev $iface scope link table $ip4table $initcwrwnd >/dev/null 2>&1
+			#ip route flush cache $id >/dev/null 2>&1
+		fi
+
 		if [ "$txqueuelen" != "" ]; then
 			#ifconfig $iface txqueuelen $txqueuelen > /dev/null 2>&1
 			ip link set dev $iface txqueuelen $txqueuelen > /dev/null 2>&1
