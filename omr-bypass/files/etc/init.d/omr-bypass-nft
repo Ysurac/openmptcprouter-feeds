@@ -144,8 +144,8 @@ _bypass_domain() {
 				done
 			fi
 		fi
-		if [ "$(uci -q get dhcp.omr_dst_bypass_$intf | grep /$domain/)" = "" ]; then
-			uci -q add_list dhcp.omr_dst_bypass_$intf.domain="$domain"
+		if [ "$(uci -q get dhcp.omr_dst_bypass_${intf}.domain | sed 's/ /\n/g' | grep $domain)" = "" ]; then
+			uci -q add_list dhcp.omr_dst_bypass_${intf}.domain="$domain"
 			uci -q set firewall.omr_dst_bypass_${type}_4.enabled='1'
 			uci -q set firewall.omr_dst_bypass_${type}_dstip_4.enabled='1'
 			uci -q set firewall.omr_dst_bypass_${type}_dstip_4_accept.enabled='1'
@@ -437,7 +437,7 @@ _bypass_proto_without_ndpi() {
 				uci -q batch <<-EOF >/dev/null
 					set firewall.bypass_$proto=ipset
 					set firewall.bypass_$proto.name="bypass_$proto"
-					set firewall.bypass_$proto.match='dest_ip'
+					set firewall.bypass_$proto.match='dest_net'
 					set firewall.bypass_$proto.family='ipv4'
 					set firewall.bypass_$proto.enabled='1'
 					set firewall.bypass_$proto_rule=rule
@@ -455,7 +455,7 @@ _bypass_proto_without_ndpi() {
 				uci -q batch <<-EOF >/dev/null
 					set firewall.bypass6_$proto=ipset
 					set firewall.bypass6_$proto.name="bypass6_$proto"
-					set firewall.bypass6_$proto.match='dest_ip'
+					set firewall.bypass6_$proto.match='dest_net'
 					set firewall.bypass6_$proto.family='ipv6'
 					set firewall.bypass6_$proto.enabled='1'
 					set firewall.bypass6_$proto_rule=rule
@@ -635,12 +635,12 @@ _intf_rule() {
 		uci -q batch <<-EOF
 			set firewall.omr_dst_bypass_${intf}_4=ipset
 			set firewall.omr_dst_bypass_${intf}_4.name="omr_dst_bypass_${intf}_4"
-			set firewall.omr_dst_bypass_${intf}_4.match='dest_ip'
+			set firewall.omr_dst_bypass_${intf}_4.match='dest_net'
 			set firewall.omr_dst_bypass_${intf}_4.family='ipv4'
 			set firewall.omr_dst_bypass_${intf}_4.enabled='1'
 			set firewall.omr_dst_bypass_${intf}_6=ipset
 			set firewall.omr_dst_bypass_${intf}_6.name="omr_dst_bypass_${intf}_6"
-			set firewall.omr_dst_bypass_${intf}_6.match='dest_ip'
+			set firewall.omr_dst_bypass_${intf}_6.match='dest_net'
 			set firewall.omr_dst_bypass_${intf}_6.family='ipv6'
 			set firewall.omr_dst_bypass_${intf}_6.enabled='1'
 		EOF
@@ -1000,6 +1000,8 @@ start_service() {
 	sqlite3 /usr/share/omr-bypass/omr-bypass.db "select distinct(proto) from (select proto from hostproto union all select proto from ipproto) a order by proto;" ".exit" > /usr/share/omr-bypass/omr-bypass-proto.lst
 	config_load omr-bypass
 	config_foreach _add_proto_without_ndpi proto
+	uci -q commit dhcp
+	uci -q commit firewall
 	sort < /usr/share/omr-bypass/omr-bypass-proto.lst > /usr/share/omr-bypass/omr-bypass-proto.lst.new
 	mv /usr/share/omr-bypass/omr-bypass-proto.lst.new /usr/share/omr-bypass/omr-bypass-proto.lst
 	logger -t "omr-bypass" "OMR-ByPass is running"
