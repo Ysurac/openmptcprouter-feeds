@@ -15,8 +15,8 @@ PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/$(PKG_NAME)/$(PKG_NAME).git
-PKG_SOURCE_VERSION:=5e7121e45ff283d30097da381fd7e97c4bb61364
-PKG_VERSION:=1.13-$(PKG_SOURCE_VERSION)
+PKG_SOURCE_VERSION:=277d4574c10bb8e16ab6ab3f38b8e1cb6cd6c678
+PKG_VERSION:=1.14.20241010
 PKG_LICENSE:=GPL-2.0
 PKG_LICENSE_FILES:=COPYING
 
@@ -29,7 +29,6 @@ define KernelPackage/cryptodev
   SUBMENU:=Cryptographic API modules
   TITLE:=Driver for cryptographic acceleration
   URL:=http://cryptodev-linux.org/
-  VERSION:=$(LINUX_VERSION)+$(PKG_VERSION)-$(BOARD)-$(PKG_RELEASE)
   DEPENDS:=+kmod-crypto-authenc +kmod-crypto-hash
   FILES:=$(PKG_BUILD_DIR)/cryptodev.$(LINUX_KMOD_SUFFIX)
   AUTOLOAD:=$(call AutoLoad,50,cryptodev)
