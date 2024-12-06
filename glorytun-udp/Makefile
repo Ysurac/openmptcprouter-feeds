@@ -48,7 +48,7 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) init $(1)/etc/init.d/$(PKG_NAME)
 	$(INSTALL_DIR) $(1)/etc/config
-	touch $(1)/etc/config/glorytun-udp
+	$(INSTALL_DATA) glorytun-udp.config $(1)/etc/config/glorytun-udp
 endef
 
 $(eval $(call BuildPackage,$(PKG_NAME)))
