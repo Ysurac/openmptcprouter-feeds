@@ -9,7 +9,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=simple-obfs
-PKG_VERSION:=486bebd9
+PKG_VERSION:=0.0.6
 PKG_RELEASE:=3
 
 PKG_SOURCE_PROTO:=git

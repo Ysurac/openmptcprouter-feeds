@@ -18,7 +18,7 @@ PKG_RELEASE:=11
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/Ysurac/shadowsocks-libev.git
 PKG_SOURCE_VERSION:=410950d87d8cdf8502d8f59a79dc0ff4c7677543
-PKG_VERSION:=3.3.5-$(PKG_SOURCE_VERSION)
+PKG_VERSION:=3.3.5
 
 PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 

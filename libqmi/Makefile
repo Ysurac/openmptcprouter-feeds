@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=libqmi
-#PKG_SOURCE_VERSION:=1.34.0
+PKG_VERSION:=1.35.6
 PKG_SOURCE_VERSION:=1.35.6-dev
 PKG_RELEASE:=1
 
