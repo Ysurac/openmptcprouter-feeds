@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mlvpn
-PKG_VERSION:=8aa1b16
+PKG_VERSION:=2.6.5.20211028
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git

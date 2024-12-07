@@ -12,8 +12,8 @@ PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/angt/glorytun.git
 PKG_SOURCE_VERSION:=32267e86a6da05b285bb3bf2b136c105dc0af4bb
 PKG_NAME:=glorytun-udp
-PKG_VERSION:=0.3.4-$(PKG_SOURCE_VERSION)
-PKG_RELEASE:=23
+PKG_VERSION:=0.3.4
+PKG_RELEASE:=24
 PKG_LICENSE:=BSD-2-Clause
 PKG_LICENSE_FILES:=LICENSE
 
@@ -48,7 +48,7 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) init $(1)/etc/init.d/$(PKG_NAME)
 	$(INSTALL_DIR) $(1)/etc/config
-	touch $(1)/etc/config/glorytun
+	$(INSTALL_DATA) glorytun-udp.config $(1)/etc/config/glorytun-udp
 endef
 
 $(eval $(call BuildPackage,$(PKG_NAME)))

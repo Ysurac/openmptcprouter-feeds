@@ -8,11 +8,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=tcptraceroute
-PKG_VERSION:=1.5beta7
+PKG_REALVERSION:=1.5beta7
+PKG_VERSION:=1.5_beta7
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_VERSION:=tcptraceroute-$(PKG_VERSION)
+PKG_SOURCE_VERSION:=tcptraceroute-$(PKG_REALVERSION)
 PKG_SOURCE_URL:=https://github.com/mct/tcptraceroute.git
 
 include $(INCLUDE_DIR)/package.mk
