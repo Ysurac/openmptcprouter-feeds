@@ -435,39 +435,39 @@ _bypass_proto_without_ndpi() {
 		if [ -n "$ALLIPS" ]; then
 			if [ "$vpn" != "1" ]; then
 				uci -q batch <<-EOF >/dev/null
-					set firewall.bypass_$proto=ipset
-					set firewall.bypass_$proto.name="bypass_$proto"
-					set firewall.bypass_$proto.match='dest_net'
-					set firewall.bypass_$proto.family='ipv4'
-					set firewall.bypass_$proto.enabled='1'
-					set firewall.bypass_$proto_rule=rule
-					set firewall.bypass_$proto_rule.name="bypass_$proto_rule"
-					set firewall.bypass_$proto_rule.src='lan'
-					set firewall.bypass_$proto_rule.proto='all'
-					set firewall.bypass_$proto_rule.dest='*'
-					set firewall.bypass_$proto_rule.family='ipv4'
-					set firewall.bypass_$proto_rule.target='MARK'
-					set firewall.bypass_$proto_rule.ipset="bypass_$proto"
-					set firewall.bypass_$proto_rule.enabled='1'
-					set firewall.bypass_$proto_rule.set_xmark="0x4539${intfid}"
+					set firewall.bypass_${proto}=ipset
+					set firewall.bypass_${proto}.name="bypass_${proto}"
+					set firewall.bypass_${proto}.match='dest_net'
+					set firewall.bypass_${proto}.family='ipv4'
+					set firewall.bypass_${proto}.enabled='1'
+					set firewall.bypass_${proto}_rule=rule
+					set firewall.bypass_${proto}_rule.name="bypass_${proto}_rule"
+					set firewall.bypass_${proto}_rule.src='lan'
+					set firewall.bypass_${proto}_rule.proto='all'
+					set firewall.bypass_${proto}_rule.dest='*'
+					set firewall.bypass_${proto}_rule.family='ipv4'
+					set firewall.bypass_${proto}_rule.target='MARK'
+					set firewall.bypass_${proto}_rule.ipset="bypass_${proto}"
+					set firewall.bypass_${proto}_rule.enabled='1'
+					set firewall.bypass_${proto}_rule.set_xmark="0x4539${intfid}"
 					commit firewall
 				EOF
 				uci -q batch <<-EOF >/dev/null
-					set firewall.bypass6_$proto=ipset
-					set firewall.bypass6_$proto.name="bypass6_$proto"
-					set firewall.bypass6_$proto.match='dest_net'
-					set firewall.bypass6_$proto.family='ipv6'
-					set firewall.bypass6_$proto.enabled='1'
-					set firewall.bypass6_$proto_rule=rule
-					set firewall.bypass6_$proto_rule.name="bypass6_$proto_rule"
-					set firewall.bypass6_$proto_rule.src='lan'
-					set firewall.bypass6_$proto_rule.family='ipv6'
-					set firewall.bypass6_$proto_rule.dest='*'
-					set firewall.bypass6_$proto_rule.proto='all'
-					set firewall.bypass6_$proto_rule.target='MARK'
-					set firewall.bypass6_$proto_rule.set_xmark="0x6539${intfid}"
-					set firewall.bypass6_$proto_rule.ipset="bypass6_$proto"
-					set firewall.bypass6_$proto_rule.enabled='1'
+					set firewall.bypass6_${proto}=ipset
+					set firewall.bypass6_${proto}.name="bypass6_${proto}"
+					set firewall.bypass6_${proto}.match='dest_net'
+					set firewall.bypass6_${proto}.family='ipv6'
+					set firewall.bypass6_${proto}.enabled='1'
+					set firewall.bypass6_${proto}_rule=rule
+					set firewall.bypass6_${proto}_rule.name="bypass6_${proto}_rule"
+					set firewall.bypass6_${proto}_rule.src='lan'
+					set firewall.bypass6_${proto}_rule.family='ipv6'
+					set firewall.bypass6_${proto}_rule.dest='*'
+					set firewall.bypass6_${proto}_rule.proto='all'
+					set firewall.bypass6_${proto}_rule.target='MARK'
+					set firewall.bypass6_${proto}_rule.set_xmark="0x6539${intfid}"
+					set firewall.bypass6_${proto}_rule.ipset="bypass6_${proto}"
+					set firewall.bypass6_${proto}_rule.enabled='1'
 					commit firewall
 				EOF
 				#if [ "$intfid" != "" ]; then
@@ -499,7 +499,7 @@ _bypass_proto_without_ndpi() {
 				if [ "$valid_ip4" = "ok" ]; then
 					if [ "$vpn" != "1" ]; then
 						#ipset -q add bypass_$proto $ip
-						uci -q add_list firewall.bypass_$proto.entry="$ip"
+						uci -q add_list firewall.bypass_${proto}.entry="$ip"
 					else
 						#ipset -q add omr_dst_bypass_$intf $ip
 						uci -q add_list firewall.omr_dst_bypass_${intf}_4.entry="$ip"
@@ -507,7 +507,7 @@ _bypass_proto_without_ndpi() {
 				elif [ "$valid_ip6" = "ok" ]; then
 					if [ "$vpn" != "1" ]; then
 						#ipset -q add bypass6_$proto $ip
-						uci -q add_list firewall.bypass6_$proto.entry=$ip
+						uci -q add_list firewall.bypass6_${proto}.entry=$ip
 					else
 						#ipset -q add omr6_dst_bypass_$intf $ip
 						uci -q add_list firewall.omr_dst_bypass_${intf}_6.entry="$ip"
@@ -864,7 +864,7 @@ _delete_dhcp_ipset() {
 }
 
 _delete_firewall_rules() {
-	([ -n "$(echo $1 | grep omr_dst_bypass)" ] || [ -n "$(echo $1 | grep omr6_dst_bypass)" ]) && {
+	([ -n "$(echo $1 | grep omr_dst_bypass)" ] || [ -n "$(echo $1 | grep omr6_dst_bypass)" ] || [ -n "$(echo $1 | grep bypass_)" ] || [ -n "$(echo $1 | grep bypass6_)" ]) && {
 		uci -q delete firewall.$1
 	}
 }
@@ -886,6 +886,7 @@ start_service() {
 
 	config_load dhcp
 	config_foreach _delete_dhcp_ipset ipset
+	uci -q delete dhcp.@dnsmasq[0].noipv6
 	#uci -q commit dhcp
 	config_load firewall
 	config_foreach _delete_firewall_rules rule
