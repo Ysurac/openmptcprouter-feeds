@@ -158,9 +158,18 @@ set_lan_ips() {
 	[ -n "$(echo $device | grep -)" ] && uci -q set openmptcprouter.settings.restrict_to_lan="0" && uci commit openmptcprouter
 	uci -q del_list shadowsocks-libev.ss_rules.ifnames="$device"
 	uci -q del_list shadowsocks-rust.ss_rules.ifnames="$device"
+	uci -q del_list unbound.ub_main.iface_lan="$1"
+	uci -q del_list unbound.ub_main.iface_wan="$1"
+	uci -q del_list dhcp.@dnsmasq[0].interface="$1"
+	uci -q del_list dhcp.@dnsmasq[0].notinterface="$1"
 	if [ "$multipath" != "on" ] && [ "$multipath" != "master" ] && [ -n "$device" ] && [ -z "$(echo $device | grep @)" ] && ([ "$proto" = "dhcp" ] || [ "$proto" = "static" ]); then
 		uci -q add_list shadowsocks-libev.ss_rules.ifnames="$device"
 		uci -q add_list shadowsocks-rust.ss_rules.ifnames="$device"
+		uci -q add_list unbound.ub_main.iface_lan="$1"
+		uci -q add_list dhcp.@dnsmasq[0].interface="$1"
+	elif [ "$multipath" = "on" ] || [ "$multipath" = "master" ]; then
+		uci -q add_list unbound.ub_main.iface_wan="$1"
+		uci -q add_list dhcp.@dnsmasq[0].notinterface="$1"
 	fi
 }
 config_load network
@@ -168,15 +177,23 @@ config_foreach restart_omrtracker interface
 [ "$(uci -q get openmptcprouter.settings.restrict_to_lan)" = "1" ] && config_foreach set_lan_ips interface
 [ "$(uci -q get openmptcprouter.settings.restrict_to_lan)" = "0" ] && ([ -n "$(uci -q get shadowsocks-libev.ss_rules.ifnames)" ] || [ -n "$(uci -q get shadowsocks-rust.ss_rules.ifnames)" ]) && {
 	uci -q batch <<-EOF
-		delete shadowsocks-libev.ss_rules.ifnames="$device"
-		delete shadowsocks-rust.ss_rules.ifnames="$device"
+		delete shadowsocks-libev.ss_rules.ifnames
+		delete shadowsocks-rust.ss_rules.ifnames
+		delete unbound.ub_main.lan
+		delete unbound.ub_main.wan
+		delete dhcp.@dnsmasq[0].interface
+		delete dhcp.@dnsmasq[0].notinterface
 	EOF
 }
-[ -n "$(uci -q changes shadowsocks-libev)" ] && uci -q commit shadowsocks-libev.ss_rules
-[ -n "$(uci -q changes shadowsocks-rust)" ] && uci -q commit shadowsocks-rust.ss_rules
+[ -n "$(uci -q changes shadowsocks-libev)" ] && uci -q commit shadowsocks-libev
+[ -n "$(uci -q changes shadowsocks-rust)" ] && uci -q commit shadowsocks-rust
+[ -n "$(uci -q changes unbound)" ] && uci -q commit unbound
+[ -n "$(uci -q changes dhcp)" ] && uci -q commit dhcp
 multipath_fix() {
 	config_get multipath "$1" multipath
 	[ "$multipath" != "off" ] && return
+	config_get device "$1" device
+	{ "$(echo $device | grep '@')" ] && return
 	interface="$(ifstatus $1 | jsonfilter -q -e '@.l3_device' | tr -d '\n')"
 	[ -n "$interface" ] && [ -z "$(multipath $interface | grep deactivated)" ] && {
 		_log "Fix Multipath status on $1 ($interface)"
@@ -294,3 +311,6 @@ if [ "$(uci -q get openmptcprouter.latest_versions.lc)" = "" ] || [ $(($(date +"
 		uci -q commit openmptcprouter
 	}
 fi
+
+# Remove old hidden config files
+find /etc/config/ -mtime +1 -type f -name '\.*' -exec rm {} +
