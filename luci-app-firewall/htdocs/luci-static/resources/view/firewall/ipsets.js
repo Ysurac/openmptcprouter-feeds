@@ -35,6 +35,9 @@ return view.extend({
 		s.sortable  = true;
 		s.cloneable = true;
 		s.nodescriptions = true;
+		s.filter = function(section_id) {
+			return (section_id.startsWith('bypass') == false && section_id.startsWith('omr_dst') == false && section_id.startsWith('omr_dscp') == false);
+		};
 
 
 		/* refer to: https://ipset.netfilter.org/ipset.man.html */

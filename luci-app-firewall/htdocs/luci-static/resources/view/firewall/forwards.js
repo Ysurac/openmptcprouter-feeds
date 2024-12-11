@@ -344,6 +344,9 @@ return view.extend({
 		fwtool.addMarkOption(s, false);
 		fwtool.addLimitOption(s);
 		fwtool.addLimitBurstOption(s);
+		
+		o = s.taboption('advanced', form.Flag, 'v2ray', _('Use V2Ray/XRay'),
+			_('Forward a port (not a range) from server using V2Ray/XRay proxy (if enabled) instead of VPN'));
 
 		if (!L.hasSystemFeature('firewall4')) {
 			o = s.taboption('advanced', form.Value, 'extra', _('Extra arguments'),
