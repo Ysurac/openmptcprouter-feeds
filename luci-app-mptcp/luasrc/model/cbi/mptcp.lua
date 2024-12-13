@@ -67,7 +67,7 @@ if uname.release:sub(1,4) ~= "5.15" and uname.release:sub(1,1) ~= "6" then
     o:value(1, translate("1"))
     o.default = 0
 end
-o = s:option(ListValue, "congestion", translate("Congestion Control"),translate("Default is cubic"))
+o = s:option(ListValue, "congestion", translate("Congestion Control"),translate("Default is bbr"))
 local availablecong = sys.exec("sysctl -n net.ipv4.tcp_available_congestion_control | xargs -n1 | sort | xargs")
 for cong in string.gmatch(availablecong, "[^%s]+") do
 	if cong == "bbr" and string.match(availablecong, "bbr1") then
