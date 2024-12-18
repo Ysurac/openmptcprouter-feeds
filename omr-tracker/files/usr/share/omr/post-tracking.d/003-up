@@ -61,13 +61,18 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 		fi
 	fi
 	if { [ "$default_gw" != "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ]; } && [ "$OMR_TRACKER_DEVICE_GATEWAY" != "" ]; then
-		_log "Tunnel up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE (was $default_gw)"
 		[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Default gw : $default_gw - Current route: $(ip r)"
-		ip route replace default scope global via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE $initcwrwnd >/dev/null 2>&1
+		if [ "$(uci -q get openvpn.omr2.enabled)" != "1" ]; then
+			_log "Tunnel up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE (was $default_gw)"
+			ip route replace default scope global via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE $initcwrwnd >/dev/null 2>&1
+		else
+			_log "Tunnel up : Replace default route by load balancing to $OMR_TRACKER_DEVICE_GATEWAY"
+			set_vpn_balancing_routes "$OMR_TRACKER_DEVICE_GATEWAY"
+		fi
 		if [ "$(pgrep -f openmptcprouter-vps)" = "" ]; then
 			/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &
 		fi
-		[ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && conntrack -D -p udp >/dev/null 2>&1
+		[ -n "$(uci -q get shadowsocks-libev.sss0)" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && conntrack -D -p udp >/dev/null 2>&1
 		[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "New route: $(ip r)"
 	fi
 
@@ -387,6 +392,8 @@ if [ "$(sysctl -qen net.mptcp.mptcp_enabled | tr -d '\n')" = "1" ] || [ "$(sysct
 	}
 fi
 [ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
+
+#[ -n "$OMR_TRACKER_DEVICE" ] && OMR_TRACKER_PREV_DEVICE="$OMR_TRACKER_DEVICE"
 
 #ubus call network reload
 exit 0

@@ -712,3 +712,23 @@ dns_flush() {
 	unbound-control flush-negative >/dev/null 2>&1
 	unbound-control flush-bogus >/dev/null 2>&1
 }
+
+set_vpn_balancing_routes() {
+	vpngw="$1"
+	vpn_route() {
+		local vpnname
+		vpnname=$1
+		[ -z "$(echo $vpnname | grep omr)" ] && return
+		config_get enabled $vpnname enabled
+		[ "$enabled" != "1" ] && return
+		config_get dev $vpnname dev
+		[ -z "$dev" ] && return
+		allvpnroutes="$allvpnroutes nexthop via $vpngw dev $dev"
+	}
+	allvpnroutes=""
+	config_load openvpn
+	config_foreach vpn_route openvpn
+	_log "allvpnroutes: $allvpnroutes"
+	[ -n "$allvpnroutes" ] && ip route replace default scope global${allvpnroutes} >/dev/null 2>&1
+}
+
