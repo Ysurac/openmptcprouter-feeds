@@ -74,34 +74,50 @@ bypass_host_disable() {
 	/etc/init.d/sqm start $INTERFACE
 }
 
+if [ -f /usr/bin/v2ray ]; then
+	upload_file="/usr/bin/v2ray"
+elif [ -f /usr/bin/xray ]; then
+	upload_file="/usr/bin/xray"
+elif [ -f /boot/vmlinuz ]; then
+	upload_file="/boot/vmlinuz"
+elif [ -f /bin/bash ]; then
+	upload_file="/bin/bash"
+else
+	upload_file="/bin/busybox"
+fi
 
 echo "Download server list..."
 wget -q -O /tmp/speedtest.lst https://www.speedtest.net/api/js/servers
 bestuploadurl=""
 besthost=""
 bestpinghost=""
+sponsor=""
 bestping="999"
 echo "Select best server..."
 while read line; do
 	host=$(echo $line | jsonfilter -e '@.host')
 	pinghost=$(echo $host | awk -F: '{print $1}')
-	uploadurl=$(echo $line | jsonfilter -e '@.host')
+	url=$(echo $line | jsonfilter -e '@.url')
 	ping=$(ping -c1 -w1 $pinghost | cut -d "/" -s -f5 | cut -d "." -f1 | tr -d '\n')
 	echo -n "."
 	if [ -n "$ping" ] && [ "$ping" -lt "$bestping" ]; then
 		bestping=$ping
-		bestuploadurl=$uploadurl
+		besturl=$url
 		besthost=$host
 		bestpinghost=$pinghost
+		sponsor=$(echo $line | jsonfilter -q -e '@.sponsor')
 	fi
 done < <(cat /tmp/speedtest.lst | jsonfilter -e '@[*]')
 echo
-echo "Done: url: $bestuploadurl - host: $besthost - ping: $bestping"
+echo "Done: url: $besturl - host: $besthost - ping: $bestping - sponsor: $sponsor"
 echo "Download test:"
 if [ -z "$INTERFACE" ]; then
 	curl -4 $besthost/speedtest/random7000x7000.jpg >/dev/null || echo
 else
 	bypass_host_enable $INTERFACE $bestpinghost
+	echo "Download:"
 	curl -4 --interface $INTERFACE $besthost/speedtest/random7000x7000.jpg >/dev/null || echo
+	echo "Upload:"
+	curl -4 --interface $INTERFACE -F "file=@$upload_file" $besturl >/dev/null || echo
 	bypass_host_disable $INTERFACE $bestpinghost
 fi
