@@ -1451,6 +1451,25 @@ _set_ssrust_server() {
 	fi
 }
 
+_set_openvpn_server() {
+	local option=$2
+	local value=$3
+	if [ "$value" = "true" ]; then
+		value=1
+	elif [ "$value" = "false" ]; then
+		value=0
+	fi
+	if [ "$(echo $1 | grep omr)" != "" ]; then 
+		if [ "$option" = "remote" ]; then
+			uci -q delete openvpn.$1.$option
+			uci -q add_list openvpn.$1.$option=$value
+		else
+			uci -q set openvpn.$1.$option=$value
+		fi
+	fi
+}
+
+
 _set_config_from_vps() {
 	local shadowsocks_disabled vpn glorytun_state redirect shorewall_redirect mlvpn_key openvpn_key dsvpn_key
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
@@ -1625,10 +1644,12 @@ _set_config_from_vps() {
 		if [ "$(uci -q get shadowsocks-libev.sss0.server)" != "127.0.0.1" ]; then
 			config_foreach _set_ss_server server "server" $vpsip
 		fi
-		uci -q commit shadowsocks-libev
-		if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ -n "$(uci -q changes shadowsocks-libev)" ]; then
-			logger -t "OMR-VPS" "Shadowsocks restart..."
-			/etc/init.d/shadowsocks-libev restart >/dev/null 2>&1
+		if [ -n "$(uci -q changes shadowsocks-libev)" ]; then
+			uci -q commit shadowsocks-libev
+			if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ]; then
+				logger -t "OMR-VPS" "Shadowsocks restart..."
+				/etc/init.d/shadowsocks-libev restart >/dev/null 2>&1
+			fi
 		fi
 	fi
 
@@ -1653,10 +1674,12 @@ _set_config_from_vps() {
 		if [ "$(uci -q get shadowsocks-rust.sss0.server)" != "127.0.0.1" ]; then
 			config_foreach _set_ssrust_server server "server" $vpsip
 		fi
-		uci -q commit shadowsocks-rust
-		if [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ] && [ -n "$(uci -q changes shadowsocks-rust)" ]; then
-			logger -t "OMR-VPS" "Shadowsocks Rust restart..."
-			/etc/init.d/shadowsocks-rust restart >/dev/null 2>&1
+		if [ -n "$(uci -q changes shadowsocks-rust)" ]; then
+			uci -q commit shadowsocks-rust
+			if [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ]; then
+				logger -t "OMR-VPS" "Shadowsocks Rust restart..."
+				/etc/init.d/shadowsocks-rust restart >/dev/null 2>&1
+			fi
 		fi
 	fi
 
@@ -1681,10 +1704,12 @@ _set_config_from_vps() {
 			uci -q set v2ray.omrout.s_trojan_address="$vpsip"
 			uci -q set v2ray.omrout.s_socks_address="$vpsip"
 		fi
-		uci -q commit v2ray
-		if [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ -n "$(uci -q changes v2ray)" ]; then
-			logger -t "OMR-VPS" "V2ray restart..."
-			/etc/init.d/v2ray restart >/dev/null 2>&1
+		if [ -n "$(uci -q changes v2ray)" ]; then
+			uci -q commit v2ray
+			if [ "$(uci -q get v2ray.main.enabled)" = "1" ]; then
+				logger -t "OMR-VPS" "V2ray restart..."
+				/etc/init.d/v2ray restart >/dev/null 2>&1
+			fi
 		fi
 	fi
 
@@ -1718,10 +1743,12 @@ _set_config_from_vps() {
 			uci -q set xray.omrout.s_socks_address="$vpsip"
 			uci -q set xray.omrout.s_shadowsocks_address="$vpsip"
 		fi
-		uci -q commit xray
-		if [ "$(uci -q get xray.main.enabled)" = "1" ] && [ -n "$(uci -q changes xray)" ]; then
-			logger -t "OMR-VPS" "Xray restart..."
-			/etc/init.d/xray restart >/dev/null 2>&1
+		if [ -n "$(uci -q changes xray)" ]; then
+			uci -q commit xray
+			if [ "$(uci -q get xray.main.enabled)" = "1" ]; then
+				logger -t "OMR-VPS" "Xray restart..."
+				/etc/init.d/xray restart >/dev/null 2>&1
+			fi
 		fi
 	fi
 
@@ -1747,8 +1774,8 @@ _set_config_from_vps() {
 		if [ "$(uci -q get glorytun.vpn.host)" != "127.0.0.1" ]; then
 			uci -q set glorytun.vpn.host="$vpsip"
 		fi
-		uci -q commit glorytun
 		if [ -n "$(uci -q changes glorytun)" ]; then
+			uci -q commit glorytun
 			logger -t "OMR-VPS" "Glorytun restart..."
 			/etc/init.d/glorytun restart >/dev/null 2>&1
 		fi
@@ -1772,8 +1799,8 @@ _set_config_from_vps() {
 		if [ "$(uci -q get glorytun-udp.vpn.host)" != "127.0.0.1" ]; then
 			uci -q set glorytun-udp.vpn.host="$vpsip"
 		fi
-		uci -q commit glorytun-udp
 		if [ -n "$(uci -q changes glorytun-udp)" ]; then
+			uci -q commit glorytun-udp
 			logger -t "OMR-VPS" "Glorytun UDP restart..."
 			/etc/init.d/glorytun-udp restart >/dev/null 2>&1
 		fi
@@ -1790,20 +1817,31 @@ _set_config_from_vps() {
 		if [ "$vpn" = "openvpn" ]; then
 			openvpn_state=1
 		fi
-		uci -q batch <<-EOF >/dev/null
-			set openvpn.omr.port=$openvpn_port
-			set openvpn.omr.secret="/etc/luci-uploads/openvpn.key"
-		EOF
-		if [ "$openvpn_state" = "1" ]; then
+		config_load openvpn
+		config_foreach _set_openvpn_server openvpn "port" "$openvpn_port"
+		config_foreach _set_openvpn_server openvpn "secret" "/etc/luci-uploads/openvpn.key"
+
+		#uci -q batch <<-EOF >/dev/null
+		#	set openvpn.omr.port=$openvpn_port
+		#	set openvpn.omr.secret="/etc/luci-uploads/openvpn.key"
+		#EOF
+		if [ "$(uci -q get openmptcprouter.settings.openvpn_lb)" = "0" ]; then
+			config_foreach _set_openvpn_server openvpn "enabled" "0"
 			uci -q set openvpn.omr.enabled=$openvpn_state
 		else
-			uci -q del openvpn.omr.enabled
+			config_foreach _set_openvpn_server openvpn "enabled" "$openvpn_state"
 		fi
+		#if [ "$openvpn_state" = "1" ]; then
+		#	uci -q set openvpn.omr.enabled=$openvpn_state
+		#else
+		#	uci -q del openvpn.omr.enabled
+		#fi
 		if [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ]; then
-			uci -q set openvpn.omr.remote="$vpsip"
+			config_foreach _set_openvpn_server openvpn "remote" "$vpsip"
+			#uci -q set openvpn.omr.remote="$vpsip"
 		fi
-		uci -q commit openvpn
 		if [ -n "$(uci -q changes openvpn)" ]; then
+			uci -q commit openvpn
 			logger -t "OMR-VPS" "OpenVPN restart..."
 			/etc/init.d/openvpn restart
 		fi
@@ -1828,21 +1866,43 @@ _set_config_from_vps() {
 		if [ "$vpn" = "openvpn" ]; then
 			openvpn_state=1
 		fi
-		uci -q batch <<-EOF >/dev/null
-			set openvpn.omr.port=$openvpn_port
-			set openvpn.omr.key="/etc/luci-uploads/client.key"
-			set openvpn.omr.cert="/etc/luci-uploads/client.crt"
-			set openvpn.omr.ca="/etc/luci-uploads/ca.crt"
-			set openvpn.omr.enabled=$openvpn_state
-			set openvpn.omr.tls_client=1
-			set openvpn.omr.client=1
-			set openvpn.omr.allow_recursive_routing=1
-		EOF
-		if [ -z "$(uci -q get openvpn.omr.remote | grep $vpsip)" ]; then
-			uci -q add_list openvpn.omr.remote="$vpsip"
+
+		NBCPU=$(grep -c '^processor' /proc/cpuinfo | tr -d "\n")
+		if [ "$NBCPU" -gt 1 ] && [ -z "$(uci -q get openvpn.omr2)" ]; then
+			[ -f /rom/etc/uci-defaults/2020-omr-vpn ] && ./rom/etc/uci-defaults/2020-omr-vpn
+			[ -f /usr/share/omr-update/2020-omr-vpn ] && ./usr/share/omr-update/2020-omr-vpn
 		fi
-		uci -q commit openvpn
+
+		config_load openvpn
+		if [ "$(uci -q get openmptcprouter.settings.openvpn_lb)" = "0" ]; then
+			config_foreach _set_openvpn_server openvpn "enabled" "0"
+			uci -q set openvpn.omr.enabled=$openvpn_state
+		else
+			config_foreach _set_openvpn_server openvpn "enabled" "$openvpn_state"
+		fi
+		config_foreach _set_openvpn_server openvpn "key" "/etc/luci-uploads/client.key"
+		config_foreach _set_openvpn_server openvpn "cert" "/etc/luci-uploads/client.crt"
+		config_foreach _set_openvpn_server openvpn "ca" "/etc/luci-uploads/ca.crt"
+		config_foreach _set_openvpn_server openvpn "tls_client" "1"
+		config_foreach _set_openvpn_server openvpn "client" "1"
+		config_foreach _set_openvpn_server openvpn "allow_recursive_routing" "1"
+
+		#uci -q batch <<-EOF >/dev/null
+		#	set openvpn.omr.port=$openvpn_port
+		#	set openvpn.omr.key="/etc/luci-uploads/client.key"
+		#	set openvpn.omr.cert="/etc/luci-uploads/client.crt"
+		#	set openvpn.omr.ca="/etc/luci-uploads/ca.crt"
+		#	set openvpn.omr.enabled=$openvpn_state
+		#	set openvpn.omr.tls_client=1
+		#	set openvpn.omr.client=1
+		#	set openvpn.omr.allow_recursive_routing=1
+		#EOF
+		if [ "$(uci -q get openvpn.omr.remote)" != "127.0.0.1" ]; then
+			config_foreach _set_openvpn_server openvpn "remote" "$vpsip"
+			#uci -q set openvpn.omr.remote="$vpsip"
+		fi
 		if [ -n "$(uci -q changes openvpn)" ]; then
+			uci -q commit openvpn
 			logger -t "OMR-VPS" "OpenVPN restart..."
 			/etc/init.d/openvpn restart
 		fi
@@ -1864,8 +1924,8 @@ _set_config_from_vps() {
 		if [ "$(uci -q get mlvpn.general.host)" != "127.0.0.1" ]; then
 			uci -q set mlvpn.general.host="$vpsip"
 		fi
-		uci -q commit mlvpn
 		if [ -n "$(uci -q changes mlvpn)" ]; then
+			uci -q commit mlvpn
 			logger -t "OMR-VPS" "MLVPN restart..."
 			/etc/init.d/mlvpn restart
 		fi
@@ -1888,8 +1948,8 @@ _set_config_from_vps() {
 		if [ "$(uci -q get dsvpn.vpn.host)" != "127.0.0.1" ]; then
 			uci -q set dsvpn.vpn.host="$vpsip"
 		fi
-		uci -q commit dsvpn
 		if [ -n "$(uci -q changes dsvpn)" ]; then
+			uci -q commit dsvpn
 			logger -t "OMR-VPS" "DSVPN restart..."
 			/etc/init.d/dsvpn restart
 		fi
@@ -1959,9 +2019,9 @@ _set_config_from_vps() {
 		uci -q batch <<-EOF >/dev/null
 			set network.omr6in4.ip6addr="$omr6in4_vps_remoteip"
 			set network.omr6in4.gateway="$omr6in4_vps_localip"
-			commit network
 		EOF
 		if [ -n "$(uci -q changes network)" ]; then
+			uci -q commit network
 			/etc/init.d/network reload
 			sleep 6
 		fi

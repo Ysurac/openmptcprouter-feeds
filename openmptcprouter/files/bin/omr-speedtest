@@ -1,35 +1,123 @@
 #!/bin/sh
+#
+# Copyright (C) 2018-2024 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+# This script check speed using Speedtest servers
+
 INTERFACE="$1"
+
+bypass_host_enable() {
+	INTERFACE=$1
+	HOST=$2
+	[ -n "$(tc qdisc show dev $INTERFACE | grep ingress)" ] && /etc/init.d/sqm stop $INTERFACE
+	domain=$(echo $HOST | awk -F/ '{print $3}')
+	if [ "$IPV6" = true ]; then
+		hostip=$(dig +nocmd +noall +answer AAAA $domain | grep -v CNAME | awk '{print $5}' | tr '\n' ' ')
+		if [ -n "$(ipset list 2>/dev/null | grep ss_rules6)" ]; then
+			for ip in $hostip; do
+				ipset add ss_rules6_dst_bypass_all $ip
+			done
+		fi
+		if [ -n "$(nft list set inet fw4 omr_dst_bypass_all_6 2>/dev/null)" ]; then
+			for ip in $hostip; do
+				nft add element inet fw4 omr_dst_bypass_all_6 { $ip } >/dev/null 2>&1
+			done
+		fi
+	else
+		hostip=$(dig +nocmd +noall +answer A $domain | grep -v CNAME | awk '{print $5}' | tr '\n' ' ')
+		if [ -n "$(ipset list 2>/dev/null | grep ss_rules)" ]; then
+			for ip in $hostip; do
+				ipset add ss_rules_dst_bypass_all $ip
+			done
+		fi
+		if [ -n "$(nft list set inet fw4 omr_dst_bypass_all_4 2>/dev/null)" ]; then
+			for ip in $hostip; do
+				nft add element inet fw4 omr_dst_bypass_all_4 { $ip } >/dev/null 2>&1
+			done
+		fi
+	fi
+}
+
+
+bypass_host_disable() {
+	INTERFACE=$1
+	HOST=$2
+	domain=$(echo $HOST | awk -F/ '{print $3}')
+	if [ "$IPV6" = true ]; then
+		hostip=$(dig +nocmd +noall +answer AAAA $domain | grep -v CNAME | awk '{print $5}' | tr '\n' ' ')
+		if [ -n "$(ipset list 2>/dev/null | grep ss_rules6)" ]; then
+			for ip in $hostip; do
+				ipset del ss_rules6_dst_bypass_all $ip
+			done
+		fi
+		if [ -n "$(nft list set inet fw4 omr_dst_bypass_all_6 2>/dev/null)" ]; then
+			for ip in $hostip; do
+				nft delete element inet fw4 omr_dst_bypass_all_6 { $ip } >/dev/null 2>&1
+			done
+		fi
+	else
+		hostip=$(dig +nocmd +noall +answer A $domain | grep -v CNAME | awk '{print $5}' | tr '\n' ' ')
+		if [ -n "$(ipset list 2>/dev/null | grep ss_rules)" ]; then
+			for ip in $hostip; do
+				ipset del ss_rules_dst_bypass_all $ip
+			done
+		fi
+		if [ -n "$(nft list set inet fw4 omr_dst_bypass_all_4 2>/dev/null)" ]; then
+			for ip in $hostip; do
+				nft delete element inet fw4 omr_dst_bypass_all_4 { $ip } >/dev/null 2>&1
+			done
+		fi
+	fi
+	/etc/init.d/sqm start $INTERFACE
+}
+
+if [ -f /usr/bin/v2ray ]; then
+	upload_file="/usr/bin/v2ray"
+elif [ -f /usr/bin/xray ]; then
+	upload_file="/usr/bin/xray"
+elif [ -f /boot/vmlinuz ]; then
+	upload_file="/boot/vmlinuz"
+elif [ -f /bin/bash ]; then
+	upload_file="/bin/bash"
+else
+	upload_file="/bin/busybox"
+fi
+
 echo "Download server list..."
-wget -q -O /tmp/speedtest.lst http://c.speedtest.net/speedtest-servers-static.php
+wget -q -O /tmp/speedtest.lst https://www.speedtest.net/api/js/servers
 bestuploadurl=""
 besthost=""
 bestpinghost=""
+sponsor=""
 bestping="999"
 echo "Select best server..."
 while read line; do
-	if [ "$(echo $line | grep url)" != "" ]; then
-		pinghost=$(echo $line | awk -F'"' '{print $18}' | cut -d: -f1)
-		host=$(echo $line | awk -F'"' '{print $18}')
-		uploadurl=$(echo $line | awk -F'"' '{print $2}')
-		ping=$(ping -c1 -w1 $pinghost | cut -d "/" -s -f5 | cut -d "." -f1)
-		echo -n "."
-		if [ -n "$ping" ] && [ "$ping" -lt "$bestping" ]; then
-			bestping=$ping
-			bestuploadurl=$uploadurl
-			besthost=$host
-			bestpinghost=$pinghost
-		fi
+	host=$(echo $line | jsonfilter -e '@.host')
+	pinghost=$(echo $host | awk -F: '{print $1}')
+	url=$(echo $line | jsonfilter -e '@.url')
+	ping=$(ping -c1 -w1 $pinghost | cut -d "/" -s -f5 | cut -d "." -f1 | tr -d '\n')
+	echo -n "."
+	if [ -n "$ping" ] && [ "$ping" -lt "$bestping" ]; then
+		bestping=$ping
+		besturl=$url
+		besthost=$host
+		bestpinghost=$pinghost
+		sponsor=$(echo $line | jsonfilter -q -e '@.sponsor')
 	fi
-done < /tmp/speedtest.lst
+done < <(cat /tmp/speedtest.lst | jsonfilter -e '@[*]')
 echo
-echo "Done: url: $bestuploadurl - host: $besthost - ping: $bestping"
+echo "Done: url: $besturl - host: $besthost - ping: $bestping - sponsor: $sponsor"
 echo "Download test:"
 if [ -z "$INTERFACE" ]; then
 	curl -4 $besthost/speedtest/random7000x7000.jpg >/dev/null || echo
 else
-	hostip=$(dig +short $bestpinghost | tr -d "\n")
-	ipset add ss_rules_dst_bypass_all $hostip
+	bypass_host_enable $INTERFACE $bestpinghost
+	echo "Download:"
 	curl -4 --interface $INTERFACE $besthost/speedtest/random7000x7000.jpg >/dev/null || echo
-	ipset del ss_rules_dst_bypass_all $hostip
+	echo "Upload:"
+	curl -4 --interface $INTERFACE -F "file=@$upload_file" $besturl >/dev/null || echo
+	bypass_host_disable $INTERFACE $bestpinghost
 fi

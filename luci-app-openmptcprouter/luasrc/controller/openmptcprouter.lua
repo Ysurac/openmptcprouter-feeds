@@ -830,8 +830,15 @@ function wizard_add()
 					ucic:set("xray","omrout","s_trojan_address",server_ip)
 					ucic:set("xray","omrout","s_socks_address",server_ip)
 					ucic:set("xray","omrout","s_shadowsocks_address",server_ip)
-					luci.sys.call("uci -q del openvpn.omr.remote")
-					luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
+					ucic:foreach("openvpn","openvpn", function(s)
+						local sectionname = s[".name"]
+						if sectionname:match("^omr.*") then
+							luci.sys.call("uci -q del openvpn." .. sectionname .. ".remote")
+							luci.sys.call("uci -q add_list openvpn." .. sectioname .. ".remote=" .. server_ip)
+						end
+					end)
+					--luci.sys.call("uci -q del openvpn.omr.remote")
+					--luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
 					ucic:set("qos","serverin","srchost",server_ip)
 					ucic:set("qos","serverout","dsthost",server_ip)
 					local nbip = 0
@@ -882,8 +889,15 @@ function wizard_add()
 				ucic:set("xray","omrout","s_trojan_address",server_ip)
 				ucic:set("xray","omrout","s_socks_address",server_ip)
 				ucic:set("xray","omrout","s_shadowsocks_address",server_ip)
-				luci.sys.call("uci -q del openvpn.omr.remote")
-				luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
+				ucic:foreach("openvpn","openvpn", function(s)
+					local sectionname = s[".name"]
+					if sectionname:match("^omr.*") then
+						luci.sys.call("uci -q del openvpn." .. sectionname .. ".remote")
+						luci.sys.call("uci -q add_list openvpn." .. sectionname .. ".remote=" .. server_ip)
+					end
+				end)
+				--luci.sys.call("uci -q del openvpn.omr.remote")
+				--luci.sys.call("uci -q add_list openvpn.omr.remote=" .. server_ip)
 				ucic:set("qos","serverin","srchost",server_ip)
 				ucic:set("qos","serverout","dsthost",server_ip)
 				local nbip = 0
@@ -938,7 +952,13 @@ function wizard_add()
 		ucic:set("shadowsocks-libev","sss1","method","none")
 		ucic:set("shadowsocks-rust","sss0","method","none")
 		ucic:set("shadowsocks-rust","sss1","method","none")
-		ucic:set("openvpn","omr","cipher","none")
+		ucic:foreach("openvpn","openvpn", function(s)
+			local sectionname = s[".name"]
+			if sectionname:match("^omr.*") then
+				ucic:set("openvpn",sectionname,"cipher","none")
+			end
+		end)
+		--ucic:set("openvpn","omr","cipher","none")
 		ucic:set("mlvpn","general","cleartext_data","1")
 		ucic:set("v2ray","omrout","s_vmess_user_security","none")
 		ucic:set("v2ray","omrout","s_vless_user_security","none")
@@ -957,7 +977,13 @@ function wizard_add()
 		ucic:set("shadowsocks-libev","sss1","method","aes-256-gcm")
 		ucic:set("glorytun","vpn","chacha20","0")
 		ucic:set("glorytun-udp","vpn","chacha","0")
-		ucic:set("openvpn","omr","cipher","AES-256-GCM")
+		ucic:foreach("openvpn","openvpn", function(s)
+			local sectionname = s[".name"]
+			if sectionname:match("^omr.*") then
+				ucic:set("openvpn",sectionname,"cipher","AES-256-GCM")
+			end
+		end)
+		--ucic:set("openvpn","omr","cipher","AES-256-GCM")
 		ucic:set("mlvpn","general","cleartext_data","0")
 		ucic:set("v2ray","omrout","s_vmess_user_security","aes-128-gcm")
 		ucic:set("v2ray","omrout","s_vless_user_security","aes-128-gcm")
@@ -977,7 +1003,13 @@ function wizard_add()
 		ucic:set("shadowsocks-libev","sss1","method","aes-256-cfb")
 		ucic:set("glorytun","vpn","chacha20","0")
 		ucic:set("glorytun-udp","vpn","chacha","0")
-		ucic:set("openvpn","omr","cipher","AES-256-CFB")
+		ucic:foreach("openvpn","openvpn", function(s)
+			local sectionname = s[".name"]
+			if sectionname:match("^omr.*") then
+				ucic:set("openvpn",sectionname,"cipher","AES-256-CFB")
+			end
+		end)
+		--ucic:set("openvpn","omr","cipher","AES-256-CFB")
 		ucic:set("mlvpn","general","cleartext_data","0")
 		ucic:set("v2ray","omrout","s_vmess_user_security","aes-128-gcm")
 		ucic:set("v2ray","omrout","s_vless_user_security","aes-128-gcm")
@@ -997,7 +1029,13 @@ function wizard_add()
 		ucic:set("shadowsocks-libev","sss1","method","chacha20-ietf-poly1305")
 		ucic:set("glorytun","vpn","chacha20","1")
 		ucic:set("glorytun-udp","vpn","chacha","1")
-		ucic:set("openvpn","omr","cipher","chacha20-poly1305")
+		ucic:foreach("openvpn","openvpn", function(s)
+			local sectionname = s[".name"]
+			if sectionname:match("^omr.*") then
+				ucic:set("openvpn",sectionname,"cipher","chacha20-poly1305")
+			end
+		end)
+		--ucic:set("openvpn","omr","cipher","chacha20-poly1305")
 		ucic:set("mlvpn","general","cleartext_data","0")
 		ucic:set("v2ray","omrout","s_vmess_user_security","chacha20-poly1305")
 		ucic:set("v2ray","omrout","s_vless_user_security","chacha20-poly1305")
@@ -1224,10 +1262,34 @@ function wizard_add()
 	ucic:commit("ubond")
 
 	if default_vpn == "openvpn" and disablednb ~= serversnb  then
-		ucic:set("openvpn","omr","enabled",1)
-		ucic:set("network","omrvpn","proto","none")
+		if ucic:get("openmptcprouter","settings","openvpn_lb") == "0" then
+			ucic:foreach("openvpn","openvpn", function(s)
+				local sectionname = s[".name"]
+				if sectionname:match("^omr.*") then
+					ucic:set("openvpn",sectionname,"enabled",0)
+					ucic:set("network",sectioname,"proto","none")
+				end
+			end)
+			ucic:set("openvpn","omr","enabled",1)
+		else
+			ucic:foreach("openvpn","openvpn", function(s)
+				local sectionname = s[".name"]
+				if sectionname:match("^omr.*") then
+					ucic:set("openvpn",sectionname,"enabled",1)
+					ucic:set("network",sectioname,"proto","none")
+				end
+			end)
+		--ucic:set("openvpn","omr","enabled",1)
+		end
+		--ucic:set("network","omrvpn","proto","none")
 	else
-		ucic:delete("openvpn","omr","enabled")
+		ucic:foreach("openvpn","openvpn", function(s)
+			local sectionname = s[".name"]
+			if sectionname:match("^omr.*") then
+				ucic:delete("openvpn",sectionname,"enabled")
+			end
+		end)
+		--ucic:delete("openvpn","omr","enabled")
 	end
 	ucic:save("openvpn")
 	ucic:commit("openvpn")
@@ -1361,6 +1423,17 @@ function settings_add()
 	-- Enable/disable external check
 	local externalcheck = luci.http.formvalue("externalcheck") or "1"
 	ucic:set("openmptcprouter","settings","external_check",externalcheck)
+
+	-- Enable/disable OpenVPN multiple clients
+	local openvpnlb = luci.http.formvalue("openvpnlb") or "1"
+	if ucic:get("openmptcprouter","settings","openvpn_lb") ~= openvpnlb then
+		ucic:set("openmptcprouter","settings","openvpn_lb",openvpnlb)
+		ucic:foreach("openmptcprouter", "server", function(s)
+			local sectionname = s[".name"]
+			ucic:set("openmptcprouter",sectionname,"get_config","1")
+		end)
+
+	end
 
 	-- Enable/disable restrict proxy to LAN
 	local restricttolan = luci.http.formvalue("restricttolan") or "0"

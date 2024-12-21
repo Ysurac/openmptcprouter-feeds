@@ -30,54 +30,6 @@ if [ "$(uci -q get network.omrvpn.txqueuelen)" = "1000" ]; then
 	EOF
 fi
 
-if [ "$(uci -q get openvpn.omr.proto)" != "tcp-client" ]; then
-	uci -q batch <<-EOF >/dev/null
-		set openvpn.omr=openvpn
-		set openvpn.omr.dev=tun0
-		set openvpn.omr.port=65301
-		set openvpn.omr.cipher=AES-256-GCM
-		set openvpn.omr.proto=tcp-client
-		set openvpn.omr.auth_nocache=1
-		set openvpn.omr.client=1
-		set openvpn.omr.tls_client=1
-		set openvpn.omr.reneg_sec=0
-		set openvpn.omr.allow_recursive_routing=1
-		set openvpn.omr.sndbuf=0
-		set openvpn.omr.rcvbuf=0
-		set openvpn.omr.route_delay=5
-		set openvpn.omr.disable_dco=1
-		set openvpn.omr.ping_restart=60
-		commit openvpn
-	EOF
-fi
-if [ -z "$(uci -q get openvpn.omr.disable_dco)" ]; then
-	uci -q batch <<-EOF >/dev/null
-		set openvpn.omr.disable_dco=1
-		commit openvpn
-	EOF
-fi
-if [ -z "$(uci -q get openvpn.omr.ping_restart)" ]; then
-	uci -q batch <<-EOF >/dev/null
-		set openvpn.omr.ping_restart=60
-		commit openvpn
-	EOF
-fi
-if [ -z "$(uci -q get openvpn.omr.tun_mtu)" ]; then
-	uci -q batch <<-EOF >/dev/null
-		set openvpn.omr.tun_mtu=1420
-		commit openvpn
-	EOF
-fi
-
-
-uci -q delete openvpn.omr.secret
-uci -q delete openvpn.omr.ncp_disable=0
-
-#if [ "$(uci -q get openvpn.omr.com_lzo)" = "" ]; then
-#	uci -q batch <<-EOF >/dev/null
-#		set openvpn.omr.comp_lzo=adaptive
-#	EOF
-#fi
 if [ "$(uci -q get ipsec.ipsec.password)" = "myvpn" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set ipsec.ipsec.enabled='0'
@@ -85,6 +37,7 @@ if [ "$(uci -q get ipsec.ipsec.password)" = "myvpn" ]; then
 	EOF
 	chmod u+x /etc/init.d/ipsec
 fi
+
 
 if [ "$(uci -q get dsvpn.vpn)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
@@ -184,6 +137,71 @@ if [ "$(uci -q get openmptcprouter.settings.vpn)" = "" ]; then
 		commit openmptcprouter
 	EOF
 fi
+
+if [ "$(uci -q get openvpn.omr.proto)" != "tcp-client" ] || [ -z "$(uci -q get openvpn.omr.disable_dco)" ] || [ -z "$(uci -q get openvpn.omr.ping_restart)" ] || [ -z "$(uci -q get openvpn.omr.tun_mtu)" ]; then
+	uci -q batch <<-EOF >/dev/null
+		set openvpn.omr=openvpn
+		set openvpn.omr.dev=tun0
+		set openvpn.omr.port=65301
+		set openvpn.omr.cipher=AES-256-GCM
+		set openvpn.omr.proto=tcp-client
+		set openvpn.omr.auth_nocache=1
+		set openvpn.omr.client=1
+		set openvpn.omr.tls_client=1
+		set openvpn.omr.reneg_sec=0
+		set openvpn.omr.allow_recursive_routing=1
+		set openvpn.omr.sndbuf=0
+		set openvpn.omr.rcvbuf=0
+		set openvpn.omr.route_delay=5
+		set openvpn.omr.disable_dco=1
+		set openvpn.omr.ping_restart=60
+		set openvpn.omr.tun_mtu=1420
+		delete openvpn.omr.secret
+		delete openvpn.omr.ncp_disable=0
+		commit openvpn
+	EOF
+fi
+NBCPU=$(grep -c '^processor' /proc/cpuinfo | tr -d "\n")
+if [ "$NBCPU" -gt 1 ] && [ -z "$(uci -q get openvpn.omr2)" ]; then
+	[ "$NBCPU" -gt 4 ] && NBCPU=4
+	for c in $(seq 2 $NBCPU); do
+		uci -q batch <<-EOF >/dev/null
+			set openvpn.omr$c=openvpn
+			set openvpn.omr$c.dev=tun$((c-1))
+			set openvpn.omr$c.port=65301
+			set openvpn.omr$c.cipher=AES-256-GCM
+			set openvpn.omr$c.proto=tcp-client
+			set openvpn.omr$c.auth_nocache=1
+			set openvpn.omr$c.client=1
+			set openvpn.omr$c.tls_client=1
+			set openvpn.omr$c.reneg_sec=0
+			set openvpn.omr$c.allow_recursive_routing=1
+			set openvpn.omr$c.sndbuf=0
+			set openvpn.omr$c.rcvbuf=0
+			set openvpn.omr$c.route_delay=5
+			set openvpn.omr$c.disable_dco=1
+			set openvpn.omr$c.ping_restart=60
+			set openvpn.omr$c.tun_mtu=1420
+			del_list firewall.zone_vpn.device=tun$((c-1))
+			add_list firewall.zone_vpn.device=tun$((c-1))
+		EOF
+	done
+	uci -q commit openvpn
+	uci -q commit firewall
+	uci set -q openmptcprouter.vps.get_config="1"
+	uci -q set openmptcprouter.settings.openvpn_lb="0"
+	uci -q commit openmptcprouter
+fi
+
+
+# This must not be enabled, this break everything
+#if [ "$(uci -q get openvpn.omr.com_lzo)" = "" ]; then
+#	uci -q batch <<-EOF >/dev/null
+#		set openvpn.omr.comp_lzo=adaptive
+#	EOF
+#fi
+
+
 
 rm -f /tmp/luci-indexcache
 exit 0
