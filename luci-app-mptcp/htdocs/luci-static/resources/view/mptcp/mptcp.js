@@ -66,7 +66,7 @@ return L.view.extend({
 		o.value("ecf", "ECF");
 	}
 
-	if (parseFloat(boardinfo.kernel.substring(0,3)) >= "6.6") {
+	if (parseFloat(boardinfo.kernel.substring(0,3)) > 6) {
 	    o.load = function(section_id) {
 		    return L.resolveDefault(fs.list('/usr/share/bpf/scheduler'), []).then(L.bind(function(entries) {
 			    for (var i = 0; i < entries.length; i++)
