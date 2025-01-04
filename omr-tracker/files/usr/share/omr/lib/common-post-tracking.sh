@@ -638,6 +638,10 @@ set_server_route6() {
 	fi
 }
 
+del_default_route() {
+	ip route del default dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
+}
+
 del_server_route() {
 	local server=$1
 	remove_route() {
