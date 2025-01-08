@@ -326,8 +326,12 @@ interface_multipath_settings() {
 			[ -z "$(ip rule show oif $iface table $ip4table)" ] && ip rule add oif $iface table $ip4table pref 0
 			ip route replace $network/$netmask dev $iface scope link metric $id $initcwrwnd >/dev/null 2>&1
 			ip route replace $network/$netmask dev $iface scope link table $ip4table $initcwrwnd >/dev/null 2>&1
+			ip route replace $gateway dev $iface table $ip4table $initcwrwnd >/dev/null 2>&1
 			ip route replace default via $gateway dev $iface table $ip4table $initcwrwnd >/dev/null 2>&1
-			[ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && ip route replace default via $gateway dev $iface metric $id $initcwrwnd >/dev/null 2>&1
+			[ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && {
+				ip route replace $gateway dev $iface metric $id $initcwrwnd >/dev/null 2>&1
+				ip route replace default via $gateway dev $iface metric $id $initcwrwnd >/dev/null 2>&1
+			}
 			#ip route flush cache $id >/dev/null 2>&1
 		fi
 
@@ -409,8 +413,10 @@ interface_multipath_settings() {
 			#	gateway6=$(ubus call network.interface.${config}_6 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
 			#fi
 			gateway6=$(echo $gateway6 | cut -d/ -f1 | tr -d "\n")
-			[ -n "$ip6addr" ] && netmask6=$(ip -6 addr show dev $iface | grep $ip6addr | awk '/inet6/ {print $2; exit}' | cut -d/ -f2 | tr -d "\n")
-			[ -n "$ip6addr" ] && [ -n "$netmask6" ] && network6=`/usr/sbin/ipcalc -n ${ip6addr}/${netmask6} | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
+			netmask6=$(ubus call network.interface.$config status | jsonfilter -q -l 1 -e '@["ipv6-prefix"][0].mask' | tr -d "\n")
+			network6=$(ubus call network.interface.$config status | jsonfilter -q -l 1 -e '@[".ipv6-prefix"][0].address' | tr -d "\n")
+			[ -z "$netmask6" ] && [ -n "$ip6addr" ] && netmask6=$(ip -6 addr show dev $iface | grep $ip6addr | awk '/inet6/ {print $2; exit}' | cut -d/ -f2 | tr -d "\n")
+			[ -z "$network6" ] && [ -n "$ip6addr" ] && [ -n "$netmask6" ] && network6=`/usr/sbin/ipcalc -n ${ip6addr}/${netmask6} | sed -n '/NETWORK=/{;s/.*=//;s/ .*//;p;}'`
 		fi
 		if [ "$(uci -q get openmptcprouter.settings.uci_route)" = "1" ]; then
 			uci -q batch <<-EOF >/dev/null
@@ -453,8 +459,12 @@ interface_multipath_settings() {
 				[ -z "$(ip rule show pref 0 table $ip6table oif $iface)" ] && ip rule add oif $iface table $ip6table pref 0
 				ip -6 route replace $network6/$netmask6 dev $iface scope link metric 6$id $initcwrwnd >/dev/null 2>&1
 				ip -6 route replace $network6/$netmask6 dev $iface scope link table $ip6table $initcwrwnd >/dev/null 2>&1
+				ip -6 route replace $gateway6 dev $iface table $ip6table $initcwrwnd >/dev/null 2>&1
 				ip -6 route replace default via $gateway6 dev $iface table $ip6table $initcwrwnd >/dev/null 2>&1
-				[ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && ip -6 route replace default via $gateway6 dev $iface metric 6$id $initcwrwnd >/dev/null 2>&1
+				[ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && {
+					ip -6 route replace $gateway6 dev $iface metric 6$id $initcwrwnd >/dev/null 2>&1
+					ip -6 route replace default via $gateway6 dev $iface metric 6$id $initcwrwnd >/dev/null 2>&1
+				}
 				#ip -6 route flush cache 6$id >/dev/null 2>&1
 			fi
 
