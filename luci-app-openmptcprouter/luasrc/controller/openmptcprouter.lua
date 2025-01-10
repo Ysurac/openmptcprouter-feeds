@@ -834,7 +834,7 @@ function wizard_add()
 						local sectionname = s[".name"]
 						if sectionname:match("^omr.*") then
 							luci.sys.call("uci -q del openvpn." .. sectionname .. ".remote")
-							luci.sys.call("uci -q add_list openvpn." .. sectioname .. ".remote=" .. server_ip)
+							luci.sys.call("uci -q add_list openvpn." .. sectionname .. ".remote=" .. server_ip)
 						end
 					end)
 					--luci.sys.call("uci -q del openvpn.omr.remote")
@@ -1267,7 +1267,7 @@ function wizard_add()
 				local sectionname = s[".name"]
 				if sectionname:match("^omr.*") then
 					ucic:set("openvpn",sectionname,"enabled",0)
-					ucic:set("network",sectioname,"proto","none")
+					ucic:set("network",sectionname,"proto","none")
 				end
 			end)
 			ucic:set("openvpn","omr","enabled",1)
@@ -1276,7 +1276,7 @@ function wizard_add()
 				local sectionname = s[".name"]
 				if sectionname:match("^omr.*") then
 					ucic:set("openvpn",sectionname,"enabled",1)
-					ucic:set("network",sectioname,"proto","none")
+					ucic:set("network",sectionname,"proto","none")
 				end
 			end)
 		--ucic:set("openvpn","omr","enabled",1)
