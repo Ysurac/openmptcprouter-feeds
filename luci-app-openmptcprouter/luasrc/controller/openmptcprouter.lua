@@ -1491,6 +1491,10 @@ function settings_add()
 	local disableserverping = luci.http.formvalue("disableserverping") or "0"
 	ucic:set("openmptcprouter","settings","disableserverping",disableserverping)
 
+	-- Enable/disable multipath check
+	local disablemultipathtest = luci.http.formvalue("disablemultipathtest") or "0"
+	ucic:set("openmptcprouter","settings","disablemultipathtest",disablemultipathtest)
+
 	-- Enable/disable shadowsocks udp
 	local shadowsocksudp = luci.http.formvalue("shadowsocksudp") or "0"
 	ucic:set("openmptcprouter","settings","shadowsocksudp",shadowsocksudp)
