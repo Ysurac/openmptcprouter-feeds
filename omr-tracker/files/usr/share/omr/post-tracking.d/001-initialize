@@ -1,11 +1,11 @@
 #!/bin/sh
 #
-# Copyright (C) 2018-2024 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+# Copyright (C) 2018-2025 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
 #
-# This script check if MPTCP status is correct on interface
+# This script check if MPTCP status is correct on interface and if modems are correctly set on z8102ax
 
 # Set default multipath status
 [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] && multipath "$OMR_TRACKER_DEVICE" off >/dev/null 2>&1
@@ -26,4 +26,19 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$OMR_TR
 		/etc/init.d/omr-tracker restart >/dev/null 2>&1
 		exit 0
 	fi
+fi
+
+if [ -n "$(grep z8102ax /etc/board.json)" ]; then
+	if [ -e /sys/devices/platform/soc/11200000.usb/usb1/1-1/1-1.1 ]; then
+		uci -q batch <<-EOF
+		set network.modem1.device='/sys/devices/platform/soc/11200000.usb/usb1/1-1/1-1.1'
+		set network.modem2.device='/sys/devices/platform/soc/11200000.usb/usb1/1-1/1-1.2'
+		EOF
+	elif [ -e /sys/devices/platform/soc/11200000.usb/usb2/2-1/2-1.1 ]; then
+		uci -q batch <<-EOF
+		set network.modem1.device='/sys/devices/platform/soc/11200000.usb/usb2/2-1/2-1.1'
+		set network.modem2.device='/sys/devices/platform/soc/11200000.usb/usb2/2-1/2-1.2'
+		EOF
+	fi
+	[ -n "$(uci -q changes network)" ] && uci -q commit network
 fi
