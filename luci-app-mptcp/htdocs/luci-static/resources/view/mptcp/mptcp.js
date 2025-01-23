@@ -57,7 +57,13 @@ return L.view.extend({
 		o.value("netlink", _("Netlink"));
 	}
 
-	o = s.option(form.ListValue, "mptcp_scheduler", _("Multipath TCP scheduler"));
+	o = s.option(form.ListValue, "mptcp_scheduler", _("Multipath TCP scheduler"), _('BPF schedulers (not available on all platforms):') + '<br />' +
+		_('bpf_burst => same as the default scheduler') + '<br />' +
+		_('bpf_red => sends all packets redundantly on all available subflows') + '<br />' +
+		_('bpf_first => always picks the first subflow to send data')  + '<br />' +
+		_('bpf_rr => always picks the next available subflow to send data (round-robin)')
+
+	);
 	o.value("default", _("default"));
 	if (parseFloat(boardinfo.kernel.substring(0,4)) < 6) {
 		o.value("roundrobin", "round-robin");
