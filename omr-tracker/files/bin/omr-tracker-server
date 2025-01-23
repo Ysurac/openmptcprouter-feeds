@@ -8,6 +8,8 @@ basename="$(basename $0)"
 
 export OMR_TRACKER_STATUS
 export OMR_TRACKER_STATUS_MSG
+export OMR_TRACKER_LATENCY
+export OMR_TRACKER_LOSS
 
 _log() {
 	logger -p daemon.info -t "${basename}" "$@"
@@ -35,6 +37,11 @@ _ping_server() {
 	)
 	loss=$(echo "$ret" | awk '/packet loss/ {gsub("%","");print $6}' | tr -d '\n')
 	if [ -n "$loss" ] && [ "$loss" != "100" ]; then
+		latency=$(echo "$ret" | awk -F/ '/rtt/ {print int($5)}' | tr -d '\n')
+		[ -n "$latency" ] && {
+			OMR_TRACKER_LATENCY="$latency"
+		}
+		OMR_TRACKER_LOSS="$loss"
 		server_ping=true
 	fi
 }
@@ -53,7 +60,35 @@ _ping_server_intf() {
 			)
 			loss=$(echo "$ret" | awk '/packet loss/ {gsub("%","");print $6}' | tr -d '\n')
 			if [ -n "$loss" ] && [ "$loss" != "100" ]; then
+				latency=$(echo "$ret" | awk -F/ '/rtt/ {print int($5)}' | tr -d '\n')
+				[ -n "$latency" ] && {
+					OMR_TRACKER_LATENCY="$latency"
+				}
+				OMR_TRACKER_LOSS="$loss"
 				server_ping=true
+				if [ "$OMR_TRACKER_CHECK_QUALITY" = "1" ]; then
+					if [ "$OMR_TRACKER_PREV_STATUS" = "OK" ]; then
+						if [ -n "$OMR_TRACKER_LOSS" ] && [ -n "$OMR_TRACKER_RECOVERY_LOSS" ] && [ "$OMR_TRACKER_LOSS" -ge "$OMR_TRACKER_FAILURE_LOSS" ]; then
+							OMR_TRACKER_STATUS="ERROR"
+							OMR_TRACKER_STATUS_MSG="Packet loss is $OMR_TRACKER_LOSS this is more than failure limit defined at $OMR_TRACKER_FAILURE_LOSS"
+							server_ping=false
+						elif [ -n "$OMR_TRACKER_LATENCY" ] && [ -n "$OMR_TRACKER_FAILURE_LATENCY"] && [ "$OMR_TRACKER_LATENCY" -ge "$OMR_TRACKER_FAILURE_LATENCY" ]; then
+							OMR_TRACKER_STATUS="ERROR"
+							OMR_TRACKER_STATUS_MSG="Latency is $OMR_TRACKER_LATENCY this is more than failure limit defined at $OMR_TRACKER_FAILURE_LATENCY"
+							server_ping=false
+						fi
+					elif [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ]; then
+						if [ -n "$OMR_TRACKER_LOSS" ] && [ -n "$OMR_TRACKER_RECOVERY_LOSS" ] && [ "$OMR_TRACKER_LOSS" -ge "$OMR_TRACKER_RECOVERY_LOSS" ]; then
+							OMR_TRACKER_STATUS="ERROR"
+							OMR_TRACKER_STATUS_MSG="Packet loss is $OMR_TRACKER_LOSS this is more than recovery limit defined at $OMR_TRACKER_RECOVERY_LOSS"
+							server_ping=false
+						elif [ -n "$OMR_TRACKER_LATENCY" ] && [ -n "$OMR_TRACKER_RECOVERY_LATENCY" ] && [ "$OMR_TRACKER_LATENCY" -ge "$OMR_TRACKER_RECOVERY_LATENCY" ]; then
+							OMR_TRACKER_STATUS="ERROR"
+							OMR_TRACKER_STATUS_MSG="Latency is $OMR_TRACKER_LATENCY this is more than recovery limit defined at $OMR_TRACKER_RECOVERY_LATENCY"
+							server_ping=false
+						fi
+					fi
+				fi
 			fi
 			k=$((k+1))
 			sleep "${intervaltries}"
@@ -208,16 +243,6 @@ _check_master() {
 						set shadowsocks-libev.sss${count}.server="$ip"
 						set shadowsocks-rust.sss${count}.server="$ip"
 					EOF
-					if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks-rust" ]; then
-						uci -q batch <<-EOF >/dev/null
-							set shadowsocks-rust.sss${count}.disabled=0
-						EOF
-					fi
-					if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks" ]; then
-						uci -q batch <<-EOF >/dev/null
-							set shadowsocks-libev.sss${count}.disabled=0
-						EOF
-					fi
 					if [ -z "$(uci -q get openvpn.omr.remote | grep $ip)" ]; then
 						uci -q batch <<-EOF >/dev/null
 							add_list openvpn.omr.remote="$ip"
@@ -271,6 +296,22 @@ _check_master() {
 						/etc/init.d/mptcpovervpn restart >/dev/null 2>/dev/null
 					fi
 				fi
+				if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks-rust" ]; then
+					uci -q batch <<-EOF >/dev/null
+						set shadowsocks-rust.sss${count}.disabled=0
+					EOF
+				fi
+				if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks" ]; then
+					uci -q batch <<-EOF >/dev/null
+						set shadowsocks-libev.sss${count}.disabled=0
+					EOF
+				fi
+				if [ "$(uci -q get openmptcprouter.settings.vpn)" = "openvpn" ]; then
+					uci -q batch <<-EOF >/dev/null
+						set openvpn.omr.enabled=1
+					EOF
+				fi
+				
 				config_load shadowsocks-libev
 				config_foreach _enable_redir ss_redir "shadowsocks-libev"
 				config_load shadowsocks-rust
@@ -314,7 +355,7 @@ _check_master() {
 				#fi
 
 
-				OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
+				[ -z "$OMR_TRACKER_STATUS_MSG" ] && OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
 				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
 				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
 				[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
@@ -419,16 +460,6 @@ _check_backup() {
 						set shadowsocks-libev.sss${count}.server="$ip"
 						set shadowsocks-rust.sss${count}.server="$ip"
 					EOF
-					if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks-rust" ]; then
-						uci -q batch <<-EOF >/dev/null
-							set shadowsocks-rust.sss${count}.disabled=0
-						EOF
-					fi
-					if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks" ]; then
-						uci -q batch <<-EOF >/dev/null
-							set shadowsocks-libev.sss${count}.disabled=0
-						EOF
-					fi
 					uci -q batch <<-EOF >/dev/null
 						set openmptcprouter.${name}.current='1'
 						del openmptcprouter.omr.detected_ss_ipv4
@@ -479,6 +510,16 @@ _check_backup() {
 					fi
 					sleep $waittest
 				fi
+				if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks-rust" ]; then
+					uci -q batch <<-EOF >/dev/null
+						set shadowsocks-rust.sss${count}.disabled=0
+					EOF
+				fi
+				if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks" ]; then
+					uci -q batch <<-EOF >/dev/null
+						set shadowsocks-libev.sss${count}.disabled=0
+					EOF
+				fi
 				
 				config_load shadowsocks-libev
 				config_foreach _enable_redir ss_redir "shadowsocks-libev"
@@ -517,7 +558,7 @@ _check_backup() {
 				config_foreach _get_server_name server "$ip"
 				[ -n "$servername" ] && config_foreach _disable_redir ss_redir "$servername" "shadowsocks-rust"
 
-				OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
+				[ -z "$OMR_TRACKER_STATUS_MSG" ] && OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
 				mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
 				#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
 				[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
