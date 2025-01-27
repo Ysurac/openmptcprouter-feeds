@@ -1463,6 +1463,10 @@ function settings_add()
 	local status_getip_timeout = luci.http.formvalue("status_getip_timeout") or "1"
 	ucic:set("openmptcprouter","settings","status_getip_timeout",status_getip_timeout)
 
+	-- Whois timeout
+	local status_whois_timeout = luci.http.formvalue("status_whois_timeout") or "2"
+	ucic:set("openmptcprouter","settings","status_whois_timeout",status_whois_timeout)
+
 	-- Enable/disable loop detection
 	local disableloopdetection = luci.http.formvalue("disableloopdetection") or "0"
 	ucic:set("openmptcprouter","settings","disableloopdetection",disableloopdetection)
