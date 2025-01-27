@@ -230,6 +230,7 @@ return L.Class.extend({
 			}
 		});
 	},
+	/*
 	option_install_package: function(s, tab) {
 		var bin = s.sectiontype.replace('_', '-'),
 			opkg_package = 'shadowsocks-libev-' + bin, o;
@@ -246,6 +247,7 @@ return L.Class.extend({
 				'?query=' + opkg_package, '_blank', 'noopener');
 		};
 	},
+	*/
 	parse_uri: function(uri) {
 		var scheme = 'ss://';
 		if (uri && uri.indexOf(scheme) === 0) {

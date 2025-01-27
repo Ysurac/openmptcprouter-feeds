@@ -76,9 +76,11 @@ return L.view.extend({
 					s.tab('advanced', _('Advanced Settings'));
 					s.taboption('general', form.Value, 'label', _('Label'));
 					s.taboption('general', form.Flag, 'disabled', _('Disable'));
+					/*
 					if (!res[0]) {
 						ss.option_install_package(s, 'general');
 					}
+					*/
 					ss.options_common(s, 'advanced');
 
 					if (stype === 'ss_server') {
