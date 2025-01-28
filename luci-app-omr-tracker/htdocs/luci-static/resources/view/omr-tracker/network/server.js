@@ -70,12 +70,58 @@ return view.extend({
 		o.value('5');
 		o.modalonly = true;
 
-/*
 		o = s.option(form.Flag, 'check_quality', _('Check link quality'));
-		o.depends('track_method', 'ping');
+		o.depends('type', 'ping');
+		o.depends('type', 'apiping');
 		o.default = false;
 		o.modalonly = true;
-*/
+
+		o = s.option(form.Value, 'failure_latency', _('Failure latency [ms]'));
+		o.depends('check_quality', '1');
+		o.default = '1000';
+		o.value('25');
+		o.value('50');
+		o.value('75');
+		o.value('100');
+		o.value('150');
+		o.value('200');
+		o.value('250');
+		o.value('300');
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'failure_loss', _('Failure packet loss [%]'));
+		o.depends('check_quality', '1');
+		o.default = '40';
+		o.value('2');
+		o.value('5');
+		o.value('10');
+		o.value('20');
+		o.value('25');
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'recovery_latency', _('Recovery latency [ms]'));
+		o.depends('check_quality', '1');
+		o.default = '500';
+		o.value('25');
+		o.value('50');
+		o.value('75');
+		o.value('100');
+		o.value('150');
+		o.value('200');
+		o.value('250');
+		o.value('300');
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'recovery_loss', _('Recovery packet loss [%]'));
+		o.depends('check_quality', '1');
+		o.default = '10';
+		o.value('2');
+		o.value('5');
+		o.value('10');
+		o.value('20');
+		o.value('25');
+		o.modalonly = true;
+
 		o = s.option(form.ListValue, "timeout", _("Test timeout"));
 		o.default = '4';
 		o.value('1', _('%d second').format('1'));
