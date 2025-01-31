@@ -51,6 +51,16 @@ _login() {
 			else
 				auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://[$server]:$serverport/token`
 			fi
+			if [ -z "$auth" ]; then
+				for intf in $(multipath 2>/dev/null | awk '/default/ { print $1 }'); do
+					if [ "$resolve" != "$server" ] || [ "$valid_ip6" != "ok" ]; then
+						auth=`curl --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://$server:$serverport/token`
+					else
+						auth=`curl --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://[$server]:$serverport/token`
+					fi
+					[ -n "$auth" ] && break
+				done
+			fi
 			[ -z "$auth" ] && return
 			token="$(echo "$auth" | jsonfilter -q -e '@.access_token')"
 			uci -q set openmptcprouter.${servername}.token="$token"
@@ -79,6 +89,16 @@ _get_json() {
 		else
 			result=`curl --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://[$server]:$serverport/$route`
 		fi
+		if [ -z "$result" ]; then
+			for intf in $(multipath 2>/dev/null | awk '/default/ { print $1 }'); do
+				if [ "$resolve" != "$server" ] || [ "$valid_ip6" != "ok" ]; then
+					result=`curl --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Authorization: Bearer $token" https://$server:$serverport/$route`
+				else
+					result=`curl --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Authorization: Bearer $token" https://[$server]:$serverport/$route`
+				fi
+				[ -n "$result" ] && break
+			done
+		fi
 		if [ "$(echo $result | grep 'Could not validate credentials')" ]; then
 			result=''
 		fi
@@ -100,6 +120,16 @@ _set_json() {
 			result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
 		else
 			result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://[$server]:$serverport/$route`
+		fi
+		if [ -z "$result" ]; then
+			for intf in $(multipath 2>/dev/null | awk '/default/ { print $1 }'); do
+				if [ "$resolve" != "$server" ] || [ "$valid_ip6" != "ok" ]; then
+					result=`curl --max-time 10 -s -k --interface $intf -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
+				else
+					result=`curl --max-time 10 -s -k --interface $intf -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://[$server]:$serverport/$route`
+				fi
+				[ -n "$result" ] && break
+			done
 		fi
 		if [ "$(echo $result | grep 'Could not validate credentials')" ]; then
 			result=''
