@@ -1,4 +1,4 @@
-From 5f71968be8e8809e4e7b876ff04b4ef3f22eb141 Mon Sep 17 00:00:00 2001
+From cf75cf46785871330717a6d2c889abeb7bbd7bfd Mon Sep 17 00:00:00 2001
 From: Geliang Tang <geliang@kernel.org>
 Date: Wed, 6 Mar 2024 11:23:33 +0800
 Subject: [PATCH] add MPTCPv1 support
@@ -17,10 +17,6 @@ be used like this:
  > iperf3 -m -s
  > iperf3 -m -c 127.0.0.1
 
-There is no need to check for IPPROTO_MPTCP support in configure.ac
-at build time, it is at runtime we will see if the kernel being use
-supports or not MPTCP.
-
 If IPPROTO_MPTCP is not supported by the kernel being tested, it is
 normal to fail because the feature is not available and the user
 explicitly asked to use MPTCP.
@@ -29,20 +25,44 @@ Closes: https://github.com/esnet/iperf/pull/1659
 Co-developed-by: Paolo Abeni <pabeni@redhat.com>
 Signed-off-by: Geliang Tang <geliang@kernel.org>
 ---
+ configure.ac       | 12 ++++++++++++
  src/iperf.h        |  1 +
  src/iperf3.1       |  4 ++++
  src/iperf_api.c    | 19 ++++++++++++++++++-
  src/iperf_locale.c |  3 +++
- src/iperf_tcp.c    | 22 +++++++++++++++++++---
+ src/iperf_tcp.c    | 18 +++++++++++++++---
  src/net.c          | 10 +++++-----
  src/net.h          |  2 +-
- 7 files changed, 51 insertions(+), 10 deletions(-)
+ 8 files changed, 59 insertions(+), 10 deletions(-)
 
+diff --git a/configure.ac b/configure.ac
+index 66c1e97a5..22c2a95cf 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -337,6 +337,18 @@ if test "x$iperf3_cv_header_tcp_info_snd_wnd" = "xyes"; then
+   AC_DEFINE([HAVE_TCP_INFO_SND_WND], [1], [Have tcpi_snd_wnd field in tcp_info.])
+ fi
+ 
++# Check for IPPROTO_MPTCP (Linux)
++AC_CACHE_CHECK([MPTCP protocol],
++[iperf3_cv_header_ipproto_mptcp],
++AC_COMPILE_IFELSE(
++  [AC_LANG_PROGRAM([[#include <netinet/in.h>]],
++		   [[int foo = IPPROTO_MPTCP;]])],
++  iperf3_cv_header_ipproto_mptcp=yes,
++  iperf3_cv_header_ipproto_mptcp=no))
++if test "x$iperf3_cv_header_ipproto_mptcp" = "xyes"; then
++    AC_DEFINE([HAVE_IPPROTO_MPTCP], [1], [Have MPTCP protocol.])
++fi
++
+ # Check if we need -lrt for clock_gettime
+ AC_SEARCH_LIBS(clock_gettime, [rt posix4])
+ # Check for clock_gettime support
 diff --git a/src/iperf.h b/src/iperf.h
-index dc3c0d1df..cb821e1f7 100644
+index 202d3016f..4043031b3 100644
 --- a/src/iperf.h
 +++ b/src/iperf.h
-@@ -342,6 +342,7 @@ struct iperf_test
+@@ -353,6 +353,7 @@ struct iperf_test
      int	      repeating_payload;                /* --repeating-payload */
      int       timestamps;			/* --timestamps */
      char     *timestamp_format;
@@ -51,12 +71,12 @@ index dc3c0d1df..cb821e1f7 100644
      char     *json_output_string; /* rendered JSON output if json_output is set */
      /* Select related parameters */
 diff --git a/src/iperf3.1 b/src/iperf3.1
-index 2efd53dea..ebc603408 100644
+index f8eff48d2..9e425cabc 100644
 --- a/src/iperf3.1
 +++ b/src/iperf3.1
-@@ -193,6 +193,10 @@ parameter is specified in ms, and defaults to the system settings.
- This functionality depends on the TCP_USER_TIMEOUT socket option, and
- will not work on systems that do not support it.
+@@ -202,6 +202,10 @@ iperf-3.17, OAEP padding is used, however this is a breaking change
+ that is not compatible with older iperf3 versions.  Use this option to
+ preserve the less secure, but more compatible, behavior.
  .TP
 +.BR -m ", " --mptcp " "
 +use mptcp variant for the current protocol. This only applies to
@@ -66,33 +86,33 @@ index 2efd53dea..ebc603408 100644
  emit debugging output.
  Primarily (perhaps exclusively) of use to developers.
 diff --git a/src/iperf_api.c b/src/iperf_api.c
-index 1dcfaabf5..f7f1fbfb8 100644
+index fa06dc830..419b48657 100644
 --- a/src/iperf_api.c
 +++ b/src/iperf_api.c
-@@ -1144,6 +1144,9 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+@@ -1149,6 +1149,9 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
          {"idle-timeout", required_argument, NULL, OPT_IDLE_TIMEOUT},
          {"rcv-timeout", required_argument, NULL, OPT_RCV_TIMEOUT},
          {"snd-timeout", required_argument, NULL, OPT_SND_TIMEOUT},
-+#if defined(linux)
++#if defined(HAVE_IPPROTO_MPTCP)
 +        {"mptcp", no_argument, NULL, 'm'},
 +#endif
          {"debug", optional_argument, NULL, 'd'},
          {"help", no_argument, NULL, 'h'},
          {NULL, 0, NULL, 0}
-@@ -1169,7 +1172,7 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+@@ -1174,7 +1177,7 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
      FILE *ptr_file;
  #endif /* HAVE_SSL */
  
 -    while ((flag = getopt_long(argc, argv, "p:f:i:D1VJvsc:ub:t:n:k:l:P:Rw:B:M:N46S:L:ZO:F:A:T:C:dI:hX:", longopts, NULL)) != -1) {
-+    while ((flag = getopt_long(argc, argv, "p:f:i:D1VJvsc:ub:t:n:k:l:P:Rw:B:mM:N46S:L:ZO:F:A:T:C:dI:hX:", longopts, NULL)) != -1) {
++    while ((flag = getopt_long(argc, argv, "p:f:i:D1VJvsc:ub:t:n:k:l:P:Rw:B:M:N46S:L:ZO:F:A:T:C:dI:mhX:", longopts, NULL)) != -1) {
          switch (flag) {
              case 'p':
  		portno = atoi(optarg);
-@@ -1639,6 +1642,12 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+@@ -1647,6 +1650,12 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
  		test->settings->connect_timeout = unit_atoi(optarg);
  		client_flag = 1;
  		break;
-+#if defined(linux)
++#if defined(HAVE_IPPROTO_MPTCP)
 +	    case 'm':
 +		set_protocol(test, Ptcp);
 +		test->mptcp = 1;
@@ -101,58 +121,47 @@ index 1dcfaabf5..f7f1fbfb8 100644
  	    case 'h':
  		usage_long(stdout);
  		exit(0);
-@@ -2216,6 +2225,10 @@ send_parameters(struct iperf_test *test)
+@@ -2259,6 +2268,10 @@ send_parameters(struct iperf_test *test)
  	    cJSON_AddTrueToObject(j, "reverse");
  	if (test->bidirectional)
  	            cJSON_AddTrueToObject(j, "bidirectional");
-+#if defined(linux)
++#if defined(HAVE_IPPROTO_MPTCP)
 +	if (test->mptcp)
 +	    cJSON_AddTrueToObject(j, "mptcp");
 +#endif
  	if (test->settings->socket_bufsize)
  	    cJSON_AddNumberToObject(j, "window", test->settings->socket_bufsize);
  	if (test->settings->blksize)
-@@ -2332,6 +2345,10 @@ get_parameters(struct iperf_test *test)
+@@ -2375,6 +2388,10 @@ get_parameters(struct iperf_test *test)
  	    iperf_set_test_reverse(test, 1);
-         if ((j_p = cJSON_GetObjectItem(j, "bidirectional")) != NULL)
+         if ((j_p = iperf_cJSON_GetObjectItemType(j, "bidirectional", cJSON_True)) != NULL)
              iperf_set_test_bidirectional(test, 1);
-+#if defined(linux)
-+	if ((j_p = cJSON_GetObjectItem(j, "mptcp")) != NULL)
++#if defined(HAVE_IPPROTO_MPTCP)
++	if ((j_p = iperf_cJSON_GetObjectItemType(j, "mptcp", cJSON_True)) != NULL)
 +	    test->mptcp = 1;
 +#endif
- 	if ((j_p = cJSON_GetObjectItem(j, "window")) != NULL)
+ 	if ((j_p = iperf_cJSON_GetObjectItemType(j, "window", cJSON_Number)) != NULL)
  	    test->settings->socket_bufsize = j_p->valueint;
- 	if ((j_p = cJSON_GetObjectItem(j, "len")) != NULL)
+ 	if ((j_p = iperf_cJSON_GetObjectItemType(j, "len", cJSON_Number)) != NULL)
 diff --git a/src/iperf_locale.c b/src/iperf_locale.c
-index ae0f63a41..d454af4f0 100644
+index 32883da84..f1d89e298 100644
 --- a/src/iperf_locale.c
 +++ b/src/iperf_locale.c
 @@ -128,6 +128,9 @@ const char usage_longstr[] = "Usage: iperf3 [-s|-c host] [options]\n"
                             "  --snd-timeout #           timeout for unacknowledged TCP data\n"
                             "                            (in ms, default is system settings)\n"
  #endif /* HAVE_TCP_USER_TIMEOUT */
-+#if defined(linux)
++#if defined(HAVE_IPPROTO_MPTCP)
 +                           "  -m, --mptcp               use MPTCP rather than plain TCP\n"
 +#endif
                             "  -d, --debug[=#]           emit debugging output\n"
                             "                            (optional optional \"=\" and debug level: 1-4. Default is 4 - all messages)\n"
                             "  -v, --version             show version information and quit\n"
 diff --git a/src/iperf_tcp.c b/src/iperf_tcp.c
-index 184a1955e..a10322b75 100644
+index 481c09dc8..2c10d7df5 100644
 --- a/src/iperf_tcp.c
 +++ b/src/iperf_tcp.c
-@@ -44,6 +44,10 @@
- #include "net.h"
- #include "cjson.h"
- 
-+#ifndef IPPROTO_MPTCP
-+#define IPPROTO_MPTCP 262
-+#endif
-+
- #if defined(HAVE_FLOWLABEL)
- #include "flowlabel.h"
- #endif /* HAVE_FLOWLABEL */
-@@ -182,9 +186,10 @@ iperf_tcp_listen(struct iperf_test *test)
+@@ -184,9 +184,10 @@ iperf_tcp_listen(struct iperf_test *test)
       *
       * It's not clear whether this is a requirement or a convenience.
       */
@@ -164,12 +173,12 @@ index 184a1955e..a10322b75 100644
  
          FD_CLR(s, &test->read_set);
          close(s);
-@@ -210,7 +215,12 @@ iperf_tcp_listen(struct iperf_test *test)
+@@ -212,7 +213,12 @@ iperf_tcp_listen(struct iperf_test *test)
              return -1;
          }
  
 -        if ((s = socket(res->ai_family, SOCK_STREAM, 0)) < 0) {
-+#if defined(linux)
++#if defined(HAVE_IPPROTO_MPTCP)
 +        if (test->mptcp)
 +	    proto = IPPROTO_MPTCP;
 +#endif
@@ -178,13 +187,13 @@ index 184a1955e..a10322b75 100644
  	    freeaddrinfo(res);
              i_errno = IESTREAMLISTEN;
              return -1;
-@@ -375,8 +385,14 @@ iperf_tcp_connect(struct iperf_test *test)
+@@ -380,8 +386,14 @@ iperf_tcp_connect(struct iperf_test *test)
      socklen_t optlen;
      int saved_errno;
      int rcvbuf_actual, sndbuf_actual;
 +    int proto = 0;
 +
-+#if defined(linux)
++#if defined(HAVE_IPPROTO_MPTCP)
 +    if (test->mptcp)
 +        proto = IPPROTO_MPTCP;
 +#endif
@@ -195,7 +204,7 @@ index 184a1955e..a10322b75 100644
  	i_errno = IESTREAMCONNECT;
  	return -1;
 diff --git a/src/net.c b/src/net.c
-index c82caff1b..849e919f2 100644
+index b693ea7fb..febf20885 100644
 --- a/src/net.c
 +++ b/src/net.c
 @@ -124,7 +124,7 @@ timeout_connect(int s, const struct sockaddr *name, socklen_t namelen,
@@ -243,7 +252,7 @@ index c82caff1b..849e919f2 100644
        return -1;
      }
 diff --git a/src/net.h b/src/net.h
-index f0e1b4f98..1f5cc4d34 100644
+index 859c52cef..fb78d289b 100644
 --- a/src/net.h
 +++ b/src/net.h
 @@ -28,7 +28,7 @@

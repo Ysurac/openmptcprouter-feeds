@@ -1,0 +1,552 @@
+From 197d8ba733f0502985abb5b0a22bf9f71c2596a7 Mon Sep 17 00:00:00 2001
+From: David Bar-On <david.cdb004@gmail.com>
+Date: Mon, 25 Mar 2024 22:11:49 +0200
+Subject: [PATCH] Add SOCKS5 Proxy support for TCP
+
+---
+ src/iperf.h            |   8 ++
+ src/iperf_api.c        | 250 ++++++++++++++++++++++++++++++++++++++++-
+ src/iperf_api.h        |  13 ++-
+ src/iperf_client_api.c |  27 ++++-
+ src/iperf_error.c      |  10 ++
+ src/iperf_locale.c     |   2 +
+ src/iperf_tcp.c        |  22 +++-
+ 7 files changed, 323 insertions(+), 9 deletions(-)
+
+diff --git a/src/iperf.h b/src/iperf.h
+index dc3c0d1df..9823dc180 100644
+--- a/src/iperf.h
++++ b/src/iperf.h
+@@ -343,6 +343,14 @@ struct iperf_test
+     int       timestamps;			/* --timestamps */
+     char     *timestamp_format;
+ 
++    char     *socks5_host;                      /* --socks5 option */
++    uint16_t  socks5_port;                      /* --socks5 option optional value */
++    char     *socks5_username;                  /* --socks5 option optional value */
++    char     *socks5_password;                  /* --socks5 option optional value */
++    char      socks5_bind_atyp;                 /* from socks5 CONNECT response ATYP */
++    char     *socks5_bind_host;                 /* from socks5 CONNECT response BIND.ADDR*/
++    uint16_t  socks5_bind_port;                 /* from socks5 CONNECT response BIND.PORT */
++
+     char     *json_output_string; /* rendered JSON output if json_output is set */
+     /* Select related parameters */
+     int       max_fd;
+diff --git a/src/iperf_api.c b/src/iperf_api.c
+index 4765d4e97..ca47f708d 100644
+--- a/src/iperf_api.c
++++ b/src/iperf_api.c
+@@ -115,7 +115,7 @@ usage()
+ void
+ usage_long(FILE *f)
+ {
+-    fprintf(f, usage_longstr, DEFAULT_NO_MSG_RCVD_TIMEOUT, UDP_RATE / (1024*1024), DEFAULT_PACING_TIMER, DURATION, DEFAULT_TCP_BLKSIZE / 1024, DEFAULT_UDP_BLKSIZE);
++    fprintf(f, usage_longstr, DEFAULT_NO_MSG_RCVD_TIMEOUT, UDP_RATE / (1024*1024), DEFAULT_PACING_TIMER, DURATION, DEFAULT_TCP_BLKSIZE / 1024, DEFAULT_UDP_BLKSIZE, SOCKS5_DEFAULT_PORT);
+ }
+ 
+ 
+@@ -1100,6 +1100,7 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+         {"version6", no_argument, NULL, '6'},
+         {"tos", required_argument, NULL, 'S'},
+         {"dscp", required_argument, NULL, OPT_DSCP},
++        {"socks5", required_argument, NULL, OPT_SOCKS5},
+ 	{"extra-data", required_argument, NULL, OPT_EXTRA_DATA},
+ #if defined(HAVE_FLOWLABEL)
+         {"flowlabel", required_argument, NULL, 'L'},
+@@ -1157,7 +1158,7 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+     char* comma;
+ #endif /* HAVE_CPU_AFFINITY */
+     char* slash;
+-    char *p, *p1;
++    char *p, *p1, *p2;
+     struct xbind_entry *xbe;
+     double farg;
+     int rcv_timeout_in = 0;
+@@ -1433,6 +1434,47 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+ 		}
+ 		client_flag = 1;
+                 break;
++	    case OPT_SOCKS5: // Format: "[username:password@]<host addr/fqdn>[:port]"
++                if (strlen(optarg) <= 0) {
++                    i_errno = IESOCKS5HOST;
++                    return -1;
++                }
++                p1 = strtok(optarg, "@"); // p1 -> user:password
++                if (p1 == NULL) {
++                    i_errno = IESOCKS5HOST;
++                    return -1;
++                }
++                p = strtok(NULL, "@"); // p -> host[:port]
++                if (p == NULL) {
++                    p = p1;
++                    p1 = NULL;
++                }
++                p2 = strtok(p, ":"); // parse host[:port]
++                if (strlen(p2) <= 0) {
++                    i_errno = IESOCKS5HOST;
++                    return -1;
++                }
++                test->socks5_host = strdup(p2);
++                p2 = strtok(NULL, ":");
++                if (p2 && strlen(p2) > 0) {
++                    test->socks5_port = atoi(p2);
++                }
++                if (p1) { // parse user:password
++                    p2 = strtok(p1, ":");
++                    if (strlen(p2) <= 0 || strlen(p2) > 255) {
++                        i_errno = IESOCKS5HOST;
++                        return -1;
++                    }
++                    test->socks5_username = strdup(p2);
++                    p2 = strtok(NULL, ":");
++                    if (!p2 || strlen(p2) <= 0 || strlen(p2) > 255) {
++                        i_errno = IESOCKS5HOST;
++                        return -1;
++                    }
++                    test->socks5_password = strdup(p2);
++                }
++		client_flag = 1;
++                break;
+ 	    case OPT_EXTRA_DATA:
+ 		test->extra_data = strdup(optarg);
+ 		client_flag = 1;
+@@ -1740,6 +1782,12 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+         return -1;
+     }
+ 
++    // SOCKS5 Proxy is supported only for TCP
++    if(test->role == 'c' && test->socks5_host && test->protocol->id != Ptcp) {
++        i_errno = IESOCKS5RTCPONLY;
++        return -1;
++    }
++
+     if (blksize == 0) {
+ 	if (test->protocol->id == Pudp)
+ 	    blksize = 0;	/* try to dynamically determine from MSS */
+@@ -2943,6 +2991,12 @@ iperf_defaults(struct iperf_test *testp)
+     testp->stats_interval = testp->reporter_interval = 1;
+     testp->num_streams = 1;
+ 
++    testp->socks5_host = NULL;
++    testp->socks5_port = SOCKS5_DEFAULT_PORT;
++    testp->socks5_username = NULL;
++    testp->socks5_password = NULL;
++    testp->socks5_bind_host = NULL;
++
+     testp->settings->domain = AF_UNSPEC;
+     testp->settings->unit_format = 'a';
+     testp->settings->socket_bufsize = 0;    /* use autotuning */
+@@ -3100,6 +3154,14 @@ iperf_free_test(struct iperf_test *test)
+ 	free(test->remote_congestion_used);
+     if (test->timestamp_format)
+ 	free(test->timestamp_format);
++    if (test->socks5_host)
++	free(test->socks5_host);
++    if (test->socks5_username)
++	free(test->socks5_username);
++    if (test->socks5_password)
++	free(test->socks5_password);
++    if (test->socks5_bind_host)
++	free(test->socks5_bind_host);
+     if (test->omit_timer != NULL)
+ 	tmr_cancel(test->omit_timer);
+     if (test->timer != NULL)
+@@ -3289,6 +3351,23 @@ iperf_reset_test(struct iperf_test *test)
+ 	free(test->extra_data);
+ 	test->extra_data = NULL;
+     }
++    if (test->socks5_host) {
++	free(test->socks5_host);
++	test->socks5_host = NULL;
++    }
++    test->socks5_port = SOCKS5_DEFAULT_PORT;
++    if (test->socks5_username) {
++	free(test->socks5_username);
++	test->socks5_username = NULL;
++    }
++    if (test->socks5_password) {
++	free(test->socks5_password);
++	test->socks5_password = NULL;
++    }
++    if (test->socks5_bind_host) {
++	free(test->socks5_bind_host);
++	test->socks5_bind_host = NULL;
++    }
+ 
+     /* Free output line buffers, if any (on the server only) */
+     struct iperf_textline *t;
+@@ -4614,6 +4693,173 @@ iperf_add_stream(struct iperf_test *test, struct iperf_stream *sp)
+     }
+ }
+ 
++/**************************************************************************/
++
++/* iperf_socks5_handshake
++ *
++ * Handshake with a SOCKS5 Proxy per RFC1928, RFC1929
++ */
++int
++iperf_socks5_handshake(struct iperf_test *test, int s) {
++    char req[1024];
++    char res[1024];
++    char selected_mthod;
++    char *p, *p1;
++    size_t len;
++    int ret;
++    uint16_t net_order_short;
++
++    // Send method selection request [RFC1928]
++    p = req;
++    *p++ = 5; // VERSION
++    if (test->socks5_username) // Number of METHODs supported
++        *p++ = 2;
++    else
++        *p++ = 1;
++    *p++ = 0; // NO AUTHENTICATION REQUIRED
++    if (test->socks5_username) *p++ = 2; // USERNAME/PASSWORD
++    if (Nwrite(s, req, p - req, Ptcp) < 0) {
++        i_errno = IESOCKS5HANDSHAKE;
++        iperf_err(test, "Writing SOCKS5 auth methods message failed\n");
++        return -1;
++    }
++
++    // Receive selected method
++    if (Nread(s, res, 2, Ptcp) != 2) {
++        i_errno = IESOCKS5HANDSHAKE;
++        iperf_err(test, "Reading selected SOCKS5 method message failed\n");
++        return -1;
++    }
++
++    selected_mthod = res[1];
++    if (res[0] != 5 || (selected_mthod != 0 && selected_mthod != 2)) {
++        i_errno = IESOCKS5HANDSHAKE;
++        iperf_err(test, "Ilegal SOCKS5 method selection response: version=%d, auth method=%d\n", res[0], selected_mthod);
++        return -1;
++    }
++    if (test->debug) {
++        iperf_printf(test, "SOCKS5 server selected authentication method %d\n", selected_mthod);
++    }
++
++    // Send Username/Password request and receive the auth response [RFC1929]
++    if (selected_mthod == 2) {
++        p = req;
++        *p++ = 1; // VERSION
++        len = strlen(test->socks5_username);
++        *p++ = len;
++        memcpy(p, test->socks5_username, len); // USERNAME
++        p += len;
++        len = strlen(test->socks5_password);
++        *p++ = len;
++        memcpy(p, test->socks5_password, len); // PASSWORD
++        p += len;
++
++        if (Nwrite(s, req, p - req, Ptcp) < 0) {
++            i_errno = IESOCKS5HANDSHAKE;
++            iperf_err(test, "Writing SOCKS5 Username/Password request message failed\n");
++            return -1;
++        }
++
++        if ((ret = Nread(s, res, 2, Ptcp)) != 2) {
++            i_errno = IESOCKS5HANDSHAKE;
++            iperf_err(test, "Reading SOCKS5 Username/Password response failed;  Returned %d\n", ret);
++            return -1;
++        }
++        if (res[1] != 0) {
++            i_errno = IESOCKS5HANDSHAKE;
++            iperf_err(test, "SOCKS5 Username/Password failed with error %d\n", res[1]);
++            return -1;
++        }
++    }
++
++    // Send CONNECT request [RFC1928]
++    p = req;
++    *p++ = 5; // VERSION
++    *p++ = 1; // CMD = CONNECT
++    *p++ = 0; // RESERVED
++    *p++ = 3; // ATYPE = DOMAINNAME:
++    len = strlen(test->server_hostname);
++    if (len > 255) {
++        i_errno = IESOCKS5HANDSHAKE;
++        iperf_err(test, "iperf3 host option length is limited to 255 chars when SOCKS5 is used\n");
++        return -1;
++    }
++    *p++ = len;
++    memcpy(p, test->server_hostname, len); // ADDR
++    p += len;
++    net_order_short = htons(test->server_port);
++    p1 = (char *)&net_order_short;
++    *p++ = *p1++; // PORT
++    *p++ = *p1;
++    if (Nwrite(s, req, p - req, Ptcp) < 0) {
++        i_errno = IESOCKS5HANDSHAKE;
++        iperf_err(test, "Writing SOCKS5 CONNECT message failed\n");
++        return -1;
++    }
++
++    //  Read CONNECT response [RFC1928]
++    if ((ret = Nread(s, res, 4, Ptcp)) != 4) {
++        i_errno = IESOCKS5HANDSHAKE;
++        iperf_err(test, "Reading SOCKS5 CONNECT response failed;  Returned %d\n", ret);
++        return -1;
++    }
++
++    if (res[0] != 5 || res[1] != 0 || res[2] != 0) {
++        i_errno = IESOCKS5HANDSHAKE;
++        iperf_err(test, "SOCKS5 CONNECT failed with error %d\n", res[1]);
++        return -1;
++    }
++  
++    // Get BND.ADDR length
++    test->socks5_bind_atyp = res[3]; // ATYP
++    switch (test->socks5_bind_atyp) {
++        case 1: // IP V4 address
++            len = 4;
++            break;
++        case 3: // DOMAINNAME:
++            if ((ret = read(s, res, 1)) != 1) {
++                i_errno = IESOCKS5HANDSHAKE;
++                iperf_err(test, "Failed to read SOCKS5 CONNECT response BND.ADDR length;  Returned %d\n", ret);
++                return -1;
++            }
++            len = (unsigned char)res[0];
++            break;
++        case 4: // IP V6 address
++            len = 16;
++            break;
++        default:
++            i_errno = IESOCKS5HANDSHAKE;
++            iperf_err(test, "Illegal SOCKS5 CONNECT response ATYP %d\n", res[3]);
++            return -1;
++    }
++    // Read BND.ADDR
++    if ((ret = Nread(s, res, len, Ptcp)) != len) {
++        i_errno = IESOCKS5HANDSHAKE;
++        iperf_err(test, "Failed to read SOCKS5 detailes BND.ADDR;  Returned %d\n", ret);
++        return -1;
++    }
++    res[len] = '\0';
++    test->socks5_bind_host = strdup(res);
++    // Read BND.PORT
++    if ((ret = Nread(s, res, 2, Ptcp)) != 2) {
++        i_errno = IESOCKS5HANDSHAKE;
++        iperf_err(test, "Failed to read SOCKS5 detailes BND.PORT;  Returned %d\n", ret);
++        return -1;
++    }
++    p1 = (char *)&net_order_short;
++    *p1++ = res[0];
++    *p1 = res[1];
++    test->socks5_bind_port = ntohs(net_order_short);
++    if (test->debug) {
++        iperf_printf(test, "SOCKS5 server BIND ADDR type=%d, PORT=%d\n", test->socks5_bind_atyp, test->socks5_bind_port);
++    }
++
++    return 0;
++}
++
++/**************************************************************************/
++
++
+ /* This pair of routines gets inserted into the snd/rcv function pointers
+ ** when there's a -F flag. They handle the file stuff and call the real
+ ** snd/rcv functions, which have been saved in snd2/rcv2.
+diff --git a/src/iperf_api.h b/src/iperf_api.h
+index d2bbdfe96..01d63bf5e 100644
+--- a/src/iperf_api.h
++++ b/src/iperf_api.h
+@@ -68,6 +68,7 @@ typedef atomic_uint_fast64_t atomic_iperf_size_t;
+ #define DEFAULT_PACING_TIMER 1000
+ #define DEFAULT_NO_MSG_RCVD_TIMEOUT 120000
+ #define MIN_NO_MSG_RCVD_TIMEOUT 100
++#define SOCKS5_DEFAULT_PORT 1080
+ 
+ #define WARN_STR_LEN 128
+ 
+@@ -100,7 +101,8 @@ typedef atomic_uint_fast64_t atomic_iperf_size_t;
+ #define OPT_RCV_TIMEOUT 27
+ #define OPT_JSON_STREAM 28
+ #define OPT_SND_TIMEOUT 29
+ #define OPT_USE_PKCS1_PADDING 30
++#define OPT_SOCKS5 31
+ 
+ /* states */
+ #define TEST_START 1
+@@ -308,6 +310,12 @@ void      iperf_free_stream(struct iperf_stream * sp);
+  */
+ int       iperf_common_sockopts(struct iperf_test *, int s);
+ 
++/**
++ * iperf_socks5_handshake - handshake with a SOCKS5 Proxy per RFC1928, RFC1929
++ * 
++ */
++int iperf_socks5_handshake(struct iperf_test *test, int s);
++
+ int has_tcpinfo(void);
+ int has_tcpinfo_retransmits(void);
+ void save_tcpinfo(struct iperf_stream *sp, struct iperf_interval_results *irp);
+@@ -419,6 +427,8 @@ enum {
+     IESNDTIMEOUT = 33,      // Illegal message send timeout
+     IEUDPFILETRANSFER = 34, // Cannot transfer file using UDP
+     IESERVERAUTHUSERS = 35,   // Cannot access authorized users file
++    IESOCKS5HOST = 36,      // Illegal SOCKS5 host / creadentials
++    IESOCKS5RTCPONLY = 37,   // SOCKS5 Proxy is supported only for TCP
+     /* Test errors */
+     IENEWTEST = 100,        // Unable to create a new test (check perror)
+     IEINITTEST = 101,       // Test initialization failed (check perror)
+@@ -473,8 +483,9 @@ enum {
+     IEPTHREADCANCEL=151,        // Unable to cancel thread (check perror)
+     IEPTHREADJOIN=152,		// Unable to join thread (check perror)
+     IEPTHREADATTRINIT=153,      // Unable to initialize thread attribute (check perror)
+     IEPTHREADATTRDESTROY=154,      // Unable to destroy thread attribute (check perror)
+     IEPTHREADSIGMASK=155,      // Unable to initialize sub thread signal mask (check perror)
++    IESOCKS5HANDSHAKE = 156,    // SOCKS5 Handshake with the server failed
+     /* Stream errors */
+     IECREATESTREAM = 200,   // Unable to create a new stream (check herror/perror)
+     IEINITSTREAM = 201,     // Unable to initialize stream (check herror/perror)
+diff --git a/src/iperf_client_api.c b/src/iperf_client_api.c
+index 7ad4c939b..670e3521d 100644
+--- a/src/iperf_client_api.c
++++ b/src/iperf_client_api.c
+@@ -385,6 +385,8 @@ iperf_connect(struct iperf_test *test)
+ {
+     int opt;
+     socklen_t len;
++    const char *connect_server;
++    int connect_port;
+ 
+     if (NULL == test)
+     {
+@@ -397,12 +399,20 @@ iperf_connect(struct iperf_test *test)
+     make_cookie(test->cookie);
+ 
+     /* Create and connect the control channel */
+-    if (test->ctrl_sck < 0)
+-	// Create the control channel using an ephemeral port
+-	test->ctrl_sck = netdial(test->settings->domain, Ptcp, test->bind_address, test->bind_dev, 0, test->server_hostname, test->server_port, test->settings->connect_timeout);
+     if (test->ctrl_sck < 0) {
+-        i_errno = IECONNECT;
+-        return -1;
++        if (test->socks5_host) {
++            connect_server = test->socks5_host;
++            connect_port = test->socks5_port;
++        } else {
++            connect_server = test->server_hostname;
++            connect_port = test->server_port;
++        }
++	// Create the control channel using an ephemeral port
++	test->ctrl_sck = netdial(test->settings->domain, Ptcp, test->bind_address, test->bind_dev, 0, connect_server, connect_port, test->settings->connect_timeout);
++        if (test->ctrl_sck < 0) {
++            i_errno = IECONNECT;
++            return -1;
++        }
+     }
+ 
+     // set TCP_NODELAY for lower latency on control messages
+@@ -421,6 +431,13 @@ iperf_connect(struct iperf_test *test)
+     }
+ #endif /* HAVE_TCP_USER_TIMEOUT */
+ 
++    /* socks5 proxy handshake  */
++    if (test->socks5_host) {
++        if (0 != iperf_socks5_handshake(test, test->ctrl_sck)) {
++            return -1;
++        }
++    }
++
+     if (Nwrite(test->ctrl_sck, test->cookie, COOKIE_SIZE, Ptcp) < 0) {
+         i_errno = IESENDCOOKIE;
+         return -1;
+diff --git a/src/iperf_error.c b/src/iperf_error.c
+index 6426554cf..a0bbb6844 100644
+--- a/src/iperf_error.c
++++ b/src/iperf_error.c
+@@ -216,6 +216,9 @@ iperf_strerror(int int_errno)
+         case IEUNIMP:
+             snprintf(errstr, len, "an option you are trying to set is not implemented yet");
+             break;
++        case IESOCKS5HOST:
++            snprintf(errstr, len, "ilegal SOCKS5 host / creadentials");
++            break;
+         case IEFILE:
+             snprintf(errstr, len, "unable to open -F file");
+             perr = 1;
+@@ -375,6 +378,9 @@ iperf_strerror(int int_errno)
+         case IEUDPFILETRANSFER:
+             snprintf(errstr, len, "cannot transfer file using UDP");
+             break;
++        case IESOCKS5RTCPONLY:
++            snprintf(errstr, len, "SOCKS5 Proxy is supported only for TCP");
++            break;
+         case IERVRSONLYRCVTIMEOUT:
+             snprintf(errstr, len, "client receive timeout is valid only in receiving mode");
+             perr = 1;
+@@ -507,6 +513,10 @@ iperf_strerror(int int_errno)
+             snprintf(errstr, len, "unable to destroy thread attributes");
+             perr = 1;
+             break;
++	case IESOCKS5HANDSHAKE:
++            snprintf(errstr, len, "socks5 Handshake with the server failed");
++            perr = 1;
++            break;
+ 	default:
+ 	    snprintf(errstr, len, "int_errno=%d", int_errno);
+ 	    perr = 1;
+diff --git a/src/iperf_locale.c b/src/iperf_locale.c
+index ae0f63a41..c8b9a71d1 100644
+--- a/src/iperf_locale.c
++++ b/src/iperf_locale.c
+@@ -194,6 +194,8 @@ const char usage_longstr[] = "Usage: iperf3 [-s|-c host] [options]\n"
+                            "  --dscp N or --dscp val    set the IP dscp value, either 0-63 or symbolic.\n"
+                            "                            Numeric values can be specified in decimal,\n"
+                            "                            octal and hex (see --tos above).\n"
++                           "  --socks5 [user:password@]<proxy-host>[:port] use SOCKS5 Proxy for TCP connections,\n"
++                           "                            using no auth or user:password. Default Proxy port is %d \n"
+ #if defined(HAVE_FLOWLABEL)
+                            "  -L, --flowlabel N         set the IPv6 flow label (only supported on Linux)\n"
+ #endif /* HAVE_FLOWLABEL */
+diff --git a/src/iperf_tcp.c b/src/iperf_tcp.c
+index 184a1955e..515913581 100644
+--- a/src/iperf_tcp.c
++++ b/src/iperf_tcp.c
+@@ -375,14 +375,24 @@ iperf_tcp_connect(struct iperf_test *test)
+     socklen_t optlen;
+     int saved_errno;
+     int rcvbuf_actual, sndbuf_actual;
+     int proto = 0;
++    const char *connect_server;
++    int connect_port;
+ 
+ #if defined(HAVE_IPPROTO_MPTCP)
+     if (test->mptcp)
+         proto = IPPROTO_MPTCP;
+ #endif
+ 
+-    s = create_socket(test->settings->domain, SOCK_STREAM, proto, test->bind_address, test->bind_dev, test->bind_port, test->server_hostname, test->server_port, &server_res);
++    if (test->socks5_host) {
++        connect_server = test->socks5_host;
++        connect_port = test->socks5_port;
++    } else {
++        connect_server = test->server_hostname;
++        connect_port = test->server_port;
++    }
++
++    s = create_socket(test->settings->domain, SOCK_STREAM, proto, test->bind_address, test->bind_dev, test->bind_port, connect_server, connect_port, &server_res);
+     if (s < 0) {
+ 	i_errno = IESTREAMCONNECT;
+ 	return -1;
+@@ -571,6 +581,16 @@ iperf_tcp_connect(struct iperf_test *test)
+ 
+     freeaddrinfo(server_res);
+ 
++    /* socks5 proxy handshake  */
++    if (test->socks5_host) {
++        if (0 != iperf_socks5_handshake(test, s)) {
++            saved_errno = errno;
++            close(s);
++            errno = saved_errno;
++            return -1;
++        }
++    }
++
+     /* Send cookie for verification */
+     if (Nwrite(s, test->cookie, COOKIE_SIZE, Ptcp) < 0) {
+ 	saved_errno = errno;
