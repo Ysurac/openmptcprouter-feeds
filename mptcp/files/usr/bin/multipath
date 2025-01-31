@@ -3,6 +3,7 @@
 # Update the MP-TCP flags without the pached iproute2
 #
 # Author: Mario Krueger <openwrt at xedp3x.de>
+#	  Ycarus (Yannick Chabanois) for OpenMPTCProuter <contact@openmptcprouter.com>
 # Released under GPL 3 or later
 
 if [ -d "/proc/sys/net/mptcp" ]; then
@@ -145,6 +146,7 @@ else
 	if [ -n "$endpoint" ]; then
 		ID=$(echo "${endpoint}" | sort | grep "dev $DEVICE " | awk '{print $3}')
 		IFF=$(echo "${endpoint}" | sort | grep -m 1 -E "dev $DEVICE " | awk '{print $4; exit}')
+		IFF2=$(echo "${endpoint}" | sort | grep -m 1 -E "dev $DEVICE " | awk '{print $5; exit}')
 	fi
 	if [ -n "$TYPE" ]; then
 		#IP=$(ip a show $DEVICE | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}[0-9]*).*/\2/p')
@@ -196,16 +198,20 @@ else
                             done
                         }
                         for i in $IP; do
-                            ip mptcp endpoint add $i dev $DEVICE backup fullmesh
+                            ip mptcp endpoint add $i dev $DEVICE subflow backup fullmesh
                         done
                         exit 0;;
                 "")
                         case "$IFF" in
                                 "")          echo $DEVICE is deactivated;;
-                                "subflow")   echo $DEVICE is in default mode;;
-                                "backup")    echo $DEVICE is in backup mode;;
+                                "subflow")
+                                    case "$IFF2" in
+                                        "backup")    echo $DEVICE is in backup mode;;
+                                        "fullmesh")  echo $DEVICE is in default mode;;
+                                        "")  echo $DEVICE is in subflow mode;;
+                                    esac
+                                    ;;
                                 "signal")    echo $DEVICE is in signal mode;;
-                                "fullmesh")  echo $DEVICE is in fullmesh mode;;
                                 *)           echo "$DEVICE Unkown state!" && exit 1;;
                         esac
                         exit 0;;
