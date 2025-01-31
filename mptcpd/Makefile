@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2020-2024 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter project
+# Copyright (C) 2020-2025 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter project
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -10,7 +10,7 @@ include $(TOPDIR)/rules.mk
 PKG_NAME:=mptcpd
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/multipath-tcp/mptcpd.git
-PKG_SOURCE_VERSION:=0c36dbadb56586ad51b7945e3434c87c7f1b16f4
+PKG_SOURCE_VERSION:=68fd9a156669ca7029a101f32282706df069cb4f
 PKG_VERSION:=0.13
 PKG_RELEASE:=1
 PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
