@@ -93,7 +93,7 @@ MY_DEPENDS := \
     (LINUX_5_4&&(TARGET_x86_64||TARGET_aarch64)):kmod-tcp-bbr2 \
     TARGET_x86_64:kmod-atlantic \
     !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-minrtt !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-bkup !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-burst !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-first !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-red !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-rr !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):bpftool-full \
-    !(LINUX_6_10||LINUX_6_11||LINUX_6_12):kmod-ovpn-dco-v2 lspci \
+    kmod-ovpn-dco-v2 lspci \
     TARGET_mediatek_filogic:kmod-mt7915-firmware TARGET_mediatek_filogic:kmod-mt7916-firmware TARGET_mediatek_filogic:kmod-mt7986-firmware TARGET_mediatek_filogic:kmod-mt7986-wo-firmware TARGET_mediatek_filogic:kmod-mt7996-firmware TARGET_mediatek_filogic:kmod-mt7996-233-firmware TARGET_mediatek_filogic:mt7988-wo-firmware TARGET_mediatek_filogic:mt7988-2p5g-phy-firmware \
     luci-app-smartdns
 
