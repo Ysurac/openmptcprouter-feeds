@@ -97,6 +97,11 @@ if [ "$(pgrep rpcd)" = "" ] && [ -f /etc/init.d/rpcd ]; then
 	/etc/init.d/rpcd restart >/dev/null 2>&1
 	sleep 5
 fi
+if [ "$(pgrep dbus)" = "" ] && [ -f /etc/init.d/dbus ]; then
+	_log "Can't find dbus, restart it..."
+	/etc/init.d/dbus restart >/dev/null 2>&1
+	sleep 5
+fi
 
 if [ "$(pgrep uhttpd)" = "" ] && [ -f /etc/init.d/uhttpd ]; then
 	_log "Can't find uhttpd, restart it..."
@@ -193,7 +198,7 @@ multipath_fix() {
 	config_get multipath "$1" multipath
 	[ "$multipath" != "off" ] && return
 	config_get device "$1" device
-	{ "$(echo $device | grep '@')" ] && return
+	[ "$(echo $device | grep '@')" ] && return
 	interface="$(ifstatus $1 | jsonfilter -q -e '@.l3_device' | tr -d '\n')"
 	[ -n "$interface" ] && [ -z "$(multipath $interface | grep deactivated)" ] && {
 		_log "Fix Multipath status on $1 ($interface)"
@@ -239,7 +244,7 @@ if [ -n "$(logread | tail -n 2 | grep 'Ring expansion failed')" ]; then
 	echo 1 > /sys/bus/pci/rescan
 fi
 
-if [ -f /etc/init.d/omr-bypass ] && (([ -e /usr/sbin/iptables-nft-save ] && [ "$(iptables-nft-save 2>/dev/null | grep omr-bypass)" = "" ]) || [ "$(iptables-save 2>/dev/null | grep omr-bypass)" = "" ]) && [ "$(pgrep -f omr-bypass)" = "" ]; then
+if [ -f /etc/init.d/omr-bypass ] && [ -z "$(pgrep -f omr-bypass)" ] && (([ -e /usr/sbin/iptables-nft-save ] && [ "$(iptables-nft-save 2>/dev/null | grep omr-bypass)" = "" ]) || [ "$(iptables-save 2>/dev/null | grep omr-bypass)" = "" ]); then
 	_log "Can't find omr-bypass rules, restart omr-bypass..."
 	/etc/init.d/omr-bypass start >/dev/null 2>&1
 	sleep 5
