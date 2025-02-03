@@ -127,6 +127,23 @@ _ping_server() {
 	fi
 }
 
+_ping_server_all() {
+	count_server() {
+		config_get disabled $1 disabled
+		config_get serverip $1 ip
+		if [ "$disabled" != "1" ] && [ -n "$serverip" ]; then
+			servers=true
+		fi
+	}
+	config_load openmptcprouter
+	config_foreach count_server server
+	if [ "$servers" = true ]; then
+		for intf in $(multipath 2>/dev/null | awk '/default/ { print $1 }); do
+			config_foreach _ping_server server $intf
+		done
+	fi
+}
+
 _httping_server() {
 	local servername="$1"
 	[ -z "$servername" ] && return
@@ -149,6 +166,24 @@ _httping_server() {
 		config_list_foreach "${servername}" ip check_ping
 	fi
 }
+
+_httping_server_all() {
+	count_server() {
+		config_get disabled $1 disabled
+		config_get serverip $1 ip
+		if [ "$disabled" != "1" ] && [ -n "$serverip" ]; then
+			servers=true
+		fi
+	}
+	config_load openmptcprouter
+	config_foreach count_server server
+	if [ "$servers" = true ]; then
+		for intf in $(multipath 2>/dev/null | awk '/default/ { print $1 }); do
+			config_foreach _httping_server server $intf
+		done
+	fi
+}
+
 
 _ping() {
 	local host="$1"
@@ -445,7 +480,7 @@ while true; do
 								fi
 								[ -n "$(ip route show ${OMR_TRACKER_HOST} via ${OMR_TRACKER_DEVICE_GATEWAY} dev ${OMR_TRACKER_DEVICE} src ${OMR_TRACKER_DEVICE_IP})" ] && ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2>&1
 								if $(exit $statusb); then
-									OMR_TRACKER_STATUS_MSG=""
+									#OMR_TRACKER_STATUS_MSG=""
 									OMR_TRACKER_STATUS="OK"
 								else
 									if [ "$OMR_TRACKER_LIST_HOSTS" = "" ]; then
@@ -456,11 +491,11 @@ while true; do
 									OMR_TRACKER_STATUS_MSG="check error"
 								fi
 							else
-								OMR_TRACKER_STATUS_MSG=""
+								#OMR_TRACKER_STATUS_MSG=""
 								OMR_TRACKER_STATUS="OK"
 							fi
 						else
-							OMR_TRACKER_STATUS_MSG=""
+							#OMR_TRACKER_STATUS_MSG=""
 							OMR_TRACKER_STATUS="OK"
 						fi
 						if [ "$serverip_ping" != false ] && [ "$OMR_TRACKER_STATUS" = "OK" ] && [ "$OMR_TRACKER_TYPE" != "httping" ] && [ "$OMR_TRACKER_SERVER_HTTP_TEST" = "1" ]; then
@@ -469,10 +504,22 @@ while true; do
 							config_foreach _httping_server server $OMR_TRACKER_DEVICE_IP
 							if [ "$serverip_ping" = false ]; then
 								#OMR_TRACKER_STATUS="ERROR"
-								OMR_TRACKER_STATUS_MSG="No access to server API"
+								OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG No access to server API"
 							else
 								OMR_TRACKER_STATUS_MSG=""
 								OMR_TRACKER_STATUS="OK"
+								break
+							fi
+						elif [ "$serverip_ping" = false ] && [ "$OMR_TRACKER_STATUS" = "OK" ]; then
+							if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
+								_ping_server_all
+							fi
+							if [ "$OMR_TRACKER_TYPE" = "httping" ]; then
+								_httping_server_all
+							fi
+							if [ "$server_ping" != false ] && [ "$servers" = true ]; then
+								OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG No answer from server"
+								OMR_TRACKER_STATUS="ERROR"
 								break
 							fi
 						fi
@@ -578,6 +625,18 @@ while true; do
 							else
 								OMR_TRACKER_STATUS_MSG=""
 								OMR_TRACKER_STATUS="OK"
+								break
+							fi
+						elif [ "$serverip_ping" = false ] && [ "$OMR_TRACKER_STATUS" = "OK" ]; then
+							if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
+								_ping_server_all
+							fi
+							if [ "$OMR_TRACKER_TYPE" = "httping" ]; then
+								_httping_server_all
+							fi
+							if [ "$server_ping" != false ] && [ "$servers" = true ]; then
+								OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG No answer from server"
+								OMR_TRACKER_STATUS="ERROR"
 								break
 							fi
 						fi
