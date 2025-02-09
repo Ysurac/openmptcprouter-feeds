@@ -7,18 +7,19 @@ timeout=$(uci -q get openmptcprouter.settings.status_getip_timeout)
 [ -z "$timeout" ] && timeout="1"
 
 get_ip_from_server() {
+	[ -n "$ip" ] && return
 	serverport=$(uci -q get openmptcprouter.$1.port)
 	get_ip() {
+		[ -n "$ip" ] && return
 		serverip=$1
 		getip="$(curl -s -k -4 -m ${timeout} --interface $intf https://$serverip:$serverport/clienthost)"
 		[ -n "$getip" ] && getip=$(echo $getip | jsonfilter -e '@.client_host' | sed 's/::ffff://')
 		if expr "$getip" : '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$' >/dev/null; then
 			ip=$getip
-			break
+			return
 		fi
 	}
 	config_list_foreach $1 ip get_ip
-	[ -n "$ip" ] && break
 }
 
 get_ip_from_website() {
@@ -30,7 +31,6 @@ get_ip_from_website() {
 	ipset del ss_rules_dst_bypass_all $checkip > /dev/null 2>&1
 	if expr "$getip" : '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$' >/dev/null; then
 		ip=$getip
-		break
 	fi
 }
 

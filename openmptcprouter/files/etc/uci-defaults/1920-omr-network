@@ -2,8 +2,8 @@
 . /lib/functions.sh
 
 _setup_macaddr() {
-	uci -q get "network.$1.macaddr" >/dev/null && return
-	uci -q set "network.$1.macaddr=$2"
+	uci -q get "network.${1}.macaddr" >/dev/null && return
+	uci -q set "network.${1}.macaddr=$2"
 }
 
 _setup_macvlan() {
@@ -104,11 +104,13 @@ if [ "$(uci -q show network.lan | grep multipath)" != "" ]; then
 fi
 
 lanif="eth0"
-if [ "$(grep rockchip /etc/os-release)" != "" ]; then
+if [ "$(cat /etc/board.json | jsonfilter -q -e '@.model.id' | tr -d '\n')" = "friendlyarm,nanopi-r5c" ]; then
+	lanif="eth0"
+elif [ "$(grep rockchip /etc/os-release)" != "" ]; then
 	lanif="eth1"
 elif [ "$(grep filogic /etc/os-release)" != "" ]; then
 	lanif="eth1"
-elif [ "$(cat /etc/board.json | jsonfilter -q -e '@.model.id' | tr -d '\n')" = "bananapi_bpi-r3" ]; then
+elif [ -n "$(cat /etc/board.json | jsonfilter -q -e '@.model.id' | grep bananapi_bpi-r3)" ]; then
 	lanif="eth0"
 elif [ -d /sys/class/net/lan0 -o -n "$(ip link | grep ' lan0')" ] && [ -d /sys/class/net/wan -o -n "$(ip link | grep ' wan@')" -o -n "$(ip link | grep ' wan:')" ]; then
 	lanif="wan"
@@ -196,10 +198,22 @@ set network.lan.delegate=0
 set network.lan.addlatency=0
 set network.lan.txqueuelen=2000
 set dhcp.lan.dhcpv4='server'
-set network.lan_dev=device
-set network.lan_dev.name=${lanif}
-
 EOF
+
+# Add Lan device if no device defined
+if [ -z "$(uci -q show network | grep device)" ]; then
+	uci -q batch <<-EOF
+	set network.lan_dev=device
+	set network.lan_dev.name=${lanif}
+	EOF
+fi
+
+# Delete all bridges
+#if [ -n "$(uci -q show network | grep bridge)" ]; then
+#	for bridge in $(uci -q show network | awk -F. '/bridge/ { print $2}'); do
+#		uci -q delete network.${bridge}
+#	done
+#fi
 
 uci -q batch <<-EOF
 delete network.none
@@ -245,6 +259,11 @@ if [ "$(uci -q show network.wan1 | grep multipath)" = "" ] && [ -z "$(uci -q get
 		_setup_wan_interface wan2 eth1.2 on
 		_setup_wan_interface wan3 eth1.3 on
 		_setup_wan_interface wan4 eth1.4 on
+	elif [ "$(cat /etc/board.json | jsonfilter -q -e '@.model.id' | tr -d '\n')" = "friendlyarm,nanopi-r5c" ]; then
+		_setup_wan_interface wan1 eth1 master macvlan
+		_setup_wan_interface wan2 eth1 on macvlan
+		_setup_macvlan wan1
+		_setup_macvlan wan2
 	elif [ "$(grep rockchip /etc/os-release)" != "" ]; then
 		_setup_wan_interface wan1 eth0 master macvlan
 		_setup_wan_interface wan2 eth0 on macvlan

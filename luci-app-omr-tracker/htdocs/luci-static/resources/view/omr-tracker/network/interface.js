@@ -95,7 +95,12 @@ return view.extend({
 		}
 		*/
 		o = s.option(form.Flag, 'server_http_test', _('Server http test'),
-			_('Check if connection work with http by sending a request to server'));
+			_('Check if connection work with http by sending a request to server API'));
+		o.rmempty = false;
+		o.modalonly = true;
+
+		o = s.option(form.Flag, 'server_test', _('Server test'),
+			_('Check if connection work by sending a ping or http request to server over all interfaces, failed if only current interface is not able to.'));
 		o.rmempty = false;
 		o.modalonly = true;
 

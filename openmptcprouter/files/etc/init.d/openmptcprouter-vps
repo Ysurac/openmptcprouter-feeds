@@ -43,6 +43,7 @@ _login() {
 	if [ -z "$token" ]; then
 		login_on_server() {
 			server=$1
+			[ -n "$token" ] && return
 			#auth=`curl --max-time 10 -s -k -H "Content-Type: application/json" -X POST -d '{"username":"'$username'","password":"'$password'"}' https://$server:$serverport/login`
 			resolve="$(resolveip -t 5 $server)"
 			valid_ip6=$(valid_subnet6 $server)
@@ -61,10 +62,10 @@ _login() {
 					[ -n "$auth" ] && break
 				done
 			fi
-			[ -z "$auth" ] && return
-			token="$(echo "$auth" | jsonfilter -q -e '@.access_token')"
-			uci -q set openmptcprouter.${servername}.token="$token"
-			[ -n "$token" ] && break
+			[ -n "$auth" ] && {
+				token="$(echo "$auth" | jsonfilter -q -e '@.access_token')"
+				uci -q set openmptcprouter.${servername}.token="$token"
+			}
 		}
 		config_load openmptcprouter
 		config_list_foreach ${servername} ip login_on_server
@@ -1717,7 +1718,7 @@ _set_config_from_vps() {
 	v2ray_key="$(echo "$vps_config" | jsonfilter -q -e '@.v2ray.config.key')"
 	#v2ray_port="$(echo "$vps_config" | jsonfilter -q -e '@.v2ray.config.port')"
 	v2ray_port="65228"
-	if [ -n "$(uci -q get v2ray.omr)" ] && (([ -n "$v2ray_key" ] && [ "$v2ray_key" != "$(uci -q get v2ray.omrout.s_vmess_user_id)" ]) || ([ -n "$v2ray_port" ] && [ "$v2ray_port" != "$(uci -q get v2ray.omrout.s_vmess.port)" ])); then
+	if [ -n "$(uci -q get v2ray.omr)" ] && ( ([ -n "$v2ray_key" ] && [ "$v2ray_key" != "$(uci -q get v2ray.omrout.s_vmess_user_id)" ]) || ([ -n "$v2ray_port" ] && [ "$v2ray_port" != "$(uci -q get v2ray.omrout.s_vmess.port)" ]) ); then
 		uci -q batch <<-EOF >/dev/null
 			set v2ray.omrout.s_socks_user_id="$v2ray_key"
 			set v2ray.omrout.s_socks_port="$((v2ray_port+3))"
@@ -1749,7 +1750,7 @@ _set_config_from_vps() {
 	xray_vless_reality_key="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.vless_reality_key')"
 	#v2ray_port="$(echo "$vps_config" | jsonfilter -q -e '@.v2ray.config.port')"
 	xray_port="65248"
-	if [ -n "$(uci -q get xray.omr)" ] && (([ -n "$xray_key" ] && [ "$xray_key" != "$(uci -q get xray.omrout.s_vmess_user_id)" ]) || ([ -n "$xray_port" ] && [ "$xray_port" != "$(uci -q get xray.omrout.s_vmess.port)" ])); then
+	if [ -n "$(uci -q get xray.omr)" ] && ( ([ -n "$xray_key" ] && [ "$xray_key" != "$(uci -q get xray.omrout.s_vmess_user_id)" ]) || ([ -n "$xray_port" ] && [ "$xray_port" != "$(uci -q get xray.omrout.s_vmess.port)" ]) ); then
 		uci -q batch <<-EOF >/dev/null
 			set xray.omrout.s_shadowsocks_port="$((xray_port+4))"
 			set xray.omrout.s_shadowsocks_password="$xray_sskey"
@@ -1785,7 +1786,7 @@ _set_config_from_vps() {
 	# Glorytun settings
 	glorytun_key="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.key')"
 	glorytun_port="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.port')"
-	if [ -n "$(uci -q get glorytun.vpn)" ] && (([ -n "$glorytun_key" ] && [ "$glorytun_key" != "$(uci -q get glorytun.vpn.key)" ]) || ([ -n "$glorytun_port" ] || [ "$glorytun_port" != "$(uci -q get glorytun.vpn.port)" ])); then
+	if [ -n "$(uci -q get glorytun.vpn)" ] && ( ([ -n "$glorytun_key" ] && [ "$glorytun_key" != "$(uci -q get glorytun.vpn.key)" ]) || ([ -n "$glorytun_port" ] || [ "$glorytun_port" != "$(uci -q get glorytun.vpn.port)" ]) ); then
 		vpn="$(uci -q get openmptcprouter.settings.vpn)"
 		glorytun_state=0
 		if [ "$vpn" = "glorytun_tcp" ]; then
@@ -1810,7 +1811,7 @@ _set_config_from_vps() {
 			/etc/init.d/glorytun restart >/dev/null 2>&1
 		fi
 	fi
-	if [ -n "$(uci -q get glorytun.udp)" ] && (([ -n "$glorytun_key" ] && [ "$glorytun_key" != "$(uci -q get glorytun-udp.vpn.key)" ]) || ([ -n "$glorytun_port" ] || [ "$glorytun_port" != "$(uci -q get glorytun-udp.vpn.port)" ])); then
+	if [ -n "$(uci -q get glorytun.udp)" ] && ( ([ -n "$glorytun_key" ] && [ "$glorytun_key" != "$(uci -q get glorytun-udp.vpn.key)" ]) || ([ -n "$glorytun_port" ] || [ "$glorytun_port" != "$(uci -q get glorytun-udp.vpn.port)" ]) ); then
 		vpn="$(uci -q get openmptcprouter.settings.vpn)"
 		glorytun_state=0
 		if [ "$vpn" = "glorytun_udp" ]; then
@@ -1964,7 +1965,7 @@ _set_config_from_vps() {
 	# DSVPN settings
 	dsvpn_key="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.key')"
 	dsvpn_port="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.port')"
-	if [ -f /etc/init.d/dsvpn ] && [ -n "$(uci -q get dsvpn.vpn)" ] && (([ -n "$dsvpn_key" ] && [ "$dsvpn_key" != "$(uci -q get dsvpn.vpn.key)" ]) || ([ -n "$dsvpn_port" ] && [ "$dsvpn_port" != "$(uci -q get dsvpn.vpn.port)" ])); then
+	if [ -f /etc/init.d/dsvpn ] && [ -n "$(uci -q get dsvpn.vpn)" ] && ( ([ -n "$dsvpn_key" ] && [ "$dsvpn_key" != "$(uci -q get dsvpn.vpn.key)" ]) || ([ -n "$dsvpn_port" ] && [ "$dsvpn_port" != "$(uci -q get dsvpn.vpn.port)" ]) ); then
 		dsvpn_state=0
 		if [ "$vpn" = "dsvpn" ]; then
 			dsvpn_state=1

@@ -330,7 +330,7 @@ set_route_balancing() {
 	local multipath_config_route interface_gw interface_if
 	INTERFACE=$1
 	[ -z "$INTERFACE" ] && return
-	[ "$INTERFACE" = "omrvpn" ] && continue
+	[ "$INTERFACE" = "omrvpn" ] && return
 	multipath_config_route=$(uci -q get openmptcprouter.$INTERFACE.multipath)
 	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$INTERFACE.multipath || echo "off")
 	[ "$(uci -q get openmptcprouter.$INTERFACE.multipathvpn)" = "1" ] && {
@@ -390,8 +390,8 @@ set_route_balancing6() {
 	local multipath_config_route interface_gw interface_if
 	INTERFACE=$1
 	[ -z "$INTERFACE" ] && return
-	[ "$INTERFACE" = "omr6in4" ] && continue
-	[ "$INTERFACE" = "omrvpn" ] && continue
+	[ "$INTERFACE" = "omr6in4" ] && return
+	[ "$INTERFACE" = "omrvpn" ] && return
 	multipath_config_route=$(uci -q get openmptcprouter.$INTERFACE.multipath)
 	[ -z "$multipath_config_route" ] && multipath_config_route=$(uci -q get network.$INTERFACE.multipath || echo "off")
 	[ "$(uci -q get openmptcprouter.$INTERFACE.multipathvpn)" = "1" ] && {
