@@ -1,17 +1,45 @@
 #!/bin/sh
-SERVER=$1
-shift
-[ -z "$SERVER" ] && SERVER="vps"
-KEY=$(uci -q get iperf.$SERVER.key)
-USER=$(uci -q get iperf.$SERVER.user)
-PASSWORD=$(uci -q get iperf.$SERVER.password)
-HOST=$(uci -q get iperf.$SERVER.host)
-PORTS=$(uci -q get iperf.$SERVER.ports | sed 's/,/ /g')
-PORT="${PORTS%% *}"
-echo $KEY | base64 -d > /tmp/iperf.pem
+#
+# Copyright (C) 2018-2025 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+
+. /lib/functions.sh
+
+get_auth_data() {
+	SERVER="$1"
+	config_get current $SERVER current
+	if [ "$current" = "1" ]; then
+		KEY=$(uci -q get iperf.$SERVER.key)
+		USER=$(uci -q get iperf.$SERVER.user)
+		PASSWORD=$(uci -q get iperf.$SERVER.password)
+		HOST=$(uci -q get iperf.$SERVER.host)
+		PORTS=$(uci -q get iperf.$SERVER.ports | sed 's/,/ /g')
+		PORT="${PORTS%% *}"
+	fi
+}
+
+config_load openmptcprouter
+config_foreach get_auth_data server
+
 if [ -n "$PASSWORD" ] && [ -n "$USER" ] && [ -n "$KEY" ]; then
+	echo $KEY | base64 -d > /tmp/iperf.pem
 	#IPERF3_PASSWORD=$PASSWORD iperf3 --username $USER --rsa-public-key-path /tmp/iperf.pem --use-pkcs1-padding -c $HOST -p $PORT ${@}
-	IPERF3_PASSWORD=$PASSWORD iperf3 --username $USER --rsa-public-key-path /tmp/iperf.pem -c $HOST -p $PORT ${@}
+	echo "machin: $0"
+	case "$0" in
+		*proxy)
+			IPERF3_PASSWORD=$PASSWORD iperf3 --username $USER --rsa-public-key-path /tmp/iperf.pem -c $HOST -p $PORT --socks5 127.0.0.1:1111 ${@}
+		;;
+		*vpn)
+			VPNIP=$(ip r show default metric 0 | awk '{ print $3 }' | tr -d '\n')
+			IPERF3_PASSWORD=$PASSWORD iperf3 --username $USER --rsa-public-key-path /tmp/iperf.pem -c $VPNIP -p $PORT
+		;;
+		*)
+			IPERF3_PASSWORD=$PASSWORD iperf3 --username $USER --rsa-public-key-path /tmp/iperf.pem -c $HOST -p $PORT ${@}
+		;;
+	esac
 else
 	iperf3 -c $HOST -p $PORT ${@}
 fi

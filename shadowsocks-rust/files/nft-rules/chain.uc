@@ -72,6 +72,8 @@ if (proto == "tcp") {
 
 chain ss_rules_pre_{{ proto }} {
 	type {{ type }} hook {{ hook }} priority {{ priority }};
+	ip daddr @ss_rules_remote_servers accept;
+	ip6 daddr @ss_rules6_remote_servers accept;
 	meta l4proto {{ proto }}{%- let ifnames=get_ifnames(); if (length(ifnames)): %} iifname { {{join(", ", ifnames)}} }{% endif %} goto ss_rules_pre_src_{{ proto }};
 }
 

@@ -118,7 +118,7 @@ _ping_server() {
 				statusp=$?
 				if $(exit $statusp); then
 					serverip_ping=true
-					return
+					return 0
 				fi
 			fi
 		}
@@ -158,7 +158,7 @@ _httping_server() {
 				statusp=$?
 				if $(exit $statusp); then
 					serverip_ping=true
-					return
+					return 0
 				fi
 			fi
 		}
@@ -199,7 +199,7 @@ _ping() {
 			-Q 184 \
 			"${host}" 2>&1
 		)
-		loss=$(echo "$ret" | awk '/packet loss/ {gsub("%","");print $6}' | tr -d '\n')
+		loss=$(echo "$ret" | awk '/packet loss/ && !/errors/ {gsub("%","");print $6}' | tr -d '\n')
 		
 		if [ -n "$loss" ] && [ "$loss" != "100" ]; then
 			if [ "$localip" = "yes" ]; then
@@ -210,7 +210,7 @@ _ping() {
 				}
 				OMR_TRACKER_LOSS="$loss"
 			fi
-			return
+			return 0
 		fi
 	else
 		ret=$(ping -B -I "${device}" \
@@ -223,9 +223,7 @@ _ping() {
 		)
 		bindcheck=$(echo "$ret" | grep "Address not available")
 		[ -n "$bindcheck" ] && OMR_TRACKER_NO_BIND=1
-		#loss=$(echo "$ret" | grep 'packet loss' | sed -ne 's/.*\([0-9]\+\)% packet loss.*/\1/p')
-		#loss=$(echo "$ret" | grep 'packet loss' | cut -d " " -f6 | sed 's/%//' | tr -d '\n')
-		loss=$(echo "$ret" | awk '/packet loss/ {gsub("%","");print $6}' | tr -d '\n')
+		loss=$(echo "$ret" | awk '/packet loss/ && !/errors/  {gsub("%","");print $6}' | tr -d '\n')
 		if [ -n "$loss" ] && [ "$loss" != "100" ]; then
 			if [ "$localip" = "yes" ]; then
 				#latency=$(echo "$ret" | grep rtt | cut -d "/" -s -f5 | cut -d "." -f1 | tr -d '\n')
@@ -236,11 +234,10 @@ _ping() {
 				}
 				OMR_TRACKER_LOSS="$loss"
 			fi
-			return
+			return 0
 		fi
-		#) && echo "$ret" | grep -sq "bytes from" && {
 	fi
-	false
+	return 1
 }
 #'
 _httping() {
@@ -266,7 +263,7 @@ _httping() {
 				}
 				OMR_TRACKER_LOSS="$loss"
 			fi
-			return
+			return 0
 		fi
 	else
 		ret=$(httping -l "${host}" \
@@ -286,10 +283,10 @@ _httping() {
 				}
 				OMR_TRACKER_LOSS="$loss"
 			fi
-			return
+			return 0
 		fi
 	fi
-	false
+	return 1
 }
 
 _dns() {
@@ -303,13 +300,13 @@ _dns() {
 	) && echo "$ret" | grep -sq "1.1.1.1" && {
 		OMR_TRACKER_LATENCY=$(echo "$ret" | awk '/Query time/{print $4}')
 		#_update_rto "$OMR_TRACKER_LATENCY"
-		return
+		return 0
 	}
-	false
+	return 1
 }
 
 _none() {
-	return
+	return 0
 }
 
 _restart
@@ -490,9 +487,6 @@ while true; do
 									fi
 									OMR_TRACKER_STATUS_MSG="check error"
 								fi
-							else
-								#OMR_TRACKER_STATUS_MSG=""
-								OMR_TRACKER_STATUS="OK"
 							fi
 						else
 							#OMR_TRACKER_STATUS_MSG=""
@@ -607,9 +601,6 @@ while true; do
 									fi
 									OMR_TRACKER_STATUS_MSG="check error"
 								fi
-							else
-								OMR_TRACKER_STATUS_MSG=""
-								OMR_TRACKER_STATUS="OK"
 							fi
 						else
 							OMR_TRACKER_STATUS_MSG=""
