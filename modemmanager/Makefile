@@ -14,7 +14,8 @@ PKG_SOURCE_VERSION:=1.23.12-dev
 PKG_RELEASE:=21
 
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_URL:=https://gitlab.freedesktop.org/mobile-broadband/ModemManager.git
+#PKG_SOURCE_URL:=https://gitlab.freedesktop.org/mobile-broadband/ModemManager.git
+PKG_SOURCE_URL:=https://github.com/linux-mobile-broadband/ModemManager.git
 #PKG_MIRROR_HASH:=98daa1a15075c88afb3ed0de20dc83fe51d2ba3c66318ce3f731da4616a2e192
 
 PKG_MAINTAINER:=Nicholas Smith <nicholas@nbembedded.com>
