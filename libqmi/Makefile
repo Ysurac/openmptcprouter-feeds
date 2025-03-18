@@ -13,7 +13,8 @@ PKG_SOURCE_VERSION:=1.35.6-dev
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_URL:=https://gitlab.freedesktop.org/mobile-broadband/libqmi.git
+#PKG_SOURCE_URL:=https://gitlab.freedesktop.org/mobile-broadband/libqmi.git
+PKG_SOURCE_URL:=https://github.com/linux-mobile-broadband/libqmi.git
 #PKG_MIRROR_HASH:=af3dc760d0c40ef8af1f8b424435daa12bff698ed45b1cc9a9e38ea62ed047f0
 
 PKG_BUILD_FLAGS:=gc-sections

@@ -1487,10 +1487,6 @@ function settings_add()
 	local tracebox = luci.http.formvalue("disabletracebox") or "1"
 	ucic:set("openmptcprouter","settings","tracebox",tracebox)
 
-	-- Enable/disable ModemManager
-	local modemmanager = luci.http.formvalue("disablemodemmanager") or "1"
-	ucic:set("openmptcprouter","settings","modemmanager",modemmanager)
-
 	-- Enable/disable server ping
 	local disableserverping = luci.http.formvalue("disableserverping") or "0"
 	ucic:set("openmptcprouter","settings","disableserverping",disableserverping)
