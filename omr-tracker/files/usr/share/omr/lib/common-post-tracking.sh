@@ -713,6 +713,7 @@ disable_pihole() {
 }
 
 dns_flush() {
+	_log "DNS flush"
 	unbound-control flush-negative >/dev/null 2>&1
 	unbound-control flush-bogus >/dev/null 2>&1
 }
