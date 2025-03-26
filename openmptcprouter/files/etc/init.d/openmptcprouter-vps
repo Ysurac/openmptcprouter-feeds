@@ -6,7 +6,7 @@ START=99
 
 USE_PROCD=1
 
-EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key set_gre_tunnel token set_bypass_ips"
+EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key set_gre_tunnel token set_bypass_ips set_vpn_ip"
 
 . /usr/lib/unbound/iptools.sh
 
@@ -1028,6 +1028,11 @@ _set_vpn_ip() {
 	fi
 }
 
+set_vpn_ip() {
+	_set_vpn_ip
+}
+
+
 _set_sipalg() {
 	local settings
 	sipalg="$(uci -q get openmptcprouter.settings.sipalg)"
@@ -1068,7 +1073,7 @@ _set_client2client() {
 			set network.omr_client2client_${c2cid}.gateway="${vpnip_remote}"
 		EOF
 	done
-	uci -q commit network
+	[ -n "$(uci -q changes network)" ] && uci -q commit network
 }
 
 _vps_firewall_redirect_port() {
@@ -1680,6 +1685,9 @@ _set_config_from_vps() {
 			if [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ]; then
 				logger -t "OMR-VPS" "Shadowsocks restart..."
 				/etc/init.d/shadowsocks-libev restart >/dev/null 2>&1
+			else
+				logger -t "OMR-VPS" "Shadowsocks stop..."
+				/etc/init.d/shadowsocks-libev stop >/dev/null 2>&1
 			fi
 		fi
 	fi
@@ -1710,6 +1718,9 @@ _set_config_from_vps() {
 			if [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ]; then
 				logger -t "OMR-VPS" "Shadowsocks Rust restart..."
 				/etc/init.d/shadowsocks-rust restart >/dev/null 2>&1
+			else
+				logger -t "OMR-VPS" "Shadowsocks Rust stop..."
+				/etc/init.d/shadowsocks-rust stop >/dev/null 2>&1
 			fi
 		fi
 	fi
@@ -1740,6 +1751,9 @@ _set_config_from_vps() {
 			if [ "$(uci -q get v2ray.main.enabled)" = "1" ]; then
 				logger -t "OMR-VPS" "V2ray restart..."
 				/etc/init.d/v2ray restart >/dev/null 2>&1
+			else
+				logger -t "OMR-VPS" "Stop restart..."
+				/etc/init.d/v2ray stop >/dev/null 2>&1
 			fi
 		fi
 	fi
@@ -1779,6 +1793,9 @@ _set_config_from_vps() {
 			if [ "$(uci -q get xray.main.enabled)" = "1" ]; then
 				logger -t "OMR-VPS" "Xray restart..."
 				/etc/init.d/xray restart >/dev/null 2>&1
+			else
+				logger -t "OMR-VPS" "Xray stop..."
+				/etc/init.d/xray stop >/dev/null 2>&1
 			fi
 		fi
 	fi
@@ -2247,7 +2264,7 @@ _backup_list() {
 backup_list() {
 	config_load openmptcprouter
 	config_foreach _backup_list server
-	uci -q commit openmptcprouter
+	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 }
 
 
@@ -2359,9 +2376,9 @@ _config_service() {
 					commit glorytun-udp
 				EOF
 				config_foreach _set_ss_server server "method" "aes-256-gcm"
-				uci -q commit shadowsocks-libev
+				[ -n "$(uci -q changes shadowsocks-libev)" ] && uci -q commit shadowsocks-libev
 				config_foreach _set_ssrust_server server "method" "2022-blake3-aes-256-gcm"
-				uci -q commit shadowsocks-rust
+				[ -n "$(uci -q changes shadowsocks-rust)" ] && uci -q commit shadowsocks-rust
 				[ "$method" != "aes-256-gcm" ] && {
 					logger -t "OMR-VPS" "Shadowsocks restart"
 					/etc/init.d/shadowsocks-libev restart
