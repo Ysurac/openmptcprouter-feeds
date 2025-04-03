@@ -1420,6 +1420,12 @@ function settings_add()
 		luci.sys.exec("/etc/init.d/modemmanager stop")
 	end
 
+	-- Ban UDP IPs
+	local banudpip = luci.http.formvalue("banudpip") or "0"
+	ucic:set("firewall","omr_dst_udp_banip_rule_v4","enabled",banudpip)
+	ucic:set("firewall","omr_dst_udp_banip_rule_v6","enabled",banudpip)
+	luci.sys.exec("/etc/init.d/firewall reload")
+
 	-- Enable/disable external check
 	local externalcheck = luci.http.formvalue("externalcheck") or "1"
 	ucic:set("openmptcprouter","settings","external_check",externalcheck)
