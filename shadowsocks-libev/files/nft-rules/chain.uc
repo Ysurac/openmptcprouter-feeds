@@ -39,7 +39,8 @@ function get_ifnames() {
 	return res;
 }
 
-let type, hook, priority, redir_port;
+let type, hook, priority, redir_port, rules_name;
+rules_name = o_oip_rules_name;
 if (proto == "tcp") {
 	type = "nat";
 	hook = "prerouting";
@@ -69,7 +70,7 @@ if (proto == "tcp") {
 
 %}
 {% if (redir_port): %}
-
+{%	if (rules_name == ""): %}
 chain ss_rules_pre_{{ proto }} {
 	type {{ type }} hook {{ hook }} priority {{ priority }};
 	ip daddr @ss_rules_remote_servers accept;
@@ -102,12 +103,16 @@ chain ss_rules_dst_{{ proto }} {
 	ip6 daddr @ss_rules6_dst_forward goto ss_rules_forward_{{ proto }};
 	{{ get_dst_default_verdict() }};
 }
-
+{%	endif %}
 {%   if (proto == "tcp"): %}
 chain ss_rules_forward_{{ proto }} {
+{%	if (rules_name != ""): %}
+	meta l4proto tcp {{ o_nft_tcp_extra }} ip saddr @ss_rules_src_forward_oip_{{ rules_name }} redirect to :{{ redir_port }};
+{%	else %}
 	meta l4proto tcp {{ o_nft_tcp_extra }} redirect to :{{ redir_port }};
+{%	endif %}
 }
-{%   let local_verdict = get_local_verdict(); if (local_verdict): %}
+{%	let local_verdict = get_local_verdict(); if (local_verdict): %}
 chain ss_rules_local_out {
 	type {{ type }} hook output priority -1;
 	meta l4proto != tcp accept;
@@ -119,7 +124,7 @@ chain ss_rules_local_out {
 	ip6 daddr @ss_rules6_dst_bypass accept;
 	{{ local_verdict }};
 }
-{%     endif %}
+{%	endif %}
 {%   elif (proto == "udp"): %}
 chain ss_rules_forward_{{ proto }} {
 	meta l4proto udp {{ o_nft_udp_extra }} meta mark set 1 tproxy to :{{ redir_port }};
