@@ -30,6 +30,7 @@ endef
 define Package/$(PKG_NAME)/conffiles
 /etc/config/$(PKG_NAME)
 /etc/vnstat_backup.tar.gz
+/etc/firewall.user
 endef
 
 define Build/Compile
