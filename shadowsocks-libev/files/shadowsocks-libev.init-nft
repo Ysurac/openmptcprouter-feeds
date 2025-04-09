@@ -160,11 +160,12 @@ ss_rules_cb() {
 }
 
 ss_redir_ports() {
+	server=$2
 	port=$(uci -q get shadowsocks-libev.$1.local_port)
-	server=$(uci -q get shadowsocks-libev.$1.server)
+	server_redir=$(uci -q get shadowsocks-libev.$1.server)
 	disabled=$(uci -q get shadowsocks-libev.$1.disabled)
-	server_disabled=$(uci -q get shadowsocks-libev.${server}.disabled)
-	if [ "$disabled" != "1" ] && [ "$server_disabled" != "1" ]; then
+	server_disabled=$(uci -q get shadowsocks-libev.${server_redir}.disabled)
+	if [ "$disabled" != "1" ] && [ "$server_disabled" != "1" ] && [ "$server" = "$server_redir" ]; then
 		if [ "$port" -lt "$min_ss_redir_ports" ]; then
 			min_ss_redir_ports=$port
 		fi
@@ -175,7 +176,8 @@ ss_redir_ports() {
 }
 
 ss_rules_nft_gen() {
-	local cfg="ss_rules"
+	#local cfg="ss_rules"
+	local cfg="$1"
 	local cfgtype
 	local local_port_tcp local_port_udp
 	local remote_servers
@@ -192,11 +194,11 @@ ss_rules_nft_gen() {
 	config_get server "$cfg" server
 	[ "$(uci -q get shadowsocks-libev.${server}.disabled)" = "1" ] && return 2
 
-	if [ "$ss_rules_redir_tcp_$redir_tcp" = "all" ]; then
+#	if [ "$ss_rules_redir_tcp_$redir_tcp" = "all" ]; then
 		min_ss_redir_ports="65535"
 		max_ss_redir_ports="0"
 		config_load shadowsocks-libev
-		config_foreach ss_redir_ports ss_redir
+		config_foreach ss_redir_ports ss_redir $server
 		if [ "$min_ss_redir_ports" != "$max_ss_redir_ports" ]; then
 			all_ss_redir_ports=$min_ss_redir_ports-$max_ss_redir_ports
 		else
@@ -206,10 +208,10 @@ ss_rules_nft_gen() {
 		if [ "$ss_rules_redir_udp_$redir_udp" = "all" ] || [ "$ss_rules_redir_udp_$redir_udp" = "hi1" ]; then
 			local_port_udp="$min_ss_redir_ports"
 		fi
-	else
-		eval local_port_tcp="\$ss_rules_redir_tcp_$redir_tcp"
-		eval local_port_udp="\$ss_rules_redir_udp_$redir_udp"
-	fi
+#	else
+#		eval local_port_tcp="\$ss_rules_redir_tcp_$redir_tcp"
+#		eval local_port_udp="\$ss_rules_redir_udp_$redir_udp"
+#	fi
 	[ -n "$local_port_tcp" -o -n "$local_port_udp" ] || return 1
 	
 	if [ -z "$(echo $ss_redir_servers | grep ' ')" ]; then
@@ -243,13 +245,21 @@ ss_rules_nft_gen() {
 	json_add_string o_dst_default "$dst_default"
 	json_add_string o_nft_tcp_extra "$nft_tcp_extra"
 	json_add_string o_nft_udp_extra "$nft_udp_extra"
+	if [ "$cfg" = "ss_rules" ]; then
+		json_add_string o_oip_rules_name ""
+	else
+		json_add_string o_oip_rules_name "$cfg"
+	fi
 	json_dump -i >"$tmp.json"
-
 	if utpl -S -F "$tmp.json" "$ssrules_uc" >"$tmp.nft" \
 		&& ! cmp -s "$tmp.nft" "$ssrules_nft"; then
 		echo "table inet chk {include \"$tmp.nft\";}" >"$tmp.nft.chk"
 		if nft -f "$tmp.nft.chk" -c; then
-			mv "$tmp.nft" "$ssrules_nft"
+			if [ "$cfg" = "ss_rules" ]; then
+				mv "$tmp.nft" "$ssrules_nft"
+			else
+				mv "$tmp.nft" "$ssrules_nft.$cfg.nft"
+			fi
 			fw4 -q reload
 		fi
 		rm -f "$tmp.nft.chk"
@@ -260,28 +270,35 @@ ss_rules_nft_gen() {
 
 ss_rules_nft_reset() {
 	if [ -f "$ssrules_nft" ] || [ -f "${ssrules_nft}.down" ]; then
-		rm -f "$ssrules_nft"
-		rm -f "${ssrules_nft}.down"
+		for f in $ssrules_nft*; do
+			rm -f $f
+		done
 		fw4 -q reload
 	fi
 }
 
 ss_rules() {
-	if ! ss_rules_nft_gen; then
-		ss_rules_nft_reset
-	fi
+	config_load shadowsocks-libev
+	config_foreach ss_rules_nft_gen ss_rules
+	#if ! ss_rules_nft_gen; then
+	#	ss_rules_nft_reset
+	#fi
 }
 
 rules_up() {
 	if [ -f "${ssrules_nft}.down" ]; then
-		mv -f "${ssrules_nft}.down" "$ssrules_nft"
+		for f in $ssrules_nft*.down; do
+			mv -f "$f" "$(echo "$f" | sed 's/.down//g')"
+		done
 		fw4 -q reload
 	fi
 }
 
 rules_down() {
 	if [ -f "${ssrules_nft}" ]; then
-		mv -f "$ssrules_nft" "${ssrules_nft}.down"
+		for f in $ssrules_nft*; do
+			mv -f "$f" "${f}.down"
+		done
 		fw4 -q reload
 	fi
 }
