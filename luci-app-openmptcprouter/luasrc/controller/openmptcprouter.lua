@@ -1559,8 +1559,8 @@ function settings_add()
 	ucic:commit("shadowsocks-libev")
 
 	-- Set master to dynamic or static
-	local master_type = luci.http.formvalue("master_type") or "static"
-	ucic:set("openmptcprouter","settings","master",master_type)
+	--local master_type = luci.http.formvalue("master_type") or "static"
+	--ucic:set("openmptcprouter","settings","master",master_type)
 
 	-- Set CPU scaling minimum frequency
 	local scaling_min_freq = luci.http.formvalue("scaling_min_freq") or ""
