@@ -1424,7 +1424,8 @@ function settings_add()
 	local banudpip = luci.http.formvalue("banudpip") or "0"
 	ucic:set("firewall","omr_dst_udp_banip_rule_v4","enabled",banudpip)
 	ucic:set("firewall","omr_dst_udp_banip_rule_v6","enabled",banudpip)
-	luci.sys.exec("/etc/init.d/firewall reload")
+	ucic:save("firewall")
+	ucic:commit("firewall")
 
 	-- Enable/disable external check
 	local externalcheck = luci.http.formvalue("externalcheck") or "1"
@@ -1558,8 +1559,8 @@ function settings_add()
 	ucic:commit("shadowsocks-libev")
 
 	-- Set master to dynamic or static
-	local master_type = luci.http.formvalue("master_type") or "static"
-	ucic:set("openmptcprouter","settings","master",master_type)
+	--local master_type = luci.http.formvalue("master_type") or "static"
+	--ucic:set("openmptcprouter","settings","master",master_type)
 
 	-- Set CPU scaling minimum frequency
 	local scaling_min_freq = luci.http.formvalue("scaling_min_freq") or ""
@@ -1596,6 +1597,7 @@ function settings_add()
 	luci.sys.call("/etc/init.d/openmptcprouter restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/openmptcprouter-vps set_vps_firewall >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
+	luci.sys.call("/etc/init.d/firewall reload >/dev/null 2>/dev/null")
 
 	-- Done, redirect
 	menuentry = ucic:get("openmptcprouter","settings","menu") or "openmptcprouter"
