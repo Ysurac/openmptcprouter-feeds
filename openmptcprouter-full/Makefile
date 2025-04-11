@@ -96,7 +96,7 @@ MY_DEPENDS := \
     kmod-ovpn-dco-v2 lspci \
     TARGET_mediatek_filogic:kmod-mt7915-firmware TARGET_mediatek_filogic:kmod-mt7916-firmware TARGET_mediatek_filogic:kmod-mt7986-firmware TARGET_mediatek_filogic:kmod-mt7986-wo-firmware TARGET_mediatek_filogic:kmod-mt7996-firmware TARGET_mediatek_filogic:kmod-mt7996-233-firmware TARGET_mediatek_filogic:mt7988-wo-firmware TARGET_mediatek_filogic:mt7988-2p5g-phy-firmware \
     luci-app-smartdns logd TARGET_x86_64:kmod-i40e \
-    (TARGET_x86||TARGET_x86_64):kmod-r8168 \
+    (TARGET_x86||TARGET_x86_64):kmod-r8168 (TARGET_x86||TARGET_x86_64):kmod-r8169 \
     omr-banudpip
 #    !TARGET_ipq40xx:kmod-rt2800-usb !TARGET_ipq40xx:kmod-rtl8xxxu !TARGET_ipq40xx:kmod-rtl8192cu !TARGET_ipq40xx:kmod-net-rtl8192su (TARGET_x86||TARGET_x86_64):kmod-r8169 (TARGET_x86||TARGET_x86_64):kmod-8139too (TARGET_x86||TARGET_x86_64):kmod-r8125 !TARGET_ipq40xx:kmod-rtl8187 kmod-rtl8xxxu (TARGET_x86||TARGET_x86_64):rtl8192eu-firmware \
 #    !TARGET_ipq40xx:kmod-usb-net-rtl8152
