@@ -24,10 +24,28 @@ get_ip_from_server() {
 get_ip_from_website() {
 	check_ipv6_website="$(uci -q get openmptcprouter.settings.check_ipv6_website)"
 	[ -z "$check_ipv6_website" ] && check_ipv6_website="http://ipv6.openmptcprouter.com"
-	checkip=$(echo $check_ipv6_website | sed -e 's/https:\/\///' -e 's/http:\/\///' | xargs dig +short AAAA | tr -d "\n")
-	ipset add ss_rules6_dst_bypass_all $checkip > /dev/null 2>&1
+	hostip=$(echo $check_ipv6_website | sed -e 's/https:\/\///' -e 's/http:\/\///' | xargs dig +nocmd +noall +answer AAAA | grep -v CNAME | awk '{print $5}' | tr -d "\n")
+	if [ -n "$(ipset list 2>/dev/null | grep ss_rules6)" ]; then
+		for ip in $hostip; do
+			ipset add ss_rules6_dst_bypass_all $ip >/dev/null 2>&1
+		done
+	fi
+	if [ -n "$(nft list set inet fw4 omr_dst_bypass_all_6 2>/dev/null)" ]; then
+		for ip in $hostip; do
+			nft add element inet fw4 omr_dst_bypass_all_6 { $ip } >/dev/null 2>&1
+		done
+	fi
 	getip="$(curl -s -6 -m ${timeout} --interface $intf $check_ipv6_website)"
-	ipset del ss_rules6_dst_bypass_all $checkip > /dev/null 2>&1
+	if [ -n "$(ipset list 2>/dev/null | grep ss_rules6)" ]; then
+		for ip in $hostip; do
+			ipset del ss_rules6_dst_bypass_all $ip >/dev/null 2>&1
+		done
+	fi
+	if [ -n "$(nft list set inet fw4 omr_dst_bypass_all_6 2>/dev/null)" ]; then
+		for ip in $hostip; do
+			nft delete element inet fw4 omr_dst_bypass_all_6 { $ip } >/dev/null 2>&1
+		done
+	fi
 	if [ -n "$(echo "$getip" | grep :)" ]; then
 		ip=$getip
 	fi
