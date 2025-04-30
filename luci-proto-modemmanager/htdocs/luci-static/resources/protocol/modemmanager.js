@@ -83,14 +83,13 @@ return network.registerProtocol('modemmanager', {
 		o.datatype = "uinteger";
 
 		o = s.taboption('general', form.DynamicList, 'allowedauth', _('Authentication Type'));
-		o.value('both', _('PAP/CHAP (both)'));
 		o.value('pap', 'PAP');
 		o.value('chap', 'CHAP');
 		o.value('mschap', 'MSCHAP');
 		o.value('mschapv2', 'MSCHAPv2');
 		o.value('eap', 'EAP');
-		o.value('', _('None'));
-		o.default = '';
+		o.value('none', _('None'));
+		o.default = 'none';
 
 		o = s.taboption('general', form.ListValue, 'allowedmode', _('Allowed network technology'),
 			_('Setting the allowed network technology.'));
