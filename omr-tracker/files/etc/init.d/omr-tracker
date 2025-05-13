@@ -290,6 +290,12 @@ _launch_shadowsocks_tracker() {
 	[ "$enabled" = "0" ] || [ "$disabled" = "1" ] || [ -z "$hosts" ] && return
 	[ -z "$server" ] && return
 	[ "$(uci -q get shadowsocks-libev.${server}.disabled)" = "1" ] && return
+	redir_status=false
+	__ss_redir_status() {
+		[ "$(uci -q get shadowsocks-libev.$1.server)" = "$2" ] && [ "$(uci -q get shadowsocks-libev.$1.disabled)" != "1" ] && redir_status=true
+	}
+	config_foreach __ss_redir_status ss_redir $server
+	[ $redir_status = false ] && return
 
 	procd_open_instance
 	# shellcheck disable=SC2086
@@ -325,7 +331,13 @@ _launch_shadowsocks_rust_tracker() {
 	[ "$enabled" = "0" ] || [ "$disabled" = "1" ] || [ -z "$hosts" ] && return
 	[ -z "$server" ] && return
 	[ "$(uci -q get shadowsocks-rust.${server}.disabled)" = "1" ] && return
-
+	redir_status=false
+	__ss_redir_status() {
+		[ "$(uci -q get shadowsocks-rust.$1.server)" = "$2" ] && [ "$(uci -q get shadowsocks-rust.$1.disabled)" != "1" ] && redir_status=true
+	}
+	config_foreach __ss_redir_status ss_redir $server
+	[ $redir_status = false ] && return
+	
 	procd_open_instance
 	# shellcheck disable=SC2086
 	procd_set_param command /bin/omr-tracker-ss "$1"

@@ -1,6 +1,10 @@
 #!/bin/bash
 # vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
 
+[ -n "$1" ] || exit
+
+. /lib/functions.sh
+
 basename="$(basename $0)"
 
 if [ -e /usr/sbin/iptables-nft ]; then
@@ -50,7 +54,7 @@ _ping_server() {
 	    -w "$OMR_TRACKER_TIMEOUT" \
 	    -c 1 \
 	    -q \
-	    "${host}"
+	    "${host}" 2>&1
 	) && echo "$ret" | grep -sq " 0% packet loss" && {
 		server_ping=true
 	}
@@ -108,6 +112,13 @@ while true; do
 	[ "$host" = "$hosts" ] || {
 		hosts="${hosts#* } $host"
 	}
+	#if [ -n "$host6" ]; then
+	#	host6="${hosts6%% *}"
+	#	[ "$host6" = "$hosts6" ] || {
+	#		hosts6="${hosts6#* } $host6"
+	#	}
+	#fi
+	#if [ "$(curl -s -I -w %{http_code} --socks5 "${proxy}" --max-time "${timeout}" "$host" -o /dev/null)" != "000" ] || [ "$(curl -s -I -w %{http_code} --socks5 "${proxy}" --max-time "${timeout}" "$host6" -o /dev/null)" != "000" ]; then
 	if [ "$(curl -s -I -w %{http_code} --socks5 "${proxy}" --max-time "${timeout}" "$host" -o /dev/null)" != "000" ]; then
 		nocontact=""
 		[ "${last}" -ge "${retry}" ] || [ "$(uci -q get openmptcprouter.omr.ss_${server})" != "up" ] && {
@@ -158,9 +169,16 @@ while true; do
 	else
 		last=$((last + 1 ))
 		[ -z "$nocontact" ] && nocontact="$host" || nocontact="$nocontact, $host"
+		if [ "$type" = "libev" ]; then
+			serverip="$(uci -q get shadowsocks-libev.${server}.server)"
+			disabled="$(uci -q get shadowsocks-libev.${server}.disabled)"
+		elif [ "$type" = "rust" ]; then
+			serverip="$(uci -q get shadowsocks-rust.${server}.server)"
+			disabled="$(uci -q get shadowsocks-rust.${server}.disabled)"
+		fi
 		[ "${last}" -ge "${retry}" ] && {
 			#if [ "$OMR_TRACKER_PREV_STATUS" != "ERROR" ] && { [ -n "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep ssr)" ] || [ -n "$(nft list ruleset 2>/dev/null | grep ss_r)" ] || [ -n "$(nft list ruleset 2>/dev/null | grep ssr_r)" ]; }; then
-			if [ -n "$($IPTABLES -w -t nat -L -n 2>/dev/null | grep ssr)" ] || [ -n "$(nft list ruleset 2>/dev/null | grep 'goto ss_rules_forward_tcp')" ]; then
+			if [ -n "$(nft list ruleset | grep $serverip)" ] && [ -n "$(nft list ruleset 2>/dev/null | grep 'goto ss_rules_forward_tcp')" ]; then
 				_log "Shadowsocks $type ${server} is down (can't contact via http ${nocontact})"
 				OMR_TRACKER_STATUS_MSG="Shadowsocks $type ${server} is down (can't contact via http ${nocontact})"
 				uci -q set openmptcprouter.omr.ss_${server}="down"
@@ -171,13 +189,6 @@ while true; do
 				#fi
 				_get_ip
 				server_ping=false
-				if [ "$type" = "libev" ]; then
-					serverip="$(uci -q get shadowsocks-libev.${server}.server)"
-					disabled="$(uci -q get shadowsocks-libev.${server}.disabled)"
-				elif [ "$type" = "rust" ]; then
-					serverip="$(uci -q get shadowsocks-rust.${server}.server)"
-					disabled="$(uci -q get shadowsocks-rust.${server}.disabled)"
-				fi
 				_ping_server $serverip
 				if [ "$server_ping" = false ]; then
 					_log "Server $server ($serverip) seems down, no answer to ping"
