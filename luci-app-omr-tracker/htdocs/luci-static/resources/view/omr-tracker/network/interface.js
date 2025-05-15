@@ -11,6 +11,7 @@ return view.extend({
 		return Promise.all([
 			L.resolveDefault(fs.stat('/usr/bin/httping'), {}),
 			L.resolveDefault(fs.stat('/usr/bin/dig'), {}),
+			L.resolveDefault(fs.stat('/usr/sbin/glorytun-udp'), {}),
 //			L.resolveDefault(fs.stat('/usr/bin/nping'), {}),
 //			L.resolveDefault(fs.stat('/usr/bin/arping'), {}),
 			uci.load('network')
@@ -83,14 +84,17 @@ return view.extend({
 		if (stats[1].type === 'file') {
 			o.value('dns');
 		}
-		/*
 		if (stats[2].type === 'file') {
+			o.value('glorytun-udp');
+		}
+		/*
+		if (stats[3].type === 'file') {
 			o.value('nping-tcp');
 			o.value('nping-udp');
 			o.value('nping-icmp');
 			o.value('nping-arp');
 		}
-		if (stats[3].type === 'file') {
+		if (stats[4].type === 'file') {
 			o.value('arping');
 		}
 		*/
@@ -122,8 +126,24 @@ return view.extend({
 		o.datatype = 'range(1, 100)';
 		o.default = '1';
 		*/
+		/*
+		o = s.option(form.ListValue, 'glorytun_down', _('Consider path down since'));
+		o.depends('type', 'glorytun-udp');
+		o.default = 'running';
+		o.value('deleting', _('deleting');
+		o.value('probing', _('probing');
+		o.value('degregated', _('degregated');
+		o.value('lossy', _('lossy');
+		o.value('waiting', _('waiting');
+		o.value('ready', _('ready');
+		o.value('running', _('running');
+		o.modalonly = true;
+		*/
 
 		o = s.option(form.ListValue, 'count', _('Ping count'));
+		o.depends('type', 'ping');
+		o.depends('type', 'httping');
+		o.depends('type', 'dns');
 		o.default = '1';
 		o.value('1');
 		o.value('2');
@@ -133,8 +153,8 @@ return view.extend({
 		o.modalonly = true;
 
 		o = s.option(form.Value, 'size', _('Ping size'));
-		o.default = '56';
 		o.depends('type', 'ping');
+		o.default = '56';
 		o.value('8');
 		o.value('24');
 		o.value('56');
