@@ -494,6 +494,11 @@ add_xray_redirect_rules() {
 	json_add_int o_redir_tcp_port "$port"
 	json_add_int o_redir_udp_port "$portudp"
 	json_add_string o_tproxy "$tproxy"
+	if [ "$tag" != "omr" ]; then
+		json_add_string o_oip_rules_name "$tag"
+	else
+		json_add_string o_oip_rules_name ""
+	fi
 	json_add_string o_ifnames "$ifnames"
 	json_add_string o_local_default "forward"
 	json_add_string o_src_bypass "$src_ips_bypass"
@@ -513,7 +518,11 @@ add_xray_redirect_rules() {
 		&& ! cmp -s "$tmp.nft" "$xrrules_nft"; then
 		echo "table inet chk {include \"$tmp.nft\";}" >"$tmp.nft.chk"
 		if nft -f "$tmp.nft.chk" -c; then
-			mv "$tmp.nft" "$xrrules_nft"
+			if [ "$tag" == "omr" ]; then
+				mv "$tmp.nft" "$xrrules_nft"
+			else
+				mv "$tmp.nft" "$xrrules_nft.$tag.nft"
+			fi
 			fw4 -q reload
 		fi
 		rm -f "$tmp.nft.chk"
@@ -2147,8 +2156,9 @@ setup_transparent_proxy() {
 
 clear_transparent_proxy() {
 	if [ -f "${xrrules_nft}" ] || [ -f "${xrrules_nft}.down" ]; then
-		rm -f "$xrrules_nft"
-		rm -f "$xrrules_nft.down"
+		for f in $xrrules_nft*; do
+			rm -f $f
+		done
 		fw4 -q reload
 	fi
 
@@ -2313,14 +2323,18 @@ rules_exist() {
 
 rules_up() {
 	if [ -f "${xrrules_nft}.down" ]; then
-		mv -f "${xrrules_nft}.down" "$xrrules_nft"
+		for f in $xrrules_nft*.down; do
+			mv -f "$f" "$(echo "$f" | sed 's/.down//g')"
+		done
 		fw4 -q reload
 	fi
 }
 
 rules_down() {
 	if [ -f "${xrrules_nft}" ]; then
-		mv -f "$xrrules_nft" "${xrrules_nft}.down"
+		for f in $xrrules_nft*; do
+			mv -f "$f" "${f}.down"
+		done
 		fw4 -q reload
 	fi
 }
@@ -2342,7 +2356,8 @@ start_service() {
 
 	config_foreach start_instance "xray"
 
-	setup_transparent_proxy
+	#setup_transparent_proxy
+	config_foreach setup_transparent_proxy transparent_proxy
 	gracefully_restart_dnsmasq
 	rules_up
 
