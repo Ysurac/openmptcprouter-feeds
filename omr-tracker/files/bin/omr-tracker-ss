@@ -126,6 +126,18 @@ while true; do
 			OMR_TRACKER_STATUS_MSG="Shadowsocks $type ${server} is up (can contact via http ${host})"
 			uci -q set openmptcprouter.omr.ss_${server}="up"
 			uci -q commit openmptcprouter.omr
+
+			_remove_rule() {
+				[ "$(uci -q get shadowsocks-rust.$1.server)" != "$2" ] && return
+				uci -q set shadowsocks-rust.$1.disabled=0
+			}
+			config_foreach shadowsocks-rust ${server}
+			uci -q commit shadowsocks-rust
+			[ "$type" = "libev" ] && /etc/init.d/shadowsocks-libev rules_reset 2> /dev/null
+			[ "$type" = "rust" ] && /etc/init.d/shadowsocks-rust rules_reset 2> /dev/null
+			#[ "$type" = "libev" ] && /etc/init.d/shadowsocks-libev rules_up 2> /dev/null
+			#[ "$type" = "rust" ] && /etc/init.d/shadowsocks-rust rules_up 2> /dev/null
+
 			mail_alert="$(uci -q get omr-tracker.proxy.mail_alert)"
 			#[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
 			[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
@@ -183,10 +195,24 @@ while true; do
 				OMR_TRACKER_STATUS_MSG="Shadowsocks $type ${server} is down (can't contact via http ${nocontact})"
 				uci -q set openmptcprouter.omr.ss_${server}="down"
 				uci -q commit openmptcprouter.omr
-				#if [ -z "$(uci show openmptcprouter.omr | grep ss_ | grep up)" ]; then
-					[ "$type" = "libev" ] && /etc/init.d/shadowsocks-libev rules_down 2> /dev/null
-					[ "$type" = "rust" ] && /etc/init.d/shadowsocks-rust rules_down 2> /dev/null
-				#fi
+
+#				if [ "$(nft list ruleset | grep 'tcp redirect to :' | wc -l)" = "1" ] || [ "$type" = "libev" ]; then
+#				#if [ -z "$(uci show openmptcprouter.omr | grep ss_ | grep up)" ]; then
+#					[ "$type" = "libev" ] && /etc/init.d/shadowsocks-libev rules_down 2> /dev/null
+#					[ "$type" = "rust" ] && /etc/init.d/shadowsocks-rust rules_down 2> /dev/null
+#				#fi
+#				else
+					_remove_rule() {
+						[ "$(uci -q get shadowsocks-rust.$1.server)" != "$2" ] && return
+						uci -q set shadowsocks-rust.$1.disabled=1
+					}
+					config_foreach shadowsocks-rust ${server}
+					uci -q commit shadowsocks-rust
+#					[ "$type" = "libev" ] && /etc/init.d/shadowsocks-libev reload 2> /dev/null
+#					[ "$type" = "rust" ] && /etc/init.d/shadowsocks-rust reload 2> /dev/null
+					[ "$type" = "libev" ] && /etc/init.d/shadowsocks-libev rules_reset 2> /dev/null
+					[ "$type" = "rust" ] && /etc/init.d/shadowsocks-rust rules_reset 2> /dev/null
+#				fi
 				_get_ip
 				server_ping=false
 				_ping_server $serverip
