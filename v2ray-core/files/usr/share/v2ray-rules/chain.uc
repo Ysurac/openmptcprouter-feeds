@@ -40,16 +40,15 @@ function get_ifnames() {
 }
 
 let type, hook, priority, redir_port;
-if (proto == "tcp") {
-	type = "nat";
-	hook = "prerouting";
-	priority = 1;
-	redir_port = o_redir_tcp_port;
-} else if (proto == "udp") {
+if (o_tproxy == "1") {
+	if (proto == "tcp") {
+		redir_port = o_redir_tcp_port;
+	} else if (proto == "udp") {
+		redir_port = o_redir_udp_port;
+	}
 	type = "filter";
 	hook = "prerouting";
 	priority = "mangle";
-	redir_port = o_redir_udp_port;
 	if (system("
 		set -o errexit
 		iprr() {
@@ -64,9 +63,33 @@ if (proto == "tcp") {
 		return ;
 	}
 } else {
-	return;
+	if (proto == "tcp") {
+		type = "nat";
+		hook = "prerouting";
+		priority = 1;
+		redir_port = o_redir_tcp_port;
+	} else if (proto == "udp") {
+		type = "filter";
+		hook = "prerouting";
+		priority = "mangle";
+		redir_port = o_redir_udp_port;
+		if (system("
+			set -o errexit
+			iprr() {
+				while ip $1 rule del fwmark 1 lookup 100 2>/dev/null; do true; done
+				      ip $1 rule add fwmark 1 lookup 100
+				ip $1 route flush table 100 2>/dev/null || true
+				ip $1 route add local default dev lo table 100
+			}
+			iprr -4
+			iprr -6
+		") != 0) {
+			return ;
+		}
+	} else {
+		return;
+	}
 }
-
 %}
 {% if (redir_port): %}
 
@@ -105,7 +128,11 @@ chain v2r_rules_dst_{{ proto }} {
 
 {%   if (proto == "tcp"): %}
 chain v2r_rules_forward_{{ proto }} {
+{%	if (o_tproxy == "1"): %}
+	meta l4proto tcp {{ o_nft_tcp_extra }} meta mark set 1 tproxy to :{{ redir_port }};
+{%	else %}
 	meta l4proto tcp {{ o_nft_tcp_extra }} redirect to :{{ redir_port }};
+{%	endif %}
 }
 {%   let local_verdict = get_local_verdict(); if (local_verdict): %}
 chain v2r_rules_local_out {
@@ -117,7 +144,9 @@ chain v2r_rules_local_out {
 	ip6 daddr @v2r_rules6_remote_servers accept;
 	ip6 daddr @v2r_rules6_dst_bypass_ accept;
 	ip6 daddr @v2r_rules6_dst_bypass accept;
+{%	if (o_tproxy != "1"): %}
 	{{ local_verdict }};
+{% 	endif %}
 }
 {%     endif %}
 {%   elif (proto == "udp"): %}

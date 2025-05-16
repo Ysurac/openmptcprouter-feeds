@@ -40,16 +40,56 @@ function get_ifnames() {
 }
 
 let type, hook, priority, redir_port;
-if (proto == "tcp") {
-	type = "nat";
-	hook = "prerouting";
-	priority = 1;
-	redir_port = o_redir_tcp_port;
-} else if (proto == "udp") {
+if (o_tun == "tcp_only") {
+	if (proto == "tcp") {
+		type = "nat";
+		hook = "prerouting";
+		priority = 1;
+		redir_port = o_redir_tcp_port;
+		if (system("
+			set -o errexit
+			iprr() {
+				while ip $1 rule del fwmark 9988 lookup 9988 2>/dev/null; do true; done
+				ip $1 rule add fwmark 0x9988 lookup 9988
+				ip $1 route flush table 9988 2>/dev/null || true
+				ip $1 route add local default dev tunprox table 9988
+			}
+			iprr -4
+			iprr -6
+		") != 0) {
+			return ;
+		}
+	} else if (proto == "udp") {
+		type = "filter";
+		hook = "prerouting";
+		priority = "mangle";
+		redir_port = o_redir_udp_port;
+		if (system("
+			set -o errexit
+			iprr() {
+				while ip $1 rule del fwmark 1 lookup 100 2>/dev/null; do true; done
+				      ip $1 rule add fwmark 1 lookup 100
+				ip $1 route flush table 100 2>/dev/null || true
+				ip $1 route add local default dev lo table 100
+			}
+			iprr -4
+			iprr -6
+		") != 0) {
+			return ;
+		}
+	} else {
+		return;
+	}
+
+} else if (o_tproxy == "1") {
+	if (proto == "tcp") {
+		redir_port = o_redir_tcp_port;
+	} else if (proto == "udp") {
+		redir_port = o_redir_udp_port;
+	}
 	type = "filter";
 	hook = "prerouting";
 	priority = "mangle";
-	redir_port = o_redir_udp_port;
 	if (system("
 		set -o errexit
 		iprr() {
@@ -64,12 +104,35 @@ if (proto == "tcp") {
 		return ;
 	}
 } else {
-	return;
+	if (proto == "tcp") {
+		type = "nat";
+		hook = "prerouting";
+		priority = 1;
+		redir_port = o_redir_tcp_port;
+	} else if (proto == "udp") {
+		type = "filter";
+		hook = "prerouting";
+		priority = "mangle";
+		redir_port = o_redir_udp_port;
+		if (system("
+			set -o errexit
+			iprr() {
+				while ip $1 rule del fwmark 1 lookup 100 2>/dev/null; do true; done
+				      ip $1 rule add fwmark 1 lookup 100
+				ip $1 route flush table 100 2>/dev/null || true
+				ip $1 route add local default dev lo table 100
+			}
+			iprr -4
+			iprr -6
+		") != 0) {
+			return ;
+		}
+	} else {
+		return;
+	}
 }
-
 %}
 {% if (redir_port): %}
-
 chain ss_rules_pre_{{ proto }} {
 	type {{ type }} hook {{ hook }} priority {{ priority }};
 	ip daddr @ss_rules_remote_servers accept;
@@ -105,7 +168,13 @@ chain ss_rules_dst_{{ proto }} {
 
 {%   if (proto == "tcp"): %}
 chain ss_rules_forward_{{ proto }} {
+{%	if (o_tun == "tcp_only"): %}
+	meta l4proto tcp {{ o_nft_tcp_extra }} meta mark set 0x00009988;
+{% 	elif (o_tproxy == "1"): %}
+	meta l4proto tcp {{ o_nft_tcp_extra }} meta mark set 1 tproxy to :{{ redir_port }};
+{% 	else %}
 	meta l4proto tcp {{ o_nft_tcp_extra }} redirect to :{{ redir_port }};
+{%	endif %}
 }
 {%   let local_verdict = get_local_verdict(); if (local_verdict): %}
 chain ss_rules_local_out {
@@ -117,7 +186,9 @@ chain ss_rules_local_out {
 	ip6 daddr @ss_rules6_remote_servers accept;
 	ip6 daddr @ss_rules6_dst_bypass_ accept;
 	ip6 daddr @ss_rules6_dst_bypass accept;
+{%	if (o_tproxy != "1"): %}
 	{{ local_verdict }};
+{%	endif %}
 }
 {%     endif %}
 {%   elif (proto == "udp"): %}
