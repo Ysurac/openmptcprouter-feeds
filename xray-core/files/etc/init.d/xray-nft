@@ -456,6 +456,7 @@ add_xray_redirect_rules() {
 	local ext_args="$1"
 	local lan_devices="$2"
 	local lan_ipaddrs="$3"
+	local tag="$4"
 
 	local port="$TRANSPARENT_PROXY_PORT"
 	local addition="$TRANSPARENT_PROXY_ADDITION"
@@ -518,7 +519,7 @@ add_xray_redirect_rules() {
 		&& ! cmp -s "$tmp.nft" "$xrrules_nft"; then
 		echo "table inet chk {include \"$tmp.nft\";}" >"$tmp.nft.chk"
 		if nft -f "$tmp.nft.chk" -c; then
-			if [ "$tag" == "omr" ]; then
+			if [ "$tag" == "omr" ] || [ "$tag" == "" ]; then
 				mv "$tmp.nft" "$xrrules_nft"
 			else
 				mv "$tmp.nft" "$xrrules_nft.$tag.nft"
@@ -2151,7 +2152,7 @@ setup_transparent_proxy() {
 	fi
 
 	logger -t "xray" "add rules"
-	add_xray_redirect_rules "$ext_args" "$lan_devices" "$lan_ipaddrs"
+	add_xray_redirect_rules "$ext_args" "$lan_devices" "$lan_ipaddrs" "omr"
 }
 
 clear_transparent_proxy() {
@@ -2306,6 +2307,7 @@ start_instance() {
 	fi
 
 	procd_set_param file "$temp_config"
+	procd_set_param nice 10
 	procd_set_param stderr 1 # forward stderr of the command to logd
 	procd_set_param stdout 1
 	procd_set_param pidfile "/var/run/${NAME}.${section}.pid"

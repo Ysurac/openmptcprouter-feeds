@@ -677,7 +677,7 @@ _get_gre_tunnel() {
 			peeraddr="$(echo $tunnel | jsonfilter -q -e '@.remote_ip')"
 			ipaddr="$(echo $tunnel | jsonfilter -q -e '@.local_ip')"
 			publicaddr="$(echo $tunnel | jsonfilter -q -e '@.public_ip')"
-			if [ "$peeraddr" != "" ] && [ "$ipaddr" != "" ] && [ "$publicaddr" != "" ] && [ "$vpnip_local" != "" ] && ([ "$(uci -q get network.oip${i}.ipaddr)" != "$peeraddr" ] || [ "$(uci -q get network.oip${i}.gateway)" != "$ipaddr" ] || [ "$(uci -q get network.oip${i}gre.ipaddr)" != "$vpnip_local" ] || [ -z "$(uci -q get xray.oip${i}server)" ]); then
+			if [ "$peeraddr" != "" ] && [ "$ipaddr" != "" ] && [ "$publicaddr" != "" ] && [ "$vpnip_local" != "" ] && ([ "$(uci -q get network.oip${i}.ipaddr)" != "$peeraddr" ] || [ "$(uci -q get network.oip${i}.gateway)" != "$ipaddr" ] || [ "$(uci -q get network.oip${i}gre.ipaddr)" != "$vpnip_local" ] || [ -z "$(uci -q get xray.oip${i}server.s_vless_user_id)" ]); then
 				uci -q batch <<-EOF >/dev/null
 					set network.oip${i}gre=interface
 					set network.oip${i}gre.label="GRE tunnel for $publicaddr"
@@ -751,55 +751,70 @@ _get_gre_tunnel() {
 					fi
 				fi
 				xray_user="$(echo $tunnel | jsonfilter -q -e '@.xray.uuid')"
-				if [ -n "$xray_user" ]; then
+				uci -q batch <<-EOF >/dev/null
+						delete xray.oip${i}server
+						delete xray.oip${i}server_tunnel
+						delete xray.oip${i}_redir
+						delete xray.oip${i}_routing
+						delete xray.oip${i}_transparent_proxy
+						del_list xray.main.outbounds="oip${i}server_tunnel"
+						del_list xray.main_routing.rules="oip${i}_routing"
+				EOF
+				if [ -n "$xray_user" ] && false; then
 					xray_ss2022="$(echo $tunnel | jsonfilter -q -e '@.xray.ss2022')"
+					xray_reality_user="$(echo $tunnel | jsonfilter -q -e '@.xray.vless_reality')"
+					xray_reality_key="$(echo $tunnel | jsonfilter -q -e '@.xray.vless_reality_key')"
+					echo "xray; $xray_reality_user - key: $xray_reality_key"
 					uci -q batch <<-EOF >/dev/null
-						set xray.oip${i}server=outbound
-						set xray.oip${i}server.tag='oip${i}server_tunnel'
-						set xray.oip${i}server.protocol='vless'
-						set xray.oip${i}server.s_vmess_port='65250'
-						set xray.oip${i}server.s_vmess_user_security='aes-128-gcm'
-						set xray.oip${i}server.s_vmess_user_alter_id='0'
-						set xray.oip${i}server.s_vless_port='65248'
-						set xray.oip${i}server.s_vless_user_security='aes-128-gcm'
-						set xray.oip${i}server.s_vless_user_encryption='none'
-						set xray.oip${i}server.s_vless_user_alter_id='0'
-						set xray.oip${i}server.s_trojan_port='65249'
-						set xray.oip${i}server.s_trojan_user_security='aes-128-gcm'
-						set xray.oip${i}server.s_trojan_user_encryption='none'
-						set xray.oip${i}server.s_trojan_user_alter_id='0'
-						set xray.oip${i}server.s_socks_port='65251'
-						set xray.oip${i}server.s_socks_user_security='aes-128-gcm'
-						set xray.oip${i}server.s_socks_user_encryption='none'
-						set xray.oip${i}server.s_socks_user_alter_id='0'
-						set xray.oip${i}server.ss_network='tcp'
-						set xray.oip${i}server.ss_security='tls'
-						set xray.oip${i}server.ss_tls_allow_insecure='1'
-						set xray.oip${i}server.ss_tls_disable_system_root='1'
-						set xray.oip${i}server.ss_tls_cert_usage='verify'
-						set xray.oip${i}server.ss_tls_cert_file='/etc/luci-uploads/client.crt'
-						set xray.oip${i}server.ss_tls_key_file='/etc/luci-uploads/client.key'
-						set xray.oip${i}server.s_shadowsocks_port='65252'
-						set xray.oip${i}server.mux_concurrency='8'
-						set xray.oip${i}server.ss_sockopt_mptcp='1'
-						set xray.oip${i}server.s_vless_reality_port='443'
-						set xray.oip${i}server.s_vless_reality_flow='xtls-rprx-vision'
-						set xray.oip${i}server.s_vless_reality_user_security='aes-128-gcm'
-						set xray.oip${i}server.s_vless_reality_user_encryption='none'
-						set xray.oip${i}server.s_vless_reality_user_alter_id='0'
-						set xray.oip${i}server.s_shadowsocks_email='openmptcprouter'
-						set xray.oip${i}server.s_vmess_address="$(uci -q get xray.omrout.s_vless_address)"
-						set xray.oip${i}server.s_vless_address="$(uci -q get xray.omrout.s_vless_address)"
-						set xray.oip${i}server.s_vless_reality_address="$(uci -q get xray.omrout.s_vless_address)"
-						set xray.oip${i}server.s_trojan_address="$(uci -q get xray.omrout.s_vless_address)"
-						set xray.oip${i}server.s_socks_address="$(uci -q get xray.omrout.s_vless_address)"
-						set xray.oip${i}server.s_shadowsocks_address="$(uci -q get xray.omrout.s_vless_address)"
-						set xray.oip${i}server.s_shadowsocks_method='2022-blake3-aes-256-gcm'
-						set xray.oip${i}server.s_shadowsocks_password="$xray_ss2022"
-						set xray.oip${i}server.s_socks_user_id="$(xray_user)"
-						set xray.oip${i}server.s_trojan_user_id="$(xray_user)"
-						set xray.oip${i}server.s_vmess_user_id="$(xray_user)"
-						set xray.oip${i}server.s_vless_user_id="$(xray_user)"
+						delete xray.oip${i}server
+						set xray.oip${i}server_tunnel=outbound
+						set xray.oip${i}server_tunnel.tag='oip${i}server_tunnel'
+						set xray.oip${i}server_tunnel.protocol='vless'
+						set xray.oip${i}server_tunnel.s_vmess_port='65250'
+						set xray.oip${i}server_tunnel.s_vmess_user_security='aes-128-gcm'
+						set xray.oip${i}server_tunnel.s_vmess_user_alter_id='0'
+						set xray.oip${i}server_tunnel.s_vless_port='65248'
+						set xray.oip${i}server_tunnel.s_vless_user_security='aes-128-gcm'
+						set xray.oip${i}server_tunnel.s_vless_user_encryption='none'
+						set xray.oip${i}server_tunnel.s_vless_user_alter_id='0'
+						set xray.oip${i}server_tunnel.s_trojan_port='65249'
+						set xray.oip${i}server_tunnel.s_trojan_user_security='aes-128-gcm'
+						set xray.oip${i}server_tunnel.s_trojan_user_encryption='none'
+						set xray.oip${i}server_tunnel.s_trojan_user_alter_id='0'
+						set xray.oip${i}server_tunnel.s_socks_port='65251'
+						set xray.oip${i}server_tunnel.s_socks_user_security='aes-128-gcm'
+						set xray.oip${i}server_tunnel.s_socks_user_encryption='none'
+						set xray.oip${i}server_tunnel.s_socks_user_alter_id='0'
+						set xray.oip${i}server_tunnel.ss_network='tcp'
+						set xray.oip${i}server_tunnel.ss_security='tls'
+						set xray.oip${i}server_tunnel.ss_tls_allow_insecure='1'
+						set xray.oip${i}server_tunnel.ss_tls_disable_system_root='1'
+						set xray.oip${i}server_tunnel.ss_tls_cert_usage='verify'
+						set xray.oip${i}server_tunnel.ss_tls_cert_file='/etc/luci-uploads/client.crt'
+						set xray.oip${i}server_tunnel.ss_tls_key_file='/etc/luci-uploads/client.key'
+						set xray.oip${i}server_tunnel.s_shadowsocks_port='65252'
+						set xray.oip${i}server_tunnel.mux_concurrency='8'
+						set xray.oip${i}server_tunnel.ss_sockopt_mptcp='1'
+						set xray.oip${i}server_tunnel.s_vless_reality_port='443'
+						set xray.oip${i}server_tunnel.s_vless_reality_flow='xtls-rprx-vision'
+						set xray.oip${i}server_tunnel.s_vless_reality_user_security='aes-128-gcm'
+						set xray.oip${i}server_tunnel.s_vless_reality_user_encryption='none'
+						set xray.oip${i}server_tunnel.s_vless_reality_user_alter_id='0'
+						set xray.oip${i}server_tunnel.s_shadowsocks_email='openmptcprouter'
+						set xray.oip${i}server_tunnel.s_vmess_address="$(uci -q get xray.omrout.s_vless_address)"
+						set xray.oip${i}server_tunnel.s_vless_address="$(uci -q get xray.omrout.s_vless_address)"
+						set xray.oip${i}server_tunnel.s_vless_reality_address="$(uci -q get xray.omrout.s_vless_address)"
+						set xray.oip${i}server_tunnel.s_trojan_address="$(uci -q get xray.omrout.s_vless_address)"
+						set xray.oip${i}server_tunnel.s_socks_address="$(uci -q get xray.omrout.s_vless_address)"
+						set xray.oip${i}server_tunnel.s_shadowsocks_address="$(uci -q get xray.omrout.s_vless_address)"
+						set xray.oip${i}server_tunnel.s_shadowsocks_method='2022-blake3-aes-256-gcm'
+						set xray.oip${i}server_tunnel.s_shadowsocks_password="$xray_ss2022"
+						set xray.oip${i}server_tunnel.s_socks_user_id="${xray_user}"
+						set xray.oip${i}server_tunnel.s_trojan_user_id="${xray_user}"
+						set xray.oip${i}server_tunnel.s_vmess_user_id="${xray_user}"
+						set xray.oip${i}server_tunnel.s_vless_user_id="${xray_user}"
+						set xray.oip${i}server_tunnel.s_vless_reality_user_id="${xray_reality_user}"
+						set xray.oip${i}server_tunnel.s_vless_reality_public_key="${xray_reality_key}"
 						add_list xray.main.outbounds="oip${i}server_tunnel"
 						set xray.oip${i}_redir=inbound
 						set xray.oip${i}_redir.tag='oip${i}_redir'
@@ -830,6 +845,7 @@ _get_gre_tunnel() {
 			commit network
 			commit firewall
 			commit shadowsocks-libev
+			commit xray
 		EOF
 	fi
 }
