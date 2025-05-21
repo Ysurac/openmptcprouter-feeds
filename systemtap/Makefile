@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2018-2022 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+# Copyright (C) 2018-2025 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -10,11 +10,11 @@ include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=systemtap
 PKG_RELEASE:=1
-PKG_VERSION:=5.0
+PKG_VERSION:=5.3
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://sourceware.org/systemtap/ftp/releases/
-PKG_HASH:=a8b43408895fee2b0023483b02f861700b0139629050666dfe4dfa1e49d59939
+PKG_HASH:=966a360fb73a4b65a8d0b51b389577b3c4f92a327e84aae58682103e8c65a69a
 
 PKG_BUILD_DIR:=$(KERNEL_BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 PKG_BUILD_DEPENDS:=systemtap/host
