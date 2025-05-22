@@ -1,7 +1,7 @@
 #!/bin/sh /etc/rc.common
 #
 # Copyright 2019-2020 Xingwang Liao <kuoruan@gmail.com>
-# Copyright 2020-2022 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+# Copyright 2020-2025 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 # Licensed to the public under the MIT License.
 #
 
@@ -495,7 +495,7 @@ add_xray_redirect_rules() {
 	json_add_int o_redir_tcp_port "$port"
 	json_add_int o_redir_udp_port "$portudp"
 	json_add_string o_tproxy "$tproxy"
-	if [ "$tag" != "omr" ]; then
+	if [ "$tag" != "omr" ] && [ "$tag" != "main_transparent_proxy" ]; then
 		json_add_string o_oip_rules_name "$tag"
 	else
 		json_add_string o_oip_rules_name ""
@@ -1995,7 +1995,8 @@ add_outbound_setting() {
 }
 
 init_transparent_proxy() {
-	local tp_cfg="main_transparent_proxy"
+	#local tp_cfg="main_transparent_proxy"
+	local tp_cfg="$1"
 	local redirect_port use_tproxy redirect_udp redirect_dns
 
 	config_get redirect_port "$tp_cfg" "redirect_port"
@@ -2023,18 +2024,19 @@ init_transparent_proxy() {
 
 setup_transparent_proxy() {
 	if [ -z "$TRANSPARENT_PROXY_PORT" ] ; then
-		#_info "Transparent proxy disabled."
+		_info "Transparent proxy disabled."
 		return 0
 	fi
 
 	if [ "x$TRANSPARENT_PROXY_EXPECTED" != "x1" ] ; then
-		#_info "No xray instance enabled, skip transparent proxy."
+		_info "No xray instance enabled, skip transparent proxy."
 		return 0
 	fi
 
 	_info "Setting transparent proxy on port: $TRANSPARENT_PROXY_PORT"
 
-	local tp_cfg="main_transparent_proxy"
+	#local tp_cfg="main_transparent_proxy"
+	local tp_cfg="$1"
 	local lan_ifaces only_privileged_ports proxy_mode direct_list_dns proxy_list_dns
 
 	config_get lan_ifaces "$tp_cfg" "lan_ifaces"
@@ -2152,7 +2154,11 @@ setup_transparent_proxy() {
 	fi
 
 	logger -t "xray" "add rules"
-	add_xray_redirect_rules "$ext_args" "$lan_devices" "$lan_ipaddrs" "omr"
+	if [ "$tp_cfg" != "main_transparent_proxy" ]; then
+		add_xray_redirect_rules "$ext_args" "$lan_devices" "$lan_ipaddrs" "$tp_cfg"
+	else
+		add_xray_redirect_rules "$ext_args" "$lan_devices" "$lan_ipaddrs"
+	fi
 }
 
 clear_transparent_proxy() {
@@ -2359,7 +2365,12 @@ start_service() {
 	config_foreach start_instance "xray"
 
 	#setup_transparent_proxy
-	config_foreach setup_transparent_proxy transparent_proxy
+	_setup_firewall() {
+		init_transparent_proxy $1
+		setup_transparent_proxy $1
+	}
+	config_foreach _setup_firewall transparent_proxy
+	#config_foreach setup_transparent_proxy transparent_proxy
 	gracefully_restart_dnsmasq
 	rules_up
 
