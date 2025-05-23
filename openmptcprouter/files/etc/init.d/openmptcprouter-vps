@@ -677,7 +677,7 @@ _get_gre_tunnel() {
 			peeraddr="$(echo $tunnel | jsonfilter -q -e '@.remote_ip')"
 			ipaddr="$(echo $tunnel | jsonfilter -q -e '@.local_ip')"
 			publicaddr="$(echo $tunnel | jsonfilter -q -e '@.public_ip')"
-			if [ "$peeraddr" != "" ] && [ "$ipaddr" != "" ] && [ "$publicaddr" != "" ] && [ "$vpnip_local" != "" ] && ([ "$(uci -q get network.oip${i}.ipaddr)" != "$peeraddr" ] || [ "$(uci -q get network.oip${i}.gateway)" != "$ipaddr" ] || [ "$(uci -q get network.oip${i}gre.ipaddr)" != "$vpnip_local" ] || [ -z "$(uci -q get xray.oip${i}server.s_vless_user_id)" ]); then
+			if [ "$peeraddr" != "" ] && [ "$ipaddr" != "" ] && [ "$publicaddr" != "" ] && [ "$vpnip_local" != "" ] && ([ "$(uci -q get network.oip${i}.ipaddr)" != "$peeraddr" ] || [ "$(uci -q get network.oip${i}.gateway)" != "$ipaddr" ] || [ "$(uci -q get network.oip${i}gre.ipaddr)" != "$vpnip_local" ] || ([ -n "$(uci -q get xray)" ] && [ -z "$(uci -q get xray.oip${i}server.s_vless_user_id)" ])); then
 				uci -q batch <<-EOF >/dev/null
 					set network.oip${i}gre=interface
 					set network.oip${i}gre.label="GRE tunnel for $publicaddr"
@@ -716,42 +716,45 @@ _get_gre_tunnel() {
 					uci -q add_list firewall.zone_vpn.network="oip${i}gre"
 					uci -q add_list firewall.zone_vpn.network="oip${i}"
 				}
-				ssport="$(echo $tunnel | jsonfilter -q -e '@.shadowsocks_port')"
-				if [ -n "$ssport" ]; then
-					uci -q batch <<-EOF >/dev/null
-						set shadowsocks-libev.oip${i}server=server
-						set shadowsocks-libev.oip${i}server.label="Server with public IP $publicaddr"
-						set shadowsocks-libev.oip${i}server.server_port="$ssport"
-						set shadowsocks-libev.oip${i}server.server="$(uci -q get shadowsocks-libev.sss0.server)"
-						set shadowsocks-libev.oip${i}server.method="$(uci -q get shadowsocks-libev.sss0.method)"
-						set shadowsocks-libev.oip${i}server.key="$(uci -q get shadowsocks-libev.sss0.key)"
-						set shadowsocks-libev.oip${i}=ss_redir
-						set shadowsocks-libev.oip${i}.label="ss-redir for public IP $publicaddr"
-						set shadowsocks-libev.oip${i}.server="oip${i}server"
-						set shadowsocks-libev.oip${i}.local_port="230$i"
-						set shadowsocks-libev.oip${i}.local_address="$(uci -q get shadowsocks-libev.hi.local_address)"
-						set shadowsocks-libev.oip${i}.mode='tcp_and_udp'
-						set shadowsocks-libev.oip${i}.reuse_port='1'
-						set shadowsocks-libev.oip${i}.mptcp='1'
-						set shadowsocks-libev.oip${i}.ipv6_first='1'
-						set shadowsocks-libev.oip${i}.timeout="$(uci -q get shadowsocks-libev.hi.timeout)"
-						set shadowsocks-libev.oip${i}.fast_open="$(uci -q get shadowsocks-libev.hi.fast_open)"
-						set shadowsocks-libev.oip${i}.no_delay="$(uci -q get shadowsocks-libev.hi.no_delay)"
-						set shadowsocks-libev.oip${i}_rule=ss_rules
-						set shadowsocks-libev.oip${i}_rule.label="Rules for public IP $publicaddr"
-						set shadowsocks-libev.oip${i}_rule.server="oip${i}server"
-						set shadowsocks-libev.oip${i}_rule.disabled='1'
-						set shadowsocks-libev.oip${i}_rule.src_default='bypass'
-						set shadowsocks-libev.oip${i}_rule.dst_default='bypass'
-						set shadowsocks-libev.oip${i}_rule.local_default='bypass'
-						set shadowsocks-libev.oip${i}_rule.redir_tcp="oip${i}"
-					EOF
-					if [ "$(uci -q get shadowsocks-libev.oip${i}server.disabled)" = "" ]; then
-						uci -q set shadowsocks-libev.oip${i}server.disabled="1"
+				if [ -n "$(uci -q get shadowsocks-libev)" ]; then
+					ssport="$(echo $tunnel | jsonfilter -q -e '@.shadowsocks_port')"
+					if [ -n "$ssport" ]; then
+						uci -q batch <<-EOF >/dev/null
+							set shadowsocks-libev.oip${i}server=server
+							set shadowsocks-libev.oip${i}server.label="Server with public IP $publicaddr"
+							set shadowsocks-libev.oip${i}server.server_port="$ssport"
+							set shadowsocks-libev.oip${i}server.server="$(uci -q get shadowsocks-libev.sss0.server)"
+							set shadowsocks-libev.oip${i}server.method="$(uci -q get shadowsocks-libev.sss0.method)"
+							set shadowsocks-libev.oip${i}server.key="$(uci -q get shadowsocks-libev.sss0.key)"
+							set shadowsocks-libev.oip${i}=ss_redir
+							set shadowsocks-libev.oip${i}.label="ss-redir for public IP $publicaddr"
+							set shadowsocks-libev.oip${i}.server="oip${i}server"
+							set shadowsocks-libev.oip${i}.local_port="230$i"
+							set shadowsocks-libev.oip${i}.local_address="$(uci -q get shadowsocks-libev.hi.local_address)"
+							set shadowsocks-libev.oip${i}.mode='tcp_and_udp'
+							set shadowsocks-libev.oip${i}.reuse_port='1'
+							set shadowsocks-libev.oip${i}.mptcp='1'
+							set shadowsocks-libev.oip${i}.ipv6_first='1'
+							set shadowsocks-libev.oip${i}.timeout="$(uci -q get shadowsocks-libev.hi.timeout)"
+							set shadowsocks-libev.oip${i}.fast_open="$(uci -q get shadowsocks-libev.hi.fast_open)"
+							set shadowsocks-libev.oip${i}.no_delay="$(uci -q get shadowsocks-libev.hi.no_delay)"
+							set shadowsocks-libev.oip${i}_rule=ss_rules
+							set shadowsocks-libev.oip${i}_rule.label="Rules for public IP $publicaddr"
+							set shadowsocks-libev.oip${i}_rule.server="oip${i}server"
+							set shadowsocks-libev.oip${i}_rule.disabled='1'
+							set shadowsocks-libev.oip${i}_rule.src_default='bypass'
+							set shadowsocks-libev.oip${i}_rule.dst_default='bypass'
+							set shadowsocks-libev.oip${i}_rule.local_default='bypass'
+							set shadowsocks-libev.oip${i}_rule.redir_tcp="oip${i}"
+						EOF
+						if [ "$(uci -q get shadowsocks-libev.oip${i}server.disabled)" = "" ]; then
+							uci -q set shadowsocks-libev.oip${i}server.disabled="1"
+						fi
 					fi
 				fi
-				xray_user="$(echo $tunnel | jsonfilter -q -e '@.xray.uuid')"
-				uci -q batch <<-EOF >/dev/null
+				if [ -n "$(uci -q get xray)" ]; then
+					xray_user="$(echo $tunnel | jsonfilter -q -e '@.xray.uuid')"
+					uci -q batch <<-EOF >/dev/null
 						delete xray.oip${i}server
 						delete xray.oip${i}server_tunnel
 						delete xray.oip${i}_redir
@@ -759,84 +762,85 @@ _get_gre_tunnel() {
 						delete xray.oip${i}_transparent_proxy
 						del_list xray.main.outbounds="oip${i}server_tunnel"
 						del_list xray.main_routing.rules="oip${i}_routing"
-				EOF
-				if [ -n "$xray_user" ] && false; then
-					xray_ss2022="$(echo $tunnel | jsonfilter -q -e '@.xray.ss2022')"
-					xray_reality_user="$(echo $tunnel | jsonfilter -q -e '@.xray.vless_reality')"
-					xray_reality_key="$(echo $tunnel | jsonfilter -q -e '@.xray.vless_reality_key')"
-					echo "xray; $xray_reality_user - key: $xray_reality_key"
-					uci -q batch <<-EOF >/dev/null
-						delete xray.oip${i}server
-						set xray.oip${i}server_tunnel=outbound
-						set xray.oip${i}server_tunnel.tag='oip${i}server_tunnel'
-						set xray.oip${i}server_tunnel.protocol='vless'
-						set xray.oip${i}server_tunnel.s_vmess_port='65250'
-						set xray.oip${i}server_tunnel.s_vmess_user_security='aes-128-gcm'
-						set xray.oip${i}server_tunnel.s_vmess_user_alter_id='0'
-						set xray.oip${i}server_tunnel.s_vless_port='65248'
-						set xray.oip${i}server_tunnel.s_vless_user_security='aes-128-gcm'
-						set xray.oip${i}server_tunnel.s_vless_user_encryption='none'
-						set xray.oip${i}server_tunnel.s_vless_user_alter_id='0'
-						set xray.oip${i}server_tunnel.s_trojan_port='65249'
-						set xray.oip${i}server_tunnel.s_trojan_user_security='aes-128-gcm'
-						set xray.oip${i}server_tunnel.s_trojan_user_encryption='none'
-						set xray.oip${i}server_tunnel.s_trojan_user_alter_id='0'
-						set xray.oip${i}server_tunnel.s_socks_port='65251'
-						set xray.oip${i}server_tunnel.s_socks_user_security='aes-128-gcm'
-						set xray.oip${i}server_tunnel.s_socks_user_encryption='none'
-						set xray.oip${i}server_tunnel.s_socks_user_alter_id='0'
-						set xray.oip${i}server_tunnel.ss_network='tcp'
-						set xray.oip${i}server_tunnel.ss_security='tls'
-						set xray.oip${i}server_tunnel.ss_tls_allow_insecure='1'
-						set xray.oip${i}server_tunnel.ss_tls_disable_system_root='1'
-						set xray.oip${i}server_tunnel.ss_tls_cert_usage='verify'
-						set xray.oip${i}server_tunnel.ss_tls_cert_file='/etc/luci-uploads/client.crt'
-						set xray.oip${i}server_tunnel.ss_tls_key_file='/etc/luci-uploads/client.key'
-						set xray.oip${i}server_tunnel.s_shadowsocks_port='65252'
-						set xray.oip${i}server_tunnel.mux_concurrency='8'
-						set xray.oip${i}server_tunnel.ss_sockopt_mptcp='1'
-						set xray.oip${i}server_tunnel.s_vless_reality_port='443'
-						set xray.oip${i}server_tunnel.s_vless_reality_flow='xtls-rprx-vision'
-						set xray.oip${i}server_tunnel.s_vless_reality_user_security='aes-128-gcm'
-						set xray.oip${i}server_tunnel.s_vless_reality_user_encryption='none'
-						set xray.oip${i}server_tunnel.s_vless_reality_user_alter_id='0'
-						set xray.oip${i}server_tunnel.s_shadowsocks_email='openmptcprouter'
-						set xray.oip${i}server_tunnel.s_vmess_address="$(uci -q get xray.omrout.s_vless_address)"
-						set xray.oip${i}server_tunnel.s_vless_address="$(uci -q get xray.omrout.s_vless_address)"
-						set xray.oip${i}server_tunnel.s_vless_reality_address="$(uci -q get xray.omrout.s_vless_address)"
-						set xray.oip${i}server_tunnel.s_trojan_address="$(uci -q get xray.omrout.s_vless_address)"
-						set xray.oip${i}server_tunnel.s_socks_address="$(uci -q get xray.omrout.s_vless_address)"
-						set xray.oip${i}server_tunnel.s_shadowsocks_address="$(uci -q get xray.omrout.s_vless_address)"
-						set xray.oip${i}server_tunnel.s_shadowsocks_method='2022-blake3-aes-256-gcm'
-						set xray.oip${i}server_tunnel.s_shadowsocks_password="$xray_ss2022"
-						set xray.oip${i}server_tunnel.s_socks_user_id="${xray_user}"
-						set xray.oip${i}server_tunnel.s_trojan_user_id="${xray_user}"
-						set xray.oip${i}server_tunnel.s_vmess_user_id="${xray_user}"
-						set xray.oip${i}server_tunnel.s_vless_user_id="${xray_user}"
-						set xray.oip${i}server_tunnel.s_vless_reality_user_id="${xray_reality_user}"
-						set xray.oip${i}server_tunnel.s_vless_reality_public_key="${xray_reality_key}"
-						add_list xray.main.outbounds="oip${i}server_tunnel"
-						set xray.oip${i}_redir=inbound
-						set xray.oip${i}_redir.tag='oip${i}_redir'
-						set xray.oip${i}_redir.listen='0.0.0.0'
-						set xray.oip${i}_redir.port='180${i}'
-						set xray.oip${i}_redir.protocol='dokodemo-door'
-						set xray.oip${i}_redir.s_dokodemo_door_network='tcp' 'udp'
-						set xray.oip${i}_redir.ss_sockopt_tproxy='redirect'
-						set xray.oip${i}_redir.ss_sockopt_tcp_fast_open='1'
-						set xray.oip${i}_redir.ss_sockopt_mptcp='1'
-						set xray.oip${i}_redir.s_dokodemo_door_follow_redirect='1'
-						set xray.oip${i}_routing=routing_rule
-						set xray.oip${i}_routing.tag="oip${i}_routing"
-						set xray.oip${i}_routing.type='field'
-						set xray.oip${i}_routing.inbound_tag="oip${i}_redir"
-						set xray.oip${i}_routing.outbound_tag="oip${i}_tunnel"
-						add_list xray.main_routing.rules="oip${i}_routing"
-						set xray.oip${i}_transparent_proxy=transparent_proxy
-						set xray.oip${i}_transparent_proxy.proxy_mode='default'
-						set xray.oip${i}_transparent_proxy.redirect_udp='1'
-						set xray.oip${i}_transparent_proxy.redirect_port="180${i}"
 					EOF
+					if [ -n "$xray_user" ]; then
+						xray_ss2022="$(echo $tunnel | jsonfilter -q -e '@.xray.ss2022')"
+						xray_reality_user="$(echo $tunnel | jsonfilter -q -e '@.xray.vless_reality')"
+						xray_reality_key="$(echo $tunnel | jsonfilter -q -e '@.xray.vless_reality_key')"
+						echo "xray; $xray_reality_user - key: $xray_reality_key"
+						uci -q batch <<-EOF >/dev/null
+							delete xray.oip${i}server
+							set xray.oip${i}server_tunnel=outbound
+							set xray.oip${i}server_tunnel.tag='oip${i}server_tunnel'
+							set xray.oip${i}server_tunnel.protocol='vless'
+							set xray.oip${i}server_tunnel.s_vmess_port='65250'
+							set xray.oip${i}server_tunnel.s_vmess_user_security='aes-128-gcm'
+							set xray.oip${i}server_tunnel.s_vmess_user_alter_id='0'
+							set xray.oip${i}server_tunnel.s_vless_port='65248'
+							set xray.oip${i}server_tunnel.s_vless_user_security='aes-128-gcm'
+							set xray.oip${i}server_tunnel.s_vless_user_encryption='none'
+							set xray.oip${i}server_tunnel.s_vless_user_alter_id='0'
+							set xray.oip${i}server_tunnel.s_trojan_port='65249'
+							set xray.oip${i}server_tunnel.s_trojan_user_security='aes-128-gcm'
+							set xray.oip${i}server_tunnel.s_trojan_user_encryption='none'
+							set xray.oip${i}server_tunnel.s_trojan_user_alter_id='0'
+							set xray.oip${i}server_tunnel.s_socks_port='65251'
+							set xray.oip${i}server_tunnel.s_socks_user_security='aes-128-gcm'
+							set xray.oip${i}server_tunnel.s_socks_user_encryption='none'
+							set xray.oip${i}server_tunnel.s_socks_user_alter_id='0'
+							set xray.oip${i}server_tunnel.ss_network='tcp'
+							set xray.oip${i}server_tunnel.ss_security='tls'
+							set xray.oip${i}server_tunnel.ss_tls_allow_insecure='1'
+							set xray.oip${i}server_tunnel.ss_tls_disable_system_root='1'
+							set xray.oip${i}server_tunnel.ss_tls_cert_usage='verify'
+							set xray.oip${i}server_tunnel.ss_tls_cert_file='/etc/luci-uploads/client.crt'
+							set xray.oip${i}server_tunnel.ss_tls_key_file='/etc/luci-uploads/client.key'
+							set xray.oip${i}server_tunnel.s_shadowsocks_port='65252'
+							set xray.oip${i}server_tunnel.mux_concurrency='8'
+							set xray.oip${i}server_tunnel.ss_sockopt_mptcp='1'
+							set xray.oip${i}server_tunnel.s_vless_reality_port='443'
+							set xray.oip${i}server_tunnel.s_vless_reality_flow='xtls-rprx-vision'
+							set xray.oip${i}server_tunnel.s_vless_reality_user_security='aes-128-gcm'
+							set xray.oip${i}server_tunnel.s_vless_reality_user_encryption='none'
+							set xray.oip${i}server_tunnel.s_vless_reality_user_alter_id='0'
+							set xray.oip${i}server_tunnel.s_shadowsocks_email='openmptcprouter'
+							set xray.oip${i}server_tunnel.s_vmess_address="$(uci -q get xray.omrout.s_vless_address)"
+							set xray.oip${i}server_tunnel.s_vless_address="$(uci -q get xray.omrout.s_vless_address)"
+							set xray.oip${i}server_tunnel.s_vless_reality_address="$(uci -q get xray.omrout.s_vless_address)"
+							set xray.oip${i}server_tunnel.s_trojan_address="$(uci -q get xray.omrout.s_vless_address)"
+							set xray.oip${i}server_tunnel.s_socks_address="$(uci -q get xray.omrout.s_vless_address)"
+							set xray.oip${i}server_tunnel.s_shadowsocks_address="$(uci -q get xray.omrout.s_vless_address)"
+							set xray.oip${i}server_tunnel.s_shadowsocks_method='2022-blake3-aes-256-gcm'
+							set xray.oip${i}server_tunnel.s_shadowsocks_password="$(uci -q get xray.omrout.s_shadowsocks_password | cut -d':' -f 1):$xray_ss2022"
+							set xray.oip${i}server_tunnel.s_socks_user_id="${xray_user}"
+							set xray.oip${i}server_tunnel.s_trojan_user_id="${xray_user}"
+							set xray.oip${i}server_tunnel.s_vmess_user_id="${xray_user}"
+							set xray.oip${i}server_tunnel.s_vless_user_id="${xray_user}"
+							set xray.oip${i}server_tunnel.s_vless_reality_user_id="${xray_reality_user}"
+							set xray.oip${i}server_tunnel.s_vless_reality_public_key="${xray_reality_key}"
+							add_list xray.main.outbounds="oip${i}server_tunnel"
+							set xray.oip${i}_redir=inbound
+							set xray.oip${i}_redir.tag='oip${i}_redir'
+							set xray.oip${i}_redir.listen='0.0.0.0'
+							set xray.oip${i}_redir.port='180${i}'
+							set xray.oip${i}_redir.protocol='dokodemo-door'
+							set xray.oip${i}_redir.s_dokodemo_door_network='tcp' 'udp'
+							set xray.oip${i}_redir.ss_sockopt_tproxy='redirect'
+							set xray.oip${i}_redir.ss_sockopt_tcp_fast_open='1'
+							set xray.oip${i}_redir.ss_sockopt_mptcp='1'
+							set xray.oip${i}_redir.s_dokodemo_door_follow_redirect='1'
+							set xray.oip${i}_routing=routing_rule
+							set xray.oip${i}_routing.tag="oip${i}_routing"
+							set xray.oip${i}_routing.type='field'
+							set xray.oip${i}_routing.inbound_tag="oip${i}_redir"
+							set xray.oip${i}_routing.outbound_tag="oip${i}_tunnel"
+							add_list xray.main_routing.rules="oip${i}_routing"
+							set xray.oip${i}_transparent_proxy=transparent_proxy
+							set xray.oip${i}_transparent_proxy.proxy_mode='default'
+							set xray.oip${i}_transparent_proxy.redirect_udp='1'
+							set xray.oip${i}_transparent_proxy.redirect_port="180${i}"
+						EOF
+					fi
 				fi
 			fi
 			i=$((i+1))

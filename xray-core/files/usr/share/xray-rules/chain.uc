@@ -93,7 +93,7 @@ if (o_tproxy == "1") {
 }
 %}
 {% if (redir_port): %}
-{%	if (rules_name == ""): %}
+{%	if (o_oip_rules_name == ""): %}
 chain xr_rules_pre_{{ proto }} {
 	type {{ type }} hook {{ hook }} priority {{ priority }};
 	ip daddr @xr_rules_remote_servers accept;
@@ -129,11 +129,11 @@ chain xr_rules_dst_{{ proto }} {
 {%	endif %}
 {%   if (proto == "tcp"): %}
 chain xr_rules_forward_{{ proto }} {
-{%	if (rules_name != ""): %}
+{%	if (o_oip_rules_name != ""): %}
 {% 		if (o_tproxy == "1"): %}
-	meta l4proto tcp {{ o_nft_tcp_extra }} ip saddr @ss_rules_src_forward_oip_{{ rules_name }} meta mark set 1 tproxy to :{{ redir_port }};
+	meta l4proto tcp {{ o_nft_tcp_extra }} ip saddr @ss_rules_src_forward_oip_{{ o_oip_rules_name }} meta mark set 1 tproxy to :{{ redir_port }};
 {% 		else %}
-	meta l4proto tcp {{ o_nft_tcp_extra }} ip saddr @ss_rules_src_forward_oip_{{ rules_name }} redirect to :{{ redir_port }};
+	meta l4proto tcp {{ o_nft_tcp_extra }} ip saddr @ss_rules_src_forward_oip_{{ o_oip_rules_name }} redirect to :{{ redir_port }};
 {%		endif %}
 {%	else %}
 {% 		if (o_tproxy == "1"): %}
@@ -143,7 +143,8 @@ chain xr_rules_forward_{{ proto }} {
 {%		endif %}
 {%	endif %}
 }
-{%	let local_verdict = get_local_verdict(); if (local_verdict): %}
+{%	if (o_oip_rules_name == ""): %}
+{%		let local_verdict = get_local_verdict(); if (local_verdict): %}
 chain xr_rules_local_out {
 	type {{ type }} hook output priority -1;
 	meta l4proto != tcp accept;
@@ -157,6 +158,7 @@ chain xr_rules_local_out {
 	{{ local_verdict }};
 {%		endif %}
 }
+{%		endif %}
 {%	endif %}
 {%   elif (proto == "udp"): %}
 chain xr_rules_forward_{{ proto }} {
