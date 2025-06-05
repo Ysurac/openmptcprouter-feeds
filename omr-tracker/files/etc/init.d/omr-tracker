@@ -15,12 +15,10 @@
 . /lib/functions/network.sh
 
 _validate_section() {
-	local tmp_hosts=$hosts tmp_hosts6=$hosts6 tmp_timeout=$timeout tmp_count=$count tmp_tries=$tries tmp_size=$size tmp_max_ttl=$max_ttl tmp_failure_loss=$failure_loss tmp_failure_latency=$failure_latency tmp_recovery_loss=$recovery_loss tmp_recovery_latency=$recovery_latency tmp_reliability=$reliability
+	local tmp_timeout=$timeout tmp_count=$count tmp_tries=$tries tmp_size=$size tmp_max_ttl=$max_ttl tmp_failure_loss=$failure_loss tmp_failure_latency=$failure_latency tmp_recovery_loss=$recovery_loss tmp_recovery_latency=$recovery_latency tmp_reliability=$reliability tmp_country=$country
 	local tmp_interval=$interval tmp_interval_tries=$interval_tries tmp_options=$options tmp_type=$type tmp_enabled=$enabled tmp_wait_test=$wait_test tmp_server_http_test=$server_http_test tmp_server_test=$server_test tmp_check_quality=$check_quality tmp_failure_interval=$failure_interval tmp_tries_up=$tries_up tmp_family=$family
 
 	uci_validate_section omr-tracker "$1" "$2" \
-		'hosts:list(host)'  \
-		'hosts6:list(host)'  \
 		'timeout:uinteger'  \
 		'size:uinteger'  \
 		'max_ttl:uinteger'  \
@@ -42,10 +40,9 @@ _validate_section() {
 		'server_http_test:bool:0'    \
 		'server_test:bool:0'    \
 		'family:string'   \
-		'options:string'
+		'options:string'  \
+		'country:string'
 
-	[ -z "$hosts"    ] && hosts=$tmp_hosts
-	[ -z "$hosts6"    ] && hosts6=$tmp_hosts6
 	[ -z "$timeout"  ] && timeout=$tmp_timeout
 	[ -z "$count"  ] && count=$tmp_count
 	[ -z "$reliability"  ] && reliability=$tmp_reliability
@@ -68,7 +65,20 @@ _validate_section() {
 	[ -z "$server_test"  ] && server_test=$tmp_server_test
 	[ -z "$family"  ] && family=$tmp_family
 	[ -z "$enabled"  ] && enabled=$tmp_enabled
+	[ -z "$country"  ] && country=$tmp_country
 }
+
+_validate_section_hosts() {
+	local tmp_hosts=$hosts tmp_hosts6=$hosts6
+
+	uci_validate_section omr-tracker "$1" "$2" \
+	'hosts:list(host)'  \
+	'hosts6:list(host)'
+
+	[ -z "$hosts"    ] && hosts=$tmp_hosts
+	[ -z "$hosts6"    ] && hosts6=$tmp_hosts6
+}
+
 
 _launch_tracker() {
 	case "$1" in
@@ -78,6 +88,9 @@ _launch_tracker() {
 	local hosts hosts6 timeout count tries tries_up interval interval_tries options type enabled wait_test ipv6 proto server_http_test size max_ttl failure_loss failure_interval failure_latency recovery_loss recovery_latency family reliability
 	_validate_section "defaults" "defaults"
 	_validate_section "interface" "$1"
+	[ -z "$country" ] && country="world"
+	_validate_section_hosts "hosts_defaults" "$country"
+
 
 	local ifname ip4table
 	#network_get_device ifname $1
@@ -281,12 +294,14 @@ _launch_shadowsocks_tracker() {
 	[ "$(echo $1 | grep tracker)" != "" ] || return
 	
 	_validate_section "proxy" "proxy"
+	[ -z "$country" ] && country="world"
+	_validate_section_hosts "hosts_proxy" "$country"
 	
 	config_get local_port "$1" local_port
 	local disabled
 	config_get disabled "$1" disabled 0
 	config_get server "$1" server
-
+	#echo "enabled: $enabled - disabled: $disabled - host: $hosts"
 	[ "$enabled" = "0" ] || [ "$disabled" = "1" ] || [ -z "$hosts" ] && return
 	[ -z "$server" ] && return
 	[ "$(uci -q get shadowsocks-libev.${server}.disabled)" = "1" ] && return
@@ -296,7 +311,6 @@ _launch_shadowsocks_tracker() {
 	}
 	config_foreach __ss_redir_status ss_redir $server
 	[ $redir_status = false ] && return
-
 	procd_open_instance
 	# shellcheck disable=SC2086
 	procd_set_param command /bin/omr-tracker-ss "$1"
@@ -322,6 +336,8 @@ _launch_shadowsocks_rust_tracker() {
 	[ "$(echo $1 | grep tracker)" != "" ] || return
 	
 	_validate_section "proxy" "proxy"
+	[ -z "$country" ] && country="world"
+	_validate_section_hosts "hosts_proxy" "$country"
 	
 	config_get local_port "$1" local_port
 	local disabled
@@ -360,6 +376,9 @@ _launch_v2ray_tracker() {
 	local hosts timeout tries interval local_port enabled server wait_test
 	
 	_validate_section "proxy" "proxy"
+	[ -z "$country" ] && country="world"
+	_validate_section_hosts "hosts_proxy" "$country"
+
 	[ "$enabled" = "0" ] || [ -z "$hosts" ] && return
 
 	procd_open_instance
@@ -382,6 +401,8 @@ _launch_xray_tracker() {
 	local hosts timeout tries interval local_port enabled server wait_test
 	
 	_validate_section "proxy" "proxy"
+	[ -z "$country" ] && country="world"
+	_validate_section_hosts "hosts_proxy" "$country"
 	[ "$enabled" = "0" ] || [ -z "$hosts" ] && return
 
 	procd_open_instance

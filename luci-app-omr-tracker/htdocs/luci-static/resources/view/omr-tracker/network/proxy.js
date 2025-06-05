@@ -13,7 +13,8 @@ return view.extend({
 			L.resolveDefault(fs.stat('/usr/bin/dig'), {}),
 //			L.resolveDefault(fs.stat('/usr/bin/nping'), {}),
 //			L.resolveDefault(fs.stat('/usr/bin/arping'), {}),
-			uci.load('network')
+			uci.load('network'),
+			uci.load('omr-tracker')
 		]);
 	},
 
@@ -51,17 +52,40 @@ return view.extend({
 		o.value('ipv4ipv6', _('IPv4 & IPv6'));
 		o.modalonly = true;
 
-		o = s.option(form.DynamicList, 'hosts', _('Tracking hostname or IP address'),
-			_('This hostname or IP address will be pinged to determine if the link is up or down. Leave blank to assume interface is always online'));
-		o.datatype = 'hosts';
-		o.modalonly = true;
+		const hostSections = uci.sections('omr-tracker').filter(s => s['.type'] === 'hosts_proxy');
+		const countryData = {};
 
-		o = s.option(form.DynamicList, 'hosts6', _('Tracking hostname or IP address for IPv6'),
-			_('This hostname or IP address will be pinged to determine if the link is up or down. Leave blank to assume interface is always online'));
-		o.datatype = 'hosts';
-		o.modalonly = true;
-		o.depends('family', 'ipv4ipv6');
-		o.depends('family', 'ipv6');
+		hostSections.forEach(s => {
+			const name = s['.name'];
+			countryData[name] = {
+				hosts: s.hosts || [],
+				hosts6: s.hosts6 || []
+			};
+			o.value(name, _(name));
+		});
+
+		hostSections.forEach(country => {
+			const cname = country['.name'];
+			let o4 = s.option(form.DynamicList, `_hosts_${cname}`, _('IPv4 Hosts (%s)').format(cname),_('This hostname or IP address will be pinged to determine if the link is up or down. Leave blank to use defaults settings.'));
+			o4.modalonly = true;
+			o4.depends('country', cname);
+			o4.cfgvalue = function (section_id) {
+				return countryData[cname].hosts;
+			};
+			o4.write = function (section_id, formvalue) {
+				uci.set('omr-tracker', cname, 'hosts', formvalue);
+			};
+
+			let o6 = s.option(form.DynamicList, `_hosts6_${cname}`, _('IPv6 Hosts (%s)').format(cname),_('This hostname or IP address will be pinged to determine if the link is up or down. Leave blank to use defaults settings.'));
+			o6.modalonly = true;
+			o6.depends('country', cname);
+			o6.cfgvalue = function (section_id) {
+				return countryData[cname].hosts6;
+			};
+			o6.write = function (section_id, formvalue) {
+				uci.set('omr-tracker', cname, 'hosts6', formvalue);
+			};
+		});
 
 		/*
 		o = s.option(form.Flag, 'httping_ssl', _('Enable ssl tracking'),
