@@ -665,6 +665,9 @@ function wizard_add()
 	local country = luci.http.formvalue("country") or "world"
 	ucic:set("openmptcprouter","settings","country",country)
 	ucic:save("openmptcprouter")
+	ucic:set("omr-tracker","defaults","country",country)
+	ucic:save("omr-tracker")
+	ucic:commit("omr-tracker")
 
 	-- Get DNS64
 	local dns64 = luci.http.formvalue("dns64") or "0"
