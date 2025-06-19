@@ -484,7 +484,7 @@ _bypass_proto_without_ndpi() {
 				#		commit network
 				#	EOF
 				#fi
-
+				_intf_rules_all_rules ${proto} ${intfid}
 				#ipset -q flush bypass_$proto > /dev/null 2>&1
 				#ipset -q flush bypass6_$proto > /dev/null 2>&1
 				#ipset -q --exist restore <<-EOF
@@ -553,6 +553,29 @@ _bypass_proto_without_ndpi() {
 				fi
 			fi
 		done
+	fi
+}
+
+_intf_rules_all_rules() {
+	service=$1
+	count=$2
+	proto=""
+	([ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] || [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ]) && proto="ss_rules"
+	[ "$(uci -q get v2ray.main.enabled)" = "1" ] && proto="v2r_rules"
+	[ "$(uci -q get xray.main.enabled)" = "1" ] && proto="xr_rules"
+	cat >> /etc/firewall.omr-bypass <<-EOF
+		nft insert rule inet fw4 ${proto}_pre_tcp ip daddr @bypass_${service} accept
+		nft insert rule inet fw4 ${proto}_pre_tcp meta mark 0x4539${count} accept
+		nft insert rule inet fw4 ${proto}_local_out ip daddr @bypass_${service} accept
+		nft insert rule inet fw4 ${proto}_local_out meta mark 0x4539${count} accept
+	EOF
+	if [ "$disableipv6" = "0" ]; then
+		cat >> /etc/firewall.omr-bypass <<-EOF
+			nft insert rule inet fw4 ${proto}_pre_tcp ip6 daddr @bypass6_${service} accept
+			nft insert rule inet fw4 ${proto}_pre_tcp meta mark 0x6539${count} accept
+			nft insert rule inet fw4 ${proto}_local_out ip6 daddr @bypass6_${service} accept
+			nft insert rule inet fw4 ${proto}_local_out meta mark 0x6539${count} accept
+		EOF
 	fi
 }
 
@@ -904,11 +927,11 @@ start_service() {
 	disableipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
 	#noipv6="$(uci -q get omr-bypass.global.noipv6)"
 	rm -f /etc/firewall.omr-bypass
-	cat > /etc/firewall.omr-bypass <<-EOF
-	#!/bin/sh
-	#nft insert rule inet fw4 ss_rules_dst_tcp ip daddr @omr_dst_bypass_all accept
-	#nft insert rule inet fw4 ss_rules_local_out ip daddr @omr_dst_bypass_all accept
-	EOF
+	#cat > /etc/firewall.omr-bypass <<-EOF
+	##!/bin/sh
+	##nft insert rule inet fw4 ss_rules_dst_tcp ip daddr @omr_dst_bypass_all accept
+	##nft insert rule inet fw4 ss_rules_local_out ip daddr @omr_dst_bypass_all accept
+	#EOF
 	#config_load shadowsocks-libev
 	#config_foreach _ss_rules_config ss_rules
 	([ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] || [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ]) && _ss_rules_config
