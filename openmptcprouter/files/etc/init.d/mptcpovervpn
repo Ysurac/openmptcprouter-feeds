@@ -139,6 +139,7 @@ mptcp_over_vpn() {
 					set network.wg${interface}.gateway="10.255.247.1"
 					set network.wg${interface}.public_key="${public_key}"
 					set network.wg${interface}.multipath="${multipath}"
+					set network.wg${interface}.mtu="1280"
 					set network.${interface}.multipath='off'
 					add network wireguard_wg${interface}
 					set network.@wireguard_wg${interface}[0]=wireguard_wg${interface}
@@ -244,8 +245,11 @@ start_service()
 			uci -q batch <<-EOF >/dev/null
 				set glorytun.vpn.host='10.255.250.1'
 				set glorytun-udp.vpn.host='10.255.250.1'
+				del openvpn.omr.remote
+				set openvpn.omr.remote='10.255.250.1'
 				commit glorytun
 				commit glorytun-udp
+				commit openvpn
 			EOF
 		else
 			if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks" ]; then
@@ -260,8 +264,11 @@ start_service()
 			uci -q batch <<-EOF >/dev/null
 				set glorytun.vpn.host='10.255.247.1'
 				set glorytun-udp.vpn.host='10.255.247.1'
+				del openvpn.omr.remote
+				set openvpn.omr.remote='10.255.247.1'
 				commit glorytun
 				commit glorytun-udp
+				commit openvpn
 			EOF
 		fi
 		uci -q batch <<-EOF >/dev/null
@@ -270,7 +277,7 @@ start_service()
 			set shadowsocks-rust.ss_rules.server='mptcpovervpn'
 			set shadowsocks-rust.ss_rules.redir_tcp='all'
 		EOF
-	elif ([ "$(uci -q get glorytun.vpn.host)" = "10.255.250.1" ] || [ "$(uci -q get glorytun.vpn.host)" = "10.255.247.1" ] || [ "$(uci -q get shadowsocks-libev.ss_rules.server)" != "sss0" ] || [ "$(uci -q get shadowsocks-rust.ss_rules.server)" != "sss0" ]) && [ "$nbintf" != "$nbintfvpn" ]; then
+	elif ([ "$(uci -q get glorytun.vpn.host)" = "10.255.250.1" ] || [ "$(uci -q get glorytun.vpn.host)" = "10.255.247.1" ] || [ "$(uci -q get openvpn.omr.remote)" = "10.255.250.1" ] || [ "$(uci -q get openvpn.omr.remote)" = "10.255.247.1" ] || [ "$(uci -q get shadowsocks-libev.ss_rules.server)" != "sss0" ] || [ "$(uci -q get shadowsocks-rust.ss_rules.server)" != "sss0" ]) && [ "$nbintf" != "$nbintfvpn" ]; then
 		if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks" ]; then
 			uci -q batch <<-EOF >/dev/null
 				set shadowsocks-libev.sss0.disabled='0'
@@ -285,8 +292,10 @@ start_service()
 			set shadowsocks-rust.ss_rules.server='sss0'
 			set glorytun.vpn.host="$(uci -q get openmptcprouter.vps.ip | awk '{print $1}')"
 			set glorytun-udp.vpn.host="$(uci -q get openmptcprouter.vps.ip | awk '{print $1}')"
+			set openvpn.omr.remote="$(uci -q get openmptcprouter.vps.ip | awk '{print $1}')"
 			commit glorytun
 			commit glorytun-udp
+			commit openvpn
 		EOF
 	fi
 	NBCPU=$(grep -c '^processor' /proc/cpuinfo | tr -d "\n")
