@@ -493,12 +493,12 @@ _bypass_proto_without_ndpi() {
 				#EOF
 			fi
 			for ip in $ALLIPS; do
-				valid_ip4=$( valid_subnet4 $ip)
-				valid_ip6=$( valid_subnet6 $ip)
+				valid_ip4=$( valid_subnet4 $ip )
+				valid_ip6=$( valid_subnet6 $ip )
 				if [ "$valid_ip4" = "ok" ]; then
 					if [ "$vpn" != "1" ]; then
 						#ipset -q add bypass_$proto $ip
-						uci -q add_list firewall.bypass_${proto}.entry="$ip"
+						uci add_list firewall.bypass_${proto}.entry="$ip"
 					else
 						#ipset -q add omr_dst_bypass_$intf $ip
 						uci -q add_list firewall.omr_dst_bypass_${intf}_4.entry="$ip"
@@ -513,6 +513,7 @@ _bypass_proto_without_ndpi() {
 					fi
 				fi
 			done
+			uci -q commit firewall
 		fi
 	fi
 	# Use dnsmasq ipset to bypass domains of the proto
@@ -559,22 +560,22 @@ _bypass_proto_without_ndpi() {
 _intf_rules_all_rules() {
 	service=$1
 	count=$2
-	proto=""
-	([ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] || [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ]) && proto="ss_rules"
-	[ "$(uci -q get v2ray.main.enabled)" = "1" ] && proto="v2r_rules"
-	[ "$(uci -q get xray.main.enabled)" = "1" ] && proto="xr_rules"
+	proxyproto=""
+	([ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] || [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ]) && proxyproto="ss_rules"
+	[ "$(uci -q get v2ray.main.enabled)" = "1" ] && proxyproto="v2r_rules"
+	[ "$(uci -q get xray.main.enabled)" = "1" ] && proxyproto="xr_rules"
 	cat >> /etc/firewall.omr-bypass <<-EOF
-		nft insert rule inet fw4 ${proto}_pre_tcp ip daddr @bypass_${service} accept
-		nft insert rule inet fw4 ${proto}_pre_tcp meta mark 0x4539${count} accept
-		nft insert rule inet fw4 ${proto}_local_out ip daddr @bypass_${service} accept
-		nft insert rule inet fw4 ${proto}_local_out meta mark 0x4539${count} accept
+		nft insert rule inet fw4 ${proxyproto}_pre_tcp ip daddr @bypass_${service} accept
+		nft insert rule inet fw4 ${proxyproto}_pre_tcp meta mark 0x4539${count} accept
+		nft insert rule inet fw4 ${proxyproto}_local_out ip daddr @bypass_${service} accept
+		nft insert rule inet fw4 ${proxyproto}_local_out meta mark 0x4539${count} accept
 	EOF
 	if [ "$disableipv6" = "0" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft insert rule inet fw4 ${proto}_pre_tcp ip6 daddr @bypass6_${service} accept
-			nft insert rule inet fw4 ${proto}_pre_tcp meta mark 0x6539${count} accept
-			nft insert rule inet fw4 ${proto}_local_out ip6 daddr @bypass6_${service} accept
-			nft insert rule inet fw4 ${proto}_local_out meta mark 0x6539${count} accept
+			nft insert rule inet fw4 ${proxyproto}_pre_tcp ip6 daddr @bypass6_${service} accept
+			nft insert rule inet fw4 ${proxyproto}_pre_tcp meta mark 0x6539${count} accept
+			nft insert rule inet fw4 ${proxyproto}_local_out ip6 daddr @bypass6_${service} accept
+			nft insert rule inet fw4 ${proxyproto}_local_out meta mark 0x6539${count} accept
 		EOF
 	fi
 }
@@ -673,7 +674,6 @@ _intf_rule() {
 			protocol="4"
 		fi
 		for ipv46 in $protocol; do
-			#echo "ipv46: $ipv46 for $intf"
 			uci -q batch <<-EOF
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}=rule
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}.name="omr_dst_bypass_${intf}_rule"
