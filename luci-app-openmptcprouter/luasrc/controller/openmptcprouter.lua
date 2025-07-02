@@ -1035,7 +1035,7 @@ function wizard_add()
 		ucic:foreach("openvpn","openvpn", function(s)
 			local sectionname = s[".name"]
 			if sectionname:match("^omr.*") then
-				ucic:set("openvpn",sectionname,"cipher","chacha20-poly1305")
+				ucic:set("openvpn",sectionname,"cipher","CHACHA20-POLY1305")
 			end
 		end)
 		--ucic:set("openvpn","omr","cipher","chacha20-poly1305")
