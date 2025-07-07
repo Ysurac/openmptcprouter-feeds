@@ -36,7 +36,7 @@ MY_DEPENDS := \
     wireless-tools \
     libiwinfo-lua \
     ca-bundle ca-certificates \
-    luci-mod-admin-full luci-app-firewall !LINUX_6_12:luci-app-glorytun-tcp luci-app-glorytun-udp luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-theme-argon luci-theme-alpha luci-theme-design luci-base luci-theme-material luci-theme-bootstrap \
+    luci-mod-admin-full luci-app-firewall luci-app-glorytun-tcp luci-app-glorytun-udp luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-theme-argon luci-theme-alpha luci-theme-design luci-base luci-theme-material luci-theme-bootstrap \
     luci-app-omr-tracker luci-app-omr-dscp \
     luci-app-sqm-autorate sqm-scripts-extra \
     luci-app-vnstat2 omr-quota luci-app-omr-quota \
