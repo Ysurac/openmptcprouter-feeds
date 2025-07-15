@@ -245,7 +245,11 @@ modemmanager_connected_method_static_ipv6() {
 	[ -n "${gateway}" ] && {
 		echo "adding default IPv6 route via ${gateway}"
 		proto_add_ipv6_route "${gateway}" "128"
-		proto_add_ipv6_route "::0" "0" "${gateway}" "" "" "${address}/${prefix}"
+		[ "$sourcefilter" = "0" ] && {
+			proto_add_ipv6_route "::0" "0" "${gateway}"
+		} || {
+			proto_add_ipv6_route "::0" "0" "${gateway}" "" "" "${address}/${prefix}"
+		}
 	}
 	[ -n "${dns1}" ] && {
 		echo "adding primary DNS at ${dns1}"
@@ -319,16 +323,16 @@ modemmanager_check_state_failed() {
 
 	case "$reason" in
 		"sim-missing")
-		    echo "SIM missing"
-		    proto_notify_error "${interface}" MM_FAILED_REASON_SIM_MISSING
-		    proto_block_restart "${interface}"
-		    return 1
-		    ;;
+			echo "SIM missing"
+			proto_notify_error "${interface}" MM_FAILED_REASON_SIM_MISSING
+			proto_block_restart "${interface}"
+			return 1
+			;;
 		*)
-		    proto_notify_error "${interface}" MM_FAILED_REASON_UNKNOWN
-		    proto_block_restart "${interface}"
-		    return 1
-		    ;;
+			proto_notify_error "${interface}" MM_FAILED_REASON_UNKNOWN
+			proto_block_restart "${interface}"
+			return 1
+			;;
 	esac
 }
 
@@ -418,7 +422,7 @@ modemmanager_check_state_locked() {
 				"$interface" \
 				"$unlock_lock" \
 				"$unlock_value"
-			[ "$?" -ne "0" ] && return 1
+				[ "$?" -ne "0" ] && return 1
 		}
 	done
 
@@ -429,23 +433,29 @@ modemmanager_check_state_locked() {
 		return 1
 	fi
 
-
 	mmcli --modem="${device}" -i any --pin=${pincode} || {
-	    proto_notify_error "${interface}" MM_PINCODE_WRONG
-	    proto_block_restart "${interface}"
-	    return 1
+		proto_notify_error "${interface}" MM_PINCODE_WRONG
+		proto_block_restart "${interface}"
+		return 1
 	}
+
+	# Give the modem time to change to the initializing state after
+	# unlocking 
+	sleep 1
 
 	return 0
 }
 
-modemmanager_check_state() {
+modemmanager_check_pin_state() {
 	local device="$1"
 	local interface="$2"
 	local modemstatus="$3"
 	local pincode="$4"
 
-	local state
+	local state modemstatus
+
+	local timeout=20
+	local count=0
 
 	state="$(modemmanager_get_field "${modemstatus}" "modem.generic.state")"
 
@@ -464,6 +474,19 @@ modemmanager_check_state() {
 			[ "$?" -ne "0" ] && return 1
 			;;
 	esac
+
+	# After the SIM has been successfully unlocked, it is initialized.
+	# This can take longer on some modems, so we must wait until the
+	# modem is ready to execute the next commands.
+	while [ $count -lt "$timeout" ]; do
+		modemstatus=$(mmcli --modem="${device}" --output-keyvalue)
+		state="$(modemmanager_get_field "${modemstatus}" "modem.generic.state")"
+
+		[ "$state" != "initializing" ] && return 0
+		count=$((count + 1))
+		echo "waiting for SIM initializing (${count}s)"
+		sleep 1
+	done
 }
 
 modemmanager_set_preferred_mode() {
@@ -528,6 +551,26 @@ modemmanager_init_epsbearer() {
 	sleep 2
 }
 
+modemmanager_set_plmn() {
+	local device="$1"
+	local interface="$2"
+	local plmn="$3"
+	local force_connection="$4"
+
+	mmcli --modem="${device}" \
+		--timeout 120 \
+		--3gpp-register-in-operator="${plmn}" || {
+		if [ -n "${force_connection}" ] && [ "${force_connection}" -eq 1 ]; then
+			echo "3GPP operator registration failed -> attempting restart"
+				proto_notify_error "${interface}" MM_INTERFACE_RESTART
+			else
+				proto_notify_error "${interface}" MM_3GPP_OPERATOR_REGISTRATION_FAILED
+				proto_block_restart "${interface}"
+		fi
+		return 1
+	}
+}
+
 proto_modemmanager_setup() {
 	local interface="$1"
 
@@ -573,7 +616,7 @@ proto_modemmanager_setup() {
 	}
 	echo "modem available at ${modempath}"
 
-	modemmanager_check_state "$device" "$interface" "${modemstatus}" "$pincode"
+	modemmanager_check_pin_state "$device" "$interface" "${modemstatus}" "$pincode"
 	[ "$?" -ne "0" ] && return 1
 
 	# always cleanup before attempting a new connection, just in case
@@ -583,51 +626,6 @@ proto_modemmanager_setup() {
 		proto_notify_error "${interface}" MM_MODEM_DISABLED
 		return 1
 	}
-
-	[ -z "${plmn}" ] || {
-		echo "starting network registraion with plmn '${plmn}'..."
-		mmcli --modem="${device}" \
-			--timeout 120 \
-			--3gpp-register-in-operator="${plmn}" || {
-			if [ -n "${force_connection}" ] && [ "${force_connection}" -eq 1 ]; then
-				echo "3GPP operator registration failed -> attempting restart"
-				proto_notify_error "${interface}" MM_INTERFACE_RESTART
-			else
-				proto_notify_error "${interface}" MM_3GPP_OPERATOR_REGISTRATION_FAILED
-				proto_block_restart "${interface}"
-			fi
-			return 1
-		}
-	}
-
-	if [ -z "${allowedmode}" ]; then
-		modemmanager_set_allowed_mode "$device" "$interface" "any"
-	else
-		case "$allowedmode" in
-			"2g")
-				modemmanager_set_allowed_mode "$device" \
-					"$interface" "2g"
-				;;
-			"3g")
-				modemmanager_set_allowed_mode "$device" \
-					"$interface" "3g"
-				;;
-			"4g")
-				modemmanager_set_allowed_mode "$device" \
-					"$interface" "4g"
-				;;
-			"5g")
-				modemmanager_set_allowed_mode "$device" \
-					"$interface" "5g"
-				;;
-			*)
-				modemmanager_set_preferred_mode "$device" \
-					"$interface" "${allowedmode}" "${preferredmode}"
-				;;
-		esac
-		# check error for allowed_mode and preferred_mode function call
-		[ "$?" -ne "0" ] && return 1
-	fi
 
 	# set initial eps bearer settings
 	[ -z "${init_epsbearer}" ] || {
@@ -670,6 +668,48 @@ proto_modemmanager_setup() {
 		[ "$?" -ne "0" ] && return 1
 	}
 
+	if [ -z "${allowedmode}" ]; then
+		modemmanager_set_allowed_mode "$device" "$interface" "any"
+	else
+		case "$allowedmode" in
+			"2g")
+				modemmanager_set_allowed_mode "$device" \
+					"$interface" "2g"
+				;;
+			"3g")
+				modemmanager_set_allowed_mode "$device" \
+					"$interface" "3g"
+				;;
+			"4g")
+				modemmanager_set_allowed_mode "$device" \
+					"$interface" "4g"
+				;;
+			"5g")
+				modemmanager_set_allowed_mode "$device" \
+					"$interface" "5g"
+				;;
+			"any")
+				modemmanager_set_allowed_mode "$device" \
+					"$interface" "any"
+				;;
+			*)
+				modemmanager_set_preferred_mode "$device" \
+					"$interface" "${allowedmode}" "${preferredmode}"
+				;;
+		esac
+		# check error for allowed_mode and preferred_mode function call
+		[ "$?" -ne "0" ] && return 1
+	fi
+
+	if [ -z "${plmn}" ]; then
+		modemmanager_set_plmn "$device" "$interface" "" "$force_connection"
+		[ "$?" -ne "0" ] && return 1
+	else
+		echo "starting network registration with plmn '${plmn}'..."
+		modemmanager_set_plmn "$device" "$interface" "$plmn" "$force_connection"
+		[ "$?" -ne "0" ] && return 1
+	fi
+
 	# setup connect args; APN mandatory (even if it may be empty)
 	echo "starting connection with apn '${apn}'..."
 
@@ -702,7 +742,7 @@ proto_modemmanager_setup() {
 		else
 			proto_notify_error "${interface}" MM_CONNECT_FAILED
 			proto_block_restart "${interface}"
-			fi
+		fi
 		return 1
 	}
 
@@ -837,14 +877,11 @@ proto_modemmanager_teardown() {
 	mmcli --modem="${device}" --simple-disconnect ||
 		proto_notify_error "${interface}" DISCONNECT_FAILED
 
-	# reading variable from var state which was set in
-	# '/usr/lib/ModemManager/connection.d/10-report-down'
-	# because of a reconnect event.
-	# The modem therefore does not need to be disabled.
-	local disable="$(uci_get_state network "$interface" disable_modem "1")"
+	# Variable is set to '1' if modem should be disabled on ifdown,
+	# otherwise it stays connected.
+	local disable="$(uci_get network "$interface" disable_modem "1")"
 	if [ "${disable}" -eq 0 ]; then
 		echo "Skipping modem disable"
-		uci_revert_state network "${interface}" disable_modem
 	else
 		mmcli --modem="${device}" --disable
 	fi

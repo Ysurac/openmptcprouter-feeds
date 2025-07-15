@@ -28,7 +28,7 @@ function count_changes(section_id) {
 
 function render_radio_badge(radioDev) {
 	return E('span', { 'class': 'ifacebadge' }, [
-		E('img', { 'src': L.resource('icons/wifi%s.png').format(radioDev.isUp() ? '' : '_disabled') }),
+		E('img', { 'src': L.resource('icons/wifi%s.svg').format(radioDev.isUp() ? '' : '_disabled') }),
 		' ',
 		radioDev.getName()
 	]);
@@ -38,17 +38,17 @@ function render_signal_badge(signalPercent, signalValue, noiseValue, wrap, mode)
 	var icon, title, value;
 
 	if (signalPercent < 0)
-		icon = L.resource('icons/signal-none.png');
+		icon = L.resource('icons/signal-none.svg');
 	else if (signalPercent == 0)
-		icon = L.resource('icons/signal-0.png');
+		icon = L.resource('icons/signal-000-000.svg');
 	else if (signalPercent < 25)
-		icon = L.resource('icons/signal-0-25.png');
+		icon = L.resource('icons/signal-000-025.svg');
 	else if (signalPercent < 50)
-		icon = L.resource('icons/signal-25-50.png');
+		icon = L.resource('icons/signal-025-050.svg');
 	else if (signalPercent < 75)
-		icon = L.resource('icons/signal-50-75.png');
+		icon = L.resource('icons/signal-050-075.svg');
 	else
-		icon = L.resource('icons/signal-75-100.png');
+		icon = L.resource('icons/signal-075-100.svg');
 
 	if (signalValue != null && signalValue != 0) {
 		if (noiseValue != null && noiseValue != 0) {
@@ -747,7 +747,7 @@ return view.extend({
 					'data-ssid': bss.network.getSSID()
 				}, [
 					E('img', {
-						'src': L.resource('icons/wifi%s.png').format(bss.network.isUp() ? '' : '_disabled'),
+						'src': L.resource('icons/wifi%s.svg').format(bss.network.isUp() ? '' : '_disabled'),
 						'title': bss.radio.getI18n()
 					}),
 					E('span', [
@@ -1058,6 +1058,12 @@ return view.extend({
 					o.rmempty = true;
 				}
 
+				o = ss.taboption('advanced', form.Flag, 'rxldpc', _('Rx LDPC'), _('Low-Density Parity-Check'));
+				o.default = '1';
+
+				o = ss.taboption('advanced', form.Flag, 'ldpc', _('Tx LDPC'));
+				o.depends({'rxldpc': '1'});
+				o.default = '1';
 
 				o = s.option(form.SectionValue, '_device', form.NamedSection, radioNet.getName(), 'wifi-iface', _('Interface Configuration'));
 				o.modalonly = true;

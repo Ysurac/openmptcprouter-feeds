@@ -16,7 +16,7 @@ PKG_RELEASE:=1
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://github.com/OpenVPN/ovpn-dco.git
-PKG_SOURCE_VERSION:=a08b2fd1296035efdb81831f21e0c10a815ab1ad
+PKG_SOURCE_VERSION:=46c77df6987fdfbf2046f938636239fcd014c717
 
 PKG_MAINTAINER:=Yannick Chabanois <contact@openmptcprouter.com>
 PKG_LICENSE:=GPL-2.0-only
