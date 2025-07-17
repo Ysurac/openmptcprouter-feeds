@@ -459,22 +459,22 @@ _bypass_proto_without_ndpi() {
 	if [ "$(uci -q get openmptcprouter.settings.ndpi)" == "0" ] || [ "$ndpi" == "0" ] || [ "$vpn" = "1" ]; then
 		ALLIPS=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select ip from ipproto where proto=\"$proto\";" ".exit")
 		if [ -n "$ALLIPS" ]; then
-				uci -q batch <<-EOF >/dev/null
-					set firewall.bypass_${proto}_${zone}=ipset
-					set firewall.bypass_${proto}_${zone}.name="bypass_${proto}_${zone}"
-					set firewall.bypass_${proto}_${zone}.match='dest_net'
-					set firewall.bypass_${proto}_${zone}.family='ipv4'
-					set firewall.bypass_${proto}_${zone}.enabled='1'
-					commit firewall
-				EOF
-				uci -q batch <<-EOF >/dev/null
-					set firewall.bypass6_${proto}_${zone}=ipset
-					set firewall.bypass6_${proto}_${zone}.name="bypass6_${proto}_${zone}"
-					set firewall.bypass6_${proto}_${zone}.match='dest_net'
-					set firewall.bypass6_${proto}_${zone}.family='ipv6'
-					set firewall.bypass6_${proto}_${zone}.enabled='1'
-					commit firewall
-				EOF
+			uci -q batch <<-EOF >/dev/null
+				set firewall.bypass_${proto}=ipset
+				set firewall.bypass_${proto}.name="bypass_${proto}"
+				set firewall.bypass_${proto}.match='dest_net'
+				set firewall.bypass_${proto}.family='ipv4'
+				set firewall.bypass_${proto}.enabled='1'
+				commit firewall
+			EOF
+			uci -q batch <<-EOF >/dev/null
+				set firewall.bypass6_${proto}=ipset
+				set firewall.bypass6_${proto}.name="bypass6_${proto}"
+				set firewall.bypass6_${proto}.match='dest_net'
+				set firewall.bypass6_${proto}.family='ipv6'
+				set firewall.bypass6_${proto}.enabled='1'
+				commit firewall
+			EOF
 
 
 			if [ "$vpn" != "1" ]; then
@@ -522,13 +522,7 @@ _bypass_proto_without_ndpi() {
 				#		commit network
 				#	EOF
 				#fi
-				_intf_rules_all_rules ${proto}_${zone} ${intfid}
-				#ipset -q flush bypass_$proto > /dev/null 2>&1
-				#ipset -q flush bypass6_$proto > /dev/null 2>&1
-				#ipset -q --exist restore <<-EOF
-				#create bypass_$proto hash:net hashsize 64
-				#create bypass6_$proto hash:net family inet6 hashsize 64
-				#EOF
+				_intf_rules_all_rules ${proto} ${intfid}
 			fi
 			for ip in $ALLIPS; do
 				valid_ip4=$( valid_subnet4 $ip )
@@ -720,8 +714,8 @@ _intf_rule() {
 		fi
 		#zone="lan"
 		for zone in $(_get_firewall_zones); do
-		for ipv46 in $protocol; do
-			uci -q batch <<-EOF
+			for ipv46 in $protocol; do
+				uci -q batch <<-EOF
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}_${zone}=rule
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}_${zone}.name="omr_dst_bypass_${intf}_rule"
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}_${zone}.ipset="omr_dst_bypass_${intf}_${ipv46}"
@@ -789,8 +783,8 @@ _intf_rule() {
 				set firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}_${zone}.target='MARK'
 				set firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}_${zone}.enabled='0'
 				set firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}_${zone}.set_xmark="0x${ipv46}539${count}"
-			EOF
-		done
+				EOF
+			done
 		done
 		if [ "$intf" = "all" ]; then
 			uci -q batch <<-EOF >/dev/null
