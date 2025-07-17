@@ -1108,12 +1108,12 @@ _set_vpn_ip() {
 	[ "$(uci -q get openmptcprouter.settings.vpn)" = "none" ] && return
 	vpnifname="$(uci -q get network.omrvpn.device)"
 	vpnip_local_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.remoteip')"
-	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} 2>/dev/null | awk -F'[ /]+' '{print $3}')
+	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} 2>/dev/null | head -n 1 | awk -F'[ /]+' '{print $3}')
 	[ -z "$vpnip_local" ]  && vpnip_local=$(ip -4 addr show dev "$OMR_TRACKER_DEVICE" | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1)
 	vpnip_remote_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.localip')"
-	vpnip_remote=$(ip -4 r show default dev ${vpnifname} | awk '{print $3}' | tr -d "\n")
-	[ -z "$vpnip_remote" ] && [ -n "$vpnifname" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} 2>/dev/null | grep kernel | awk '{print $1}' | tr -d "\n")
-	[ -z "$vpnip_remote" ] && [ -n "$vpnifname" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} 2>/dev/null | grep "proto static src" | awk '{print $3}' | tr -d "\n")
+	vpnip_remote=$(ip -4 r show default dev ${vpnifname} | head -n 1 | awk '{print $3}' | tr -d "\n")
+	[ -z "$vpnip_remote" ] && [ -n "$vpnifname" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} 2>/dev/null | grep -m 1 kernel | awk '{print $1}' | tr -d "\n")
+	[ -z "$vpnip_remote" ] && [ -n "$vpnifname" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} 2>/dev/null | grep -m 1 "proto static src" | awk '{print $3}' | tr -d "\n")
 	[ -z "$vpnip_remote" ] && vpnip_remote=$(ifstatus omrvpn | jsonfilter -e '@.route[0].nexthop')
 	[ -z "$vpnip_remote" ] && [ "$vpnifname" = "bonding-omrvpn" ] && vpnip_remote="10.255.248.1"
 	ula="$(uci -q get network.globals.ula_prefix)"
