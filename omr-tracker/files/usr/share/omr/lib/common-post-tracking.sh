@@ -63,7 +63,7 @@ set_route() {
 		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ]; then
 			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && [ "$SETDEFAULT" = "yes" ] && _log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
 			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && [ "$SETDEFAULT" != "yes" ] && _log "$PREVINTERFACE down. Replace default in table 991337 route by $interface_gw dev $interface_if"
-			[ "$SETDEFAULT" = "yes" ] && [ "$(uci -q openmptcprouter.settings.defaultgw)" != "0" ] && ip route replace default scope global metric 1 via $interface_gw dev $interface_if $initcwrwnd >/dev/null 2>&1
+			[ "$SETDEFAULT" = "yes" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && ip route replace default scope global metric 1 via $interface_gw dev $interface_if $initcwrwnd >/dev/null 2>&1
 			ip route replace default via $interface_gw dev $interface_if table 991337 $initcwrwnd >/dev/null 2>&1 && SETROUTE=true
 		fi
 	fi
@@ -103,7 +103,7 @@ set_route6() {
 		fi
 		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ -n "$(echo $interface_gw | grep ':')" ]; then
 			[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
-			[ "$SETDEFAULT" = "yes" ] && [ "$(uci -q openmptcprouter.settings.defaultgw)" != "0" ] && ip -6 route replace default scope metric 1 global nexthop via $interface_gw dev $interface_if >/dev/null 2>&1
+			[ "$SETDEFAULT" = "yes" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && ip -6 route replace default scope metric 1 global nexthop via $interface_gw dev $interface_if >/dev/null 2>&1
 			ip -6 route replace default via $interface_gw dev $interface_if table 6991337 >/dev/null 2>&1 && SETROUTE=true
 		fi
 	fi
@@ -360,8 +360,8 @@ set_route_balancing() {
 		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ]; then
 			if [ "$(uci -q get network.$INTERFACE.weight)" != "" ]; then
 				weight=$(uci -q get network.$INTERFACE.weight)
-			elif [ "$(uci -q get openmtpcprouter.$INTERFACE.weight)" != "" ]; then
-				weight=$(uci -q get openmtpcprouter.$INTERFACE.weight)
+			elif [ "$(uci -q get openmptcprouter.$INTERFACE.weight)" != "" ]; then
+				weight=$(uci -q get openmptcprouter.$INTERFACE.weight)
 			elif [ "$multipath_config_route" = "master" ]; then
 				weight=100
 			else
@@ -437,8 +437,8 @@ set_route_balancing6() {
 		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ -n "$(echo $interface_gw | grep :)" ]; then
 			if [ "$(uci -q get network.$INTERFACE.weight)" != "" ]; then
 				weight=$(uci -q get network.$INTERFACE.weight)
-			elif [ "$(uci -q get openmtpcprouter.$INTERFACE.weight)" != "" ]; then
-				weight=$(uci -q get openmtpcprouter.$INTERFACE.weight)
+			elif [ "$(uci -q get openmptcprouter.$INTERFACE.weight)" != "" ]; then
+				weight=$(uci -q get openmptcprouter.$INTERFACE.weight)
 			elif [ "$multipath_config_route" = "master" ]; then
 				weight=100
 			else
