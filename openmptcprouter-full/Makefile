@@ -96,7 +96,7 @@ MY_DEPENDS := \
     TARGET_mediatek_filogic:kmod-mt7915-firmware TARGET_mediatek_filogic:kmod-mt7916-firmware TARGET_mediatek_filogic:kmod-mt7986-firmware TARGET_mediatek_filogic:kmod-mt7986-wo-firmware TARGET_mediatek_filogic:kmod-mt7996-firmware TARGET_mediatek_filogic:kmod-mt7996-233-firmware TARGET_mediatek_filogic:mt7988-wo-firmware TARGET_mediatek_filogic:mt7988-2p5g-phy-firmware \
     (TARGET_x86||TARGET_x86_64):kmod-r8169 \
     !(TARGET_mt7623||TARGET_ipq806x):luci-app-smartdns logd TARGET_x86_64:kmod-i40e \
-    omr-banudpip luci-app-upnp kmod-inet-diag (TARGET_x86||TARGET_x86_64):luci-app-bpftune LINUX_6_18:kmod-ovpn luci-app-mqvpn luci-app-omr-metrics luci-app-irqbalance
+    omr-banudpip luci-app-upnp kmod-inet-diag (TARGET_x86||TARGET_x86_64):luci-app-bpftune LINUX_6_18:kmod-ovpn luci-app-mqvpn luci-app-omr-metrics luci-app-irqbalance mptcp-bpf-weight
 
 # kmod-ovpn-dco-v2
 # kmod-swconfig swconfig
