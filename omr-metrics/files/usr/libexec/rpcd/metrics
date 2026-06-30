@@ -6,22 +6,127 @@
 #   ubus call metrics get_status '{"interface":"wan1"}'
 #   ubus call metrics get_all
 #   ubus call metrics get_interfaces
+#   ubus call metrics get_user_info
+#   ubus call metrics get_forecast
 
 METRICS_DIR="/tmp/metrics"
 
+_is_ip6() {
+	case "$1" in *:*) return 0 ;; esac
+	return 1
+}
+
+# Obtain a Bearer token via POST /token and save it in UCI.
+# $1 = full UCI key, $2 = server, $3 = port, $4 = username, $5 = password
+_login() {
+	local uci_token_key="$1" server="$2" serverport="$3" username="$4" password="$5"
+	local auth token
+	if _is_ip6 "$server"; then
+		auth=$(curl -6 --max-time 10 -s -k \
+			-H "Content-Type: application/x-www-form-urlencoded" \
+			-X POST -d "username=${username}&password=${password}" \
+			"https://[${server}]:${serverport}/token" 2>/dev/null)
+	else
+		auth=$(curl --max-time 10 -s -k \
+			-H "Content-Type: application/x-www-form-urlencoded" \
+			-X POST -d "username=${username}&password=${password}" \
+			"https://${server}:${serverport}/token" 2>/dev/null)
+	fi
+	token=$(echo "$auth" | jsonfilter -q -e '@.access_token' 2>/dev/null)
+	[ -n "$token" ] && uci -q set "${uci_token_key}=${token}"
+	printf '%s' "$token"
+}
+
+# GET a VPS metrics endpoint and print the JSON response (or {} on failure).
+# $1 = endpoint path (e.g. /metrics/user)
+# $2 = optional query string (e.g. "horizon=300&since=1h")
+_vps_get() {
+	local endpoint="$1" extra="${2:-}"
+	local token username password server serverport url http_code uci_token_key tmpfile
+
+	username=$(uci -q get "omr-metrics.settings.username" 2>/dev/null)
+	if [ -n "$username" ]; then
+		token=$(uci -q get "omr-metrics.settings.token" 2>/dev/null)
+		password=$(uci -q get "omr-metrics.settings.password" 2>/dev/null)
+		uci_token_key="omr-metrics.settings.token"
+		server=$(uci -q get "omr-metrics.settings.server" 2>/dev/null)
+		serverport=$(uci -q get "omr-metrics.settings.serverport" 2>/dev/null)
+		[ -z "$serverport" ] && serverport="65500"
+	else
+		local servername
+		servername=$(uci -q show openmptcprouter 2>/dev/null | \
+			sed -n 's/^openmptcprouter\.\([^.=][^.=]*\)=server$/\1/p' | head -1)
+		if [ -z "$servername" ]; then
+			echo '{}'
+			return 1
+		fi
+		token=$(uci -q get "openmptcprouter.${servername}.token" 2>/dev/null)
+		username=$(uci -q get "openmptcprouter.${servername}.username" 2>/dev/null)
+		password=$(uci -q get "openmptcprouter.${servername}.password" 2>/dev/null)
+		uci_token_key="openmptcprouter.${servername}.token"
+		serverport=$(uci -q get "openmptcprouter.${servername}.port" 2>/dev/null)
+		[ -z "$serverport" ] && serverport="65500"
+		server=$(uci -q get "openmptcprouter.${servername}.ip" 2>/dev/null | awk '{print $1}')
+	fi
+
+	if [ -z "$server" ]; then
+		echo '{}'
+		return 1
+	fi
+
+	[ -z "$token" ] && \
+		token=$(_login "$uci_token_key" "$server" "$serverport" "$username" "$password")
+	if [ -z "$token" ]; then
+		echo '{}'
+		return 1
+	fi
+
+	local qs
+	[ -n "$extra" ] && qs="?${extra}" || qs=""
+	if _is_ip6 "$server"; then
+		url="https://[${server}]:${serverport}${endpoint}${qs}"
+	else
+		url="https://${server}:${serverport}${endpoint}${qs}"
+	fi
+
+	tmpfile=$(mktemp /tmp/omr-metrics-rpcd.XXXXXX 2>/dev/null) || { echo '{}'; return 1; }
+	http_code=$(curl --max-time 10 -s -k \
+		-o "$tmpfile" -w "%{http_code}" \
+		-H "accept: application/json" \
+		-H "Authorization: Bearer ${token}" \
+		"$url" 2>/dev/null)
+
+	if [ "$http_code" = "401" ]; then
+		token=$(_login "$uci_token_key" "$server" "$serverport" "$username" "$password")
+		[ -n "$token" ] && http_code=$(curl --max-time 10 -s -k \
+			-o "$tmpfile" -w "%{http_code}" \
+			-H "accept: application/json" \
+			-H "Authorization: Bearer ${token}" \
+			"$url" 2>/dev/null)
+	fi
+
+	if [ "$http_code" = "200" ]; then
+		cat "$tmpfile"
+	else
+		echo '{}'
+	fi
+	rm -f "$tmpfile"
+}
+
 case "$1" in
 	list)
-		# Declare available methods and their parameter signatures
 		echo '{'
-		echo '  "get_status": { "interface": "str" },'
-		echo '  "get_all": {},'
-		echo '  "get_interfaces": {}'
+		echo '  "get_status":    { "interface": "str" },'
+		echo '  "get_all":       {},'
+		echo '  "get_interfaces":{},'
+		echo '  "get_user_info": {},'
+		echo '  "get_forecast":  { "horizon": 0, "since": "str", "limit": 0 },'
+		echo '  "get_decision":  { "predict": false, "horizon": 0 }'
 		echo '}'
 		;;
 	call)
 		case "$2" in
 			get_status)
-				# Read JSON input to get interface name
 				input=$(cat)
 				iface=$(echo "$input" | jsonfilter -q -e '@.interface')
 				if [ -z "$iface" ]; then
@@ -36,7 +141,6 @@ case "$1" in
 				fi
 				;;
 			get_all)
-				# Return metrics for all tracked interfaces
 				echo '{"interfaces": ['
 				first=1
 				for f in "${METRICS_DIR}"/*.json; do
@@ -47,7 +151,6 @@ case "$1" in
 				echo ']}'
 				;;
 			get_interfaces)
-				# Return list of tracked interface names
 				echo '{"interfaces": ['
 				first=1
 				for f in "${METRICS_DIR}"/*.json; do
@@ -57,6 +160,31 @@ case "$1" in
 					echo "\"${iface_name}\""
 				done
 				echo ']}'
+				;;
+			get_user_info)
+				_vps_get "/metrics/user"
+				;;
+			get_forecast)
+				input=$(cat)
+				horizon=$(echo "$input" | jsonfilter -q -e '@.horizon' 2>/dev/null)
+				since=$(echo "$input"   | jsonfilter -q -e '@.since'   2>/dev/null)
+				limit=$(echo "$input"   | jsonfilter -q -e '@.limit'   2>/dev/null)
+				qs=""
+				[ -n "$horizon" ] && [ "$horizon" != "0" ] && qs="${qs}horizon=${horizon}&"
+				[ -n "$since" ]                             && qs="${qs}since=${since}&"
+				[ -n "$limit" ]   && [ "$limit"   != "0" ] && qs="${qs}limit=${limit}&"
+				qs="${qs%&}"
+				_vps_get "/metrics/quality/forecast" "$qs"
+				;;
+			get_decision)
+				input=$(cat)
+				predict=$(echo "$input" | jsonfilter -q -e '@.predict' 2>/dev/null)
+				horizon=$(echo "$input" | jsonfilter -q -e '@.horizon' 2>/dev/null)
+				qs=""
+				[ "$predict" = "true" ] && qs="${qs}predict=true&"
+				[ -n "$horizon" ] && [ "$horizon" != "0" ] && qs="${qs}horizon=${horizon}&"
+				qs="${qs%&}"
+				_vps_get "/metrics/decision" "$qs"
 				;;
 			*)
 				echo '{"error": "unknown method"}'
