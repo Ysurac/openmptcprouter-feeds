@@ -7,54 +7,178 @@ STOP=10
 USE_PROCD=1
 
 PROG=/usr/sbin/ndpid
-CONF=/etc/config/ndpid
 RUNTIME_DIR=/var/run/ndpid
 COMPAT_STATUS=/var/run/netifyd/status.json
 
 . /usr/share/ndpid/functions.sh 2>/dev/null || true
 
-validate_section() {
-	uci_load_validate ndpid main "$1" "$2" \
-		'enabled:bool:0' \
-		'user:string:nobody' \
-		'group:string:nogroup' \
-		'interface:list(string)' \
-		'collector_socket:string:/var/run/ndpid/collector.sock' \
-		'pcap_filter:string' \
-		'max_flows:uinteger:100000' \
-		'flow_idle_timeout:uinteger:600000' \
-		'tcp_timeout:uinteger:7200000' \
-		'udp_timeout:uinteger:180000' \
-		'compression:bool:1'
-}
-
 generate_config() {
-	local enabled user group collector_socket max_flows
-	local flow_idle_timeout tcp_timeout udp_timeout compression
-
 	config_load ndpid
-	config_get enabled main enabled 0
-	config_get user main user nobody
-	config_get group main group nogroup
-	config_get collector_socket main collector_socket /var/run/ndpid/collector.sock
-	config_get max_flows main max_flows 100000
-	config_get flow_idle_timeout main flow_idle_timeout 600000
-	config_get tcp_timeout main tcp_timeout 7200000
-	config_get udp_timeout main udp_timeout 180000
+
+	# [general] settings
+	local user group collector bpf no_promisc decode_tunnel riskdomains protocols
+	local categories ja4 sha1 cert_pem_file key_pem_file ca_pem_file
+	local alias uuid internal external compression analysis poll pfring
+	local interfaces
+
+	config_get user main user 'nobody'
+	config_get group main group 'nogroup'
+	config_get collector main collector '/var/run/ndpid/collector.sock'
+	config_get bpf main bpf ''
+	config_get_bool no_promisc main no_promisc 0
+	config_get interfaces main interface 'br-lan'
+
+	# When no_promisc is set, prepend an ether-host BPF clause for every
+	# monitored interface so nDPId only processes packets addressed to/from
+	# those interfaces, even though pcap still opens them in promiscuous mode.
+	if [ "$no_promisc" = "1" ]; then
+		local mac_filter="" mac iface
+		for iface in $interfaces; do
+			mac=$(cat "/sys/class/net/$iface/address" 2>/dev/null)
+			[ -n "$mac" ] || continue
+			[ -n "$mac_filter" ] && mac_filter="$mac_filter or "
+			mac_filter="${mac_filter}ether host $mac"
+		done
+		if [ -n "$mac_filter" ]; then
+			if [ -n "$bpf" ]; then
+				bpf="($mac_filter) and ($bpf)"
+			else
+				bpf="$mac_filter"
+			fi
+		fi
+	fi
+
+	config_get_bool decode_tunnel main decode_tunnel 0
+	config_get riskdomains main riskdomains ''
+	config_get protocols main protocols ''
+	config_get categories main categories ''
+	config_get ja4 main ja4 ''
+	config_get sha1 main sha1 ''
+	config_get cert_pem_file main cert_pem_file ''
+	config_get key_pem_file main key_pem_file ''
+	config_get ca_pem_file main ca_pem_file ''
+	config_get alias main alias ''
+	config_get uuid main uuid ''
+	config_get_bool internal main internal 0
+	config_get_bool external main external 0
 	config_get_bool compression main compression 1
+	config_get_bool analysis main analysis 0
+	config_get_bool poll main poll 0
+	config_get_bool pfring main pfring 0
 
-	cat > /etc/ndpid.conf << EOF
-# Auto-generated from UCI - do not edit
-collector = $collector_socket
-user = $user
-group = $group
-max-flows = $max_flows
-generic-max-idle-time = $flow_idle_timeout
-tcp-max-idle-time = $tcp_timeout
-udp-max-idle-time = $udp_timeout
-EOF
+	# [tuning] settings
+	local max_flows_per_thread max_idle_flows_per_thread max_reader_threads
+	local daemon_status_interval compression_scan_interval compression_flow_inactivity
+	local flow_scan_interval generic_max_idle_time icmp_max_idle_time
+	local tcp_max_idle_time udp_max_idle_time tcp_max_post_end_flow_time
+	local max_packets_per_flow_to_send max_packets_per_flow_to_process
+	local max_packets_per_flow_to_analyse error_event_threshold_n error_event_threshold_time
 
-	[ "$compression" -eq 1 ] && echo "enable-zlib-compression = yes" >> /etc/ndpid.conf
+	config_get max_flows_per_thread tuning max_flows_per_thread 2048
+	config_get max_idle_flows_per_thread tuning max_idle_flows_per_thread 64
+	config_get max_reader_threads tuning max_reader_threads 10
+	config_get daemon_status_interval tuning daemon_status_interval 600000000
+	config_get compression_scan_interval tuning compression_scan_interval 20000000
+	config_get compression_flow_inactivity tuning compression_flow_inactivity 30000000
+	config_get flow_scan_interval tuning flow_scan_interval 10000000
+	config_get generic_max_idle_time tuning generic_max_idle_time 600000000
+	config_get icmp_max_idle_time tuning icmp_max_idle_time 120000000
+	config_get tcp_max_idle_time tuning tcp_max_idle_time 180000000
+	config_get udp_max_idle_time tuning udp_max_idle_time 7440000000
+	config_get tcp_max_post_end_flow_time tuning tcp_max_post_end_flow_time 120000000
+	config_get max_packets_per_flow_to_send tuning max_packets_per_flow_to_send 15
+	config_get max_packets_per_flow_to_process tuning max_packets_per_flow_to_process 32
+	config_get max_packets_per_flow_to_analyse tuning max_packets_per_flow_to_analyse 32
+	config_get error_event_threshold_n tuning error_event_threshold_n 16
+	config_get error_event_threshold_time tuning error_event_threshold_time 10000000
+
+	# [ndpi] settings
+	local packets_limit_per_flow flow_direction_detection flow_track_payload
+	local tcp_ack_payload_heuristic fully_encrypted_heuristic libgcrypt_init
+	local dpi_compute_entropy fpc dpi_guess_on_giveup flow_risk_lists_load log_level
+
+	config_get packets_limit_per_flow ndpi packets_limit_per_flow 32
+	config_get flow_direction_detection ndpi flow_direction_detection 'enable'
+	config_get flow_track_payload ndpi flow_track_payload 'disable'
+	config_get tcp_ack_payload_heuristic ndpi tcp_ack_payload_heuristic 'disable'
+	config_get fully_encrypted_heuristic ndpi fully_encrypted_heuristic 'enable'
+	config_get libgcrypt_init ndpi libgcrypt_init 1
+	config_get dpi_compute_entropy ndpi dpi_compute_entropy 1
+	config_get fpc ndpi fpc 'disable'
+	config_get dpi_guess_on_giveup ndpi dpi_guess_on_giveup '0x03'
+	config_get flow_risk_lists_load ndpi flow_risk_lists_load 1
+	config_get log_level ndpi log_level 0
+
+	# [protos] settings
+	local tls_cert_expire_threshold tls_app_blocks_tracking stun_max_packets_extra_dissection
+
+	config_get tls_cert_expire_threshold protos tls_cert_expire_threshold 7
+	config_get tls_app_blocks_tracking protos tls_app_blocks_tracking 'enable'
+	config_get stun_max_packets_extra_dissection protos stun_max_packets_extra_dissection 8
+
+	{
+		printf '%s\n' "# Auto-generated from UCI - do not edit manually"
+		printf '\n'
+		printf '%s\n' "[general]"
+		printf 'user        = %s\n' "$user"
+		printf 'group       = %s\n' "$group"
+		printf 'collector   = %s\n' "$collector"
+		[ -n "$bpf" ] && printf 'bpf         = %s\n' "$bpf"
+		[ "$decode_tunnel" = "1" ] && printf '%s\n' "decode-tunnel = true"
+		[ -n "$riskdomains" ] && printf 'riskdomains = %s\n' "$riskdomains"
+		[ -n "$protocols" ] && printf 'protocols   = %s\n' "$protocols"
+		[ -n "$categories" ] && printf 'categories  = %s\n' "$categories"
+		[ -n "$ja4" ] && printf 'ja4         = %s\n' "$ja4"
+		[ -n "$sha1" ] && printf 'sha1        = %s\n' "$sha1"
+		[ -n "$cert_pem_file" ] && printf 'cert-pem-file = %s\n' "$cert_pem_file"
+		[ -n "$key_pem_file" ] && printf 'key-pem-file  = %s\n' "$key_pem_file"
+		[ -n "$ca_pem_file" ] && printf 'ca-pem-file   = %s\n' "$ca_pem_file"
+		[ -n "$alias" ] && printf 'alias       = %s\n' "$alias"
+		[ -n "$uuid" ] && printf 'uuid        = %s\n' "$uuid"
+		[ "$internal" = "1" ] && printf '%s\n' "internal    = true"
+		[ "$external" = "1" ] && printf '%s\n' "external    = true"
+		printf 'compression = %s\n' "$([ "$compression" = "1" ] && echo "true" || echo "false")"
+		[ "$analysis" = "1" ] && printf '%s\n' "analysis    = true"
+		[ "$poll" = "1" ] && printf '%s\n' "poll        = true"
+		[ "$pfring" = "1" ] && printf '%s\n' "pfring      = true"
+		printf '\n'
+		printf '%s\n' "[tuning]"
+		printf 'max-flows-per-thread            = %s\n' "$max_flows_per_thread"
+		printf 'max-idle-flows-per-thread       = %s\n' "$max_idle_flows_per_thread"
+		printf 'max-reader-threads              = %s\n' "$max_reader_threads"
+		printf 'daemon-status-interval          = %s\n' "$daemon_status_interval"
+		printf 'compression-scan-interval       = %s\n' "$compression_scan_interval"
+		printf 'compression-flow-inactivity     = %s\n' "$compression_flow_inactivity"
+		printf 'flow-scan-interval              = %s\n' "$flow_scan_interval"
+		printf 'generic-max-idle-time           = %s\n' "$generic_max_idle_time"
+		printf 'icmp-max-idle-time              = %s\n' "$icmp_max_idle_time"
+		printf 'tcp-max-idle-time               = %s\n' "$tcp_max_idle_time"
+		printf 'udp-max-idle-time               = %s\n' "$udp_max_idle_time"
+		printf 'tcp-max-post-end-flow-time      = %s\n' "$tcp_max_post_end_flow_time"
+		printf 'max-packets-per-flow-to-send    = %s\n' "$max_packets_per_flow_to_send"
+		printf 'max-packets-per-flow-to-process = %s\n' "$max_packets_per_flow_to_process"
+		printf 'max-packets-per-flow-to-analyse = %s\n' "$max_packets_per_flow_to_analyse"
+		printf 'error-event-threshold-n         = %s\n' "$error_event_threshold_n"
+		printf 'error-event-threshold-time      = %s\n' "$error_event_threshold_time"
+		printf '\n'
+		printf '%s\n' "[ndpi]"
+		printf 'packets_limit_per_flow      = %s\n' "$packets_limit_per_flow"
+		printf 'flow.direction_detection    = %s\n' "$flow_direction_detection"
+		printf 'flow.track_payload          = %s\n' "$flow_track_payload"
+		printf 'tcp_ack_payload_heuristic   = %s\n' "$tcp_ack_payload_heuristic"
+		printf 'fully_encrypted_heuristic   = %s\n' "$fully_encrypted_heuristic"
+		printf 'libgcrypt.init              = %s\n' "$libgcrypt_init"
+		printf 'dpi.compute_entropy         = %s\n' "$dpi_compute_entropy"
+		printf 'fpc                         = %s\n' "$fpc"
+		printf 'dpi.guess_on_giveup         = %s\n' "$dpi_guess_on_giveup"
+		printf 'flow_risk_lists.load        = %s\n' "$flow_risk_lists_load"
+		printf 'log.level                   = %s\n' "$log_level"
+		printf '\n'
+		printf '%s\n' "[protos]"
+		printf 'tls.certificate_expiration_threshold = %s\n' "$tls_cert_expire_threshold"
+		printf 'tls.application_blocks_tracking      = %s\n' "$tls_app_blocks_tracking"
+		printf 'stun.max_packets_extra_dissection    = %s\n' "$stun_max_packets_extra_dissection"
+	} > /etc/ndpid.conf
 }
 
 start_service() {
@@ -68,33 +192,50 @@ start_service() {
 		return 0
 	}
 
-	# Create runtime directories
 	mkdir -p "$RUNTIME_DIR"
 	mkdir -p "$(dirname "$COMPAT_STATUS")"
 	chown nobody:nogroup "$RUNTIME_DIR"
 
-	# Generate native config from UCI
 	generate_config
 
-	# Get interfaces
 	config_get interfaces main interface "br-lan"
+	local collector bpf no_promisc
+	config_get collector main collector '/var/run/ndpid/collector.sock'
+	config_get bpf main bpf ''
+	config_get_bool no_promisc main no_promisc 0
 
-	# Build interface arguments
-	local iface_args=""
-	for iface in $interfaces; do
-		iface_args="$iface_args -i $iface"
-	done
-
-	# Get collector socket
-	local collector_socket
-	config_get collector_socket main collector_socket /var/run/ndpid/collector.sock
+	# Build the BPF ether-host filter when no_promisc is enabled.
+	# generate_config() writes it to /etc/ndpid.conf, but nDPId only reads
+	# that file when told via -f; passing -B here guarantees it takes effect.
+	if [ "$no_promisc" = "1" ]; then
+		local mac_filter="" mac iface
+		for iface in $interfaces; do
+			mac=$(cat "/sys/class/net/$iface/address" 2>/dev/null)
+			[ -n "$mac" ] || continue
+			[ -n "$mac_filter" ] && mac_filter="$mac_filter or "
+			mac_filter="${mac_filter}ether host $mac"
+		done
+		if [ -n "$mac_filter" ]; then
+			if [ -n "$bpf" ]; then
+				bpf="($mac_filter) and ($bpf)"
+			else
+				bpf="$mac_filter"
+			fi
+		fi
+	fi
 
 	logger -t ndpid "Starting nDPId on interfaces: $interfaces"
+	[ -n "$bpf" ] && logger -t ndpid "BPF filter: $bpf"
 
+	# Use procd_append_param so the BPF string (which contains spaces)
+	# is passed as a single argument rather than being word-split.
 	procd_open_instance ndpid
-	procd_set_param command "$PROG" \
-		-c "$collector_socket" \
-		$iface_args
+	procd_set_param command "$PROG"
+	procd_append_param command -c "$collector"
+	for iface in $interfaces; do
+		procd_append_param command -i "$iface"
+	done
+	[ -n "$bpf" ] && procd_append_param command -B "$bpf"
 	procd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-5}
 	procd_set_param stdout 1
 	procd_set_param stderr 1

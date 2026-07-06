@@ -18,10 +18,28 @@ proto_list="$1"
 
 echo $$ > "$PIDFILE"
 
+# ndpisrvd exposes two distributor endpoints:
+#   - TCP (127.0.0.1:7000 by default) — works with GNU netcat and BusyBox nc
+#   - Unix socket ($SOCK)             — requires OpenBSD netcat or socat
+# Prefer TCP so the consumer works on OpenWrt with GNU netcat.
+TCP_HOST=$(uci -q get ndpid.distributor.tcp_address 2>/dev/null)
+TCP_PORT=$(uci -q get ndpid.distributor.tcp_port 2>/dev/null)
+TCP_HOST=${TCP_HOST:-127.0.0.1}
+TCP_PORT=${TCP_PORT:-7000}
+
+_nc_distributor() {
+	# GNU netcat exits when stdin reaches EOF; pipe from tail -f /dev/null to
+	# provide a never-ending stdin so the connection stays open for events.
+	if tail -f /dev/null | nc "$TCP_HOST" "$TCP_PORT" 2>/dev/null; then
+		return
+	fi
+	[ ! -S "$SOCK" ] && return
+	tail -f /dev/null | nc -U "$SOCK" 2>/dev/null
+}
+
 while true; do
-	[ ! -S "$SOCK" ] && sleep 5 && continue
-	nc -U "$SOCK" 2>/dev/null | while IFS= read -r line; do
-		# nDPId frames are prefixed with a 5-character decimal length field
+	_nc_distributor | while IFS= read -r line; do
+		# nDPId frames are prefixed with a 5-character hex length field
 		json="${line:5}"
 		[ -z "$json" ] && continue
 
@@ -31,13 +49,12 @@ while true; do
 		proto_str=$(echo "$json" | jsonfilter -q -e '@.ndpi.proto' 2>/dev/null)
 		[ -z "$proto_str" ] && continue
 
-		dst_ip=$(echo "$json" | jsonfilter -q -e '@.l3_dst4' 2>/dev/null)
-		is_v6=0
-		if [ -z "$dst_ip" ]; then
-			dst_ip=$(echo "$json" | jsonfilter -q -e '@.l3_dst6' 2>/dev/null)
-			[ -n "$dst_ip" ] && is_v6=1
-		fi
+		# ndpisrvd uses "dst_ip" (not "l3_dst4"/"l3_dst6") and "l3_proto" ("ip4"/"ip6")
+		dst_ip=$(echo "$json" | jsonfilter -q -e '@.dst_ip' 2>/dev/null)
 		[ -z "$dst_ip" ] && continue
+		l3_proto=$(echo "$json" | jsonfilter -q -e '@.l3_proto' 2>/dev/null)
+		is_v6=0
+		[ "$l3_proto" = "ip6" ] && is_v6=1
 
 		# Normalize nDPI proto string (e.g. "TLS.Google" -> app="google", base="tls")
 		app=$(echo "$proto_str" | tr '.' '\n' | tail -1 | tr '[:upper:]' '[:lower:]')

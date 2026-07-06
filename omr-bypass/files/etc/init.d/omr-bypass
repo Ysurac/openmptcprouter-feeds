@@ -50,6 +50,28 @@ _add_proto_without_ndpi() {
 	echo "$protoname" >> /usr/share/omr-bypass/omr-bypass-proto.lst
 }
 
+_apply_failback() {
+	local intf=$1
+	local failback=$2
+	if [ -z "$intf" ] || [ "$intf" = "all" ] || [ "$intf" = "srv_vpn1" ]; then
+		echo "${intf:-all}"
+		return
+	fi
+	if [ -z "$(ipset --list | grep "omr_dst_bypass_${intf}")" ]; then
+		case "$failback" in
+			default) echo "all" ;;
+			any)
+				local newintf
+				newintf=$(ipset -n list | grep "^omr_dst_bypass_" | grep -v "^omr_dst_bypass_all$\|^omr_dst_bypass_srv_vpn1$" | head -1 | sed 's/^omr_dst_bypass_//')
+				echo "${newintf:-all}"
+				;;
+			*) echo "" ;;
+		esac
+	else
+		echo "$intf"
+	fi
+}
+
 _bypass_ip() {
 	local ip=$1
 	local type=$2
@@ -72,6 +94,7 @@ _bypass_domains() {
 	config_get enabled $1 enabled
 	config_get noipv6 $1 noipv6
 	config_get family $1 family
+	config_get failback $1 failback
 	[ -z "$intf" ] && intf="all"
 	config_get vpn $1 vpn
 	[ "$vpn" = "1" ] && intf="srv_vpn1"
@@ -103,10 +126,10 @@ _bypass_domains() {
 			| grep $domain                `# grep, only keep wanted domain` \
 			| awk '{for (i=1;i<=NF;i++) if (!a[$i]++) printf("%s%s",$i,FS)}{printf("\n")}')" # deduplicate
 		for validdomain in $domainlist; do
-			_bypass_domain $validdomain $intf $family $noipv6
+			_bypass_domain $validdomain $intf $family $noipv6 $failback
 		done
 	else
-		_bypass_domain $domain $intf $family $noipv6
+		_bypass_domain $domain $intf $family $noipv6 $failback
 	fi
 }
 
@@ -115,9 +138,10 @@ _bypass_domain() {
 	local intf=$2
 	local family=$3
 	local noipv6=$4
+	local failback=$5
 	intf=$(echo $intf | sed -e 's/\./_/')
-	[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
-	[ -z "$intf" ] && intf="all"
+	intf="$(_apply_failback "$intf" "$failback")"
+	[ -z "$intf" ] && return
 	if [ -n "$domain" ]; then
 		domain=$(echo $domain | sed 's:^\.::')
 		#logger -t "omr-bypass" "Get IPs of $domain..."
@@ -173,9 +197,11 @@ _bypass_mac() {
 	config_get mac $1 mac
 	config_get intf $1 interface
 	config_get enabled $1 enabled
+	config_get failback $1 failback
 	[ "$enabled" = "0" ] && return
 	intf=$(echo $intf | sed -e 's/\./_/')
-	[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
+	intf="$(_apply_failback "$intf" "$failback")"
+	[ -z "$intf" ] && return
 	local intfid="$(uci -q get omr-bypass.$intf.id)"
 
 	[ -z "$intf" ] && intf="all"
@@ -216,9 +242,11 @@ _bypass_lan_ip() {
 	config_get ip $1 ip
 	config_get intf $1 interface
 	config_get enabled $1 enabled
+	config_get failback $1 failback
 	[ "$enabled" = "0" ] && return
 	intf=$(echo $intf | sed -e 's/\./_/')
-	[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
+	intf="$(_apply_failback "$intf" "$failback")"
+	[ -z "$intf" ] && return
 	local intfid="$(uci -q get omr-bypass.$intf.id)"
 
 	[ -z "$intf" ] && intf="all"
@@ -275,9 +303,11 @@ _bypass_dest_port() {
 	config_get proto $1 proto
 	config_get intf $1 interface
 	config_get enabled $1 enabled
+	config_get failback $1 failback
 	[ "$enabled" = "0" ] && return
 	intf=$(echo $intf | sed -e 's/\./_/')
-	[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
+	intf="$(_apply_failback "$intf" "$failback")"
+	[ -z "$intf" ] && return
 	local intfid="$(uci -q get omr-bypass.$intf.id)"
 
 	[ -z "$intf" ] && intf="all"
@@ -332,9 +362,11 @@ _bypass_src_port() {
 	config_get proto $1 proto
 	config_get intf $1 interface
 	config_get enabled $1 enabled
+	config_get failback $1 failback
 	[ "$enabled" = "0" ] && return
 	intf=$(echo $intf | sed -e 's/\./_/')
-	[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
+	intf="$(_apply_failback "$intf" "$failback")"
+	[ -z "$intf" ] && return
 	local intfid="$(uci -q get omr-bypass.$intf.id)"
 
 	[ -z "$intf" ] && intf="all"
@@ -391,13 +423,15 @@ _bypass_proto() {
 	config_get noipv6 $1 noipv6
 	config_get family $1 family
 	config_get vpn $1 vpn
+	config_get failback $1 failback
 	[ "$vpn" = "1" ] && intf="srv_vpn1"
 
 	[ "$enabled" = "0" ] && return
 	[ -z "$noipv6" ] && noipv6="0"
 	[ -z "$family" ] && family="ipv4ipv6"
 	intf=$(echo $intf | sed -e 's/\./_/')
-	[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
+	intf="$(_apply_failback "$intf" "$failback")"
+	[ -z "$intf" ] && return
 	local intfid="$(uci -q get omr-bypass.$intf.id)"
 
 	[ -z "$intf" ] && intf="all"
@@ -469,39 +503,27 @@ _bypass_proto() {
 						| grep $domain                `# grep, only keep wanted domain` \
 						| awk '{for (i=1;i<=NF;i++) if (!a[$i]++) printf("%s%s",$i,FS)}{printf("\n")}')" # deduplicate
 					for validdomain in $domainlist; do
-						_bypass_domain $validdomain $intf $family $noipv6
+						_bypass_domain $validdomain $intf $family $noipv6 $failback
 					done
 				else
-					_bypass_domain $domain $intf $family $noipv6
+					_bypass_domain $domain $intf $family $noipv6 $failback
 				fi
 			fi
 		done
 	fi
 }
 
-_bypass_proto_without_ndpi() {
-	local proto
-	local intf
-	local enabled
-	config_get proto $1 proto
-	config_get intf $1 interface
-	config_get enabled $1 enabled
-	config_get ndpi $1 ndpi "0"
-	config_get noipv6 $1 noipv6
-	config_get family $1 family
-	config_get vpn $1 vpn
-	[ "$vpn" = "1" ] && intf="srv_vpn1"
-
-	[ "$enabled" = "0" ] && return
-	[ -z "$noipv6" ] && noipv6="0"
-	[ -z "$family" ] && family="ipv4ipv6"
-	intf=$(echo $intf | sed -e 's/\./_/')
-	[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
-	local intfid="$(uci -q get omr-bypass.$intf.id)"
-
-	[ -z "$intf" ] && intf="all"
+_bypass_proto_core() {
+	local proto=$1
+	local intf=$2
+	local intfid=$3
+	local vpn=$4
+	local failback=$5
+	local ndpi=$6
+	local noipv6=$7
+	local family=$8
 	[ -z "$proto" ] && return
-	if [ "$(uci -q get openmptcprouter.settings.ndpi)" == "0" ] || [ "$ndpi" == "0" ] || [ "$vpn" = "1" ]; then
+	if [ "$(uci -q get openmptcprouter.settings.ndpi)" = "0" ] || [ "$ndpi" = "0" ] || [ "$vpn" = "1" ]; then
 		ALLIPS=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select ip from ipproto where proto=\"$proto\";" ".exit")
 		if [ -n "$ALLIPS" ]; then
 			if [ "$vpn" != "1" ]; then
@@ -568,7 +590,6 @@ _bypass_proto_without_ndpi() {
 	fi
 	# Use dnsmasq ipset to bypass domains of the proto
 	local domains
-	#domains="$(cat /proc/net/xt_ndpi/host_proto | grep -i $proto: | sed -e "s/$proto://i" -e 's/*//' -e 's/,/ /g')"
 	domains=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select host from hostproto where proto='"$proto"';" ".exit")
 	if [ -n "$domains" ]; then
 		tlds=`curl --max-time 4 -s -k https://data.iana.org/TLD/tlds-alpha-by-domain.txt`
@@ -577,36 +598,84 @@ _bypass_proto_without_ndpi() {
 				domain="$(echo $domain | sed 's/^\.//')"
 				if [ "$(echo $domain | grep '\.$')" != "" ]; then
 					domainlist=""
-					# construct list of domains to query
 					i=0
 					for tld in $tlds; do
 						i=$((i+1))
-						# trim off header
 						if [ "$i" -lt "2" ] || [ "${#tld}" -gt "3" ]; then
 							continue
-						fi 
-						# add to command
+						fi
 						domainlist="${domainlist} ${domain}${tld}"
 					done
-					domainlist="$(echo $domainlist  `# Get the list of valid domains, pass it to awk` \
-						| awk '{print tolower($0)}'   `# awk lowercases the whole string and passes it to ` \
-						| xargs -n8 -P12              `# xargs sends 8 arguments at a time to` \
-							dig a +timeout=1 +tries=1 +retry=1 +nocmd +noall +answer `# dig, which passes results (if any) to` \
-						| awk '{print $1}'            `# awk, which outputs queried domain to` \
-						| sed 's/.$//'             `# sed, which trims off the trailing dot (google.com. -> google.com) to` \
-						| grep $domain                `# grep, only keep wanted domain` \
-						| awk '{for (i=1;i<=NF;i++) if (!a[$i]++) printf("%s%s",$i,FS)}{printf("\n")}')" # deduplicate
+					domainlist="$(echo $domainlist \
+						| awk '{print tolower($0)}' \
+						| xargs -n8 -P12 \
+							dig a +timeout=1 +tries=1 +retry=1 +nocmd +noall +answer \
+						| awk '{print $1}' \
+						| sed 's/.$//' \
+						| grep $domain \
+						| awk '{for (i=1;i<=NF;i++) if (!a[$i]++) printf("%s%s",$i,FS)}{printf("\n")}')"
 					for validdomain in $domainlist; do
-						_bypass_domain $validdomain $intf $family $noipv6
+						_bypass_domain $validdomain $intf $family $noipv6 $failback
 					done
 				else
-					_bypass_domain $domain $intf $family $noipv6
+					_bypass_domain $domain $intf $family $noipv6 $failback
 				fi
 			fi
 		done
 	fi
 }
 
+_bypass_proto_without_ndpi() {
+	local proto
+	local intf
+	local enabled
+	config_get proto $1 proto
+	config_get intf $1 interface
+	config_get enabled $1 enabled
+	config_get ndpi $1 ndpi "0"
+	config_get noipv6 $1 noipv6
+	config_get family $1 family
+	config_get vpn $1 vpn
+	config_get failback $1 failback
+	[ "$vpn" = "1" ] && intf="srv_vpn1"
+	[ "$enabled" = "0" ] && return
+	[ -z "$noipv6" ] && noipv6="0"
+	[ -z "$family" ] && family="ipv4ipv6"
+	intf=$(echo $intf | sed -e 's/\./_/')
+	intf="$(_apply_failback "$intf" "$failback")"
+	[ -z "$intf" ] && return
+	local intfid="$(uci -q get omr-bypass.$intf.id)"
+	[ -z "$intf" ] && intf="all"
+	_bypass_proto_core "$proto" "$intf" "$intfid" "$vpn" "$failback" "$ndpi" "$noipv6" "$family"
+}
+
+_bypass_category() {
+	local category intf enabled vpn failback ndpi noipv6 family intfid
+	config_get category $1 category
+	config_get intf $1 interface
+	config_get enabled $1 enabled
+	config_get vpn $1 vpn
+	config_get failback $1 failback
+	config_get ndpi $1 ndpi "0"
+	config_get noipv6 $1 noipv6
+	config_get family $1 family
+	[ "$enabled" = "0" ] && return
+	[ -z "$category" ] && return
+	[ -z "$noipv6" ] && noipv6="0"
+	[ -z "$family" ] && family="ipv4ipv6"
+	[ "$vpn" = "1" ] && intf="srv_vpn1"
+	intf=$(echo $intf | sed -e 's/\./_/')
+	intf="$(_apply_failback "$intf" "$failback")"
+	[ -z "$intf" ] && return
+	local intfid="$(uci -q get omr-bypass.$intf.id)"
+	[ -z "$intf" ] && intf="all"
+
+	local proto
+	for proto in $(grep -F "\"category\":\"${category}\"" /usr/share/omr-bypass/omr-bypass-proto.json 2>/dev/null | awk -F'"' '{print $4}'); do
+		[ -n "$proto" ] || continue
+		_bypass_proto_core "$proto" "$intf" "$intfid" "$vpn" "$failback" "$ndpi" "$noipv6" "$family"
+	done
+}
 _intf_rule_ss_rules() {
 	rule_name=$1
 	[ "$rule_name" = "ss_rules" ] && rule_name="def"
@@ -835,10 +904,15 @@ _bypass_ip_set() {
 	local ip
 	local interface
 	local enabled
+	local failback
 	config_get ip $1 ip
 	config_get interface $1 interface
 	config_get enabled $1 enabled
+	config_get failback $1 failback
 	[ "$enabled" = "0" ] && return
+	interface=$(echo $interface | sed -e 's/\./_/')
+	interface="$(_apply_failback "$interface" "$failback")"
+	[ -z "$interface" ] && return
 	_bypass_ip $ip $interface
 }
 
@@ -846,10 +920,15 @@ _bypass_asn() {
 	local asn
 	local interface
 	local enabled
+	local failback
 	config_get asn $1 asn
 	config_get interface $1 interface
 	config_get enabled $1 enabled
+	config_get failback $1 failback
 	[ "$enabled" = "0" ] && return
+	interface=$(echo $interface | sed -e 's/\./_/')
+	interface="$(_apply_failback "$interface" "$failback")"
+	[ -z "$interface" ] && return
 	local asnips
 	asnips=`curl --max-time 4 -s -k https://stat.ripe.net/data/announced-prefixes/data.json?resource=${asn} | jsonfilter -q -e '@.data.prefixes.*.prefix'`
 	for ip in $asnips; do
@@ -1145,6 +1224,7 @@ start_service() {
 	config_load omr-bypass
 	[ -d /proc/net/xt_ndpi/proto ] && config_foreach _bypass_proto dpis
 	config_foreach _bypass_proto_without_ndpi dpis
+	config_foreach _bypass_category categories
 	uci -q commit omr-bypass
 
 	[ -z "$RELOAD" ] && [ "$add_domains" = "true" ] && {

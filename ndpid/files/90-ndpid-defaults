@@ -1,0 +1,126 @@
+#!/bin/sh
+# Migrate old ndpid UCI options and set defaults for new ones.
+# Runs once via /etc/uci-defaults/ on first boot after upgrade.
+
+# Helper: set option only if it does not already exist
+_set_if_missing() {
+	uci -q get "$1" >/dev/null || uci -q set "$1=$2"
+}
+
+# --------------------------------------------------------------------------
+# Migrate deprecated option names
+# --------------------------------------------------------------------------
+
+# collector_socket → collector
+if uci -q get ndpid.main.collector_socket >/dev/null && \
+   ! uci -q get ndpid.main.collector >/dev/null; then
+	uci -q set ndpid.main.collector="$(uci -q get ndpid.main.collector_socket)"
+	uci -q delete ndpid.main.collector_socket
+fi
+
+# Remove old flat tuning options that moved to the [tuning] section
+for _opt in max_flows flow_idle_timeout tcp_timeout udp_timeout; do
+	uci -q get ndpid.main.$_opt >/dev/null && uci -q delete ndpid.main.$_opt
+done
+
+# --------------------------------------------------------------------------
+# Detect LAN interface from network config (OpenWrt 21.02+: lan.device,
+# older: lan.ifname; fall back to br-lan if neither is set)
+# --------------------------------------------------------------------------
+
+_lan_iface=$(uci -q get network.lan.device 2>/dev/null)
+[ -z "$_lan_iface" ] && _lan_iface=$(uci -q get network.lan.ifname 2>/dev/null | awk '{print $1}')
+[ -z "$_lan_iface" ] && _lan_iface="br-lan"
+
+# Set interface list only when not already configured
+if ! uci -q get ndpid.main.interface >/dev/null; then
+	uci -q add_list ndpid.main.interface="$_lan_iface"
+fi
+
+# --------------------------------------------------------------------------
+# [main] new options
+# --------------------------------------------------------------------------
+
+_set_if_missing ndpid.main.collector    '/var/run/ndpid/collector.sock'
+_set_if_missing ndpid.main.bpf         ''
+_set_if_missing ndpid.main.no_promisc  '1'
+_set_if_missing ndpid.main.decode_tunnel '0'
+_set_if_missing ndpid.main.riskdomains ''
+_set_if_missing ndpid.main.protocols   ''
+_set_if_missing ndpid.main.categories  ''
+_set_if_missing ndpid.main.ja4         ''
+_set_if_missing ndpid.main.sha1        ''
+_set_if_missing ndpid.main.cert_pem_file ''
+_set_if_missing ndpid.main.key_pem_file  ''
+_set_if_missing ndpid.main.ca_pem_file   ''
+_set_if_missing ndpid.main.alias       ''
+_set_if_missing ndpid.main.uuid        ''
+_set_if_missing ndpid.main.internal    '0'
+_set_if_missing ndpid.main.external    '0'
+_set_if_missing ndpid.main.compression '1'
+_set_if_missing ndpid.main.analysis    '0'
+_set_if_missing ndpid.main.poll        '0'
+_set_if_missing ndpid.main.pfring      '0'
+
+# --------------------------------------------------------------------------
+# [tuning] section
+# --------------------------------------------------------------------------
+
+if ! uci -q get ndpid.tuning >/dev/null; then
+	uci -q set ndpid.tuning=tuning
+fi
+
+_set_if_missing ndpid.tuning.max_flows_per_thread          '2048'
+_set_if_missing ndpid.tuning.max_idle_flows_per_thread     '64'
+_set_if_missing ndpid.tuning.max_reader_threads            '10'
+_set_if_missing ndpid.tuning.daemon_status_interval        '600000000'
+_set_if_missing ndpid.tuning.compression_scan_interval     '20000000'
+_set_if_missing ndpid.tuning.compression_flow_inactivity   '30000000'
+_set_if_missing ndpid.tuning.flow_scan_interval            '10000000'
+_set_if_missing ndpid.tuning.generic_max_idle_time         '600000000'
+_set_if_missing ndpid.tuning.icmp_max_idle_time            '120000000'
+_set_if_missing ndpid.tuning.tcp_max_idle_time             '180000000'
+_set_if_missing ndpid.tuning.udp_max_idle_time             '7440000000'
+_set_if_missing ndpid.tuning.tcp_max_post_end_flow_time    '120000000'
+_set_if_missing ndpid.tuning.max_packets_per_flow_to_send  '15'
+_set_if_missing ndpid.tuning.max_packets_per_flow_to_process '32'
+_set_if_missing ndpid.tuning.max_packets_per_flow_to_analyse '32'
+_set_if_missing ndpid.tuning.error_event_threshold_n       '16'
+_set_if_missing ndpid.tuning.error_event_threshold_time    '10000000'
+
+# --------------------------------------------------------------------------
+# [ndpi] section
+# --------------------------------------------------------------------------
+
+if ! uci -q get ndpid.ndpi >/dev/null; then
+	uci -q set ndpid.ndpi=ndpi
+fi
+
+_set_if_missing ndpid.ndpi.packets_limit_per_flow      '32'
+_set_if_missing ndpid.ndpi.flow_direction_detection    'enable'
+_set_if_missing ndpid.ndpi.flow_track_payload          'disable'
+_set_if_missing ndpid.ndpi.tcp_ack_payload_heuristic   'disable'
+_set_if_missing ndpid.ndpi.fully_encrypted_heuristic   'enable'
+_set_if_missing ndpid.ndpi.libgcrypt_init              '1'
+_set_if_missing ndpid.ndpi.dpi_compute_entropy         '1'
+_set_if_missing ndpid.ndpi.fpc                         'disable'
+_set_if_missing ndpid.ndpi.dpi_guess_on_giveup         '0x03'
+_set_if_missing ndpid.ndpi.flow_risk_lists_load        '1'
+_set_if_missing ndpid.ndpi.log_level                   '0'
+
+# --------------------------------------------------------------------------
+# [protos] section
+# --------------------------------------------------------------------------
+
+if ! uci -q get ndpid.protos >/dev/null; then
+	uci -q set ndpid.protos=protos
+fi
+
+_set_if_missing ndpid.protos.tls_cert_expire_threshold        '7'
+_set_if_missing ndpid.protos.tls_app_blocks_tracking          'enable'
+_set_if_missing ndpid.protos.stun_max_packets_extra_dissection '8'
+
+# --------------------------------------------------------------------------
+
+uci -q commit ndpid
+exit 0

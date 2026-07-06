@@ -10,14 +10,14 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ndpid
-PKG_VERSION:=1.7.1
+PKG_VERSION:=1.7.2
 PKG_RELEASE:=1
 
 # Use git dev branch for latest libndpi compatibility
 # Version 1.7 (Oct 2023) has API incompatibilities with current libndpi
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/utoni/nDPId.git
-PKG_SOURCE_VERSION:=f712dbacfbe80f5a3a30e784f59616a2dc63727f
+PKG_SOURCE_VERSION:=84285ae42d8f70c976a6ee9be6ceb935aa215b18
 PKG_MIRROR_HASH:=skip
 
 PKG_MAINTAINER:=CyberMind <contact@cybermind.fr>
@@ -95,8 +95,22 @@ define Package/ndpid/install
 	$(INSTALL_BIN) ./files/ndpid.init $(1)/etc/init.d/ndpid
 	$(INSTALL_BIN) ./files/ndpisrvd.init $(1)/etc/init.d/ndpisrvd
 
+	$(INSTALL_DIR) $(1)/etc/uci-defaults
+	$(INSTALL_BIN) ./files/90-ndpid-defaults $(1)/etc/uci-defaults/
+
 	$(INSTALL_DIR) $(1)/usr/share/ndpid
 	$(INSTALL_DATA) ./files/functions.sh $(1)/usr/share/ndpid/
+
+	# Generate protocols.json from bundled nDPI source at build time.
+	# Fall back to the pre-generated static file when nDPI source is not found
+	# (e.g. when the package is installed without rebuilding nDPId from source).
+	NDPI_MAIN=$$(find $(PKG_BUILD_DIR) -name "ndpi_main.c" -path "*/lib/*" 2>/dev/null | head -1); \
+	if [ -n "$$NDPI_MAIN" ]; then \
+		NDPI_SRC=$$(echo "$$NDPI_MAIN" | sed 's|/src/lib/ndpi_main.c||'); \
+		python3 $(CURDIR)/files/gen-protocols.py "$$NDPI_SRC" $(1)/usr/share/ndpid/protocols.json; \
+	else \
+		$(INSTALL_DATA) ./files/protocols.json $(1)/usr/share/ndpid/protocols.json; \
+	fi
 endef
 
 $(eval $(call BuildPackage,ndpid))

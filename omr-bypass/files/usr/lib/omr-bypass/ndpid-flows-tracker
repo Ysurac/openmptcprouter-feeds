@@ -1,0 +1,48 @@
+#!/bin/sh
+# Copyright (C) 2024 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# nDPId flows tracker for luci-app-ndpid.
+# Reads flow events from the ndpisrvd distributor socket and maintains
+# a per-flow JSON file directory that the LuCI view can query via rpcd.
+
+SOCK="/var/run/ndpid/distributor.sock"
+FLOWS_DIR="/tmp/ndpid-flows"
+PIDFILE="/var/run/omr-bypass-ndpid-flows.pid"
+MAX_FLOWS=2000
+
+TCP_HOST=$(uci -q get ndpid.distributor.tcp_address 2>/dev/null)
+TCP_PORT=$(uci -q get ndpid.distributor.tcp_port 2>/dev/null)
+TCP_HOST=${TCP_HOST:-127.0.0.1}
+TCP_PORT=${TCP_PORT:-7000}
+
+mkdir -p "$FLOWS_DIR"
+echo $$ > "$PIDFILE"
+
+_get_json_field() {
+	echo "$1" | jsonfilter -q -e "@.$2" 2>/dev/null
+}
+
+while true; do
+	[ ! -S "$SOCK" ] && sleep 5 && continue
+	nc "$TCP_HOST" "$TCP_PORT" 2>/dev/null | while IFS= read -r line; do
+		json="${line:5}"
+		[ -z "$json" ] && continue
+
+		event=$(_get_json_field "$json" "flow_event_name")
+		fid=$(_get_json_field "$json" "flow_id")
+		[ -z "$fid" ] && continue
+
+		case "$event" in
+			end|idle|not-detected)
+				rm -f "${FLOWS_DIR}/${fid}.json"
+				;;
+			new|detected|detection-update|guessed)
+				count=$(ls "$FLOWS_DIR" 2>/dev/null | wc -l)
+				if [ "$count" -lt "$MAX_FLOWS" ] || [ -f "${FLOWS_DIR}/${fid}.json" ]; then
+					printf '%s' "$json" > "${FLOWS_DIR}/${fid}.json"
+				fi
+				;;
+		esac
+	done
+	sleep 2
+done

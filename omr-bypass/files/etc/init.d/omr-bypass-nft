@@ -7,6 +7,10 @@ EXTRA_COMMANDS="reload_rules bypass_asn"
 
 . /usr/lib/unbound/iptools.sh
 
+# dnsmasq writes one nftset= line per UCI ipset entry; its config parser has a
+# ~1024-byte line buffer, so cap how many domains go into each entry.
+_BYPASS_MAX_DOMAINS_PER_DNSIPSET=30
+
 # Still used by ndpi
 if [ -e /usr/sbin/iptables-nft ]; then
 	IPTABLES="/usr/sbin/iptables-nft"
@@ -192,8 +196,34 @@ _bypass_domain() {
 				done
 			fi
 		fi
-		if ! uci -q get dhcp.omr_dst_bypass_${intf}.domain 2>/dev/null| grep -qw "$domain"; then
-			uci -q add_list dhcp.omr_dst_bypass_${intf}.domain="$domain"
+		# Determine which UCI ipset section to use for this intf.
+		# Domains are spread across omr_dst_bypass_${intf}, omr_dst_bypass_${intf}_d1,
+		# _d2, ... so each generates a short enough nftset= line in dnsmasq.conf.
+		local _dnsipset_slot _dnsipset_cnt _dnsipset_key
+		eval "_dnsipset_slot=\${_dnsipset_slot_${intf}:-0}"
+		eval "_dnsipset_cnt=\${_dnsipset_cnt_${intf}:-0}"
+		if [ "$_dnsipset_slot" = "0" ]; then
+			_dnsipset_key="omr_dst_bypass_${intf}"
+		else
+			_dnsipset_key="omr_dst_bypass_${intf}_d${_dnsipset_slot}"
+		fi
+		if ! uci -q get dhcp.${_dnsipset_key}.domain 2>/dev/null | grep -qw "$domain"; then
+			if [ "$_dnsipset_cnt" -ge "$_BYPASS_MAX_DOMAINS_PER_DNSIPSET" ]; then
+				_dnsipset_slot=$((_dnsipset_slot + 1))
+				_dnsipset_key="omr_dst_bypass_${intf}_d${_dnsipset_slot}"
+				eval "_dnsipset_slot_${intf}=${_dnsipset_slot}"
+				eval "_dnsipset_cnt_${intf}=0"
+				_dnsipset_cnt=0
+				uci -q batch <<-EOIPSET
+					set dhcp.${_dnsipset_key}=ipset
+					set dhcp.${_dnsipset_key}.table='fw4'
+					set dhcp.${_dnsipset_key}.table_family='inet'
+					add_list dhcp.${_dnsipset_key}.name="omr_dst_bypass_${intf}_4"
+					add_list dhcp.${_dnsipset_key}.name="omr_dst_bypass_${intf}_6"
+				EOIPSET
+			fi
+			uci -q add_list dhcp.${_dnsipset_key}.domain="$domain"
+			eval "_dnsipset_cnt_${intf}=$((_dnsipset_cnt + 1))"
 			uci -q set firewall.omr_dst_bypass_${intf}_4.enabled='1'
 			add_domains="true"
 		fi
@@ -449,30 +479,43 @@ _bypass_proto() {
 	fi
 }
 
-_bypass_proto_without_ndpi() {
-	local proto
-	local intf
-	local enabled
-	config_get proto $1 proto
-	config_get intf $1 interface
-	config_get enabled $1 enabled
-	config_get ndpi $1 ndpi "0"
-	config_get noipv6 $1 noipv6 "1"
-	config_get family $1 family "ipv4ipv6"
-	config_get vpn $1 vpn
-	config_get tcpudp $1 tcpudp "all"
-	[ "$vpn" = "1" ] && intf="srv_vpn1"
-
-	[ "$enabled" = "0" ] && return
-	#[ -z "$noipv6" ] && noipv6="1"
-	#[ -z "$family" ] && family="ipv4ipv6"
-	intf=$(echo "$intf" | sed 's/[.-]/_/g')
-	#[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
-	local intfid="$(uci -q get omr-bypass.$intf.id)"
-
-	[ -z "$intf" ] && intf="all"
-	[ "$intf" = "all" ] && intfid=""
+_bypass_proto_core() {
+	local proto=$1
+	local intf=$2
+	local intfid=$3
+	local vpn=$4
+	local tcpudp=$5
+	local ndpi=$6
+	local noipv6=$7
+	local family=$8
 	[ -z "$proto" ] && return
+	if [ "$intf" = "none" ]; then
+		if [ "$_omr_ndpi" = "0" ] || [ "$ndpi" = "0" ] || [ "$vpn" = "1" ]; then
+			local ALLIPS
+			ALLIPS=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select ip from ipproto where proto=\"$proto\";" ".exit")
+			for ip in $ALLIPS; do
+				valid_ip4=$(valid_subnet4 $ip)
+				valid_ip6=$(valid_subnet6 $ip)
+				if [ "$valid_ip4" = "ok" ]; then
+					_uci_add_list_unique firewall.omr_dst_bypass_none_4.entry "$ip"
+					for zone in $(_get_firewall_zones); do
+						uci -q set firewall.omr_dst_bypass_none_dstip_4_${zone}.enabled='1'
+					done
+				elif [ "$valid_ip6" = "ok" ] && [ "$disableipv6" = "0" ]; then
+					_uci_add_list_unique firewall.omr_dst_bypass_none_6.entry "$ip"
+					for zone in $(_get_firewall_zones); do
+						uci -q set firewall.omr_dst_bypass_none_dstip_6_${zone}.enabled='1'
+					done
+				fi
+			done
+		fi
+		local domains
+		domains=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select host from hostproto where proto='"$proto"';" ".exit")
+		for domain in $domains; do
+			[ -n "$domain" ] && _bypass_domain "${domain#.}" "none" "$family" "$noipv6" "${tcpudp}"
+		done
+		return
+	fi
 	if [ "$_omr_ndpi" = "0" ] || [ "$ndpi" = "0" ] || [ "$vpn" = "1" ]; then
 		ALLIPS=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select ip from ipproto where proto=\"$proto\";" ".exit")
 		if [ -n "$ALLIPS" ]; then
@@ -493,9 +536,7 @@ _bypass_proto_without_ndpi() {
 				commit firewall
 			EOF
 
-
 			if [ "$vpn" != "1" ]; then
-				#zone="lan"
 				for zone in $(_get_firewall_zones); do
 					uci -q batch <<-EOF >/dev/null
 					set firewall.bypass_${proto}_${zone}_rule=rule
@@ -524,21 +565,6 @@ _bypass_proto_without_ndpi() {
 					commit firewall
 					EOF
 				done
-				#if [ "$intfid" != "" ]; then
-				#	uci -q batch <<-EOF >/dev/null
-				#		delete network.${1}_fw_rule=rule
-				#		set network.${1}_fw_rule=rule
-				#		set network.${1}_fw_rule.priority=1
-				#		set network.${1}_fw_rule.mark=0x539${intfid}
-				#		set network.${1}_fw_rule.lookup=${intfid}
-				#		delete network.${1}_fw_rule6=rule6
-				#		set network.${1}_fw_rule6=rule6
-				#		set network.${1}_fw_rule6.priority=1
-				#		set network.${1}_fw_rule6.mark=0x6539${intfid}
-				#		set network.${1}_fw_rule6.lookup=${intfid}
-				#		commit network
-				#	EOF
-				#fi
 				_intf_rules_all_rules ${proto} ${intfid} ${tcpudp}
 			fi
 			local _nft4="" _nft6="" _nft4n=0 _nft6n=0
@@ -571,40 +597,39 @@ _bypass_proto_without_ndpi() {
 			done
 			[ -n "$_nft4" ] && printf 'nft add element inet fw4 bypass_%s { %s } 2>/dev/null\n' "$proto" "$_nft4" >> /etc/firewall.omr-bypass
 			[ -n "$_nft6" ] && printf 'nft add element inet fw4 bypass6_%s { %s } 2>/dev/null\n' "$proto" "$_nft6" >> /etc/firewall.omr-bypass
-			
+
 			uci -q commit firewall
 		fi
 	fi
 	# Use dnsmasq ipset to bypass domains of the proto
 	local domains
-	#domains="$(cat /proc/net/xt_ndpi/host_proto | grep -i $proto: | sed -e "s/$proto://i" -e 's/*//' -e 's/,/ /g')"
 	domains=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select host from hostproto where proto='"$proto"';" ".exit")
 	if [ -n "$domains" ]; then
-		tlds=$(curl --max-time 4 -s -k https://data.iana.org/TLD/tlds-alpha-by-domain.txt)
+		# Only fetch TLD list for wildcard expansion on fresh start (not reload)
+		[ -z "$RELOAD" ] && tlds=$(curl --max-time 4 -s -k https://data.iana.org/TLD/tlds-alpha-by-domain.txt)
 		for domain in $domains; do
 			if [ -n "$domain" ]; then
 				domain="${domain#.}"
 				case "$domain" in *.)
+					# Wildcard TLD expansion: skip on reload_rules (too slow, dnsmasq keeps prior config)
+					[ -n "$RELOAD" ] && continue
 					domainlist=""
-					# construct list of domains to query
 					i=0
 					for tld in $tlds; do
 						i=$((i+1))
-						# trim off header
 						if [ "$i" -lt "2" ] || [ "${#tld}" -gt "3" ]; then
 							continue
-						fi 
-						# add to command
+						fi
 						domainlist="${domainlist} ${domain}${tld}"
 					done
-					domainlist="$(echo $domainlist  `# Get the list of valid domains, pass it to awk` \
-						| awk '{print tolower($0)}'   `# awk lowercases the whole string and passes it to ` \
-						| xargs -n8 -P12              `# xargs sends 8 arguments at a time to` \
-							dig a +timeout=1 +tries=1 +retry=1 +nocmd +noall +answer `# dig, which passes results (if any) to` \
-						| awk '{print $1}'            `# awk, which outputs queried domain to` \
-						| sed 's/.$//'             `# sed, which trims off the trailing dot (google.com. -> google.com) to` \
-						| grep $domain                `# grep, only keep wanted domain` \
-						| awk '{for (i=1;i<=NF;i++) if (!a[$i]++) printf("%s%s",$i,FS)}{printf("\n")}')" # deduplicate
+					domainlist="$(echo $domainlist \
+						| awk '{print tolower($0)}' \
+						| xargs -n8 -P12 \
+							dig a +timeout=1 +tries=1 +retry=1 +nocmd +noall +answer \
+						| awk '{print $1}' \
+						| sed 's/.$//' \
+						| grep $domain \
+						| awk '{for (i=1;i<=NF;i++) if (!a[$i]++) printf("%s%s",$i,FS)}{printf("\n")}')"
 					for validdomain in $domainlist; do
 						_bypass_domain $validdomain $intf $family $noipv6 ${tcpudp}
 					done
@@ -618,10 +643,55 @@ _bypass_proto_without_ndpi() {
 	fi
 }
 
+_bypass_proto_without_ndpi() {
+	local proto
+	local intf
+	local enabled
+	config_get proto $1 proto
+	config_get intf $1 interface
+	config_get enabled $1 enabled
+	config_get ndpi $1 ndpi "0"
+	config_get noipv6 $1 noipv6 "1"
+	config_get family $1 family "ipv4ipv6"
+	config_get vpn $1 vpn
+	config_get tcpudp $1 tcpudp "all"
+	[ "$vpn" = "1" ] && intf="srv_vpn1"
+	[ "$enabled" = "0" ] && return
+	intf=$(echo "$intf" | sed 's/[.-]/_/g')
+	local intfid="$(uci -q get omr-bypass.$intf.id)"
+	[ -z "$intf" ] && intf="all"
+	[ "$intf" = "all" ] && intfid=""
+	_bypass_proto_core "$proto" "$intf" "$intfid" "$vpn" "$tcpudp" "$ndpi" "$noipv6" "$family"
+}
+
+_bypass_category() {
+	local category intf enabled vpn tcpudp ndpi noipv6 family intfid
+	config_get category $1 category
+	config_get intf $1 interface
+	config_get enabled $1 enabled
+	config_get vpn $1 vpn
+	config_get tcpudp $1 tcpudp "all"
+	config_get ndpi $1 ndpi "0"
+	config_get noipv6 $1 noipv6 "1"
+	config_get family $1 family "ipv4ipv6"
+	[ "$enabled" = "0" ] && return
+	[ -z "$category" ] && return
+	[ "$vpn" = "1" ] && intf="srv_vpn1"
+	intf=$(echo "$intf" | sed 's/[.-]/_/g')
+	intfid="$(uci -q get omr-bypass.$intf.id)"
+	[ -z "$intf" ] && intf="all"
+	[ "$intf" = "all" ] && intfid=""
+
+	local proto
+	for proto in $(grep -F "\"category\":\"${category}\"" /usr/share/omr-bypass/omr-bypass-proto.json 2>/dev/null | awk -F'"' '{print $4}'); do
+		[ -n "$proto" ] || continue
+		_bypass_proto_core "$proto" "$intf" "$intfid" "$vpn" "$tcpudp" "$ndpi" "$noipv6" "$family"
+	done
+}
 _intf_rules_all_rules() {
-	service=$1
-	count=$2
-	proto=$3
+	local service=$1
+	local count=$2
+	local proto=$3
 	[ -z "$proto" ] && proto="tcp udp"
 	proxyproto=""
 	([ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] || [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ]) && proxyproto="ss_rules"
@@ -639,7 +709,7 @@ _intf_rules_all_rules() {
 			nft add chain inet fw4 noproxy_local_out "{ type nat hook output priority filter - 1; policy accept; }" 2>&1 >/dev/null
 			nft add chain inet fw4 noproxy_pre_tcp "{ type nat hook prerouting priority filter - 1; policy accept; }" 2>&1 >/dev/null
 		EOF
-	elif [ "$(uci -q get v2ray.main_enabled)" = "1" ] || [ "$(uci -q get xray.main_enabled)" = "1" ]; then
+	elif [ "$(uci -q get v2ray.main.enabled)" = "1" ] || [ "$(uci -q get xray.main.enabled)" = "1" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
 			nft add chain inet fw4 ${proxyproto}_pre_tcp "{ type nat hook prerouting priority filter + 1; policy accept; }" 2>&1 >/dev/null
 		EOF
@@ -660,7 +730,7 @@ _intf_rules_all_rules() {
 		cat >> /etc/firewall.omr-bypass <<-EOF
 			nft add chain inet fw4 noproxy_pre_udp "{ type nat hook prerouting priority filter + 1; policy accept; }" 2>&1 >/dev/null
 		EOF
-	elif ([ "$(uci -q get v2ray.main_enabled)" = "1" ] && [ "$(uci -q get v2ray.main_transparent_proxy.redirect_udp)" = "0" ]) || ([ "$(uci -q get xray.main_enabled)" = "1" ] && [ "$(uci -q get xray.main_transparent_proxy.redirect_udp)" = "0" ]); then
+	elif ([ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ "$(uci -q get v2ray.main_transparent_proxy.redirect_udp)" = "0" ]) || ([ "$(uci -q get xray.main.enabled)" = "1" ] && [ "$(uci -q get xray.main_transparent_proxy.redirect_udp)" = "0" ]); then
 		cat >> /etc/firewall.omr-bypass <<-EOF
 			nft add chain inet fw4 ${proxyproto}_pre_udp "{ type nat hook prerouting priority filter + 1; policy accept; }" 2>&1 >/dev/null
 		EOF
@@ -991,6 +1061,92 @@ _intf_rule() {
 	fi
 }
 
+_intf_rule_none() {
+	if [ "$disableipv6" = "0" ]; then
+		protocol="4 6"
+	else
+		protocol="4"
+	fi
+	uci -q batch <<-EOF
+		set firewall.omr_dst_bypass_none_4=ipset
+		set firewall.omr_dst_bypass_none_4.name="omr_dst_bypass_none_4"
+		set firewall.omr_dst_bypass_none_4.match='dest_net'
+		set firewall.omr_dst_bypass_none_4.family='ipv4'
+		set firewall.omr_dst_bypass_none_4.enabled='1'
+		set firewall.omr_dst_bypass_none_6=ipset
+		set firewall.omr_dst_bypass_none_6.name="omr_dst_bypass_none_6"
+		set firewall.omr_dst_bypass_none_6.match='dest_net'
+		set firewall.omr_dst_bypass_none_6.family='ipv6'
+		set firewall.omr_dst_bypass_none_6.enabled='1'
+	EOF
+	for zone in $(_get_firewall_zones); do
+		for ipv46 in $protocol; do
+			uci -q batch <<-EOF
+				set firewall.omr_dst_bypass_none_dstip_${ipv46}_${zone}=rule
+				set firewall.omr_dst_bypass_none_dstip_${ipv46}_${zone}.name="omr_dst_bypass_none_dstip_${ipv46}_${zone}_rule"
+				set firewall.omr_dst_bypass_none_dstip_${ipv46}_${zone}.ipset="omr_dst_bypass_none_${ipv46}"
+				set firewall.omr_dst_bypass_none_dstip_${ipv46}_${zone}.target='DROP'
+				set firewall.omr_dst_bypass_none_dstip_${ipv46}_${zone}.src="${zone}"
+				set firewall.omr_dst_bypass_none_dstip_${ipv46}_${zone}.dest='*'
+				set firewall.omr_dst_bypass_none_dstip_${ipv46}_${zone}.family="ipv${ipv46}"
+				set firewall.omr_dst_bypass_none_dstip_${ipv46}_${zone}.enabled='0'
+				set firewall.omr_dst_bypass_none_dstip_${ipv46}_${zone}.proto='all'
+				set firewall.omr_dst_bypass_none_srcip_${ipv46}_${zone}=rule
+				set firewall.omr_dst_bypass_none_srcip_${ipv46}_${zone}.name="omr_dst_bypass_none_srcip_${ipv46}_${zone}"
+				set firewall.omr_dst_bypass_none_srcip_${ipv46}_${zone}.src="${zone}"
+				set firewall.omr_dst_bypass_none_srcip_${ipv46}_${zone}.dest='*'
+				set firewall.omr_dst_bypass_none_srcip_${ipv46}_${zone}.family="ipv${ipv46}"
+				set firewall.omr_dst_bypass_none_srcip_${ipv46}_${zone}.target='DROP'
+				set firewall.omr_dst_bypass_none_srcip_${ipv46}_${zone}.enabled='0'
+				set firewall.omr_dst_bypass_none_srcip_${ipv46}_${zone}.proto='all'
+				set firewall.omr_dst_bypass_none_mac_${ipv46}_${zone}=rule
+				set firewall.omr_dst_bypass_none_mac_${ipv46}_${zone}.name='omr_dst_bypass_none_mac_${ipv46}_${zone}'
+				set firewall.omr_dst_bypass_none_mac_${ipv46}_${zone}.src="${zone}"
+				set firewall.omr_dst_bypass_none_mac_${ipv46}_${zone}.dest='*'
+				set firewall.omr_dst_bypass_none_mac_${ipv46}_${zone}.target='DROP'
+				set firewall.omr_dst_bypass_none_mac_${ipv46}_${zone}.enabled='0'
+				set firewall.omr_dst_bypass_none_mac_${ipv46}_${zone}.proto='all'
+				set firewall.omr_dst_bypass_none_srcport_tcp_${ipv46}_${zone}=rule
+				set firewall.omr_dst_bypass_none_srcport_tcp_${ipv46}_${zone}.name="omr_dst_bypass_none_srcport_tcp_${ipv46}_${zone}"
+				set firewall.omr_dst_bypass_none_srcport_tcp_${ipv46}_${zone}.proto='tcp'
+				set firewall.omr_dst_bypass_none_srcport_tcp_${ipv46}_${zone}.src="${zone}"
+				set firewall.omr_dst_bypass_none_srcport_tcp_${ipv46}_${zone}.dest='*'
+				set firewall.omr_dst_bypass_none_srcport_tcp_${ipv46}_${zone}.target='DROP'
+				set firewall.omr_dst_bypass_none_srcport_tcp_${ipv46}_${zone}.enabled='0'
+				set firewall.omr_dst_bypass_none_srcport_udp_${ipv46}_${zone}=rule
+				set firewall.omr_dst_bypass_none_srcport_udp_${ipv46}_${zone}.name="omr_dst_bypass_none_srcport_udp_${ipv46}_${zone}"
+				set firewall.omr_dst_bypass_none_srcport_udp_${ipv46}_${zone}.proto='udp'
+				set firewall.omr_dst_bypass_none_srcport_udp_${ipv46}_${zone}.src="${zone}"
+				set firewall.omr_dst_bypass_none_srcport_udp_${ipv46}_${zone}.dest='*'
+				set firewall.omr_dst_bypass_none_srcport_udp_${ipv46}_${zone}.target='DROP'
+				set firewall.omr_dst_bypass_none_srcport_udp_${ipv46}_${zone}.enabled='0'
+				set firewall.omr_dst_bypass_none_dstport_tcp_${ipv46}_${zone}=rule
+				set firewall.omr_dst_bypass_none_dstport_tcp_${ipv46}_${zone}.name="omr_dst_bypass_none_dstport_tcp_${ipv46}_${zone}"
+				set firewall.omr_dst_bypass_none_dstport_tcp_${ipv46}_${zone}.src="${zone}"
+				set firewall.omr_dst_bypass_none_dstport_tcp_${ipv46}_${zone}.dest='*'
+				set firewall.omr_dst_bypass_none_dstport_tcp_${ipv46}_${zone}.target='DROP'
+				set firewall.omr_dst_bypass_none_dstport_tcp_${ipv46}_${zone}.proto='tcp'
+				set firewall.omr_dst_bypass_none_dstport_tcp_${ipv46}_${zone}.enabled='0'
+				set firewall.omr_dst_bypass_none_dstport_udp_${ipv46}_${zone}=rule
+				set firewall.omr_dst_bypass_none_dstport_udp_${ipv46}_${zone}.name="omr_dst_bypass_none_dstport_udp_${ipv46}_${zone}"
+				set firewall.omr_dst_bypass_none_dstport_udp_${ipv46}_${zone}.src="${zone}"
+				set firewall.omr_dst_bypass_none_dstport_udp_${ipv46}_${zone}.dest='*'
+				set firewall.omr_dst_bypass_none_dstport_udp_${ipv46}_${zone}.proto='udp'
+				set firewall.omr_dst_bypass_none_dstport_udp_${ipv46}_${zone}.target='DROP'
+				set firewall.omr_dst_bypass_none_dstport_udp_${ipv46}_${zone}.enabled='0'
+			EOF
+		done
+	done
+	uci -q batch <<-EOF
+		delete dhcp.omr_dst_bypass_none
+		set dhcp.omr_dst_bypass_none=ipset
+		set dhcp.omr_dst_bypass_none.table='fw4'
+		set dhcp.omr_dst_bypass_none.table_family='inet'
+		add_list dhcp.omr_dst_bypass_none.name="omr_dst_bypass_none_4"
+		add_list dhcp.omr_dst_bypass_none.name="omr_dst_bypass_none_6"
+	EOF
+}
+
 _bypass_ip_set() {
 	local ip
 	local interface
@@ -1047,7 +1203,6 @@ _ss_rules_config() {
 
 _v2ray_rules_config() {
 	cat >> /etc/firewall.omr-bypass <<-EOF
-		[ -z "\$(nft list ruleset | grep v2r_rules)" ] && exit 0
 		#nft insert rule inet fw4 v2r_rules_dst_tcp ip daddr @omr_dst_bypass_all_4 accept
 		#nft insert rule inet fw4 v2r_rules_local_out ip daddr @omr_dst_bypass_all_4 accept
 	EOF
@@ -1061,7 +1216,6 @@ _v2ray_rules_config() {
 
 _xray_rules_config() {
 	cat >> /etc/firewall.omr-bypass <<-EOF
-		[ -z "\$(nft list ruleset | grep xr_rules)" ] && exit 0
 		#nft insert rule inet fw4 xr_rules_dst_tcp ip daddr @omr_dst_bypass_all_4 accept
 		#nft insert rule inet fw4 xr_rules_local_out ip daddr @omr_dst_bypass_all_4 accept
 	EOF
@@ -1076,7 +1230,8 @@ _xray_rules_config() {
 _delete_dhcp_ipset() {
 	case "$1" in
 	*omr_dst_bypass*)
-		uci -q delete dhcp.$1
+		_dhcp_delete_batch="${_dhcp_delete_batch}delete dhcp.$1
+"
 		;;
 	esac
 }
@@ -1084,7 +1239,8 @@ _delete_dhcp_ipset() {
 _delete_firewall_rules() {
 	case "$1" in
 	*omr_dst_bypass*|*omr6_dst_bypass*|*bypass_*|*bypass6_*)
-		uci -q delete firewall.$1
+		_fw_delete_batch="${_fw_delete_batch}delete firewall.$1
+"
 		;;
 	esac
 }
@@ -1092,7 +1248,8 @@ _delete_firewall_rules() {
 _delete_network_rules() {
 	case "$1" in
 	*fw_rule*)
-		uci -q delete network.$1
+		_net_delete_batch="${_net_delete_batch}delete network.$1
+"
 		;;
 	esac
 }
@@ -1110,11 +1267,14 @@ _bypass_proto_collect_ndpid() {
 	[ "$ndpi" = "0" ] && return
 	[ -z "$proto" ] && return
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
+	[ "$intf" = "none" ] && return
 	intfid=$(uci -q get omr-bypass.$intf.id)
 	[ "$intf" = "all" ] && intfid=""
 
 	# Ensure nftables sets and rules exist for this protocol (even if DB is empty)
 	if [ "$intf" = "all" ]; then
+		# Flag if the nft set is absent — used by start_service to force fw4
+		nft list set inet fw4 "bypass_${proto}" >/dev/null 2>&1 || _ndpid_fw_needed=1
 		uci -q batch <<-EOF >/dev/null
 			set firewall.bypass_${proto}=ipset
 			set firewall.bypass_${proto}.name="bypass_${proto}"
@@ -1162,19 +1322,25 @@ _start_ndpid_consumer() {
 	[ "$_omr_ndpid" != "1" ] && return
 	[ -z "$_bypass_proto_ndpid_list" ] && return
 
-	# Kill any existing consumer
+	# Kill any existing consumer (whole process group to avoid orphan tail/nc)
 	if [ -f /var/run/omr-bypass-ndpid.pid ]; then
+		kill -- -"$(cat /var/run/omr-bypass-ndpid.pid)" 2>/dev/null
 		kill "$(cat /var/run/omr-bypass-ndpid.pid)" 2>/dev/null
 		rm -f /var/run/omr-bypass-ndpid.pid
 	fi
 
-	/usr/lib/omr-bypass/ndpid-consumer "$_bypass_proto_ndpid_list" &
+	# setsid makes the consumer a new session/process-group leader so that
+	# kill -- -PID cleans up all its children (nc, tail, subshells).
+	setsid /usr/lib/omr-bypass/ndpid-consumer "$_bypass_proto_ndpid_list" 1000>&- &
 	logger -t "omr-bypass" "nDPId consumer started (PID: $!)"
 }
 
 _stop_ndpid_consumer() {
 	if [ -f /var/run/omr-bypass-ndpid.pid ]; then
-		kill "$(cat /var/run/omr-bypass-ndpid.pid)" 2>/dev/null
+		local pid
+		pid=$(cat /var/run/omr-bypass-ndpid.pid)
+		kill -- -"$pid" 2>/dev/null
+		kill "$pid" 2>/dev/null
 		rm -f /var/run/omr-bypass-ndpid.pid
 		logger -t "omr-bypass" "nDPId consumer stopped"
 	fi
@@ -1186,19 +1352,33 @@ boot() {
 }
 
 start_service() {
+	# Prevent concurrent/cascading invocations (procd triggers on firewall/network commits)
+	local _lock="/var/run/omr-bypass.lock"
+	if ! mkdir "$_lock" 2>/dev/null; then
+		logger -t "omr-bypass" "Another instance running, skipping concurrent call"
+		return
+	fi
+	trap "rmdir '$_lock' 2>/dev/null" EXIT HUP INT TERM
+
 	#local count
 	logger -t "omr-bypass" "Starting OMR-ByPass..."
 
+	_dhcp_delete_batch=""
 	config_load dhcp
 	config_foreach _delete_dhcp_ipset ipset
+	[ -n "$_dhcp_delete_batch" ] && printf '%s' "$_dhcp_delete_batch" | uci -q batch
 	uci -q delete dhcp.@dnsmasq[0].noipv6
 	#uci -q commit dhcp
+	_fw_delete_batch=""
 	config_load firewall
 	config_foreach _delete_firewall_rules rule
 	config_foreach _delete_firewall_rules ipset
+	[ -n "$_fw_delete_batch" ] && printf '%s' "$_fw_delete_batch" | uci -q batch
 	#uci -q commit firewall
+	_net_delete_batch=""
 	config_load network
 	config_foreach _delete_network_rules rule
+	[ -n "$_net_delete_batch" ] && printf '%s' "$_net_delete_batch" | uci -q batch
 	#uci -q commit network
 
 
@@ -1247,6 +1427,7 @@ start_service() {
 	config_foreach _intf_rule interface
 	_intf_rule all
 	_intf_rule srv_vpn1
+	_intf_rule_none
 	local ndpi_rules=""
 	#echo "bypass server"
 	if [ "$(uci -q get openmptcprouter.settings.bypass_servers)" = "1" ]; then
@@ -1294,8 +1475,10 @@ start_service() {
 	config_load omr-bypass
 	[ -d /proc/net/xt_ndpi/proto ] && config_foreach _bypass_proto dpis
 	config_foreach _bypass_proto_without_ndpi dpis
+	config_foreach _bypass_category categories
 	if [ "$_omr_ndpid" = "1" ]; then
 		_bypass_proto_ndpid_list=""
+		_ndpid_fw_needed=0
 		config_load omr-bypass
 		config_foreach _bypass_proto_collect_ndpid dpis
 		_start_ndpid_consumer
@@ -1313,7 +1496,7 @@ start_service() {
 	fi
 
 
-	if [ -n "$(uci -q changes firewall)" ] || [ "$fwfilechangemd5" != "$fwfilechangemd5check" ]; then
+	if [ -n "$(uci -q changes firewall)" ] || [ "$fwfilechangemd5" != "$fwfilechangemd5check" ] || [ "${_ndpid_fw_needed:-0}" = "1" ]; then
 		uci -q commit firewall
 		[ -z "$RELOAD" ] && {
 			fw4 restart || logger -t "omr-bypass" "ERROR: fw4 restart failed"
@@ -1341,6 +1524,13 @@ start_service() {
 	sort < /usr/share/omr-bypass/omr-bypass-proto.lst > /usr/share/omr-bypass/omr-bypass-proto.lst.new
 	mv /usr/share/omr-bypass/omr-bypass-proto.lst.new /usr/share/omr-bypass/omr-bypass-proto.lst
 	logger -t "omr-bypass" "OMR-ByPass is running"
+
+	procd_open_instance
+	procd_set_param command /bin/true
+	procd_close_instance
+
+	rmdir "$_lock" 2>/dev/null
+	trap - EXIT HUP INT TERM
 }
 
 stop_service() {
@@ -1350,18 +1540,22 @@ stop_service() {
 #	$IP6TABLESSAVE --counters 2>/dev/null | grep -v omr-bypass6 | $IP6TABLESRESTORE -w --counters 2>/dev/null
 	# disable all rules
 	uci -q set firewall.omr_bypass.enabled='0'
+	_dhcp_delete_batch=""
 	config_load dhcp
 	config_foreach _delete_dhcp_ipset ipset
+	[ -n "$_dhcp_delete_batch" ] && printf '%s' "$_dhcp_delete_batch" | uci -q batch
 	uci -q commit dhcp
+	_fw_delete_batch=""
 	config_load firewall
 	config_foreach _delete_firewall_rules rule
 	config_foreach _delete_firewall_rules ipset
+	[ -n "$_fw_delete_batch" ] && printf '%s' "$_fw_delete_batch" | uci -q batch
 	uci -q commit firewall
 	[ -z "$RELOAD" ] && { fw4 restart || logger -t "omr-bypass" "ERROR: fw4 restart failed"; }
 }
 
 service_triggers() {
-	procd_add_reload_trigger omr-bypass network firewall ndpid
+	procd_add_reload_trigger omr-bypass ndpid
 }
 
 reload_service() {

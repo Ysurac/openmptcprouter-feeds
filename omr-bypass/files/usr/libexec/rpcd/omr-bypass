@@ -1,0 +1,159 @@
+#!/bin/sh
+# /usr/libexec/rpcd/omr-bypass
+# rpcd plugin for omr-bypass interface management
+#
+# Usage:
+#   ubus call omr-bypass set_interface '{"section":"cfg01","interface":"wan1","force":true}'
+#   ubus call omr-bypass get_interface '{"section":"cfg01"}'
+#   ubus call omr-bypass list_sections {}
+
+VALID_SECTION_TYPES="domains ips macs dest_port src_port dpis asns lan_ip"
+
+_intf_ipset_exists() {
+	local intf=$1
+	[ -z "$intf" ] || [ "$intf" = "all" ] || [ "$intf" = "srv_vpn1" ] && return 0
+	ipset --list "omr_dst_bypass_${intf}" >/dev/null 2>&1
+}
+
+# Delete conntrack entries for IPs in the old interface's bypass ipsets.
+# The kernel sends RST to peers when their tracked entries disappear.
+_rst_old_intf_connections() {
+	local old_intf=$1
+	[ -z "$old_intf" ] || [ "$old_intf" = "all" ] || [ "$old_intf" = "srv_vpn1" ] && return
+
+	local ipset_name
+	for ipset_name in "omr_dst_bypass_${old_intf}" "omr6_dst_bypass_${old_intf}"; do
+		ipset --list "$ipset_name" >/dev/null 2>&1 || continue
+		ipset --list "$ipset_name" -output plain 2>/dev/null \
+			| awk 'found && NF { print } /^Members:/ { found=1 }' \
+			| while read -r ip; do
+				conntrack -D --orig-dst "$ip" >/dev/null 2>&1
+				conntrack -D --reply-src "$ip" >/dev/null 2>&1
+			done
+	done
+}
+
+_json_str() {
+	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+case "$1" in
+	list)
+		echo '{
+  "set_interface": {
+    "section":   "str",
+    "interface": "str",
+    "force":     false,
+    "reload":    false
+  },
+  "get_interface": {
+    "section": "str"
+  },
+  "list_sections": {}
+}'
+		# force=true: skip active-interface check, RST connections on the
+		# previous interface via conntrack deletion, then reload rules.
+		# reload=true: reload rules without the RST step.
+		;;
+	call)
+		case "$2" in
+			set_interface)
+				input=$(cat)
+				section=$(echo "$input"   | jsonfilter -q -e '@.section')
+				interface=$(echo "$input" | jsonfilter -q -e '@.interface')
+				force=$(echo "$input"     | jsonfilter -q -e '@.force')
+				reload=$(echo "$input"    | jsonfilter -q -e '@.reload')
+
+				if [ -z "$section" ]; then
+					echo '{"error":"missing section parameter"}'
+					exit 1
+				fi
+
+				section_type=$(uci -q get "omr-bypass.${section}" 2>/dev/null)
+				if [ -z "$section_type" ]; then
+					echo "{\"error\":\"section '$(_json_str "$section")' not found in omr-bypass config\"}"
+					exit 1
+				fi
+
+				[ -z "$interface" ] && interface="all"
+				safe_intf=$(echo "$interface" | sed 's/[^a-zA-Z0-9_-]//g')
+				if [ "$safe_intf" != "$interface" ]; then
+					echo '{"error":"invalid interface name"}'
+					exit 1
+				fi
+
+				if [ "$force" != "true" ] && [ "$interface" != "all" ] && [ "$interface" != "srv_vpn1" ]; then
+					if ! _intf_ipset_exists "$interface"; then
+						echo "{\"error\":\"interface '$(_json_str "$interface")' is not active; use force:true to override\"}"
+						exit 1
+					fi
+				fi
+
+				# Remember the old interface so we can RST its active connections
+				old_interface=$(uci -q get "omr-bypass.${section}.interface" 2>/dev/null)
+				[ -z "$old_interface" ] && old_interface="all"
+
+				if [ "$interface" = "all" ]; then
+					uci -q delete "omr-bypass.${section}.interface"
+				else
+					uci -q set "omr-bypass.${section}.interface=${interface}"
+				fi
+				uci -q commit omr-bypass
+
+				if [ "$force" = "true" ]; then
+					_rst_old_intf_connections "$old_interface"
+					/etc/init.d/omr-bypass reload_rules >/dev/null 2>&1 &
+				elif [ "$reload" = "true" ]; then
+					/etc/init.d/omr-bypass reload_rules >/dev/null 2>&1 &
+				fi
+
+				echo "{\"result\":\"ok\",\"section\":\"$(_json_str "$section")\",\"interface\":\"$(_json_str "$interface")\",\"prev_interface\":\"$(_json_str "$old_interface")\"}"
+				;;
+
+			get_interface)
+				input=$(cat)
+				section=$(echo "$input" | jsonfilter -q -e '@.section')
+
+				if [ -z "$section" ]; then
+					echo '{"error":"missing section parameter"}'
+					exit 1
+				fi
+
+				section_type=$(uci -q get "omr-bypass.${section}" 2>/dev/null)
+				if [ -z "$section_type" ]; then
+					echo "{\"error\":\"section '$(_json_str "$section")' not found in omr-bypass config\"}"
+					exit 1
+				fi
+
+				interface=$(uci -q get "omr-bypass.${section}.interface" 2>/dev/null)
+				[ -z "$interface" ] && interface="all"
+
+				active="false"
+				_intf_ipset_exists "$interface" && active="true"
+
+				echo "{\"section\":\"$(_json_str "$section")\",\"type\":\"$(_json_str "$section_type")\",\"interface\":\"$(_json_str "$interface")\",\"active\":${active}}"
+				;;
+
+			list_sections)
+				entries=""
+				for type in $VALID_SECTION_TYPES; do
+					for key in $(uci -q show omr-bypass 2>/dev/null | grep "=${type}$" | cut -d= -f1); do
+						sec=$(echo "$key" | sed 's/omr-bypass\.//')
+						intf=$(uci -q get "omr-bypass.${sec}.interface" 2>/dev/null)
+						[ -z "$intf" ] && intf="all"
+						name=$(uci -q get "omr-bypass.${sec}.name" 2>/dev/null)
+						entry="{\"section\":\"$(_json_str "$sec")\",\"type\":\"$(_json_str "$type")\",\"interface\":\"$(_json_str "$intf")\",\"name\":\"$(_json_str "$name")\"}"
+						[ -n "$entries" ] && entries="${entries},"
+						entries="${entries}${entry}"
+					done
+				done
+				echo "{\"sections\":[${entries}]}"
+				;;
+
+			*)
+				echo '{"error":"unknown method"}'
+				exit 1
+				;;
+		esac
+		;;
+esac

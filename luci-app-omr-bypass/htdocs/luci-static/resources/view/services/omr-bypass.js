@@ -7,6 +7,12 @@
 
 var callHostHints;
 
+var callUciCommit = rpc.declare({
+	object: 'uci',
+	method: 'commit',
+	params: ['config']
+});
+
 return L.view.extend({
 	callHostHints: rpc.declare({
 		object: 'luci-rpc',
@@ -20,14 +26,31 @@ return L.view.extend({
 			this.callHostHints(),
 			L.resolveDefault(fs.read_direct('/proc/net/xt_ndpi/proto'), ''),
 			L.resolveDefault(fs.read_direct('/proc/net/xt_ndpi/host_proto'), ''),
-			fs.read_direct('/usr/share/omr-bypass/omr-bypass-proto.lst'),
-			L.resolveDefault(fs.stat('/usr/sbin/ndpisrvd'), null)
+			fs.read_direct('/usr/share/omr-bypass/omr-bypass-proto.json'),
+			L.resolveDefault(fs.stat('/usr/sbin/ndpisrvd'), null),
+			uci.load('network')
 		]);
 	},
 
 	render: function(testhosts) {
 		var m, s, o, hosts;
 		hosts = testhosts[1];
+		var ifaces = uci.sections('network', 'interface').map(function(s) { return s['.name']; }).filter(function(name) { return name !== 'loopback'; });
+
+		var protodata = [];
+		try { protodata = JSON.parse(testhosts[4]); } catch(e) {}
+		var protoMap = {};
+		protodata.forEach(function(p) {
+			if (!p || !p.proto)
+				return;
+			protoMap[p.proto] = p;
+			protoMap[String(p.proto).toLowerCase()] = p;
+		});
+		function getProtoMeta(name) {
+			if (!name)
+				return null;
+			return protoMap[name] || protoMap[String(name).toLowerCase()] || null;
+		}
 
 		m = new form.Map('omr-bypass', _('OMR-Bypass'),_('OpenMPTCProuter IP must be used as DNS.'));
 
@@ -58,10 +81,19 @@ return L.view.extend({
 		o = s.option(form.Flag, 'vpn', _('VPN on server'),_('Bypass using VPN configured on server.'));
 		o.modalonly = true
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.noaliases = true;
-		o.noinactive = true;
-		o.nocreate    = true;
+		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
+		o.value('', _('Default (MPTCP master interface)'));
+		o.value('none', _('None (block traffic)'));
+		ifaces.forEach(function(name) { o.value(name); });
+		o.depends('vpn', '0');
+
+		o = s.option(form.ListValue, 'failback', _('Failback'),
+			_('Failback interface when the selected interface is down.'));
+		o.value('', _('None (no failback)'));
+		o.value('default', _('Default MPTCP interface'));
+		ifaces.forEach(function(name) { o.value(name); });
+		o.rmempty = true;
+		o.modalonly = true;
 		o.depends('vpn', '0');
 
 		o = s.option(form.Value, 'note', _('Note'),
@@ -116,10 +148,19 @@ return L.view.extend({
 		o.value('udp');
 		o.modalonly = true
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.noaliases = true;
-		o.noinactive = true;
-		o.nocreate    = true;
+		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
+		o.value('', _('Default (MPTCP master interface)'));
+		o.value('none', _('None (block traffic)'));
+		ifaces.forEach(function(name) { o.value(name); });
+		o.depends('vpn', '0');
+
+		o = s.option(form.ListValue, 'failback', _('Failback'),
+			_('Failback interface when the selected interface is down.'));
+		o.value('', _('None (no failback)'));
+		o.value('default', _('Default MPTCP interface'));
+		ifaces.forEach(function(name) { o.value(name); });
+		o.rmempty = true;
+		o.modalonly = true;
 		o.depends('vpn', '0');
 
 		o = s.option(form.Value, 'note', _('Note'),
@@ -148,10 +189,18 @@ return L.view.extend({
 		o.value('udp');
 		o.value('icmp');
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.noaliases = true;
-		o.noinactive = true;
-		o.nocreate    = true;
+		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
+		o.value('', _('Default (MPTCP master interface)'));
+		o.value('none', _('None (block traffic)'));
+		ifaces.forEach(function(name) { o.value(name); });
+
+		o = s.option(form.ListValue, 'failback', _('Failback'),
+			_('Failback interface when the selected interface is down.'));
+		o.value('', _('None (no failback)'));
+		o.value('default', _('Default MPTCP interface'));
+		ifaces.forEach(function(name) { o.value(name); });
+		o.rmempty = true;
+		o.modalonly = true;
 
 		o = s.option(form.Value, 'note', _('Note'),
 			_('Optional comment to help identify the purpose of this rule.'));
@@ -179,10 +228,18 @@ return L.view.extend({
 		o.value('udp');
 		o.value('icmp');
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.noaliases = true;
-		o.noinactive = true;
-		o.nocreate    = true;
+		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
+		o.value('', _('Default (MPTCP master interface)'));
+		o.value('none', _('None (block traffic)'));
+		ifaces.forEach(function(name) { o.value(name); });
+
+		o = s.option(form.ListValue, 'failback', _('Failback'),
+			_('Failback interface when the selected interface is down.'));
+		o.value('', _('None (no failback)'));
+		o.value('default', _('Default MPTCP interface'));
+		ifaces.forEach(function(name) { o.value(name); });
+		o.rmempty = true;
+		o.modalonly = true;
 
 		o = s.option(form.Value, 'note', _('Note'),
 			_('Optional comment to help identify the purpose of this rule.'));
@@ -207,10 +264,18 @@ return L.view.extend({
 			o.value(mac, hint ? '%s (%s)'.format(mac, hint) : mac);
 		});
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.noaliases = true;
-		o.noinactive = true;
-		o.nocreate    = true;
+		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
+		o.value('', _('Default (MPTCP master interface)'));
+		o.value('none', _('None (block traffic)'));
+		ifaces.forEach(function(name) { o.value(name); });
+
+		o = s.option(form.ListValue, 'failback', _('Failback'),
+			_('Failback interface when the selected interface is down.'));
+		o.value('', _('None (no failback)'));
+		o.value('default', _('Default MPTCP interface'));
+		ifaces.forEach(function(name) { o.value(name); });
+		o.rmempty = true;
+		o.modalonly = true;
 
 		o = s.option(form.Value, 'note', _('Note'),
 			_('Optional comment to help identify the purpose of this rule.'));
@@ -237,10 +302,18 @@ return L.view.extend({
 			}
 		});
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.noaliases = true;
-		o.noinactive = true;
-		o.nocreate    = true;
+		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
+		o.value('', _('Default (MPTCP master interface)'));
+		o.value('none', _('None (block traffic)'));
+		ifaces.forEach(function(name) { o.value(name); });
+
+		o = s.option(form.ListValue, 'failback', _('Failback'),
+			_('Failback interface when the selected interface is down.'));
+		o.value('', _('None (no failback)'));
+		o.value('default', _('Default MPTCP interface'));
+		ifaces.forEach(function(name) { o.value(name); });
+		o.rmempty = true;
+		o.modalonly = true;
 
 		o = s.option(form.Value, 'note', _('Note'),
 			_('Optional comment to help identify the purpose of this rule.'));
@@ -263,10 +336,19 @@ return L.view.extend({
 		o = s.option(form.Flag, 'vpn', _('VPN on server'),_('Bypass using VPN configured on server.'));
 		o.modalonly = true
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.noaliases = true;
-		o.noinactive = true;
-		o.nocreate    = true;
+		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
+		o.value('', _('Default (MPTCP master interface)'));
+		o.value('none', _('None (block traffic)'));
+		ifaces.forEach(function(name) { o.value(name); });
+		o.depends('vpn', '0');
+
+		o = s.option(form.ListValue, 'failback', _('Failback'),
+			_('Failback interface when the selected interface is down.'));
+		o.value('', _('None (no failback)'));
+		o.value('default', _('Default MPTCP interface'));
+		ifaces.forEach(function(name) { o.value(name); });
+		o.rmempty = true;
+		o.modalonly = true;
 		o.depends('vpn', '0');
 
 		o = s.option(form.Value, 'note', _('Note'),
@@ -283,13 +365,50 @@ return L.view.extend({
 			_('Enable or disable this bypass rule without deleting it.'));
 		o.default = o.enabled;
 
+		// Full list of DPI protocol names, populated by o.load below.
+		var allDpiNames = [];
+
+		// Rebuild protoSel options from allDpiNames filtered by catVal / typVal.
+		function applyDpiFilter(protoSel, catVal, typVal) {
+			if (!protoSel || !allDpiNames.length) return;
+			var curVal = protoSel.value;
+			while (protoSel.options.length) protoSel.remove(0);
+			var first = null, found = false;
+			allDpiNames.forEach(function(n) {
+				var meta = getProtoMeta(n) || {};
+				if ((!catVal || catVal === meta.category) &&
+				    (!typVal || typVal === meta.type)) {
+					protoSel.add(new Option(n, n));
+					if (!first) first = n;
+					if (n === curVal) found = true;
+				}
+			});
+			protoSel.value = found ? curVal : (first || '');
+		}
+/*
+		o = s.option(form.ListValue, 'category', _('Category'),
+			_('Filter the protocol list by category.'));
+		o.rmempty = true;
+		o.modalonly = true;
+		o.default = '';
+		o.value('', _('All'));
+		Array.from(new Set(protodata.map(function(p) { return p.category; }).filter(Boolean))).sort().forEach(function(cat) { o.value(cat); });
+
+		o = s.option(form.ListValue, 'ndpitype', _('Type'),
+			_('Filter the protocol list by type.'));
+		o.rmempty = true;
+		o.modalonly = true;
+		o.default = '';
+		o.value('', _('All'));
+		o.value('application', _('Application'));
+		o.value('protocol', _('Protocol'));
+*/
 		o = s.option(form.ListValue, 'proto', _('Protocol/Service'),
 			_('Select the application protocol or service name to match.'));
 		o.rmempty = false;
 		o.load = function(section_id) {
 			var proto = testhosts[2].split(/\n/),
 			    host = testhosts[3].split(/\n/),
-			    protofile = testhosts[4].split(/\n/),
 			    name = [];
 			if (proto.length > 2) {
 				for (var i = 0; i < proto.length; i++) {
@@ -306,28 +425,71 @@ return L.view.extend({
 				}
 			}
 			if (proto.length == 1 && host.length == 1) {
-				for (var i = 0; i < protofile.length; i++) {
-					var m = protofile[i];
-					name.push(m);
+				for (var i = 0; i < protodata.length; i++) {
+					if (protodata[i] && protodata[i].proto)
+						name.push(protodata[i].proto);
 				}
 			}
 			if (host.length > 2) {
 				name = Array.from(new Set(name)).sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase())}).reduce(function(a, b){ if (a.slice(-1)[0] !== b) a.push(b);return a;},[]);
 			}
+			allDpiNames = name;
 			for (var i = 0; i < name.length; i++) {
-				this.value(name[i]);
+				this.value(name[i], name[i]);
 			}
 			return this.super('load', [section_id]);
-		
+		};
+		o.renderWidget = function(section_id, option_index, cfgvalue) {
+			var node = this.super('renderWidget', [section_id, option_index, cfgvalue]);
+			var protoSel = node.querySelector('select');
+			if (!protoSel || !allDpiNames.length) return node;
+
+			// Apply initial filter based on saved UCI values (editing existing row).
+			var mapCfg = this.map.config;
+			var initCat = uci.get(mapCfg, section_id, 'category') || '';
+			var initTyp = uci.get(mapCfg, section_id, 'ndpitype') || '';
+			if (initCat || initTyp)
+				applyDpiFilter(protoSel, initCat, initTyp);
+
+			// Attach native change listeners to category/ndpitype selects.
+			// Use setTimeout so the modal is fully in the DOM before we query it.
+			setTimeout(function() {
+				function findSel(field) {
+					var w = document.getElementById('cbid.' + mapCfg + '.' + section_id + '.' + field);
+					if (w) return w.querySelector('select') || (w.tagName === 'SELECT' ? w : null);
+					w = document.querySelector('[id$=".' + field + '"] select, select[id$=".' + field + '"]');
+					return w || null;
+				}
+				var catSel = findSel('category');
+				var typSel = findSel('ndpitype');
+				function onChange() {
+					applyDpiFilter(protoSel,
+						catSel ? catSel.value : '',
+						typSel ? typSel.value : '');
+				}
+				if (catSel) catSel.addEventListener('change', onChange);
+				if (typSel) typSel.addEventListener('change', onChange);
+			}, 0);
+
+			return node;
 		};
 
 		o = s.option(form.Flag, 'vpn', _('VPN on server'),_('Bypass using VPN configured on server.'));
 		o.modalonly = true
 
-		o = s.option(widgets.DeviceSelect, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used (or an other interface if master is down).'));
-		o.noaliases = true;
-		o.noinactive = true;
-		o.nocreate    = true;
+		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used (or an other interface if master is down).'));
+		o.value('', _('Default (MPTCP master interface)'));
+		o.value('none', _('None (block traffic)'));
+		ifaces.forEach(function(name) { o.value(name); });
+		o.depends('vpn', '0');
+
+		o = s.option(form.ListValue, 'failback', _('Failback'),
+			_('Failback interface when the selected interface is down.'));
+		o.value('', _('None (no failback)'));
+		o.value('default', _('Default MPTCP interface'));
+		ifaces.forEach(function(name) { o.value(name); });
+		o.rmempty = true;
+		o.modalonly = true;
 		o.depends('vpn', '0');
 
 		o = s.option(form.Value, 'note', _('Note'),
@@ -342,7 +504,7 @@ return L.view.extend({
 		o.default = 'ipv4ipv6';
 		o.modalonly = true
 
-		o = s.option(form.ListValue, 'proto', _('protocol'),
+		o = s.option(form.ListValue, 'tcpudp', _('Transport protocol'),
 			_('Restrict the matched traffic to a specific transport protocol.'));
 		o.default = 'all';
 		o.rmempty = false;
@@ -363,6 +525,73 @@ return L.view.extend({
 			o.modalonly = true
 			o.depends('vpn', '0');
 		}
+
+		s = m.section(form.GridSection, 'categories', _('Protocol categories'),
+			_('Create rules that bypass all protocols belonging to a selected category.'));
+		s.addremove = true;
+		s.anonymous = true;
+		s.nodescriptions = true;
+
+		o = s.option(form.Flag, 'enabled', _('Enabled'),
+			_('Enable or disable this bypass rule without deleting it.'));
+		o.default = o.enabled;
+
+		o = s.option(form.ListValue, 'category', _('Category'),
+			_('Select the protocol category to bypass.'));
+		o.rmempty = false;
+		Array.from(new Set(protodata.map(function(p) { return p.category; }).filter(Boolean))).sort().forEach(function(cat) { o.value(cat); });
+
+		o = s.option(form.Flag, 'vpn', _('VPN on server'), _('Bypass using VPN configured on server.'));
+		o.modalonly = true;
+
+		o = s.option(form.ListValue, 'interface', _('Output interface'), _('When none selected, MPTCP master interface is used.'));
+		o.value('', _('Default (MPTCP master interface)'));
+		o.value('none', _('None (block traffic)'));
+		ifaces.forEach(function(name) { o.value(name); });
+		o.depends('vpn', '0');
+
+		o = s.option(form.ListValue, 'failback', _('Failback'),
+			_('Failback interface when the selected interface is down.'));
+		o.value('', _('None (no failback)'));
+		o.value('default', _('Default MPTCP interface'));
+		ifaces.forEach(function(name) { o.value(name); });
+		o.rmempty = true;
+		o.modalonly = true;
+		o.depends('vpn', '0');
+
+		o = s.option(form.ListValue, 'tcpudp', _('Protocol'),
+			_('Restrict the matched traffic to a specific transport protocol.'));
+		o.default = 'all';
+		o.rmempty = false;
+		o.value('all');
+		o.value('tcp');
+		o.value('udp');
+		o.modalonly = true;
+
+		o = s.option(form.ListValue, 'family', _('Restrict to address family'),
+			_('Limit the rule to IPv4 results, IPv6 results, or allow both.'));
+		o.value('ipv4ipv6', _('IPv4 and IPv6'));
+		o.value('ipv4', _('IPv4 only'));
+		o.value('ipv6', _('IPv6 only'));
+		o.default = 'ipv4ipv6';
+		o.modalonly = true;
+
+		o = s.option(form.Flag, 'noipv6', _('Disable AAAA IPv6 DNS'),
+			_('Ignore IPv6 AAAA DNS answers for bypassed domain names in this category.'));
+		o.default = true;
+		o.modalonly = true;
+
+		if (testhosts[0] || testhosts[5]) {
+			o = s.option(form.Flag, 'ndpi', _('Enable ndpi'),
+				_('Enable deep packet inspection for this rule when nDPI support is available.'));
+			o.default = o.enabled;
+			o.modalonly = true;
+			o.depends('vpn', '0');
+		}
+
+		o = s.option(form.Value, 'note', _('Note'),
+			_('Optional comment to help identify the purpose of this rule.'));
+		o.rmempty = true;
 
 		return m.render();
 	}
