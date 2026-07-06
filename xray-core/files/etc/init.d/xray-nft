@@ -308,6 +308,7 @@ inbound_section_validate() {
 		'ss_tls_cert_usage:or("encipherment", "verify", "issue")' \
 		'ss_tls_cert_file:string' \
 		'ss_tls_key_file:string' \
+		'ss_tls_pinned_sha256:string' \
 		'ss_tcp_header_type:or("none", "http")' \
 		'ss_tcp_header_request_version:string' \
 		'ss_tcp_header_request_method:string:GET' \
@@ -420,6 +421,7 @@ outbound_section_validate() {
 		'ss_tls_cert_usage:or("encipherment", "verify", "issue")' \
 		'ss_tls_cert_file:string' \
 		'ss_tls_key_file:string' \
+		'ss_tls_pinned_sha256:string' \
 		'ss_tcp_header_type:or("none", "http")' \
 		'ss_tcp_header_request_version:string' \
 		'ss_tcp_header_request_method:string' \
@@ -1243,20 +1245,25 @@ add_inbound_setting() {
 			json_close_array # alpn
 		fi
 
-		json_add_boolean "disableSystemRoot" "$ss_tls_disable_system_root"
+		test -n "$ss_tls_pinned_sha256" && \
+			json_add_string "pinnedPeerCertSha256" "$ss_tls_pinned_sha256"
 
-		json_add_array "certificates"
-		if [ -n "$ss_tls_cert_file" ] ; then
-			json_add_object ""
+		if [ -z "$ss_tls_pinned_sha256" ] ; then
+			json_add_boolean "disableSystemRoot" "$ss_tls_disable_system_root"
 
-			json_add_string "certificateFile" "$ss_tls_cert_file"
-			json_add_string "keyFile" "$ss_tls_key_file"
-			test -n "$ss_tls_cert_usage" && \
-				json_add_string "usage" "$ss_tls_cert_usage"
+			json_add_array "certificates"
+			if [ -n "$ss_tls_cert_file" ] ; then
+				json_add_object ""
 
-			json_close_object
+				json_add_string "certificateFile" "$ss_tls_cert_file"
+				json_add_string "keyFile" "$ss_tls_key_file"
+				test -n "$ss_tls_cert_usage" && \
+					json_add_string "usage" "$ss_tls_cert_usage"
+
+				json_close_object
+			fi
+			json_close_array # certificates
 		fi
-		json_close_array # certificates
 
 		json_close_object # tlsSettings
 	fi
@@ -1757,18 +1764,45 @@ add_outbound_setting() {
 				json_close_array
 			fi
 
-			json_add_boolean "disableSystemRoot" "$ss_tls_disable_system_root"
-
-			json_add_array "certificates"
-			if [ -n "$ss_tls_cert_file" ] ; then
-				json_add_object ""
-				json_add_string "certificateFile" "$ss_tls_cert_file"
-				json_add_string "keyFile" "$ss_tls_key_file"
-				test -n "$ss_tls_cert_usage" && \
-					json_add_string "usage" "$ss_tls_cert_usage"
-				json_close_object
+			# If no pinned hash configured by user, compute one from the server cert
+			_pinned_sha256="$ss_tls_pinned_sha256"
+			if [ -z "$_pinned_sha256" ] ; then
+				_pin_addr="" ; _pin_port=""
+				case "$protocol" in
+					vless)  _pin_addr="$s_vless_address"  ; _pin_port="$s_vless_port" ;;
+					vmess)  _pin_addr="$s_vmess_address"  ; _pin_port="$s_vmess_port" ;;
+					trojan) _pin_addr="$s_trojan_address" ; _pin_port="$s_trojan_port" ;;
+					socks)  _pin_addr="$s_socks_address"  ; _pin_port="$s_socks_port" ;;
+				esac
+				if [ -n "$_pin_addr" ] && [ -n "$_pin_port" ] ; then
+					_pinned_sha256=$(echo "Q" | openssl s_client \
+						-connect "${_pin_addr}:${_pin_port}" \
+						${ss_tls_server_name:+-servername "$ss_tls_server_name"} \
+						2>/dev/null \
+						| openssl x509 -outform DER 2>/dev/null \
+						| openssl dgst -sha256 2>/dev/null \
+						| awk '{print $2}')
+					[ "${#_pinned_sha256}" -ne 64 ] && _pinned_sha256=""
+				fi
 			fi
-			json_close_array # certificates
+
+			test -n "$_pinned_sha256" && \
+				json_add_string "pinnedPeerCertSha256" "$_pinned_sha256"
+
+			if [ -z "$_pinned_sha256" ] ; then
+				json_add_boolean "disableSystemRoot" "$ss_tls_disable_system_root"
+
+				json_add_array "certificates"
+				if [ -n "$ss_tls_cert_file" ] ; then
+					json_add_object ""
+					json_add_string "certificateFile" "$ss_tls_cert_file"
+					json_add_string "keyFile" "$ss_tls_key_file"
+					test -n "$ss_tls_cert_usage" && \
+						json_add_string "usage" "$ss_tls_cert_usage"
+					json_close_object
+				fi
+				json_close_array # certificates
+			fi
 
 			json_close_object # tlsSettings
 		fi
@@ -2350,7 +2384,7 @@ rules_down() {
 		for f in $xrrules_nft*; do
 			mv -f "$f" "${f}.down"
 		done
-		fw4 -q reload
+		fw4 -q restart
 	fi
 }
 
