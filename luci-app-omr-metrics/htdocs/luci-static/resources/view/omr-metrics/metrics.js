@@ -10,12 +10,35 @@ var callMetricsGetAll = rpc.declare({
 	expect: { '': {} }
 });
 
+var callMetricsGetUserInfo = rpc.declare({
+	object: 'metrics',
+	method: 'get_user_info',
+	expect: { '': {} }
+});
+
+var callMetricsGetForecast = rpc.declare({
+	object: 'metrics',
+	method: 'get_forecast',
+	expect: { '': {} }
+});
+
+var callMetricsGetDecision = rpc.declare({
+	object: 'metrics',
+	method: 'get_decision',
+	expect: { '': {} }
+});
+
 return view.extend({
 	/* Auto-refresh interval in seconds */
 	POLL_INTERVAL: 5,
 
 	load: function() {
-		return callMetricsGetAll();
+		return Promise.all([
+			callMetricsGetAll(),
+			callMetricsGetUserInfo(),
+			callMetricsGetForecast(),
+			callMetricsGetDecision()
+		]);
 	},
 
 	/* ------------------------------------------------------------------ *
@@ -142,18 +165,189 @@ return view.extend({
 		rows.forEach(function(r) {
 			if (!r) return;
 			tbody.appendChild(E('tr', {}, [
-				E('td', { style: 'padding:3px 8px 3px 0;color:#666;white-space:nowrap;font-size:0.9em' }, [ r[0] ]),
-				E('td', { style: 'padding:3px 0;font-weight:500' }, [ r[1] ])
+				E('td', { style: 'padding:3px 8px 3px 0;color:#666;white-space:nowrap;font-size:0.9em;width:1%' }, [ r[0] ]),
+				E('td', { style: 'padding:3px 0;font-weight:500;max-width:0;overflow-wrap:anywhere' }, [ r[1] ])
 			]));
 		});
 		return E('table', { style: 'border-collapse:collapse;width:100%' }, [ tbody ]);
 	},
 
 	/* ------------------------------------------------------------------ *
+	 *  User info panel (VPS metrics DB stats)                             *
+	 * ------------------------------------------------------------------ */
+
+	_renderUserInfo: function(info) {
+		if (!info || !info.username) return null;
+
+		var fmtTs = function(ts) {
+			if (ts == null) return '—';
+			return new Date(ts * 1000).toLocaleString();
+		};
+
+		var rows = [
+			[ _('Username'),    info.username ],
+			[ _('VPS entries'), info.entry_count != null ? String(info.entry_count) : '—' ],
+			[ _('First seen'),  fmtTs(info.first_seen) ],
+			[ _('Last seen'),   fmtTs(info.last_seen) ],
+			[ _('Interfaces'),  (info.interfaces || []).join(', ') || '—' ],
+		];
+
+		var tbody = E('tbody');
+		rows.forEach(function(r) {
+			tbody.appendChild(E('tr', {}, [
+				E('td', { style: 'padding:3px 12px 3px 0;color:#666;white-space:nowrap;font-size:0.9em' }, [ r[0] ]),
+				E('td', { style: 'padding:3px 0;font-weight:500;font-size:0.9em' }, [ r[1] ])
+			]));
+		});
+
+		return E('div', {
+			style: 'border:1px solid #c5d8f0;border-radius:6px;padding:10px 14px;' +
+			       'margin-bottom:16px;background:#f0f6ff'
+		}, [
+			E('strong', { style: 'font-size:0.9em;color:#345' }, [ _('VPS Metrics — User Info') ]),
+			E('table', { style: 'border-collapse:collapse;margin-top:6px' }, [ tbody ])
+		]);
+	},
+
+	/* ------------------------------------------------------------------ *
+	 *  Forecast section (per interface)                                    *
+	 * ------------------------------------------------------------------ */
+
+	_levelColor: function(level) {
+		var m = { 'none': '#4caf50', 'low': '#8bc34a', 'moderate': '#ff9800',
+		          'high': '#f44336', 'severe': '#b71c1c' };
+		return m[level] || '#aaa';
+	},
+
+	_fmtEta: function(seconds) {
+		if (seconds == null) return null;
+		if (seconds === 0)   return _('now');
+		if (seconds < 60)    return seconds + 's';
+		return Math.round(seconds / 60) + 'min';
+	},
+
+	_renderForecastSection: function(fc) {
+		if (!fc) return null;
+		var self = this;
+
+		var metrics = [
+			{
+				key: 'congestion', label: _('Congestion'),
+				fmtVal: function(v) { return v != null ? v.toFixed(0) : '—'; }
+			},
+			{
+				key: 'loss', label: _('Loss'),
+				fmtVal: function(v) { return v != null ? v.toFixed(1) + '%' : '—'; }
+			},
+			{
+				key: 'jitter', label: _('Jitter'),
+				fmtVal: function(v) { return v != null ? v.toFixed(1) + ' ms' : '—'; }
+			},
+		];
+
+		var trendInfo = {
+			'rising':  { sym: '⬆', color: '#f44336' },
+			'falling': { sym: '⬇', color: '#4caf50' },
+			'stable':  { sym: '→', color: '#888' }
+		};
+
+		var confColors = { 'high': '#4caf50', 'medium': '#ff9800', 'low': '#f44336', 'none': '#999' };
+
+		var tbody = E('tbody');
+
+		tbody.appendChild(E('tr', {}, [
+			E('td', { style: 'font-size:0.75em;color:#888;padding:0 8px 4px 0' }, [ _('Metric') ]),
+			E('td', { style: 'font-size:0.75em;color:#888;padding:0 4px 4px;text-align:center' }, [ _('Now') ]),
+			E('td'),
+			E('td', { style: 'font-size:0.75em;color:#888;padding:0 4px 4px;text-align:center' }, [ _('5 min') ]),
+			E('td', { style: 'font-size:0.75em;color:#888;padding:0 4px 4px' }, [ _('ETA') ]),
+			E('td', { style: 'font-size:0.75em;color:#888;padding:0 0 4px 4px' }, [ _('Conf') ]),
+		]));
+
+		var hasData = false;
+		metrics.forEach(function(m) {
+			var d = fc[m.key];
+			if (!d) return;
+			hasData = true;
+
+			var curColor  = self._levelColor(d.current_level);
+			var predColor = self._levelColor(d.predicted_level);
+			var ti        = trendInfo[d.trend] || trendInfo['stable'];
+			var confColor = confColors[d.confidence] || '#999';
+
+			var eta = self._fmtEta(d.eta_severe_s) ||
+			          self._fmtEta(d.eta_high_s)   ||
+			          self._fmtEta(d.eta_moderate_s);
+
+			tbody.appendChild(E('tr', {}, [
+				E('td', { style: 'padding:3px 8px 3px 0;color:#555;white-space:nowrap;font-size:0.85em' }, [ m.label ]),
+				E('td', { style: 'padding:3px 4px;white-space:nowrap' }, [
+					E('span', {
+						style: 'padding:1px 5px;border-radius:3px;background:' + curColor +
+						       ';color:#fff;font-size:0.8em;font-weight:bold'
+					}, [ m.fmtVal(d.current) ])
+				]),
+				E('td', { style: 'padding:3px 2px;color:' + ti.color + ';text-align:center' }, [ ti.sym ]),
+				E('td', { style: 'padding:3px 4px;white-space:nowrap' }, [
+					E('span', {
+						style: 'padding:1px 5px;border-radius:3px;background:' + predColor +
+						       ';color:#fff;font-size:0.8em;font-weight:bold'
+					}, [ m.fmtVal(d.predicted) ])
+				]),
+				E('td', { style: 'padding:3px 4px;font-size:0.8em;color:#888;white-space:nowrap' }, [ eta || '—' ]),
+				E('td', { style: 'padding:3px 0 3px 4px' }, [
+					E('span', {
+						style: 'padding:1px 4px;border-radius:3px;border:1px solid ' + confColor +
+						       ';color:' + confColor + ';font-size:0.75em'
+					}, [ d.confidence || '—' ])
+				])
+			]));
+		});
+
+		if (!hasData) return null;
+
+		return E('div', { style: 'display:inline-block;padding:8px 12px;background:#f9f9f9;border-radius:4px' }, [
+			E('h4', { style: 'margin:0 0 4px;font-size:0.95em;color:#333' }, [ _('Forecast') ]),
+			E('table', { style: 'border-collapse:collapse' }, [ tbody ])
+		]);
+	},
+
+	/* ------------------------------------------------------------------ *
+	 *  Decision section (model-assigned routing weights)                  *
+	 * ------------------------------------------------------------------ */
+
+	_renderDecisionSection: function(decision, ifaceName) {
+		var self = this;
+		if (!decision || !decision.weights) return null;
+		var w = decision.weights[ifaceName];
+		var s = decision.scores ? decision.scores[ifaceName] : null;
+		if (w == null && s == null) return null;
+
+		var totalW = 0;
+		Object.keys(decision.weights).forEach(function(k) {
+			totalW += (decision.weights[k] || 0);
+		});
+		var share = (totalW > 0 && w != null) ? Math.round(w / totalW * 100) : null;
+
+		var rows = [];
+		if (w != null)
+			rows.push([ self._help(_('Weight'), _('Routing weight assigned by the decision model — higher means this interface is preferred')),
+				E('span', {}, [ String(w) + (share != null ? '  (' + share + '%)' : '') ]) ]);
+		if (s != null)
+			rows.push([ self._help(_('Score'), _('Model quality score (0–100) — higher means this interface is preferred')),
+				self._signalBar(Math.round(s)) ]);
+
+		return E('div', { style: 'display:inline-block;padding:8px 12px;background:#f9f9f9;border-radius:4px' }, [
+			E('h4', { style: 'margin:0 0 4px;font-size:0.95em;color:#333' }, [ _('Decision') ]),
+			self._kvTable(rows)
+		]);
+	},
+
+	/* ------------------------------------------------------------------ *
 	 *  Render one interface card                                           *
 	 * ------------------------------------------------------------------ */
 
-	_renderCard: function(iface) {
+	_renderCard: function(iface, forecast, decision) {
 		var self   = this;
 		var name   = iface.interface || '?';
 		var sig    = iface.signal      || {};
@@ -320,29 +514,44 @@ return view.extend({
 			]));
 		}
 
-		return E('div', {
-			style: 'border:1px solid #ddd;border-radius:6px;padding:12px;margin-bottom:16px;background:#fff'
-		}, [
+		var fcSection = self._renderForecastSection(forecast || null);
+		var dcSection = self._renderDecisionSection(decision || null, name);
+
+		var cardChildren = [
 			E('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:10px' }, [
 				E('strong', { style: 'font-size:1.05em' }, [ name ]),
 				E('span',   { style: 'font-size:0.8em;color:#888' }, [ _('Updated: ') + tsStr ])
 			]),
 			E('div', { style: 'display:flex;flex-wrap:wrap;gap:10px' }, cols)
-		]);
+		];
+
+		var extraSections = [];
+		if (fcSection) extraSections.push(fcSection);
+		if (dcSection) extraSections.push(dcSection);
+		if (extraSections.length)
+			cardChildren.push(E('div', { style: 'display:flex;flex-wrap:wrap;gap:10px;margin-top:10px' }, extraSections));
+
+		return E('div', {
+			style: 'border:1px solid #ddd;border-radius:6px;padding:12px;margin-bottom:16px;background:#fff'
+		}, cardChildren);
 	},
 
 	/* ------------------------------------------------------------------ *
 	 *  Build / update the full page                                        *
 	 * ------------------------------------------------------------------ */
 
-	_buildPage: function(data) {
+	_buildPage: function(data, userInfo, forecast, decision) {
 		var self       = this;
 		var ifaces     = (data && data.interfaces) ? data.interfaces : [];
 		var container  = document.getElementById('omr-metrics-container');
 		if (!container) return;
 
-		/* Remove existing cards */
+		/* Remove existing content */
 		while (container.firstChild) container.removeChild(container.firstChild);
+
+		/* User info panel */
+		var userPanel = self._renderUserInfo(userInfo || {});
+		if (userPanel) container.appendChild(userPanel);
 
 		if (!ifaces.length) {
 			container.appendChild(
@@ -355,12 +564,17 @@ return view.extend({
 		ifaces.forEach(function(iface) {
 			var n = (iface.interface || '').toLowerCase();
 			if (n === 'omrvpn' || n === 'owvpn') return;
-			container.appendChild(self._renderCard(iface));
+			var ifaceFc = (forecast && forecast[iface.interface]) || null;
+			container.appendChild(self._renderCard(iface, ifaceFc, decision || null));
 		});
 	},
 
-	render: function(data) {
-		var self = this;
+	render: function(results) {
+		var self     = this;
+		var data     = results[0] || {};
+		var userInfo = results[1] || {};
+		var forecast = results[2] || {};
+		var decision = results[3] || {};
 
 		var view = E('div', {}, [
 			E('h2', {}, [ _('WAN Metrics') ]),
@@ -370,11 +584,16 @@ return view.extend({
 			E('div', { id: 'omr-metrics-container' })
 		]);
 
-		self._buildPage(data);
+		self._buildPage(data, userInfo, forecast, decision);
 
 		poll.add(function() {
-			return callMetricsGetAll().then(function(d) {
-				self._buildPage(d);
+			return Promise.all([
+				callMetricsGetAll(),
+				callMetricsGetUserInfo(),
+				callMetricsGetForecast(),
+				callMetricsGetDecision()
+			]).then(function(r) {
+				self._buildPage(r[0] || {}, r[1] || {}, r[2] || {}, r[3] || {});
 			});
 		}, self.POLL_INTERVAL);
 
