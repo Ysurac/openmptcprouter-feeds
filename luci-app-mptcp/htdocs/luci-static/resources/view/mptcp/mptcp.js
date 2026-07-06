@@ -6,7 +6,7 @@
 'require tools.widgets as widgets';
 
 /*
- * Copyright (C) 2024-2025 Ycarus (Yannick Chabanois) <contact@openmptcprouter.com> for OpenMPTCProuter
+ * Copyright (C) 2024-2026 Ycarus (Yannick Chabanois) <contact@openmptcprouter.com> for OpenMPTCProuter
  * This is free software, licensed under the GNU General Public License v3.
  * See /LICENSE for more information
  */
@@ -276,30 +276,11 @@ return L.view.extend({
 	//o.value("handover", _("handover"));
 	o.default = "off";
 
-	o = s.option(form.Value, "multipath_weight", _("Weight"), _("Only for *weight schedulers/path managers (if any available)") + '<br />' + _("A weight >100 make it more attractive, a weight <100 make it less attractive. Max 256"));
+	o = s.option(form.Value, "multipath_weight", _("Weight"), _("Only used by *weight schedulers/path managers. Ignored if no weight scheduler is selected.") + '<br />' + _("A weight >100 make it more attractive, a weight <100 make it less attractive. Max 256"));
 	o.datatype = "uinteger";
 	o.rmempty = false;
 	o.default = 100;
 
-	return m.render().then(function(mapEl) {
-		function updateWeightVisibility() {
-			var schedulerEl = document.getElementById('widget.cbid.network.globals.mptcp_scheduler');
-			var val = schedulerEl ? schedulerEl.value : (uci.get('network', 'globals', 'mptcp_scheduler') || '');
-			var show = val.toLowerCase().indexOf('weight') > -1;
-
-			mapEl.querySelectorAll('[data-name="multipath_weight"]').forEach(function(el) {
-				var row = el.closest('.cbi-value') || el;
-				row.style.display = show ? '' : 'none';
-			});
-		}
-
-		var schedulerEl = document.getElementById('widget.cbid.network.globals.mptcp_scheduler');
-		if (schedulerEl) {
-			schedulerEl.addEventListener('change', updateWeightVisibility);
-		}
-		updateWeightVisibility();
-
-		return mapEl;
-	});
+	return m.render();
     }
 });
