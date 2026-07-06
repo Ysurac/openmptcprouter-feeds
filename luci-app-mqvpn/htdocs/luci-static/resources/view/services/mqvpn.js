@@ -74,10 +74,6 @@ return L.view.extend({
 		o.placeholder = 'auto';
 		o.rmempty = true;
 
-		o = s.option(form.Flag, 'manage_routes', _('Manage routes'));
-		o.description = _('Uncheck on router/embedded integrations to keep host routes untouched');
-		o.default = o.enabled;
-
 		o = s.option(form.Flag, 'kill_switch', _('Kill switch'));
 		o.description = _('Block all traffic if the VPN tunnel goes down');
 		o.default = o.disabled;
@@ -179,6 +175,47 @@ return L.view.extend({
 		o.description = _('Network interfaces to use as backup multipath paths');
 		o.rmempty = true;
 		o.depends('auto_wan', '0');
+
+		s = m.section(form.NamedSection, 'reorder', 'reorder', _('Reorder'));
+		s.addremove = false;
+
+		o = s.option(form.Flag, 'enabled', _('Enable reorder buffer'));
+		o.description = _('Enable reorder buffer for inner UDP (off by default)');
+		o.default = o.disabled;
+
+		o = s.option(form.Value, 'max_wait_ms', _('Max wait (ms)'));
+		o.description = _('Max hold time before releasing a gap (ms)');
+		o.datatype = 'uinteger';
+		o.placeholder = '30';
+		o.rmempty = true;
+		o.depends('enabled', '1');
+
+		o = s.option(form.Value, 'cap_packets', _('Cap packets'));
+		o.description = _('Max buffered datagrams per flow (power of two)');
+		o.datatype = 'uinteger';
+		o.placeholder = '1024';
+		o.rmempty = true;
+		o.depends('enabled', '1');
+
+		s = m.section(form.TypedSection, 'reorder_rule', _('Reorder rules'));
+		s.addremove = true;
+		s.anonymous = true;
+
+		o = s.option(form.ListValue, 'proto', _('Protocol'));
+		o.value('udp', _('UDP'));
+		o.value('tcp', _('TCP'));
+		o.rmempty = false;
+
+		o = s.option(form.Value, 'port', _('Port'));
+		o.datatype = 'port';
+		o.rmempty = false;
+
+		o = s.option(form.ListValue, 'profile', _('Profile'));
+		o.value('cellular_bond', _('Cellular Bond'));
+		o.value('fiber_lte',     _('Fiber + LTE'));
+		o.value('quic_bulk',     _('QUIC Bulk'));
+		o.value('default_udp',   _('Default UDP (pass-through)'));
+		o.rmempty = false;
 
 		return m.render();
 	}
