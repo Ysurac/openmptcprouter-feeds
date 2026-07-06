@@ -21,6 +21,7 @@ generate_config() {
 	local cipher
 	local control_port control_addr
 	local scheduler cc auto_wan reinjection_control reinjection_mode fec_enable fec_scheme
+	local reorder_enabled reorder_max_wait_ms reorder_cap_packets
 	local dns_csv
 
 	config_get_bool enable settings enable 0
@@ -87,6 +88,10 @@ generate_config() {
 	config_get_bool fec_enable multipath fec_enable 0
 	config_get fec_scheme multipath fec_scheme ''
 
+	config_get_bool reorder_enabled reorder enabled 0
+	config_get reorder_max_wait_ms reorder max_wait_ms ''
+	config_get reorder_cap_packets reorder cap_packets ''
+
 	dns_csv=''
 	config_list_foreach interface dns _append_dns_csv
 
@@ -99,7 +104,7 @@ generate_config() {
 	{
 		echo '[Server]'
 		echo "Address = $server_address"
-		echo "Insecure = $(_bool "$insecure")"
+		[ "$insecure" = "1" ] && echo "Insecure = true"
 		if [ -n "$cipher" ]; then
 			echo ''
 			echo '[TLS]'
@@ -144,6 +149,17 @@ generate_config() {
 			config_list_foreach multipath path _write_explicit_path ""
 			config_list_foreach multipath backup_path _write_explicit_path "backup"
 		fi
+
+		if [ "$reorder_enabled" = "1" ]; then
+			echo ''
+			echo '[Reorder]'
+			echo 'Enabled = on'
+			[ -n "$reorder_max_wait_ms" ] && echo "MaxWaitMs = $reorder_max_wait_ms"
+			[ -n "$reorder_cap_packets" ] && echo "CapPackets = $reorder_cap_packets"
+		fi
+
+		config_load mqvpn
+		config_foreach _write_reorder_rule reorder_rule
 	} > "$CONF"
 
 	return 0
@@ -191,6 +207,20 @@ _write_explicit_path() {
 	else
 		echo "Path = $ifname"
 	fi
+}
+
+_write_reorder_rule() {
+	local config="$1"
+	local proto port profile
+	config_get proto "$config" proto ''
+	config_get port "$config" port ''
+	config_get profile "$config" profile ''
+	[ -z "$proto" ] && return 0
+	echo ''
+	echo '[ReorderRule]'
+	echo "Proto = $proto"
+	[ -n "$port" ] && echo "Port = $port"
+	[ -n "$profile" ] && echo "Profile = $profile"
 }
 
 start_service() {
