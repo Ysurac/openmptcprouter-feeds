@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2025 Yannick Chabanois (Ycarus) for Stellar
+# Copyright (C) 2026 Yannick Chabanois (Ycarus)
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.

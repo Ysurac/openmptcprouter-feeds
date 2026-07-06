@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /* Based on Burst scheduler */
 /* Copyright (c) 2023, SUSE. */
-/* Copyright (c) 2025, Yannick Chabanois for Stellar */
+/* Copyright (c) 2025-2026, Yannick Chabanois */
 
 #include "mptcp_bpf.h"
 #include <bpf/bpf_tracing.h>
