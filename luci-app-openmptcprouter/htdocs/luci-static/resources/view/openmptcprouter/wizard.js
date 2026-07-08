@@ -421,13 +421,11 @@ return view.extend({
 		o = s.taboption('general', form.Flag, '_show_adv', _('Show advanced settings'));
 		o.description = _('Reveal proxy, VPN, IPv6 and country settings.');
 		o.default = '0';
-		o.rmempty = true;
 		o.cfgvalue = function() { return '0'; };
 		o.write = function() {};
 		o.remove = function() {};
 
 		o = s.taboption('general', form.ListValue, 'encryption', _('Encryption'));
-		o.rmempty = true;
 		o.value('none', _('None'));
 		o.value('aes-256-gcm', 'AES-256-GCM');
 		o.value('chacha20-ietf-poly1305', 'chacha20');
@@ -601,7 +599,6 @@ return view.extend({
 
 		if (has.mqvpn) {
 			o = s.taboption('vpn', form.ListValue, '_mqvpn_scheduler', _('MQVPN scheduler'));
-			o.rmempty = true;
 			o.depends({ '_show_adv': '1', 'vpn': 'mqvpn' });
 			o.value('wlb',    _('Weighted Load Balancing'));
 			o.value('minrtt', _('Minimum RTT'));
@@ -613,7 +610,6 @@ return view.extend({
 
 		// ── MPTCP over VPN ──
 		o = s.taboption('mptcpvpn', form.ListValue, 'mptcpovervpn', _('MPTCP over VPN'));
-		o.rmempty = true;
 		o.description = _('Use when MPTCP is blocked by your ISP.');
 		o.depends('_show_adv', '1');
 		if (has.openvpn) o.value('openvpn', 'OpenVPN');
@@ -622,7 +618,6 @@ return view.extend({
 
 		// ── Country ──
 		o = s.taboption('country', form.ListValue, 'country', _('Country'));
-		o.rmempty = true;
 		o.description = _('For China: accessible DNS and disable DNSSEC.');
 		o.depends('_show_adv', '1');
 		o.value('world', _('World'));
@@ -660,7 +655,6 @@ return view.extend({
 		o = s.option(form.Value, 'netmask', _('IPv4 netmask'));
 		o.datatype = 'ip4addr';
 		o.default = '255.255.255.0';
-		o.rmempty = true;
 		o.depends('proto', 'static');
 
 		/* ── Step 4: WAN ───────────────────────────────── */
@@ -720,7 +714,6 @@ return view.extend({
 
 		// Protocol — type=normal|bridge
 		o = s.option(form.ListValue, 'proto', _('Protocol'));
-		o.rmempty = true;
 		o.value('static', _('Static address'));
 		o.value('dhcp', _('DHCP'));
 		o.value('dhcpv6', _('DHCPv6'));
@@ -773,7 +766,6 @@ return view.extend({
 		o = s.option(form.Value, 'netmask', _('IPv4 netmask'));
 		o.datatype = 'ip4addr';
 		o.default = '255.255.255.0';
-		o.rmempty = true;
 		o.depends('proto', 'static');
 		o.depends('_type', 'macvlan');
 
@@ -850,7 +842,6 @@ return view.extend({
 
 		// Authentication — proto=qmi|pppoe only
 		o = s.option(form.ListValue, 'auth', _('Authentication Type'));
-		o.rmempty = true;
 		o.value('none', _('NONE'));
 		o.value('pap', _('PAP'));
 		o.value('chap', _('CHAP'));
@@ -884,7 +875,6 @@ return view.extend({
 		// ── Always visible WAN fields ──
 
 		o = s.option(form.ListValue, 'multipath', _('Multipath TCP'));
-		o.rmempty = true;
 		o.value('on', _('Enabled'));
 		o.value('off', _('Disabled'));
 		o.value('master', _('Master'));
@@ -911,7 +901,6 @@ return view.extend({
 
 		if (has.sqm) {
 			o = s.option(form.Flag, '_sqm_enabled', _('Enable SQM'));
-			o.rmempty = true;
 			o.default = '0';
 			o.cfgvalue = function(sid) { return uci.get('sqm', sid, 'enabled') || '0'; };
 			o.write = function(sid, val) { uci.set('sqm', sid, 'enabled', val); };
@@ -934,12 +923,10 @@ return view.extend({
 		o.remove = function(sid) { uci.set('openmptcprouter', sid, 'testspeed', '0'); };
 
 		o = s.option(form.Value, 'downloadspeed', _('Download speed (Kb/s)'));
-		o.rmempty = true;
 		o.datatype = 'uinteger';
 		o.default = '0';
 
 		o = s.option(form.Value, 'uploadspeed', _('Upload speed (Kb/s)'));
-		o.rmempty = true;
 		o.datatype = 'uinteger';
 		o.default = '0';
 
@@ -1011,9 +998,8 @@ return view.extend({
 					return callOMRWizardAddCompat(payload);
 				}).then(function(res) {
 					var status = (res && res.status) ? res.status : 'ok';
-					ui.addNotification(null, E('p', _('Saved through openmptcprouter ubus API (%s).').format(status)), 'info');
-					// Mark changes as applied in LuCI
-					return ui.changes.apply();
+					ui.addNotification(null, E('p', _('Saved through openmptcprouter ubus API (%s). Reloading...').format(status)), 'info');
+					setTimeout(function() { window.location.reload(); }, 3000);
 				}).catch(function(e) {
 					ui.addNotification(null, E('p', _('Error: ') + e.message), 'error');
 				}).finally(function() {
@@ -1066,10 +1052,7 @@ return view.extend({
 	},
 
 	handleSaveApply: function(ev) {
-		var self = this;
-		return this.handleSave(ev).then(function() {
-			return ui.changes.apply();
-		});
+		return this.handleSave(ev);
 	},
 
 	handleSave: function(ev) {
@@ -1198,17 +1181,10 @@ return view.extend({
 				var status = (res && res.status) ? res.status : 'ok';
 				
 				if (status === 'ok' || status === 'reload') {
-					ui.addNotification(null, 
-						E('p', _('Configuration saved successfully through OpenMPTCProuter API.')), 
+					ui.addNotification(null,
+						E('p', _('Configuration saved. Services are restarting, page will reload...')),
 						'info');
-					
-					if (status === 'ok') {
-						ui.addNotification(null,
-							E('p', _('System is restarting services. This may take a few moments...')),
-							'info');
-					}
-					
-					return ui.changes.apply();
+					setTimeout(function() { window.location.reload(); }, 3000);
 				} else {
 					throw new Error(_('API returned unexpected status: %s').format(status));
 				}
