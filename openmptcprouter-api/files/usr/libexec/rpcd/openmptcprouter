@@ -265,9 +265,18 @@ function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspee
 	if proto ~= "other" and proto ~= "" then
 		ucic:set("network",intf,"proto",proto)
 	end
-	ucic:set("network",intf,"ipaddr",ipaddr)
-	ucic:set("network",intf,"netmask",netmask)
-	ucic:set("network",intf,"gateway",gateway)
+	if ipaddr ~= "" then ucic:set("network",intf,"ipaddr",ipaddr) else ucic:delete("network",intf,"ipaddr") end
+	if netmask ~= "" then
+		ucic:set("network",intf,"netmask",netmask)
+	elseif proto == "static" then
+		-- rmempty strips default '255.255.255.0' from the wizard form; keep existing or apply default
+		if ucic:get("network",intf,"netmask") == nil then
+			ucic:set("network",intf,"netmask","255.255.255.0")
+		end
+	else
+		ucic:delete("network",intf,"netmask")
+	end
+	if gateway ~= "" then ucic:set("network",intf,"gateway",gateway) else ucic:delete("network",intf,"gateway") end
 
 	ucic:delete("openmptcprouter",intf,"lc")
 	ucic:save("openmptcprouter")
@@ -576,7 +585,7 @@ function set_glorytun(glorytun_key)
 end
 
 function set_dsvpn(dsvpn_key)
-	ucic:set("dsvpn","vpn","port","65011")
+	ucic:set("dsvpn","vpn","port","65401")
 	ucic:set("dsvpn","vpn","key",dsvpn_key)
 	ucic:save("dsvpn")
 	ucic:commit("dsvpn")
@@ -754,8 +763,9 @@ function wizard_add(args)
 		disableipv6(_as_string(args.disableipv6, "1"))
 	end
 
-	if _as_string(args.default_vpn, "") ~= "" then
-		default_vpn(_as_string(args.default_vpn, "glorytun_tcp"))
+	local new_vpn = _as_string(args.default_vpn, "")
+	if new_vpn ~= "" and new_vpn ~= (ucic:get("openmptcprouter","settings","vpn") or "") then
+		default_vpn(new_vpn)
 	end
 
 	if _as_string(args.shadowsocks_key, "") ~= "" then
