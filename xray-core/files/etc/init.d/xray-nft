@@ -903,6 +903,15 @@ add_policy_settings() {
 add_reverse_settings() {
 	local section="${1}_reverse"
 
+	# "legacy reverse" was removed in xray 24+; the replacement is VLESS Reverse Proxy.
+	# Skip silently to avoid a startup failure on new xray versions.
+	local _xmaj
+	_xmaj=$(xray version 2>/dev/null | head -1 | grep -oE 'Xray ([0-9]+)' | awk '{print $2}')
+	if [ "${_xmaj:-0}" -ge 24 ]; then
+		_info "Skipping legacy reverse section (not supported in xray ${_xmaj}+)"
+		return 0
+	fi
+
 	if ! reverse_section_validate "$section" ; then
 		_err "Invalid reverse config: $section, skip"
 		return 1
@@ -2373,7 +2382,8 @@ rules_up() {
 		for f in $xrrules_nft*.down; do
 			mv -f "$f" "$(echo "$f" | sed 's/.down//g')"
 		done
-		fw4 -q reload
+		fw4 -q restart
+		conntrack -F 2>/dev/null || true
 	elif [ ! -f "$xrrules_nft" ]; then
 		/etc/init.d/xray restart &
 	fi
