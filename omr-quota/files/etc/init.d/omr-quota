@@ -12,20 +12,31 @@ _validate_section() {
 		'rxquota:uinteger'  \
 		'ttquota:uinteger'  \
 		'interval:uinteger:30' \
-		'enabled:bool:0'
+		'enabled:bool:0' \
+		'exceedance_action:string:cut' \
+		'throttle_dl:uinteger:1' \
+		'throttle_ul:uinteger:1' \
+		'exceedance_scope:string:month_only' \
+		'reset_exceeded:bool:0'
 }
 
 _launch_quota() {
 	local txquota rxquota ttquota interval enabled interface
+	local exceedance_action throttle_dl throttle_ul exceedance_scope reset_exceeded
 	_validate_section "interface" "$1"
 	interface=$1
-	#interface=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
-	#[ -n "$(echo $interface | grep '@')" ] && interface=$(ifstatus "$1" | jsonfilter -q -e '@["device"]')
 
 	[ -z "$interface" ] && return
 
 	[ -z "$txquota" ] && [ -z "$rxquota" ] && [ -z "$ttquota" ] && return
 	[ "$enabled" = "0" ] && return
+
+	# Clear persistent exceeded state when explicitly requested
+	if [ "$reset_exceeded" = "1" ]; then
+		rm -f "/etc/omr-quota/state/${interface}.exceeded"
+		uci -q set "omr-quota.${interface}.reset_exceeded=0"
+		uci -q commit omr-quota
+	fi
 
 	[ "$(uci get vnstat.@vnstat[-1].interface | grep $interface)" = "" ] && {
 		uci -q batch <<-EOF
@@ -39,6 +50,10 @@ _launch_quota() {
 	procd_append_param env "OMR_QUOTA_RX=$rxquota"
 	procd_append_param env "OMR_QUOTA_TT=$ttquota"
 	procd_append_param env "OMR_QUOTA_INTERVAL=$interval"
+	procd_append_param env "OMR_QUOTA_ACTION=$exceedance_action"
+	procd_append_param env "OMR_QUOTA_THROTTLE_DL=$throttle_dl"
+	procd_append_param env "OMR_QUOTA_THROTTLE_UL=$throttle_ul"
+	procd_append_param env "OMR_QUOTA_SCOPE=$exceedance_scope"
 	procd_set_param respawn 0 10 0
 	procd_set_param stderr 1
 	procd_close_instance

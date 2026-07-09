@@ -79,6 +79,7 @@ _bypass_ip() {
 	local type=$2
 	local tcpudp=$3
 	[ -z "$type" ] && type="all"
+	[ "$type" = "default" ] && type="all"
 	[ -z "$tcpudp" ] && tcpudp="all"
 	valid_ip4=$( valid_subnet4 $ip)
 	valid_ip6=$( valid_subnet6 $ip)
@@ -117,20 +118,71 @@ _bypass_ip() {
 	fi
 }
 
+_dscp_chain_written=""
+_dscp_ipset_vals=""
+
+_dscp_ensure_chain() {
+	[ -n "$_dscp_chain_written" ] && return
+	_dscp_chain_written=1
+	cat >> /etc/firewall.omr-bypass <<-'EOF'
+		nft add chain inet fw4 omr_dscp_pre "{ type filter hook prerouting priority filter - 2; policy accept; }" 2>/dev/null
+	EOF
+}
+
+_dscp_ensure_ipset() {
+	local dscp=$1
+	[ -z "$dscp" ] && return
+	case "$_dscp_ipset_vals" in *" $dscp "*) return ;; esac
+	_dscp_ipset_vals="${_dscp_ipset_vals} $dscp "
+	_dscp_ensure_chain
+	uci -q batch <<-EOF
+		set firewall.omr_dscp_${dscp}_4=ipset
+		set firewall.omr_dscp_${dscp}_4.name="omr_dscp_${dscp}_4"
+		set firewall.omr_dscp_${dscp}_4.match='dest_net'
+		set firewall.omr_dscp_${dscp}_4.family='ipv4'
+		set firewall.omr_dscp_${dscp}_4.enabled='1'
+		set firewall.omr_dscp_${dscp}_6=ipset
+		set firewall.omr_dscp_${dscp}_6.name="omr_dscp_${dscp}_6"
+		set firewall.omr_dscp_${dscp}_6.match='dest_net'
+		set firewall.omr_dscp_${dscp}_6.family='ipv6'
+		set firewall.omr_dscp_${dscp}_6.enabled='1'
+	EOF
+	cat >> /etc/firewall.omr-bypass <<-EOF
+		nft add rule inet fw4 omr_dscp_pre ip daddr @omr_dscp_${dscp}_4 ip dscp set ${dscp} 2>/dev/null
+		nft add rule inet fw4 omr_dscp_pre ip6 daddr @omr_dscp_${dscp}_6 ip6 dscp set ${dscp} 2>/dev/null
+	EOF
+}
+
+_dscp_ip() {
+	local ip=$1
+	local dscp=$2
+	[ -z "$dscp" ] && return
+	local valid_ip4=$( valid_subnet4 "$ip")
+	local valid_ip6=$( valid_subnet6 "$ip")
+	_dscp_ensure_ipset "$dscp"
+	if [ "$valid_ip4" = "ok" ]; then
+		_uci_add_list_unique "firewall.omr_dscp_${dscp}_4.entry" "$ip"
+	elif [ "$valid_ip6" = "ok" ]; then
+		_uci_add_list_unique "firewall.omr_dscp_${dscp}_6.entry" "$ip"
+	fi
+}
+
 _bypass_domains() {
 	local domain
 	local intf
 	local enabled
+	local dscp
 	config_get domain $1 name
-	config_get intf $1 interface "all"
+	config_get intf $1 interface
 	config_get enabled $1 enabled
 	config_get noipv6 $1 noipv6 "1"
 	config_get family $1 family "ipv4ipv6"
 	config_get tcpudp $1 tcpudp "all"
-	#[ -z "$intf" ] && intf="all"
 	config_get vpn $1 vpn
+	config_get dscp $1 dscp
 	[ "$vpn" = "1" ] && intf="srv_vpn1"
-	#echo "bypass $domain $enabled $family $intf $vpn"
+	[ -z "$intf" ] && [ -z "$dscp" ] && return
+	[ "$intf" = "default" ] && intf="all"
 	[ "$enabled" = "0" ] && return
 	[ -z "$domain" ] && return
 	#[ -z "$family" ] && family="ipv4ipv6"
@@ -163,11 +215,11 @@ _bypass_domains() {
 			| grep $domain                `# grep, only keep wanted domain` \
 			| awk '{for (i=1;i<=NF;i++) if (!a[$i]++) printf("%s%s",$i,FS)}{printf("\n")}')" # deduplicate
 		for validdomain in $domainlist; do
-			_bypass_domain $validdomain $intf $family $noipv6 $tcpudp
+			_bypass_domain $validdomain $intf $family $noipv6 $tcpudp $dscp
 		done
 	else
 		#echo "_bypass_domain $domain $intf $family $noipv6"
-		_bypass_domain $domain $intf $family $noipv6 $tcpudp
+		_bypass_domain $domain $intf $family $noipv6 $tcpudp $dscp
 	fi
 }
 
@@ -177,8 +229,10 @@ _bypass_domain() {
 	local family=$3
 	local noipv6=$4
 	local tcpudp=$5
+	local dscp=$6
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
-	[ -z "$intf" ] && intf="all"
+	[ -z "$intf" ] && [ -z "$dscp" ] && return
+	[ "$intf" = "default" ] && intf="all"
 	[ -z "$noipv6" ] && noipv6="1"
 	[ -z "$tcpudp" ] && tcpudp="all"
 	if [ -n "$domain" ]; then
@@ -187,56 +241,85 @@ _bypass_domain() {
 		if [ -z "$RELOAD" ]; then
 			resolve=$(dig a +timeout=1 +tries=1 +nocmd +noall +answer $domain | grep -v CNAME | awk '{print $5}')
 			for ip in $resolve; do
-				_bypass_ip $ip $intf $tcpudp
+				[ -n "$intf" ] && _bypass_ip $ip $intf $tcpudp
+				[ -n "$dscp" ] && _dscp_ip $ip $dscp
 			done
 			if [ "$disableipv6" = "0" ]; then
 				resolve=$(dig aaaa +timeout=1 +tries=1 +nocmd +noall +answer $domain | grep AAAA | awk '{print $5}')
 				for ip in $resolve; do
-					_bypass_ip $ip $intf $tcpudp
+					[ -n "$intf" ] && _bypass_ip $ip $intf $tcpudp
+					[ -n "$dscp" ] && _dscp_ip $ip $dscp
 				done
 			fi
 		fi
 		# Determine which UCI ipset section to use for this intf.
 		# Domains are spread across omr_dst_bypass_${intf}, omr_dst_bypass_${intf}_d1,
 		# _d2, ... so each generates a short enough nftset= line in dnsmasq.conf.
-		local _dnsipset_slot _dnsipset_cnt _dnsipset_key
-		eval "_dnsipset_slot=\${_dnsipset_slot_${intf}:-0}"
-		eval "_dnsipset_cnt=\${_dnsipset_cnt_${intf}:-0}"
-		if [ "$_dnsipset_slot" = "0" ]; then
-			_dnsipset_key="omr_dst_bypass_${intf}"
-		else
-			_dnsipset_key="omr_dst_bypass_${intf}_d${_dnsipset_slot}"
-		fi
-		if ! uci -q get dhcp.${_dnsipset_key}.domain 2>/dev/null | grep -qw "$domain"; then
-			if [ "$_dnsipset_cnt" -ge "$_BYPASS_MAX_DOMAINS_PER_DNSIPSET" ]; then
-				_dnsipset_slot=$((_dnsipset_slot + 1))
+		if [ -n "$intf" ]; then
+			local _dnsipset_slot _dnsipset_cnt _dnsipset_key
+			eval "_dnsipset_slot=\${_dnsipset_slot_${intf}:-0}"
+			eval "_dnsipset_cnt=\${_dnsipset_cnt_${intf}:-0}"
+			if [ "$_dnsipset_slot" = "0" ]; then
+				_dnsipset_key="omr_dst_bypass_${intf}"
+			else
 				_dnsipset_key="omr_dst_bypass_${intf}_d${_dnsipset_slot}"
-				eval "_dnsipset_slot_${intf}=${_dnsipset_slot}"
-				eval "_dnsipset_cnt_${intf}=0"
-				_dnsipset_cnt=0
-				uci -q batch <<-EOIPSET
-					set dhcp.${_dnsipset_key}=ipset
-					set dhcp.${_dnsipset_key}.table='fw4'
-					set dhcp.${_dnsipset_key}.table_family='inet'
-					add_list dhcp.${_dnsipset_key}.name="omr_dst_bypass_${intf}_4"
-					add_list dhcp.${_dnsipset_key}.name="omr_dst_bypass_${intf}_6"
-				EOIPSET
 			fi
-			uci -q add_list dhcp.${_dnsipset_key}.domain="$domain"
-			eval "_dnsipset_cnt_${intf}=$((_dnsipset_cnt + 1))"
-			uci -q set firewall.omr_dst_bypass_${intf}_4.enabled='1'
-			add_domains="true"
-		fi
-		for zone in $(_get_firewall_zones); do
-			uci -q set firewall.omr_dst_bypass_${intf}_dstip_4_${zone}.enabled='1'
-			uci -q set firewall.omr_dst_bypass_${intf}_dstip_4_accept_${zone}.enabled='1'
-		done
-		if [ "$noipv6" != "1" ]; then
-			uci -q set firewall.omr_dst_bypass_${intf}_6.enabled='1'
+			if ! uci -q get dhcp.${_dnsipset_key}.domain 2>/dev/null | grep -qw "$domain"; then
+				if [ "$_dnsipset_cnt" -ge "$_BYPASS_MAX_DOMAINS_PER_DNSIPSET" ]; then
+					_dnsipset_slot=$((_dnsipset_slot + 1))
+					_dnsipset_key="omr_dst_bypass_${intf}_d${_dnsipset_slot}"
+					eval "_dnsipset_slot_${intf}=${_dnsipset_slot}"
+					eval "_dnsipset_cnt_${intf}=0"
+					_dnsipset_cnt=0
+					uci -q batch <<-EOIPSET
+						set dhcp.${_dnsipset_key}=ipset
+						set dhcp.${_dnsipset_key}.table='fw4'
+						set dhcp.${_dnsipset_key}.table_family='inet'
+						add_list dhcp.${_dnsipset_key}.name="omr_dst_bypass_${intf}_4"
+						add_list dhcp.${_dnsipset_key}.name="omr_dst_bypass_${intf}_6"
+					EOIPSET
+				fi
+				uci -q add_list dhcp.${_dnsipset_key}.domain="$domain"
+				eval "_dnsipset_cnt_${intf}=$((_dnsipset_cnt + 1))"
+				uci -q set firewall.omr_dst_bypass_${intf}_4.enabled='1'
+				add_domains="true"
+			fi
+			# Add DSCP nftset names to the existing intf dnsmasq ipset so dnsmasq populates them too
+			if [ -n "$dscp" ]; then
+				_dscp_ensure_ipset "$dscp"
+				uci -q get dhcp.${_dnsipset_key}.name 2>/dev/null | grep -qw "omr_dscp_${dscp}_4" || \
+					uci -q add_list dhcp.${_dnsipset_key}.name="omr_dscp_${dscp}_4"
+				if [ "$noipv6" != "1" ]; then
+					uci -q get dhcp.${_dnsipset_key}.name 2>/dev/null | grep -qw "omr_dscp_${dscp}_6" || \
+						uci -q add_list dhcp.${_dnsipset_key}.name="omr_dscp_${dscp}_6"
+				fi
+			fi
 			for zone in $(_get_firewall_zones); do
-				uci -q set firewall.omr_dst_bypass_${intf}_dstip_6_${zone}.enabled='1'
-				uci -q set firewall.omr_dst_bypass_${intf}_dstip_6_accept_${zone}.enabled='1'
+				uci -q set firewall.omr_dst_bypass_${intf}_dstip_4_${zone}.enabled='1'
+				uci -q set firewall.omr_dst_bypass_${intf}_dstip_4_accept_${zone}.enabled='1'
 			done
+			if [ "$noipv6" != "1" ]; then
+				uci -q set firewall.omr_dst_bypass_${intf}_6.enabled='1'
+				for zone in $(_get_firewall_zones); do
+					uci -q set firewall.omr_dst_bypass_${intf}_dstip_6_${zone}.enabled='1'
+					uci -q set firewall.omr_dst_bypass_${intf}_dstip_6_accept_${zone}.enabled='1'
+				done
+			fi
+		elif [ -n "$dscp" ]; then
+			# DSCP-only domain: create a dedicated dnsmasq ipset for the DSCP nftset
+			_dscp_ensure_ipset "$dscp"
+			local _dscp_ipset_key="omr_dscp_${dscp}"
+			if ! uci -q get dhcp.${_dscp_ipset_key}.domain 2>/dev/null | grep -qw "$domain"; then
+				uci -q batch <<-EOIPSET
+					set dhcp.${_dscp_ipset_key}=ipset
+					set dhcp.${_dscp_ipset_key}.table='fw4'
+					set dhcp.${_dscp_ipset_key}.table_family='inet'
+					add_list dhcp.${_dscp_ipset_key}.name="omr_dscp_${dscp}_4"
+					add_list dhcp.${_dscp_ipset_key}.name="omr_dscp_${dscp}_6"
+				EOIPSET
+				uci -q add_list dhcp.${_dscp_ipset_key}.domain="$domain"
+				add_domains="true"
+			fi
 		fi
 		if ! uci -q get dhcp.@dnsmasq[0].noipv6 | grep -qF "/$domain/" && [ "$noipv6" = "1" ]; then
 			uci -q add_list dhcp.@dnsmasq[0].noipv6="$domain"
@@ -249,53 +332,86 @@ _bypass_mac() {
 	local mac
 	local intf
 	local enabled
+	local dscp
 	config_get mac $1 mac
 	config_get intf $1 interface
 	config_get enabled $1 enabled
+	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
+	[ -z "$intf" ] && [ -z "$dscp" ] && return
 	local intfid="$(uci -q get omr-bypass.$intf.id)"
 
-	[ -z "$intf" ] && intf="all"
+	[ "$intf" = "default" ] && intf="all"
 	[ -z "$mac" ] && return
 	if [ "$disableipv6" = "0" ]; then
 		protocol="4 6"
 	else
 		protocol="4"
 	fi
-	for zone in $(_get_firewall_zones); do
-		for ipv46 in $protocol; do
-			uci -q set firewall.omr_dst_bypass_${intf}_mac_${ipv46}_${zone}.enabled='1'
-			_uci_add_list_unique firewall.omr_dst_bypass_${intf}_mac_${ipv46}_${zone}.src_mac "$mac"
+	if [ -n "$intf" ]; then
+		for zone in $(_get_firewall_zones); do
+			for ipv46 in $protocol; do
+				uci -q set firewall.omr_dst_bypass_${intf}_mac_${ipv46}_${zone}.enabled='1'
+				_uci_add_list_unique firewall.omr_dst_bypass_${intf}_mac_${ipv46}_${zone}.src_mac "$mac"
+			done
 		done
-	done
+	fi
+	if [ -n "$dscp" ]; then
+		_dscp_ensure_chain
+		for mac_addr in $mac; do
+			cat >> /etc/firewall.omr-bypass <<-EOF
+				nft add rule inet fw4 omr_dscp_pre ether saddr $mac_addr ip dscp set $dscp 2>/dev/null
+				nft add rule inet fw4 omr_dscp_pre ether saddr $mac_addr ip6 dscp set $dscp 2>/dev/null
+			EOF
+		done
+	fi
 }
 
 _bypass_lan_ip() {
 	local ip
 	local intf
 	local enabled
+	local dscp
 	config_get ip $1 ip
 	config_get intf $1 interface
 	config_get enabled $1 enabled
+	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
 	#[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
+	[ -z "$intf" ] && [ -z "$dscp" ] && return
 	local intfid="$(uci -q get omr-bypass.$intf.id)"
 
-	[ -z "$intf" ] && intf="all"
+	[ "$intf" = "default" ] && intf="all"
 	[ -z "$ip" ] && return
-	for zone in $(_get_firewall_zones); do
+	if [ -n "$intf" ]; then
+		for zone in $(_get_firewall_zones); do
+			valid_ip4=$(valid_subnet4 $ip)
+			valid_ip6=$(valid_subnet6 $ip)
+			if [ "$valid_ip4" = "ok" ]; then
+				uci -q set firewall.omr_dst_bypass_${intf}_srcip_4_${zone}.enabled='1'
+				_uci_add_list_unique firewall.omr_dst_bypass_${intf}_srcip_4_${zone}.src_ip "$ip"
+			elif [ "$valid_ip6" = "ok" ] && [ "$disableipv6" = "0" ]; then
+				uci -q set firewall.omr_dst_bypass_${intf}_srcip_6_${zone}.enabled='1'
+				_uci_add_list_unique firewall.omr_dst_bypass_${intf}_srcip_6_${zone}.src_ip "$ip"
+			fi
+		done
+	fi
+	if [ -n "$dscp" ]; then
+		_dscp_ensure_chain
 		valid_ip4=$(valid_subnet4 $ip)
 		valid_ip6=$(valid_subnet6 $ip)
 		if [ "$valid_ip4" = "ok" ]; then
-			uci -q set firewall.omr_dst_bypass_${intf}_srcip_4_${zone}.enabled='1'
-			_uci_add_list_unique firewall.omr_dst_bypass_${intf}_srcip_4_${zone}.src_ip "$ip"
+			cat >> /etc/firewall.omr-bypass <<-EOF
+				nft add rule inet fw4 omr_dscp_pre ip saddr $ip ip dscp set $dscp 2>/dev/null
+			EOF
 		elif [ "$valid_ip6" = "ok" ] && [ "$disableipv6" = "0" ]; then
-			uci -q set firewall.omr_dst_bypass_${intf}_srcip_6_${zone}.enabled='1'
-			_uci_add_list_unique firewall.omr_dst_bypass_${intf}_srcip_6_${zone}.src_ip "$ip"
+			cat >> /etc/firewall.omr-bypass <<-EOF
+				nft add rule inet fw4 omr_dscp_pre ip6 saddr $ip ip6 dscp set $dscp 2>/dev/null
+			EOF
 		fi
-	done
+	fi
 }
 
 _bypass_dest_port() {
@@ -303,16 +419,19 @@ _bypass_dest_port() {
 	local enabled
 	local dport
 	local proto
+	local dscp
 	config_get dport $1 dport
 	config_get proto $1 proto
 	config_get intf $1 interface
 	config_get enabled $1 enabled
+	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
 	#[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
+	[ -z "$intf" ] && [ -z "$dscp" ] && return
 	local intfid="$(uci -q get omr-bypass.$intf.id)"
 
-	[ -z "$intf" ] && intf="all"
+	[ "$intf" = "default" ] && intf="all"
 	[ -z "$dport" ] && return
 	dport=$(echo "$dport" | sed 's/:/-/')
 	[ -z "$proto" ] && return
@@ -322,20 +441,36 @@ _bypass_dest_port() {
 		protocol="4"
 	fi
 
-	for zone in $(_get_firewall_zones); do
-		if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
-			for ipv46 in $protocol; do
-				uci -q set firewall.omr_dst_bypass_${intf}_dstport_tcp_${ipv46}_${zone}.enabled='1'
-				_uci_add_list_unique firewall.omr_dst_bypass_${intf}_dstport_tcp_${ipv46}_${zone}.dest_port "$dport"
-			done
-		fi
-		if [ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ]; then
-			for ipv46 in $protocol; do
-				uci -q set firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}_${zone}.enabled='1'
-				_uci_add_list_unique firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}_${zone}.dest_port "$dport"
-			done
-		fi
-	done
+	if [ -n "$intf" ]; then
+		for zone in $(_get_firewall_zones); do
+			if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
+				for ipv46 in $protocol; do
+					uci -q set firewall.omr_dst_bypass_${intf}_dstport_tcp_${ipv46}_${zone}.enabled='1'
+					_uci_add_list_unique firewall.omr_dst_bypass_${intf}_dstport_tcp_${ipv46}_${zone}.dest_port "$dport"
+				done
+			fi
+			if [ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ]; then
+				for ipv46 in $protocol; do
+					uci -q set firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}_${zone}.enabled='1'
+					_uci_add_list_unique firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}_${zone}.dest_port "$dport"
+				done
+			fi
+		done
+	fi
+	if [ -n "$dscp" ]; then
+		_dscp_ensure_chain
+		local _nft_proto=""
+		[ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ] && _nft_proto="${_nft_proto}tcp "
+		[ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ] && _nft_proto="${_nft_proto}udp "
+		for _p in $_nft_proto; do
+			cat >> /etc/firewall.omr-bypass <<-EOF
+				nft add rule inet fw4 omr_dscp_pre ip ${_p} dport $dport ip dscp set $dscp 2>/dev/null
+			EOF
+			[ "$disableipv6" = "0" ] && cat >> /etc/firewall.omr-bypass <<-EOF
+				nft add rule inet fw4 omr_dscp_pre ip6 ${_p} dport $dport ip6 dscp set $dscp 2>/dev/null
+			EOF
+		done
+	fi
 }
 
 _bypass_src_port() {
@@ -343,16 +478,19 @@ _bypass_src_port() {
 	local enabled
 	local sport
 	local proto
+	local dscp
 	config_get sport $1 sport
 	config_get proto $1 proto
 	config_get intf $1 interface
 	config_get enabled $1 enabled
+	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
 	#[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
+	[ -z "$intf" ] && [ -z "$dscp" ] && return
 	local intfid="$(uci -q get omr-bypass.$intf.id)"
 
-	[ -z "$intf" ] && intf="all"
+	[ "$intf" = "default" ] && intf="all"
 	[ -z "$sport" ] && return
 	sport=$(echo "$sport" | sed 's/:/-/')
 	[ -z "$proto" ] && return
@@ -362,20 +500,36 @@ _bypass_src_port() {
 		protocol="4"
 	fi
 
-	for zone in $(_get_firewall_zones); do
-		if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
-			for ipv46 in $protocol; do
-				uci -q set firewall.omr_dst_bypass_${intf}_srcport_tcp_${ipv46}_${zone}.enabled='1'
-				_uci_add_list_unique firewall.omr_dst_bypass_${intf}_srcport_tcp_${ipv46}_${zone}.src_port "$sport"
-			done
-		fi
-		if [ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ]; then
-			for ipv46 in $protocol; do
-				uci -q set firewall.omr_dst_bypass_${intf}_srcport_udp_${ipv46}_${zone}.enabled='1'
-				_uci_add_list_unique firewall.omr_dst_bypass_${intf}_srcport_udp_${ipv46}_${zone}.src_port "$sport"
-			done
-		fi
-	done
+	if [ -n "$intf" ]; then
+		for zone in $(_get_firewall_zones); do
+			if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
+				for ipv46 in $protocol; do
+					uci -q set firewall.omr_dst_bypass_${intf}_srcport_tcp_${ipv46}_${zone}.enabled='1'
+					_uci_add_list_unique firewall.omr_dst_bypass_${intf}_srcport_tcp_${ipv46}_${zone}.src_port "$sport"
+				done
+			fi
+			if [ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ]; then
+				for ipv46 in $protocol; do
+					uci -q set firewall.omr_dst_bypass_${intf}_srcport_udp_${ipv46}_${zone}.enabled='1'
+					_uci_add_list_unique firewall.omr_dst_bypass_${intf}_srcport_udp_${ipv46}_${zone}.src_port "$sport"
+				done
+			fi
+		done
+	fi
+	if [ -n "$dscp" ]; then
+		_dscp_ensure_chain
+		local _nft_proto=""
+		[ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ] && _nft_proto="${_nft_proto}tcp "
+		[ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ] && _nft_proto="${_nft_proto}udp "
+		for _p in $_nft_proto; do
+			cat >> /etc/firewall.omr-bypass <<-EOF
+				nft add rule inet fw4 omr_dscp_pre ip ${_p} sport $sport ip dscp set $dscp 2>/dev/null
+			EOF
+			[ "$disableipv6" = "0" ] && cat >> /etc/firewall.omr-bypass <<-EOF
+				nft add rule inet fw4 omr_dscp_pre ip6 ${_p} sport $sport ip6 dscp set $dscp 2>/dev/null
+			EOF
+		done
+	fi
 }
 
 _bypass_proto() {
@@ -398,7 +552,8 @@ _bypass_proto() {
 	#[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
 	local intfid="$(uci -q get omr-bypass.$intf.id)"
 
-	[ -z "$intf" ] && intf="all"
+	[ -z "$intf" ] && return
+	[ "$intf" = "default" ] && intf="all"
 	[ -z "$proto" ] && return
 	if [ "$_omr_ndpi" != "0" ] && [ "$ndpi" != "0" ] && [ "$vpn" != "1" ]; then
 		if [ "$intf" = "all" ]; then
@@ -658,8 +813,9 @@ _bypass_proto_without_ndpi() {
 	[ "$vpn" = "1" ] && intf="srv_vpn1"
 	[ "$enabled" = "0" ] && return
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
+	[ -z "$intf" ] && return
+	[ "$intf" = "default" ] && intf="all"
 	local intfid="$(uci -q get omr-bypass.$intf.id)"
-	[ -z "$intf" ] && intf="all"
 	[ "$intf" = "all" ] && intfid=""
 	_bypass_proto_core "$proto" "$intf" "$intfid" "$vpn" "$tcpudp" "$ndpi" "$noipv6" "$family"
 }
@@ -678,8 +834,9 @@ _bypass_category() {
 	[ -z "$category" ] && return
 	[ "$vpn" = "1" ] && intf="srv_vpn1"
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
+	[ -z "$intf" ] && return
+	[ "$intf" = "default" ] && intf="all"
 	intfid="$(uci -q get omr-bypass.$intf.id)"
-	[ -z "$intf" ] && intf="all"
 	[ "$intf" = "all" ] && intfid=""
 
 	local proto
@@ -810,13 +967,13 @@ _intf_rule_xray_rules() {
 	proto=$1
 	[ -z "$proto" ] && proto="tcp udp"
 	cat >> /etc/firewall.omr-bypass <<-EOF
-		nft insert rule inet fw4 xr_rules_pre_tcp ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null
-		nft insert rule inet fw4 xr_rules_pre_tcp meta mark 0x4539${count} accept 2>&1 >/dev/null
+		nft insert rule inet fw4 xr_rules_local_out ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null
+		nft insert rule inet fw4 xr_rules_local_out meta mark 0x4539${count} accept 2>&1 >/dev/null
 	EOF
 	if [ "$disableipv6" = "0" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft insert rule inet fw4 xr_rules_pre_tcp ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null
-			nft insert rule inet fw4 xr_rules_pre_tcp meta mark 0x6539${count} accept 2>&1 >/dev/null
+			nft insert rule inet fw4 xr_rules_local_out ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null
+			nft insert rule inet fw4 xr_rules_local_out meta mark 0x6539${count} accept 2>&1 >/dev/null
 		EOF
 	fi
 	if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
@@ -1151,25 +1308,37 @@ _bypass_ip_set() {
 	local ip
 	local interface
 	local enabled
+	local dscp
 	config_get ip $1 ip
 	config_get interface $1 interface
 	config_get enabled $1 enabled
+	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
-	_bypass_ip $ip $interface
+	[ -z "$interface" ] && [ -z "$dscp" ] && return
+	[ "$interface" = "default" ] && interface="all"
+	for ip in $ip; do
+		[ -n "$interface" ] && _bypass_ip $ip $interface
+		[ -n "$dscp" ] && _dscp_ip $ip $dscp
+	done
 }
 
 _bypass_asn() {
 	local asn
 	local interface
 	local enabled
+	local dscp
 	config_get asn $1 asn
 	config_get interface $1 interface
 	config_get enabled $1 enabled
+	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
+	[ -z "$interface" ] && [ -z "$dscp" ] && return
+	[ "$interface" = "default" ] && interface="all"
 	local asnips
 	asnips=$(curl --max-time 4 -s -k https://stat.ripe.net/data/announced-prefixes/data.json?resource=${asn} | jsonfilter -q -e \'@.data.prefixes.*.prefix\')
 	for ip in $asnips; do
-		_bypass_ip $ip $interface
+		[ -n "$interface" ] && _bypass_ip $ip $interface
+		[ -n "$dscp" ] && _dscp_ip $ip $dscp
 	done
 }
 
@@ -1229,7 +1398,7 @@ _xray_rules_config() {
 
 _delete_dhcp_ipset() {
 	case "$1" in
-	*omr_dst_bypass*)
+	*omr_dst_bypass*|*omr_dscp*)
 		_dhcp_delete_batch="${_dhcp_delete_batch}delete dhcp.$1
 "
 		;;
@@ -1238,7 +1407,7 @@ _delete_dhcp_ipset() {
 
 _delete_firewall_rules() {
 	case "$1" in
-	*omr_dst_bypass*|*omr6_dst_bypass*|*bypass_*|*bypass6_*)
+	*omr_dst_bypass*|*omr6_dst_bypass*|*bypass_*|*bypass6_*|*omr_dscp*)
 		_fw_delete_batch="${_fw_delete_batch}delete firewall.$1
 "
 		;;
@@ -1259,7 +1428,7 @@ _bypass_proto_ndpid_list=""
 _bypass_proto_collect_ndpid() {
 	local proto intf enabled intfid tcpudp ndpi
 	config_get proto $1 proto
-	config_get intf $1 interface "all"
+	config_get intf $1 interface
 	config_get enabled $1 enabled
 	config_get tcpudp $1 tcpudp "all"
 	config_get ndpi $1 ndpi "1"
@@ -1267,7 +1436,9 @@ _bypass_proto_collect_ndpid() {
 	[ "$ndpi" = "0" ] && return
 	[ -z "$proto" ] && return
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
+	[ -z "$intf" ] && return
 	[ "$intf" = "none" ] && return
+	[ "$intf" = "default" ] && intf="all"
 	intfid=$(uci -q get omr-bypass.$intf.id)
 	[ "$intf" = "all" ] && intfid=""
 
@@ -1383,6 +1554,8 @@ start_service() {
 
 
 	add_domains="false"
+	_dscp_chain_written=""
+	_dscp_ipset_vals=""
 	[ -d /proc/net/xt_ndpi ] && {
 		config_load omr-bypass
 		config_foreach _add_proto proto
@@ -1499,6 +1672,9 @@ start_service() {
 	if [ -n "$(uci -q changes firewall)" ] || [ "$fwfilechangemd5" != "$fwfilechangemd5check" ] || [ "${_ndpid_fw_needed:-0}" = "1" ]; then
 		uci -q commit firewall
 		[ -z "$RELOAD" ] && {
+			for _proxy_nft_down in /etc/nftables.d/90-proxy-*-rules.nft.down; do
+				[ -f "$_proxy_nft_down" ] && mv -f "$_proxy_nft_down" "${_proxy_nft_down%.down}"
+			done
 			fw4 restart || logger -t "omr-bypass" "ERROR: fw4 restart failed"
 			sleep 1
 		}

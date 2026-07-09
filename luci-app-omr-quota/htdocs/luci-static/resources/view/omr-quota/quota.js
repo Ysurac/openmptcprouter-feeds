@@ -20,7 +20,7 @@ return view.extend({
 		var m, s, o;
 
 		m = new form.Map('omr-quota', _('Monthly Quota'),
-			_('Set monthly quota, when quota is reached interface state is set to down'));
+			_('Set monthly quota per interface. When the quota is reached the interface can be cut or throttled for the remainder of the month.'));
 
 		s = m.section(form.TypedSection, 'interface', _('Interfaces'));
 		s.addremove = true;
@@ -55,21 +55,50 @@ return view.extend({
 		o = s.option(form.Flag, 'enabled', _('Enable'));
 		o.rmempty = false;
 
-		o = s.option(form.Value, 'txquota', _('TX quota (kbit)'));
+		o = s.option(form.Value, 'txquota', _('TX quota (KiB)'));
 		o.datatype = 'uinteger';
 		o.placeholder = '0';
 
-		o = s.option(form.Value, 'rxquota', _('RX quota (kbit)'));
+		o = s.option(form.Value, 'rxquota', _('RX quota (KiB)'));
 		o.datatype = 'uinteger';
 		o.placeholder = '0';
 
-		o = s.option(form.Value, 'ttquota', _('TX+RX quota (kbit)'));
+		o = s.option(form.Value, 'ttquota', _('TX+RX quota (KiB)'));
 		o.datatype = 'uinteger';
 		o.placeholder = '0';
 
-		o = s.option(form.Value, 'interval', _('Interval between check (s)'));
+		o = s.option(form.Value, 'interval', _('Interval between checks (s)'));
 		o.datatype = 'uinteger';
 		o.placeholder = '60';
+
+		o = s.option(form.ListValue, 'exceedance_action', _('Action when quota is reached'));
+		o.value('cut',      _('Cut — bring interface down for the rest of the month'));
+		o.value('throttle', _('Throttle — limit interface bandwidth'));
+		o.default = 'cut';
+		o.rmempty = false;
+
+		o = s.option(form.Value, 'throttle_dl', _('Download limit (Mbps)'),
+			_('Maximum download speed applied to the interface when quota is exceeded'));
+		o.datatype = 'uinteger';
+		o.placeholder = '1';
+		o.depends('exceedance_action', 'throttle');
+
+		o = s.option(form.Value, 'throttle_ul', _('Upload limit (Mbps)'),
+			_('Maximum upload speed applied to the interface when quota is exceeded'));
+		o.datatype = 'uinteger';
+		o.placeholder = '1';
+		o.depends('exceedance_action', 'throttle');
+
+		o = s.option(form.ListValue, 'exceedance_scope', _('Enforcement scope'));
+		o.value('month_only', _('This month only — auto-recover when the month resets'));
+		o.value('persistent', _('All future months — keep cut/throttled until manually reset'));
+		o.default = 'month_only';
+		o.rmempty = false;
+
+		o = s.option(form.Flag, 'reset_exceeded', _('Reset exceeded state'),
+			_('Tick and save to clear the persistent exceeded flag — the interface recovers on the next check interval'));
+		o.depends('exceedance_scope', 'persistent');
+		o.rmempty = true;
 
 		return m.render();
 	}

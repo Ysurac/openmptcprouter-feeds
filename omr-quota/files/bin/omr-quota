@@ -8,6 +8,40 @@
 OMR_QUOTA_INTERFACE="$1"
 shift
 
+_PERSIST_DIR="${OMR_QUOTA_STATE_DIR:-/etc/omr-quota/state}"
+_TSTATE_DIR="${OMR_QUOTA_THROTTLE_STATE_DIR:-/tmp/omr-quota}"
+
+_apply_throttle() {
+	local dev="$1"
+	local dl_kbit=$(( ${OMR_QUOTA_THROTTLE_DL:-1} * 1000 ))
+	local ul_kbit=$(( ${OMR_QUOTA_THROTTLE_UL:-1} * 1000 ))
+	local ifb_dev="ifb-$(echo "$dev" | tr '/' '-')"
+	modprobe ifb 2>/dev/null || true
+	if ! ip link show "$ifb_dev" > /dev/null 2>&1; then
+		ip link add name "$ifb_dev" type ifb
+	fi
+	ip link set "$ifb_dev" up
+	tc qdisc replace dev "$dev" root tbf rate "${ul_kbit}kbit" burst 32768 latency 400ms
+	tc qdisc add dev "$dev" handle ffff: ingress 2>/dev/null || true
+	tc filter del dev "$dev" parent ffff: 2>/dev/null || true
+	tc filter add dev "$dev" parent ffff: protocol all u32 match u32 0 0 \
+		action mirred egress redirect dev "$ifb_dev"
+	tc qdisc replace dev "$ifb_dev" root tbf rate "${dl_kbit}kbit" burst 32768 latency 400ms
+}
+
+_remove_throttle() {
+	local dev="$1"
+	local ifb_dev="ifb-$(echo "$dev" | tr '/' '-')"
+	tc qdisc del dev "$dev" root 2>/dev/null || true
+	tc qdisc del dev "$dev" ingress 2>/dev/null || true
+	if ip link show "$ifb_dev" > /dev/null 2>&1; then
+		tc qdisc del dev "$ifb_dev" root 2>/dev/null || true
+		ip link del "$ifb_dev" 2>/dev/null || true
+	fi
+}
+
+_prev_exceeded=-1
+
 # main loop
 while true; do
 	OMR_QUOTA_REAL_INTERFACE="$(ifstatus $OMR_QUOTA_INTERFACE | jsonfilter -e '@.l3_device')"
@@ -19,24 +53,61 @@ while true; do
 	tx=$(( ${tx_bits:-0} / 1024 ))
 	tt=$((rx + tx))
 	iface_up="$(ifstatus $OMR_QUOTA_INTERFACE | jsonfilter -e '@.up')"
+
+	exceeded=0
+	reason=""
 	if [ -n "$OMR_QUOTA_RX" ] && [ "$OMR_QUOTA_RX" -gt 0 ] && [ -n "$rx" ] && [ "$OMR_QUOTA_RX" -le "$rx" ]; then
-		if [ "$iface_up" = "true" ]; then
-			logger -t "OMR-QUOTA" "Set interface $OMR_QUOTA_INTERFACE down, RX quota reached"
-			ifdown $OMR_QUOTA_INTERFACE
-		fi
+		exceeded=1; reason="RX quota"
 	elif [ -n "$OMR_QUOTA_TX" ] && [ "$OMR_QUOTA_TX" -gt 0 ] && [ -n "$tx" ] && [ "$OMR_QUOTA_TX" -le "$tx" ]; then
-		if [ "$iface_up" = "true" ]; then
-			logger -t "OMR-QUOTA" "Set interface $OMR_QUOTA_INTERFACE down, TX quota reached"
-			ifdown $OMR_QUOTA_INTERFACE
-		fi
+		exceeded=1; reason="TX quota"
 	elif [ -n "$OMR_QUOTA_TT" ] && [ "$OMR_QUOTA_TT" -gt 0 ] && [ -n "$tt" ] && [ "$OMR_QUOTA_TT" -le "$tt" ]; then
-		if [ "$iface_up" = "true" ]; then
-			logger -t "OMR-QUOTA" "Set interface $OMR_QUOTA_INTERFACE down, RX+TX quota reached"
-			ifdown $OMR_QUOTA_INTERFACE
-		fi
-	elif [ "$iface_up" = "false" ]; then
-		logger -t "OMR-QUOTA" "Set interface $OMR_QUOTA_INTERFACE up"
-		ifup $OMR_QUOTA_INTERFACE
+		exceeded=1; reason="RX+TX quota"
 	fi
+
+	# For persistent scope: once exceeded, stay exceeded even across month boundaries
+	_persist_file="${_PERSIST_DIR}/${OMR_QUOTA_INTERFACE}.exceeded"
+	if [ "${OMR_QUOTA_SCOPE:-month_only}" = "persistent" ] && [ -f "$_persist_file" ]; then
+		exceeded=1
+		[ -z "$reason" ] && reason="persistent exceeded state"
+	fi
+
+	_tstate_file="${_TSTATE_DIR}/${OMR_QUOTA_INTERFACE}.throttled"
+
+	if [ "$exceeded" = "1" ]; then
+		# Record persistent exceeded state on first detection
+		if [ "${OMR_QUOTA_SCOPE:-month_only}" = "persistent" ] && [ ! -f "$_persist_file" ]; then
+			mkdir -p "$_PERSIST_DIR"
+			touch "$_persist_file"
+		fi
+
+		if [ "${OMR_QUOTA_ACTION:-cut}" = "throttle" ]; then
+			[ "$_prev_exceeded" != "1" ] && \
+				logger -t "OMR-QUOTA" "Throttling $OMR_QUOTA_INTERFACE to ${OMR_QUOTA_THROTTLE_DL:-1}/${OMR_QUOTA_THROTTLE_UL:-1} Mbps: $reason reached"
+			mkdir -p "$_TSTATE_DIR"
+			touch "$_tstate_file"
+			_apply_throttle "$OMR_QUOTA_REAL_INTERFACE"
+			# Keep the interface up while throttled
+			[ "$iface_up" = "false" ] && ifup $OMR_QUOTA_INTERFACE
+		else
+			# cut: bring the interface down
+			if [ "$iface_up" = "true" ]; then
+				logger -t "OMR-QUOTA" "Set interface $OMR_QUOTA_INTERFACE down: $reason reached"
+				ifdown $OMR_QUOTA_INTERFACE
+			fi
+		fi
+	else
+		# Quota not exceeded — remove any throttle that was active
+		if [ -f "$_tstate_file" ]; then
+			logger -t "OMR-QUOTA" "Removing throttle from $OMR_QUOTA_INTERFACE"
+			_remove_throttle "$OMR_QUOTA_REAL_INTERFACE"
+			rm -f "$_tstate_file"
+		fi
+		if [ "$iface_up" = "false" ]; then
+			logger -t "OMR-QUOTA" "Set interface $OMR_QUOTA_INTERFACE up"
+			ifup $OMR_QUOTA_INTERFACE
+		fi
+	fi
+
+	_prev_exceeded=$exceeded
 	sleep "${OMR_QUOTA_INTERVAL:-60}"
 done

@@ -82,7 +82,8 @@ return L.view.extend({
 		o.modalonly = true
 
 		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.value('', _('Default (MPTCP master interface)'));
+		o.value('default', _('Default (MPTCP master interface)'));
+		o.value('', _('No routing change (DSCP marking only)'));
 		o.value('none', _('None (block traffic)'));
 		ifaces.forEach(function(name) { o.value(name); });
 		o.depends('vpn', '0');
@@ -95,6 +96,34 @@ return L.view.extend({
 		o.rmempty = true;
 		o.modalonly = true;
 		o.depends('vpn', '0');
+
+		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
+			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
+		o.value('', _('None'));
+		o.value('cs0', 'CS0 (0) - Best Effort');
+		o.value('cs1', 'CS1 (8)');
+		o.value('cs2', 'CS2 (16)');
+		o.value('cs3', 'CS3 (24)');
+		o.value('cs4', 'CS4 (32)');
+		o.value('cs5', 'CS5 (40)');
+		o.value('cs6', 'CS6 (48)');
+		o.value('cs7', 'CS7 (56)');
+		o.value('af11', 'AF11 (10)');
+		o.value('af12', 'AF12 (12)');
+		o.value('af13', 'AF13 (14)');
+		o.value('af21', 'AF21 (18)');
+		o.value('af22', 'AF22 (20)');
+		o.value('af23', 'AF23 (22)');
+		o.value('af31', 'AF31 (26)');
+		o.value('af32', 'AF32 (28)');
+		o.value('af33', 'AF33 (30)');
+		o.value('af41', 'AF41 (34)');
+		o.value('af42', 'AF42 (36)');
+		o.value('af43', 'AF43 (38)');
+		o.value('ef', 'EF (46) - Expedited Forwarding');
+		o.value('le', 'LE (1) - Lower Effort');
+		o.rmempty = true;
+		o.modalonly = true;
 
 		o = s.option(form.Value, 'note', _('Note'),
 			_('Optional comment to help identify the purpose of this rule.'));
@@ -149,7 +178,8 @@ return L.view.extend({
 		o.modalonly = true
 
 		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.value('', _('Default (MPTCP master interface)'));
+		o.value('default', _('Default (MPTCP master interface)'));
+		o.value('', _('No routing change (DSCP marking only)'));
 		o.value('none', _('None (block traffic)'));
 		ifaces.forEach(function(name) { o.value(name); });
 		o.depends('vpn', '0');
@@ -162,6 +192,34 @@ return L.view.extend({
 		o.rmempty = true;
 		o.modalonly = true;
 		o.depends('vpn', '0');
+
+		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
+			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
+		o.value('', _('None'));
+		o.value('cs0', 'CS0 (0) - Best Effort');
+		o.value('cs1', 'CS1 (8)');
+		o.value('cs2', 'CS2 (16)');
+		o.value('cs3', 'CS3 (24)');
+		o.value('cs4', 'CS4 (32)');
+		o.value('cs5', 'CS5 (40)');
+		o.value('cs6', 'CS6 (48)');
+		o.value('cs7', 'CS7 (56)');
+		o.value('af11', 'AF11 (10)');
+		o.value('af12', 'AF12 (12)');
+		o.value('af13', 'AF13 (14)');
+		o.value('af21', 'AF21 (18)');
+		o.value('af22', 'AF22 (20)');
+		o.value('af23', 'AF23 (22)');
+		o.value('af31', 'AF31 (26)');
+		o.value('af32', 'AF32 (28)');
+		o.value('af33', 'AF33 (30)');
+		o.value('af41', 'AF41 (34)');
+		o.value('af42', 'AF42 (36)');
+		o.value('af43', 'AF43 (38)');
+		o.value('ef', 'EF (46) - Expedited Forwarding');
+		o.value('le', 'LE (1) - Lower Effort');
+		o.rmempty = true;
+		o.modalonly = true;
 
 		o = s.option(form.Value, 'note', _('Note'),
 			_('Optional comment to help identify the purpose of this rule.'));
@@ -190,7 +248,8 @@ return L.view.extend({
 		o.value('icmp');
 
 		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.value('', _('Default (MPTCP master interface)'));
+		o.value('default', _('Default (MPTCP master interface)'));
+		o.value('', _('No routing change (DSCP marking only)'));
 		o.value('none', _('None (block traffic)'));
 		ifaces.forEach(function(name) { o.value(name); });
 
@@ -199,6 +258,34 @@ return L.view.extend({
 		o.value('', _('None (no failback)'));
 		o.value('default', _('Default MPTCP interface'));
 		ifaces.forEach(function(name) { o.value(name); });
+		o.rmempty = true;
+		o.modalonly = true;
+
+		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
+			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
+		o.value('', _('None'));
+		o.value('cs0', 'CS0 (0) - Best Effort');
+		o.value('cs1', 'CS1 (8)');
+		o.value('cs2', 'CS2 (16)');
+		o.value('cs3', 'CS3 (24)');
+		o.value('cs4', 'CS4 (32)');
+		o.value('cs5', 'CS5 (40)');
+		o.value('cs6', 'CS6 (48)');
+		o.value('cs7', 'CS7 (56)');
+		o.value('af11', 'AF11 (10)');
+		o.value('af12', 'AF12 (12)');
+		o.value('af13', 'AF13 (14)');
+		o.value('af21', 'AF21 (18)');
+		o.value('af22', 'AF22 (20)');
+		o.value('af23', 'AF23 (22)');
+		o.value('af31', 'AF31 (26)');
+		o.value('af32', 'AF32 (28)');
+		o.value('af33', 'AF33 (30)');
+		o.value('af41', 'AF41 (34)');
+		o.value('af42', 'AF42 (36)');
+		o.value('af43', 'AF43 (38)');
+		o.value('ef', 'EF (46) - Expedited Forwarding');
+		o.value('le', 'LE (1) - Lower Effort');
 		o.rmempty = true;
 		o.modalonly = true;
 
@@ -229,7 +316,8 @@ return L.view.extend({
 		o.value('icmp');
 
 		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.value('', _('Default (MPTCP master interface)'));
+		o.value('default', _('Default (MPTCP master interface)'));
+		o.value('', _('No routing change (DSCP marking only)'));
 		o.value('none', _('None (block traffic)'));
 		ifaces.forEach(function(name) { o.value(name); });
 
@@ -238,6 +326,34 @@ return L.view.extend({
 		o.value('', _('None (no failback)'));
 		o.value('default', _('Default MPTCP interface'));
 		ifaces.forEach(function(name) { o.value(name); });
+		o.rmempty = true;
+		o.modalonly = true;
+
+		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
+			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
+		o.value('', _('None'));
+		o.value('cs0', 'CS0 (0) - Best Effort');
+		o.value('cs1', 'CS1 (8)');
+		o.value('cs2', 'CS2 (16)');
+		o.value('cs3', 'CS3 (24)');
+		o.value('cs4', 'CS4 (32)');
+		o.value('cs5', 'CS5 (40)');
+		o.value('cs6', 'CS6 (48)');
+		o.value('cs7', 'CS7 (56)');
+		o.value('af11', 'AF11 (10)');
+		o.value('af12', 'AF12 (12)');
+		o.value('af13', 'AF13 (14)');
+		o.value('af21', 'AF21 (18)');
+		o.value('af22', 'AF22 (20)');
+		o.value('af23', 'AF23 (22)');
+		o.value('af31', 'AF31 (26)');
+		o.value('af32', 'AF32 (28)');
+		o.value('af33', 'AF33 (30)');
+		o.value('af41', 'AF41 (34)');
+		o.value('af42', 'AF42 (36)');
+		o.value('af43', 'AF43 (38)');
+		o.value('ef', 'EF (46) - Expedited Forwarding');
+		o.value('le', 'LE (1) - Lower Effort');
 		o.rmempty = true;
 		o.modalonly = true;
 
@@ -265,7 +381,8 @@ return L.view.extend({
 		});
 
 		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.value('', _('Default (MPTCP master interface)'));
+		o.value('default', _('Default (MPTCP master interface)'));
+		o.value('', _('No routing change (DSCP marking only)'));
 		o.value('none', _('None (block traffic)'));
 		ifaces.forEach(function(name) { o.value(name); });
 
@@ -274,6 +391,34 @@ return L.view.extend({
 		o.value('', _('None (no failback)'));
 		o.value('default', _('Default MPTCP interface'));
 		ifaces.forEach(function(name) { o.value(name); });
+		o.rmempty = true;
+		o.modalonly = true;
+
+		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
+			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
+		o.value('', _('None'));
+		o.value('cs0', 'CS0 (0) - Best Effort');
+		o.value('cs1', 'CS1 (8)');
+		o.value('cs2', 'CS2 (16)');
+		o.value('cs3', 'CS3 (24)');
+		o.value('cs4', 'CS4 (32)');
+		o.value('cs5', 'CS5 (40)');
+		o.value('cs6', 'CS6 (48)');
+		o.value('cs7', 'CS7 (56)');
+		o.value('af11', 'AF11 (10)');
+		o.value('af12', 'AF12 (12)');
+		o.value('af13', 'AF13 (14)');
+		o.value('af21', 'AF21 (18)');
+		o.value('af22', 'AF22 (20)');
+		o.value('af23', 'AF23 (22)');
+		o.value('af31', 'AF31 (26)');
+		o.value('af32', 'AF32 (28)');
+		o.value('af33', 'AF33 (30)');
+		o.value('af41', 'AF41 (34)');
+		o.value('af42', 'AF42 (36)');
+		o.value('af43', 'AF43 (38)');
+		o.value('ef', 'EF (46) - Expedited Forwarding');
+		o.value('le', 'LE (1) - Lower Effort');
 		o.rmempty = true;
 		o.modalonly = true;
 
@@ -303,7 +448,8 @@ return L.view.extend({
 		});
 
 		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.value('', _('Default (MPTCP master interface)'));
+		o.value('default', _('Default (MPTCP master interface)'));
+		o.value('', _('No routing change (DSCP marking only)'));
 		o.value('none', _('None (block traffic)'));
 		ifaces.forEach(function(name) { o.value(name); });
 
@@ -312,6 +458,34 @@ return L.view.extend({
 		o.value('', _('None (no failback)'));
 		o.value('default', _('Default MPTCP interface'));
 		ifaces.forEach(function(name) { o.value(name); });
+		o.rmempty = true;
+		o.modalonly = true;
+
+		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
+			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
+		o.value('', _('None'));
+		o.value('cs0', 'CS0 (0) - Best Effort');
+		o.value('cs1', 'CS1 (8)');
+		o.value('cs2', 'CS2 (16)');
+		o.value('cs3', 'CS3 (24)');
+		o.value('cs4', 'CS4 (32)');
+		o.value('cs5', 'CS5 (40)');
+		o.value('cs6', 'CS6 (48)');
+		o.value('cs7', 'CS7 (56)');
+		o.value('af11', 'AF11 (10)');
+		o.value('af12', 'AF12 (12)');
+		o.value('af13', 'AF13 (14)');
+		o.value('af21', 'AF21 (18)');
+		o.value('af22', 'AF22 (20)');
+		o.value('af23', 'AF23 (22)');
+		o.value('af31', 'AF31 (26)');
+		o.value('af32', 'AF32 (28)');
+		o.value('af33', 'AF33 (30)');
+		o.value('af41', 'AF41 (34)');
+		o.value('af42', 'AF42 (36)');
+		o.value('af43', 'AF43 (38)');
+		o.value('ef', 'EF (46) - Expedited Forwarding');
+		o.value('le', 'LE (1) - Lower Effort');
 		o.rmempty = true;
 		o.modalonly = true;
 
@@ -337,7 +511,8 @@ return L.view.extend({
 		o.modalonly = true
 
 		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.value('', _('Default (MPTCP master interface)'));
+		o.value('default', _('Default (MPTCP master interface)'));
+		o.value('', _('No routing change (DSCP marking only)'));
 		o.value('none', _('None (block traffic)'));
 		ifaces.forEach(function(name) { o.value(name); });
 		o.depends('vpn', '0');
@@ -350,6 +525,34 @@ return L.view.extend({
 		o.rmempty = true;
 		o.modalonly = true;
 		o.depends('vpn', '0');
+
+		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
+			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
+		o.value('', _('None'));
+		o.value('cs0', 'CS0 (0) - Best Effort');
+		o.value('cs1', 'CS1 (8)');
+		o.value('cs2', 'CS2 (16)');
+		o.value('cs3', 'CS3 (24)');
+		o.value('cs4', 'CS4 (32)');
+		o.value('cs5', 'CS5 (40)');
+		o.value('cs6', 'CS6 (48)');
+		o.value('cs7', 'CS7 (56)');
+		o.value('af11', 'AF11 (10)');
+		o.value('af12', 'AF12 (12)');
+		o.value('af13', 'AF13 (14)');
+		o.value('af21', 'AF21 (18)');
+		o.value('af22', 'AF22 (20)');
+		o.value('af23', 'AF23 (22)');
+		o.value('af31', 'AF31 (26)');
+		o.value('af32', 'AF32 (28)');
+		o.value('af33', 'AF33 (30)');
+		o.value('af41', 'AF41 (34)');
+		o.value('af42', 'AF42 (36)');
+		o.value('af43', 'AF43 (38)');
+		o.value('ef', 'EF (46) - Expedited Forwarding');
+		o.value('le', 'LE (1) - Lower Effort');
+		o.rmempty = true;
+		o.modalonly = true;
 
 		o = s.option(form.Value, 'note', _('Note'),
 			_('Optional comment to help identify the purpose of this rule.'));
@@ -478,7 +681,8 @@ return L.view.extend({
 		o.modalonly = true
 
 		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used (or an other interface if master is down).'));
-		o.value('', _('Default (MPTCP master interface)'));
+		o.value('default', _('Default (MPTCP master interface)'));
+		o.value('', _('No routing change (DSCP marking only)'));
 		o.value('none', _('None (block traffic)'));
 		ifaces.forEach(function(name) { o.value(name); });
 		o.depends('vpn', '0');
@@ -491,6 +695,34 @@ return L.view.extend({
 		o.rmempty = true;
 		o.modalonly = true;
 		o.depends('vpn', '0');
+
+		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
+			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
+		o.value('', _('None'));
+		o.value('cs0', 'CS0 (0) - Best Effort');
+		o.value('cs1', 'CS1 (8)');
+		o.value('cs2', 'CS2 (16)');
+		o.value('cs3', 'CS3 (24)');
+		o.value('cs4', 'CS4 (32)');
+		o.value('cs5', 'CS5 (40)');
+		o.value('cs6', 'CS6 (48)');
+		o.value('cs7', 'CS7 (56)');
+		o.value('af11', 'AF11 (10)');
+		o.value('af12', 'AF12 (12)');
+		o.value('af13', 'AF13 (14)');
+		o.value('af21', 'AF21 (18)');
+		o.value('af22', 'AF22 (20)');
+		o.value('af23', 'AF23 (22)');
+		o.value('af31', 'AF31 (26)');
+		o.value('af32', 'AF32 (28)');
+		o.value('af33', 'AF33 (30)');
+		o.value('af41', 'AF41 (34)');
+		o.value('af42', 'AF42 (36)');
+		o.value('af43', 'AF43 (38)');
+		o.value('ef', 'EF (46) - Expedited Forwarding');
+		o.value('le', 'LE (1) - Lower Effort');
+		o.rmempty = true;
+		o.modalonly = true;
 
 		o = s.option(form.Value, 'note', _('Note'),
 			_('Optional comment to help identify the purpose of this rule.'));
@@ -545,7 +777,8 @@ return L.view.extend({
 		o.modalonly = true;
 
 		o = s.option(form.ListValue, 'interface', _('Output interface'), _('When none selected, MPTCP master interface is used.'));
-		o.value('', _('Default (MPTCP master interface)'));
+		o.value('default', _('Default (MPTCP master interface)'));
+		o.value('', _('No routing change (DSCP marking only)'));
 		o.value('none', _('None (block traffic)'));
 		ifaces.forEach(function(name) { o.value(name); });
 		o.depends('vpn', '0');
@@ -588,6 +821,34 @@ return L.view.extend({
 			o.modalonly = true;
 			o.depends('vpn', '0');
 		}
+
+		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
+			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
+		o.value('', _('None'));
+		o.value('cs0', 'CS0 (0) - Best Effort');
+		o.value('cs1', 'CS1 (8)');
+		o.value('cs2', 'CS2 (16)');
+		o.value('cs3', 'CS3 (24)');
+		o.value('cs4', 'CS4 (32)');
+		o.value('cs5', 'CS5 (40)');
+		o.value('cs6', 'CS6 (48)');
+		o.value('cs7', 'CS7 (56)');
+		o.value('af11', 'AF11 (10)');
+		o.value('af12', 'AF12 (12)');
+		o.value('af13', 'AF13 (14)');
+		o.value('af21', 'AF21 (18)');
+		o.value('af22', 'AF22 (20)');
+		o.value('af23', 'AF23 (22)');
+		o.value('af31', 'AF31 (26)');
+		o.value('af32', 'AF32 (28)');
+		o.value('af33', 'AF33 (30)');
+		o.value('af41', 'AF41 (34)');
+		o.value('af42', 'AF42 (36)');
+		o.value('af43', 'AF43 (38)');
+		o.value('ef', 'EF (46) - Expedited Forwarding');
+		o.value('le', 'LE (1) - Lower Effort');
+		o.rmempty = true;
+		o.modalonly = true;
 
 		o = s.option(form.Value, 'note', _('Note'),
 			_('Optional comment to help identify the purpose of this rule.'));

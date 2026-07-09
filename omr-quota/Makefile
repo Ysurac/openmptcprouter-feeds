@@ -18,7 +18,7 @@ define Package/$(PKG_NAME)
   CATEGORY:=Network
   TITLE:=OpenMPTCProuter quota
   PKGARCH:=all
-  DEPENDS:=+vnstat2
+  DEPENDS:=+vnstat2 +rpcd
 endef
 
 define Package/$(PKG_NAME)/description

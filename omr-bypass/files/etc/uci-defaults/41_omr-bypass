@@ -175,5 +175,21 @@ fi
 if [ ! -f /etc/crontabs/root ] || [ "$(cat /etc/crontabs/root | grep bypass)" = "" ]; then
 	echo "0 2 * * * /etc/init.d/omr-bypass bypass_asn" >> /etc/crontabs/root
 fi
+
+# Migrate sections with no interface set to 'default' (skip if already a new-format config)
+if ! uci -q show omr-bypass | grep -q "\.interface='default'"; then
+	_need_commit=0
+	for _type in domains ips dest_port src_port macs lan_ip asns dpis categories; do
+		for _sec in $(uci -q show omr-bypass | grep "^omr-bypass\.[^.=]*=${_type}$" | cut -d= -f1); do
+			_intf=$(uci -q get "${_sec}.interface" 2>/dev/null)
+			if [ -z "$_intf" ]; then
+				uci -q set "${_sec}.interface=default"
+				_need_commit=1
+			fi
+		done
+	done
+	[ "$_need_commit" = "1" ] && uci -q commit omr-bypass
+fi
+
 rm -f /tmp/luci-indexcache
 exit 0
