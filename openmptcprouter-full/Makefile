@@ -78,7 +78,7 @@ MY_DEPENDS := \
     !(TARGET_mvebu||TARGET_ramips||TARGET_ipq40xx||TARGET_ipq806x||TARGET_mt7623):kmod-usb-net-huawei-cdc-ncm !(TARGET_mvebu||TARGET_ramips||TARGET_ipq40xx||TARGET_ipq806x||TARGET_mt7623):kmod-usb-net-rndis !(TARGET_mvebu||TARGET_ramips||TARGET_ipq40xx||TARGET_ipq806x||TARGET_mt7623):kmod-usb-net-cdc-ether !(TARGET_mvebu||TARGET_ramips||TARGET_ipq40xx||TARGET_ipq806x||TARGET_mt7623):kmod-usb-net-ipheth !(TARGET_mvebu||TARGET_ramips||TARGET_ipq40xx||TARGET_ipq806x||TARGET_mt7623):usbmuxd !(TARGET_mvebu||TARGET_ramips||TARGET_ipq40xx||TARGET_ipq806x||TARGET_mt7623):libusbmuxd \
     !(TARGET_mvebu||TARGET_ramips||TARGET_ipq806x||TARGET_mt7623):luci-proto-qmi !LINUX_5_4:wpad-mesh-openssl !LINUX_5_4:libopenssl-legacy LINUX_5_4:wpad-basic (TARGET_x86||TARGET_x86_64||TARGET_rockchip_armv8):kmod-usb-net-rtl8152 \
     !(TARGET_mvebu||TARGET_ramips||TARGET_ipq806x||TARGET_mt7623):luci-app-mlvpn !(TARGET_mvebu||TARGET_ramips||TARGET_ipq806x||TARGET_mt7623):mlvpn 464xlat kmod-zram kmod-ipt-nat kmod-ipt-nat6 kmod-tcp-nanqinlang iptables-mod-ipopt igmpproxy ss iptraf-ng \
-    luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre tcptraceroute luci-proto-mbim luci-app-ttyd luci-mod-dashboard kmod-usb2 libustream-openssl (TARGET_x86||TARGET_x86_64):kmod-ixgbevf (TARGET_x86||TARGET_x86_64):kmod-igbvf \
+    luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre vxlan luci-proto-vxlan tcptraceroute luci-proto-mbim luci-app-ttyd luci-mod-dashboard kmod-usb2 libustream-openssl (TARGET_x86||TARGET_x86_64):kmod-ixgbevf (TARGET_x86||TARGET_x86_64):kmod-igbvf \
     hwinfo (TARGET_x86||TARGET_x86_64):dmidecode kmod-bonding luci-proto-bonding luci-app-sysupgrade \
     luci-theme-openwrt-2020 luci-proto-wireguard luci-app-wireguard kmod-crypto-lib-blake2s  \
     !(LINUX_5_4):mptcpd (TARGET_x86||TARGET_x86_64):kmod-igc !TARGET_mvebu:kmod-mmc-spi kmod-macsec usbutils v2ray-core !LINUX_5_4:v2ray-config-nft \
@@ -96,7 +96,7 @@ MY_DEPENDS := \
     TARGET_mediatek_filogic:kmod-mt7915-firmware TARGET_mediatek_filogic:kmod-mt7916-firmware TARGET_mediatek_filogic:kmod-mt7986-firmware TARGET_mediatek_filogic:kmod-mt7986-wo-firmware TARGET_mediatek_filogic:kmod-mt7996-firmware TARGET_mediatek_filogic:kmod-mt7996-233-firmware TARGET_mediatek_filogic:mt7988-wo-firmware TARGET_mediatek_filogic:mt7988-2p5g-phy-firmware \
     (TARGET_x86||TARGET_x86_64):kmod-r8169 \
     !(TARGET_mt7623||TARGET_ipq806x):luci-app-smartdns logd TARGET_x86_64:kmod-i40e \
-    omr-banudpip luci-app-upnp kmod-inet-diag (TARGET_x86||TARGET_x86_64):luci-app-bpftune LINUX_6_18:kmod-ovpn luci-app-mqvpn luci-app-omr-metrics luci-app-irqbalance mptcp-bpf-weight
+    omr-banudpip luci-app-upnp kmod-inet-diag (TARGET_x86||TARGET_x86_64):luci-app-bpftune LINUX_6_18:kmod-ovpn luci-app-mqvpn luci-app-omr-metrics luci-app-irqbalance mptcp-bpf-weight mptcp-weight-manager
 
 # kmod-ovpn-dco-v2
 # kmod-swconfig swconfig
