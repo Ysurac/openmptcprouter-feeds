@@ -63,4 +63,16 @@ glorytunudppath() {
 config_load openmptcprouter
 config_foreach glorytunudppath server
 
+# Set down any path whose local address is no longer assigned to any
+# interface (stale path left after an IP change)
+if [ -n "$(pgrep -f glorytun-udp)" ]; then
+	gtudp_dev="$(uci -q get glorytun-udp.vpn.dev)"
+	[ -z "$gtudp_dev" ] && gtudp_dev="tun0"
+	for gtudp_path_addr in $(glorytun-udp path 2>/dev/null | awk '$1 == "path" {print $2}'); do
+		[ -n "$(ip -o addr show 2>/dev/null | grep -F " ${gtudp_path_addr}/")" ] && continue
+		_log "Set down stale Glorytun UDP path $gtudp_path_addr (address no longer assigned)"
+		glorytun-udp path addr "$gtudp_path_addr" dev "$gtudp_dev" set down > /dev/null 2>&1
+	done
+fi
+
 exit 0

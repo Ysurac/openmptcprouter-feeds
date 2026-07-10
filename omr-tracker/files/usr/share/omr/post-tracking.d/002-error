@@ -57,14 +57,59 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 					#mbimcli -p -d /dev/$mm_primary_port --ms-device-reset >/dev/null 2>&1
 				fi
 			elif [ "$mm_state" = "enabled" ] || [ "$mm_state" = "connected" ]; then
-				_log "No answer from $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE), restart interface"
-				_log "Set $OMR_TRACKER_INTERFACE down"
-				ifdown $OMR_TRACKER_INTERFACE >/dev/null 2>&1
-				sleep 5
-				_log "Set $OMR_TRACKER_INTERFACE up"
-				ifup $OMR_TRACKER_INTERFACE >/dev/null 2>&1
-				sleep $(uci -q get network.$OMR_TRACKER_INTERFACE.delay || echo '120')
-				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.restart_intf=1
+				restart_intf_count="$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.restart_intf)"
+				[ -z "$restart_intf_count" ] && restart_intf_count=0
+				restart_intf_count=$((restart_intf_count + 1))
+
+				switch_operator="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.switch_operator_on_no_traffic)"
+				[ -z "$switch_operator" ] && switch_operator="$(uci -q get omr-tracker.defaults.switch_operator_on_no_traffic)"
+				[ -z "$switch_operator" ] && switch_operator="1"
+
+				switch_operator_tries="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.switch_operator_tries)"
+				[ -z "$switch_operator_tries" ] && switch_operator_tries="$(uci -q get omr-tracker.defaults.switch_operator_tries)"
+				[ -z "$switch_operator_tries" ] && switch_operator_tries=3
+
+				switch_operator_plmn="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.switch_operator_plmn)"
+				[ -z "$switch_operator_plmn" ] && switch_operator_plmn="$(uci -q get omr-tracker.defaults.switch_operator_plmn)"
+
+				no_traffic_error=0
+				case "${OMR_TRACKER_STATUS_MSG:-}" in
+					*"No answer from server"*|*"No access to server API"*|*"check error"*)
+						no_traffic_error=1
+					;;
+				esac
+
+				if [ "$switch_operator" = "1" ] && [ "$OMR_TRACKER_STATUS" = "ERROR" ] && [ "$interface_up" = "true" ] && [ "$no_traffic_error" = "1" ] && [ "$restart_intf_count" -ge "$switch_operator_tries" ]; then
+					mm_operator_code=$(modemmanager_get_field "${MODEM_STATUS}" "modem.3gpp.operator-code")
+					if [ -n "$switch_operator_plmn" ] && [ "$switch_operator_plmn" != "$mm_operator_code" ]; then
+						_log "No traffic on $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE), switch operator to $switch_operator_plmn"
+						/usr/bin/mmcli -m ${modem} --command='AT+COPS=2' >/dev/null 2>&1
+						sleep 4
+						/usr/bin/mmcli -m ${modem} --command="AT+COPS=1,2,\"$switch_operator_plmn\"" >/dev/null 2>&1
+					else
+						_log "No traffic on $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE), trigger automatic operator reselection"
+						/usr/bin/mmcli -m ${modem} --command='AT+COPS=2' >/dev/null 2>&1
+						sleep 4
+						/usr/bin/mmcli -m ${modem} --command='AT+COPS=0' >/dev/null 2>&1
+					fi
+					_log "Set $OMR_TRACKER_INTERFACE down"
+					ifdown $OMR_TRACKER_INTERFACE >/dev/null 2>&1
+					sleep 5
+					_log "Set $OMR_TRACKER_INTERFACE up"
+					ifup $OMR_TRACKER_INTERFACE >/dev/null 2>&1
+					sleep $(uci -q get network.$OMR_TRACKER_INTERFACE.delay || echo '120')
+					restart_intf_count=0
+				else
+					_log "No answer from $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE), restart interface"
+					_log "Set $OMR_TRACKER_INTERFACE down"
+					ifdown $OMR_TRACKER_INTERFACE >/dev/null 2>&1
+					sleep 5
+					_log "Set $OMR_TRACKER_INTERFACE up"
+					ifup $OMR_TRACKER_INTERFACE >/dev/null 2>&1
+					sleep $(uci -q get network.$OMR_TRACKER_INTERFACE.delay || echo '120')
+				fi
+
+				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.restart_intf=$restart_intf_count
 				uci -q commit openmptcprouter
 			elif [ "$mm_state" = "disabled" ] && [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.force_link)" = "1" ]; then
 			# [ -n "$(echo $modeminfo | grep 'modem.3gpp.registration-state ' | grep home)" ]; then
@@ -167,12 +212,40 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 			multipath "$OMR_TRACKER_DEVICE" off > /dev/null 2>&1
 		fi
 		if [ "$(uci -q get glorytun-udp.vpn.enable)" = "1" ] && [ "$OMR_TRACKER_TYPE" != "glorytun" ]; then
-			if [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
-				glorytun-udp path addr "$OMR_TRACKER_DEVICE_IP" dev tun0 set down > /dev/null 2>&1
+			gtudp_dev="$(uci -q get glorytun-udp.vpn.dev)"
+			[ -z "$gtudp_dev" ] && gtudp_dev="tun0"
+			# When the interface lost its IP (link down), the current IP is
+			# empty: fall back to the last known IP so the path is really set
+			# down and not left up in Glorytun UDP
+			gtudp_down_ip="$OMR_TRACKER_DEVICE_IP"
+			[ -z "$gtudp_down_ip" ] && gtudp_down_ip="$OMR_TRACKER_PREV_DEVICE_IP"
+			gtudp_down_ip6="$OMR_TRACKER_DEVICE_IP6"
+			[ -z "$gtudp_down_ip6" ] && gtudp_down_ip6="$OMR_TRACKER_PREV_DEVICE_IP6"
+			if [ -n "$gtudp_down_ip" ]; then
+				glorytun-udp path addr "$gtudp_down_ip" dev "$gtudp_dev" set down > /dev/null 2>&1
 			fi
-			if [ -n "$OMR_TRACKER_DEVICE_IP6" ]; then
-				glorytun-udp path addr "$OMR_TRACKER_DEVICE_IP6" dev tun0 set down > /dev/null 2>&1
+			if [ -n "$gtudp_down_ip6" ]; then
+				glorytun-udp path addr "$gtudp_down_ip6" dev "$gtudp_dev" set down > /dev/null 2>&1
 			fi
+			# Set down any path whose local address is no longer assigned to
+			# any interface (stale path from an old IP)
+			for gtudp_path_addr in $(glorytun-udp path 2>/dev/null | awk '$1 == "path" {print $2}'); do
+				[ -n "$(ip -o addr show 2>/dev/null | grep -F " ${gtudp_path_addr}/")" ] && continue
+				_log "Set down stale Glorytun UDP path $gtudp_path_addr (address no longer assigned)"
+				glorytun-udp path addr "$gtudp_path_addr" dev "$gtudp_dev" set down > /dev/null 2>&1
+			done
+		fi
+		# Make traffic sourced from this interface fail fast instead of leaking
+		# to another WAN via the main routing table when its own table has no
+		# default route anymore: such leaked packets get NATed by the other WAN
+		# and can keep dead VPN paths (Glorytun UDP) artificially alive
+		intf_table="$(uci -q get network.$OMR_TRACKER_INTERFACE.ip4table)"
+		[ -z "$intf_table" ] && intf_table="$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)"
+		intf_table6="$(uci -q get network.$OMR_TRACKER_INTERFACE.ip6table)"
+		[ -z "$intf_table6" ] && [ -n "$intf_table" ] && intf_table6="6$intf_table"
+		if [ -n "$intf_table" ]; then
+			ip route replace unreachable default metric 999999 table $intf_table >/dev/null 2>&1
+			ip -6 route replace unreachable default metric 999999 table $intf_table6 >/dev/null 2>&1
 		fi
 		if [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" = "1" ] && [ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "openvpn" ]; then
 			VPN_BASE_INTF="$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.baseintf)"
@@ -210,6 +283,26 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 				config_load network
 				config_foreach set_route interface $OMR_TRACKER_INTERFACE "no"
 				config_foreach set_route6 interface $OMR_TRACKER_INTERFACE "no"
+			fi
+			# In balancing mode none of the branches above handle a non-master
+			# interface failure: rebuild the balancing default route without
+			# the down interface, else a dead nexthop stays in the route
+			if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$(ip route show default metric 1 | grep -w "$OMR_TRACKER_DEVICE")" ]; then
+				routesbalancing=""
+				routesbalancingbackup=""
+				nbintf=0
+				nbintfb=0
+				ipv6=false
+				config_load network
+				config_foreach set_route_balancing interface
+				if [ -n "$routesbalancing" ]; then
+					_log "$OMR_TRACKER_INTERFACE down, set ip route replace default scope global metric 1 $routesbalancing"
+					ip route replace default scope global metric 1 $routesbalancing >/dev/null 2>&1
+				fi
+				if [ -n "$routesbalancingbackup" ]; then
+					_log "$OMR_TRACKER_INTERFACE down, set backup ip route replace default scope global metric 999 $routesbalancingbackup"
+					ip route replace default scope global metric 999 $routesbalancingbackup >/dev/null 2>&1
+				fi
 			fi
 		fi
 		[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server routes (current: $(ip r) )"
@@ -287,8 +380,18 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 			/etc/init.d/glorytun restart >/dev/null 2>&1
 		fi
 		if [ "$(uci -q get glorytun-udp.vpn.enable)" = "1" ]; then
-			_log "Glorytun UDP VPN down, restart it"
-			/etc/init.d/glorytun-udp restart >/dev/null 2>&1
+			# Rate-limit restarts: a restart removes all Glorytun UDP paths and
+			# they are only re-added by the trackers of the other interfaces,
+			# restarting again before that only creates a restart loop
+			gtudp_last_restart="$(cat /tmp/omr-tracker-gtudp-last-restart 2>/dev/null)"
+			[ -z "$gtudp_last_restart" ] && gtudp_last_restart=0
+			if [ "$(($(date +%s) - gtudp_last_restart))" -ge 60 ]; then
+				_log "Glorytun UDP VPN down, restart it"
+				date +%s > /tmp/omr-tracker-gtudp-last-restart
+				/etc/init.d/glorytun-udp restart >/dev/null 2>&1
+			else
+				_log "Glorytun UDP VPN down, restart skipped (restarted less than 60s ago, waiting for paths to be set again)"
+			fi
 		fi
 		if [ "$(uci -q get openvpn.omr.enabled)" = "1" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" != "none" ]; then
 			_log "OpenVPN down, restart it"

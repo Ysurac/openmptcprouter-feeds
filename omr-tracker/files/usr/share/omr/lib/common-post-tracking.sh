@@ -587,6 +587,12 @@ _del_server_route_common() {
 		[ -n "$serverip" ] && serverip="$($resolve_cmd -t 5 "$serverip" | head -n 1 | tr -d '\n')"
 
 		if [ -n "$serverip" ]; then
+			# A nexthop group route can't be deleted by device: 'route del dev X'
+			# either fails or removes the whole group, set_server_all_routes
+			# rebuilds the group without the down interface
+			if [ -n "$($ip_cmd route show "$serverip" 2>/dev/null | grep nexthop)" ]; then
+				return
+			fi
 			_log "Delete default route to $serverip dev $OMR_TRACKER_DEVICE"
 			local metric
 			if [ -z "$OMR_TRACKER_INTERFACE" ]; then
