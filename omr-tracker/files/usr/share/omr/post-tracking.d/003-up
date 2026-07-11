@@ -20,22 +20,44 @@ SETROUTE=false
 . "${OMR_LIB_DIR:-/usr/share/omr/lib}/common-post-tracking.sh"
 
 # Prevent overlapping 003-up runs for the same interface.
-lock_base_dir="/var/run/omr-tracker"
-lock_iface="$(echo "${OMR_TRACKER_INTERFACE:-global}" | tr -c 'A-Za-z0-9_.-' '_')"
+lock_base_dir="${OMR_TRACKER_LOCK_DIR:-/var/run/omr-tracker}"
+lock_iface="$(printf '%s' "${OMR_TRACKER_INTERFACE:-global}" | tr -c 'A-Za-z0-9_.-' '_')"
 lock_dir="${lock_base_dir}/003-up.${lock_iface}.lock"
+# A run can't legitimately take this long: past it the pid in the lock was
+# recycled by an unrelated process and the lock is stale.
+lock_max_age=600
 
 mkdir -p "$lock_base_dir" >/dev/null 2>&1
 
-if mkdir "$lock_dir" 2>/dev/null; then
-	printf '%s\n' "$$" >"$lock_dir/pid"
-else
-	lock_pid=""
-	[ -f "$lock_dir/pid" ] && lock_pid="$(cat "$lock_dir/pid" 2>/dev/null)"
-	if [ -n "$lock_pid" ] && ! kill -0 "$lock_pid" 2>/dev/null; then
+_acquire_003_up_lock() {
+	mkdir "$lock_dir" 2>/dev/null || return 1
+	# This script is sourced in a command-substitution subshell, where $$ is
+	# the long-lived tracker daemon: BASHPID is the pid actually running it.
+	printf '%s\n' "${BASHPID:-$$}" >"$lock_dir/pid"
+	date +%s >"$lock_dir/ts" 2>/dev/null
+	return 0
+}
+
+if ! _acquire_003_up_lock; then
+	lock_stale=false
+	lock_pid="$(cat "$lock_dir/pid" 2>/dev/null)"
+	lock_ts="$(cat "$lock_dir/ts" 2>/dev/null)"
+	case "$lock_ts" in
+		''|*[!0-9]*) lock_ts="" ;;
+	esac
+	if [ -z "$lock_pid" ]; then
+		# Holder died before writing its pid (e.g. killed during a config
+		# re-apply): nothing will ever release the lock.
+		lock_stale=true
+	elif ! kill -0 "$lock_pid" 2>/dev/null; then
+		lock_stale=true
+	elif [ -n "$lock_ts" ] && [ "$(($(date +%s) - lock_ts))" -ge "$lock_max_age" ]; then
+		lock_stale=true
+	fi
+	if [ "$lock_stale" = true ]; then
+		_log "Removing stale 003-up lock on ${OMR_TRACKER_INTERFACE:-global}"
 		rm -rf "$lock_dir" >/dev/null 2>&1
-		if mkdir "$lock_dir" 2>/dev/null; then
-			printf '%s\n' "$$" >"$lock_dir/pid"
-		else
+		if ! _acquire_003_up_lock; then
 			_log "Skip overlapping 003-up run on ${OMR_TRACKER_INTERFACE:-global}"
 			exit 0
 		fi
