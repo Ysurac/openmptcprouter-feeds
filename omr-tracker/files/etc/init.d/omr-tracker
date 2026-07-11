@@ -450,9 +450,23 @@ _gre_tunnel() {
 	[ "$proto" = "gre" ] && gretunnel=true
 }
 
+# Remove post-tracking lock directories left behind by killed runs.
+# With an interface argument only that interface's locks are removed,
+# without argument all of them are.
+_cleanup_locks() {
+	local iface
+	if [ -n "$1" ]; then
+		iface="$(printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '_')"
+		rm -rf "/var/run/omr-tracker/003-up.${iface}.lock" 2>/dev/null
+	else
+		rm -rf /var/run/omr-tracker/*.lock 2>/dev/null
+	fi
+}
+
 start_interface() {
 	[ -z "$1" ] && return
 	[ -n "$(pgrep -f "omr-tracker $1")" ] && return
+	_cleanup_locks "$1"
 	config_load network
 	_launch_tracker $1
 }
@@ -508,9 +522,15 @@ start_service() {
 		[ "$gretunnel" = true ] && _launch_gre_tracker
 		logger -t "omr-tracker" "Launched"
 	else
+		_cleanup_locks "${instance}"
 		config_load network
 		_launch_tracker ${instance}
 	fi
+}
+
+stop_service() {
+	# Trackers are going down: any lock left behind would be stale.
+	_cleanup_locks "$1"
 }
 
 service_triggers() {
@@ -525,6 +545,7 @@ restart_service() {
 	if [ -n "$1" ]; then
 		procd_kill "omr-tracker" "$1" 2>/dev/null
 		sleep 2
+		_cleanup_locks "$1"
 		start "$@"
 	else
 		stop
