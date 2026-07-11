@@ -6,7 +6,7 @@ START=85
 
 USE_PROCD=1
 
-EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key set_gre_tunnel token set_bypass_ips set_vpn_ip"
+EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key set_gre_tunnel set_vxlan token set_bypass_ips set_vpn_ip"
 
 . /usr/lib/unbound/iptools.sh
 
@@ -519,6 +519,7 @@ _get_vps_config() {
 					set network.omrvpn.proto='none'
 					commit network
 				EOF
+				ifup omrvpn >/dev/null 2>&1
 				glorytun_change=1
 			fi
 		else
@@ -534,6 +535,7 @@ _get_vps_config() {
 					set network.omrvpn.proto='dhcp'
 					commit network
 				EOF
+				ifup omrvpn >/dev/null 2>&1
 				glorytun_change=1
 			fi
 		fi
@@ -562,6 +564,7 @@ _get_vps_config() {
 					set network.omrvpn.proto='none'
 					commit network
 				EOF
+				ifup omrvpn >/dev/null 2>&1
 				glorytun_change=1
 			fi
 		else
@@ -577,6 +580,7 @@ _get_vps_config() {
 					set network.omrvpn.proto='dhcp'
 					commit network
 				EOF
+				ifup omrvpn >/dev/null 2>&1
 				glorytun_change=1
 			fi
 		fi
@@ -682,18 +686,22 @@ _get_vps_config() {
 	fi
 
 	port="$(echo "$vps_config" | jsonfilter -q -e '@.softethervpn.port')"
-	if [ -n "$(uci -q get softethervpn.openmptcprouter)" ] && ([ "$(uci -q get softethervpn.openmptcprouter.host)" != "127.0.0.1" ] && [ "$(uci -q get softethervpn.openmptcprouter.host)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]) || [ "$(uci -q get softethervpn.openmptcprouter.port)" != "$port" ]; then
+	if [ -n "$(uci -q get softethervpn.openmptcprouter)" ] && [ -n "$port" ] && { { [ "$(uci -q get softethervpn.openmptcprouter.host)" != "127.0.0.1" ] && [ "$(uci -q get softethervpn.openmptcprouter.host)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; } || [ "$(uci -q get softethervpn.openmptcprouter.port)" != "$port" ]; }; then
 		uci -q batch <<-EOF >/dev/null
 			set softethervpn.openmptcprouter.port=$port
 			set softethervpn.openmptcprouter.host="$vpsip"
 			commit softethervpn
 		EOF
-		uci -q batch <<-EOF >/dev/null
-			set network.omrvpn.proto='dhcp'
-			commit network
-		EOF
-			
-		if [ "$(uci -q get softethervpn.openmptcprouter.enable)" = "1" ]; then
+		# omrvpn is shared by all VPNs: only switch it to DHCP when
+		# SoftEtherVPN is really the VPN in use
+		if [ "$vpn" = "softethervpn" ] || [ "$vpn" = "softether" ]; then
+			uci -q batch <<-EOF >/dev/null
+				set network.omrvpn.proto='dhcp'
+				commit network
+			EOF
+			ifup omrvpn >/dev/null 2>&1
+		fi
+		if [ "$(uci -q get softethervpn.openmptcprouter.enable)" = "1" ] && [ -f /etc/init.d/softethervpnclient ]; then
 			logger -t "OMR-VPS" "Restart SoftEtherVPN..."
 			/etc/init.d/softethervpnclient restart
 		fi
@@ -934,6 +942,97 @@ _get_gre_tunnel() {
 set_gre_tunnel() {
 	config_load openmptcprouter
 	config_foreach _get_gre_tunnel server
+}
+
+_set_vxlan_vps() {
+	local settings result vxlan_enabled vxlan_current
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	if [ "$(uci -q get openmptcprouter.settings.vxlan)" = "1" ]; then
+		vxlan_enabled="true"
+	else
+		vxlan_enabled="false"
+	fi
+	vxlan_current="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.enabled')"
+	[ -z "$vxlan_current" ] && vxlan_current="false"
+	if [ "$vxlan_current" != "$vxlan_enabled" ]; then
+		settings='{"enable": '$vxlan_enabled'}'
+		result=$(_set_json "vxlan" "$settings")
+		[ "$(_parse_result "$result")" = "done" ] && vps_config=$(_get_json "config")
+	fi
+}
+
+_get_vxlan() {
+	local vxlan_state vxlan_vni vxlan_port vxlan_mtu vxlan_ipaddr vxlan_ip6addr vxlan_peeraddr
+	[ -z "$servername" ] && servername=$1
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	vxlan_state="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.enabled')"
+	if [ "$vxlan_state" = "true" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" != "none" ]; then
+		vxlan_vni="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.vni')"
+		vxlan_port="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.port')"
+		vxlan_mtu="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.mtu')"
+		vxlan_ipaddr="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.remoteip')"
+		vxlan_ip6addr="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.remoteip6')"
+		vxlan_peeraddr="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.localip')"
+		[ -z "$vxlan_vni" ] && return
+		[ -z "$vxlan_ipaddr" ] && return
+		[ -z "$vxlan_peeraddr" ] && return
+		[ "$(uci -q get openmptcprouter.settings.disable_ipv6)" = "1" ] && vxlan_ip6addr=""
+		if [ "$(uci -q get network.omrvxlan.peeraddr)" != "$vxlan_peeraddr" ] || [ "$(uci -q get network.omrvxlan.vid)" != "$vxlan_vni" ] || [ "$(uci -q get network.omrvxlan.port)" != "$vxlan_port" ] || [ "$(uci -q get network.omrvxlan.mtu)" != "$vxlan_mtu" ] || [ "$(uci -q get network.omrvxlanip.ipaddr)" != "$vxlan_ipaddr" ] || [ "$(uci -q get network.omrvxlanip.ip6addr)" != "$vxlan_ip6addr" ]; then
+			uci -q batch <<-EOF >/dev/null
+				set network.omrvxlan=interface
+				set network.omrvxlan.label="VXLAN tunnel over the VPN"
+				set network.omrvxlan.proto=vxlan
+				set network.omrvxlan.tunlink=omrvpn
+				set network.omrvxlan.peeraddr="$vxlan_peeraddr"
+				set network.omrvxlan.port="$vxlan_port"
+				set network.omrvxlan.vid="$vxlan_vni"
+				set network.omrvxlan.mtu="$vxlan_mtu"
+				set network.omrvxlan.ttl='255'
+				set network.omrvxlan.multipath='off'
+				set network.omrvxlan.defaultroute='0'
+				set network.omrvxlan.peerdns='0'
+				set network.omrvxlanip=interface
+				set network.omrvxlanip.label="VXLAN tunnel IPs"
+				set network.omrvxlanip.proto=static
+				set network.omrvxlanip.device="@omrvxlan"
+				set network.omrvxlanip.ipaddr="$vxlan_ipaddr"
+				set network.omrvxlanip.multipath='off'
+				set network.omrvxlanip.defaultroute='0'
+				set network.omrvxlanip.peerdns='0'
+				delete network.omrvxlanip.ip6addr
+			EOF
+			[ -n "$vxlan_ip6addr" ] && uci -q set network.omrvxlanip.ip6addr="$vxlan_ip6addr"
+			uci -q commit network
+			if [ -z "$(uci -q get firewall.zone_vpn.network | grep omrvxlan)" ]; then
+				uci -q add_list firewall.zone_vpn.network="omrvxlan"
+				uci -q add_list firewall.zone_vpn.network="omrvxlanip"
+				uci -q commit firewall
+			fi
+			logger -t "OMR-VPS" "VXLAN tunnel configured over the VPN"
+			ifup omrvxlan >/dev/null 2>&1
+			ifup omrvxlanip >/dev/null 2>&1
+		fi
+	elif [ -n "$(uci -q get network.omrvxlan)" ]; then
+		ifdown omrvxlanip >/dev/null 2>&1
+		ifdown omrvxlan >/dev/null 2>&1
+		uci -q batch <<-EOF >/dev/null
+			delete network.omrvxlan
+			delete network.omrvxlanip
+			commit network
+		EOF
+		uci -q del_list firewall.zone_vpn.network="omrvxlan"
+		uci -q del_list firewall.zone_vpn.network="omrvxlanip"
+		uci -q commit firewall
+		ubus call network reload >/dev/null 2>&1
+		logger -t "OMR-VPS" "VXLAN tunnel removed"
+	fi
+}
+
+set_vxlan() {
+	config_load openmptcprouter
+	config_foreach _get_vxlan server
 }
 
 
@@ -2738,6 +2837,10 @@ _config_service() {
 	#_set_pihole
 	[ -n "$wanips" ] && _set_wan_ip
 	_set_vpn_ip
+	([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q get openmptcprouter.${servername}.current)" = "1" ]) && {
+		[ "$user_permission" != "ro" ] && _set_vxlan_vps
+		_get_vxlan
+	}
 	config_load network
 	lanips=""
 	config_foreach _get_lan_ip interface

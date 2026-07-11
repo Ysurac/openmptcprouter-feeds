@@ -32,6 +32,7 @@ var callOMRWizardAdd = rpc.declare({
 		'v2ray_user', 'xray_user', 'xray_transport',
 		'v2rayudp', 'forceretrieve',
 		'mptcpovervpn_vpn', 'country', 'dns64',
+		'vxlan',
 		'master'
 	],
 	expect: { '': {} }
@@ -66,6 +67,7 @@ function callOMRWizardAddCompat(payload) {
 		payload.mptcpovervpn_vpn,
 		payload.country,
 		payload.dns64,
+		payload.vxlan,
 		payload.master
 	).catch(function(err) {
 		var msg = (err && (err.message || err.toString())) || '';
@@ -105,6 +107,7 @@ function callOMRWizardAddCompat(payload) {
 				mptcpovervpn_vpn: payload.mptcpovervpn_vpn,
 				country: payload.country,
 				dns64: payload.dns64,
+				vxlan: payload.vxlan,
 				master: payload.master
 			})
 		]).then(function(res) {
@@ -152,7 +155,7 @@ function uniqueValues(list) {
 	});
 }
 
-var excludeRe = /^(lo|6in4-omr6in4|mlvpn0|ifb|sit|gre|ip6|teql|erspan|tun|bond)/;
+var excludeRe = /^(lo|6in4-omr6in4|mlvpn0|ifb|sit|gre|ip6|teql|erspan|tun|bond|vxlan|omrvxlan)/;
 
 function ensureWizardCSSLoaded() {
 	if (document.getElementById('omr-wizard-css'))
@@ -344,6 +347,7 @@ return view.extend({
 				mptcpovervpn_vpn: uci.get('openmptcprouter', 'settings', 'mptcpovervpn') || 'wireguard',
 				country: uci.get('openmptcprouter', 'settings', 'country') || 'world',
 				dns64: uci.get('openmptcprouter', 'settings', 'dns64') || '0',
+				vxlan: uci.get('openmptcprouter', 'settings', 'vxlan') || '0',
 				master: master
 			};
 		}
@@ -607,6 +611,12 @@ return view.extend({
 			o.write = function(sid, val) { uci.set('mqvpn', 'multipath', 'scheduler', val); };
 			o.remove = function() {};
 		}
+
+		o = s.taboption('vpn', form.Flag, 'vxlan', _('VXLAN'));
+		o.rmempty = true;
+		o.description = _('Set a VXLAN L2 tunnel over the VPN, configured on the server via the API.');
+		o.depends('_show_adv', '1');
+		o.default = '0';
 
 		// ── MPTCP over VPN ──
 		o = s.taboption('mptcpvpn', form.ListValue, 'mptcpovervpn', _('MPTCP over VPN'));
@@ -1171,6 +1181,7 @@ return view.extend({
 					mptcpovervpn_vpn: uci.get('openmptcprouter', 'settings', 'mptcpovervpn') || 'wireguard',
 					country: uci.get('openmptcprouter', 'settings', 'country') || 'world',
 					dns64: uci.get('openmptcprouter', 'settings', 'dns64') || '0',
+					vxlan: uci.get('openmptcprouter', 'settings', 'vxlan') || '0',
 					master: master
 				};
 			}, this))
