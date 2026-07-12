@@ -57,9 +57,9 @@ if [ "$(uci -q get omr-tracker.defaults.server_http_test)" = "" ]; then
 	EOF
 fi
 
-if [ "$(uci -q get omr-tracker.defaults.server_test)" = "" ]; then
+if [ "$(uci -q get omr-tracker.defaults.server_test)" = "" ] || [ "$(uci -q get omr-tracker.defaults.server_test)" = "0" ]; then
 	uci -q batch <<-EOF >/dev/null
-		set omr-tracker.defaults.server_test=0
+		set omr-tracker.defaults.server_test=1
 		commit omr-tracker
 	EOF
 fi
@@ -104,13 +104,27 @@ if [ -z "$(uci -q get omr-tracker.omrvpn.restart_down)" ]; then
 		commit omr-tracker
 	EOF
 fi
-if [ -z "$(uci -q show omr-tracker.hosts_defauts)" ]; then
-	uci -q batch <<-EOF >/dev/null
-		set omr-tracker.defaults.country='world'
-		set omr-tracker.proxy.country='world_proxy'
-		del omr-tracker.defaults.hosts
-		del omr-tracker.defaults.hosts6
-	EOF
+# Recreate the hosts sections when missing, or when their lists contain
+# duplicates: an earlier version of this script guarded on a misspelled
+# section name, so every sysupgrade appended the whole block again. A later
+# "uci commit" merges the duplicate-named sections into one, concatenating
+# the lists, so the reliable symptom is repeated values in world.hosts.
+_world_hosts=$(uci -q get omr-tracker.world.hosts)
+if [ -z "$_world_hosts" ] || [ -n "$(echo "$_world_hosts" | tr ' ' '\n' | sort | uniq -d)" ]; then
+	# rewrite the config without any hosts_defaults/hosts_proxy section,
+	# bypassing uci: staged-delta semantics around duplicate-named sections
+	# are unreliable
+	uci -q revert omr-tracker
+	awk '
+		/^config[ \t]/ { skip = ($2 == "hosts_defaults" || $2 == "hosts_proxy") }
+		!skip
+	' /etc/config/omr-tracker > /tmp/omr-tracker.uci-defaults.$$ && \
+		mv /tmp/omr-tracker.uci-defaults.$$ /etc/config/omr-tracker
+	uci -q set omr-tracker.defaults.country='world'
+	uci -q set omr-tracker.proxy.country='world_proxy'
+	uci -q delete omr-tracker.defaults.hosts
+	uci -q delete omr-tracker.defaults.hosts6
+	uci -q commit omr-tracker
 	cat >> "/etc/config/omr-tracker" <<-EOF
 config hosts_defaults 'world'
         list hosts '4.2.2.1'
