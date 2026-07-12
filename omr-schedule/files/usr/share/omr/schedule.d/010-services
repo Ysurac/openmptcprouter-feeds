@@ -74,12 +74,12 @@ if [ -n "$(uci show openmptcprouter | awk -F= '/password/ { gsub("\047","",$2);p
 		sleep 5
 	fi
 	if [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ -f /etc/init.d/v2ray ] && [ "$(pgrep -f omr-tracker-v2ray)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
-		_log "Can't find omr-tracker-v2ray, restart omr-tracker..."
-		/etc/init.d/omr-tracker restart >/dev/null 2>&1
+		_log "Can't find omr-tracker-v2ray, start it (procd keeps running trackers)..."
+		/etc/init.d/omr-tracker start >/dev/null 2>&1
 	fi
 	if [ "$(uci -q get xray.main.enabled)" = "1" ] && [ -f /etc/init.d/xray ] && [ "$(pgrep -f omr-tracker-xray)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
-		_log "Can't find omr-tracker-xray, restart omr-tracker..."
-		/etc/init.d/omr-tracker restart >/dev/null 2>&1
+		_log "Can't find omr-tracker-xray, start it (procd keeps running trackers)..."
+		/etc/init.d/omr-tracker start >/dev/null 2>&1
 	fi
 
 	set_get_config() {
@@ -93,13 +93,13 @@ if [ -n "$(uci show openmptcprouter | awk -F= '/password/ { gsub("\047","",$2);p
 		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 	fi
 	if [ -f /etc/init.d/shadowsocks-libev ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.key)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "192.168.1.3" ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
-		_log "Can't find omr-tracker-ss for Shadowsocks libev, restart omr-tracker..."
-		/etc/init.d/omr-tracker restart >/dev/null 2>&1
+		_log "Can't find omr-tracker-ss for Shadowsocks libev, start it (procd keeps running trackers)..."
+		/etc/init.d/omr-tracker start >/dev/null 2>&1
 	fi
 
 	if [ -f /etc/init.d/shadowsocks-rust ] && [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-rust.sss0.password)" != "" ] && [ "$(uci -q get shadowsocks-rust.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-rust.sss0.server)" != "192.168.1.3" ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
-		_log "Can't find omr-tracker-ss for Shadowsocks Rust, restart omr-tracker..."
-		/etc/init.d/omr-tracker restart >/dev/null 2>&1
+		_log "Can't find omr-tracker-ss for Shadowsocks Rust, start it (procd keeps running trackers)..."
+		/etc/init.d/omr-tracker start >/dev/null 2>&1
 	fi
 
 	if [ "$(uci -q get glorytun.vpn.enable)" = "1" ] && [ "$(uci -q get glorytun.vpn.key)" = "" ]; then
@@ -252,19 +252,55 @@ if [ "$(uci -q get openmptcprouter.settings.disable_modemmanager)" != "1" ]; the
 	/etc/init.d/modemmanager enable >/dev/null 2>&1
 fi
 
+# pgrep -f matches the tracker daemon AND its short-lived bash subshells
+# (command substitutions, post-tracking blocks share the same cmdline), so a
+# raw pid count sees phantom duplicates and — once the pid space wraps — the
+# lowest pid can be a subshell, getting the real daemon killed. Only processes
+# reparented to init/procd (PPid 1) are actual daemons.
+_daemon_pids() {
+	local pid ppid daemons=""
+	for pid in $(pgrep -f "$1"); do
+		ppid=$(awk '/^PPid:/ {print $2}' "/proc/$pid/status" 2>/dev/null)
+		[ "$ppid" = "1" ] && daemons="$daemons $pid"
+	done
+	echo $daemons
+}
+
+_oldest_pid() {
+	local pid start oldest="" oldest_start=""
+	for pid in "$@"; do
+		start=$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null)
+		[ -z "$start" ] && continue
+		if [ -z "$oldest_start" ] || [ "$start" -lt "$oldest_start" ]; then
+			oldest=$pid
+			oldest_start=$start
+		fi
+	done
+	echo "$oldest"
+}
+
 restart_omrtracker() {
 	config_get multipath "$1" multipath
 	config_get ifenabled "$1" auto
 	{ [ -z "$multipath" ] || [ "$multipath" = "off" ]; } && return
 	[ "$ifenabled" = "0" ] && return
-	local pids pid_count
-	pids=$(pgrep -f "omr-tracker $1")
-	pid_count=$(printf '%s\n' $pids | sed '/^$/d' | wc -l)
-	[ "$pid_count" -gt 1 ] && {
-		printf '%s\n' $pids | tail -n +2 | while read -r pid; do kill "$pid" 2>/dev/null; done
+	local daemons daemon_count keep pid
+	daemons=$(_daemon_pids "omr-tracker $1")
+	daemon_count=$(echo $daemons | wc -w)
+	[ "$daemon_count" -gt 1 ] && {
+		# keep the instance procd supervises (fall back to the oldest),
+		# kill only genuine stray daemons
+		keep=$(ubus call service list '{"name":"omr-tracker"}' 2>/dev/null | jsonfilter -q -e "@['omr-tracker'].instances['$1'].pid")
+		case " $daemons " in
+			*" $keep "*) ;;
+			*) keep=$(_oldest_pid $daemons);;
+		esac
+		for pid in $daemons; do
+			[ "$pid" != "$keep" ] && kill "$pid" 2>/dev/null
+		done
 		return
 	}
-	[ "$pid_count" -eq 1 ] && return
+	[ "$daemon_count" -eq 1 ] && return
 	# Atomic lock to prevent concurrent starts from overlapping cron runs
 	local lockdir="/tmp/omr-tracker-lock-${1}"
 	if ! mkdir "$lockdir" 2>/dev/null; then
@@ -306,10 +342,16 @@ set_lan_ips() {
 }
 config_load network
 config_foreach restart_omrtracker interface
-# Kill any duplicate omr-tracker-server instances
-_srv_pids=$(pgrep -f "omr-tracker-server")
-_srv_count=$(printf '%s\n' $_srv_pids | sed '/^$/d' | wc -l)
-[ "$_srv_count" -gt 1 ] && printf '%s\n' $_srv_pids | tail -n +2 | while read -r pid; do kill "$pid" 2>/dev/null; done
+# Kill any duplicate omr-tracker-server daemons (PPid-1 only: pgrep -f also
+# matches its subshells), keeping the oldest
+_srv_daemons=$(_daemon_pids "omr-tracker-server")
+_srv_count=$(echo $_srv_daemons | wc -w)
+[ "$_srv_count" -gt 1 ] && {
+	_srv_keep=$(_oldest_pid $_srv_daemons)
+	for _srv_pid in $_srv_daemons; do
+		[ "$_srv_pid" != "$_srv_keep" ] && kill "$_srv_pid" 2>/dev/null
+	done
+}
 [ "$(uci -q get openmptcprouter.settings.restrict_to_lan)" = "1" ] && config_foreach set_lan_ips interface
 [ "$(uci -q get openmptcprouter.settings.restrict_to_lan)" = "0" ] && ([ -n "$(uci -q get shadowsocks-libev.ss_rules.ifnames)" ] || [ -n "$(uci -q get shadowsocks-rust.ss_rules.ifnames)" ]) && {
 	uci -q batch <<-EOF
