@@ -333,7 +333,18 @@ _restart
 
 OMR_TRACKER_INTERFACE_PROTO="$(uci -q get network.${OMR_TRACKER_INTERFACE}.proto)"
 OMR_TRACKER_PREV_STATUS=""
-[ "$OMR_TRACKER_INTERFACE_PROTO" = "modemmanager" ] && sleep $(uci -q get network.${OMR_TRACKER_INTERFACE}.delay || echo '120')
+# The modem may still be initializing: wait for netifd to report the
+# interface up instead of sleeping blindly, with the configured delay
+# (default 120s) as the cap. Tracking — and with it MPTCP endpoint setup —
+# then starts as soon as the connection is established.
+[ "$OMR_TRACKER_INTERFACE_PROTO" = "modemmanager" ] && {
+	_mm_delay=$(uci -q get network.${OMR_TRACKER_INTERFACE}.delay || echo '120')
+	while [ "$_mm_delay" -gt 0 ]; do
+		[ "$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@.up')" = "true" ] && break
+		sleep 2
+		_mm_delay=$((_mm_delay - 2))
+	done
+}
 
 _host4_raw=""
 _host4_resolved=""
@@ -341,6 +352,7 @@ _host4_resolve_time=0
 _host6_raw=""
 _host6_resolved=""
 _host6_resolve_time=0
+_post_tracking_last=0
 
 # main loop
 while true; do
@@ -356,9 +368,19 @@ while true; do
 	OMR_TRACKER_RTT_MAX=
 	#OMR_TRACKER_TIMEOUT=$((rto / 1000 + (rto % 1000 ? 1 : 0)))
 	OMR_TRACKER_LIST_HOSTS=""
-	OMR_TRACKER_DEVICE_GATEWAY=
-	OMR_TRACKER_DEVICE_GATEWAY6=
+	# Reuse the last known gateways while the link is healthy: rediscovery
+	# costs ~15 processes per cycle. A stale gateway makes the next ping
+	# fail, flipping status to ERROR, which forces a full rediscovery on
+	# the following cycle.
+	if [ "$OMR_TRACKER_PREV_STATUS" = "OK" ]; then
+		OMR_TRACKER_DEVICE_GATEWAY="$OMR_TRACKER_PREV_GATEWAY"
+		OMR_TRACKER_DEVICE_GATEWAY6="$OMR_TRACKER_PREV_GATEWAY6"
+	else
+		OMR_TRACKER_DEVICE_GATEWAY=
+		OMR_TRACKER_DEVICE_GATEWAY6=
+	fi
 	serverip_ping=false
+	OMR_TRACKER_PINGED=""
 	if [ "$(uci -q get network.${OMR_TRACKER_INTERFACE}.disabled)" = "1" ]; then
 		sleep "${OMR_TRACKER_INTERVAL:-2}"
 		continue
@@ -432,28 +454,33 @@ while true; do
 				#if [ -z "$OMR_TRACKER_DEVICE_IP6" ]; then
 					OMR_TRACKER_DEVICE_IP6=$(ip -6 addr show dev "$OMR_TRACKER_DEVICE" scope global | sort -r | grep -m 1 inet6 | awk '{print $2}' | cut -d'/' -s -f1)
 				#fi
-				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
-					OMR_TRACKER_DEVICE_GATEWAY6=$(uci -q get "network.$OMR_TRACKER_INTERFACE.ip6gw")
-				fi
-				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
-					OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.${OMR_TRACKER_INTERFACE} status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${OMR_TRACKER_DEVICE_IP6}\"].nexthop" | tr -d "\n")
-				fi
-				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
-					OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.${OMR_TRACKER_INTERFACE} status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${OMR_TRACKER_DEVICE_IP6}/64\"].nexthop" | tr -d "\n")
-				fi
-				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
-					OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.${OMR_TRACKER_INTERFACE} status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${OMR_TRACKER_DEVICE_IP6}/56\"].nexthop" | tr -d "\n")
-				fi
-				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
-					OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.$OMR_TRACKER_INTERFACE status | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
-				fi
-				if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
-					OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.$OMR_TRACKER_INTERFACE status | jsonfilter -q -l 1 -e '@.route[@.nexthop="::"].target' | tr -d "\n")
+				# without a global IPv6 address no IPv6 probe can run, so
+				# don't burn ubus/jsonfilter calls looking for a gateway
+				if [ -n "$OMR_TRACKER_DEVICE_IP6" ]; then
+					if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
+						OMR_TRACKER_DEVICE_GATEWAY6=$(uci -q get "network.$OMR_TRACKER_INTERFACE.ip6gw")
+					fi
+					if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
+						OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.${OMR_TRACKER_INTERFACE} status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${OMR_TRACKER_DEVICE_IP6}\"].nexthop" | tr -d "\n")
+					fi
+					if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
+						OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.${OMR_TRACKER_INTERFACE} status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${OMR_TRACKER_DEVICE_IP6}/64\"].nexthop" | tr -d "\n")
+					fi
+					if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
+						OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.${OMR_TRACKER_INTERFACE} status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${OMR_TRACKER_DEVICE_IP6}/56\"].nexthop" | tr -d "\n")
+					fi
+					if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
+						OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.$OMR_TRACKER_INTERFACE status | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
+					fi
+					if [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$OMR_TRACKER_DEVICE_GATEWAY6" = "::" ]; then
+						OMR_TRACKER_DEVICE_GATEWAY6=$(ubus call network.interface.$OMR_TRACKER_INTERFACE status | jsonfilter -q -l 1 -e '@.route[@.nexthop="::"].target' | tr -d "\n")
+					fi
 				fi
 			fi
 
 			# execute specific tracker
 			if { [ "$OMR_TRACKER_FAMILY" = "ipv4" ] || [ "$OMR_TRACKER_FAMILY" = "ipv4ipv6" ]; } && [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
+				OMR_TRACKER_PINGED=1
 				# setup loop variable
 				if [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ]; then
 					tries="$OMR_TRACKER_TRIES_UP"
@@ -584,6 +611,7 @@ while true; do
 			fi
 			#if [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" = "0" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
 			if [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
+				OMR_TRACKER_PINGED=1
 				# setup loop variable
 				if [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ]; then
 					tries="$OMR_TRACKER_TRIES"
@@ -753,16 +781,38 @@ while true; do
 	#[ "$OMR_TRACKER_HOSTS" = "$initial_hosts" ] || [ "$OMR_TRACKER_STATUS" = "OK" ] && _post_tracking
 	#[ "$OMR_TRACKER_STATUS" = "ERROR" ] && _restart
 	#[ "$OMR_TRACKER_STATUS" != "$OMR_TRACKER_PREV_STATUS" ] && _post_tracking
-	_post_tracking
+	# The post-tracking cascade sources every script in post-tracking.d (dozens
+	# of forks per run): run it immediately on any state transition so failover
+	# is not delayed, otherwise at most every OMR_TRACKER_POST_INTERVAL seconds
+	# for the periodic refresh work (status, latencies, weights, metrics).
+	printf -v _post_tracking_now '%(%s)T' -1
+	if [ "$OMR_TRACKER_STATUS" != "$OMR_TRACKER_PREV_STATUS" ] \
+		|| [ "$OMR_TRACKER_DEVICE_IP" != "$OMR_TRACKER_PREV_DEVICE_IP" ] \
+		|| [ "$OMR_TRACKER_DEVICE_IP6" != "$OMR_TRACKER_PREV_DEVICE_IP6" ] \
+		|| [ $((_post_tracking_now - _post_tracking_last)) -ge "${OMR_TRACKER_POST_INTERVAL:-10}" ]; then
+		_post_tracking
+		_post_tracking_last=$_post_tracking_now
+	fi
 	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && sleep $wait_test
 	OMR_TRACKER_PREV_STATUS="$OMR_TRACKER_STATUS"
 	OMR_TRACKER_PREV_DEVICE_IP="$OMR_TRACKER_DEVICE_IP"
 	OMR_TRACKER_PREV_DEVICE_IP6="$OMR_TRACKER_DEVICE_IP6"
+	OMR_TRACKER_PREV_GATEWAY="$OMR_TRACKER_DEVICE_GATEWAY"
+	OMR_TRACKER_PREV_GATEWAY6="$OMR_TRACKER_DEVICE_GATEWAY6"
 	_restart
 
 	if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
-		[ -n "$OMR_TRACKER_FAILURE_INTERVAL" ] && sleep "$OMR_TRACKER_FAILURE_INTERVAL"
+		if [ -z "$OMR_TRACKER_EVER_OK" ] && [ -z "$OMR_TRACKER_PINGED" ]; then
+			# The interface has never validated and isn't even up yet (no ping
+			# was possible, so the cycle was nearly free): boot/bring-up phase —
+			# recheck at the normal interval so the first route isn't delayed
+			# by the failure backoff.
+			sleep "${OMR_TRACKER_INTERVAL:-2}"
+		else
+			[ -n "$OMR_TRACKER_FAILURE_INTERVAL" ] && sleep "$OMR_TRACKER_FAILURE_INTERVAL"
+		fi
 	else
+		OMR_TRACKER_EVER_OK=1
 		sleep "${OMR_TRACKER_INTERVAL:-2}"
 	fi
 done

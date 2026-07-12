@@ -16,7 +16,7 @@
 
 _validate_section() {
 	local tmp_timeout=$timeout tmp_count=$count tmp_tries=$tries tmp_size=$size tmp_max_ttl=$max_ttl tmp_failure_loss=$failure_loss tmp_failure_latency=$failure_latency tmp_recovery_loss=$recovery_loss tmp_recovery_latency=$recovery_latency tmp_reliability=$reliability tmp_country=$country
-	local tmp_interval=$interval tmp_interval_tries=$interval_tries tmp_options=$options tmp_type=$type tmp_enabled=$enabled tmp_wait_test=$wait_test tmp_server_http_test=$server_http_test tmp_server_test=$server_test tmp_check_quality=$check_quality tmp_failure_interval=$failure_interval tmp_tries_up=$tries_up tmp_family=$family
+	local tmp_interval=$interval tmp_interval_tries=$interval_tries tmp_options=$options tmp_type=$type tmp_enabled=$enabled tmp_wait_test=$wait_test tmp_server_http_test=$server_http_test tmp_server_test=$server_test tmp_check_quality=$check_quality tmp_failure_interval=$failure_interval tmp_tries_up=$tries_up tmp_family=$family tmp_post_interval=$post_interval
 
 	uci_validate_section omr-tracker "$1" "$2" \
 		'timeout:uinteger'  \
@@ -33,6 +33,7 @@ _validate_section() {
 		'tries_up:uinteger'    \
 		'interval:uinteger' \
 		'interval_tries:uinteger' \
+		'post_interval:uinteger' \
 		'failure_interval:uinteger' \
 		'wait_test:uinteger' \
 		'type:string:undef'  \
@@ -57,6 +58,7 @@ _validate_section() {
 	[ -z "$tries"    ] && tries=$tmp_tries
 	[ -z "$tries_up"    ] && tries_up=$tmp_tries_up
 	[ -z "$interval" ] && interval=$tmp_interval
+	[ -z "$post_interval" ] && post_interval=$tmp_post_interval
 	[ -z "$interval_tries" ] && interval_tries=$tmp_interval_tries
 	[ -z "$wait_test" ] && wait_test=$tmp_wait_test
 	[ -z "$options"  ] && options=$tmp_options
@@ -85,7 +87,7 @@ _launch_tracker() {
 		loopback|lan*|if0*) return;;
 	esac
 	[ -z "$1" ] && return
-	local hosts hosts6 timeout count tries tries_up interval interval_tries options type enabled wait_test ipv6 proto server_http_test size max_ttl failure_loss failure_interval failure_latency recovery_loss recovery_latency family reliability
+	local hosts hosts6 timeout count tries tries_up interval interval_tries post_interval options type enabled wait_test ipv6 proto server_http_test size max_ttl failure_loss failure_interval failure_latency recovery_loss recovery_latency family reliability
 	_validate_section "defaults" "defaults"
 	_validate_section "interface" "$1"
 	[ -z "$country" ] && country="world"
@@ -119,6 +121,7 @@ _launch_tracker() {
 	#[ "${ifstatus}" = "false" ] && [ -z "${ifdevice}" ] && return
 	[ -z "${interval}" ] && interval=2
 	[ -z "${interval_tries}" ] && interval_tries=1
+	[ -z "${post_interval}" ] && post_interval=10
 	[ -z "${count}" ] && count=2
 	[ -z "${max_ttl}" ] && max_ttl=60
 	[ -z "${size}" ] && size=56
@@ -150,6 +153,7 @@ _launch_tracker() {
 	procd_append_param env "OMR_TRACKER_INTERVAL=$interval"
 	procd_append_param env "OMR_TRACKER_FAILURE_INTERVAL=$failure_interval"
 	procd_append_param env "OMR_TRACKER_INTERVAL_TRIES=$interval_tries"
+	procd_append_param env "OMR_TRACKER_POST_INTERVAL=$post_interval"
 	procd_append_param env "OMR_TRACKER_TABLE=$ip4table"
 	procd_append_param env "OMR_TRACKER_DEVICE=$ifname"
 	procd_append_param env "OMR_TRACKER_DEVICE_GATEWAY=$gateway"
@@ -544,7 +548,12 @@ reload_service() {
 restart_service() {
 	if [ -n "$1" ]; then
 		procd_kill "omr-tracker" "$1" 2>/dev/null
-		sleep 2
+		# wait for the instance to actually exit instead of a blind sleep
+		local _kill_wait=0
+		while [ -n "$(pgrep -f "omr-tracker $1")" ] && [ "$_kill_wait" -lt 3 ]; do
+			sleep 1
+			_kill_wait=$((_kill_wait + 1))
+		done
 		_cleanup_locks "$1"
 		start "$@"
 	else

@@ -295,6 +295,17 @@ return view.extend({
 		o.modalonly = true;
 		o.rmempty = false;
 
+		o = s.option(form.Value, 'post_interval', _('Post-tracking interval'),
+			_('Minimum delay between two runs of the post-tracking scripts while the interface state is stable. State changes always trigger them immediately. Higher values reduce CPU load.'));
+		o.default = '10';
+		o.value('5', _('%d seconds').format('5'));
+		o.value('10', _('%d seconds').format('10'));
+		o.value('30', _('%d seconds').format('30'));
+		o.value('60', _('%d minute').format('1'));
+		o.value('300', _('%d minutes').format('5'));
+		o.datatype = 'uinteger';
+		o.modalonly = true;
+
 		o = s.option(form.Value, 'failure_interval', _('Failure interval'),
 			_('Ping interval during failure detection'));
 		o.default = '5';
