@@ -2,7 +2,13 @@
 # Copyright (C) 2016 Aleksander Morgado <aleksander@aleksander.es>
 
 USE_PROCD=1
-START=70
+# Start right after network instead of S70: ModemManager needs 60s+ on small
+# boards to acquire DBus and probe USB modems, and at S70 that work is starved
+# by the S90 init block, delaying cellular WANs (and thus internet) by ~40-60s.
+# Starting early overlaps the probing with the rest of the boot sequence; the
+# wrapper waits for the DBus system bus, which we kick below since dbus itself
+# is only at S60.
+START=21
 
 LOG_LEVEL="INFO"
 
@@ -21,6 +27,9 @@ start_service() {
 	# wrapper script called '/usr/sbin/ModemManager-wrapper'.
 	#
 	. /usr/share/ModemManager/modemmanager.common
+	# dbus is enabled at S60; kick it now so ModemManager can register early.
+	# When S60dbus runs later, procd sees the same running instance and no-ops.
+	[ -x /etc/init.d/dbus ] && ! /etc/init.d/dbus running && /etc/init.d/dbus start >/dev/null 2>&1
 	procd_open_instance "service"
 	procd_set_param command /usr/sbin/ModemManager-wrapper
 	procd_append_param command --log-level="$LOG_LEVEL"
