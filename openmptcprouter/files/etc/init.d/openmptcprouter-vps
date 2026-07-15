@@ -262,6 +262,48 @@ _set_mlvpn_vps() {
 	fi
 }
 
+_set_mqvpn_vps() {
+	local enabled port key scheduler cc fec_enable fec_scheme reinjection_control reinjection_mode
+	local current_port
+	enabled="$(uci -q get mqvpn.settings.enable)"
+	[ "$enabled" != "1" ] && echo "MQVPN disabled" && return
+	# mqvpn.server.port is the user intent: push it to the server when it differs
+	port="$(uci -q get mqvpn.server.port)"
+	[ -z "$port" ] && echo 1 && return
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.port')"
+	[ -z "$current_port" ] && echo 1 && return
+	key="$(uci -q get mqvpn.auth.key)"
+	[ -z "$key" ] && echo "MQVPN key not set" && return
+	if [ "$current_port" != "$port" ]; then
+		scheduler="$(uci -q get mqvpn.multipath.scheduler)"
+		[ -z "$scheduler" ] && scheduler="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.scheduler')"
+		[ -z "$scheduler" ] && scheduler="wlb"
+		cc="$(uci -q get mqvpn.multipath.cc)"
+		[ -z "$cc" ] && cc="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.cc')"
+		[ -z "$cc" ] && cc="bbr2"
+		fec_enable="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.fec_enable')"
+		[ -z "$fec_enable" ] && fec_enable="false"
+		fec_scheme="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.fec_scheme')"
+		[ -z "$fec_scheme" ] && fec_scheme="xor"
+		reinjection_control="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reinjection_control')"
+		[ -z "$reinjection_control" ] && reinjection_control="false"
+		reinjection_mode="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reinjection_mode')"
+		[ -z "$reinjection_mode" ] && reinjection_mode="default"
+		local settings result
+		settings='{"key": "'$key'", "port": '$port', "scheduler": "'$scheduler'", "cc": "'$cc'", "fec_enable": '$fec_enable', "fec_scheme": "'$fec_scheme'", "reinjection_control": '$reinjection_control', "reinjection_mode": "'$reinjection_mode'"}'
+		result=$(_set_json "mqvpn" "$settings")
+		[ -n "$result" ] && uci -q set openmptcprouter.${servername}.get_config="1"
+		# The server moved its QUIC listener: restart the client so it
+		# reconnects on the new port instead of retrying the stale session
+		[ -n "$result" ] && /etc/init.d/mqvpn restart >/dev/null 2>&1
+		echo $result
+	else
+		echo 1
+	fi
+}
+
 _set_wireguard_vps() {
 	local enabled port key
 	ipskey=""
@@ -430,6 +472,9 @@ _set_xray_server_vps() {
 	userid=$(uci -q get xray.omrout.s_vless_user_id)
 	protocol=$(uci -q get xray.omrout.protocol)
 	ss_method=$(uci -q get xray.omrout.s_shadowsocks_method)
+	# An empty method makes the xray-server.json shadowsocks inbound invalid
+	# and prevents the whole xray service from starting on the VPS
+	[ -z "$ss_method" ] && ss_method="2022-blake3-aes-256-gcm"
 	transport=$(uci -q get xray.omrout.ss_network)
 	[ -z "$transport" ] && transport="tcp"
 	if [ "$protocol" = "vless-reality" ] && [ "$enabled" = "1" ]; then
@@ -585,6 +630,18 @@ _get_vps_config() {
 			fi
 		fi
 	fi
+	if [ "$vpn" = "mqvpn" ]; then
+		# mqvpn assigns the tunnel IP itself: a leftover dhcp proto (softether
+		# or glorytun-dhcp era) keeps omrvpn pending forever in netifd, which
+		# breaks everything that depends on it (VXLAN tunlink, ...)
+		if [ "$(uci -q get network.omrvpn.proto)" = "dhcp" ]; then
+			uci -q batch <<-EOF >/dev/null
+				set network.omrvpn.proto='none'
+				commit network
+			EOF
+			ifup omrvpn >/dev/null 2>&1
+		fi
+	fi
 	vpsip="$(uci -q get openmptcprouter.${servername}.ip | awk '{print $1}')"
 	ipresolve="$(resolveip -t 5 -4 $vpsip | head -n 1)"
 	if [ -n "$ipresolve" ]; then
@@ -673,6 +730,9 @@ _get_vps_config() {
 
 	mqvpn_port_tmp="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.port')"
 	[ -z "$mqvpn_port_tmp" ] && mqvpn_port_tmp="65443"
+	# mqvpn.server.port is user intent (pushed to the VPS by _set_mqvpn_vps):
+	# only default it from the VPS when not set locally
+	[ -n "$(uci -q get mqvpn.server.port)" ] && mqvpn_port_tmp="$(uci -q get mqvpn.server.port)"
 	if [ -n "$(uci -q get mqvpn.server)" ] && { [ "$(uci -q get mqvpn.server.ip)" != "$vpsip" ] || [ "$(uci -q get mqvpn.server.port)" != "$mqvpn_port_tmp" ]; } && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set mqvpn.server.ip="$vpsip"
@@ -707,7 +767,7 @@ _get_vps_config() {
 		fi
 	fi
 
-	if [ -n "$(uci -q get mlvpn.general)" ] && [ "$(uci -q get mlvpn.general.host)" != "127.0.0.1" ] && [ "$(uci -q get mlvpn.general.host)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ] && [ -f /etc/init.d/mlvpn ]; then
+	if [ -n "$(uci -q get mlvpn.general)" ] && [ -z "$(uci -q get openmptcprouter.settings.mptcpovervpn)" ] && [ "$(uci -q get mlvpn.general.host)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ] && [ -f /etc/init.d/mlvpn ]; then
 		uci -q batch <<-EOF >/dev/null
 			set mlvpn.general=mlvpn
 			set mlvpn.general.host="$vpsip"
@@ -718,13 +778,13 @@ _get_vps_config() {
 			/etc/init.d/mlvpn restart
 		fi
 	fi
-	if [ -n "$(uci -q get glorytun.vpn)" ] && [ "$(uci -q get glorytun.vpn.host)" != "127.0.0.1" ] && [ "$(uci -q get glorytun.vpn.host)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
+	if [ -n "$(uci -q get glorytun.vpn)" ] && [ -z "$(uci -q get openmptcprouter.settings.mptcpovervpn)" ] && [ "$(uci -q get glorytun.vpn.host)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set glorytun.vpn.host="$vpsip"
 		EOF
 		glorytun_change=1
 	fi
-	if [ -n "$(uci -q get glorytun-udp.vpn)" ] && [ "$(uci -q get glorytun-udp.vpn.host)" != "127.0.0.1" ] && [ "$(uci -q get glorytun-udp.vpn.host)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
+	if [ -n "$(uci -q get glorytun-udp.vpn)" ] && [ -z "$(uci -q get openmptcprouter.settings.mptcpovervpn)" ] && [ "$(uci -q get glorytun-udp.vpn.host)" != "$vpsip" ] && [ "$(uci -q get openmptcprouter.settings.ha)" != "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set glorytun-udp.vpn.host="$vpsip"
 		EOF
@@ -1010,9 +1070,24 @@ _get_vxlan() {
 				uci -q add_list firewall.zone_vpn.network="omrvxlanip"
 				uci -q commit firewall
 			fi
+			# The vpn zone input chain only accepts ICMP: without this rule the
+			# VXLAN UDP encap replies arriving on the VPN tunnel are rejected
+			uci -q batch <<-EOF >/dev/null
+				set firewall.omrvxlan=rule
+				set firewall.omrvxlan.enabled='1'
+				set firewall.omrvxlan.target='ACCEPT'
+				set firewall.omrvxlan.name='Allow-VXLAN'
+				set firewall.omrvxlan.proto='udp'
+				set firewall.omrvxlan.src='vpn'
+				set firewall.omrvxlan.dest_port='${vxlan_port:-4789}'
+				commit firewall
+			EOF
 			logger -t "OMR-VPS" "VXLAN tunnel configured over the VPN"
 			ifup omrvxlan >/dev/null 2>&1
 			ifup omrvxlanip >/dev/null 2>&1
+			# Reload so fw4 resolves the omrvxlan device into the vpn zone
+			# (output to the vxlan device is rejected until then)
+			/etc/init.d/firewall reload >/dev/null 2>&1
 		fi
 	elif [ -n "$(uci -q get network.omrvxlan)" ]; then
 		ifdown omrvxlanip >/dev/null 2>&1
@@ -1024,8 +1099,10 @@ _get_vxlan() {
 		EOF
 		uci -q del_list firewall.zone_vpn.network="omrvxlan"
 		uci -q del_list firewall.zone_vpn.network="omrvxlanip"
+		uci -q delete firewall.omrvxlan
 		uci -q commit firewall
 		ubus call network reload >/dev/null 2>&1
+		/etc/init.d/firewall reload >/dev/null 2>&1
 		logger -t "OMR-VPS" "VXLAN tunnel removed"
 	fi
 }
@@ -2108,7 +2185,7 @@ _set_config_from_vps() {
 			set glorytun.vpn.enable=$glorytun_state
 			set glorytun.vpn.chacha20=$glorytun_chacha
 		EOF
-		if [ "$(uci -q get glorytun.vpn.host)" != "127.0.0.1" ]; then
+		if [ -z "$(uci -q get openmptcprouter.settings.mptcpovervpn)" ]; then
 			uci -q set glorytun.vpn.host="$vpsip"
 		fi
 		if [ -n "$(uci -q changes glorytun)" ]; then
@@ -2133,7 +2210,7 @@ _set_config_from_vps() {
 			set glorytun-udp.vpn.enable=$glorytun_state
 			set glorytun-udp.vpn.chacha=$glorytun_chacha
 		EOF
-		if [ "$(uci -q get glorytun-udp.vpn.host)" != "127.0.0.1" ]; then
+		if [ -z "$(uci -q get openmptcprouter.settings.mptcpovervpn)" ]; then
 			uci -q set glorytun-udp.vpn.host="$vpsip"
 		fi
 		if [ -n "$(uci -q changes glorytun-udp)" ]; then
@@ -2301,6 +2378,9 @@ _set_config_from_vps() {
 	mqvpn_key="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.key')"
 	mqvpn_port="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.port')"
 	[ -z "$mqvpn_port" ] && mqvpn_port="65443"
+	# mqvpn.server.port is user intent (pushed to the VPS by _set_mqvpn_vps):
+	# only default it from the VPS when not set locally
+	[ -n "$(uci -q get mqvpn.server.port)" ] && mqvpn_port="$(uci -q get mqvpn.server.port)"
 	mqvpn_cc="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.cc')"
 	mqvpn_scheduler="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.scheduler')"
 	mqvpn_fec_enable_raw="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.fec_enable')"
@@ -2354,7 +2434,6 @@ _set_config_from_vps() {
 			$([ -n "$mqvpn_reorder_enabled" ] && echo "set mqvpn.reorder.enabled=$mqvpn_reorder_enabled")
 			$([ -n "$mqvpn_reorder_max_wait_ms" ] && echo "set mqvpn.reorder.max_wait_ms=$mqvpn_reorder_max_wait_ms")
 			$([ -n "$mqvpn_reorder_cap_packets" ] && echo "set mqvpn.reorder.cap_packets=$mqvpn_reorder_cap_packets")
-			commit mqvpn
 		EOF
 		if [ -n "$mqvpn_reorder_rules_json" ]; then
 			while uci -q delete mqvpn.@reorder_rule[0] 2>/dev/null; do :; done
@@ -2817,6 +2896,7 @@ _config_service() {
 		([ -n "$(uci -q get glorytun.vpn)" ] || [ -n "$(uci -q get glorytun-udp.vpn)" ]) && [ -z "$(_set_glorytun_vps)" ] && error=1
 		[ -n "$(uci -q get openvpn.omr)" ] && [ -z "$(_set_openvpn_vps)" ] && error=1
 		[ -n "$(uci -q get mlvpn.general)" ] && [ -z "$(_set_mlvpn_vps)" ] && error=1
+		[ -n "$(uci -q get mqvpn.server)" ] && [ -z "$(_set_mqvpn_vps)" ] && error=1
 		[ -n "$(uci -q get softethervpn.openmptcprouter)" ] && [ -z "$(_set_softethervpn_vps)" ] && error=1
 		_set_vps_firewall
 		[ -n "$(uci -q show network | grep wireguard)" ] && [ -z "$(_set_wireguard_vps)" ] && error=1

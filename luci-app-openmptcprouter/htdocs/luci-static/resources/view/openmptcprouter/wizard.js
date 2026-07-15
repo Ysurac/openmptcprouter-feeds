@@ -610,6 +610,15 @@ return view.extend({
 			o.cfgvalue = function() { return uci.get('mqvpn', 'multipath', 'scheduler') || 'wlb'; };
 			o.write = function(sid, val) { uci.set('mqvpn', 'multipath', 'scheduler', val); };
 			o.remove = function() {};
+
+			o = s.taboption('vpn', form.Value, '_mqvpn_port', _('MQVPN port'));
+			o.description = _('UDP port of the MQVPN server (e.g. 443 when other UDP ports are blocked). The server port is changed via the server API.');
+			o.depends({ '_show_adv': '1', 'vpn': 'mqvpn' });
+			o.datatype = 'port';
+			o.placeholder = '65443';
+			o.cfgvalue = function() { return uci.get('mqvpn', 'server', 'port') || ''; };
+			o.write = function(sid, val) { uci.set('mqvpn', 'server', 'port', val); };
+			o.remove = function() {};
 		}
 
 		o = s.taboption('vpn', form.Flag, 'vxlan', _('VXLAN'));
