@@ -208,7 +208,9 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='down'
 			env -i ACTION="disconnecting" INTERFACE="$OMR_TRACKER_INTERFACE" DEVICE="$OMR_TRACKER_DEVICE" /sbin/hotplug-call iface
 		fi
-		if [ "$disable_multipath_off" != "1" ]; then
+		# disable_multipath_off only keeps multipath on when the interface is
+		# merely down; a tracker ERROR always turns multipath off
+		if [ "$disable_multipath_off" != "1" ] || [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 			multipath "$OMR_TRACKER_DEVICE" off > /dev/null 2>&1
 		fi
 		if [ "$(uci -q get glorytun-udp.vpn.enable)" = "1" ] && [ "$OMR_TRACKER_TYPE" != "glorytun" ]; then
@@ -380,14 +382,49 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 			/etc/init.d/glorytun restart >/dev/null 2>&1
 		fi
 		if [ "$(uci -q get glorytun-udp.vpn.enable)" = "1" ]; then
+			gtudp_now="$(date +%s)"
+			# When this outage began: only cleared on recovery (003-up)
+			# or after a hold-down, never by a restart, so it measures
+			# how long the tunnel has really been down
+			gtudp_outage_start="$(cat /tmp/omr-tracker-gtudp-outage-start 2>/dev/null)"
+			[ -z "$gtudp_outage_start" ] && {
+				gtudp_outage_start="$gtudp_now"
+				echo "$gtudp_outage_start" > /tmp/omr-tracker-gtudp-outage-start
+			}
+			# A path in running state means two-way keepalives with the
+			# server still work: a client restart would not help (the
+			# problem is elsewhere, likely server side) and each restart
+			# behind a NAT consumes a new path slot on the server, so
+			# don't restart unless the error persists
+			gtudp_error_since="$(cat /tmp/omr-tracker-gtudp-error-since 2>/dev/null)"
+			[ -z "$gtudp_error_since" ] && {
+				gtudp_error_since="$gtudp_now"
+				echo "$gtudp_error_since" > /tmp/omr-tracker-gtudp-error-since
+			}
 			# Rate-limit restarts: a restart removes all Glorytun UDP paths and
 			# they are only re-added by the trackers of the other interfaces,
 			# restarting again before that only creates a restart loop
 			gtudp_last_restart="$(cat /tmp/omr-tracker-gtudp-last-restart 2>/dev/null)"
 			[ -z "$gtudp_last_restart" ] && gtudp_last_restart=0
-			if [ "$(($(date +%s) - gtudp_last_restart))" -ge 60 ]; then
+			if [ -f /tmp/omr-tracker-gtudp-holddown ]; then
+				_log "Glorytun UDP VPN down, hold-down in progress (waiting for the server to purge its stale paths)"
+			elif [ "$((gtudp_now - gtudp_outage_start))" -ge 900 ]; then
+				# Restarts did not help for 15 minutes: the server path
+				# table is probably full of stale paths. The server purges
+				# all its passive paths after 2 minutes without receiving
+				# anything, so stop the tunnel to stay silent long enough,
+				# 004-glorytun-udp-path starts it again afterwards
+				_log "Glorytun UDP VPN still down after 15 minutes of restarts, stop it for 150s so the server purges its stale paths"
+				echo "$gtudp_now" > /tmp/omr-tracker-gtudp-holddown
+				/etc/init.d/glorytun-udp stop >/dev/null 2>&1
+			elif [ -n "$(glorytun-udp path 2>/dev/null | grep running)" ] && [ "$((gtudp_now - gtudp_error_since))" -lt 300 ]; then
+				_log "Glorytun UDP VPN down but a path is still running, restart skipped (probably a server side issue)"
+			elif [ "$((gtudp_now - gtudp_last_restart))" -ge 60 ]; then
 				_log "Glorytun UDP VPN down, restart it"
-				date +%s > /tmp/omr-tracker-gtudp-last-restart
+				echo "$gtudp_now" > /tmp/omr-tracker-gtudp-last-restart
+				# Restart the persistent error delay so with a running
+				# path next restart is only after another 5 minutes
+				echo "$gtudp_now" > /tmp/omr-tracker-gtudp-error-since
 				/etc/init.d/glorytun-udp restart >/dev/null 2>&1
 			else
 				_log "Glorytun UDP VPN down, restart skipped (restarted less than 60s ago, waiting for paths to be set again)"

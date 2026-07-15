@@ -19,6 +19,28 @@ if [ "$(uci -q get glorytun-udp.vpn.enable)" != "1" ]; then
 	exit 0
 fi
 
+# Resume a hold-down: 002-error stopped the tunnel so the silence makes the
+# server purge its stale paths, start it again once the silence lasted long
+# enough. Done here because this runs on every pass of every tracked
+# interface, while 002-error only acts on status transitions
+gtudp_holddown="$(cat /tmp/omr-tracker-gtudp-holddown 2>/dev/null)"
+if [ -n "$gtudp_holddown" ]; then
+	if [ "$(($(date +%s) - gtudp_holddown))" -ge 150 ]; then
+		_log "Glorytun UDP hold-down finished, start it again"
+		rm -f /tmp/omr-tracker-gtudp-holddown
+		# Next hold-down only if the tunnel stays in error for 15 more minutes
+		date +%s > /tmp/omr-tracker-gtudp-outage-start
+		date +%s > /tmp/omr-tracker-gtudp-error-since
+		date +%s > /tmp/omr-tracker-gtudp-last-restart
+		/etc/init.d/glorytun-udp start >/dev/null 2>&1
+	else
+		# The silence must not be broken: stop the tunnel again if
+		# something else (respawn, hotplug, user) restarted it meanwhile
+		[ -n "$(pidof glorytun-udp)" ] && /etc/init.d/glorytun-udp stop >/dev/null 2>&1
+		exit 0
+	fi
+fi
+
 multipath_config=$(uci -q get "openmptcprouter.$OMR_TRACKER_INTERFACE.multipath")
 [ -z "$multipath_config" ] && multipath_config=$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath" || echo "off")
 
