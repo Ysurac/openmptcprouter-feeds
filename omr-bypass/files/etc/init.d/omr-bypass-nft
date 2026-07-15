@@ -1530,6 +1530,50 @@ _stop_ndpid_consumer() {
 	fi
 }
 
+# Set _ndpid_wanted=1 when at least one enabled proto bypass rule relies on
+# nDPId detection (same conditions as _bypass_proto_collect_ndpid)
+_ndpid_rule_wanted() {
+	local proto intf enabled ndpi
+	config_get proto $1 proto
+	config_get intf $1 interface
+	config_get enabled $1 enabled
+	config_get ndpi $1 ndpi "1"
+	[ "$enabled" = "0" ] && return
+	[ "$ndpi" = "0" ] && return
+	[ -z "$proto" ] && return
+	[ -z "$intf" ] && return
+	[ "$intf" = "none" ] && return
+	_ndpid_wanted=1
+}
+
+# nDPId ships disabled by default: when bypass rules need protocol detection,
+# enable and start ndpisrvd/ndpid instead of silently doing nothing
+_ensure_ndpid_running() {
+	_ndpid_wanted=0
+	config_load omr-bypass
+	config_foreach _ndpid_rule_wanted dpis
+	[ "$_ndpid_wanted" != "1" ] && return
+	pidof ndpisrvd >/dev/null 2>&1 && pidof ndpid >/dev/null 2>&1 && return
+	[ "$(uci -q get ndpid.main.enabled)" != "1" ] && uci -q set ndpid.main.enabled='1'
+	[ "$(uci -q get ndpid.distributor.enabled)" != "1" ] && uci -q set ndpid.distributor.enabled='1'
+	[ -n "$(uci -q changes ndpid)" ] && uci -q commit ndpid
+	if ! pidof ndpisrvd >/dev/null 2>&1; then
+		logger -t "omr-bypass" "nDPId bypass rules present, starting ndpisrvd"
+		/etc/init.d/ndpisrvd start >/dev/null 2>&1
+	fi
+	if ! pidof ndpid >/dev/null 2>&1; then
+		logger -t "omr-bypass" "nDPId bypass rules present, starting ndpid"
+		/etc/init.d/ndpid start >/dev/null 2>&1
+	fi
+	# procd spawns instances asynchronously — wait briefly so the consumer
+	# check below sees ndpisrvd
+	local _i=0
+	while [ "$_i" -lt 5 ] && ! pidof ndpisrvd >/dev/null 2>&1; do
+		sleep 1
+		_i=$((_i+1))
+	done
+}
+
 boot() {
 	BOOT=1
 	start "$@"
@@ -1586,7 +1630,10 @@ start_service() {
 	_omr_proxy=$(uci -q get openmptcprouter.settings.proxy)
 	_omr_ndpi=$(uci -q get openmptcprouter.settings.ndpi)
 	_omr_ndpid=0
-	[ -x /usr/sbin/ndpid ] && pidof ndpisrvd >/dev/null 2>&1 && _omr_ndpid=1
+	if [ -x /usr/sbin/ndpid ]; then
+		_ensure_ndpid_running
+		pidof ndpisrvd >/dev/null 2>&1 && _omr_ndpid=1
+	fi
 	_ss_libev_disabled=$(uci -q get shadowsocks-libev.sss0.disabled)
 	_ss_rust_disabled=$(uci -q get shadowsocks-rust.sss0.disabled)
 	_v2ray_enabled=$(uci -q get v2ray.main.enabled)
