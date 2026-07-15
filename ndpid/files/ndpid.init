@@ -12,6 +12,22 @@ COMPAT_STATUS=/var/run/netifyd/status.json
 
 . /usr/share/ndpid/functions.sh 2>/dev/null || true
 
+# Drop configured interfaces that don't exist (the shipped default br-lan is
+# absent when the LAN isn't bridged) and fall back to the LAN device so the
+# daemon doesn't crash-loop on pcap_open_live
+resolve_interfaces() {
+	local valid="" iface
+	for iface in $1; do
+		[ -e "/sys/class/net/$iface" ] && valid="$valid $iface"
+	done
+	valid="${valid# }"
+	if [ -z "$valid" ]; then
+		valid=$(ifstatus lan 2>/dev/null | jsonfilter -q -e '@.l3_device')
+		[ -n "$valid" ] && logger -t ndpid "Configured interface(s) '$1' not found, using LAN device '$valid'"
+	fi
+	echo "$valid"
+}
+
 generate_config() {
 	config_load ndpid
 
@@ -27,6 +43,7 @@ generate_config() {
 	config_get bpf main bpf ''
 	config_get_bool no_promisc main no_promisc 0
 	config_get interfaces main interface 'br-lan'
+	interfaces=$(resolve_interfaces "$interfaces")
 
 	# When no_promisc is set, prepend an ether-host BPF clause for every
 	# monitored interface so nDPId only processes packets addressed to/from
@@ -199,6 +216,11 @@ start_service() {
 	generate_config
 
 	config_get interfaces main interface "br-lan"
+	interfaces=$(resolve_interfaces "$interfaces")
+	if [ -z "$interfaces" ]; then
+		logger -t ndpid "No usable capture interface found, not starting"
+		return 1
+	fi
 	local collector bpf no_promisc
 	config_get collector main collector '/var/run/ndpid/collector.sock'
 	config_get bpf main bpf ''
