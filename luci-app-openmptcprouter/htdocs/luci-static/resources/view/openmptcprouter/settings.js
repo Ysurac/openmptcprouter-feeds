@@ -422,10 +422,8 @@ return view.extend({
 				hasSfe     ? get('sfe_bridge')        : '0',
 				get('sipalg')
 			).then(function() {
-				uci.revert('openmptcprouter');
 				ui.addNotification(null, _('Settings saved and applied successfully.'), 'info');
 			}).catch(function(err) {
-				uci.revert('openmptcprouter');
 				ui.addNotification(null, _('Failed to save settings: ') + String(err), 'error');
 			});
 		});

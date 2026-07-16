@@ -722,7 +722,25 @@ local function valid_ipv4(ip)
 		and a ~= 127
 end
 
+-- Every uci config the wizard may read or write. Used both to discard
+-- stale staged deltas before applying and to commit everything at the end.
+local wizard_uci_configs = {
+	"network", "firewall", "openmptcprouter", "qos", "sqm",
+	"shadowsocks-libev", "shadowsocks-rust", "v2ray", "xray",
+	"glorytun", "glorytun-udp", "dsvpn", "mqvpn", "mlvpn", "openvpn",
+	"softethervpn", "ubond"
+}
+
 function wizard_add(args)
+	-- Discard any uci changes staged (but never committed) by LuCI ubus
+	-- sessions: rpcd shares the /tmp/.uci savedir, so stale deltas such as
+	-- 'del network.wan1.proto' left behind by an earlier page visit would
+	-- otherwise be silently merged into the commits below and could brick
+	-- the router (#4316). The wizard payload carries the full desired state.
+	for _, cfg in ipairs(wizard_uci_configs) do
+		pcall(function() ucic:revert(cfg) end)
+	end
+
 	local interfaces = _parse_json_table(args.interfaces)
 	local servers = _parse_json_table(args.servers)
 	local delete_intfs = _parse_json_table(args.delete_intfs)
@@ -788,6 +806,14 @@ function wizard_add(args)
 
 	if _as_string(args.mqvpn_key, "") ~= "" then
 		set_mqvpn(_as_string(args.mqvpn_key, ""))
+	end
+
+	if _as_string(args.mqvpn_scheduler, "") ~= "" then
+		ucic:set("mqvpn", "multipath", "scheduler", _as_string(args.mqvpn_scheduler, "wlb"))
+	end
+
+	if _as_string(args.mqvpn_port, "") ~= "" then
+		ucic:set("mqvpn", "server", "port", _as_string(args.mqvpn_port, ""))
 	end
 
 	if _as_string(args.ula, "") ~= "" then
@@ -1059,13 +1085,7 @@ function wizard_add(args)
 		end
 	end
 
-	local configs = {
-		"network", "firewall", "openmptcprouter", "qos", "sqm",
-		"shadowsocks-libev", "shadowsocks-rust", "v2ray", "xray",
-		"glorytun", "glorytun-udp", "mlvpn", "openvpn",
-		"softethervpn", "ubond"
-	}
-	for _, cfg in ipairs(configs) do
+	for _, cfg in ipairs(wizard_uci_configs) do
 		ucic:save(cfg)
 		ucic:commit(cfg)
 	end
@@ -2923,6 +2943,7 @@ local methods = {
 			encryption = "",
 			shadowsocks_key = "", shadowsocks2022_key = "",
 			glorytun_key = "", dsvpn_key = "",
+			mqvpn_key = "", mqvpn_scheduler = "", mqvpn_port = "",
 			mlvpn_password = "", softethervpn_password = "", ubond_password = "",
 			v2ray_user = "", xray_user = "", xray_transport = "",
 			v2rayudp = "", forceretrieve = "",

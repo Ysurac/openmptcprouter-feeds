@@ -28,6 +28,7 @@ var callOMRWizardAdd = rpc.declare({
 		'encryption',
 		'shadowsocks_key', 'shadowsocks2022_key',
 		'glorytun_key', 'dsvpn_key',
+		'mqvpn_key', 'mqvpn_scheduler', 'mqvpn_port',
 		'mlvpn_password', 'softethervpn_password', 'ubond_password',
 		'v2ray_user', 'xray_user', 'xray_transport',
 		'v2rayudp', 'forceretrieve',
@@ -56,6 +57,9 @@ function callOMRWizardAddCompat(payload) {
 		payload.shadowsocks2022_key,
 		payload.glorytun_key,
 		payload.dsvpn_key,
+		payload.mqvpn_key,
+		payload.mqvpn_scheduler,
+		payload.mqvpn_port,
 		payload.mlvpn_password,
 		payload.softethervpn_password,
 		payload.ubond_password,
@@ -96,6 +100,9 @@ function callOMRWizardAddCompat(payload) {
 				shadowsocks2022_key: payload.shadowsocks2022_key,
 				glorytun_key: payload.glorytun_key,
 				dsvpn_key: payload.dsvpn_key,
+				mqvpn_key: payload.mqvpn_key,
+				mqvpn_scheduler: payload.mqvpn_scheduler,
+				mqvpn_port: payload.mqvpn_port,
 				mlvpn_password: payload.mlvpn_password,
 				softethervpn_password: payload.softethervpn_password,
 				ubond_password: payload.ubond_password,
@@ -247,6 +254,19 @@ return view.extend({
 		var zoneLan = L.toArray(uci.get('firewall', 'zone_lan', 'network'));
 		var zoneWan = L.toArray(uci.get('firewall', 'zone_wan', 'network'));
 
+		/* Snapshot existing interfaces/servers so deletions done in the form
+		 * can be sent to the backend (nothing is staged via ubus uci anymore,
+		 * see #4316). */
+		var origIntfNames = [];
+		zoneLan.concat(zoneWan).forEach(function(i) {
+			if (uci.get('network', i) && origIntfNames.indexOf(i) === -1)
+				origIntfNames.push(i);
+		});
+		var origServerNames = [];
+		uci.sections('openmptcprouter', 'server', function(srv) {
+			origServerNames.push(srv['.name']);
+		});
+
 		function buildWizardPayload() {
 			var allIntfs = {};
 			zoneLan.forEach(function(i) { allIntfs[i] = true; });
@@ -318,11 +338,18 @@ return view.extend({
 			if (!master && servers.length)
 				master = servers[0].name;
 
+			var delIntfs = origIntfNames.filter(function(n) {
+				return !uci.get('network', n);
+			});
+			var delServers = origServerNames.filter(function(n) {
+				return !uci.get('openmptcprouter', n);
+			});
+
 			return {
 				interfaces: JSON.stringify(interfaces),
 				servers: JSON.stringify(servers),
-				delete_intfs: '[]',
-				delete_servers: '[]',
+				delete_intfs: JSON.stringify(delIntfs),
+				delete_servers: JSON.stringify(delServers),
 				add_interface: '',
 				add_interface_ifname: '',
 				add_server_name: '',
@@ -335,6 +362,9 @@ return view.extend({
 				shadowsocks2022_key: uci.get('shadowsocks-rust', 'sss0', 'password') || '',
 				glorytun_key: uci.get('glorytun', 'vpn', 'key') || '',
 				dsvpn_key: uci.get('dsvpn', 'vpn', 'key') || '',
+				mqvpn_key: uci.get('mqvpn', 'auth', 'key') || '',
+				mqvpn_scheduler: uci.get('mqvpn', 'multipath', 'scheduler') || '',
+				mqvpn_port: uci.get('mqvpn', 'server', 'port') || '',
 				mlvpn_password: uci.get('mlvpn', 'general', 'password') || '',
 				softethervpn_password: uci.get('softethervpn', 'openmptcprouter', 'password') || '',
 				ubond_password: uci.get('ubond', 'general', 'password') || '',
@@ -372,6 +402,24 @@ return view.extend({
 		if (has.softether) m.chain('softethervpn');
 		if (has.sqm) m.chain('sqm');
 		if (has.qos) m.chain('qos');
+
+		/* Never push form changes into the rpcd uci staging area: everything
+		 * is applied atomically by the openmptcprouter.wizardadd ubus method.
+		 * Staged-but-never-committed deltas were left behind by the stock
+		 * Map.save()/TypedSection.handleAdd()/handleRemove() flow; applying
+		 * (or auto-merging) them later corrupted the config (#4316).
+		 * This local-only save keeps the stock add/remove buttons working. */
+		m.save = function(cb, silent) {
+			this.checkDepends();
+			return this.parse()
+				.then(cb)
+				.catch(function(e) {
+					if (!silent)
+						ui.addNotification(null, E('p', _('Save error: ') + (e.message || e.toString())), 'error');
+					return Promise.reject(e);
+				})
+				.finally(L.bind(this.renderContents, this));
+		};
 
 		/* ── Step 1: Servers ───────────────────────────── */
 		s = m.section(form.TypedSection, 'server', _('Server settings'));
@@ -684,7 +732,7 @@ return view.extend({
 		s.addbtntitle = _('Add an interface');
 		s.filter = function(sid) { return zoneWan.indexOf(sid) !== -1; };
 
-		s.addSection = function(name) {
+		s.handleAdd = function(ev, name) {
 			if (!name) {
 				var n = 1;
 				while (uci.get('network', 'wan' + n)) n++;
@@ -697,16 +745,17 @@ return view.extend({
 			w.push(name);
 			uci.set('firewall', 'zone_wan', 'network', w);
 			zoneWan.push(name);
-			return name;
+			return this.map.save(null, true);
 		};
 
-		s.removeSection = function(sid) {
+		s.handleRemove = function(sid, ev) {
 			var w = L.toArray(uci.get('firewall', 'zone_wan', 'network'));
 			var i = w.indexOf(sid);
 			if (i !== -1) { w.splice(i, 1); uci.set('firewall', 'zone_wan', 'network', w); }
 			i = zoneWan.indexOf(sid);
 			if (i !== -1) zoneWan.splice(i, 1);
 			uci.remove('network', sid);
+			return this.map.save(null, true);
 		};
 
 		o = s.option(form.Value, 'label', _('Label'));
@@ -950,9 +999,60 @@ return view.extend({
 		o.default = '0';
 
 		/* ═══════════════════════════════════════════════════
-		 *  RENDER + STEP WIZARD WRAPPER
+		 *  SAVE FLOW
+		 *
+		 *  The form is only parsed into the local (client-side) uci cache;
+		 *  the full state is then sent to the openmptcprouter.wizardadd
+		 *  ubus method which validates, writes and commits everything
+		 *  atomically on the router. No change is ever staged through the
+		 *  ubus uci add/set/delete methods, so no "unapplied changes"
+		 *  are left behind after an apply (#4316).
 		 * ═══════════════════════════════════════════════════ */
-		return m.render().then(function(mapEl) {
+		this.map = m;
+
+		function doSave() {
+			if (document.querySelector('.cbi-input-invalid')) {
+				ui.addNotification(null,
+					E('p', _('Validation errors exist in the form. Please check all fields.')),
+					'error');
+				return Promise.reject(new Error(_('Validation errors exist in the form. Please check all fields.')));
+			}
+
+			m.checkDepends();
+			return m.parse()
+				.then(function() {
+					return callOMRWizardAddCompat(buildWizardPayload());
+				})
+				.then(function(res) {
+					var status = (res && res.status) ? res.status : 'ok';
+					if (status !== 'ok' && status !== 'reload')
+						throw new Error(_('API returned unexpected status: %s').format(status));
+					ui.addNotification(null, E('p', _('Saved through openmptcprouter ubus API (%s). Reloading...').format(status)), 'info');
+					setTimeout(function() { window.location.reload(); }, 3000);
+				})
+				.catch(function(e) {
+					ui.addNotification(null,
+						E('p', [
+							_('Save error: '),
+							E('em', {}, e.message || e.toString())
+						]),
+						'error');
+					throw e;
+				});
+		}
+		this._doSave = doSave;
+
+		/* ═══════════════════════════════════════════════════
+		 *  STEP WIZARD WRAPPER
+		 *  Re-applied after every Map.renderContents() so the step UI
+		 *  survives section add/remove re-renders.
+		 * ═══════════════════════════════════════════════════ */
+		var currentStep = 0;
+
+		function decorateWizard(mapEl) {
+			if (!mapEl || mapEl.querySelector('.omr-steps'))
+				return;
+
 			ensureWizardCSSLoaded();
 
 			var sections = mapEl.querySelectorAll(':scope > .cbi-section');
@@ -969,16 +1069,21 @@ return view.extend({
 				panels.push(panel);
 			}
 
+			if (!panels.length)
+				return;
+
 			// Remove LuCI default page actions (using wizard's custom buttons instead)
 			mapEl.querySelectorAll('.cbi-page-actions').forEach(function(el) {
 				el.remove();
 			});
 
-			panels[0].classList.add('active');
+			if (currentStep >= panels.length) currentStep = panels.length - 1;
+			if (currentStep < 0) currentStep = 0;
+
+			panels[currentStep].classList.add('active');
 
 			// Step bar
 			var stepsUl = E('ul', { 'class': 'omr-steps' });
-			var currentStep = 0;
 
 			function goTo(idx) {
 				if (idx < 0 || idx >= panels.length) return;
@@ -995,7 +1100,7 @@ return view.extend({
 
 			stepLabels.forEach(function(label, idx) {
 				stepsUl.appendChild(E('li', {
-					'class': idx === 0 ? 'active' : '',
+					'class': idx === currentStep ? 'active' : (idx < currentStep ? 'done' : ''),
 					'click': function() { goTo(idx); }
 				}, [
 					E('span', { 'class': 'step-num' }, '' + (idx + 1)),
@@ -1012,16 +1117,7 @@ return view.extend({
 			btnNext.addEventListener('click', function() { goTo(currentStep + 1); });
 			btnSave.addEventListener('click', function() {
 				btnSave.disabled = true;
-				m.save().then(function() {
-					var payload = buildWizardPayload();
-					return callOMRWizardAddCompat(payload);
-				}).then(function(res) {
-					var status = (res && res.status) ? res.status : 'ok';
-					ui.addNotification(null, E('p', _('Saved through openmptcprouter ubus API (%s). Reloading...').format(status)), 'info');
-					setTimeout(function() { window.location.reload(); }, 3000);
-				}).catch(function(e) {
-					ui.addNotification(null, E('p', _('Error: ') + e.message), 'error');
-				}).finally(function() {
+				doSave().catch(function() {}).finally(function() {
 					btnSave.disabled = false;
 				});
 			});
@@ -1033,7 +1129,6 @@ return view.extend({
 			function updateNav() {
 				btnPrev.style.display = currentStep === 0 ? 'none' : '';
 				btnNext.style.display = currentStep === panels.length - 1 ? 'none' : '';
-				//btnSave.style.display = currentStep === panels.length - 1 ? '' : 'none';
 			}
 			updateNav();
 
@@ -1065,9 +1160,18 @@ return view.extend({
 					el.remove();
 				});
 			}, 100);
+		}
 
-			return mapEl;
-		});
+		var origRenderContents = m.renderContents;
+		m.renderContents = function() {
+			var self = this;
+			return origRenderContents.apply(this, arguments).then(function(node) {
+				decorateWizard(node || self.root);
+				return node;
+			});
+		};
+
+		return m.render();
 	},
 
 	handleSaveApply: function(ev) {
@@ -1075,152 +1179,11 @@ return view.extend({
 	},
 
 	handleSave: function(ev) {
-		var map = this.map;
-
-		document.querySelectorAll('.cbi-input-invalid').forEach(function(elem) {
-			ui.addNotification(null, 
-				E('p', _('Validation errors exist in the form. Please check all fields.')), 
-				'error');
-		});
-
-		if (document.querySelector('.cbi-input-invalid'))
-			return Promise.reject();
-
-		return uci.save()
-			.then(L.bind(function() {
-				var zoneLan = L.toArray(uci.get('firewall', 'zone_lan', 'network'));
-				var zoneWan = L.toArray(uci.get('firewall', 'zone_wan', 'network'));
-
-				var allIntfs = {};
-				zoneLan.forEach(function(i) { allIntfs[i] = true; });
-				zoneWan.forEach(function(i) { allIntfs[i] = true; });
-
-				var interfaces = [];
-				Object.keys(allIntfs).forEach(function(intf) {
-					if (!uci.get('network', intf))
-						return;
-
-					var proto = uci.get('network', intf, 'proto') || 'static';
-					var typeintf = uci.get('network', intf, 'type') || '';
-					var device = uci.get('network', intf, 'device') || '';
-					var dev = splitDeviceAndVlan(device);
-
-					interfaces.push({
-						name: intf,
-						label: uci.get('network', intf, 'label') || '',
-						proto: proto,
-						type: typeintf,
-						masterintf: uci.get('network', intf, 'masterintf') || '',
-						ifname: dev.ifname,
-						vlan: dev.vlan,
-						device_ncm: proto === 'ncm' ? device : '',
-						device_qmi: proto === 'qmi' ? device : '',
-						device_modemmanager: proto === 'modemmanager' ? device : '',
-						ipaddr: uci.get('network', intf, 'ipaddr') || '',
-						ip6addr: uci.get('network', intf, 'ip6addr') || '',
-						netmask: uci.get('network', intf, 'netmask') || '',
-						gateway: uci.get('network', intf, 'gateway') || '',
-						ip6gw: uci.get('network', intf, 'ip6gw') || '',
-						ipv6: uci.get('network', intf, 'ipv6') || '0',
-						apn: uci.get('network', intf, 'apn') || '',
-						pincode: uci.get('network', intf, 'pincode') || '',
-						delay: uci.get('network', intf, 'delay') || '',
-						username: uci.get('network', intf, 'username') || '',
-						password: uci.get('network', intf, 'password') || '',
-						auth: uci.get('network', intf, 'auth') || '',
-						mode: uci.get('network', intf, 'mode') || '',
-						sqmenabled: uci.get('sqm', intf, 'enabled') || '0',
-						sqmautorate: uci.get('sqm', intf, 'autorate') || '0',
-						qosenabled: uci.get('qos', intf, 'enabled') || '0',
-						multipath: uci.get('network', intf, 'multipath') || 'on',
-						lan: zoneLan.indexOf(intf) !== -1 ? '1' : '0',
-						ttl: uci.get('network', intf + '_dev', 'ttl') || '',
-						downloadspeed: uci.get('network', intf, 'downloadspeed') || '0',
-						uploadspeed: uci.get('network', intf, 'uploadspeed') || '0',
-						testspeed: uci.get('openmptcprouter', intf, 'testspeed') || '0',
-						multipathvpn: uci.get('openmptcprouter', intf, 'multipathvpn') || '0'
-					});
-				});
-
-				var servers = [];
-				var master = '';
-				uci.sections('openmptcprouter', 'server', function(srv) {
-					var sid = srv['.name'];
-					if (!master && (uci.get('openmptcprouter', sid, 'master') === '1'))
-						master = sid;
-
-					servers.push({
-						name: sid,
-						ips: uniqueValues(uci.get('openmptcprouter', sid, 'ip')),
-						password: uci.get('openmptcprouter', sid, 'password') || '',
-						username: uci.get('openmptcprouter', sid, 'username') || 'openmptcprouter',
-						disabled: uci.get('openmptcprouter', sid, 'disabled') || '0'
-					});
-				});
-
-				if (!master && servers.length)
-					master = servers[0].name;
-
-				return {
-					interfaces: JSON.stringify(interfaces),
-					servers: JSON.stringify(servers),
-					delete_intfs: '[]',
-					delete_servers: '[]',
-					add_interface: '',
-					add_interface_ifname: '',
-					add_server_name: '',
-					disableipv6: uci.get('openmptcprouter', 'settings', 'disable_ipv6') || '1',
-					ula: uci.get('network', 'globals', 'ula_prefix') || '',
-					default_vpn: uci.get('openmptcprouter', 'settings', 'vpn') || 'glorytun_tcp',
-					default_proxy: uci.get('openmptcprouter', 'settings', 'proxy') || 'shadowsocks-rust',
-					encryption: uci.get('openmptcprouter', 'settings', 'encryption') || (has.aes ? 'aes-256-gcm' : 'chacha20-ietf-poly1305'),
-					shadowsocks_key: uci.get('shadowsocks-libev', 'sss0', 'key') || '',
-					shadowsocks2022_key: uci.get('shadowsocks-rust', 'sss0', 'password') || '',
-					glorytun_key: uci.get('glorytun', 'vpn', 'key') || '',
-					dsvpn_key: uci.get('dsvpn', 'vpn', 'key') || '',
-					mlvpn_password: uci.get('mlvpn', 'general', 'password') || '',
-					softethervpn_password: uci.get('softethervpn', 'openmptcprouter', 'password') || '',
-					ubond_password: uci.get('ubond', 'general', 'password') || '',
-					v2ray_user: uci.get('v2ray', 'omrout', 's_vmess_user_id') || '',
-					xray_user: uci.get('xray', 'omrout', 's_vmess_user_id') || '',
-					xray_transport: uci.get('xray', 'omrout', 'ss_network') || 'tcp',
-					v2rayudp: (uci.get('v2ray', 'main_transparent_proxy', 'redirect_udp') === '1' ||
-						uci.get('xray', 'main_transparent_proxy', 'redirect_udp') === '1') ? '1' : '0',
-					forceretrieve: uci.get('openmptcprouter', 'settings', 'forceretrieve') === '1' ? '1' : '',
-					mptcpovervpn_vpn: uci.get('openmptcprouter', 'settings', 'mptcpovervpn') || 'wireguard',
-					country: uci.get('openmptcprouter', 'settings', 'country') || 'world',
-					dns64: uci.get('openmptcprouter', 'settings', 'dns64') || '0',
-					vxlan: uci.get('openmptcprouter', 'settings', 'vxlan') || '0',
-					master: master
-				};
-			}, this))
-			.then(function(payload) {
-				return callOMRWizardAddCompat(payload);
-			})
-			.then(function(res) {
-				var status = (res && res.status) ? res.status : 'ok';
-				
-				if (status === 'ok' || status === 'reload') {
-					ui.addNotification(null,
-						E('p', _('Configuration saved. Services are restarting, page will reload...')),
-						'info');
-					setTimeout(function() { window.location.reload(); }, 3000);
-				} else {
-					throw new Error(_('API returned unexpected status: %s').format(status));
-				}
-			})
-			.catch(function(e) {
-				ui.addNotification(null, 
-					E('p', [
-						_('Save error: '), 
-						E('em', {}, e.message || e.toString())
-					]), 
-					'error');
-				throw e;
-			});
+		return this._doSave ? this._doSave() :
+			Promise.reject(new Error('wizard is not initialized'));
 	},
 
 	handleReset: function(ev) {
-		return this.map.reset();
+		return this.map ? this.map.reset() : Promise.resolve();
 	}
 });
