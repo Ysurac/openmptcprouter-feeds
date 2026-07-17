@@ -103,6 +103,16 @@ return view.extend({
 			};
 		});
 
+		o = s.option(form.Value, 'latency_ip', _('Custom check IPv4'),
+			_('IPv4 address or hostname used instead of the hosts list to check the connection and latency when no VPS is defined. Leave empty to use the hosts list.'));
+		o.datatype = 'host';
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'latency_ip6', _('Custom check IPv6'),
+			_('IPv6 address or hostname used instead of the hosts list to check the connection and latency when no VPS is defined. Leave empty to use the hosts list.'));
+		o.datatype = 'host';
+		o.modalonly = true;
+
 		o = s.option(form.ListValue, 'type', _('Tracking method'),_('Always ping gateway, then test connection by ping, httping or dns. None mode only ping gateway.'));
 		o.default = 'ping';
 		o.value('none');

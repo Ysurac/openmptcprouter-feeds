@@ -16,6 +16,8 @@ shift
 export OMR_TRACKER_INTERFACE
 export OMR_TRACKER_HOST
 export OMR_TRACKER_HOST6
+export OMR_TRACKER_LATENCY_IP
+export OMR_TRACKER_LATENCY_IP6
 export OMR_TRACKER_TIMEOUT
 export OMR_TRACKER_SIZE
 export OMR_TRACKER_MAX_TTL
@@ -138,14 +140,16 @@ _ping_server() {
 	fi
 }
 
+# Set servers=true when at least one enabled server has an IP defined
+count_server() {
+	config_get disabled $1 disabled
+	config_get serverip $1 ip
+	if [ "$disabled" != "1" ] && [ -n "$serverip" ]; then
+		servers=true
+	fi
+}
+
 _ping_server_all() {
-	count_server() {
-		config_get disabled $1 disabled
-		config_get serverip $1 ip
-		if [ "$disabled" != "1" ] && [ -n "$serverip" ]; then
-			servers=true
-		fi
-	}
 	config_load openmptcprouter
 	config_foreach count_server server
 	if [ "$servers" = true ]; then
@@ -179,13 +183,6 @@ _httping_server() {
 }
 
 _httping_server_all() {
-	count_server() {
-		config_get disabled $1 disabled
-		config_get serverip $1 ip
-		if [ "$disabled" != "1" ] && [ -n "$serverip" ]; then
-			servers=true
-		fi
-	}
 	config_load openmptcprouter
 	config_foreach count_server server
 	if [ "$servers" = true ]; then
@@ -324,6 +321,7 @@ _none() {
 }
 
 # Export callback functions for config_foreach
+export -f count_server
 export -f _ping_server
 export -f _ping_server_all
 export -f _httping_server
@@ -381,6 +379,49 @@ while true; do
 	fi
 	serverip_ping=false
 	OMR_TRACKER_PINGED=""
+	# The VPS is the latency reference when its IP is defined, the custom
+	# hosts list is only used to measure latency when no VPS is set. Cache
+	# the answer as scanning the server sections costs several forks.
+	printf -v _server_check_now '%(%s)T' -1
+	if [ -z "$_server_check_time" ] || [ $((_server_check_now - _server_check_time)) -gt 300 ]; then
+		servers=false
+		config_load openmptcprouter
+		config_foreach count_server server
+		OMR_TRACKER_SERVER_DEFINED=$servers
+		_server_check_time=$_server_check_now
+	fi
+	if [ "$OMR_TRACKER_SERVER_DEFINED" = true ]; then
+		host_localip="no"
+	else
+		host_localip="yes"
+	fi
+	# When no VPS is defined, a dedicated custom IP (latency_ip/latency_ip6)
+	# replaces the hosts list as check target; the hosts list is restored
+	# when a VPS appears or when no custom IP is set.
+	if [ "$OMR_TRACKER_SERVER_DEFINED" != true ] && [ -n "$OMR_TRACKER_LATENCY_IP" ]; then
+		if [ "$_custom4_active" != "1" ]; then
+			_hosts4_saved="$OMR_TRACKER_HOSTS"
+			OMR_TRACKER_HOSTS="$OMR_TRACKER_LATENCY_IP"
+			OMR_TRACKER_HOST="$OMR_TRACKER_LATENCY_IP"
+			_custom4_active=1
+		fi
+	elif [ "$_custom4_active" = "1" ]; then
+		OMR_TRACKER_HOSTS="$_hosts4_saved"
+		OMR_TRACKER_HOST="${OMR_TRACKER_HOSTS%% *}"
+		_custom4_active=0
+	fi
+	if [ "$OMR_TRACKER_SERVER_DEFINED" != true ] && [ -n "$OMR_TRACKER_LATENCY_IP6" ]; then
+		if [ "$_custom6_active" != "1" ]; then
+			_hosts6_saved="$OMR_TRACKER_HOSTS6"
+			OMR_TRACKER_HOSTS6="$OMR_TRACKER_LATENCY_IP6"
+			OMR_TRACKER_HOST6="$OMR_TRACKER_LATENCY_IP6"
+			_custom6_active=1
+		fi
+	elif [ "$_custom6_active" = "1" ]; then
+		OMR_TRACKER_HOSTS6="$_hosts6_saved"
+		OMR_TRACKER_HOST6="${OMR_TRACKER_HOSTS6%% *}"
+		_custom6_active=0
+	fi
 	if [ "$(uci -q get network.${OMR_TRACKER_INTERFACE}.disabled)" = "1" ]; then
 		sleep "${OMR_TRACKER_INTERVAL:-2}"
 		continue
@@ -516,13 +557,15 @@ while true; do
 							OMR_TRACKER_STATUS_MSG="IPv4 gateway down"
 						fi
 						serverip_ping=false
-						if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
-							config_load openmptcprouter
-							config_foreach _ping_server server $OMR_TRACKER_DEVICE
-						fi
-						if [ "$OMR_TRACKER_TYPE" = "httping" ]; then
-							config_load openmptcprouter
-							config_foreach _httping_server server $OMR_TRACKER_DEVICE_IP
+						if [ "$OMR_TRACKER_SERVER_DEFINED" = true ]; then
+							if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
+								config_load openmptcprouter
+								config_foreach _ping_server server $OMR_TRACKER_DEVICE
+							fi
+							if [ "$OMR_TRACKER_TYPE" = "httping" ]; then
+								config_load openmptcprouter
+								config_foreach _httping_server server $OMR_TRACKER_DEVICE_IP
+							fi
 						fi
 						if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST" ]; then
 							_resolve_now=$(date +%s)
@@ -544,13 +587,13 @@ while true; do
 									done
 								fi
 								if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
-									_ping "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE" "yes"
+									_ping "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE" "$host_localip"
 									statusb=$?
 								elif [ "$OMR_TRACKER_TYPE" = "httping" ]; then
-									_httping "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE_IP" "yes"
+									_httping "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE_IP" "$host_localip"
 									statusb=$?
 								elif [ "$OMR_TRACKER_TYPE" = "dns" ]; then
-									_dns "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE_IP" "yes"
+									_dns "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE_IP" "$host_localip"
 									statusb=$?
 								fi
 								[ -n "$(ip route show ${OMR_TRACKER_HOST} via ${OMR_TRACKER_DEVICE_GATEWAY} dev ${OMR_TRACKER_DEVICE} src ${OMR_TRACKER_DEVICE_IP})" ] && ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2>&1
@@ -636,13 +679,15 @@ while true; do
 							OMR_TRACKER_STATUS_MSG="IPv6 gateway down"
 						fi
 						serverip_ping=false
-						if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
-							config_load openmptcprouter
-							config_foreach _ping_server server $OMR_TRACKER_DEVICE
-						fi
-						if [ "$OMR_TRACKER_TYPE" = "httping" ]; then
-							config_load openmptcprouter
-							config_foreach _httping_server server $OMR_TRACKER_DEVICE_IP6
+						if [ "$OMR_TRACKER_SERVER_DEFINED" = true ]; then
+							if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
+								config_load openmptcprouter
+								config_foreach _ping_server server $OMR_TRACKER_DEVICE
+							fi
+							if [ "$OMR_TRACKER_TYPE" = "httping" ]; then
+								config_load openmptcprouter
+								config_foreach _httping_server server $OMR_TRACKER_DEVICE_IP6
+							fi
 						fi
 
 						if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST6" ]; then
@@ -665,13 +710,13 @@ while true; do
 									done
 								fi
 								if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
-									_ping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE" "yes"
+									_ping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE" "$host_localip"
 									statusb=$?
 								elif [ "$OMR_TRACKER_TYPE" = "httping" ]; then
-									_httping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP6" "yes"
+									_httping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP6" "$host_localip"
 									statusb=$?
 								elif [ "$OMR_TRACKER_TYPE" = "dns" ]; then
-									_dns "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP6" "yes"
+									_dns "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP6" "$host_localip"
 									statusb=$?
 								fi
 								ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP6" > /dev/null 2>&1
