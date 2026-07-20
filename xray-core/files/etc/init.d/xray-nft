@@ -1561,6 +1561,20 @@ add_outbound_setting() {
 			test -n "$s_freedom_user_level" && \
 				json_add_int "userLevel" "$s_freedom_user_level"
 
+			# xray blocks every target of a stream coming from a VLESS Reverse
+			# Proxy bridge unless the freedom outbound explicitly allows it; the
+			# omrbridge routing rule sends reverse streams here for VPS->LAN
+			# port forwarding, so restore the legacy reverse behaviour (full
+			# access, the VPS is trusted) when the bridge is enabled
+			if [ "$(uci -q get xray.main_reverse.enabled)" = "1" ] && \
+			   [ -n "$(uci -q get xray.omrout.s_vless_reverse_user_id)" ] ; then
+				json_add_array "finalRules"
+				json_add_object ""
+				json_add_string "action" "allow"
+				json_close_object
+				json_close_array # finalRules
+			fi
+
 			json_close_object # settings
 			;;
 		"http")
@@ -2228,6 +2242,76 @@ clear_transparent_proxy() {
 	fi
 }
 
+add_reverse_bridge_outbound() {
+	# VLESS Reverse Proxy bridge (replaces legacy reverse, removed in xray 26+):
+	# dials the VPS VLESS inbound with the dedicated reverse user id pushed by the
+	# VPS (xray.config.reverse_key); streams opened by the VPS portal (tag OMRLan,
+	# used for VPS->LAN port forwarding) show up here with inbound tag "omrbridge"
+	# and are routed to the LAN by the existing omrbridge routing rule.
+	[ "$(uci -q get xray.main_reverse.enabled)" = "1" ] || return 0
+	local reverse_id reverse_addr reverse_port reverse_pin
+	reverse_id="$(uci -q get xray.omrout.s_vless_reverse_user_id)"
+	[ -n "$reverse_id" ] || return 0
+	reverse_addr="$(uci -q get xray.omrout.s_vless_address)"
+	reverse_port="$(uci -q get xray.omrout.s_vless_port)"
+	[ -n "$reverse_addr" ] && [ -n "$reverse_port" ] || return 0
+
+	json_add_object ""
+	json_add_string "protocol" "vless"
+	json_add_string "tag" "omrreverse_tunnel"
+
+	json_add_object "settings"
+	json_add_string "address" "$reverse_addr"
+	json_add_int "port" "$reverse_port"
+	json_add_string "id" "$reverse_id"
+	json_add_string "encryption" "none"
+	json_add_object "reverse"
+	json_add_string "tag" "omrbridge"
+	json_close_object # reverse
+	json_close_object # settings
+
+	json_add_object "streamSettings"
+	json_add_string "network" "tcp"
+	json_add_string "security" "tls"
+	json_add_object "tlsSettings"
+	reverse_pin="$(uci -q get xray.omrout.ss_tls_pinned_sha256)"
+	if [ -z "$reverse_pin" ] ; then
+		reverse_pin=$(echo "Q" | openssl s_client \
+			-connect "${reverse_addr}:${reverse_port}" \
+			2>/dev/null \
+			| openssl x509 -outform DER 2>/dev/null \
+			| openssl dgst -sha256 2>/dev/null \
+			| awk '{print $2}')
+		[ "${#reverse_pin}" -ne 64 ] && reverse_pin=""
+		# SHA-256 of an empty stream = failed cert fetch, not a usable pin
+		[ "$reverse_pin" = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ] && reverse_pin=""
+	fi
+	if [ -n "$reverse_pin" ] ; then
+		json_add_string "pinnedPeerCertSha256" "$reverse_pin"
+	else
+		json_add_boolean "disableSystemRoot" "1"
+		json_add_array "certificates"
+		json_add_object ""
+		json_add_string "certificateFile" "$(uci -q get xray.omrout.ss_tls_cert_file)"
+		json_add_string "keyFile" "$(uci -q get xray.omrout.ss_tls_key_file)"
+		json_add_string "usage" "verify"
+		json_close_object
+		json_close_array # certificates
+	fi
+	json_close_object # tlsSettings
+	json_add_object "sockopt"
+	if [ -n "$TRANSPARENT_PROXY_PORT" ] ; then
+		json_add_int "mark" "255"
+	fi
+	if version_over_5_4 && [ "$(uci -q get xray.omrout.ss_sockopt_mptcp)" = "1" ] ; then
+		json_add_boolean "tcpMptcp" "1"
+	fi
+	json_close_object # sockopt
+	json_close_object # streamSettings
+
+	json_close_object
+}
+
 start_instance() {
 	local section="$1"
 
@@ -2324,6 +2408,8 @@ start_instance() {
 			for os in $outbounds ; do
 				add_outbound_setting "$os"
 			done
+
+			add_reverse_bridge_outbound
 
 			json_close_array # outbounds
 		fi
