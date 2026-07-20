@@ -225,6 +225,10 @@ function remove_interface(intf)
 	local defif = ucic:get("network",intf,"device")
 	ucic:delete("network",intf)
 	ucic:delete("network",intf .. "_dev")
+	if ucic:get("network",intf .. "_6","proto") == "dhcpv6" then
+		ucic:delete("network",intf .. "_6")
+		ucic:delete("openmptcprouter",intf .. "_6")
+	end
 	ucic:save("network")
 	ucic:commit("network")
 	ucic:delete("sqm",intf)
@@ -479,16 +483,36 @@ function default_proxy(proxy)
 		ucic:commit("shadowsocks-rust")
 	end
 
-	-- v2ray: enabled flag on main section
+	-- v2ray: enabled flag on main section and outbound protocol
+	local v2ray_protocols = {
+		["v2ray"]        = "vless",
+		["v2ray-vmess"]  = "vmess",
+		["v2ray-trojan"] = "trojan",
+		["v2ray-socks"]  = "socks"
+	}
 	if ucic:get("v2ray","main") ~= nil then
 		ucic:set("v2ray","main","enabled", is_v2ray and "1" or "0")
+		if v2ray_protocols[proxy] and ucic:get("v2ray","omrout") ~= nil then
+			ucic:set("v2ray","omrout","protocol", v2ray_protocols[proxy])
+		end
 		ucic:save("v2ray")
 		ucic:commit("v2ray")
 	end
 
-	-- xray: enabled flag on main section
+	-- xray: enabled flag on main section and outbound protocol
+	local xray_protocols = {
+		["xray"]               = "vless",
+		["xray-vless-reality"] = "vless-reality",
+		["xray-vmess"]         = "vmess",
+		["xray-trojan"]        = "trojan",
+		["xray-socks"]         = "socks",
+		["xray-shadowsocks"]   = "shadowsocks"
+	}
 	if ucic:get("xray","main") ~= nil then
 		ucic:set("xray","main","enabled", is_xray and "1" or "0")
+		if xray_protocols[proxy] and ucic:get("xray","omrout") ~= nil then
+			ucic:set("xray","omrout","protocol", xray_protocols[proxy])
+		end
 		ucic:save("xray")
 		ucic:commit("xray")
 	end
@@ -961,12 +985,26 @@ function wizard_add(args)
 	local lan_networks = {}
 	local wan_networks = {}
 
+	local managed_names = {}
+	for _, itf in ipairs(interfaces) do
+		if type(itf) == "table" then
+			local n = _sanitize_name(itf.name)
+			if n ~= "" then managed_names[n] = true end
+		end
+	end
+
 	for _, itf in ipairs(interfaces) do
 		if type(itf) == "table" then
 			local name = _sanitize_name(itf.name)
 			if name ~= "" then
 				if ucic:get("network", name) == nil then
 					ucic:set("network", name, "interface")
+				end
+				-- pre-existing gap: on a brand-new interface this section
+				-- doesn't exist yet, so unguarded option writes below
+				-- (testspeed, multipathvpn, and now ipv6) silently no-op
+				if ucic:get("openmptcprouter", name) == nil then
+					ucic:set("openmptcprouter", name, "interface")
 				end
 
 				local proto = _as_string(itf.proto, "dhcp")
@@ -989,7 +1027,41 @@ function wizard_add(args)
 				_set_or_delete("network", name, "device", _dev)
 				_set_or_delete("network", name, "ip6addr", _as_string(itf.ip6addr, ""))
 				_set_or_delete("network", name, "ip6gw", _as_string(itf.ip6gw, ""))
-				_set_or_delete("network", name, "ipv6", _as_string(itf.ipv6, "0"))
+				local itf_ipv6 = _as_string(itf.ipv6, "0")
+				if proto == "dhcp" then
+					-- per-interface preference; /etc/init.d/openmptcprouter
+					-- re-derives network.<name>.ipv6 from this on every
+					-- restart (global disable_ipv6 still takes priority)
+					_set_or_delete("openmptcprouter", name, "ipv6", itf_ipv6)
+				else
+					ucic:delete("openmptcprouter", name, "ipv6")
+					_set_or_delete("network", name, "ipv6", itf_ipv6)
+				end
+
+				-- IPv6 on a DHCP WAN (#4329) needs odhcp6c, so manage a
+				-- companion "<name>_6" DHCPv6 interface on the same device;
+				-- the tracker and post-tracking pick the address up from the
+				-- shared device and read the gateway from "<name>_6" status
+				local companion = name .. "_6"
+				if not managed_names[companion] then
+					if proto == "dhcp" and itf_ipv6 == "1" and _dev ~= "" then
+						local comp_mp = _as_string(itf.multipath, "on")
+						if comp_mp == "master" then comp_mp = "on" end
+						if ucic:get("network", companion) == nil then
+							ucic:set("network", companion, "interface")
+							ucic:set("network", companion, "reqaddress", "try")
+							ucic:set("network", companion, "reqprefix", "no")
+							ucic:set("network", companion, "defaultroute", "0")
+							ucic:set("network", companion, "peerdns", "0")
+						end
+						ucic:set("network", companion, "proto", "dhcpv6")
+						ucic:set("network", companion, "device", _dev)
+						ucic:set("network", companion, "multipath", comp_mp)
+					elseif ucic:get("network", companion, "proto") == "dhcpv6" then
+						ucic:delete("network", companion)
+						ucic:delete("openmptcprouter", companion)
+					end
+				end
 				_set_or_delete("network", name, "apn", _as_string(itf.apn, ""))
 				_set_or_delete("network", name, "pincode", _as_string(itf.pincode, ""))
 				_set_or_delete("network", name, "delay", _as_string(itf.delay, ""))

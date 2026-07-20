@@ -61,6 +61,8 @@ omr_set_settings() {
 	local device
 	local ifname
 	local multipath
+	# DHCPv6 companion interfaces (<intf>_6) are managed through their parent
+	case "$1" in *_6) return ;; esac
 	config_get multipath "$1" multipath
 	network_get_device ifname $1
 	[ -z "$ifname" ] && network_get_physdev ifname $1
@@ -81,8 +83,11 @@ omr_set_settings() {
 	if [ "$disable_ipv6" = "1" ]; then
 		uci -q set network.$1.ipv6=0
 	else
-		uci -q set network.$1.ipv6=1
+		# per-interface wizard choice wins when set (openmptcprouter.<intf>.ipv6)
+		ipv6_pref="$(uci -q get openmptcprouter.$1.ipv6)"
+		uci -q set network.$1.ipv6="${ipv6_pref:-1}"
 	fi
+	ipv6="$(uci -q get network.$1.ipv6)"
 
 	[ -z "$addlatency" ] && addlatency=0
 	devicename=$(echo "$device" | cut -d'/' -f3)

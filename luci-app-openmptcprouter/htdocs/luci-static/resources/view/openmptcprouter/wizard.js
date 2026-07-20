@@ -298,7 +298,8 @@ return view.extend({
 					netmask: uci.get('network', intf, 'netmask') || '',
 					gateway: uci.get('network', intf, 'gateway') || '',
 					ip6gw: uci.get('network', intf, 'ip6gw') || '',
-					ipv6: uci.get('network', intf, 'ipv6') || '0',
+					ipv6: uci.get('openmptcprouter', intf, 'ipv6') ||
+						(proto === 'dhcp' ? '0' : (uci.get('network', intf, 'ipv6') || '0')),
 					apn: uci.get('network', intf, 'apn') || '',
 					pincode: uci.get('network', intf, 'pincode') || '',
 					delay: uci.get('network', intf, 'delay') || '',
@@ -857,6 +858,21 @@ return view.extend({
 		o.optional = true;
 		o.depends('proto', 'static');
 		o.depends('_type', 'macvlan');
+
+		// IPv6 — proto=dhcp; the backend manages a companion "<intf>_6"
+		// DHCPv6 interface on the same device (SLAAC needs odhcp6c, the
+		// kernel ignores RAs on a router). Stored in openmptcprouter.<intf>
+		// because /etc/init.d/openmptcprouter rewrites network.<intf>.ipv6
+		// from the global IPv6 setting.
+		o = s.option(form.ListValue, '_ipv6', _('IPv6'));
+		o.value('0', _('Disabled'));
+		o.value('1', _('Enabled (SLAAC/DHCPv6)'));
+		o.default = '0';
+		o.depends('proto', 'dhcp');
+		o.description = _('Acquire an IPv6 address on this WAN via router advertisements or DHCPv6. IPv6 must also be enabled in the advanced settings.');
+		o.cfgvalue = function(sid) { return uci.get('openmptcprouter', sid, 'ipv6') || '0'; };
+		o.write = function(sid, val) { uci.set('openmptcprouter', sid, 'ipv6', val); };
+		o.remove = function(sid) { uci.unset('openmptcprouter', sid, 'ipv6'); };
 
 		// Device NCM — proto=ncm
 		o = s.option(form.ListValue, '_device_ncm', _('Device'));

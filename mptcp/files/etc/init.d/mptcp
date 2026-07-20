@@ -140,6 +140,9 @@ interface_multipath_settings() {
 	local mode iface proto metric ip4table qdisc
 	local config="$1"
 	local intf="$2"
+	# DHCPv6 companion interfaces (<intf>_6) share the parent's device:
+	# processing them here would clobber the parent's multipath state
+	case "$config" in *_6) return 0 ;; esac
 	local enabled uci_route
 	uci_route=$(uci -q get openmptcprouter.settings.uci_route)
 
@@ -435,6 +438,8 @@ interface_multipath_settings() {
 			[ -z "$gateway6" ] && gateway6=$(ip -6 r list dev $iface | grep -v default | awk '/proto static/ {print $1; exit}' | tr -d "\n")
 			[ -z "$gateway6" ] && gateway6=$(uci -q get "network.$config.ip6gw")
 			[ -z "$gateway6" ] && gateway6=$(ubus call network.interface.$config status | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
+			[ -z "$gateway6" ] && gateway6=$(ubus call network.interface.${config}_6 status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
+			[ -z "$gateway6" ] && gateway6=$(ubus call network.interface.${config}_6 status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
 			#if [ -z "$gateway6" ] || [ "$( valid_subnet6 $gateway6 )" != "ok" ]; then 
 			#	gateway6=$(ubus call network.interface.$config status | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
 			#fi

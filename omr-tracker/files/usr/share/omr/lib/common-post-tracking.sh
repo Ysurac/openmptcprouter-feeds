@@ -89,6 +89,7 @@ _get_interface_gateway() {
 		[ -z "$gateway" ] && gateway=$(ubus call network.interface."$interface" status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
 		[ -z "$gateway" ] && gateway=$(ubus call network.interface."$interface" status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
 		[ -z "$gateway" ] && gateway=$(ubus call network.interface."${interface}_6" status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
+		[ -z "$gateway" ] && gateway=$(ubus call network.interface."${interface}_6" status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
 	else
 		gateway=$(uci -q get "network.${interface}.gateway")
 		# Try different jsonfilter queries for IPv4
