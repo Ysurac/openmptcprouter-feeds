@@ -31,9 +31,7 @@ mkdir -p "$lock_base_dir" >/dev/null 2>&1
 
 _acquire_003_up_lock() {
 	mkdir "$lock_dir" 2>/dev/null || return 1
-	# This script is sourced in a command-substitution subshell, where $$ is
-	# the long-lived tracker daemon: BASHPID is the pid actually running it.
-	printf '%s\n' "${BASHPID:-$$}" >"$lock_dir/pid"
+	printf '%s\n' "$$" >"$lock_dir/pid"
 	date +%s >"$lock_dir/ts" 2>/dev/null
 	return 0
 }
@@ -45,13 +43,15 @@ if ! _acquire_003_up_lock; then
 	case "$lock_ts" in
 		''|*[!0-9]*) lock_ts="" ;;
 	esac
-	if [ -z "$lock_pid" ]; then
-		# Holder died before writing its pid (e.g. killed during a config
-		# re-apply): nothing will ever release the lock.
+	if [ -z "$lock_ts" ]; then
+		# Holder died before writing the timestamp (e.g. killed during a config
+		# re-apply): nothing can age the lock safely.
+		lock_stale=true
+	elif [ "$(($(date +%s) - lock_ts))" -ge "$lock_max_age" ]; then
+		lock_stale=true
+	elif [ -z "$lock_pid" ]; then
 		lock_stale=true
 	elif ! kill -0 "$lock_pid" 2>/dev/null; then
-		lock_stale=true
-	elif [ -n "$lock_ts" ] && [ "$(($(date +%s) - lock_ts))" -ge "$lock_max_age" ]; then
 		lock_stale=true
 	fi
 	if [ "$lock_stale" = true ]; then
@@ -340,10 +340,11 @@ if [ "$multipath_config" = "master" ]; then
 		ip -6 route replace default via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE table 6991337 $initcwrwnd >/dev/null 2>&1
 		#ip -6 route flush cache >/dev/null 2>&1
 	fi
-	if { [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ]; } || [ $(($(date +"%s") + $((10 + RANDOM % 10)) - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ] || [ "$(uci -q show openmptcprouter | grep get_config=\'1\')" != "" ] || [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" != "" ]; then
+	lc_jitter="$(awk 'BEGIN{srand();print 10 + int(rand()*10)}')"
+	if { [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter."$OMR_TRACKER_INTERFACE".lc)" = "" ]; } || [ $(($(date +"%s") + lc_jitter - $(uci -q get openmptcprouter."$OMR_TRACKER_INTERFACE".lc))) -gt 3600 ] || [ "$(uci -q show openmptcprouter | grep get_config=\'1\')" != "" ] || [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" != "" ]; then
 		[ -z "$(pgrep -f openmptcprouter-vps)" ] && {
 			/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &
-			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
+			uci -q set openmptcprouter."$OMR_TRACKER_INTERFACE".lc="$(date +"%s")"
 			#uci -q commit openmptcprouter.$OMR_TRACKER_INTERFACE
 		}
 	fi
