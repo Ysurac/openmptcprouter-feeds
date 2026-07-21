@@ -26,7 +26,7 @@ to_le_hex() {
 # Extract decimal weight from bpftool map lookup output
 get_weight_from_key() {
 	KEY_HEX="$1"
-	WEIGHT=$(bpftool map lookup pinned "$MAP_PATH" key hex $KEY_HEX 2>/dev/null | \
+	WEIGHT=$(bpftool map lookup pinned "$MAP_PATH" key hex "$KEY_HEX" 2>/dev/null | \
 		awk '/"value":/ {
 			for(i=1;i<=NF;i++) {
 				if ($i ~ /^[0-9]+$/) {
@@ -69,12 +69,11 @@ if [ "$ACTION" = "show" ]; then
 	if [ "$#" -eq 1 ]; then
 		ip mptcp endpoint show | while read -r line; do
 			IP_EP=$(echo "$line" | awk '{print $1}')
-			IP_EP_ID=$(echo "$line" | awk '{for(i=1;i<=NF;i++) if($i=="id") print $(i+1)}')
 			IFACE=$(echo "$line" | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}')
 
 			if [ -n "$IP_EP" ] && [ -n "$IFACE" ]; then
 				#BPF_EP_IP=$(echo $IP_EP | awk -F. '{print ($1*16777216)+($2*65536)+($3*256)+$4}')
-				BPF_EP_IP=$(echo $IP_EP | awk -F. '{print ($4 * 256^3) + ($3 * 256^2) + ($2 * 256) + $1}')
+				BPF_EP_IP=$(echo "$IP_EP" | awk -F. '{print ($4 * 256^3) + ($3 * 256^2) + ($2 * 256) + $1}')
 				KEY_HEX=$(to_le_hex "$BPF_EP_IP")
 				WEIGHT=$(get_weight_from_key "$KEY_HEX")
 
@@ -103,7 +102,7 @@ if [ "$ACTION" = "show" ]; then
 				WEIGHT=100
 			fi
 
-			EP_IP=$(printf "%d.%d.%d.%d\n" $(( (BPF_EP_IP >> 24) & 255 )) $(( (BPF_EP_IP >> 16) & 255 )) $(( (BPF_EP_IP >> 8) & 255 )) $(( BPF_EP_IP & 255 )) )
+			EP_IP=$(printf "%d.%d.%d.%d\n" $(( BPF_EP_IP & 255 )) $(( (BPF_EP_IP >> 8) & 255 )) $(( (BPF_EP_IP >> 16) & 255 )) $(( (BPF_EP_IP >> 24) & 255 )) )
 			echo "interface=$IFACE endpoint_ip=$EP_IP weight=$WEIGHT"
 		done
 		exit 0
@@ -119,26 +118,25 @@ elif [ "$ACTION" = "set" ]; then
 
 	IFACE="$2"
 	WEIGHT="$3"
+	BPF_EP_IPS="$(get_bpf_ep_ip_from_iface "$IFACE")"
 
-	found=0
-	while read -r BPF_EP_IP; do
-		found=1
+	if [ -z "$BPF_EP_IPS" ]; then
+		echo "Interface '$IFACE' not found"
+		exit 1
+	fi
+
+	echo "$BPF_EP_IPS" | while read -r BPF_EP_IP; do
 		KEY_HEX=$(to_le_hex "$BPF_EP_IP")
 		VALUE_HEX=$(to_le_hex "$WEIGHT")
 
-		if ! bpftool map update pinned "$MAP_PATH" key hex $KEY_HEX value hex $VALUE_HEX; then
+		if ! bpftool map update pinned "$MAP_PATH" key hex "$KEY_HEX" value hex "$VALUE_HEX"; then
 			echo "Error updating map"
 			exit 1
 		fi
 
-		EP_IP=$(printf "%d.%d.%d.%d\n" $(( (BPF_EP_IP >> 24) & 255 )) $(( (BPF_EP_IP >> 16) & 255 )) $(( (BPF_EP_IP >> 8) & 255 )) $(( BPF_EP_IP & 255 )) )
+		EP_IP=$(printf "%d.%d.%d.%d\n" $(( BPF_EP_IP & 255 )) $(( (BPF_EP_IP >> 8) & 255 )) $(( (BPF_EP_IP >> 16) & 255 )) $(( (BPF_EP_IP >> 24) & 255 )) )
 		echo "Weight updated: interface=$IFACE endpoint_ip=$EP_IP weight=$WEIGHT"
-	done < <(get_bpf_ep_ip_from_iface "$IFACE")
-
-	if [ $found -eq 0 ]; then
-		echo "Interface '$IFACE' not found"
-		exit 1
-	fi
+	done || exit 1
 	exit 0
 
 elif [ "$ACTION" = "debug" ]; then
