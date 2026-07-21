@@ -153,6 +153,21 @@ if [ -n "$(uci show openmptcprouter | awk -F= '/password/ { gsub("\047","",$2);p
 		/bin/blocklanfw >/dev/null 2>&1
 		sleep 5
 	fi
+
+	# VXLAN is toggled purely via UCI (openmptcprouter.settings.vxlan) but only
+	# takes effect once openmptcprouter-vps pushes/pulls it against the VPS, so
+	# catch a UCI flag that drifted from the actual omrvxlan interface state
+	if [ "$(pgrep -f openmptcprouter-vps)" = "" ]; then
+		if [ "$(uci -q get openmptcprouter.settings.vxlan)" = "1" ] && [ -z "$(uci -q get network.omrvxlan)" ]; then
+			_log "VXLAN enabled but not set up, enable it..."
+			/etc/init.d/openmptcprouter-vps set_vxlan >/dev/null 2>&1
+			sleep 5
+		elif [ "$(uci -q get openmptcprouter.settings.vxlan)" != "1" ] && [ -n "$(uci -q get network.omrvxlan)" ]; then
+			_log "VXLAN disabled but still set up, disable it..."
+			/etc/init.d/openmptcprouter-vps set_vxlan >/dev/null 2>&1
+			sleep 5
+		fi
+	fi
 fi
 
 

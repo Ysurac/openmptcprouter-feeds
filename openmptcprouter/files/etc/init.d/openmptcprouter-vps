@@ -1107,9 +1107,28 @@ _get_vxlan() {
 	fi
 }
 
+_set_vxlan_service() {
+	local tokenserver user_permission
+	servername=$1
+	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
+	# VXLAN rides on top of the VPN of the master/current server only
+	([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q get openmptcprouter.${servername}.current)" = "1" ]) || return
+	vps_config=""
+	tokenserver=$(_get_token $servername)
+	server="$(echo $tokenserver | cut -f1 -d:)"
+	serverport="$(echo $tokenserver | cut -f2 -d:)"
+	token="$(echo $tokenserver | cut -f3 -d:)"
+	[ -z "$token" ] && return
+	vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
+	[ "$user_permission" != "ro" ] && _set_vxlan_vps
+	_get_vxlan
+}
+
 set_vxlan() {
 	config_load openmptcprouter
-	config_foreach _get_vxlan server
+	config_foreach _set_vxlan_service server
 }
 
 
