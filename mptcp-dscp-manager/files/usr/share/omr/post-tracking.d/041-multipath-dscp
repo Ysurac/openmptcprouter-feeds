@@ -1,0 +1,21 @@
+#
+# Copyright (C) 2026 Yannick Chabanois for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+# Sync network.<iface>.mptcp_dscp (list of DSCP classes pinned to this
+# WAN interface) into the bpf_dscp scheduler's dscp_iface BPF map
+# whenever the tracked interface's endpoint IP may have changed.
+
+scheduler="$(uci -q get network.globals.mptcp_scheduler)"
+
+if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && \
+	([ "$scheduler" = "mptcp_bpf_dscp.o" ] || [ "$scheduler" = "bpf_dscp" ]) && \
+	([ "$(uci -q get network.${OMR_TRACKER_INTERFACE}.multipath)" = "on" ] || [ "$(uci -q get network.${OMR_TRACKER_INTERFACE}.multipath)" = "master" ] || [ "$(uci -q get network.${OMR_TRACKER_INTERFACE}.multipath)" = "backup" ]); then
+	for dscp in $(uci -q get network.${OMR_TRACKER_INTERFACE}.mptcp_dscp); do
+		/usr/sbin/mptcp-scheduler-dscp.sh set "$dscp" "${OMR_TRACKER_DEVICE}" 2>&1 >/dev/null
+	done
+fi
+
+exit 0
