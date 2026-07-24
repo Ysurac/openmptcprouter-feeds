@@ -162,19 +162,24 @@ _send_mail_alert() {
 	local mail_alert mail_to OMR_SYSNAME mail_subject mail_message
 	mail_alert="$(uci -q get omr-tracker.server.mail_alert)"
 	[ "$mail_alert" != "1" ] && return
-	mail_to="$(uci -q get mail.default.to)"
+	mail_to="$(uci -q get mail.default.to | tr -d '\r\n')"
+	case "$mail_to" in
+		-*|*[[:space:]]*) mail_to="" ;;
+	esac
 	[ -z "$mail_to" ] && return
 	OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
 	mail_subject="$(uci -q get omr-tracker.defaults.mail_${type}_subject)"
 	mail_message="$(uci -q get omr-tracker.defaults.mail_${type}_message)"
 	if [ -n "$mail_subject" ] && [ -n "$mail_message" ]; then
 		mail_subject=$(echo "$mail_subject" | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g")
+		mail_subject="$(printf '%s' "$mail_subject" | tr -d '\r\n')"
 		mail_message=$(echo "$mail_message" | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/Server ${name}/g" -e "s/%DEVICE%/${ip}/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g")
-		echo -e "Subject: ${mail_subject}\n\n${mail_message}" | sendmail "$mail_to"
+		printf 'Subject: %s\n\n%s\n' "$mail_subject" "$mail_message" | sendmail "$mail_to"
 	else
 		local status_word
 		[ "$type" = "up" ] && status_word="UP" || status_word="down"
-		echo -e "Subject: $OMR_SYSNAME: Server ${name} (${ip}) is ${status_word}\n. The reason is \"$OMR_TRACKER_STATUS_MSG\"." | sendmail "$mail_to"
+		mail_subject="$(printf '%s' "$OMR_SYSNAME: Server ${name} (${ip}) is ${status_word}" | tr -d '\r\n')"
+		printf 'Subject: %s\n\nThe reason is "%s".\n' "$mail_subject" "$OMR_TRACKER_STATUS_MSG" | sendmail "$mail_to"
 	fi
 }
 

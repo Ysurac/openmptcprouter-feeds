@@ -217,16 +217,22 @@ if [ "$OMR_TRACKER_PREV_STATUS" != "" ] && [ "$OMR_TRACKER_PREV_STATUS" != "$OMR
 	_log "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) switched up"
 	mail_alert="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.mail_alert)"
 	[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
-	[ "$mail_alert" = "1" ] && [ -n "$(uci -q get mail.default.to)" ] && {
+	mail_to="$(uci -q get mail.default.to | tr -d '\r\n')"
+	case "$mail_to" in
+		-*|*[[:space:]]*) mail_to="" ;;
+	esac
+	[ "$mail_alert" = "1" ] && [ -n "$mail_to" ] && {
 		OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
 		if [ "$(uci -q get omr-tracker.defaults.mail_up_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_up_message)" != "" ]; then
 			mail_subject="$(uci -q get omr-tracker.defaults.mail_up_subject)"
 			mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/$OMR_TRACKER_INTERFACE/g" -e "s/%DEVICE%/$OMR_TRACKER_DEVICE/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+			mail_subject="$(printf '%s' "$mail_subject" | tr -d '\r\n')"
 			mail_message="$(uci -q get omr-tracker.defaults.mail_up_message)"
 			mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/$OMR_TRACKER_INTERFACE/g" -e "s/%DEVICE%/$OMR_TRACKER_DEVICE/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
-			echo -e "Subject: ${mail_subject}\n\n${mail_message}" | sendmail $(uci -q get mail.default.to)
+			printf 'Subject: %s\n\n%s\n' "$mail_subject" "$mail_message" | sendmail "$mail_to"
 		else
-			echo -e "Subject: $OMR_SYSNAME: $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) is up\n\nDetected that connection $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) is up again." | sendmail $(uci -q get mail.default.to)
+			mail_subject="$(printf '%s' "$OMR_SYSNAME: $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) is up" | tr -d '\r\n')"
+			printf 'Subject: %s\n\nDetected that connection %s (%s) is up again.\n' "$mail_subject" "$OMR_TRACKER_INTERFACE" "$OMR_TRACKER_DEVICE" | sendmail "$mail_to"
 		fi
 	}
 	script_alert_up="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.script_alert_up)"
