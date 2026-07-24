@@ -19,6 +19,58 @@ end
 
 local timeout_cmd = file_exists("/usr/bin/timeout") and "/usr/bin/timeout" or nil
 
+local function uci_get_list(config, section, option)
+	local value = ucic:get(config, section, option)
+	if type(value) == "table" then
+		return value
+	elseif type(value) == "string" and value ~= "" then
+		return { value }
+	end
+	return {}
+end
+
+local function uci_add_list(config, section, option, value)
+	if type(value) ~= "string" or value == "" then return false end
+	local values = uci_get_list(config, section, option)
+	for _, existing in ipairs(values) do
+		if existing == value then return false end
+	end
+	values[#values + 1] = value
+	ucic:set_list(config, section, option, values)
+	return true
+end
+
+local function uci_del_list(config, section, option, value)
+	if type(value) ~= "string" or value == "" then return false end
+	local values = uci_get_list(config, section, option)
+	local next_values = {}
+	local changed = false
+	for _, existing in ipairs(values) do
+		if existing == value then
+			changed = true
+		else
+			next_values[#next_values + 1] = existing
+		end
+	end
+	if changed then
+		if #next_values > 0 then
+			ucic:set_list(config, section, option, next_values)
+		else
+			ucic:delete(config, section, option)
+		end
+	end
+	return changed
+end
+
+local function integer_string(value, default, min, max)
+	local n = tonumber(value)
+	if not n then return tostring(default) end
+	n = math.floor(n)
+	if min ~= nil and n < min then n = min end
+	if max ~= nil and n > max then n = max end
+	return tostring(n)
+end
+
 local function exec_with_timeout(seconds, cmd)
 	if timeout_cmd then
 		return sys.exec(timeout_cmd .. " " .. tostring(seconds) .. " sh -c " .. string.format("%q", cmd))
@@ -87,7 +139,7 @@ local function clear_server_vpn_proxy(ips)
 				ucic:delete("mqvpn", "server", "ip")
 				changed["mqvpn"] = true
 			end
-			sys.exec("uci -q del_list openvpn.omr.remote=" .. ip)
+			uci_del_list("openvpn", "omr", "remote", ip)
 			if ucic:get("qos", "serverin", "srchost") == ip then
 				ucic:delete("qos", "serverin", "srchost")
 				changed["qos"] = true
@@ -98,7 +150,8 @@ local function clear_server_vpn_proxy(ips)
 			end
 		end
 	end
-	sys.exec("uci -q commit openvpn")
+	ucic:save("openvpn")
+	ucic:commit("openvpn")
 	for cfg, _ in pairs(changed) do
 		ucic:save(cfg)
 		ucic:commit(cfg)
@@ -210,12 +263,16 @@ function add_interface(add_interface_ifname)
 	ucic:save("sqm")
 	ucic:commit("sqm")
 
-	sys.exec("uci -q add_list vnstat.@vnstat[-1].interface=" .. wanif)
-	sys.exec("uci -q commit vnstat")
+	if uci_add_list("vnstat", "@vnstat[-1]", "interface", wanif) then
+		ucic:save("vnstat")
+		ucic:commit("vnstat")
+	end
 
 	-- Dirty way to add new interface to firewall...
-	sys.exec("uci -q add_list firewall.@zone[1].network=wan" .. i)
-	sys.exec("uci -q commit firewall")
+	if uci_add_list("firewall", "@zone[1]", "network", "wan" .. i) then
+		ucic:save("firewall")
+		ucic:commit("firewall")
+	end
 
 	sys.exec("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
 end
@@ -238,11 +295,13 @@ function remove_interface(intf)
 	ucic:save("qos")
 	ucic:commit("qos")
 	if defif ~= nil and defif ~= "" then
-		sys.exec("uci -q del_list vnstat.@vnstat[-1].interface=" .. defif)
+		uci_del_list("vnstat", "@vnstat[-1]", "interface", defif)
 	end
-	sys.exec("uci -q commit vnstat")
-	sys.exec("uci -q del_list firewall.@zone[1].network=" .. intf)
-	sys.exec("uci -q commit firewall")
+	ucic:save("vnstat")
+	ucic:commit("vnstat")
+	uci_del_list("firewall", "@zone[1]", "network", intf)
+	ucic:save("firewall")
+	ucic:commit("firewall")
 end
 
 function enable_interface(intf, enable)
@@ -547,8 +606,8 @@ function server_settings(server,server_ip,openmptcprouter_vps_key,openmptcproute
 		local mqvpn_port = "65443"
 		ucic:set("mqvpn","server","ip",server_ip)
 		ucic:set("mqvpn","server","port",mqvpn_port)
-		sys.exec("uci -q del openvpn.omr.remote")
-		sys.exec("uci -q add_list openvpn.omr.remote=" .. server_ip)
+			ucic:delete("openvpn", "omr", "remote")
+			uci_add_list("openvpn", "omr", "remote", server_ip)
 		ucic:set("qos","serverin","srchost",server_ip)
 		ucic:set("qos","serverout","dsthost",server_ip)
 		ucic:set("v2ray","omrout","s_vmess_address",server_ip)
@@ -577,10 +636,12 @@ function server_settings(server,server_ip,openmptcprouter_vps_key,openmptcproute
 		ucic:commit("mqvpn")
 		ucic:save("shadowsocks-libev")
 		ucic:commit("shadowsocks-libev")
-		ucic:save("shadowsocks-rust")
-		ucic:commit("shadowsocks-rust")
+			ucic:save("shadowsocks-rust")
+			ucic:commit("shadowsocks-rust")
+			ucic:save("openvpn")
+			ucic:commit("openvpn")
+		end
 	end
-end
 
 function set_shadowsocks(shadowsocks_key)
 	-- Set ShadowSocks settings
@@ -1191,16 +1252,19 @@ function settings_add(args)
 		tcpfastopen(_as_string(args.tcp_fastopen, "1"))
 	end
 	if _as_string(args.tcp_retries1, "") ~= "" then
-		sys.exec("sysctl -w net.ipv4.tcp_retries1=%s" % _as_string(args.tcp_retries1, "3"))
-		sys.exec("sed -i 's:^net.ipv4.tcp_retries1=[0-9]*:net.ipv4.tcp_retries1=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % _as_string(args.tcp_retries1, "3"))
+		local tcp_retries1 = integer_string(args.tcp_retries1, 3, 1, 255)
+		sys.exec("sysctl -w net.ipv4.tcp_retries1=%s" % tcp_retries1)
+		sys.exec("sed -i 's:^net.ipv4.tcp_retries1=[0-9]*:net.ipv4.tcp_retries1=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_retries1)
 	end
 	if _as_string(args.tcp_retries2, "") ~= "" then
-		sys.exec("sysctl -w net.ipv4.tcp_retries2=%s" % _as_string(args.tcp_retries2, "8"))
-		sys.exec("sed -i 's:^net.ipv4.tcp_retries2=[0-9]*:net.ipv4.tcp_retries2=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % _as_string(args.tcp_retries2, "8"))
+		local tcp_retries2 = integer_string(args.tcp_retries2, 8, 1, 255)
+		sys.exec("sysctl -w net.ipv4.tcp_retries2=%s" % tcp_retries2)
+		sys.exec("sed -i 's:^net.ipv4.tcp_retries2=[0-9]*:net.ipv4.tcp_retries2=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_retries2)
 	end
 	if _as_string(args.ip_default_ttl, "") ~= "" then
-		sys.exec("sysctl -w net.ipv4.ip_default_ttl=%s" % _as_string(args.ip_default_ttl, "64"))
-		sys.exec("sed -i 's:^net.ipv4.ip_default_ttl=[0-9]*:net.ipv4.ip_default_ttl=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % _as_string(args.ip_default_ttl, "64"))
+		local ip_default_ttl = integer_string(args.ip_default_ttl, 64, 1, 255)
+		sys.exec("sysctl -w net.ipv4.ip_default_ttl=%s" % ip_default_ttl)
+		sys.exec("sed -i 's:^net.ipv4.ip_default_ttl=[0-9]*:net.ipv4.ip_default_ttl=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % ip_default_ttl)
 	end
 
 	if args.disable_ipv6 ~= nil then
@@ -1230,6 +1294,7 @@ function settings_add(args)
 	_set_or_delete("openmptcprouter", "settings", "sfe_bridge", _to_flag(args.sfe_bridge))
 	_set_or_delete("openmptcprouter", "settings", "sipalg", _to_flag(args.sipalg))
 	_set_or_delete("openmptcprouter", "settings", "openvpn_lb", _to_flag(args.openvpnlb))
+	_set_or_delete("openmptcprouter", "settings", "vxlan", _to_flag(args.vxlan))
 
 	if _as_string(args.scaling_min_freq, "") ~= "" then
 		cpuscalingmin(_as_string(args.scaling_min_freq, ""))
@@ -1831,7 +1896,7 @@ function interfaces_status()
 		local current = uci:get("openmptcprouter",s[".name"],"current") or "0"
 		for _, value in ipairs(serverips) do
 			local serverip = exec_with_timeout(2, 'resolveip -t 1 ' .. value .. ' | head -n 1 | tr -d "\\n"')
-			if serverip ~= "" and (current == "1" or mArray.openmptcprouter["wan_addr"] == serverip or mArray.openmptcprouter["wan_addr6"] == serverip) and mArray.openmptcprouter["vps_admin"] == false then
+			if serverip ~= "" and (master == "1" or current == "1" or mArray.openmptcprouter["wan_addr"] == serverip or mArray.openmptcprouter["wan_addr6"] == serverip) and mArray.openmptcprouter["vps_admin"] == false then
 				mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter", s[".name"], "omr_version") or ""
 				mArray.openmptcprouter["vps_kernel"] = uci:get("openmptcprouter",s[".name"],"kernel") or ""
 				mArray.openmptcprouter["vps_machine"] = uci:get("openmptcprouter",s[".name"],"machine") or ""
@@ -2301,8 +2366,9 @@ function interfaces_status()
 			if uci:get("openmptcprouter","settings","disableserverping") ~= "1" then
 				uci:foreach("openmptcprouter", "server", function(s)
 					local serverips = _as_string_list(uci:get("openmptcprouter",s[".name"],"ip"))
+					local master = uci:get("openmptcprouter",s[".name"],"master") or "1"
 					local current = uci:get("openmptcprouter",s[".name"],"current") or "0"
-					if current == "1" then
+					if master == "1" or current == "1" then
 						local vps_any_up = false
 						for _, value in ipairs(serverips) do
 							if not vps_any_up then
@@ -3040,7 +3106,7 @@ local methods = {
 			shadowsocksudp = "", v2rayudp = "", ndpi = "", disablefastopen = "", enablenodelay = "",
 			obfs = "", obfs_plugin = "", obfs_type = "",
 			scaling_min_freq = "", scaling_max_freq = "", scaling_governor = "",
-			sfe_enabled = "", sfe_bridge = "", sipalg = ""
+			sfe_enabled = "", sfe_bridge = "", sipalg = "", vxlan = ""
 		},
 		call = function(args)
 			return settings_add(args)
