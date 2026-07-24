@@ -26,7 +26,8 @@ to_le_hex() {
 # Extract decimal weight from bpftool map lookup output
 get_weight_from_key() {
 	KEY_HEX="$1"
-	WEIGHT=$(bpftool map lookup pinned "$MAP_PATH" key hex "$KEY_HEX" 2>/dev/null | \
+	# $KEY_HEX must stay unquoted — see the "set" branch below for why.
+	WEIGHT=$(bpftool map lookup pinned "$MAP_PATH" key hex $KEY_HEX 2>/dev/null | \
 		awk '/"value":/ {
 			for(i=1;i<=NF;i++) {
 				if ($i ~ /^[0-9]+$/) {
@@ -129,7 +130,11 @@ elif [ "$ACTION" = "set" ]; then
 		KEY_HEX=$(to_le_hex "$BPF_EP_IP")
 		VALUE_HEX=$(to_le_hex "$WEIGHT")
 
-		if ! bpftool map update pinned "$MAP_PATH" key hex "$KEY_HEX" value hex "$VALUE_HEX"; then
+		# KEY_HEX/VALUE_HEX must stay unquoted: bpftool's "key hex" and
+		# "value hex" syntax takes each byte as its own argument, and
+		# to_le_hex() returns a space-separated byte list that needs
+		# word-splitting to reach bpftool that way.
+		if ! bpftool map update pinned "$MAP_PATH" key hex $KEY_HEX value hex $VALUE_HEX; then
 			echo "Error updating map"
 			exit 1
 		fi
