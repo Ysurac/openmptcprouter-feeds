@@ -5,8 +5,9 @@
 /*
  * DSCP-aware MPTCP scheduler: pins each DSCP class to a chosen WAN
  * interface (identified by its local endpoint IP). Traffic whose DSCP
- * has no pin, or whose pinned interface has no usable subflow, falls
- * back to the first available subflow (active, then backup).
+ * has no pin falls back to the least queued available subflow (active,
+ * then backup). A configured pin is authoritative: prefer the pinned
+ * subflow even if it is currently marked backup.
  */
 
 #include "mptcp_bpf.h"
@@ -16,7 +17,10 @@
 char _license[] SEC("license") = "GPL";
 
 #define MPTCP_SEND_BURST_SIZE	65428
-#define MAX_SUBFLOWS		8
+
+#define SSK_MODE_ACTIVE	0
+#define SSK_MODE_BACKUP	1
+#define SSK_MODE_MAX	2
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
@@ -39,9 +43,23 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } dscp_iface SEC(".maps");
 
+struct dscp_subflow_send_info {
+	struct sock *ssk;
+	__u64 linger_time;
+};
+
 static __always_inline __u64 div_u64(__u64 dividend, __u32 divisor)
 {
 	return dividend / divisor;
+}
+
+static __always_inline bool local_ip_matches(struct sock *ssk, __u32 desired_ip)
+{
+	struct inet_sock *inet = (struct inet_sock *)ssk;
+	__u32 rcv_saddr = BPF_CORE_READ(ssk, __sk_common.skc_rcv_saddr);
+	__u32 saddr = BPF_CORE_READ(inet, inet_saddr);
+
+	return desired_ip == rcv_saddr || desired_ip == saddr;
 }
 
 static __always_inline bool tcp_write_queue_empty(struct sock *sk)
@@ -69,21 +87,31 @@ void BPF_PROG(mptcp_sched_dscp_release, struct mptcp_sock *msk)
 SEC("struct_ops")
 int BPF_PROG(bpf_dscp_get_send, struct mptcp_sock *msk)
 {
-	struct sock *pinned_active = NULL, *pinned_backup = NULL;
-	struct sock *fallback_active = NULL, *fallback_backup = NULL;
+	struct dscp_subflow_send_info pinned[SSK_MODE_MAX];
+	struct dscp_subflow_send_info fallback[SSK_MODE_MAX];
 	struct mptcp_subflow_context *subflow;
 	struct sock *sk = (struct sock *)msk;
 	__u32 pace, burst, wmem;
+	__u64 linger_time;
 	struct sock *ssk;
 	__u32 *desired_ip;
-	__u8 dscp;
+	__u8 dscp, tos;
+	int i;
 
-	dscp = msk->sk.icsk_inet.tos >> 2;
+	for (i = 0; i < SSK_MODE_MAX; ++i) {
+		pinned[i].ssk = NULL;
+		pinned[i].linger_time = -1;
+		fallback[i].ssk = NULL;
+		fallback[i].linger_time = -1;
+	}
+
+	tos = BPF_CORE_READ(msk, sk.icsk_inet.tos);
+	dscp = tos >> 2;
 	desired_ip = bpf_map_lookup_elem(&dscp_iface, &dscp);
 
 	bpf_for_each(mptcp_subflow, subflow, sk) {
-		__u8 backup = (subflow->backup || subflow->request_bkup) ? 1 : 0;
-		__u32 local_ip;
+		__u8 backup = (subflow->backup || subflow->request_bkup) ? SSK_MODE_BACKUP : SSK_MODE_ACTIVE;
+		struct dscp_subflow_send_info *send_info;
 		struct sock *cur;
 
 		cur = mptcp_subflow_tcp_sock(subflow);
@@ -98,36 +126,34 @@ int BPF_PROG(bpf_dscp_get_send, struct mptcp_sock *msk)
 				continue;
 		}
 
-		local_ip = cur->__sk_common.skc_rcv_saddr;
+		linger_time = div_u64((__u64)cur->sk_wmem_queued << 32, pace);
 
-		if (desired_ip && *desired_ip == local_ip) {
-			if (backup) {
-				if (!pinned_backup)
-					pinned_backup = cur;
-			} else {
-				if (!pinned_active)
-					pinned_active = cur;
-			}
-		} else {
-			if (backup) {
-				if (!fallback_backup)
-					fallback_backup = cur;
-			} else {
-				if (!fallback_active)
-					fallback_active = cur;
-			}
+		if (desired_ip && local_ip_matches(cur, *desired_ip))
+			send_info = &pinned[backup];
+		else
+			send_info = &fallback[backup];
+
+		if (linger_time < send_info->linger_time) {
+			send_info->ssk = cur;
+			send_info->linger_time = linger_time;
 		}
 	}
 	mptcp_set_timeout(sk);
 
-	if (pinned_active)
-		ssk = pinned_active;
-	else if (fallback_active)
-		ssk = fallback_active;
-	else if (pinned_backup)
-		ssk = pinned_backup;
-	else
-		ssk = fallback_backup;
+	if (desired_ip) {
+		if (pinned[SSK_MODE_ACTIVE].ssk)
+			ssk = pinned[SSK_MODE_ACTIVE].ssk;
+		else if (pinned[SSK_MODE_BACKUP].ssk)
+			ssk = pinned[SSK_MODE_BACKUP].ssk;
+		else if (fallback[SSK_MODE_ACTIVE].ssk)
+			ssk = fallback[SSK_MODE_ACTIVE].ssk;
+		else
+			ssk = fallback[SSK_MODE_BACKUP].ssk;
+	} else if (fallback[SSK_MODE_ACTIVE].ssk) {
+		ssk = fallback[SSK_MODE_ACTIVE].ssk;
+	} else {
+		ssk = fallback[SSK_MODE_BACKUP].ssk;
+	}
 
 	if (!ssk || !bpf_sk_stream_memory_free(ssk))
 		return -1;
