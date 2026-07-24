@@ -41,6 +41,8 @@ version_over_5_4() {
 
 start_instance() {
 	local enable key host port dev
+	local key_dir="/var/run/${PROG_NAME}"
+	local key_file="${key_dir}/${1}.key"
 
 	validate_section "${1}" || {
 		_err "validation failed"
@@ -55,7 +57,12 @@ start_instance() {
 	[ -z "${port}" ] && port="auto"
 	[ -n "${dev}" ] || return 1
 
-	echo "${key}" > /tmp/${PROG_NAME}-${1}.key
+	mkdir -p "$key_dir"
+	chmod 0700 "$key_dir"
+	( umask 077; printf '%s\n' "$key" > "$key_file" ) || {
+		_err "can't create key file"
+		return 1
+	}
 	key=""
 
 	if [ "$(uci -q get network.omrvpn)" != "" ] && [ "$(uci -q get network.omrvpn)" != "$dev" ]; then
@@ -75,7 +82,7 @@ start_instance() {
 	procd_open_instance
 
 	procd_set_param command ${PROG} ${mode} \
-		/tmp/${PROG_NAME}-${1}.key \
+		"$key_file" \
 		$host \
 		$port \
 		$dev  \
@@ -87,7 +94,7 @@ start_instance() {
 
 	procd_set_param respawn 0 30 5
 	procd_set_param nice 10
-	procd_set_param file /tmp/${PROG_NAME}-${1}.key
+	procd_set_param file "$key_file"
 
 	procd_set_param stdout 1
 	procd_set_param stderr 1
