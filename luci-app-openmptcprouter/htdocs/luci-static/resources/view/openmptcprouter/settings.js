@@ -20,7 +20,7 @@ var callSettingsAdd = rpc.declare({
 		'shadowsocksudp', 'v2rayudp', 'ndpi', 'disablefastopen', 'enablenodelay',
 		'obfs', 'obfs_plugin', 'obfs_type',
 		'scaling_min_freq', 'scaling_max_freq', 'scaling_governor',
-		'sfe_enabled', 'sfe_bridge', 'sipalg'
+		'sfe_enabled', 'sfe_bridge', 'sipalg', 'vxlan'
 	],
 	expect: { '': {} }
 });
@@ -210,6 +210,10 @@ return view.extend({
 			_('Optimize for latency instead of bandwidth'));
 
 		o = s.taboption('network', form.Flag, 'sipalg', _('Enable SIP ALG'));
+
+		o = s.taboption('network', form.Flag, 'vxlan',
+			_('VXLAN'),
+			_('Set a VXLAN L2 tunnel over the VPN, configured on the server via the API.'));
 
 		/* ── Other tab ─────────────────────────────────────────────── */
 		o = s.taboption('other', form.Flag, 'vnstat_backup',
@@ -420,7 +424,8 @@ return view.extend({
 				hasCpuFreq ? get('scaling_governor')  : '',
 				hasSfe     ? get('sfe_enabled')       : '0',
 				hasSfe     ? get('sfe_bridge')        : '0',
-				get('sipalg')
+				get('sipalg'),
+				get('vxlan')
 			).then(function() {
 				ui.addNotification(null, _('Settings saved and applied successfully.'), 'info');
 			}).catch(function(err) {
