@@ -1,11 +1,27 @@
 #!/bin/sh
 
+. /lib/functions.sh
+
 cd /etc/uci-defaults || exit 0
 source /etc/os-release
 
 OMRVERSION=$(echo $VERSION | sed 's/v//')
 uci -q set openmptcprouter.settings=settings
 uci -q set openmptcprouter.settings.version=${OMRVERSION}
+
+_check_server_configured() {
+	local ip password
+	config_get ip "$1" ip
+	config_get password "$1" password
+	[ -n "$ip" ] && [ -n "$password" ] && server_configured=1
+}
+
+server_configured=0
+config_load openmptcprouter
+config_foreach _check_server_configured server
+
+[ "$server_configured" = "1" ] && uci -q set openmptcprouter.settings.forceretrieve=1
+
 uci -q commit
 
 exit 0
