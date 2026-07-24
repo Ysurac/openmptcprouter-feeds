@@ -32,6 +32,8 @@ validate_section() {
 
 start_instance() {
 	local enable key host port listener proto mtuauto chacha dev mode
+	local key_dir="/var/run/${PROG_NAME}"
+	local key_file="${key_dir}/${1}.key"
 
 	validate_section "${1}" || {
 		_err "validation failed"
@@ -46,7 +48,12 @@ start_instance() {
 	[ -n "${dev}" ] || return 1
 	[ -n "${mode}" ] || return 1
 
-	echo "${key}" > /tmp/${PROG_NAME}-${1}.key
+	mkdir -p "$key_dir"
+	chmod 0700 "$key_dir"
+	( umask 077; printf '%s\n' "$key" > "$key_file" ) || {
+		_err "can't create key file"
+		return 1
+	}
 	key=""
 
 	if [ "$(uci -q get network.omrvpn)" != "" ]; then
@@ -68,14 +75,14 @@ start_instance() {
 	procd_set_param command ${PROG} \
 		${bind} \
 		${dev:+dev "$dev"} \
-		keyfile /tmp/${PROG_NAME}-${1}.key \
+		keyfile "$key_file" \
 		persist
 
 	[ "${chacha}" = "1" ] && procd_append_param command chacha
 
 	procd_set_param respawn 0 30 0
 	procd_set_param nice 10
-	procd_set_param file /tmp/${PROG_NAME}-${1}.key
+	procd_set_param file "$key_file"
 
 	procd_set_param stdout 1
 	procd_set_param stderr 1
