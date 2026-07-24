@@ -1590,83 +1590,94 @@ _vps_firewall_redirect_port() {
 					fi
 				fi
 			else
-				checkfw=""
-				if [ "$family" = "ipv4" ]; then
-					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
-						[ "$v2ray" = "1" ] && checkfw=$(echo "$vpsfwlist" | grep "$src_dport	# OMR $username open router $src_dport port $protoi --- V2Ray to ${dest_ip}:${dest_port}")
-						[ "$xray" = "1" ] && checkfw=$(echo "$vpsfwlist" | grep "$src_dport	# OMR $username open router $src_dport port $protoi --- XRay to ${dest_ip}:${dest_port}")
+				# Always (re)issue shorewallopen + v2rayredirect/xrayredirect for
+				# the active family instead of gating on a "does a shorewall
+				# line already mention this family" text match: v2ray_add_port/
+				# xray_add_port on the VPS are already idempotent (they key off
+				# the inbound tag and no-op if it exists), and the previous
+				# text-match gate went stale as soon as a proxy-family switch
+				# left old comment text behind (see the resulting nft errors
+				# below this loop and the cross-family unredirect a few lines
+				# down) -- a stale match then wrongly skipped re-adding the
+				# redirect for the now-active family, silently breaking the
+				# forward instead of healing it.
+				if [ "$family" = "ipv4" ] && [ -n "$src_dip" ]; then
+					if [ ! -f /usr/sbin/nft ]; then
+						$IPTABLESSAVE --counters | sed "s:-d $src_dip/32::g" | $IPTABLESRESTORE -w
 					else
-						comment=""
-						[ -n "$src_dip" ] && {
-							comment=" to $src_dip"
-							if [ ! -f /usr/sbin/nft ]; then
-								$IPTABLESSAVE --counters | sed "s:-d $src_dip/32::g" | $IPTABLESRESTORE -w
-							else
-								rule=$(nft -a list table inet fw4 | grep -m1 "ip daddr $src_dip")
-								[ -n "$rule" ] && {
-									handle=$(echo $rule | awk '{ print $NF }')
-									nft replace rule inet fw4 dstnat_lan handle ${handle} $(echo $rule | awk '{ sub(" comment.*$",""); print }' | sed "s/ip daddr ${src_dip}//") 2>&1 >/dev/null
-								}
-								rule=$(nft -a list table inet fw4 | grep -m1 "ip daddr $src_dip")
-								[ -n "$rule" ] && {
-									handle=$(echo $rule | awk '{ print $NF }')
-									nft replace rule inet fw4 dstnat_vpn handle $handle $(echo $rule | awk '{ sub(" comment.*$",""); print }' | sed "s/ip daddr ${src_dip}/meta nfproto ipv4/") 2>&1 >/dev/null
-								}
-							fi
+						rule=$(nft -a list table inet fw4 | grep -m1 "ip daddr $src_dip")
+						[ -n "$rule" ] && {
+							handle=$(echo $rule | awk '{ print $NF }')
+							nft replace rule inet fw4 dstnat_lan handle ${handle} $(echo $rule | awk '{ sub(" comment.*$",""); print }' | sed "s/ip daddr ${src_dip}//") 2>&1 >/dev/null
 						}
-						[ -n "$src_ip" ] && comment=" from $src_ip"
-						[ "$v2ray" = "1" ] && checkfw=$(echo "$vpsfwlist" | grep "# OMR $username open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}")
-						[ "$xray" = "1" ] && checkfw=$(echo "$vpsfwlist" | grep "# OMR $username open router $src_dport port ${protoi}${comment} --- XRay to ${dest_ip}:${dest_port}")
-					fi
-				else
-					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
-						[ "$v2ray" = "1" ] && checkfw=$(echo "$vpsfw6list" | grep "$src_dport	# OMR $username open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}")
-						[ "$xray" = "1" ] && checkfw=$(echo "$vpsfw6list" | grep "$src_dport	# OMR $username open router $src_dport port ${protoi} --- XRay to ${dest_ip}:${dest_port}")
-					else
-						comment=""
-						[ -n "$src_dip" ] && comment=" to $src_dip"
-						[ -n "$src_ip" ] && comment=" from $src_ip"
-						[ "$v2ray" = "1" ] && checkfw=$(echo "$vpsfw6list" | grep "# OMR $username open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}")
-						[ "$xray" = "1" ] && checkfw=$(echo "$vpsfw6list" | grep "# OMR $username open router $src_dport port ${protoi}${comment} --- XRay to ${dest_ip}:${dest_port}")
+						rule=$(nft -a list table inet fw4 | grep -m1 "ip daddr $src_dip")
+						[ -n "$rule" ] && {
+							handle=$(echo $rule | awk '{ print $NF }')
+							nft replace rule inet fw4 dstnat_vpn handle $handle $(echo $rule | awk '{ sub(" comment.*$",""); print }' | sed "s/ip daddr ${src_dip}/meta nfproto ipv4/") 2>&1 >/dev/null
+						}
 					fi
 				fi
-				if [ "$checkfw" = "" ]; then
-					[ "$v2ray" = "1" ] && settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","source_dip" : "'$src_dip'","source_ip" : "'$src_ip'","proto" : "'${protoi}'","fwtype" : "ACCEPT","ipproto" : "'$family'","comment" : "V2Ray to '${dest_ip}':'${dest_port}'"}'
-					[ "$xray" = "1" ] && settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","source_dip" : "'$src_dip'","source_ip" : "'$src_ip'","proto" : "'${protoi}'","fwtype" : "ACCEPT","ipproto" : "'$family'","comment" : "XRay to '${dest_ip}':'${dest_port}'"}'
-					result=$(_set_json "shorewallopen" "$settings")
-					[ -z "$dest_port" ] && dest_port="$src_dport"
-					settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","destip" : "'$dest_ip'","destport" : "'$dest_port'","proto" : "'${protoi}'"}'
-					[ "$v2ray" = "1" ] && result=$(_set_json "v2rayredirect" "$settings")
-					[ "$xray" = "1" ] && result=$(_set_json "xrayredirect" "$settings")
-				fi
+				[ "$v2ray" = "1" ] && settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","source_dip" : "'$src_dip'","source_ip" : "'$src_ip'","proto" : "'${protoi}'","fwtype" : "ACCEPT","ipproto" : "'$family'","comment" : "V2Ray to '${dest_ip}':'${dest_port}'"}'
+				[ "$xray" = "1" ] && settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","source_dip" : "'$src_dip'","source_ip" : "'$src_ip'","proto" : "'${protoi}'","fwtype" : "ACCEPT","ipproto" : "'$family'","comment" : "XRay to '${dest_ip}':'${dest_port}'"}'
+				result=$(_set_json "shorewallopen" "$settings")
+				[ -z "$dest_port" ] && dest_port="$src_dport"
+				settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","destip" : "'$dest_ip'","destport" : "'$dest_port'","proto" : "'${protoi}'"}'
+				[ "$v2ray" = "1" ] && result=$(_set_json "v2rayredirect" "$settings")
+				[ "$xray" = "1" ] && result=$(_set_json "xrayredirect" "$settings")
+				# A forwarded port can only be safely bound to one proxy
+				# family's dokodemo-door inbound at a time: the VPS runs
+				# v2ray and xray simultaneously, so a stale redirect left on
+				# the other family after a proxy switch competes for the same
+				# port (SO_REUSEPORT) and randomly blackholes connections
+				# that land on the family with no live reverse bridge.
+				# Explicitly tear down the other family's redirect for this
+				# exact port+destination every pass, not just when (re)adding
+				# our own -- otherwise a stale entry left from before this
+				# script gained cross-family cleanup (or from a run that hit
+				# this same race) never gets closed.
+				settings='{"name" : "router '$src_dport'","port" : "'$src_dport'","destip" : "'$dest_ip'","destport" : "'$dest_port'","proto" : "'${protoi}'"}'
+				[ "$v2ray" = "1" ] && result=$(_set_json "xrayunredirect" "$settings")
+				[ "$xray" = "1" ] && result=$(_set_json "v2rayunredirect" "$settings")
+				# Strip both the V2Ray- and XRay-tagged variant of this rule from
+				# the stale-entry list unconditionally (not just the currently
+				# active family's). A proxy-family switch rewrites the shorewall
+				# comment to the new family without going through this cleanup
+				# for the old one, so the old family's line otherwise survives
+				# into _vps_firewall_close_port below. Since v2ray_del_port/
+				# xray_del_port on the VPS key their delete purely off
+				# proto+port+destip:destport (not family), that stale close call
+				# then deletes the redirect this same pass just (re)created —
+				# the port-forward would appear to "randomly" stop working after
+				# switching proxy family on the same forwarded port (issue #4315
+				# follow-up).
 				if [ "$family" = "ipv4" ]; then
 					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
-						[ "$v2ray" = "1" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR $username open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}$")
-						[ "$xray" = "1" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR $username open router $src_dport port ${protoi} --- XRay to ${dest_ip}:${dest_port}$")
-						[ "$v2ray" = "1" ] && [ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}$")
-						[ "$xray" = "1" ] && [ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR open router $src_dport port ${protoi} --- XRay to ${dest_ip}:${dest_port}$")
+						vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR $username open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}$")
+						vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR $username open router $src_dport port ${protoi} --- XRay to ${dest_ip}:${dest_port}$")
+						[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}$")
+						[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "$src_dport	# OMR open router $src_dport port ${protoi} --- XRay to ${dest_ip}:${dest_port}$")
 					else
 						comment=""
 						[ -n "$src_dip" ] && comment=" to $src_dip"
 						[ -n "$src_ip" ] && comment=" from $src_ip"
-						[ "$v2ray" = "1" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR $username open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}$")
-						[ "$xray" = "1" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR $username open router $src_dport port ${protoi}${comment} --- XRay to ${dest_ip}:${dest_port}$")
-						[ "$v2ray" = "1" ] && [ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}$")
-						[ "$xray" = "1" ] && [ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR open router $src_dport port ${protoi}${comment} --- XRay to ${dest_ip}:${dest_port}$")
+						vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR $username open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}$")
+						vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR $username open router $src_dport port ${protoi}${comment} --- XRay to ${dest_ip}:${dest_port}$")
+						[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}$")
+						[ "$username" = "openmptcprouter" ] && vpsfwlist=$(echo "$vpsfwlist" | grep -v "# OMR open router $src_dport port ${protoi}${comment} --- XRay to ${dest_ip}:${dest_port}$")
 					fi
 				else
 					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
-						[ "$v2ray" = "1" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR $username open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}$")
-						[ "$xray" = "1" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR $username open router $src_dport port ${protoi} --- XRay to ${dest_ip}:${dest_port}$")
-						[ "$v2ray" = "1" ] && [ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}$")
-						[ "$xray" = "1" ] && [ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR open router $src_dport port ${protoi} --- XRay to ${dest_ip}:${dest_port}$")
+						vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR $username open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}$")
+						vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR $username open router $src_dport port ${protoi} --- XRay to ${dest_ip}:${dest_port}$")
+						[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR open router $src_dport port ${protoi} --- V2Ray to ${dest_ip}:${dest_port}$")
+						[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "$src_dport	# OMR open router $src_dport port ${protoi} --- XRay to ${dest_ip}:${dest_port}$")
 					else
 						[ -n "$src_dip" ] && comment=" to $src_dip"
 						[ -n "$src_ip" ] && comment=" from $src_ip"
-						[ "$v2ray" = "1" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR $username open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}$")
-						[ "$xray" = "1" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR $username open router $src_dport port ${protoi}${comment} --- XRay to ${dest_ip}:${dest_port}$")
-						[ "$v2ray" = "1" ] && [ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}$")
-						[ "$xray" = "1" ] && [ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR open router $src_dport port ${protoi}${comment} --- XRay to ${dest_ip}:${dest_port}$")
+						vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR $username open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}$")
+						vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR $username open router $src_dport port ${protoi}${comment} --- XRay to ${dest_ip}:${dest_port}$")
+						[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR open router $src_dport port ${protoi}${comment} --- V2Ray to ${dest_ip}:${dest_port}$")
+						[ "$username" = "openmptcprouter" ] && vpsfw6list=$(echo "$vpsfw6list" | grep -v "# OMR open router $src_dport port ${protoi}${comment} --- XRay to ${dest_ip}:${dest_port}$")
 					fi
 				fi
 			fi
@@ -2149,7 +2160,7 @@ _set_config_from_vps() {
 	xray_transport="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.transport')"
 	#v2ray_port="$(echo "$vps_config" | jsonfilter -q -e '@.v2ray.config.port')"
 	xray_port="65248"
-	if [ -n "$(uci -q get xray.omr)" ] && ( ([ -n "$xray_key" ] && [ "$xray_key" != "$(uci -q get xray.omrout.s_vmess_user_id)" ]) || ([ -n "$xray_port" ] && [ "$xray_port" != "$(uci -q get xray.omrout.s_vmess.port)" ]) || ([ -n "$xray_transport" ] && [ "$xray_transport" != "$(uci -q get xray.omrout.ss_network)" ])); then
+	if [ -n "$(uci -q get xray.omr)" ] && ( ([ -n "$xray_key" ] && [ "$xray_key" != "$(uci -q get xray.omrout.s_vmess_user_id)" ]) || ([ -n "$xray_port" ] && [ "$xray_port" != "$(uci -q get xray.omrout.s_vmess.port)" ]) || ([ -n "$xray_transport" ] && [ "$xray_transport" != "$(uci -q get xray.omrout.ss_network)" ]) || ([ -n "$xray_vless_reality_key" ] && [ "$xray_vless_reality_key" != "$(uci -q get xray.omrout.s_vless_reality_public_key)" ])); then
 		uci -q batch <<-EOF >/dev/null
 			set xray.omrout.s_shadowsocks_port="$((xray_port+4))"
 			set xray.omrout.s_shadowsocks_password="$xray_sskey"
