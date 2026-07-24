@@ -8,15 +8,21 @@ USE_PROCD=1
 
 PROG=/usr/sbin/bpftune
 CONFIGFILE=/etc/config/bpftune
+ALL_TUNERS="tcp_buffer tcp_conn ip_frag neigh_table sysctl net_buffer netns route_table udp_buffer"
+
+# rc.common only dispatches actions listed in EXTRA_COMMANDS; without this,
+# "/etc/init.d/bpftune query ..." silently falls through to the generic
+# help text instead of calling query() below.
+EXTRA_COMMANDS="query"
+EXTRA_HELP="	query <tuner_query>	Query a running bpftune tuner"
 
 start_service() {
-    local enabled logging_stdout tuners_disabled tuners_allowed learning_rate daemon rollback legacy cgroup libdir respawn_threshold respawn_timeout respawn_retry
+    local enabled logging_stdout tuners_disabled tuners_allowed learning_rate rollback legacy cgroup libdir respawn_threshold respawn_timeout respawn_retry
 
     config_load bpftune
     config_get_bool enabled config 'enabled' '0'
     config_get_bool logging_stdout config 'logging_stdout' '0'
     config_get learning_rate config 'learning_rate' ''
-    config_get_bool daemon config 'daemon' '1'
     config_get_bool rollback config 'rollback' '0'
     config_get_bool legacy config 'legacy' '0'
     config_get cgroup config 'cgroup' ''
@@ -35,7 +41,9 @@ start_service() {
     procd_open_instance
     procd_set_param command "$PROG"
 
-    [ "$daemon" -eq 1 ] && procd_append_param command -D
+    # Never pass -D (self-daemonize): procd supervises the foreground process
+    # directly, and if bpftune forks away procd sees the tracked child exit
+    # and respawns it, leaking a duplicate daemon each time.
     [ "$rollback" -eq 1 ] && procd_append_param command -R
     [ "$legacy" -eq 1 ] && procd_append_param command -L
     [ "$logging_stdout" -eq 1 ] && procd_append_param command -s
@@ -43,17 +51,22 @@ start_service() {
     [ -n "$cgroup" ] && procd_append_param command -c "$cgroup"
     [ -n "$libdir" ] && procd_append_param command -l "$libdir"
 
-    [ -n "$tuners_disabled" ] && {
-	for tuner in $tuners_disabled; do
-	    procd_append_param command -d "$tuner"
-	done
-    }
-
-    [ -n "$tuners_allowed" ] && {
+    # bpftune has no "disable a tuner" flag, only -a/--allow (an allowlist),
+    # and -a matches the tuner's .so filename, not its short name.
+    # tuners_allowed wins if set; otherwise tuners_disabled is honored by
+    # allow-listing everything except the disabled ones.
+    if [ -n "$tuners_allowed" ]; then
 	for tuner in $tuners_allowed; do
-	    procd_append_param command -a "$tuner"
+	    procd_append_param command -a "${tuner}_tuner.so"
 	done
-    }
+    elif [ -n "$tuners_disabled" ]; then
+	for tuner in $ALL_TUNERS; do
+	    case " $tuners_disabled " in
+		*" $tuner "*) ;;
+		*) procd_append_param command -a "${tuner}_tuner.so" ;;
+	    esac
+	done
+    fi
 
     procd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-5}
     procd_set_param stdout 1
@@ -71,10 +84,14 @@ reload_service() {
     start
 }
 
-status() {
+status_service() {
     $PROG -S
 }
 
 query() {
-    $PROG -q
+    [ -n "$1" ] || {
+	echo "Usage: $0 query <tuner_query>"
+	return 1
+    }
+    $PROG -q "$1"
 }
