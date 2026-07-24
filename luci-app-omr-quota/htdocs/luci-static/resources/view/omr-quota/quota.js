@@ -39,17 +39,41 @@ return view.extend({
 		};
 
 		s.renderSectionAdd = function(extra_class) {
-			var el = form.TypedSection.prototype.renderSectionAdd.apply(this, arguments);
-			var input = el.querySelector('.cbi-section-create-name');
-			if (input) {
-				var select = E('select', { 'class': 'cbi-section-create-name' });
-				select.appendChild(E('option', { 'value': '' }, _('-- select interface --')));
-				networks.forEach(function(n) {
-					select.appendChild(E('option', { 'value': n.getName() }, n.getName()));
-				});
-				input.parentNode.replaceChild(select, input);
-			}
-			return el;
+			if (!this.addremove)
+				return E([]);
+
+			var section = this;
+			var createEl = E('div', { 'class': 'cbi-section-create' });
+			if (extra_class != null)
+				createEl.classList.add(extra_class);
+
+			var select = E('select', {
+				'class': 'cbi-section-create-name',
+				'disabled': this.map.readonly || null
+			});
+			select.appendChild(E('option', { 'value': '' }, _('-- select interface --')));
+			networks.forEach(function(n) {
+				select.appendChild(E('option', { 'value': n.getName() }, n.getName()));
+			});
+
+			var btn = E('button', {
+				'class': 'cbi-button cbi-button-add',
+				'title': this.addbtntitle || _('Add'),
+				'click': function(ev) {
+					if (!select.value)
+						return;
+					return section.handleAdd(ev, select.value);
+				},
+				'disabled': this.map.readonly || true
+			}, [ this.addbtntitle || _('Add') ]);
+
+			select.addEventListener('change', function() {
+				btn.disabled = select.value ? (section.map.readonly || null) : true;
+			});
+
+			createEl.appendChild(E('div', {}, select));
+			createEl.appendChild(btn);
+			return createEl;
 		};
 
 		o = s.option(form.Flag, 'enabled', _('Enable'));
