@@ -1,0 +1,64 @@
+#!/bin/sh
+#
+# Copyright (C) 2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+# This script pushes network.<iface>.multipath_weight into mqvpn's wrtt
+# (Weighted RTT) or wrr (Weighted Round Robin) scheduler via the control
+# API. Both schedulers read the same per-path weight (mqvpn_path_desc_t.weight
+# / mqvpn_client_set_path_weight); they only differ in how they use it.
+# multipath_weight is set the same way as for the MPTCP weight schedulers
+# (e.g. luci.mptcp's set_interface_settings rpcd call), so this just keeps
+# mqvpn in sync with whatever weight was last pushed through that API.
+
+if [ "$(uci -q get mqvpn.settings.enable)" != "1" ]; then
+	exit 0
+fi
+
+if [ -z "$OMR_TRACKER_DEVICE" ] || [ -z "$OMR_TRACKER_INTERFACE" ]; then
+	exit 0
+fi
+
+mqvpn_scheduler="$(uci -q get mqvpn.multipath.scheduler)"
+if [ "$mqvpn_scheduler" != "wrtt" ] && [ "$mqvpn_scheduler" != "wrr" ]; then
+	exit 0
+fi
+
+# Don't manage VPN interfaces
+if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" = "1" ]; then
+	exit 0
+fi
+
+if [ "$(pgrep -f mqvpn)" = "" ]; then
+	exit 0
+fi
+
+multipath_config=$(uci -q get "openmptcprouter.$OMR_TRACKER_INTERFACE.multipath")
+[ -z "$multipath_config" ] && multipath_config=$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath" || echo "off")
+
+if [ "$multipath_config" != "on" ] && [ "$multipath_config" != "master" ] && [ "$multipath_config" != "backup" ]; then
+	exit 0
+fi
+
+weight="$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath_weight")"
+[ -z "$weight" ] && exit 0
+
+# network.<iface>.weight mirrors the weight last applied to this path.
+# It's cleared by 005-mqvpn-path whenever the path is removed, so a
+# freshly re-added path always gets its weight re-applied here even if
+# multipath_weight itself never changed.
+current_weight="$(uci -q get "network.$OMR_TRACKER_INTERFACE.weight")"
+
+if [ "$weight" != "$current_weight" ]; then
+	_log "mqvpn: set weight $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $weight"
+	if mqvpn-path weight "$OMR_TRACKER_DEVICE" "$weight" >/dev/null 2>&1; then
+		uci -q set "network.$OMR_TRACKER_INTERFACE.weight=$weight"
+		[ -n "$(uci -q changes network)" ] && uci -q commit network
+	else
+		_log "mqvpn: failed to set weight $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $weight"
+	fi
+fi
+
+exit 0

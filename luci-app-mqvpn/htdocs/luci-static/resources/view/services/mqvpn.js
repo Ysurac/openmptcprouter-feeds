@@ -123,9 +123,11 @@ return L.view.extend({
 		o.value('wlb_udp_pin', _('WLB with UDP pinning'));
 		o.value('minrtt',      _('Minimum RTT'));
 		o.value('wrtt',        _('Weighted RTT'));
+		o.value('wrr',         _('Weighted Round Robin'));
 		o.value('backup_fec',  _('Backup with FEC'));
 		o.value('rap',         _('RAP'));
 		o.default = 'wlb';
+		o.description = _('With "Weighted RTT" or "Weighted Round Robin", each path\'s weight is taken from its interface\'s "Weight" setting (Network page, same value used by the MPTCP weight schedulers and settable via the API) and pushed to mqvpn automatically. "Weighted RTT" favors the highest-weight path until it\'s congestion-window-limited, while "Weighted Round Robin" interleaves traffic across paths in proportion to their weight.');
 
 		o = s.option(form.ListValue, 'cc', _('Congestion control'));
 		o.value('bbr2',      _('BBR2'));

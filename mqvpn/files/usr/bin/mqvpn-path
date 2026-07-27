@@ -10,6 +10,7 @@
 #   mqvpn-path list
 #   mqvpn-path add <iface> [backup]
 #   mqvpn-path remove <iface>
+#   mqvpn-path weight <iface> <value>
 
 MQVPN_API_HOST="$(uci -q get mqvpn.control.control_addr 2>/dev/null || echo '127.0.0.1')"
 MQVPN_API_PORT="$(uci -q get mqvpn.control.control_port 2>/dev/null || echo '9091')"
@@ -22,11 +23,13 @@ _usage() {
 	echo "Usage: $0 list"
 	echo "       $0 add <iface> [backup]"
 	echo "       $0 remove <iface>"
+	echo "       $0 weight <iface> <value>"
 	exit 1
 }
 
 cmd="$1"
 iface="$2"
+weight_value="$3"
 
 case "$cmd" in
 	list)
@@ -50,6 +53,21 @@ case "$cmd" in
 		[ -z "$iface" ] && _usage
 		_api "{\"cmd\":\"remove_path\",\"iface\":\"$iface\"}" >/dev/null
 		echo "Removed path: $iface"
+		;;
+	weight)
+		if [ -z "$iface" ] || [ -z "$weight_value" ]; then
+			_usage
+		fi
+		result=$(_api "{\"cmd\":\"set_path_weight\",\"iface\":\"$iface\",\"weight\":$weight_value}")
+		case "$result" in
+			*'"ok":true'*)
+				echo "Set weight: $iface -> $weight_value"
+				;;
+			*)
+				echo "Failed to set weight: $iface -> $weight_value (${result:-no response from mqvpn API})" >&2
+				exit 1
+				;;
+		esac
 		;;
 	*)
 		_usage
