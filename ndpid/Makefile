@@ -11,7 +11,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ndpid
 PKG_VERSION:=1.7.2
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 # Use git dev branch for latest libndpi compatibility
 # Version 1.7 (Oct 2023) has API incompatibilities with current libndpi
@@ -19,6 +19,11 @@ PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/utoni/nDPId.git
 PKG_SOURCE_VERSION:=84285ae42d8f70c976a6ee9be6ceb935aa215b18
 PKG_MIRROR_HASH:=skip
+
+# nDPId bundles libnDPI (nDPI) via its own scripts/get-and-build-libndpi.sh,
+# which fetches this exact commit from GitHub at compile time (see NDPI_COMMIT_HASH
+# below). Bump this whenever a newer libnDPI should be pulled in.
+NDPI_COMMIT_HASH:=ff29e7579e2ef9563c082e97ade62a2d18a836ae
 
 PKG_MAINTAINER:=CyberMind <contact@cybermind.fr>
 PKG_LICENSE:=GPL-3.0-or-later
@@ -31,6 +36,11 @@ CMAKE_BINARY_SUBDIR:=build
 
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/cmake.mk
+
+# Exported so nDPId's ExternalProject_Add step for libnDPI (which invokes
+# scripts/get-and-build-libndpi.sh via `env ...`) picks it up and fetches
+# this pinned commit instead of falling back to a floating "dev" branch zip.
+MAKE_FLAGS += NDPI_COMMIT_HASH=$(NDPI_COMMIT_HASH)
 
 NINJA := MAKEFLAGS="" $(STAGING_DIR_HOST)/bin/ninja \
 	$(if $(findstring c,$(OPENWRT_VERBOSE)),-v)

@@ -2,6 +2,8 @@
 # Migrate old ndpid UCI options and set defaults for new ones.
 # Runs once via /etc/uci-defaults/ on first boot after upgrade.
 
+. /lib/functions.sh
+
 # Helper: set option only if it does not already exist
 _set_if_missing() {
 	uci -q get "$1" >/dev/null || uci -q set "$1=$2"
@@ -23,18 +25,34 @@ for _opt in max_flows flow_idle_timeout tcp_timeout udp_timeout; do
 	uci -q get ndpid.main.$_opt >/dev/null && uci -q delete ndpid.main.$_opt
 done
 
-# --------------------------------------------------------------------------
-# Detect LAN interface from network config (OpenWrt 21.02+: lan.device,
-# older: lan.ifname; fall back to br-lan if neither is set)
-# --------------------------------------------------------------------------
+_lan_networks=$(uci -q get firewall.zone_lan.network)
+if [ -z "$_lan_networks" ]; then
+	_find_lan_zone_networks() {
+		[ "$(uci -q get "firewall.$1.name")" = "lan" ] || return 0
+		_lan_networks="$(uci -q get "firewall.$1.network")"
+	}
+	config_load firewall
+	config_foreach _find_lan_zone_networks zone
+fi
 
-_lan_iface=$(uci -q get network.lan.device 2>/dev/null)
+_lan_iface=""
+for _lan_net in $_lan_networks; do
+	_dev=$(ubus call network.interface."$_lan_net" status 2>/dev/null | jsonfilter -q -e '@.l3_device' | tr -d "\n")
+	[ -z "$_dev" ] && _dev=$(uci -q get "network.$_lan_net.device")
+	[ -z "$_dev" ] && _dev=$(uci -q get "network.$_lan_net.ifname" 2>/dev/null | awk '{print $1}')
+	[ -n "$_dev" ] && _lan_iface="$_lan_iface $_dev"
+done
+_lan_iface="${_lan_iface# }"
+
+[ -z "$_lan_iface" ] && _lan_iface=$(uci -q get network.lan.device 2>/dev/null)
 [ -z "$_lan_iface" ] && _lan_iface=$(uci -q get network.lan.ifname 2>/dev/null | awk '{print $1}')
 [ -z "$_lan_iface" ] && _lan_iface="br-lan"
 
 # Set interface list only when not already configured
 if ! uci -q get ndpid.main.interface >/dev/null; then
-	uci -q add_list ndpid.main.interface="$_lan_iface"
+	for _if in $_lan_iface; do
+		uci -q add_list ndpid.main.interface="$_if"
+	done
 fi
 
 # --------------------------------------------------------------------------
