@@ -124,6 +124,7 @@ return L.view.extend({
 		o.value('minrtt',      _('Minimum RTT'));
 		o.value('wrtt',        _('Weighted RTT'));
 		o.value('wrr',         _('Weighted Round Robin'));
+		o.value('backup',      _('Backup'));
 		o.value('backup_fec',  _('Backup with FEC'));
 		o.value('rap',         _('RAP'));
 		o.default = 'wlb';
@@ -167,6 +168,11 @@ return L.view.extend({
 		o.default = 'reed_solomon';
 		o.rmempty = true;
 		o.depends('fec_enable', '1');
+
+		o = s.option(form.Value, 'init_max_path_id', _('Initial max path ID'));
+		o.description = _('draft-21 initial_max_path_id transport parameter. Lower it (e.g. 2) to force PATHS_BLOCKED for testing; leave empty for the default');
+		o.datatype = 'uinteger';
+		o.rmempty = true;
 
 		o = s.option(form.DynamicList, 'path', _('Paths'));
 		o.description = _('Network interfaces to use as multipath paths');
@@ -218,6 +224,15 @@ return L.view.extend({
 		o.value('quic_bulk',     _('QUIC Bulk'));
 		o.value('default_udp',   _('Default UDP (pass-through)'));
 		o.rmempty = false;
+
+		s = m.section(form.NamedSection, 'advanced', 'advanced', _('Advanced'));
+		s.addremove = false;
+
+		o = s.option(form.Value, 'recv_rate_limit', _('Receive rate limit'));
+		o.description = _('Client-only: cap QUIC receive window to N bytes/sec (0 = no cap)');
+		o.datatype = 'uinteger';
+		o.placeholder = '0';
+		o.rmempty = true;
 
 		return m.render();
 	}
