@@ -1440,22 +1440,11 @@ _delete_network_rules() {
 
 _bypass_proto_ndpid_list=""
 
-_bypass_proto_collect_ndpid() {
-	local proto intf enabled intfid tcpudp ndpi
-	config_get proto $1 proto
-	config_get intf $1 interface
-	config_get enabled $1 enabled
-	config_get tcpudp $1 tcpudp "all"
-	config_get ndpi $1 ndpi "1"
-	[ "$enabled" = "0" ] && return
-	[ "$ndpi" = "0" ] && return
-	[ -z "$proto" ] && return
-	intf=$(echo "$intf" | sed 's/[.-]/_/g')
-	[ -z "$intf" ] && return
-	[ "$intf" = "none" ] && return
-	[ "$intf" = "default" ] && intf="all"
-	intfid=$(uci -q get omr-bypass.$intf.id)
-	[ "$intf" = "all" ] && intfid=""
+# Shared by _bypass_proto_collect_ndpid (dpis) and _bypass_category_collect_ndpid
+# (categories): registers one proto for nDPId watching and, for interface=all,
+# ensures the nftables sets/rules used to receive detected IPs exist.
+_bypass_ndpid_collect_proto() {
+	local proto="$1" intf="$2" intfid="$3" tcpudp="$4"
 
 	# Ensure nftables sets and rules exist for this protocol (even if DB is empty)
 	if [ "$intf" = "all" ]; then
@@ -1502,6 +1491,56 @@ _bypass_proto_collect_ndpid() {
 	_bypass_proto_ndpid_list="${_bypass_proto_ndpid_list} ${proto}:${intf}:${intfid}"
 }
 
+_bypass_proto_collect_ndpid() {
+	local proto intf enabled intfid tcpudp ndpi
+	config_get proto $1 proto
+	config_get intf $1 interface
+	config_get enabled $1 enabled
+	config_get tcpudp $1 tcpudp "all"
+	config_get ndpi $1 ndpi "1"
+	[ "$enabled" = "0" ] && return
+	[ "$ndpi" = "0" ] && return
+	[ -z "$proto" ] && return
+	intf=$(echo "$intf" | sed 's/[.-]/_/g')
+	[ -z "$intf" ] && return
+	[ "$intf" = "none" ] && return
+	[ "$intf" = "default" ] && intf="all"
+	intfid=$(uci -q get omr-bypass.$intf.id)
+	[ "$intf" = "all" ] && intfid=""
+	_bypass_ndpid_collect_proto "$proto" "$intf" "$intfid" "$tcpudp"
+}
+
+# Categories (a set of protos grouped in omr-bypass-proto.json) were never
+# registered with the nDPId consumer: a category rule with ndpi=1 skipped the
+# static DB IP list (via _bypass_proto_core's ndpi gate) but no mechanism ever
+# watched for the live flows, so the rule silently bypassed nothing. Expand
+# the category into its member protos here, same as _bypass_proto_collect_ndpid
+# does for a single dpis proto.
+_bypass_category_collect_ndpid() {
+	local category intf enabled vpn intfid tcpudp ndpi proto
+	config_get category $1 category
+	config_get intf $1 interface
+	config_get enabled $1 enabled
+	config_get vpn $1 vpn
+	config_get tcpudp $1 tcpudp "all"
+	config_get ndpi $1 ndpi "0"
+	[ "$enabled" = "0" ] && return
+	[ "$ndpi" = "0" ] && return
+	[ -z "$category" ] && return
+	[ "$vpn" = "1" ] && intf="srv_vpn1"
+	intf=$(echo "$intf" | sed 's/[.-]/_/g')
+	[ -z "$intf" ] && return
+	[ "$intf" = "none" ] && return
+	[ "$intf" = "default" ] && intf="all"
+	intfid=$(uci -q get omr-bypass.$intf.id)
+	[ "$intf" = "all" ] && intfid=""
+
+	for proto in $(grep -F "\"category\":\"${category}\"" /usr/share/omr-bypass/omr-bypass-proto.json 2>/dev/null | awk -F'"' '{print $4}'); do
+		[ -n "$proto" ] || continue
+		_bypass_ndpid_collect_proto "$proto" "$intf" "$intfid" "$tcpudp"
+	done
+}
+
 _start_ndpid_consumer() {
 	[ "$_omr_ndpid" != "1" ] && return
 	[ -z "$_bypass_proto_ndpid_list" ] && return
@@ -1546,12 +1585,30 @@ _ndpid_rule_wanted() {
 	_ndpid_wanted=1
 }
 
+# Same check as _ndpid_rule_wanted, for categories sections (a category rule
+# has no single "proto" — any enabled, ndpi=1 category with a routing
+# interface is enough to require the consumer).
+_ndpid_category_rule_wanted() {
+	local category intf enabled ndpi
+	config_get category $1 category
+	config_get intf $1 interface
+	config_get enabled $1 enabled
+	config_get ndpi $1 ndpi "0"
+	[ "$enabled" = "0" ] && return
+	[ "$ndpi" = "0" ] && return
+	[ -z "$category" ] && return
+	[ -z "$intf" ] && return
+	[ "$intf" = "none" ] && return
+	_ndpid_wanted=1
+}
+
 # nDPId ships disabled by default: when bypass rules need protocol detection,
 # enable and start ndpisrvd/ndpid instead of silently doing nothing
 _ensure_ndpid_running() {
 	_ndpid_wanted=0
 	config_load omr-bypass
 	config_foreach _ndpid_rule_wanted dpis
+	config_foreach _ndpid_category_rule_wanted categories
 	[ "$_ndpid_wanted" != "1" ] && return
 	pidof ndpisrvd >/dev/null 2>&1 && pidof ndpid >/dev/null 2>&1 && return
 	[ "$(uci -q get ndpid.main.enabled)" != "1" ] && uci -q set ndpid.main.enabled='1'
@@ -1703,6 +1760,7 @@ start_service() {
 		_ndpid_fw_needed=0
 		config_load omr-bypass
 		config_foreach _bypass_proto_collect_ndpid dpis
+		config_foreach _bypass_category_collect_ndpid categories
 		_start_ndpid_consumer
 	fi
 	# Apply the generated sections in one shot per config, skipping entirely
