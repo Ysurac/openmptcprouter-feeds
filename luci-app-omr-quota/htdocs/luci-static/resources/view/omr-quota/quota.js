@@ -91,15 +91,62 @@ return view.extend({
 		o.datatype = 'uinteger';
 		o.placeholder = '0';
 
+		o = s.option(form.Value, 'interfaces', _('Metered interfaces'),
+			_('Space-separated interfaces whose vnstat traffic is summed for this quota. Leave empty to use this section interface.'));
+		o.placeholder = 'wan1 wan2';
+		o.rmempty = true;
+
+		o = s.option(form.Value, 'begindate', _('Begin date'));
+		o.datatype = 'date';
+		o.placeholder = 'YYYY-MM-DD';
+		o.rmempty = true;
+
+		o = s.option(form.Value, 'enddate', _('End date'));
+		o.datatype = 'date';
+		o.placeholder = 'YYYY-MM-DD';
+		o.rmempty = true;
+		o.depends('method', '1');
+		o.depends('method', '2');
+
 		o = s.option(form.Value, 'interval', _('Interval between checks (s)'));
 		o.datatype = 'uinteger';
 		o.placeholder = '60';
+
+		o = s.option(form.ListValue, 'method', _('Daily budget method'));
+		o.value('0', _('Disabled'));
+		o.value('1', _('Block when the interval budget is exceeded'));
+		o.value('2', _('Limit speed using remaining daily volume'));
+		o.default = '0';
+		o.rmempty = false;
+
+		o = s.option(form.Value, 'percent', _('Budget threshold (%)'));
+		o.datatype = 'range(1,100)';
+		o.placeholder = '80';
+		o.depends('method', '1');
+		o.depends('method', '2');
+
+		o = s.option(form.Value, 'calculation_interval', _('Budget calculation interval (s)'));
+		o.datatype = 'uinteger';
+		o.placeholder = '120';
+		o.depends('method', '1');
+
+		o = s.option(form.Value, 'down_interfaces', _('Downstream limit interfaces'),
+			_('Space-separated interfaces shaped by the daily budget speed-limit method. Leave empty to use this section interface.'));
+		o.placeholder = 'lan';
+		o.rmempty = true;
+		o.depends('method', '2');
 
 		o = s.option(form.ListValue, 'exceedance_action', _('Action when quota is reached'));
 		o.value('cut',      _('Cut — bring interface down for the rest of the month'));
 		o.value('throttle', _('Throttle — limit interface bandwidth'));
 		o.default = 'cut';
 		o.rmempty = false;
+
+		o = s.option(form.Flag, 'block_lan', _('Block LAN and proxy when cut'),
+			_('Set firewall LAN input to DROP and stop shadowsocks-rust while the quota is exceeded.'));
+		o.default = '0';
+		o.rmempty = false;
+		o.depends('exceedance_action', 'cut');
 
 		o = s.option(form.Value, 'throttle_dl', _('Download limit (Mbps)'),
 			_('Maximum download speed applied to the interface when quota is exceeded'));

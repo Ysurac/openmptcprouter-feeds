@@ -42,9 +42,15 @@ _vnstat_month() {
 	local dev="$1"
 	[ -z "$dev" ] && { printf '0 0'; return; }
 	local js rx tx
-	js=$(vnstat -i "$dev" --json 2>/dev/null)
-	rx=$(printf '%s' "$js" | jsonfilter -q -e '@.interfaces[0].traffic.month[-1].rx' | tr -d '\n')
-	tx=$(printf '%s' "$js" | jsonfilter -q -e '@.interfaces[0].traffic.month[-1].tx' | tr -d '\n')
+	if [ -n "$2" ]; then
+		js=$(vnstat -i "$dev" -b "$2" --json 2>/dev/null)
+		rx=$(printf '%s' "$js" | jsonfilter -q -e '@.interfaces[0].traffic.total.rx' | tr -d '\n')
+		tx=$(printf '%s' "$js" | jsonfilter -q -e '@.interfaces[0].traffic.total.tx' | tr -d '\n')
+	else
+		js=$(vnstat -i "$dev" --json 2>/dev/null)
+		rx=$(printf '%s' "$js" | jsonfilter -q -e '@.interfaces[0].traffic.month[-1].rx' | tr -d '\n')
+		tx=$(printf '%s' "$js" | jsonfilter -q -e '@.interfaces[0].traffic.month[-1].tx' | tr -d '\n')
+	fi
 	printf '%s %s' "${rx:-0}" "${tx:-0}"
 }
 
@@ -55,18 +61,30 @@ _all_sections() {
 _quota_config_json() {
 	local iface="$1"
 	local enabled txquota rxquota ttquota interval action dl ul scope
+	local interfaces down_interfaces begindate enddate method percent calculation_interval block_lan
 	enabled=$(uci -q get "omr-quota.${iface}.enabled"          2>/dev/null); enabled=${enabled:-0}
 	txquota=$(uci -q get "omr-quota.${iface}.txquota"          2>/dev/null); txquota=${txquota:-0}
 	rxquota=$(uci -q get "omr-quota.${iface}.rxquota"          2>/dev/null); rxquota=${rxquota:-0}
 	ttquota=$(uci -q get "omr-quota.${iface}.ttquota"          2>/dev/null); ttquota=${ttquota:-0}
 	interval=$(uci -q get "omr-quota.${iface}.interval"        2>/dev/null); interval=${interval:-60}
+	interfaces=$(uci -q get "omr-quota.${iface}.interfaces"   2>/dev/null); interfaces=${interfaces:-$iface}
+	down_interfaces=$(uci -q get "omr-quota.${iface}.down_interfaces" 2>/dev/null); down_interfaces=${down_interfaces:-$iface}
+	begindate=$(uci -q get "omr-quota.${iface}.begindate"      2>/dev/null)
+	enddate=$(uci -q get "omr-quota.${iface}.enddate"          2>/dev/null)
+	method=$(uci -q get "omr-quota.${iface}.method"            2>/dev/null); method=${method:-0}
+	percent=$(uci -q get "omr-quota.${iface}.percent"          2>/dev/null); percent=${percent:-80}
+	calculation_interval=$(uci -q get "omr-quota.${iface}.calculation_interval" 2>/dev/null); calculation_interval=${calculation_interval:-120}
+	block_lan=$(uci -q get "omr-quota.${iface}.block_lan"      2>/dev/null); block_lan=${block_lan:-0}
 	action=$(uci -q get "omr-quota.${iface}.exceedance_action" 2>/dev/null); action=${action:-cut}
 	dl=$(uci -q get "omr-quota.${iface}.throttle_dl"           2>/dev/null); dl=${dl:-1}
 	ul=$(uci -q get "omr-quota.${iface}.throttle_ul"           2>/dev/null); ul=${ul:-1}
 	scope=$(uci -q get "omr-quota.${iface}.exceedance_scope"   2>/dev/null); scope=${scope:-month_only}
-	printf '{"name":"%s","enabled":"%s","txquota":%s,"rxquota":%s,"ttquota":%s,"interval":%s,"exceedance_action":"%s","throttle_dl":%s,"throttle_ul":%s,"exceedance_scope":"%s"}' \
+	printf '{"name":"%s","enabled":"%s","txquota":%s,"rxquota":%s,"ttquota":%s,"interval":%s,"interfaces":"%s","down_interfaces":"%s","begindate":"%s","enddate":"%s","method":%s,"percent":%s,"calculation_interval":%s,"block_lan":"%s","exceedance_action":"%s","throttle_dl":%s,"throttle_ul":%s,"exceedance_scope":"%s"}' \
 		"$(_json_str "$iface")" "$(_json_str "$enabled")" \
 		"$txquota" "$rxquota" "$ttquota" "$interval" \
+		"$(_json_str "$interfaces")" "$(_json_str "$down_interfaces")" \
+		"$(_json_str "$begindate")" "$(_json_str "$enddate")" \
+		"$method" "$percent" "$calculation_interval" "$(_json_str "$block_lan")" \
 		"$(_json_str "$action")" "$dl" "$ul" \
 		"$(_json_str "$scope")"
 }
@@ -74,21 +92,28 @@ _quota_config_json() {
 _quota_status_json() {
 	local iface="$1"
 	local enabled txquota rxquota ttquota action scope
+	local begindate interfaces
 	enabled=$(uci -q get "omr-quota.${iface}.enabled"          2>/dev/null); enabled=${enabled:-0}
 	txquota=$(uci -q get "omr-quota.${iface}.txquota"          2>/dev/null); txquota=${txquota:-0}
 	rxquota=$(uci -q get "omr-quota.${iface}.rxquota"          2>/dev/null); rxquota=${rxquota:-0}
 	ttquota=$(uci -q get "omr-quota.${iface}.ttquota"          2>/dev/null); ttquota=${ttquota:-0}
+	begindate=$(uci -q get "omr-quota.${iface}.begindate"      2>/dev/null)
+	interfaces=$(uci -q get "omr-quota.${iface}.interfaces"   2>/dev/null); interfaces=${interfaces:-$iface}
 	action=$(uci -q get "omr-quota.${iface}.exceedance_action" 2>/dev/null); action=${action:-cut}
 	scope=$(uci -q get "omr-quota.${iface}.exceedance_scope"   2>/dev/null); scope=${scope:-month_only}
 
 	# Current month usage from vnstat
-	local real_iface usage rx_bytes tx_bytes rx_kib tx_kib tt_kib
-	real_iface=$(_get_real_iface "$iface")
-	usage=$(_vnstat_month "$real_iface")
-	rx_bytes=$(printf '%s' "$usage" | awk '{print $1}')
-	tx_bytes=$(printf '%s' "$usage" | awk '{print $2}')
-	rx_kib=$(( rx_bytes / 1024 ))
-	tx_kib=$(( tx_bytes / 1024 ))
+	local metered real_iface usage rx_bytes tx_bytes rx_kib tx_kib tt_kib
+	rx_kib=0
+	tx_kib=0
+	for metered in $interfaces; do
+		real_iface=$(_get_real_iface "$metered")
+		usage=$(_vnstat_month "$real_iface" "$begindate")
+		rx_bytes=$(printf '%s' "$usage" | awk '{print $1}')
+		tx_bytes=$(printf '%s' "$usage" | awk '{print $2}')
+		rx_kib=$(( rx_kib + rx_bytes / 1024 ))
+		tx_kib=$(( tx_kib + tx_bytes / 1024 ))
+	done
 	tt_kib=$(( rx_kib + tx_kib ))
 
 	# Exceeded / throttled state
@@ -129,7 +154,7 @@ _quota_status_json() {
 
 case "$1" in
 	list)
-		printf '{"get_quota":{"interface":""},"set_quota":{"interface":"","enabled":"","txquota":"","rxquota":"","ttquota":"","interval":"","exceedance_action":"","throttle_dl":"","throttle_ul":"","exceedance_scope":""},"get_status":{"interface":""},"reset_exceeded":{"interface":""}}\n'
+		printf '{"get_quota":{"interface":""},"set_quota":{"interface":"","enabled":"","txquota":"","rxquota":"","ttquota":"","interval":"","interfaces":"","down_interfaces":"","begindate":"","enddate":"","method":"","percent":"","calculation_interval":"","block_lan":"","exceedance_action":"","throttle_dl":"","throttle_ul":"","exceedance_scope":""},"get_status":{"interface":""},"reset_exceeded":{"interface":""}}\n'
 		;;
 
 	call)
@@ -165,7 +190,7 @@ case "$1" in
 					uci -q set "omr-quota.${iface}=interface"
 				fi
 				# Apply every provided non-empty field
-				for field in enabled txquota rxquota ttquota interval exceedance_action throttle_dl throttle_ul exceedance_scope; do
+				for field in enabled txquota rxquota ttquota interval interfaces down_interfaces begindate enddate method percent calculation_interval block_lan exceedance_action throttle_dl throttle_ul exceedance_scope; do
 					val=$(printf '%s' "$input" | jsonfilter -q -e "@.${field}")
 					[ -n "$val" ] && uci -q set "omr-quota.${iface}.${field}=${val}"
 				done
