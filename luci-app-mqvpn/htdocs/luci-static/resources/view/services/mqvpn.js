@@ -31,6 +31,10 @@ return L.view.extend({
 		o.placeholder = '443';
 		o.rmempty = false;
 
+		o = s.option(form.Value, 'server_name', _('Server name (SNI)'));
+		o.description = _('TLS SNI/verification name, if different from the server address');
+		o.rmempty = true;
+
 		o = s.option(form.Flag, 'insecure', _('Insecure TLS'));
 		o.description = _('Skip TLS certificate verification');
 		o.default = o.enabled;
@@ -127,8 +131,9 @@ return L.view.extend({
 		o.value('backup',      _('Backup'));
 		o.value('backup_fec',  _('Backup with FEC'));
 		o.value('rap',         _('RAP'));
+		o.value('redundant',   _('Redundant'));
 		o.default = 'wlb';
-		o.description = _('With "Weighted RTT" or "Weighted Round Robin", each path\'s weight is taken from its interface\'s "Weight" setting (Network page, same value used by the MPTCP weight schedulers and settable via the API) and pushed to mqvpn automatically. "Weighted RTT" favors the highest-weight path until it\'s congestion-window-limited, while "Weighted Round Robin" interleaves traffic across paths in proportion to their weight.');
+		o.description = _('With "Weighted RTT" or "Weighted Round Robin", each path\'s weight is taken from its interface\'s "Weight" setting (Network page, same value used by the MPTCP weight schedulers and settable via the API) and pushed to mqvpn automatically. "Weighted RTT" favors the highest-weight path until it\'s congestion-window-limited, while "Weighted Round Robin" interleaves traffic across paths in proportion to their weight. "Redundant" broadcasts every packet on every usable path; use only for loss-critical, low-bitrate traffic.');
 
 		o = s.option(form.ListValue, 'cc', _('Congestion control'));
 		o.value('bbr2',      _('BBR2'));
@@ -137,6 +142,7 @@ return L.view.extend({
 		o.value('new_reno',  _('New Reno'));
 		o.value('copa',      _('Copa'));
 		o.value('unlimited', _('Unlimited'));
+		o.value('none',      _('None'));
 		o.default = 'bbr2';
 		o.rmempty = true;
 
@@ -222,6 +228,7 @@ return L.view.extend({
 		o.value('cellular_bond', _('Cellular Bond'));
 		o.value('fiber_lte',     _('Fiber + LTE'));
 		o.value('quic_bulk',     _('QUIC Bulk'));
+		o.value('low_latency',   _('Low Latency'));
 		o.value('default_udp',   _('Default UDP (pass-through)'));
 		o.rmempty = false;
 
