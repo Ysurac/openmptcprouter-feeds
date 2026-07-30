@@ -14,6 +14,7 @@ _TSTATE_DIR="${OMR_QUOTA_THROTTLE_STATE_DIR:-/tmp/omr-quota}"
 _get_real_interface() {
 	local iface="$1"
 	local real
+	local _cache="${_TSTATE_DIR}/${iface}.realdev"
 	case "$iface" in
 		@*)
 			real="$(ifstatus "$iface" | jsonfilter -q -e '@["device"]')"
@@ -22,6 +23,18 @@ _get_real_interface() {
 			real="$(ifstatus "$iface" | jsonfilter -q -e '@.l3_device')"
 			;;
 	esac
+	# ifstatus reports no l3_device while the interface is administratively
+	# down (e.g. cut by this same script for quota enforcement) -- fall back
+	# to the last known device name so vnstat usage lookups keep working.
+	# Without this, a cut interface reads back as 0 bytes used next cycle,
+	# looks like the quota is no longer exceeded, and gets brought back up
+	# only to be cut again next cycle: an infinite up/down flap.
+	if [ -n "$real" ]; then
+		mkdir -p "$_TSTATE_DIR"
+		echo "$real" > "$_cache"
+	elif [ -f "$_cache" ]; then
+		real="$(cat "$_cache")"
+	fi
 	printf '%s' "$real"
 }
 
@@ -165,6 +178,43 @@ _calculate_budget_limit() {
 	fi
 }
 
+# Baseline reset -- reset_exceeded (UCI/ubus) only clears the *persistent*
+# scope marker, which is irrelevant for exceedance_scope=month_only: that
+# scope recomputes "exceeded" from live vnstat totals every loop, so there's
+# nothing else to clear and quota enforcement stays in effect until the
+# calendar month rolls over. Recording a baseline (usage-so-far, subtracted
+# from every future reading) makes reset_exceeded actually un-exceed a
+# month_only quota immediately, without waiting for vnstat's own month
+# bucket to roll over. Tagged with the calendar month it was taken in, so a
+# real month rollover (vnstat's own bucket resetting to 0) isn't permanently
+# masked by a stale baseline from a previous month.
+_baseline_file="${_PERSIST_DIR}/${OMR_QUOTA_INTERFACE}.baseline"
+
+_read_baseline() {
+	local tag rx0 tx0
+	[ -f "$_baseline_file" ] || { printf '0 0'; return; }
+	read -r tag rx0 tx0 < "$_baseline_file"
+	if [ "$tag" != "$(date +%Y-%m)" ]; then
+		rm -f "$_baseline_file"
+		printf '0 0'
+	else
+		printf '%s %s' "${rx0:-0}" "${tx0:-0}"
+	fi
+}
+
+if [ "${OMR_QUOTA_RESET_BASELINE:-0}" = "1" ]; then
+	_rx0=0; _tx0=0
+	for iface in ${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}; do
+		real_iface="$(_get_real_interface "$iface")"
+		usage="$(_vnstat_usage "$real_iface")"
+		_rx0=$(( _rx0 + $(printf '%s' "$usage" | awk '{print $1}') ))
+		_tx0=$(( _tx0 + $(printf '%s' "$usage" | awk '{print $2}') ))
+	done
+	mkdir -p "$_PERSIST_DIR"
+	printf '%s %s %s' "$(date +%Y-%m)" "$_rx0" "$_tx0" > "$_baseline_file"
+	logger -t "OMR-QUOTA" "Reset quota baseline for $OMR_QUOTA_INTERFACE (rx=${_rx0}KB tx=${_tx0}KB)"
+fi
+
 _prev_exceeded=-1
 last_calculation=0
 last_tt=0
@@ -182,6 +232,11 @@ while true; do
 		rx=$(( rx + ${rxi:-0} ))
 		tx=$(( tx + ${txi:-0} ))
 	done
+	_baseline="$(_read_baseline)"
+	rx=$(( rx - $(printf '%s' "$_baseline" | awk '{print $1}') ))
+	tx=$(( tx - $(printf '%s' "$_baseline" | awk '{print $2}') ))
+	[ "$rx" -lt 0 ] && rx=0
+	[ "$tx" -lt 0 ] && tx=0
 	tt=$(( rx + tx ))
 	iface_up="$(ifstatus "$OMR_QUOTA_INTERFACE" | jsonfilter -e '@.up')"
 	cb=""

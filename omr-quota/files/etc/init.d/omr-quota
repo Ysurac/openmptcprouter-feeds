@@ -30,7 +30,7 @@ _validate_section() {
 
 _launch_quota() {
 	local txquota rxquota ttquota interval enabled interface
-	local exceedance_action throttle_dl throttle_ul exceedance_scope reset_exceeded
+	local exceedance_action throttle_dl throttle_ul exceedance_scope reset_exceeded reset_baseline
 	local interfaces down_interfaces begindate enddate method percent calculation_interval block_lan
 	_validate_section "interface" "$1"
 	interface=$1
@@ -42,11 +42,17 @@ _launch_quota() {
 	[ -z "$interfaces" ] && interfaces="$interface"
 	[ -z "$down_interfaces" ] && down_interfaces="$interface"
 
-	# Clear persistent exceeded state when explicitly requested
+	# Clear persistent exceeded state when explicitly requested. This alone
+	# only matters for exceedance_scope=persistent -- month_only recomputes
+	# "exceeded" from live vnstat data every loop, so also tell the daemon
+	# (via OMR_QUOTA_RESET_BASELINE) to record a fresh usage baseline on this
+	# launch, which is what actually un-exceeds a month_only quota.
+	reset_baseline=0
 	if [ "$reset_exceeded" = "1" ]; then
 		rm -f "/etc/omr-quota/state/${interface}.exceeded"
 		uci -q set "omr-quota.${interface}.reset_exceeded=0"
 		uci -q commit omr-quota
+		reset_baseline=1
 	fi
 
 	[ "$(uci get vnstat.@vnstat[-1].interface | grep $interface)" = "" ] && {
@@ -73,6 +79,7 @@ _launch_quota() {
 	procd_append_param env "OMR_QUOTA_THROTTLE_DL=$throttle_dl"
 	procd_append_param env "OMR_QUOTA_THROTTLE_UL=$throttle_ul"
 	procd_append_param env "OMR_QUOTA_SCOPE=$exceedance_scope"
+	procd_append_param env "OMR_QUOTA_RESET_BASELINE=$reset_baseline"
 	procd_set_param respawn 0 10 0
 	procd_set_param stderr 1
 	procd_close_instance

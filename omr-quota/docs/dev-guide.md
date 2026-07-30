@@ -63,13 +63,21 @@ passed as env vars (`OMR_QUOTA_TX`, `OMR_QUOTA_RX`, `OMR_QUOTA_TT`,
 1. Resolve the real L3 device for every interface in `OMR_QUOTA_INTERFACES`
    (defaults to the section interface) via `_get_real_interface`, which
    wraps `ifstatus` and handles both plain interfaces and `@`-prefixed
-   logical/dynamic ones (e.g. mwan/multipath aliases).
+   logical/dynamic ones (e.g. mwan/multipath aliases). `ifstatus` reports no
+   `l3_device` while an interface is administratively down — including when
+   *this script* just cut it for quota enforcement — so `_get_real_interface`
+   caches the last resolved device name to `<_TSTATE_DIR>/<iface>.realdev`
+   and falls back to it when the live lookup comes back empty. Without this
+   the next loop reads 0 bytes for a cut interface, sees the quota as no
+   longer exceeded, brings it back up, and cuts it again: an infinite
+   up/down flap.
 2. `_vnstat_usage` reads rx/tx for each of those devices from
    `vnstat -i <dev> --json` and sums them into `rx`/`tx`/`tt` (KiB). If
    `OMR_QUOTA_BEGINDATE` is set it instead queries
    `vnstat -i <dev> -b <begindate> --json` and reads
    `interfaces[0].traffic.total.*` — cumulative usage since that date
-   rather than the current vnstat month bucket.
+   rather than the current vnstat month bucket. The summed `rx`/`tx` are
+   then reduced by the current baseline (see below) before `tt` is derived.
 3. Compare `rx`/`tx`/`tt` against the configured quotas to compute
    `exceeded`. `_calculate_budget_limit` additionally derives a daily-budget
    signal (see below) once usage crosses `OMR_QUOTA_PERCENT`: method `1`
@@ -82,6 +90,29 @@ passed as env vars (`OMR_QUOTA_TX`, `OMR_QUOTA_RX`, `OMR_QUOTA_TT`,
    `_unblock_lan` run alongside `ifdown`/`ifup` when `OMR_QUOTA_BLOCK_LAN=1`.
 5. `sleep "$OMR_QUOTA_INTERVAL"` and repeat — the process never exits on its
    own; procd/`stop` is what tears it down.
+
+### Usage baseline / `reset_exceeded` (`_read_baseline`, `OMR_QUOTA_RESET_BASELINE`)
+
+`reset_exceeded` only ever cleared the `persistent`-scope marker file, which
+does nothing for `exceedance_scope=month_only`: that scope recomputes
+`exceeded` from live vnstat totals every loop, so there was nothing else to
+clear and an exceeded month_only quota stayed cut/throttled until vnstat's
+own monthly bucket rolled over.
+
+A baseline file `${OMR_QUOTA_STATE_DIR:-/etc/omr-quota/state}/<interface>.baseline`
+fixes this: it stores `<year-month> <rx0> <tx0>`, and every loop's summed
+`rx`/`tx` has `rx0`/`tx0` subtracted (clamped to `0`) before quotas are
+checked. `_read_baseline` discards the file (treating it as `0 0`) if its
+tag doesn't match the current `date +%Y-%m`, so a real month rollover isn't
+permanently masked by a stale baseline.
+
+The baseline is (re)recorded at daemon launch when `OMR_QUOTA_RESET_BASELINE=1`
+is passed in the environment: the daemon sums current vnstat usage across
+`OMR_QUOTA_INTERFACES` and writes it as the new baseline before entering the
+main loop. `init.d/omr-quota` sets that env var whenever
+`reset_exceeded=1` is set on the section (in addition to its existing
+persistent-marker cleanup), so a single `reset_exceeded` trigger un-exceeds
+*both* scopes immediately, regardless of which one is configured.
 
 ### Exceedance scope
 
@@ -159,6 +190,15 @@ the running daemon. `set_quota` and `reset_exceeded` call
 `/etc/init.d/omr-quota reload` after committing, since the daemon only reads
 its quota values once at launch (via env vars) and won't notice a live UCI
 change otherwise.
+
+`reset_exceeded` no longer clears the persistent marker file directly —
+it clears the throttle-state file, sets `reset_exceeded=1` in UCI, and
+reloads, delegating to the exact same `init.d/omr-quota` path the
+UCI-option trigger uses. That path both removes the persistent marker *and*
+sets `OMR_QUOTA_RESET_BASELINE=1` for the relaunch, which is what actually
+un-exceeds an `exceedance_scope=month_only` quota (see the daemon's usage
+baseline section above) — a plain `rm` of the marker file never affected
+month_only quotas at all.
 
 `get_status` recomputes `exceeded` from live vnstat data in addition to
 checking the persistent marker, so it reflects reality even if the daemon
