@@ -1,0 +1,198 @@
+#!/usr/bin/env lua
+
+-- Copyright 2024 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+-- Licensed to the public under the Apache License 2.0.
+
+local jsonc = require "luci.jsonc"
+
+local FLOWS_DIR = "/tmp/ndpid-flows"
+
+local function parseInput()
+	local parse = jsonc.new()
+	local done, err
+	while true do
+		local chunk = io.read(4096)
+		if not chunk then break end
+		if not done and not err then
+			done, err = parse:parse(chunk)
+		end
+	end
+	if not done then
+		print(jsonc.stringify({ error = err or "Incomplete input" }))
+		os.exit(1)
+	end
+	return parse:get()
+end
+
+local function validateArgs(func, uargs)
+	local method = methods[func]
+	if not method then
+		print(jsonc.stringify({ error = "Method not found" }))
+		os.exit(1)
+	end
+	if type(uargs) ~= "table" then
+		print(jsonc.stringify({ error = "Invalid arguments" }))
+		os.exit(1)
+	end
+	uargs.ubus_rpc_session = nil
+	local margs = method.args or {}
+	for k, v in pairs(uargs) do
+		if margs[k] == nil or (v ~= nil and type(v) ~= type(margs[k])) then
+			print(jsonc.stringify({ error = "Invalid arguments" }))
+			os.exit(1)
+		end
+	end
+	return method
+end
+
+local function read_file(path)
+	local f = io.open(path, "r")
+	if not f then return nil end
+	local content = f:read("*all")
+	f:close()
+	return content
+end
+
+local function list_flow_files()
+	local files = {}
+	local f = io.popen("ls " .. FLOWS_DIR .. "/ 2>/dev/null")
+	if not f then return files end
+	for name in f:lines() do
+		if name:match("^%d+%.json$") then
+			files[#files + 1] = name
+		end
+	end
+	f:close()
+	return files
+end
+
+local function l4_proto_name(proto)
+	local n = tonumber(proto)
+	if n == 6  then return "TCP"
+	elseif n == 17 then return "UDP"
+	elseif n == 1  then return "ICMP"
+	elseif n == 58 then return "ICMPv6"
+	elseif n == 132 then return "SCTP"
+	else return tostring(proto or "?")
+	end
+end
+
+local PROTOCOLS_FILE = "/usr/share/ndpid/protocols.json"
+
+methods = {
+
+	get_supported_protocols = {
+		args = {},
+		call = function()
+			local content = read_file(PROTOCOLS_FILE)
+			if not content then
+				return { protocols = {}, categories = {} }
+			end
+			local ok, data = pcall(jsonc.parse, content)
+			if not ok or type(data) ~= "table" then
+				return { protocols = {}, categories = {} }
+			end
+			return data
+		end
+	},
+
+	get_flows = {
+		args = {},
+		call = function()
+			local flows = {}
+			local files = list_flow_files()
+			for _, fname in ipairs(files) do
+				local content = read_file(FLOWS_DIR .. "/" .. fname)
+				if content and #content > 2 then
+					local ok, data = pcall(jsonc.parse, content)
+					if ok and type(data) == "table" then
+						local src_ip    = data["src_ip"] or data["l3_src4"] or data["l3_src6"] or ""
+						local dst_ip    = data["dst_ip"] or data["l3_dst4"] or data["l3_dst6"] or ""
+						local ndpi      = data["ndpi"] or {}
+						local pkts      = (data["flow_src_packets_processed"] or 0) + (data["flow_dst_packets_processed"] or 0)
+						local proto_str = ndpi["proto"] or ""
+						local app, base
+						if proto_str:find("%.") then
+							base = proto_str:match("^([^%.]+)"):lower()
+							app  = proto_str:match("([^%.]+)$"):lower()
+						else
+							base = proto_str:lower()
+							app  = ""
+						end
+						flows[#flows + 1] = {
+							flow_id  = data["flow_id"],
+							event    = data["flow_event_name"] or "",
+							src_ip   = src_ip,
+							dst_ip   = dst_ip,
+							src_port = data["src_port"],
+							dst_port = data["dst_port"],
+							l3_proto = data["l3_proto"] or "ip4",
+							l4_proto = data["l4_proto"] or "",
+							app      = app,
+							base     = base,
+							category = ndpi["category"] or "",
+							confidence = ndpi["confidence"] or "",
+							packets  = pkts,
+						}
+					end
+				end
+			end
+			return { flows = flows, total = #flows }
+		end
+	},
+
+	get_status = {
+		args = {},
+		call = function()
+			local ndpid_running = false
+			local tracker_running = false
+
+			local pid_f = io.open("/var/run/ndpid.pid", "r")
+			if pid_f then
+				local pid = pid_f:read("*line")
+				pid_f:close()
+				if pid and pid ~= "" then
+					local rc = os.execute("kill -0 " .. pid .. " 2>/dev/null")
+					ndpid_running = (rc == 0)
+				end
+			end
+
+			local tr_f = io.open("/var/run/omr-bypass-ndpid-flows.pid", "r")
+			if tr_f then
+				local pid = tr_f:read("*line")
+				tr_f:close()
+				if pid and pid ~= "" then
+					local rc = os.execute("kill -0 " .. pid .. " 2>/dev/null")
+					tracker_running = (rc == 0)
+				end
+			end
+
+			local flow_count = 0
+			local ls = io.popen("ls " .. FLOWS_DIR .. "/ 2>/dev/null | wc -l")
+			if ls then
+				local n = ls:read("*line")
+				ls:close()
+				flow_count = tonumber(n) or 0
+			end
+
+			return {
+				ndpid_running   = ndpid_running,
+				tracker_running = tracker_running,
+				flow_count      = flow_count,
+			}
+		end
+	},
+
+}
+
+if arg[1] == "list" then
+	local rv = {}
+	for name, method in pairs(methods) do rv[name] = method.args or {} end
+	print((jsonc.stringify(rv):gsub(":%[%]", ":{}")))
+elseif arg[1] == "call" then
+	local args   = parseInput()
+	local method = validateArgs(arg[2], args)
+	local result, code = method.call(args)
+	print((jsonc.stringify(result):gsub("^%[%]$", "{}")))
+	os.exit(code or 0)
+end
