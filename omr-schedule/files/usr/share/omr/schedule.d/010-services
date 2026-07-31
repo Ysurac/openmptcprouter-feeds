@@ -332,6 +332,29 @@ restart_omrtracker() {
 	rmdir "$lockdir" 2>/dev/null
 }
 
+_intf_zone_forwards_to_wan() {
+	# Only true if the firewall zone this interface belongs to actually
+	# has a forwarding path to the wan zone (either it *is* the wan zone,
+	# or a `config forwarding` src=<zone> dest=wan exists). Isolated zones
+	# (forward=REJECT, no forwarding to wan) must return false so their
+	# interfaces are never added to the ss-rust transparent-redirect scope.
+	local intf="$1" zsection znetwork zname fsection fsrc fdest
+	for zsection in $(uci -q show firewall | sed -n "s/^\(firewall\.[^.]*\)=zone\$/\1/p"); do
+		znetwork=$(uci -q get ${zsection}.network 2>/dev/null)
+		case " $znetwork " in
+			*" $intf "*)
+				zname=$(uci -q get ${zsection}.name 2>/dev/null)
+				[ "$zname" = "wan" ] && return 0
+				for fsection in $(uci -q show firewall | sed -n "s/^\(firewall\.[^.]*\)=forwarding\$/\1/p"); do
+					fsrc=$(uci -q get ${fsection}.src 2>/dev/null)
+					fdest=$(uci -q get ${fsection}.dest 2>/dev/null)
+					[ "$fsrc" = "$zname" ] && [ "$fdest" = "wan" ] && return 0
+				done
+				;;
+		esac
+	done
+	return 1
+}
 set_lan_ips() {
 	config_get ip4table "$1" ip4table
 	config_get device "$1" device
@@ -346,8 +369,10 @@ set_lan_ips() {
 	uci -q del_list dhcp.@dnsmasq[0].interface="$1"
 	uci -q del_list dhcp.@dnsmasq[0].notinterface="$1"
 	if [ "$multipath" != "on" ] && [ "$multipath" != "master" ] && [ -n "$device" ] && [ -z "$(echo $device | grep @)" ] && ([ "$proto" = "dhcp" ] || [ "$proto" = "static" ]); then
-		uci -q add_list shadowsocks-libev.ss_rules.ifnames="$device"
-		uci -q add_list shadowsocks-rust.ss_rules.ifnames="$device"
+		if _intf_zone_forwards_to_wan "$1"; then
+			uci -q add_list shadowsocks-libev.ss_rules.ifnames="$device"
+			uci -q add_list shadowsocks-rust.ss_rules.ifnames="$device"
+		fi
 		uci -q add_list unbound.ub_main.iface_lan="$1"
 		uci -q add_list dhcp.@dnsmasq[0].interface="$1"
 	elif [ "$multipath" = "on" ] || [ "$multipath" = "master" ]; then
