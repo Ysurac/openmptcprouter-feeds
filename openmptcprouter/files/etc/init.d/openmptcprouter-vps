@@ -1005,7 +1005,7 @@ set_gre_tunnel() {
 }
 
 _set_vxlan_vps() {
-	local settings result vxlan_enabled vxlan_current
+	local settings result vxlan_enabled vxlan_current vxlan_mode vxlan_mode_current
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 	if [ "$(uci -q get openmptcprouter.settings.vxlan)" = "1" ]; then
@@ -1013,17 +1013,93 @@ _set_vxlan_vps() {
 	else
 		vxlan_enabled="false"
 	fi
+	vxlan_mode="$(uci -q get openmptcprouter.settings.vxlan_mode)"
+	[ "$vxlan_mode" = "l2" ] || vxlan_mode="l3"
 	vxlan_current="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.enabled')"
 	[ -z "$vxlan_current" ] && vxlan_current="false"
-	if [ "$vxlan_current" != "$vxlan_enabled" ]; then
-		settings='{"enable": '$vxlan_enabled'}'
+	vxlan_mode_current="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.mode')"
+	[ -z "$vxlan_mode_current" ] && vxlan_mode_current="l3"
+	if [ "$vxlan_current" != "$vxlan_enabled" ] || [ "$vxlan_mode_current" != "$vxlan_mode" ]; then
+		settings='{"enable": '$vxlan_enabled', "mode": "'$vxlan_mode'"}'
 		result=$(_set_json "vxlan" "$settings")
 		[ "$(_parse_result "$result")" = "done" ] && vps_config=$(_get_json "config")
 	fi
 }
 
+_bridge_name="omrvxlanbr"
+_bridge_ifname="br-omrvxlan"
+
+# Bridge omrvxlan into the LAN's device (L2 mode): the tunnel carries the
+# LAN's own broadcast domain instead of a routed P2P link
+_vxlan_join_lan_bridge() {
+	local lan_device
+	lan_device="$(uci -q get network.lan.device)"
+	if [ "$lan_device" != "$_bridge_name" ]; then
+		# Wrap the LAN's current device in a bridge so omrvxlan can join it
+		# as a port; the original device is stashed to unwind on disable
+		uci -q batch <<-EOF >/dev/null
+			set network.${_bridge_name}=device
+			set network.${_bridge_name}.type='bridge'
+			set network.${_bridge_name}.name="$_bridge_ifname"
+			set network.${_bridge_name}.omrvxlan_lan_device="$lan_device"
+		EOF
+		uci -q add_list network.${_bridge_name}.ports="$lan_device"
+		uci -q set network.lan.device="$_bridge_name"
+	fi
+	if [ -z "$(uci -q get network.${_bridge_name}.ports | grep 'omrvxlan')" ]; then
+		uci -q add_list network.${_bridge_name}.ports='omrvxlan'
+	fi
+}
+
+# Undo _vxlan_join_lan_bridge: drop omrvxlan from the bridge and, once it was
+# the only extra port, restore network.lan.device to the stashed original
+_vxlan_leave_lan_bridge() {
+	local lan_device
+	lan_device="$(uci -q get network.${_bridge_name}.omrvxlan_lan_device)"
+	uci -q del_list network.${_bridge_name}.ports='omrvxlan'
+	if [ -n "$lan_device" ]; then
+		uci -q set network.lan.device="$lan_device"
+		uci -q delete network.${_bridge_name}
+	fi
+}
+
+# Routed P2P mode: omrvxlan gets no address itself, omrvxlanip carries the
+# tunnel IPs, both networks join the vpn firewall zone like any other VPN link
+_vxlan_apply_l3() {
+	local vxlan_ip6addr
+	vxlan_ip6addr="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.remoteip6')"
+	[ "$(uci -q get openmptcprouter.settings.disable_ipv6)" = "1" ] && vxlan_ip6addr=""
+	uci -q batch <<-EOF >/dev/null
+		set network.omrvxlanip=interface
+		set network.omrvxlanip.label="VXLAN tunnel IPs"
+		set network.omrvxlanip.proto=static
+		set network.omrvxlanip.device="@omrvxlan"
+		set network.omrvxlanip.ipaddr="$vxlan_ipaddr"
+		set network.omrvxlanip.multipath='off'
+		set network.omrvxlanip.defaultroute='0'
+		set network.omrvxlanip.peerdns='0'
+		delete network.omrvxlanip.ip6addr
+	EOF
+	[ -n "$vxlan_ip6addr" ] && uci -q set network.omrvxlanip.ip6addr="$vxlan_ip6addr"
+	if [ -z "$(uci -q get firewall.zone_vpn.network | grep omrvxlan)" ]; then
+		uci -q add_list firewall.zone_vpn.network="omrvxlan"
+		uci -q add_list firewall.zone_vpn.network="omrvxlanip"
+	fi
+	ifup omrvxlanip >/dev/null 2>&1
+}
+
+_vxlan_teardown_l3() {
+	ifdown omrvxlanip >/dev/null 2>&1
+	uci -q batch <<-EOF >/dev/null
+		delete network.omrvxlanip
+		commit network
+	EOF
+	uci -q del_list firewall.zone_vpn.network="omrvxlan"
+	uci -q del_list firewall.zone_vpn.network="omrvxlanip"
+}
+
 _get_vxlan() {
-	local vxlan_state vxlan_vni vxlan_port vxlan_mtu vxlan_ipaddr vxlan_ip6addr vxlan_peeraddr
+	local vxlan_state vxlan_vni vxlan_port vxlan_mtu vxlan_peeraddr vxlan_mode vxlan_ipaddr
 	[ -z "$servername" ] && servername=$1
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
@@ -1032,14 +1108,18 @@ _get_vxlan() {
 		vxlan_vni="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.vni')"
 		vxlan_port="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.port')"
 		vxlan_mtu="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.mtu')"
-		vxlan_ipaddr="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.remoteip')"
-		vxlan_ip6addr="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.remoteip6')"
 		vxlan_peeraddr="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.localip')"
+		vxlan_mode="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.mode')"
+		[ "$vxlan_mode" = "l2" ] || vxlan_mode="l3"
+		vxlan_ipaddr="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.remoteip')"
 		[ -z "$vxlan_vni" ] && return
-		[ -z "$vxlan_ipaddr" ] && return
 		[ -z "$vxlan_peeraddr" ] && return
-		[ "$(uci -q get openmptcprouter.settings.disable_ipv6)" = "1" ] && vxlan_ip6addr=""
-		if [ "$(uci -q get network.omrvxlan.peeraddr)" != "$vxlan_peeraddr" ] || [ "$(uci -q get network.omrvxlan.vid)" != "$vxlan_vni" ] || [ "$(uci -q get network.omrvxlan.port)" != "$vxlan_port" ] || [ "$(uci -q get network.omrvxlan.mtu)" != "$vxlan_mtu" ] || [ "$(uci -q get network.omrvxlanip.ipaddr)" != "$vxlan_ipaddr" ] || [ "$(uci -q get network.omrvxlanip.ip6addr)" != "$vxlan_ip6addr" ]; then
+		[ "$vxlan_mode" = "l3" ] && [ -z "$vxlan_ipaddr" ] && return
+		if [ "$(uci -q get network.omrvxlan.peeraddr)" != "$vxlan_peeraddr" ] || [ "$(uci -q get network.omrvxlan.vid)" != "$vxlan_vni" ] || [ "$(uci -q get network.omrvxlan.port)" != "$vxlan_port" ] || [ "$(uci -q get network.omrvxlan.mtu)" != "$vxlan_mtu" ] || { [ "$vxlan_mode" = "l2" ] && [ -z "$(uci -q get network.${_bridge_name}.ports | grep 'omrvxlan')" ]; } || { [ "$vxlan_mode" = "l3" ] && [ "$(uci -q get network.omrvxlanip.ipaddr)" != "$vxlan_ipaddr" ]; }; then
+			# If the mode changed since the last run, unwind whichever mode's
+			# state is currently on disk before applying the new one
+			[ -n "$(uci -q get network.omrvxlanip)" ] && [ "$vxlan_mode" = "l2" ] && _vxlan_teardown_l3
+			[ -n "$(uci -q get network.${_bridge_name})" ] && [ "$vxlan_mode" = "l3" ] && _vxlan_leave_lan_bridge
 			uci -q batch <<-EOF >/dev/null
 				set network.omrvxlan=interface
 				set network.omrvxlan.label="VXLAN tunnel over the VPN"
@@ -1053,23 +1133,13 @@ _get_vxlan() {
 				set network.omrvxlan.multipath='off'
 				set network.omrvxlan.defaultroute='0'
 				set network.omrvxlan.peerdns='0'
-				set network.omrvxlanip=interface
-				set network.omrvxlanip.label="VXLAN tunnel IPs"
-				set network.omrvxlanip.proto=static
-				set network.omrvxlanip.device="@omrvxlan"
-				set network.omrvxlanip.ipaddr="$vxlan_ipaddr"
-				set network.omrvxlanip.multipath='off'
-				set network.omrvxlanip.defaultroute='0'
-				set network.omrvxlanip.peerdns='0'
-				delete network.omrvxlanip.ip6addr
 			EOF
-			[ -n "$vxlan_ip6addr" ] && uci -q set network.omrvxlanip.ip6addr="$vxlan_ip6addr"
-			uci -q commit network
-			if [ -z "$(uci -q get firewall.zone_vpn.network | grep omrvxlan)" ]; then
-				uci -q add_list firewall.zone_vpn.network="omrvxlan"
-				uci -q add_list firewall.zone_vpn.network="omrvxlanip"
-				uci -q commit firewall
+			if [ "$vxlan_mode" = "l2" ]; then
+				_vxlan_join_lan_bridge
+			else
+				_vxlan_apply_l3
 			fi
+			uci -q commit network
 			# The vpn zone input chain only accepts ICMP: without this rule the
 			# VXLAN UDP encap replies arriving on the VPN tunnel are rejected
 			uci -q batch <<-EOF >/dev/null
@@ -1082,23 +1152,19 @@ _get_vxlan() {
 				set firewall.omrvxlan.dest_port='${vxlan_port:-4789}'
 				commit firewall
 			EOF
-			logger -t "OMR-VPS" "VXLAN tunnel configured over the VPN"
+			logger -t "OMR-VPS" "VXLAN tunnel configured over the VPN (mode: $vxlan_mode)"
 			ifup omrvxlan >/dev/null 2>&1
-			ifup omrvxlanip >/dev/null 2>&1
-			# Reload so fw4 resolves the omrvxlan device into the vpn zone
-			# (output to the vxlan device is rejected until then)
+			ubus call network reload >/dev/null 2>&1
 			/etc/init.d/firewall reload >/dev/null 2>&1
 		fi
 	elif [ -n "$(uci -q get network.omrvxlan)" ]; then
-		ifdown omrvxlanip >/dev/null 2>&1
+		[ -n "$(uci -q get network.omrvxlanip)" ] && _vxlan_teardown_l3
+		[ -n "$(uci -q get network.${_bridge_name})" ] && _vxlan_leave_lan_bridge
 		ifdown omrvxlan >/dev/null 2>&1
 		uci -q batch <<-EOF >/dev/null
 			delete network.omrvxlan
-			delete network.omrvxlanip
 			commit network
 		EOF
-		uci -q del_list firewall.zone_vpn.network="omrvxlan"
-		uci -q del_list firewall.zone_vpn.network="omrvxlanip"
 		uci -q delete firewall.omrvxlan
 		uci -q commit firewall
 		ubus call network reload >/dev/null 2>&1
