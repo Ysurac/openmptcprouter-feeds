@@ -1,7 +1,7 @@
 #!/bin/sh /etc/rc.common
 #
 # Copyright 2019-2020 Xingwang Liao <kuoruan@gmail.com>
-# Copyright 2020-2022 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+# Copyright 2020-2025 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 # Licensed to the public under the MIT License.
 #
 
@@ -11,6 +11,9 @@ EXTRA_COMMANDS="rules_up rules_down rules_exist"
 
 NAME=xray
 CONFIG_FOLDER=/var/etc/$NAME
+
+xrrules_uc="/usr/share/xray-rules/xr-rules.uc"
+xrrules_nft="/etc/nftables.d/90-proxy-x2ray-rules.nft"
 
 FILE_XRAY_DNSMASQ=/tmp/dnsmasq.d/$NAME
 FILE_XRAY_DNSMASQ_CACHE=/tmp/$NAME.dnsmasq.cache
@@ -23,6 +26,7 @@ IPSET_SRC_DIRECT_V4=ss_rules_src_bypass
 IPSET_DST_DIRECT_V4=ss_rules_dst_bypass
 IPSET_DST_DIRECT_V6=ss_rules6_dst_bypass
 
+OUTBOUND_SERVERS=
 OUTBOUND_SERVERS_V4=
 OUTBOUND_SERVERS_V6=
 
@@ -137,11 +141,13 @@ append_server_address() {
 	local ipv4
 	for ipv4 in $(resolveip -4 -t 5 "$addr") ; do
 		append_server_ipv4 "$ipv4"
+		OUTBOUND_SERVERS="$OUTBOUND_SERVERS $ipv4"
 	done
 
 	local ipv6
 	for ipv6 in $(resolveip -6 -t 5 "$addr") ; do
 		append_server_ipv6 "$ipv6"
+		OUTBOUND_SERVERS="$OUTBOUND_SERVERS $ipv6"
 	done
 }
 
@@ -292,7 +298,7 @@ inbound_section_validate() {
 		's_trojan_disable_insecure_encryption:bool:0' \
 		's_socks_client_id:string' \
 		's_socks_client_email:string:"openmptcprouter"' \
-		'ss_network:or("tcp", "kcp", "ws", "http", "domainsocket", "quic")' \
+		'ss_network:or("tcp", "kcp", "ws", "http", "domainsocket", "quic", "grpc", "xhttp")' \
 		'ss_security:or("none", "tls")' \
 		'ss_tls_server_name:host' \
 		'ss_tls_alpn:string' \
@@ -302,6 +308,7 @@ inbound_section_validate() {
 		'ss_tls_cert_usage:or("encipherment", "verify", "issue")' \
 		'ss_tls_cert_file:string' \
 		'ss_tls_key_file:string' \
+		'ss_tls_pinned_sha256:string' \
 		'ss_tcp_header_type:or("none", "http")' \
 		'ss_tcp_header_request_version:string' \
 		'ss_tcp_header_request_method:string:GET' \
@@ -378,6 +385,8 @@ outbound_section_validate() {
 		's_vless_user_alter_id:and(uinteger, max(65535))' \
 		's_vless_user_security:or("auto", "aes-128-gcm", "chacha20-poly1305", "none")' \
 		's_vless_user_encryption:or("auto", "none")' \
+		's_vless_flow:string' \
+		's_vless_decryption:string' \
 		's_vless_user_level:uinteger' \
 		's_vless_reality_address:host' \
 		's_vless_reality_port:port' \
@@ -402,7 +411,7 @@ outbound_section_validate() {
 		's_socks_port:port' \
 		's_socks_user_id:string' \
 		's_socks_email:string:openmptcprouter' \
-		'ss_network:or("tcp", "kcp", "ws", "http", "domainsocket", "quic")' \
+		'ss_network:or("tcp", "kcp", "ws", "http", "domainsocket", "quic", "grpc", "xhttp")' \
 		'ss_security:or("none", "tls")' \
 		'ss_tls_server_name:host' \
 		'ss_tls_alpn:string' \
@@ -412,6 +421,7 @@ outbound_section_validate() {
 		'ss_tls_cert_usage:or("encipherment", "verify", "issue")' \
 		'ss_tls_cert_file:string' \
 		'ss_tls_key_file:string' \
+		'ss_tls_pinned_sha256:string' \
 		'ss_tcp_header_type:or("none", "http")' \
 		'ss_tcp_header_request_version:string' \
 		'ss_tcp_header_request_method:string' \
@@ -450,26 +460,81 @@ add_xray_redirect_rules() {
 	local ext_args="$1"
 	local lan_devices="$2"
 	local lan_ipaddrs="$3"
+	local tag="$4"
 
 	local port="$TRANSPARENT_PROXY_PORT"
 	local addition="$TRANSPARENT_PROXY_ADDITION"
+	local tproxy="$TRANSPARENT_PROXY_USE_TPROXY"
 	local ipset_src_direct="$IPSET_SRC_DIRECT_V4"
 	local ipset_dst_direct="$IPSET_DST_DIRECT_V4"
 
 	test -n "$port" || return
 
-	# This part need a rewrite
-	xray-rules -f
-	#logger -t "xray" "xray-rules -l ${port} -L ${port} -s $OUTBOUND_SERVERS_V4 --rule-name def --src-default forward --dst-default forward --local-default forward"
-	commandline="-l ${port} -s $OUTBOUND_SERVERS_V4 --rule-name def --src-default forward --dst-default forward --local-default forward"
-	[ "$(uci -q get xray.main_transparent_proxy.redirect_udp)" = "1" ] && [ "$(uci -q get xray.omrout.protocol)" != "socks" ] && commandline="$commandline -L ${port}"
-	xray-rules $commandline
-	[ "$(uci -q get xray.main.inbounds | grep omr6)" != "" ] && [ -n "$OUTBOUND_SERVERS_V6" ] && {
-		xray-rules6 -f
-		commandline="-l $((port+1)) -L $((port+1)) -s $OUTBOUND_SERVERS_V6 --rule-name def --src-default forward --dst-default forward --local-default forward"
-		[ "$(uci -q get xray.main_transparent_proxy.redirect_udp)" = "1" ] && ([ "$(uci -q get xray.omrout.protocol)" = "vless-reality" ] || [ "$(uci -q get xray.omrout.protocol)" = "vless" ] || [ "$(uci -q get xray.omrout.protocol)" = "vmess" ]) && commandline="$commandline -L ${port+1}"
-		xray-rules6 $commandline
-	}
+#	# This part need a rewrite
+#	xray-rules -f
+#	#logger -t "xray" "xray-rules -l ${port} -L ${port} -s $OUTBOUND_SERVERS_V4 --rule-name def --src-default forward --dst-default forward --local-default forward"
+#	commandline="-l ${port} -s $OUTBOUND_SERVERS_V4 --rule-name def --src-default forward --dst-default forward --local-default forward"
+#	[ "$(uci -q get xray.main_transparent_proxy.redirect_udp)" = "1" ] && [ "$(uci -q get xray.omrout.protocol)" != "socks" ] && commandline="$commandline -L ${port}"
+#	xray-rules $commandline
+#	[ "$(uci -q get xray.main.inbounds | grep omr6)" != "" ] && [ -n "$OUTBOUND_SERVERS_V6" ] && {
+#		xray-rules6 -f
+#		commandline="-l $((port+1)) -L $((port+1)) -s $OUTBOUND_SERVERS_V6 --rule-name def --src-default forward --dst-default forward --local-default forward"
+#		[ "$(uci -q get xray.main_transparent_proxy.redirect_udp)" = "1" ] && ([ "$(uci -q get xray.omrout.protocol)" = "vless-reality" ] || [ "$(uci -q get xray.omrout.protocol)" = "vless" ] || [ "$(uci -q get xray.omrout.protocol)" = "vmess" ]) && commandline="$commandline -L ${port+1}"
+#		xray-rules6 $commandline
+#	}
+	
+	remote_servers="$(echo $OUTBOUND_SERVERS \
+		| tr ' ' '\n' \
+		| sort -u \
+		| xargs -n 1 resolveip -t 5 \
+		| sort -u)"
+
+	[ "$(uci -q get xray.main_transparent_proxy.redirect_udp)" = "1" ] && [ "$(uci -q get xray.omrout.protocol)" != "socks" ] && portudp="$port"
+	ifnames="$(uci -q get shadowsocks-libev.ss_rules.ifnames)"
+	[ -z "$ifnames" ] && ifnames="$(uci -q get shadowsocks-rust.ss_rules.ifnames)"
+
+	local tmp="/tmp/xrrules"
+	json_init
+	json_add_string o_remote_servers "$remote_servers"
+	json_add_int o_redir_tcp_port "$port"
+	json_add_int o_redir_udp_port "$portudp"
+	json_add_string o_tproxy "$tproxy"
+	if [ "$tag" != "omr" ] && [ "$tag" != "main_transparent_proxy" ]; then
+		json_add_string o_oip_rules_name "$tag"
+	else
+		json_add_string o_oip_rules_name ""
+	fi
+	json_add_string o_ifnames "$ifnames"
+	json_add_string o_local_default "forward"
+	json_add_string o_src_bypass "$src_ips_bypass"
+	json_add_string o_src_forward "$src_ips_forward"
+	json_add_string o_src_checkdst "$src_ips_checkdst"
+	json_add_string o_src_default "checkdst"
+	json_add_string o_dst_bypass "$dst_ips_bypass"
+	json_add_string o_dst_forward "$dst_ips_forward"
+	json_add_string o_dst_bypass_file "$dst_ips_bypass_file"
+	json_add_string o_dst_forward_file "$dst_ips_forward_file"
+	json_add_string o_dst_default "forward"
+	json_add_string o_nft_tcp_extra "$nft_tcp_extra"
+	json_add_string o_nft_udp_extra "$nft_udp_extra"
+	json_dump -i >"$tmp.json"
+
+	if utpl -S -F "$tmp.json" "$xrrules_uc" >"$tmp.nft" \
+		&& ! cmp -s "$tmp.nft" "$xrrules_nft"; then
+		echo "table inet chk {include \"$tmp.nft\";}" >"$tmp.nft.chk"
+		if nft -f "$tmp.nft.chk" -c; then
+			if [ "$tag" == "omr" ] || [ "$tag" == "" ]; then
+				mv "$tmp.nft" "$xrrules_nft"
+			else
+				mv "$tmp.nft" "$xrrules_nft.$tag.nft"
+			fi
+			fw4 -q reload
+		fi
+		rm -f "$tmp.nft.chk"
+	fi
+	rm -f "$tmp.json"
+	rm -f "$tmp.nft"
+
 	[ -f /etc/init.d/omr-bypass ] && [ -z "$(pgrep -f omr-bypass)" ] && {
 		logger -t "xray" "Reload omr-bypass rules"
 		/etc/init.d/omr-bypass reload_rules
@@ -838,6 +903,15 @@ add_policy_settings() {
 add_reverse_settings() {
 	local section="${1}_reverse"
 
+	# "legacy reverse" was removed in xray 24+; the replacement is VLESS Reverse Proxy.
+	# Skip silently to avoid a startup failure on new xray versions.
+	local _xmaj
+	_xmaj=$(xray version 2>/dev/null | head -1 | grep -oE 'Xray ([0-9]+)' | awk '{print $2}')
+	if [ "${_xmaj:-0}" -ge 24 ]; then
+		_info "Skipping legacy reverse section (not supported in xray ${_xmaj}+)"
+		return 0
+	fi
+
 	if ! reverse_section_validate "$section" ; then
 		_err "Invalid reverse config: $section, skip"
 		return 1
@@ -1180,20 +1254,25 @@ add_inbound_setting() {
 			json_close_array # alpn
 		fi
 
-		json_add_boolean "disableSystemRoot" "$ss_tls_disable_system_root"
+		test -n "$ss_tls_pinned_sha256" && \
+			json_add_string "pinnedPeerCertSha256" "$ss_tls_pinned_sha256"
 
-		json_add_array "certificates"
-		if [ -n "$ss_tls_cert_file" ] ; then
-			json_add_object ""
+		if [ -z "$ss_tls_pinned_sha256" ] ; then
+			json_add_boolean "disableSystemRoot" "$ss_tls_disable_system_root"
 
-			json_add_string "certificateFile" "$ss_tls_cert_file"
-			json_add_string "keyFile" "$ss_tls_key_file"
-			test -n "$ss_tls_cert_usage" && \
-				json_add_string "usage" "$ss_tls_cert_usage"
+			json_add_array "certificates"
+			if [ -n "$ss_tls_cert_file" ] ; then
+				json_add_object ""
 
-			json_close_object
+				json_add_string "certificateFile" "$ss_tls_cert_file"
+				json_add_string "keyFile" "$ss_tls_key_file"
+				test -n "$ss_tls_cert_usage" && \
+					json_add_string "usage" "$ss_tls_cert_usage"
+
+				json_close_object
+			fi
+			json_close_array # certificates
 		fi
-		json_close_array # certificates
 
 		json_close_object # tlsSettings
 	fi
@@ -1482,6 +1561,20 @@ add_outbound_setting() {
 			test -n "$s_freedom_user_level" && \
 				json_add_int "userLevel" "$s_freedom_user_level"
 
+			# xray blocks every target of a stream coming from a VLESS Reverse
+			# Proxy bridge unless the freedom outbound explicitly allows it; the
+			# omrbridge routing rule sends reverse streams here for VPS->LAN
+			# port forwarding, so restore the legacy reverse behaviour (full
+			# access, the VPS is trusted) when the bridge is enabled
+			if [ "$(uci -q get xray.main_reverse.enabled)" = "1" ] && \
+			   [ -n "$(uci -q get xray.omrout.s_vless_reverse_user_id)" ] ; then
+				json_add_array "finalRules"
+				json_add_object ""
+				json_add_string "action" "allow"
+				json_close_object
+				json_close_array # finalRules
+			fi
+
 			json_close_object # settings
 			;;
 		"http")
@@ -1574,6 +1667,8 @@ add_outbound_setting() {
 			append_server_address "$s_vless_address"
 
 			json_add_int "port" "$s_vless_port"
+			test -n "$ss_vless_decryption" && \
+				json_add_string "decryption" "$ss_vless_decryption"
 
 			json_add_array "users"
 			json_add_object ""
@@ -1585,6 +1680,8 @@ add_outbound_setting() {
 				json_add_string "encryption" "$s_vless_user_encryption"
 			test -n "$s_vless_user_level" && \
 				json_add_int "level" "$s_vless_user_level"
+			test -n "$s_vless_flow" && \
+				json_add_string "flow" "$s_vless_flow"
 			json_close_object
 			json_close_array # users
 
@@ -1672,6 +1769,9 @@ add_outbound_setting() {
 		json_add_string "network" "$ss_network"
 
 	if [ "x$protocol" != "xshadowsocks" ]; then
+		test -n "$ss_decryption" && \
+			json_add_string "decryption" "$ss_decryption"
+
 		test -n "$ss_security" && \
 			json_add_string "security" "$ss_security"
 
@@ -1687,18 +1787,49 @@ add_outbound_setting() {
 				json_close_array
 			fi
 
-			json_add_boolean "disableSystemRoot" "$ss_tls_disable_system_root"
-
-			json_add_array "certificates"
-			if [ -n "$ss_tls_cert_file" ] ; then
-				json_add_object ""
-				json_add_string "certificateFile" "$ss_tls_cert_file"
-				json_add_string "keyFile" "$ss_tls_key_file"
-				test -n "$ss_tls_cert_usage" && \
-					json_add_string "usage" "$ss_tls_cert_usage"
-				json_close_object
+			# If no pinned hash configured by user, compute one from the server cert
+			_pinned_sha256="$ss_tls_pinned_sha256"
+			if [ -z "$_pinned_sha256" ] ; then
+				_pin_addr="" ; _pin_port=""
+				case "$protocol" in
+					vless)  _pin_addr="$s_vless_address"  ; _pin_port="$s_vless_port" ;;
+					vmess)  _pin_addr="$s_vmess_address"  ; _pin_port="$s_vmess_port" ;;
+					trojan) _pin_addr="$s_trojan_address" ; _pin_port="$s_trojan_port" ;;
+					socks)  _pin_addr="$s_socks_address"  ; _pin_port="$s_socks_port" ;;
+				esac
+				if [ -n "$_pin_addr" ] && [ -n "$_pin_port" ] ; then
+					_pinned_sha256=$(echo "Q" | openssl s_client \
+						-connect "${_pin_addr}:${_pin_port}" \
+						${ss_tls_server_name:+-servername "$ss_tls_server_name"} \
+						2>/dev/null \
+						| openssl x509 -outform DER 2>/dev/null \
+						| openssl dgst -sha256 2>/dev/null \
+						| awk '{print $2}')
+					[ "${#_pinned_sha256}" -ne 64 ] && _pinned_sha256=""
+					# openssl dgst on an empty stream (cert fetch failed) still
+					# yields a 64-char hash — the SHA-256 of "" — which would pin
+					# an unusable value; treat it as a failed fetch instead
+					[ "$_pinned_sha256" = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ] && _pinned_sha256=""
+				fi
 			fi
-			json_close_array # certificates
+
+			test -n "$_pinned_sha256" && \
+				json_add_string "pinnedPeerCertSha256" "$_pinned_sha256"
+
+			if [ -z "$_pinned_sha256" ] ; then
+				json_add_boolean "disableSystemRoot" "$ss_tls_disable_system_root"
+
+				json_add_array "certificates"
+				if [ -n "$ss_tls_cert_file" ] ; then
+					json_add_object ""
+					json_add_string "certificateFile" "$ss_tls_cert_file"
+					json_add_string "keyFile" "$ss_tls_key_file"
+					test -n "$ss_tls_cert_usage" && \
+						json_add_string "usage" "$ss_tls_cert_usage"
+					json_close_object
+				fi
+				json_close_array # certificates
+			fi
 
 			json_close_object # tlsSettings
 		fi
@@ -1930,7 +2061,8 @@ add_outbound_setting() {
 }
 
 init_transparent_proxy() {
-	local tp_cfg="main_transparent_proxy"
+	#local tp_cfg="main_transparent_proxy"
+	local tp_cfg="$1"
 	local redirect_port use_tproxy redirect_udp redirect_dns
 
 	config_get redirect_port "$tp_cfg" "redirect_port"
@@ -1958,7 +2090,7 @@ init_transparent_proxy() {
 
 setup_transparent_proxy() {
 	if [ -z "$TRANSPARENT_PROXY_PORT" ] ; then
-		#_info "Transparent proxy disabled."
+		_info "Transparent proxy disabled."
 		return 0
 	fi
 
@@ -1969,7 +2101,8 @@ setup_transparent_proxy() {
 
 	_info "Setting transparent proxy on port: $TRANSPARENT_PROXY_PORT"
 
-	local tp_cfg="main_transparent_proxy"
+	#local tp_cfg="main_transparent_proxy"
+	local tp_cfg="$1"
 	local lan_ifaces only_privileged_ports proxy_mode direct_list_dns proxy_list_dns
 
 	config_get lan_ifaces "$tp_cfg" "lan_ifaces"
@@ -2087,16 +2220,96 @@ setup_transparent_proxy() {
 	fi
 
 	logger -t "xray" "add rules"
-	add_xray_redirect_rules "$ext_args" "$lan_devices" "$lan_ipaddrs"
+	if [ "$tp_cfg" != "main_transparent_proxy" ]; then
+		add_xray_redirect_rules "$ext_args" "$lan_devices" "$lan_ipaddrs" "$tp_cfg"
+	else
+		add_xray_redirect_rules "$ext_args" "$lan_devices" "$lan_ipaddrs"
+	fi
 }
 
 clear_transparent_proxy() {
-	xray-rules -f
+	if [ -f "${xrrules_nft}" ] || [ -f "${xrrules_nft}.down" ]; then
+		for f in $xrrules_nft*; do
+			rm -f $f
+		done
+		fw4 -q reload
+	fi
+
 
 	if [ -s "$FILE_XRAY_DNSMASQ" ] ; then
 		rm -f "$FILE_XRAY_DNSMASQ"
 		DNSMASQ_RESTART_EXPECTED=1
 	fi
+}
+
+add_reverse_bridge_outbound() {
+	# VLESS Reverse Proxy bridge (replaces legacy reverse, removed in xray 26+):
+	# dials the VPS VLESS inbound with the dedicated reverse user id pushed by the
+	# VPS (xray.config.reverse_key); streams opened by the VPS portal (tag OMRLan,
+	# used for VPS->LAN port forwarding) show up here with inbound tag "omrbridge"
+	# and are routed to the LAN by the existing omrbridge routing rule.
+	[ "$(uci -q get xray.main_reverse.enabled)" = "1" ] || return 0
+	local reverse_id reverse_addr reverse_port reverse_pin
+	reverse_id="$(uci -q get xray.omrout.s_vless_reverse_user_id)"
+	[ -n "$reverse_id" ] || return 0
+	reverse_addr="$(uci -q get xray.omrout.s_vless_address)"
+	reverse_port="$(uci -q get xray.omrout.s_vless_port)"
+	[ -n "$reverse_addr" ] && [ -n "$reverse_port" ] || return 0
+
+	json_add_object ""
+	json_add_string "protocol" "vless"
+	json_add_string "tag" "omrreverse_tunnel"
+
+	json_add_object "settings"
+	json_add_string "address" "$reverse_addr"
+	json_add_int "port" "$reverse_port"
+	json_add_string "id" "$reverse_id"
+	json_add_string "encryption" "none"
+	json_add_object "reverse"
+	json_add_string "tag" "omrbridge"
+	json_close_object # reverse
+	json_close_object # settings
+
+	json_add_object "streamSettings"
+	json_add_string "network" "tcp"
+	json_add_string "security" "tls"
+	json_add_object "tlsSettings"
+	reverse_pin="$(uci -q get xray.omrout.ss_tls_pinned_sha256)"
+	if [ -z "$reverse_pin" ] ; then
+		reverse_pin=$(echo "Q" | openssl s_client \
+			-connect "${reverse_addr}:${reverse_port}" \
+			2>/dev/null \
+			| openssl x509 -outform DER 2>/dev/null \
+			| openssl dgst -sha256 2>/dev/null \
+			| awk '{print $2}')
+		[ "${#reverse_pin}" -ne 64 ] && reverse_pin=""
+		# SHA-256 of an empty stream = failed cert fetch, not a usable pin
+		[ "$reverse_pin" = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ] && reverse_pin=""
+	fi
+	if [ -n "$reverse_pin" ] ; then
+		json_add_string "pinnedPeerCertSha256" "$reverse_pin"
+	else
+		json_add_boolean "disableSystemRoot" "1"
+		json_add_array "certificates"
+		json_add_object ""
+		json_add_string "certificateFile" "$(uci -q get xray.omrout.ss_tls_cert_file)"
+		json_add_string "keyFile" "$(uci -q get xray.omrout.ss_tls_key_file)"
+		json_add_string "usage" "verify"
+		json_close_object
+		json_close_array # certificates
+	fi
+	json_close_object # tlsSettings
+	json_add_object "sockopt"
+	if [ -n "$TRANSPARENT_PROXY_PORT" ] ; then
+		json_add_int "mark" "255"
+	fi
+	if version_over_5_4 && [ "$(uci -q get xray.omrout.ss_sockopt_mptcp)" = "1" ] ; then
+		json_add_boolean "tcpMptcp" "1"
+	fi
+	json_close_object # sockopt
+	json_close_object # streamSettings
+
+	json_close_object
 }
 
 start_instance() {
@@ -2113,7 +2326,7 @@ start_instance() {
 	fi
 
 	if [ -z "$xray_file" ] || [ ! -s "$xray_file" ] ; then
-		_err "Invalid XRay file."
+		_err "Invalid xRay file."
 		return 1
 	fi
 
@@ -2196,6 +2409,8 @@ start_instance() {
 				add_outbound_setting "$os"
 			done
 
+			add_reverse_bridge_outbound
+
 			json_close_array # outbounds
 		fi
 
@@ -2236,6 +2451,7 @@ start_instance() {
 	fi
 
 	procd_set_param file "$temp_config"
+	procd_set_param nice 10
 	procd_set_param stderr 1 # forward stderr of the command to logd
 	procd_set_param stdout 1
 	procd_set_param pidfile "/var/run/${NAME}.${section}.pid"
@@ -2243,64 +2459,41 @@ start_instance() {
 }
 
 rules_exist() {
-	[ -n "$(iptables -w -t nat -L -n 2>/dev/null | grep xr_)" ] && return 0
-	return 1
+	#[ -n "$(iptables -w -t nat -L -n 2>/dev/null | grep xr_)" ] && return 0
+	if [ -f "$xrrules_nft" ]; then
+		return 0
+	else
+		return 1
+	fi
 }
 
 rules_up() {
-	rules_exist && {
-		[ -f /bin/blocklanfw ] && /bin/blocklanfw 2>&1 >/dev/null
-		return 0
-	}
-	enabled="0"
-	config_load xray
-	config_get enabled main enabled "0"
-	[ "$enabled" = "0" ] && return
-	if [ "$(uci -q get xray.omrout.protocol)" = "vless" ]; then
-		OUTBOUND_SERVERS_V4="$(uci -q get xray.omrout.s_vless_address)"
-		OUTBOUND_SERVERS_V6="$(uci -q get xray.omrout.s_vless_address)"
-	elif [ "$(uci -q get xray.omrout.protocol)" = "vless-reality" ]; then
-		OUTBOUND_SERVERS_V4="$(uci -q get xray.omrout.s_vless_reality_address)"
-		OUTBOUND_SERVERS_V6="$(uci -q get xray.omrout.s_vless_reality_address)"
-	elif [ "$(uci -q get xray.omrout.protocol)" = "vmess" ]; then
-		OUTBOUND_SERVERS_V4="$(uci -q get xray.omrout.s_vmess_address)"
-		OUTBOUND_SERVERS_V6="$(uci -q get xray.omrout.s_vmess_address)"
-	elif [ "$(uci -q get xray.omrout.protocol)" = "trojan" ]; then
-		OUTBOUND_SERVERS_V4="$(uci -q get xray.omrout.s_trojan_address)"
-		OUTBOUND_SERVERS_V6="$(uci -q get xray.omrout.s_trojan_address)"
-	elif [ "$(uci -q get xray.omrout.protocol)" = "socks" ]; then
-		OUTBOUND_SERVERS_V4="$(uci -q get xray.omrout.s_socks_address)"
-		OUTBOUND_SERVERS_V6="$(uci -q get xray.omrout.s_socks_address)"
-	elif [ "$(uci -q get xray.omrout.protocol)" = "shadowsocks" ]; then
-		OUTBOUND_SERVERS_V4="$(uci -q get xray.omrout.s_shadowsocks_address)"
-		OUTBOUND_SERVERS_V6="$(uci -q get xray.omrout.s_shadowsocks_address)"
+	if [ -f "${xrrules_nft}.down" ]; then
+		for f in $xrrules_nft*.down; do
+			mv -f "$f" "$(echo "$f" | sed 's/.down//g')"
+		done
+		fw4 -q restart
+		conntrack -F 2>/dev/null || true
+	elif [ ! -f "$xrrules_nft" ]; then
+		/etc/init.d/xray restart &
 	fi
-	TRANSPARENT_PROXY_PORT="$(uci -q get xray.omr.port)"
-	[ -n "$OUTBOUND_SERVERS_V4" ] || [ -n "$OUTBOUND_SERVERS_V6" ] && {
-		logger -t "xray" "Rules UP"
-		add_xray_redirect_rules
-	}
-	[ -f /etc/init.d/omr-bypass ] && [ -z "$(pgrep -f omr-bypass)" ] && {
-		logger -t "xray" "Reload omr-bypass rules"
-		/etc/init.d/omr-bypass reload_rules
-	}
-	[ -f /bin/blocklanfw ] && /bin/blocklanfw 2>&1 >/dev/null
 }
 
 rules_down() {
-	rules_exist || return 0
-	logger -t "xray" "Rules DOWN"
-	local bin="/usr/bin/xray-rules"
-	[ -x "$bin" ] && {
-		"$bin" -f >/dev/null 2>&1
-	}
-	local bin6="/usr/bin/xray-rules6"
-	[ -x "$bin6" ] && {
-		"$bin6" -f >/dev/null 2>&1
-	}
+	if [ -f "${xrrules_nft}" ]; then
+		for f in $xrrules_nft*; do
+			mv -f "$f" "${f}.down"
+		done
+		fw4 -q restart
+	fi
 }
 
+
 start_service() {
+	[ -n "$(uci -q get firewall.xray)" ] && {
+		uci -q del firewall.xray
+		uci -q commit firewall
+	}
 	clear_transparent_proxy
 
 	config_load "$NAME"
@@ -2312,9 +2505,21 @@ start_service() {
 
 	config_foreach start_instance "xray"
 
-	setup_transparent_proxy
+	#setup_transparent_proxy
+	_setup_firewall() {
+		init_transparent_proxy $1
+		setup_transparent_proxy $1
+	}
+	config_foreach _setup_firewall transparent_proxy
+	#config_foreach setup_transparent_proxy transparent_proxy
 	gracefully_restart_dnsmasq
-	rules_up
+	local wait_proxy
+	wait_proxy=$(uci -q get xray.main_transparent_proxy.wait_proxy 2>/dev/null)
+	if [ "${wait_proxy:-1}" = "1" ]; then
+		rules_down
+	else
+		rules_up
+	fi
 
 	unset OUTBOUND_SERVERS_V4 \
 		OUTBOUND_SERVERS_V6 \
@@ -2335,6 +2540,17 @@ stop_service() {
 	gracefully_restart_dnsmasq
 	test -d "$CONFIG_FOLDER" && rm -rf "$CONFIG_FOLDER"
 }
+
+restart_service() {
+	stop
+	start
+}
+
+reload_service() {
+	stop
+	start
+}
+
 
 service_triggers() {
 	procd_add_reload_trigger "$NAME"
