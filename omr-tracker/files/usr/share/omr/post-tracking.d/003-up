@@ -115,6 +115,10 @@ fi
 
 
 if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] || [ "$OMR_TRACKER_INTERFACE" = "omr6in4" ]; then
+	if [ "$(uci -q get network.omrvpn.disabled)" = "1" ]; then
+		_log "VPS/tunnel disabled by user, ignore $OMR_TRACKER_INTERFACE up event"
+		exit 0
+	fi
 	if [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
 		uci -q set openmptcprouter.omr.vpn='up'
 	fi
@@ -378,6 +382,17 @@ if [ "$master_setting" = "balancing" ] && { [ "$multipath_config" = "on" ] || [ 
 				_log "Set backup ip route replace default scope global metric 999 $routesbalancingbackup"
 				ip route replace default scope global metric 999 $routesbalancingbackup >/dev/null 2>&1
 			}
+		}
+	fi
+	# Non-master (on/backup) WAN recovering never resynced the VPS-side
+	# port-forward/redirect state (only the master WAN's own up-event did,
+	# incidentally, via the block above) - mirror that lc-staleness-gated
+	# resync here so a secondary WAN flap also repairs port-forwarding.
+	lc_jitter="$(awk 'BEGIN{srand();print 10 + int(rand()*10)}')"
+	if { [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter."$OMR_TRACKER_INTERFACE".lc)" = "" ]; } || [ $(($(date +"%s") + lc_jitter - $(uci -q get openmptcprouter."$OMR_TRACKER_INTERFACE".lc))) -gt 3600 ] || [ "$(uci -q show openmptcprouter | grep get_config=\'1\')" != "" ] || [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" != "" ]; then
+		[ -z "$(pgrep -f openmptcprouter-vps)" ] && {
+			/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &
+			uci -q set openmptcprouter."$OMR_TRACKER_INTERFACE".lc="$(date +"%s")"
 		}
 	fi
 fi
