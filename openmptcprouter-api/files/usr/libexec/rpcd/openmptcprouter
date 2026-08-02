@@ -98,7 +98,7 @@ end
 local function clear_server_vpn_proxy(ips)
 	if type(ips) ~= "table" or #ips == 0 then return end
 	local changed = {}
-	local proxy_fields = {"s_vmess_address", "s_vless_address", "s_socks_address", "s_trojan_address"}
+	local proxy_fields = {"s_vmess_address", "s_vless_address", "s_socks_address", "s_trojan_address", "s_vless_reality_address", "s_shadowsocks_address"}
 	for _, ip in ipairs(ips) do
 		if type(ip) == "string" and ip ~= "" then
 			if ucic:get("shadowsocks-libev", "sss0", "server") == ip then
@@ -599,6 +599,9 @@ function server_settings(server,server_ip,openmptcprouter_vps_key,openmptcproute
 	if ucic:get("openmptcprouter",server,"master") == "1" then
 		ucic:set("shadowsocks-libev","sss0","server",server_ip)
 		ucic:set("shadowsocks-rust","sss0","server",server_ip)
+		if ucic:get("shadowsocks-rust","sss1") ~= nil then
+			ucic:set("shadowsocks-rust","sss1","server",server_ip)
+		end
 		ucic:set("glorytun","vpn","host",server_ip)
 		ucic:set("glorytun-udp","vpn","host",server_ip)
 		ucic:set("dsvpn","vpn","host",server_ip)
@@ -618,6 +621,8 @@ function server_settings(server,server_ip,openmptcprouter_vps_key,openmptcproute
 		ucic:set("xray","omrout","s_vless_address",server_ip)
 		ucic:set("xray","omrout","s_socks_address",server_ip)
 		ucic:set("xray","omrout","s_trojan_address",server_ip)
+		ucic:set("xray","omrout","s_vless_reality_address",server_ip)
+		ucic:set("xray","omrout","s_shadowsocks_address",server_ip)
 		ucic:save("qos")
 		ucic:commit("qos")
 		ucic:save("mlvpn")
@@ -816,6 +821,78 @@ local wizard_uci_configs = {
 	"softethervpn", "ubond"
 }
 
+-- Flip the currently-selected proxy backend's own enable/disabled flag --
+-- confirmed live that committing ANY change to the "openmptcprouter" config
+-- while the VPN is stopped-but-disabled resurrects it within seconds (some
+-- other config.change trigger reconciles/restarts it, ignoring the per-VPN
+-- enable flag) -- so, mirroring how force_stop_vpn/force_start_vpn already
+-- avoid touching "openmptcprouter" (they only write the VPN's own config,
+-- reading but never writing openmptcprouter.settings.vpn), this touches only
+-- the proxy's own config and leaves openmptcprouter.settings.proxy alone.
+local function set_proxy_backend_enabled(proxy, enabled)
+	local disabled_flag = enabled and "0" or "1"
+	if proxy == "shadowsocks" then
+		if ucic:get("shadowsocks-libev","sss0") ~= nil then
+			ucic:set("shadowsocks-libev","sss0","disabled",disabled_flag)
+			ucic:save("shadowsocks-libev")
+			ucic:commit("shadowsocks-libev")
+		end
+	elseif proxy == "shadowsocks-rust" or proxy == "shadowsocks-go" then
+		if ucic:get("shadowsocks-rust","sss0") ~= nil then
+			ucic:foreach("shadowsocks-rust", "server", function(s)
+				ucic:set("shadowsocks-rust", s[".name"], "disabled", disabled_flag)
+			end)
+			if ucic:get("shadowsocks-rust","ss_rules") ~= nil then
+				ucic:set("shadowsocks-rust","ss_rules","disabled", disabled_flag)
+			end
+			ucic:save("shadowsocks-rust")
+			ucic:commit("shadowsocks-rust")
+		end
+	elseif proxy:match("^v2ray.*") then
+		if ucic:get("v2ray","main") ~= nil then
+			ucic:set("v2ray","main","enabled", enabled and "1" or "0")
+			ucic:save("v2ray")
+			ucic:commit("v2ray")
+		end
+	elseif proxy:match("^xray.*") then
+		if ucic:get("xray","main") ~= nil then
+			ucic:set("xray","main","enabled", enabled and "1" or "0")
+			ucic:save("xray")
+			ucic:commit("xray")
+		end
+	end
+end
+
+local function set_proxy_disabled(disable)
+	local cur = ucic:get("openmptcprouter","settings","proxy") or "none"
+	if cur == "none" or cur == "" then return end
+	if disable then
+		force_stop_proxy(cur)
+		set_proxy_backend_enabled(cur, false)
+	else
+		set_proxy_backend_enabled(cur, true)
+		force_start_proxy(cur)
+	end
+end
+
+-- Actually stop/start the VPN tunnel (and any active proxy) when every
+-- configured server is disabled/re-enabled, instead of leaving the
+-- "Disable server" wizard option as a config-cleanup no-op (#4334): tears
+-- down the omrvpn logical interface, the active VPN daemon, and the active
+-- proxy so traffic really fails over to WAN.
+local function set_vps_disabled(disable)
+	local want = disable and "1" or "0"
+	if (ucic:get("network","omrvpn","disabled") or "0") == want then return end
+	enable_interface("omrvpn", disable and "0" or "1")
+	if disable then
+		force_stop_vpn("all")
+		set_proxy_disabled(true)
+	else
+		force_start_vpn(ucic:get("openmptcprouter","settings","vpn"))
+		set_proxy_disabled(false)
+	end
+end
+
 function wizard_add(args)
 	-- Discard any uci changes staged (but never committed) by LuCI ubus
 	-- sessions: rpcd shares the /tmp/.uci savedir, so stale deltas such as
@@ -912,6 +989,9 @@ function wizard_add(args)
 	_set_or_delete("openmptcprouter", "settings", "country", _as_string(args.country, ""))
 	_set_or_delete("openmptcprouter", "settings", "dns64", _to_flag(args.dns64))
 	_set_or_delete("openmptcprouter", "settings", "vxlan", _to_flag(args.vxlan))
+	local wizard_vxlan_mode = _as_string(args.vxlan_mode, "")
+	if wizard_vxlan_mode ~= "l2" and wizard_vxlan_mode ~= "l3" then wizard_vxlan_mode = "" end
+	_set_or_delete("openmptcprouter", "settings", "vxlan_mode", wizard_vxlan_mode)
 	_set_or_delete("openmptcprouter", "settings", "forceretrieve", _to_flag(args.forceretrieve))
 
 	local encryption = _as_string(args.encryption, "")
@@ -1177,6 +1257,7 @@ function wizard_add(args)
 	local master_key = ""
 	local master_username = "openmptcprouter"
 	local master_iplist = {}
+	local any_server_enabled = false
 	for _, srv in ipairs(servers) do
 		if type(srv) == "table" then
 			local sid = _sanitize_name(srv.name)
@@ -1186,6 +1267,7 @@ function wizard_add(args)
 				_set_or_delete("openmptcprouter", sid, "password", _as_string(srv.password, ""))
 				_set_or_delete("openmptcprouter", sid, "disabled", _to_flag(srv.disabled))
 				ucic:set("openmptcprouter", sid, "master", sid == master and "1" or "0")
+				if _to_flag(srv.disabled) ~= "1" then any_server_enabled = true end
 
 				local iplist = _unique_string_list(srv.ips)
 				if _to_flag(srv.disabled) == "1" then
@@ -1193,7 +1275,7 @@ function wizard_add(args)
 				end
 				if #iplist > 0 then
 					ucic:set("openmptcprouter", sid, "ip", iplist)
-					if sid == master then
+					if sid == master and _to_flag(srv.disabled) ~= "1" then
 						master_ip = iplist[1]
 						master_iplist = iplist
 					end
@@ -1217,6 +1299,8 @@ function wizard_add(args)
 			ucic:set("openmptcprouter", master, "ip", master_iplist)
 		end
 	end
+
+	set_vps_disabled(not any_server_enabled)
 
 	for _, cfg in ipairs(wizard_uci_configs) do
 		ucic:save(cfg)
@@ -1295,6 +1379,9 @@ function settings_add(args)
 	_set_or_delete("openmptcprouter", "settings", "sipalg", _to_flag(args.sipalg))
 	_set_or_delete("openmptcprouter", "settings", "openvpn_lb", _to_flag(args.openvpnlb))
 	_set_or_delete("openmptcprouter", "settings", "vxlan", _to_flag(args.vxlan))
+	local vxlan_mode = _as_string(args.vxlan_mode, "")
+	if vxlan_mode ~= "l2" and vxlan_mode ~= "l3" then vxlan_mode = "" end
+	_set_or_delete("openmptcprouter", "settings", "vxlan_mode", vxlan_mode)
 
 	if _as_string(args.scaling_min_freq, "") ~= "" then
 		cpuscalingmin(_as_string(args.scaling_min_freq, ""))
@@ -1493,7 +1580,7 @@ function restart_all()
 end
 
 function restart_all_async()
-	sys.exec("sh -c '(sleep 1; /etc/init.d/macvlan restart; /bin/ubus call network reload; /etc/init.d/omr-tracker stop; /etc/init.d/mptcp restart; /etc/init.d/shadowsocks-libev restart; /etc/init.d/glorytun restart; /etc/init.d/glorytun-udp restart; /etc/init.d/mlvpn restart; /etc/init.d/openvpn restart; /etc/init.d/openvpnbonding restart; /etc/init.d/dsvpn restart; /etc/init.d/mqvpn restart; /etc/init.d/omr-tracker start; /etc/init.d/omr-6in4 restart; /etc/init.d/mptcpovervpn restart; /etc/init.d/vnstat restart; /etc/init.d/v2ray restart; /etc/init.d/xray restart) >/dev/null 2>/dev/null &'")
+	sys.exec("sh -c '(sleep 1; /etc/init.d/macvlan restart; /bin/ubus call network reload; /etc/init.d/omr-tracker stop; /etc/init.d/mptcp restart; /etc/init.d/shadowsocks-libev restart; /etc/init.d/glorytun restart; /etc/init.d/glorytun-udp restart; /etc/init.d/mlvpn restart; /etc/init.d/openvpn restart; /etc/init.d/openvpnbonding restart; /etc/init.d/dsvpn restart; /etc/init.d/mqvpn restart; /etc/init.d/omr-tracker start; /etc/init.d/omr-6in4 restart; /etc/init.d/mptcpovervpn restart; /etc/init.d/vnstat restart; /etc/init.d/v2ray restart; /etc/init.d/xray restart; /etc/init.d/shadowsocks-rust restart; sleep 60; /etc/init.d/omr-bypass restart) >/dev/null 2>/dev/null &'")
 end
 
 function apply_settings_async()
@@ -1891,6 +1978,7 @@ function interfaces_status()
 	mArray.openmptcprouter["vps_kernel"] = ""
 	local adminport = ""
 	ucic:foreach("openmptcprouter", "server", function(s)
+		if (uci:get("openmptcprouter",s[".name"],"disabled") or "0") == "1" then return end
 		local serverips = _as_string_list(uci:get("openmptcprouter",s[".name"],"ip"))
 		local master = uci:get("openmptcprouter",s[".name"],"master") or "1"
 		local current = uci:get("openmptcprouter",s[".name"],"current") or "0"
@@ -2365,6 +2453,7 @@ function interfaces_status()
 		if ifname ~= "" and (gateway ~= "" or gateway6 ~= "") and (ipaddr ~= "" or ip6addr ~= "") then
 			if uci:get("openmptcprouter","settings","disableserverping") ~= "1" then
 				uci:foreach("openmptcprouter", "server", function(s)
+					if (uci:get("openmptcprouter",s[".name"],"disabled") or "0") == "1" then return end
 					local serverips = _as_string_list(uci:get("openmptcprouter",s[".name"],"ip"))
 					local master = uci:get("openmptcprouter",s[".name"],"master") or "1"
 					local current = uci:get("openmptcprouter",s[".name"],"current") or "0"
@@ -3086,7 +3175,7 @@ local methods = {
 			v2ray_user = "", xray_user = "", xray_transport = "",
 			v2rayudp = "", forceretrieve = "",
 			mptcpovervpn_vpn = "", country = "", dns64 = "",
-			vxlan = "",
+			vxlan = "", vxlan_mode = "",
 			master = ""
 		},
 		call = function(args)
@@ -3106,7 +3195,7 @@ local methods = {
 			shadowsocksudp = "", v2rayudp = "", ndpi = "", disablefastopen = "", enablenodelay = "",
 			obfs = "", obfs_plugin = "", obfs_type = "",
 			scaling_min_freq = "", scaling_max_freq = "", scaling_governor = "",
-			sfe_enabled = "", sfe_bridge = "", sipalg = "", vxlan = ""
+			sfe_enabled = "", sfe_bridge = "", sipalg = "", vxlan = "", vxlan_mode = ""
 		},
 		call = function(args)
 			return settings_add(args)
