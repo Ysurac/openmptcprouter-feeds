@@ -33,7 +33,7 @@ var callOMRWizardAdd = rpc.declare({
 		'v2ray_user', 'xray_user', 'xray_transport',
 		'v2rayudp', 'forceretrieve',
 		'mptcpovervpn_vpn', 'country', 'dns64',
-		'vxlan',
+		'vxlan', 'vxlan_mode',
 		'master'
 	],
 	expect: { '': {} }
@@ -72,6 +72,7 @@ function callOMRWizardAddCompat(payload) {
 		payload.country,
 		payload.dns64,
 		payload.vxlan,
+		payload.vxlan_mode,
 		payload.master
 	).catch(function(err) {
 		var msg = (err && (err.message || err.toString())) || '';
@@ -115,6 +116,7 @@ function callOMRWizardAddCompat(payload) {
 				country: payload.country,
 				dns64: payload.dns64,
 				vxlan: payload.vxlan,
+				vxlan_mode: payload.vxlan_mode,
 				master: payload.master
 			})
 		]).then(function(res) {
@@ -357,7 +359,7 @@ return view.extend({
 				disableipv6: uci.get('openmptcprouter', 'settings', 'disable_ipv6') || '1',
 				ula: uci.get('network', 'globals', 'ula_prefix') || '',
 				default_vpn: uci.get('openmptcprouter', 'settings', 'vpn') || 'openvpn',
-				default_proxy: uci.get('openmptcprouter', 'settings', 'proxy') || 'shadowsocks-rust',
+				default_proxy: uci.get('openmptcprouter', 'settings', 'proxy') || '',
 				encryption: uci.get('openmptcprouter', 'settings', 'encryption') || (has.aes ? 'aes-256-gcm' : 'chacha20-ietf-poly1305'),
 				shadowsocks_key: uci.get('shadowsocks-libev', 'sss0', 'key') || '',
 				shadowsocks2022_key: uci.get('shadowsocks-rust', 'sss0', 'password') || '',
@@ -379,6 +381,7 @@ return view.extend({
 				country: uci.get('openmptcprouter', 'settings', 'country') || 'world',
 				dns64: uci.get('openmptcprouter', 'settings', 'dns64') || '0',
 				vxlan: uci.get('openmptcprouter', 'settings', 'vxlan') || '0',
+				vxlan_mode: uci.get('openmptcprouter', 'settings', 'vxlan_mode') || 'l3',
 				master: master
 			};
 		}
@@ -672,9 +675,16 @@ return view.extend({
 
 		o = s.taboption('vpn', form.Flag, 'vxlan', _('VXLAN'));
 		o.rmempty = true;
-		o.description = _('Set a VXLAN L2 tunnel over the VPN, configured on the server via the API.');
+		o.description = _('Set a VXLAN tunnel over the VPN, configured on the server via the API.');
 		o.depends('_show_adv', '1');
 		o.default = '0';
+
+		o = s.taboption('vpn', form.ListValue, 'vxlan_mode', _('VXLAN mode'));
+		o.description = _('Layer 3: a routed point-to-point link over the tunnel. Layer 2: the tunnel is bridged into the LAN, extending its broadcast domain.');
+		o.value('l3', _('Layer 3 (routed)'));
+		o.value('l2', _('Layer 2 (bridged into LAN)'));
+		o.default = 'l3';
+		o.depends({ '_show_adv': '1', 'vxlan': '1' });
 
 		// ── MPTCP over VPN ──
 		o = s.taboption('mptcpvpn', form.ListValue, 'mptcpovervpn', _('MPTCP over VPN'));

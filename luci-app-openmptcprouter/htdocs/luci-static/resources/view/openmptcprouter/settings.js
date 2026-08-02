@@ -20,7 +20,7 @@ var callSettingsAdd = rpc.declare({
 		'shadowsocksudp', 'v2rayudp', 'ndpi', 'disablefastopen', 'enablenodelay',
 		'obfs', 'obfs_plugin', 'obfs_type',
 		'scaling_min_freq', 'scaling_max_freq', 'scaling_governor',
-		'sfe_enabled', 'sfe_bridge', 'sipalg', 'vxlan'
+		'sfe_enabled', 'sfe_bridge', 'sipalg', 'vxlan', 'vxlan_mode'
 	],
 	expect: { '': {} }
 });
@@ -213,7 +213,14 @@ return view.extend({
 
 		o = s.taboption('network', form.Flag, 'vxlan',
 			_('VXLAN'),
-			_('Set a VXLAN L2 tunnel over the VPN, configured on the server via the API.'));
+			_('Set a VXLAN tunnel over the VPN, configured on the server via the API.'));
+
+		o = s.taboption('network', form.ListValue, 'vxlan_mode', _('VXLAN mode'),
+			_('Layer 3: a routed point-to-point link over the tunnel. Layer 2: the tunnel is bridged into the LAN, extending its broadcast domain.'));
+		o.value('l3', _('Layer 3 (routed)'));
+		o.value('l2', _('Layer 2 (bridged into LAN)'));
+		o.default = 'l3';
+		o.depends('vxlan', '1');
 
 		/* ── Other tab ─────────────────────────────────────────────── */
 		o = s.taboption('other', form.Flag, 'vnstat_backup',
@@ -425,7 +432,8 @@ return view.extend({
 				hasSfe     ? get('sfe_enabled')       : '0',
 				hasSfe     ? get('sfe_bridge')        : '0',
 				get('sipalg'),
-				get('vxlan')
+				get('vxlan'),
+				get('vxlan_mode')
 			).then(function() {
 				ui.addNotification(null, _('Settings saved and applied successfully.'), 'info');
 			}).catch(function(err) {
