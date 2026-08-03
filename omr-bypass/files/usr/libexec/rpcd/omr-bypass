@@ -9,24 +9,50 @@
 
 VALID_SECTION_TYPES="domains ips macs dest_port src_port dpis asns lan_ip"
 
+# Callers pass the network.interface UCI *section* name (e.g. "wan1", see the
+# ubus usage example above) -- the same value the LuCI bypass form stores.
+# Only omr-bypass-nft's _intf_rule knows that section resolves to a device
+# (e.g. "eth1"), and caches the mapping in omr-bypass.ifmap_<section>.device.
+# Without resolving through that same cache here, this plugin would check/RST
+# against a set that never exists (issue #4340's failure mode, applied to the
+# rpcd API instead of the LuCI form).
+_map_intf_device() {
+	local raw="$1"
+	case "$raw" in
+		""|all|none|default|srv_vpn1) printf '%s' "$raw"; return ;;
+	esac
+	local dev
+	dev=$(uci -q get "omr-bypass.ifmap_${raw}.device" 2>/dev/null)
+	printf '%s' "${dev:-$raw}"
+}
+
+# This system's omr-bypass is nftables-based (omr_dst_bypass_<dev>_4/_6 sets
+# in table inet fw4) -- there is no ipset binary/subsystem to query here.
 _intf_ipset_exists() {
 	local intf=$1
 	[ -z "$intf" ] || [ "$intf" = "all" ] || [ "$intf" = "srv_vpn1" ] && return 0
-	ipset --list "omr_dst_bypass_${intf}" >/dev/null 2>&1
+	local dev
+	dev=$(_map_intf_device "$intf")
+	nft list set inet fw4 "omr_dst_bypass_${dev}_4" >/dev/null 2>&1 \
+		|| nft list set inet fw4 "omr_dst_bypass_${dev}_6" >/dev/null 2>&1
 }
 
-# Delete conntrack entries for IPs in the old interface's bypass ipsets.
-# The kernel sends RST to peers when their tracked entries disappear.
+# Delete conntrack entries for IPs in the old interface's bypass nftables
+# sets. The kernel sends RST to peers when their tracked entries disappear.
 _rst_old_intf_connections() {
 	local old_intf=$1
 	[ -z "$old_intf" ] || [ "$old_intf" = "all" ] || [ "$old_intf" = "srv_vpn1" ] && return
 
-	local ipset_name
-	for ipset_name in "omr_dst_bypass_${old_intf}" "omr6_dst_bypass_${old_intf}"; do
-		ipset --list "$ipset_name" >/dev/null 2>&1 || continue
-		ipset --list "$ipset_name" -output plain 2>/dev/null \
-			| awk 'found && NF { print } /^Members:/ { found=1 }' \
+	local dev
+	dev=$(_map_intf_device "$old_intf")
+
+	local set_name
+	for set_name in "omr_dst_bypass_${dev}_4" "omr_dst_bypass_${dev}_6"; do
+		nft list set inet fw4 "$set_name" 2>/dev/null \
+			| sed -n 's/.*elements = { \(.*\) }.*/\1/p' \
+			| tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
 			| while read -r ip; do
+				[ -z "$ip" ] && continue
 				conntrack -D --orig-dst "$ip" >/dev/null 2>&1
 				conntrack -D --reply-src "$ip" >/dev/null 2>&1
 			done

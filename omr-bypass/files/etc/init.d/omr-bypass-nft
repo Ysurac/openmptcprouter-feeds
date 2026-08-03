@@ -92,6 +92,26 @@ _uci_add_list_unique() {
 	uci -q get "$key" 2>/dev/null | tr ' ' '\n' | grep -qxF "$val" || uci -q add_list "$key"="$val"
 }
 
+# Domain/mac/ip/port/proto/category bypass entries store the network
+# interface's own UCI section name (e.g. "wan1", from the LuCI interface
+# picker) in their "interface" option. _intf_rule resolves that to the
+# underlying device (e.g. "eth1") when it builds the ipset/firewall/mark-id
+# skeleton for that interface, caching the mapping in
+# omr-bypass.ifmap_<section>.device. Without resolving through that same
+# cache here, a domain assigned to "wan1" builds sections named
+# omr_dst_bypass_wan1_* while the only marking/routing infrastructure that
+# actually exists is omr_dst_bypass_eth1_* -- the bypass silently never
+# matches (issue #4340). Special pseudo-values pass through unchanged.
+_map_intf_device() {
+	local raw="$1"
+	case "$raw" in
+		""|all|none|default|srv_vpn1) printf '%s' "$raw"; return ;;
+	esac
+	local dev
+	dev=$(uci -q get "omr-bypass.ifmap_${raw}.device" 2>/dev/null)
+	printf '%s' "${dev:-$raw}"
+}
+
 _bypass_ip() {
 	local ip=$1
 	local type=$2
@@ -143,7 +163,7 @@ _dscp_ensure_chain() {
 	[ -n "$_dscp_chain_written" ] && return
 	_dscp_chain_written=1
 	cat >> /etc/firewall.omr-bypass <<-'EOF'
-		nft add chain inet fw4 omr_dscp_pre "{ type filter hook prerouting priority filter - 2; policy accept; }" 2>/dev/null
+		nft add chain inet fw4 omr_dscp_pre "{ type filter hook prerouting priority filter - 2; policy accept; }" 2>/dev/null || true
 	EOF
 }
 
@@ -166,8 +186,8 @@ _dscp_ensure_ipset() {
 		set firewall.omr_dscp_${dscp}_6.enabled='1'
 	EOF
 	cat >> /etc/firewall.omr-bypass <<-EOF
-		nft add rule inet fw4 omr_dscp_pre ip daddr @omr_dscp_${dscp}_4 ip dscp set ${dscp} 2>/dev/null
-		nft add rule inet fw4 omr_dscp_pre ip6 daddr @omr_dscp_${dscp}_6 ip6 dscp set ${dscp} 2>/dev/null
+		nft add rule inet fw4 omr_dscp_pre ip daddr @omr_dscp_${dscp}_4 ip dscp set ${dscp} 2>/dev/null || true
+		nft add rule inet fw4 omr_dscp_pre ip6 daddr @omr_dscp_${dscp}_6 ip6 dscp set ${dscp} 2>/dev/null || true
 	EOF
 }
 
@@ -248,6 +268,7 @@ _bypass_domain() {
 	local noipv6=$4
 	local tcpudp=$5
 	local dscp=$6
+	intf=$(_map_intf_device "$intf")
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
 	[ -z "$intf" ] && [ -z "$dscp" ] && return
 	[ "$intf" = "default" ] && intf="all"
@@ -339,7 +360,10 @@ _bypass_domain() {
 				add_domains="true"
 			fi
 		fi
-		if ! uci -q get dhcp.@dnsmasq[0].noipv6 | grep -qF "/$domain/" && [ "$noipv6" = "1" ]; then
+		# noipv6 list entries are plain domains (no slashes), unlike the ipset
+		# list above -- matching for "/$domain/" here never hits, so this used
+		# to add the same domain again on every occurrence within one run.
+		if [ "$noipv6" = "1" ] && ! uci -q get dhcp.@dnsmasq[0].noipv6 2>/dev/null | grep -qw "$domain"; then
 			uci -q add_list dhcp.@dnsmasq[0].noipv6="$domain"
 		fi
 		#logger -t "omr-bypass" "Get IPs of $domain... Done"
@@ -356,6 +380,7 @@ _bypass_mac() {
 	config_get enabled $1 enabled
 	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
+	intf=$(_map_intf_device "$intf")
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
 	[ -z "$intf" ] && [ -z "$dscp" ] && return
 	local intfid="$(uci -q get omr-bypass.$intf.id)"
@@ -379,8 +404,8 @@ _bypass_mac() {
 		_dscp_ensure_chain
 		for mac_addr in $mac; do
 			cat >> /etc/firewall.omr-bypass <<-EOF
-				nft add rule inet fw4 omr_dscp_pre ether saddr $mac_addr ip dscp set $dscp 2>/dev/null
-				nft add rule inet fw4 omr_dscp_pre ether saddr $mac_addr ip6 dscp set $dscp 2>/dev/null
+				nft add rule inet fw4 omr_dscp_pre ether saddr $mac_addr ip dscp set $dscp 2>/dev/null || true
+				nft add rule inet fw4 omr_dscp_pre ether saddr $mac_addr ip6 dscp set $dscp 2>/dev/null || true
 			EOF
 		done
 	fi
@@ -396,6 +421,7 @@ _bypass_lan_ip() {
 	config_get enabled $1 enabled
 	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
+	intf=$(_map_intf_device "$intf")
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
 	#[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
 	[ -z "$intf" ] && [ -z "$dscp" ] && return
@@ -422,11 +448,11 @@ _bypass_lan_ip() {
 		valid_ip6=$(valid_subnet6 $ip)
 		if [ "$valid_ip4" = "ok" ]; then
 			cat >> /etc/firewall.omr-bypass <<-EOF
-				nft add rule inet fw4 omr_dscp_pre ip saddr $ip ip dscp set $dscp 2>/dev/null
+				nft add rule inet fw4 omr_dscp_pre ip saddr $ip ip dscp set $dscp 2>/dev/null || true
 			EOF
 		elif [ "$valid_ip6" = "ok" ] && [ "$disableipv6" = "0" ]; then
 			cat >> /etc/firewall.omr-bypass <<-EOF
-				nft add rule inet fw4 omr_dscp_pre ip6 saddr $ip ip6 dscp set $dscp 2>/dev/null
+				nft add rule inet fw4 omr_dscp_pre ip6 saddr $ip ip6 dscp set $dscp 2>/dev/null || true
 			EOF
 		fi
 	fi
@@ -444,6 +470,7 @@ _bypass_dest_port() {
 	config_get enabled $1 enabled
 	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
+	intf=$(_map_intf_device "$intf")
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
 	#[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
 	[ -z "$intf" ] && [ -z "$dscp" ] && return
@@ -482,10 +509,10 @@ _bypass_dest_port() {
 		[ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ] && _nft_proto="${_nft_proto}udp "
 		for _p in $_nft_proto; do
 			cat >> /etc/firewall.omr-bypass <<-EOF
-				nft add rule inet fw4 omr_dscp_pre ip ${_p} dport $dport ip dscp set $dscp 2>/dev/null
+				nft add rule inet fw4 omr_dscp_pre ip ${_p} dport $dport ip dscp set $dscp 2>/dev/null || true
 			EOF
 			[ "$disableipv6" = "0" ] && cat >> /etc/firewall.omr-bypass <<-EOF
-				nft add rule inet fw4 omr_dscp_pre ip6 ${_p} dport $dport ip6 dscp set $dscp 2>/dev/null
+				nft add rule inet fw4 omr_dscp_pre ip6 ${_p} dport $dport ip6 dscp set $dscp 2>/dev/null || true
 			EOF
 		done
 	fi
@@ -503,6 +530,7 @@ _bypass_src_port() {
 	config_get enabled $1 enabled
 	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
+	intf=$(_map_intf_device "$intf")
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
 	#[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
 	[ -z "$intf" ] && [ -z "$dscp" ] && return
@@ -541,10 +569,10 @@ _bypass_src_port() {
 		[ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ] && _nft_proto="${_nft_proto}udp "
 		for _p in $_nft_proto; do
 			cat >> /etc/firewall.omr-bypass <<-EOF
-				nft add rule inet fw4 omr_dscp_pre ip ${_p} sport $sport ip dscp set $dscp 2>/dev/null
+				nft add rule inet fw4 omr_dscp_pre ip ${_p} sport $sport ip dscp set $dscp 2>/dev/null || true
 			EOF
 			[ "$disableipv6" = "0" ] && cat >> /etc/firewall.omr-bypass <<-EOF
-				nft add rule inet fw4 omr_dscp_pre ip6 ${_p} sport $sport ip6 dscp set $dscp 2>/dev/null
+				nft add rule inet fw4 omr_dscp_pre ip6 ${_p} sport $sport ip6 dscp set $dscp 2>/dev/null || true
 			EOF
 		done
 	fi
@@ -566,6 +594,7 @@ _bypass_proto() {
 	[ "$enabled" = "0" ] && return
 	[ -z "$noipv6" ] && noipv6="1"
 	[ -z "$family" ] && family="ipv4ipv6"
+	intf=$(_map_intf_device "$intf")
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
 	#[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
 	local intfid="$(uci -q get omr-bypass.$intf.id)"
@@ -741,7 +770,7 @@ _bypass_proto_core() {
 						_nft4="${_nft4:+$_nft4, }$ip"
 						_nft4n=$((_nft4n + 1))
 						if [ "$_nft4n" -ge 64 ]; then
-							printf 'nft add element inet fw4 bypass_%s { %s } 2>/dev/null\n' "$proto" "$_nft4" >> /etc/firewall.omr-bypass
+							printf 'nft add element inet fw4 bypass_%s { %s } 2>/dev/null || true\n' "$proto" "$_nft4" >> /etc/firewall.omr-bypass
 							_nft4="" _nft4n=0
 						fi
 					else
@@ -752,7 +781,7 @@ _bypass_proto_core() {
 						_nft6="${_nft6:+$_nft6, }$ip"
 						_nft6n=$((_nft6n + 1))
 						if [ "$_nft6n" -ge 64 ]; then
-							printf 'nft add element inet fw4 bypass6_%s { %s } 2>/dev/null\n' "$proto" "$_nft6" >> /etc/firewall.omr-bypass
+							printf 'nft add element inet fw4 bypass6_%s { %s } 2>/dev/null || true\n' "$proto" "$_nft6" >> /etc/firewall.omr-bypass
 							_nft6="" _nft6n=0
 						fi
 					else
@@ -760,8 +789,8 @@ _bypass_proto_core() {
 					fi
 				fi
 			done
-			[ -n "$_nft4" ] && printf 'nft add element inet fw4 bypass_%s { %s } 2>/dev/null\n' "$proto" "$_nft4" >> /etc/firewall.omr-bypass
-			[ -n "$_nft6" ] && printf 'nft add element inet fw4 bypass6_%s { %s } 2>/dev/null\n' "$proto" "$_nft6" >> /etc/firewall.omr-bypass
+			[ -n "$_nft4" ] && printf 'nft add element inet fw4 bypass_%s { %s } 2>/dev/null || true\n' "$proto" "$_nft4" >> /etc/firewall.omr-bypass
+			[ -n "$_nft6" ] && printf 'nft add element inet fw4 bypass6_%s { %s } 2>/dev/null || true\n' "$proto" "$_nft6" >> /etc/firewall.omr-bypass
 		fi
 	fi
 	# Use dnsmasq ipset to bypass domains of the proto
@@ -820,6 +849,7 @@ _bypass_proto_without_ndpi() {
 	config_get tcpudp $1 tcpudp "all"
 	[ "$vpn" = "1" ] && intf="srv_vpn1"
 	[ "$enabled" = "0" ] && return
+	intf=$(_map_intf_device "$intf")
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
 	[ -z "$intf" ] && return
 	[ "$intf" = "default" ] && intf="all"
@@ -841,6 +871,7 @@ _bypass_category() {
 	[ "$enabled" = "0" ] && return
 	[ -z "$category" ] && return
 	[ "$vpn" = "1" ] && intf="srv_vpn1"
+	intf=$(_map_intf_device "$intf")
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
 	[ -z "$intf" ] && return
 	[ "$intf" = "default" ] && intf="all"
@@ -864,51 +895,51 @@ _intf_rules_all_rules() {
 	[ "$(uci -q get xray.main.enabled)" = "1" ] && proxyproto="xr_rules"
 	[ -z "$proxyproto" ] && proxyproto="noproxy"
 	cat >> /etc/firewall.omr-bypass <<-EOF
-		nft insert rule inet fw4 ${proxyproto}_local_out ip daddr @bypass_${service} accept 2>&1 >/dev/null
-		nft insert rule inet fw4 ${proxyproto}_local_out meta mark 0x4539${count} accept 2>&1 >/dev/null
-		nft insert rule inet fw4 ${proxyproto}_local_out ip6 daddr @bypass6_${service} accept 2>&1 >/dev/null
-		nft insert rule inet fw4 ${proxyproto}_local_out meta mark 0x6539${count} accept 2>&1 >/dev/null
+		nft insert rule inet fw4 ${proxyproto}_local_out ip daddr @bypass_${service} accept 2>&1 >/dev/null || true
+		nft insert rule inet fw4 ${proxyproto}_local_out meta mark 0x4539${count} accept 2>&1 >/dev/null || true
+		nft insert rule inet fw4 ${proxyproto}_local_out ip6 daddr @bypass6_${service} accept 2>&1 >/dev/null || true
+		nft insert rule inet fw4 ${proxyproto}_local_out meta mark 0x6539${count} accept 2>&1 >/dev/null || true
 	EOF
 	if [ "$proxyproto" = "noproxy" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft add chain inet fw4 noproxy_local_out "{ type nat hook output priority filter - 1; policy accept; }" 2>&1 >/dev/null
-			nft add chain inet fw4 noproxy_pre_tcp "{ type nat hook prerouting priority filter - 1; policy accept; }" 2>&1 >/dev/null
+			nft add chain inet fw4 noproxy_local_out "{ type nat hook output priority filter - 1; policy accept; }" 2>&1 >/dev/null || true
+			nft add chain inet fw4 noproxy_pre_tcp "{ type nat hook prerouting priority filter - 1; policy accept; }" 2>&1 >/dev/null || true
 		EOF
 	elif [ "$(uci -q get v2ray.main.enabled)" = "1" ] || [ "$(uci -q get xray.main.enabled)" = "1" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft add chain inet fw4 ${proxyproto}_pre_tcp "{ type nat hook prerouting priority filter + 1; policy accept; }" 2>&1 >/dev/null
+			nft add chain inet fw4 ${proxyproto}_pre_tcp "{ type nat hook prerouting priority filter + 1; policy accept; }" 2>&1 >/dev/null || true
 		EOF
 	fi
 	if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft insert rule inet fw4 ${proxyproto}_pre_tcp ip daddr @bypass_${service} accept 2>&1 >/dev/null
-			nft insert rule inet fw4 ${proxyproto}_pre_tcp meta mark 0x4539${count} accept 2>&1 >/dev/null
+			nft insert rule inet fw4 ${proxyproto}_pre_tcp ip daddr @bypass_${service} accept 2>&1 >/dev/null || true
+			nft insert rule inet fw4 ${proxyproto}_pre_tcp meta mark 0x4539${count} accept 2>&1 >/dev/null || true
 		EOF
 		if [ "$disableipv6" = "0" ]; then
 			cat >> /etc/firewall.omr-bypass <<-EOF
-				nft insert rule inet fw4 ${proxyproto}_pre_tcp ip6 daddr @bypass6_${service} accept 2>&1 >/dev/null
-				nft insert rule inet fw4 ${proxyproto}_pre_tcp meta mark 0x6539${count} accept 2>&1 >/dev/null
+				nft insert rule inet fw4 ${proxyproto}_pre_tcp ip6 daddr @bypass6_${service} accept 2>&1 >/dev/null || true
+				nft insert rule inet fw4 ${proxyproto}_pre_tcp meta mark 0x6539${count} accept 2>&1 >/dev/null || true
 			EOF
 		fi
 	fi
 	if [ "$proxyproto" = "noproxy" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft add chain inet fw4 noproxy_pre_udp "{ type nat hook prerouting priority filter + 1; policy accept; }" 2>&1 >/dev/null
+			nft add chain inet fw4 noproxy_pre_udp "{ type nat hook prerouting priority filter + 1; policy accept; }" 2>&1 >/dev/null || true
 		EOF
 	elif ([ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ "$(uci -q get v2ray.main_transparent_proxy.redirect_udp)" = "0" ]) || ([ "$(uci -q get xray.main.enabled)" = "1" ] && [ "$(uci -q get xray.main_transparent_proxy.redirect_udp)" = "0" ]); then
 		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft add chain inet fw4 ${proxyproto}_pre_udp "{ type nat hook prerouting priority filter + 1; policy accept; }" 2>&1 >/dev/null
+			nft add chain inet fw4 ${proxyproto}_pre_udp "{ type nat hook prerouting priority filter + 1; policy accept; }" 2>&1 >/dev/null || true
 		EOF
 	fi
 	if [ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft insert rule inet fw4 ${proxyproto}_pre_udp ip daddr @bypass_${service} accept 2>&1 >/dev/null
-			nft insert rule inet fw4 ${proxyproto}_pre_udp meta mark 0x4539${count} accept 2>&1 >/dev/null
+			nft insert rule inet fw4 ${proxyproto}_pre_udp ip daddr @bypass_${service} accept 2>&1 >/dev/null || true
+			nft insert rule inet fw4 ${proxyproto}_pre_udp meta mark 0x4539${count} accept 2>&1 >/dev/null || true
 		EOF
 		if [ "$disableipv6" = "0" ]; then
 			cat >> /etc/firewall.omr-bypass <<-EOF
-				nft insert rule inet fw4 ${proxyproto}_pre_udp ip6 daddr @bypass6_${service} accept 2>&1 >/dev/null
-				nft insert rule inet fw4 ${proxyproto}_pre_udp meta mark 0x6539${count} accept 2>&1 >/dev/null
+				nft insert rule inet fw4 ${proxyproto}_pre_udp ip6 daddr @bypass6_${service} accept 2>&1 >/dev/null || true
+				nft insert rule inet fw4 ${proxyproto}_pre_udp meta mark 0x6539${count} accept 2>&1 >/dev/null || true
 			EOF
 		fi
 	fi
@@ -917,17 +948,17 @@ _intf_rules_all_rules() {
 
 _intf_rule_ss_rules() {
 	cat >> /etc/firewall.omr-bypass <<-EOF
-		nft insert rule inet fw4 ss_rules_pre_tcp ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null
-		nft insert rule inet fw4 ss_rules_pre_tcp meta mark 0x4539${count} accept 2>&1 >/dev/null
-		nft insert rule inet fw4 ss_rules_local_out ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null
-		nft insert rule inet fw4 ss_rules_local_out meta mark 0x4539${count} accept 2>&1 >/dev/null
+		nft insert rule inet fw4 ss_rules_pre_tcp ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null || true
+		nft insert rule inet fw4 ss_rules_pre_tcp meta mark 0x4539${count} accept 2>&1 >/dev/null || true
+		nft insert rule inet fw4 ss_rules_local_out ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null || true
+		nft insert rule inet fw4 ss_rules_local_out meta mark 0x4539${count} accept 2>&1 >/dev/null || true
 	EOF
 	if [ "$disableipv6" = "0" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft insert rule inet fw4 ss_rules_pre_tcp ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null
-			nft insert rule inet fw4 ss_rules_pre_tcp meta mark 0x6539${count} accept 2>&1 >/dev/null
-			nft insert rule inet fw4 ss_rules_local_out ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null
-			nft insert rule inet fw4 ss_rules_local_out meta mark 0x6539${count} accept 2>&1 >/dev/null
+			nft insert rule inet fw4 ss_rules_pre_tcp ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null || true
+			nft insert rule inet fw4 ss_rules_pre_tcp meta mark 0x6539${count} accept 2>&1 >/dev/null || true
+			nft insert rule inet fw4 ss_rules_local_out ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null || true
+			nft insert rule inet fw4 ss_rules_local_out meta mark 0x6539${count} accept 2>&1 >/dev/null || true
 		EOF
 	fi
 }
@@ -936,36 +967,36 @@ _intf_rule_v2ray_rules() {
 	proto=$1
 	[ -z "$proto" ] && proto="tcp udp"
 	cat >> /etc/firewall.omr-bypass <<-EOF
-		nft insert rule inet fw4 v2r_rules_local_out ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null
-		nft insert rule inet fw4 v2r_rules_local_out meta mark 0x4539${count} accept 2>&1 >/dev/null
+		nft insert rule inet fw4 v2r_rules_local_out ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null || true
+		nft insert rule inet fw4 v2r_rules_local_out meta mark 0x4539${count} accept 2>&1 >/dev/null || true
 	EOF
 	if [ "$disableipv6" = "0" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft insert rule inet fw4 v2r_rules_local_out ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null
-			nft insert rule inet fw4 v2r_rules_local_out meta mark 0x6539${count} accept 2>&1 >/dev/null
+			nft insert rule inet fw4 v2r_rules_local_out ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null || true
+			nft insert rule inet fw4 v2r_rules_local_out meta mark 0x6539${count} accept 2>&1 >/dev/null || true
 		EOF
 	fi
 	if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft insert rule inet fw4 v2r_rules_pre_tcp ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null
-			nft insert rule inet fw4 v2r_rules_pre_tcp meta mark 0x4539${count} accept 2>&1 >/dev/null
+			nft insert rule inet fw4 v2r_rules_pre_tcp ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null || true
+			nft insert rule inet fw4 v2r_rules_pre_tcp meta mark 0x4539${count} accept 2>&1 >/dev/null || true
 		EOF
 		if [ "$disableipv6" = "0" ]; then
 			cat >> /etc/firewall.omr-bypass <<-EOF
-				nft insert rule inet fw4 v2r_rules_pre_tcp ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null
-				nft insert rule inet fw4 v2r_rules_pre_tcp meta mark 0x6539${count} accept 2>&1 >/dev/null
+				nft insert rule inet fw4 v2r_rules_pre_tcp ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null || true
+				nft insert rule inet fw4 v2r_rules_pre_tcp meta mark 0x6539${count} accept 2>&1 >/dev/null || true
 			EOF
 		fi
 	fi
 	if [ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft insert rule inet fw4 v2r_rules_pre_udp ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null
-			nft insert rule inet fw4 v2r_rules_pre_udp meta mark 0x4539${count} accept 2>&1 >/dev/null
+			nft insert rule inet fw4 v2r_rules_pre_udp ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null || true
+			nft insert rule inet fw4 v2r_rules_pre_udp meta mark 0x4539${count} accept 2>&1 >/dev/null || true
 		EOF
 		if [ "$disableipv6" = "0" ]; then
 			cat >> /etc/firewall.omr-bypass <<-EOF
-				nft insert rule inet fw4 v2r_rules_pre_udp ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null
-				nft insert rule inet fw4 v2r_rules_pre_udp meta mark 0x6539${count} accept 2>&1 >/dev/null
+				nft insert rule inet fw4 v2r_rules_pre_udp ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null || true
+				nft insert rule inet fw4 v2r_rules_pre_udp meta mark 0x6539${count} accept 2>&1 >/dev/null || true
 			EOF
 		fi
 	fi
@@ -975,36 +1006,36 @@ _intf_rule_xray_rules() {
 	proto=$1
 	[ -z "$proto" ] && proto="tcp udp"
 	cat >> /etc/firewall.omr-bypass <<-EOF
-		nft insert rule inet fw4 xr_rules_local_out ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null
-		nft insert rule inet fw4 xr_rules_local_out meta mark 0x4539${count} accept 2>&1 >/dev/null
+		nft insert rule inet fw4 xr_rules_local_out ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null || true
+		nft insert rule inet fw4 xr_rules_local_out meta mark 0x4539${count} accept 2>&1 >/dev/null || true
 	EOF
 	if [ "$disableipv6" = "0" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft insert rule inet fw4 xr_rules_local_out ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null
-			nft insert rule inet fw4 xr_rules_local_out meta mark 0x6539${count} accept 2>&1 >/dev/null
+			nft insert rule inet fw4 xr_rules_local_out ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null || true
+			nft insert rule inet fw4 xr_rules_local_out meta mark 0x6539${count} accept 2>&1 >/dev/null || true
 		EOF
 	fi
 	if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft insert rule inet fw4 xr_rules_pre_tcp ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null
-			nft insert rule inet fw4 xr_rules_pre_tcp meta mark 0x4539${count} accept 2>&1 >/dev/null
+			nft insert rule inet fw4 xr_rules_pre_tcp ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null || true
+			nft insert rule inet fw4 xr_rules_pre_tcp meta mark 0x4539${count} accept 2>&1 >/dev/null || true
 		EOF
 		if [ "$disableipv6" = "0" ]; then
 			cat >> /etc/firewall.omr-bypass <<-EOF
-				nft insert rule inet fw4 xr_rules_pre_tcp ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null
-				nft insert rule inet fw4 xr_rules_pre_tcp meta mark 0x6539${count} accept 2>&1 >/dev/null
+				nft insert rule inet fw4 xr_rules_pre_tcp ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null || true
+				nft insert rule inet fw4 xr_rules_pre_tcp meta mark 0x6539${count} accept 2>&1 >/dev/null || true
 			EOF
 		fi
 	fi
 	if [ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft insert rule inet fw4 xr_rules_pre_udp ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null
-			nft insert rule inet fw4 xr_rules_pre_udp meta mark 0x4539${count} accept 2>&1 >/dev/null
+			nft insert rule inet fw4 xr_rules_pre_udp ip daddr @omr_dst_bypass_${intf}_4 accept 2>&1 >/dev/null || true
+			nft insert rule inet fw4 xr_rules_pre_udp meta mark 0x4539${count} accept 2>&1 >/dev/null || true
 		EOF
 		if [ "$disableipv6" = "0" ]; then
 			cat >> /etc/firewall.omr-bypass <<-EOF
-				nft insert rule inet fw4 xr_rules_pre_udp ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null
-				nft insert rule inet fw4 xr_rules_pre_udp meta mark 0x6539${count} accept 2>&1 >/dev/null
+				nft insert rule inet fw4 xr_rules_pre_udp ip6 daddr @omr_dst_bypass_${intf}_6 accept 2>&1 >/dev/null || true
+				nft insert rule inet fw4 xr_rules_pre_udp meta mark 0x6539${count} accept 2>&1 >/dev/null || true
 			EOF
 		fi
 	fi
@@ -1202,12 +1233,12 @@ _intf_rule() {
 		EOF
 		for tcpudp in tcp udp; do
 			cat >> "$_dhcp_uci_batch" <<-EOF
-				delete dhcp.omr_dst_bypass_$intf_${tcpudp}
-				set dhcp.omr_dst_bypass_$intf_${tcpudp}=ipset
-				set dhcp.omr_dst_bypass_$intf_${tcpudp}.table='fw4'
-				set dhcp.omr_dst_bypass_$intf_${tcpudp}.table_family='inet'
-				add_list dhcp.omr_dst_bypass_$intf_${tcpudp}.name="omr_dst_bypass_${intf}_4_${tcpudp}"
-				add_list dhcp.omr_dst_bypass_$intf_${tcpudp}.name="omr_dst_bypass_${intf}_6_${tcpudp}"
+				delete dhcp.omr_dst_bypass_${intf}_${tcpudp}
+				set dhcp.omr_dst_bypass_${intf}_${tcpudp}=ipset
+				set dhcp.omr_dst_bypass_${intf}_${tcpudp}.table='fw4'
+				set dhcp.omr_dst_bypass_${intf}_${tcpudp}.table_family='inet'
+				add_list dhcp.omr_dst_bypass_${intf}_${tcpudp}.name="omr_dst_bypass_${intf}_4_${tcpudp}"
+				add_list dhcp.omr_dst_bypass_${intf}_${tcpudp}.name="omr_dst_bypass_${intf}_6_${tcpudp}"
 			EOF
 		done
 
@@ -1329,6 +1360,7 @@ _bypass_ip_set() {
 	config_get enabled $1 enabled
 	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
+	interface=$(_map_intf_device "$interface")
 	[ -z "$interface" ] && [ -z "$dscp" ] && return
 	[ "$interface" = "default" ] && interface="all"
 	for ip in $ip; do
@@ -1347,6 +1379,7 @@ _bypass_asn() {
 	config_get enabled $1 enabled
 	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
+	interface=$(_map_intf_device "$interface")
 	[ -z "$interface" ] && [ -z "$dscp" ] && return
 	[ "$interface" = "default" ] && interface="all"
 	local asnips
@@ -1501,6 +1534,7 @@ _bypass_proto_collect_ndpid() {
 	[ "$enabled" = "0" ] && return
 	[ "$ndpi" = "0" ] && return
 	[ -z "$proto" ] && return
+	intf=$(_map_intf_device "$intf")
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
 	[ -z "$intf" ] && return
 	[ "$intf" = "none" ] && return
@@ -1528,6 +1562,7 @@ _bypass_category_collect_ndpid() {
 	[ "$ndpi" = "0" ] && return
 	[ -z "$category" ] && return
 	[ "$vpn" = "1" ] && intf="srv_vpn1"
+	intf=$(_map_intf_device "$intf")
 	intf=$(echo "$intf" | sed 's/[.-]/_/g')
 	[ -z "$intf" ] && return
 	[ "$intf" = "none" ] && return
@@ -1894,7 +1929,15 @@ service_triggers() {
 }
 
 reload_service() {
+	# procd fires this on every omr-bypass config change, including a LuCI
+	# Save & Apply that only reassigns a domain/mac/ip/port's interface. The
+	# hash-gate skips the (unchanged) skeleton, so without clearing the old
+	# per-entry state here, the stale entry stays live under its old
+	# interface's ipset/dnsmasq section until "Reload OMR-ByPass rules" is
+	# run manually or the hourly cron fires (issue #4340).
 	RELOAD=1
+	_stop_ndpid_consumer
+	_soft_wipe_dynamic
 	#stop
 	start
 }
