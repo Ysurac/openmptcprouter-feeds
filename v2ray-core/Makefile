@@ -60,14 +60,7 @@ endef
 define Package/v2ray-config
   $(call Package/v2ray/template)
   TITLE+= (init script)
-  DEPENDS:=v2ray-core
-  PKGARCH:=all
-endef
-
-define Package/v2ray-config-nft
-  $(call Package/v2ray/template)
-  TITLE+= (init script with nft)
-  DEPENDS:=v2ray-core
+  DEPENDS:=v2ray-core +firewall4 +ip +resolveip +ucode +ucode-mod-fs +kmod-nft-tproxy @!LINUX_5_4
   PKGARCH:=all
 endef
 
@@ -95,13 +88,7 @@ endef
 define Package/v2ray-config/description
   $(call Package/v2ray/description)
 
-  This includes init script
-endef
-
-define Package/v2ray-config-nft/description
-  $(call Package/v2ray/description)
-
-  This includes init script with nftables support
+  This includes init script (nftables-native)
 endef
 
 define Package/v2ray-core/conffiles
@@ -121,12 +108,6 @@ endef
 
 define Package/v2ray-config/install
 	$(CP) ./files/* $(1)/
-	rm $(1)/etc/init.d/v2ray-nft
-endef
-
-define Package/v2ray-config-nft/install
-	$(CP) ./files/* $(1)/
-	mv $(1)/etc/init.d/v2ray-nft $(1)/etc/init.d/v2ray
 endef
 
 define Package/v2ray-example/install
@@ -142,6 +123,5 @@ endef
 
 $(eval $(call BuildPackage,v2ray-core))
 $(eval $(call BuildPackage,v2ray-config))
-$(eval $(call BuildPackage,v2ray-config-nft))
 $(eval $(call BuildPackage,v2ray-example))
 $(eval $(call BuildPackage,v2ray-extra))

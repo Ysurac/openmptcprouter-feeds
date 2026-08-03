@@ -45,11 +45,7 @@ endef
 define Package/$(PKG_NAME)-config
 	$(call Package/$(PKG_NAME)/template)
 	TITLE+= (init script)
-endef
-
-define Package/$(PKG_NAME)-config-nft
-	$(call Package/$(PKG_NAME)/template)
-	TITLE+= (init script with nft)
+	DEPENDS+=+firewall4 +ip +resolveip +ucode +ucode-mod-fs +kmod-nft-tproxy @!LINUX_5_4
 endef
 
 define Package/$(PKG_NAME)-core/description
@@ -57,11 +53,7 @@ define Package/$(PKG_NAME)-core/description
 endef
 
 define Package/$(PKG_NAME)-config/description
-	Xray-core init script
-endef
-
-define Package/$(PKG_NAME)-config-nft/description
-	Xray-core init script with nft support
+	Xray-core init script (nftables-native)
 endef
 
 define Package/$(PKG_NAME)-core/config
@@ -94,14 +86,7 @@ endef
 
 define Package/$(PKG_NAME)-config/install
 	$(CP) ./files/* $(1)/
-	rm -f $(1)/etc/init.d/xray-nft
-endef
-
-define Package/$(PKG_NAME)-config-nft/install
-	$(CP) ./files/* $(1)/
-	mv $(1)/etc/init.d/xray-nft $(1)/etc/init.d/xray
 endef
 
 $(eval $(call BuildPackage,$(PKG_NAME)-core))
 $(eval $(call BuildPackage,$(PKG_NAME)-config))
-$(eval $(call BuildPackage,$(PKG_NAME)-config-nft))
