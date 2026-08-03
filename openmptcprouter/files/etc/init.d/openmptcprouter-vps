@@ -1123,7 +1123,7 @@ _vxlan_teardown_l3() {
 }
 
 _get_vxlan() {
-	local vxlan_state vxlan_vni vxlan_port vxlan_mtu vxlan_peeraddr vxlan_mode vxlan_ipaddr vxlan_bridge_if vxlan_bridge_if_stored
+	local vxlan_state vxlan_vni vxlan_port vxlan_mtu vxlan_peeraddr vxlan_mode vxlan_ipaddr vxlan_bridge_if vxlan_bridge_if_stored vxlan_bridge_status
 	[ -z "$servername" ] && servername=$1
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
@@ -1189,6 +1189,23 @@ _get_vxlan() {
 			ifup omrvxlan >/dev/null 2>&1
 			ubus call network reload >/dev/null 2>&1
 			"$FIREWALL_INIT" reload >/dev/null 2>&1
+			if [ "$vxlan_mode" = "l2" ]; then
+				# The target interface's device now points at the bridge. A
+				# bridge can report kernel-level "up" even when the actual L3
+				# path is broken (e.g. tunnel not really passing traffic), so
+				# also require a live IPv4 address -- that's what an interface
+				# doubling as the management/LAN path actually needs to keep
+				# working. Unwind rather than strand the router.
+				sleep 2
+				vxlan_bridge_status="$(ubus call network.interface.${vxlan_bridge_if} status 2>/dev/null)"
+				if [ "$(echo "$vxlan_bridge_status" | jsonfilter -q -e '@.up')" != "true" ] || \
+				   [ -z "$(echo "$vxlan_bridge_status" | jsonfilter -q -e '@["ipv4-address"][0].address')" ]; then
+					logger -t "OMR-VPS" "VXLAN L2 bridge on ${vxlan_bridge_if} did not come up cleanly -- rolling back to avoid stranding the router"
+					_vxlan_leave_lan_bridge
+					uci -q commit network
+					ubus call network reload >/dev/null 2>&1
+				fi
+			fi
 		fi
 	elif [ -n "$(uci -q get network.omrvxlan)" ]; then
 		[ -n "$(uci -q get network.omrvxlanip)" ] && _vxlan_teardown_l3
