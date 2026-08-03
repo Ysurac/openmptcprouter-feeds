@@ -20,7 +20,7 @@ var callSettingsAdd = rpc.declare({
 		'shadowsocksudp', 'v2rayudp', 'ndpi', 'disablefastopen', 'enablenodelay',
 		'obfs', 'obfs_plugin', 'obfs_type',
 		'scaling_min_freq', 'scaling_max_freq', 'scaling_governor',
-		'sfe_enabled', 'sfe_bridge', 'sipalg', 'vxlan', 'vxlan_mode'
+		'sfe_enabled', 'sfe_bridge', 'sipalg', 'vxlan', 'vxlan_mode', 'vxlan_bridge_if'
 	],
 	expect: { '': {} }
 });
@@ -40,6 +40,7 @@ return view.extend({
 				L.resolveDefault(uci.load('v2ray'), null),
 				L.resolveDefault(uci.load('xray'), null),
 				L.resolveDefault(uci.load('firewall'), null),
+				L.resolveDefault(uci.load('network'), null),
 			]),
 			L.resolveDefault(fs.stat('/usr/bin/obfs-local'),    null),
 			L.resolveDefault(fs.stat('/usr/bin/v2ray-plugin'),  null),
@@ -100,6 +101,20 @@ return view.extend({
 		var ss0Obfs     = uci.get('shadowsocks-libev', 'sss0',         'obfs')        || '0';
 		var ss0Plugin   = uci.get('shadowsocks-libev', 'sss0',         'obfs_plugin') || 'v2ray';
 		var trkObfsType = uci.get('shadowsocks-libev', 'tracker_sss0', 'obfs_type')   || 'http';
+		var zoneLan     = L.toArray(uci.get('firewall', 'zone_lan', 'network'));
+		var zoneWan     = L.toArray(uci.get('firewall', 'zone_wan', 'network'));
+
+		/* Candidate interfaces the VXLAN tunnel can be bridged into (L2 mode):
+		 * any configured network interface, not just the LAN zone's, minus
+		 * the tunnel's own interfaces and interfaces bridging into those
+		 * would break (loopback, the VPN tunnel, the VXLAN itself) */
+		var vxlanBridgeExcludeRe = /^(loopback|omrvpn|omrvxlan|omrvxlanip)$/;
+		var vxlanBridgeIfs = [];
+		uci.sections('network', 'interface', function(sec) {
+			var name = sec['.name'];
+			if (name && !vxlanBridgeExcludeRe.test(name) && vxlanBridgeIfs.indexOf(name) === -1)
+				vxlanBridgeIfs.push(name);
+		});
 
 		/* Determine if any server needs a VPS update */
 		var latestVpsVer = uci.get('openmptcprouter', 'latest_versions', 'vps') || '';
@@ -221,6 +236,17 @@ return view.extend({
 		o.value('l2', _('Layer 2 (bridged into LAN)'));
 		o.default = 'l3';
 		o.depends('vxlan', '1');
+
+		o = s.taboption('network', form.ListValue, 'vxlan_bridge_if', _('VXLAN bridge interface'),
+			_('Interface the VXLAN tunnel is bridged into.'));
+		(vxlanBridgeIfs.length ? vxlanBridgeIfs : ['lan']).forEach(function(i) {
+			var label = uci.get('network', i, 'label') || i;
+			if (zoneWan.indexOf(i) !== -1) label += ' (' + _('WAN') + ')';
+			else if (zoneLan.indexOf(i) !== -1) label += ' (' + _('LAN') + ')';
+			o.value(i, label);
+		});
+		o.default = 'lan';
+		o.depends({ 'vxlan': '1', 'vxlan_mode': 'l2' });
 
 		/* ── Other tab ─────────────────────────────────────────────── */
 		o = s.taboption('other', form.Flag, 'vnstat_backup',
@@ -433,7 +459,8 @@ return view.extend({
 				hasSfe     ? get('sfe_bridge')        : '0',
 				get('sipalg'),
 				get('vxlan'),
-				get('vxlan_mode')
+				get('vxlan_mode'),
+				get('vxlan_bridge_if')
 			).then(function() {
 				ui.addNotification(null, _('Settings saved and applied successfully.'), 'info');
 			}).catch(function(err) {

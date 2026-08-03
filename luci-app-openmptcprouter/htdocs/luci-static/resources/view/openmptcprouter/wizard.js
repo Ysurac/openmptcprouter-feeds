@@ -33,7 +33,7 @@ var callOMRWizardAdd = rpc.declare({
 		'v2ray_user', 'xray_user', 'xray_transport',
 		'v2rayudp', 'forceretrieve',
 		'mptcpovervpn_vpn', 'country', 'dns64',
-		'vxlan', 'vxlan_mode',
+		'vxlan', 'vxlan_mode', 'vxlan_bridge_if',
 		'master'
 	],
 	expect: { '': {} }
@@ -73,6 +73,7 @@ function callOMRWizardAddCompat(payload) {
 		payload.dns64,
 		payload.vxlan,
 		payload.vxlan_mode,
+		payload.vxlan_bridge_if,
 		payload.master
 	).catch(function(err) {
 		var msg = (err && (err.message || err.toString())) || '';
@@ -117,6 +118,7 @@ function callOMRWizardAddCompat(payload) {
 				dns64: payload.dns64,
 				vxlan: payload.vxlan,
 				vxlan_mode: payload.vxlan_mode,
+				vxlan_bridge_if: payload.vxlan_bridge_if,
 				master: payload.master
 			})
 		]).then(function(res) {
@@ -256,6 +258,18 @@ return view.extend({
 		var zoneLan = L.toArray(uci.get('firewall', 'zone_lan', 'network'));
 		var zoneWan = L.toArray(uci.get('firewall', 'zone_wan', 'network'));
 
+		/* Candidate interfaces the VXLAN tunnel can be bridged into (L2 mode):
+		 * any configured network interface, not just the LAN zone's, minus
+		 * the tunnel's own interfaces and interfaces bridging into those
+		 * would break (loopback, the VPN tunnel, the VXLAN itself) */
+		var vxlanBridgeExcludeRe = /^(loopback|omrvpn|omrvxlan|omrvxlanip)$/;
+		var vxlanBridgeIfs = [];
+		uci.sections('network', 'interface', function(sec) {
+			var name = sec['.name'];
+			if (name && !vxlanBridgeExcludeRe.test(name) && vxlanBridgeIfs.indexOf(name) === -1)
+				vxlanBridgeIfs.push(name);
+		});
+
 		/* Snapshot existing interfaces/servers so deletions done in the form
 		 * can be sent to the backend (nothing is staged via ubus uci anymore,
 		 * see #4316). */
@@ -382,6 +396,7 @@ return view.extend({
 				dns64: uci.get('openmptcprouter', 'settings', 'dns64') || '0',
 				vxlan: uci.get('openmptcprouter', 'settings', 'vxlan') || '0',
 				vxlan_mode: uci.get('openmptcprouter', 'settings', 'vxlan_mode') || 'l3',
+				vxlan_bridge_if: uci.get('openmptcprouter', 'settings', 'vxlan_bridge_if') || 'lan',
 				master: master
 			};
 		}
@@ -685,6 +700,17 @@ return view.extend({
 		o.value('l2', _('Layer 2 (bridged into LAN)'));
 		o.default = 'l3';
 		o.depends({ '_show_adv': '1', 'vxlan': '1' });
+
+		o = s.taboption('vpn', form.ListValue, 'vxlan_bridge_if', _('VXLAN bridge interface'));
+		o.description = _('Interface the VXLAN tunnel is bridged into.');
+		(vxlanBridgeIfs.length ? vxlanBridgeIfs : ['lan']).forEach(function(i) {
+			var label = uci.get('network', i, 'label') || i;
+			if (zoneWan.indexOf(i) !== -1) label += ' (' + _('WAN') + ')';
+			else if (zoneLan.indexOf(i) !== -1) label += ' (' + _('LAN') + ')';
+			o.value(i, label);
+		});
+		o.default = 'lan';
+		o.depends({ '_show_adv': '1', 'vxlan': '1', 'vxlan_mode': 'l2' });
 
 		// ── MPTCP over VPN ──
 		o = s.taboption('mptcpvpn', form.ListValue, 'mptcpovervpn', _('MPTCP over VPN'));

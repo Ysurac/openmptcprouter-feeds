@@ -26,6 +26,10 @@ else
 	IP6TABLESSAVE="/usr/sbin/ip6tables-save"
 fi
 
+# Overridable so the test suite can point this at a mock instead of shelling
+# out to the real init script
+FIREWALL_INIT="${FIREWALL_INIT:-/etc/init.d/firewall}"
+
 
 _parse_result() {
 	result=$(echo "$1" | jsonfilter -q -e '@.result')
@@ -1029,22 +1033,40 @@ _set_vxlan_vps() {
 _bridge_name="omrvxlanbr"
 _bridge_ifname="br-omrvxlan"
 
-# Bridge omrvxlan into the LAN's device (L2 mode): the tunnel carries the
-# LAN's own broadcast domain instead of a routed P2P link
+# Which local network interface to bridge omrvxlan into (L2 mode); any
+# configured interface is allowed, not just the LAN zone's. Falls back to
+# lan when unset, malformed, nonexistent, or one of the tunnel's own
+# interfaces (bridging into those would break the tunnel itself)
+_vxlan_bridge_target_if() {
+	local target
+	target="$(uci -q get openmptcprouter.settings.vxlan_bridge_if)"
+	case "$target" in
+		''|*[!A-Za-z0-9_-]*|loopback|omrvpn|omrvxlan|omrvxlanip) target="lan" ;;
+	esac
+	[ -n "$(uci -q get network.$target)" ] || target="lan"
+	echo "$target"
+}
+
+# Bridge omrvxlan into the configured interface's device (L2 mode): the
+# tunnel carries that interface's broadcast domain instead of a routed P2P
+# link. Defaults to lan when unset.
 _vxlan_join_lan_bridge() {
-	local lan_device
-	lan_device="$(uci -q get network.lan.device)"
+	local target_if lan_device
+	target_if="$(_vxlan_bridge_target_if)"
+	lan_device="$(uci -q get network.${target_if}.device)"
 	if [ "$lan_device" != "$_bridge_name" ]; then
-		# Wrap the LAN's current device in a bridge so omrvxlan can join it
-		# as a port; the original device is stashed to unwind on disable
+		# Wrap the target interface's current device in a bridge so omrvxlan
+		# can join it as a port; the original device and interface name are
+		# stashed to unwind on disable or on a later target change
 		uci -q batch <<-EOF >/dev/null
 			set network.${_bridge_name}=device
 			set network.${_bridge_name}.type='bridge'
 			set network.${_bridge_name}.name="$_bridge_ifname"
 			set network.${_bridge_name}.omrvxlan_lan_device="$lan_device"
+			set network.${_bridge_name}.omrvxlan_target_if="$target_if"
 		EOF
 		uci -q add_list network.${_bridge_name}.ports="$lan_device"
-		uci -q set network.lan.device="$_bridge_name"
+		uci -q set network.${target_if}.device="$_bridge_name"
 	fi
 	if [ -z "$(uci -q get network.${_bridge_name}.ports | grep 'omrvxlan')" ]; then
 		uci -q add_list network.${_bridge_name}.ports='omrvxlan'
@@ -1052,13 +1074,15 @@ _vxlan_join_lan_bridge() {
 }
 
 # Undo _vxlan_join_lan_bridge: drop omrvxlan from the bridge and, once it was
-# the only extra port, restore network.lan.device to the stashed original
+# the only extra port, restore the stashed interface's original device
 _vxlan_leave_lan_bridge() {
-	local lan_device
+	local lan_device target_if
 	lan_device="$(uci -q get network.${_bridge_name}.omrvxlan_lan_device)"
+	target_if="$(uci -q get network.${_bridge_name}.omrvxlan_target_if)"
+	[ -z "$target_if" ] && target_if="lan"
 	uci -q del_list network.${_bridge_name}.ports='omrvxlan'
 	if [ -n "$lan_device" ]; then
-		uci -q set network.lan.device="$lan_device"
+		uci -q set network.${target_if}.device="$lan_device"
 		uci -q delete network.${_bridge_name}
 	fi
 }
@@ -1099,7 +1123,7 @@ _vxlan_teardown_l3() {
 }
 
 _get_vxlan() {
-	local vxlan_state vxlan_vni vxlan_port vxlan_mtu vxlan_peeraddr vxlan_mode vxlan_ipaddr
+	local vxlan_state vxlan_vni vxlan_port vxlan_mtu vxlan_peeraddr vxlan_mode vxlan_ipaddr vxlan_bridge_if vxlan_bridge_if_stored
 	[ -z "$servername" ] && servername=$1
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
@@ -1112,14 +1136,23 @@ _get_vxlan() {
 		vxlan_mode="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.mode')"
 		[ "$vxlan_mode" = "l2" ] || vxlan_mode="l3"
 		vxlan_ipaddr="$(echo "$vps_config" | jsonfilter -q -e '@.vxlan.remoteip')"
+		vxlan_bridge_if="$(_vxlan_bridge_target_if)"
+		# A bridge from before this option existed has no stashed target;
+		# it was always lan back then, so treat missing as lan rather than
+		# as a mismatch (avoids an unnecessary rejoin on first run post-upgrade)
+		vxlan_bridge_if_stored="$(uci -q get network.${_bridge_name}.omrvxlan_target_if)"
+		[ -z "$vxlan_bridge_if_stored" ] && vxlan_bridge_if_stored="lan"
 		[ -z "$vxlan_vni" ] && return
 		[ -z "$vxlan_peeraddr" ] && return
 		[ "$vxlan_mode" = "l3" ] && [ -z "$vxlan_ipaddr" ] && return
-		if [ "$(uci -q get network.omrvxlan.peeraddr)" != "$vxlan_peeraddr" ] || [ "$(uci -q get network.omrvxlan.vid)" != "$vxlan_vni" ] || [ "$(uci -q get network.omrvxlan.port)" != "$vxlan_port" ] || [ "$(uci -q get network.omrvxlan.mtu)" != "$vxlan_mtu" ] || { [ "$vxlan_mode" = "l2" ] && [ -z "$(uci -q get network.${_bridge_name}.ports | grep 'omrvxlan')" ]; } || { [ "$vxlan_mode" = "l3" ] && [ "$(uci -q get network.omrvxlanip.ipaddr)" != "$vxlan_ipaddr" ]; }; then
+		if [ "$(uci -q get network.omrvxlan.peeraddr)" != "$vxlan_peeraddr" ] || [ "$(uci -q get network.omrvxlan.vid)" != "$vxlan_vni" ] || [ "$(uci -q get network.omrvxlan.port)" != "$vxlan_port" ] || [ "$(uci -q get network.omrvxlan.mtu)" != "$vxlan_mtu" ] || { [ "$vxlan_mode" = "l2" ] && [ -z "$(uci -q get network.${_bridge_name}.ports | grep 'omrvxlan')" ]; } || { [ "$vxlan_mode" = "l2" ] && [ -n "$(uci -q get network.${_bridge_name})" ] && [ "$vxlan_bridge_if_stored" != "$vxlan_bridge_if" ]; } || { [ "$vxlan_mode" = "l3" ] && [ "$(uci -q get network.omrvxlanip.ipaddr)" != "$vxlan_ipaddr" ]; }; then
 			# If the mode changed since the last run, unwind whichever mode's
-			# state is currently on disk before applying the new one
+			# state is currently on disk before applying the new one. Also
+			# unwind an L2 bridge whose target interface changed, so the
+			# next join re-wraps the newly selected interface instead.
 			[ -n "$(uci -q get network.omrvxlanip)" ] && [ "$vxlan_mode" = "l2" ] && _vxlan_teardown_l3
 			[ -n "$(uci -q get network.${_bridge_name})" ] && [ "$vxlan_mode" = "l3" ] && _vxlan_leave_lan_bridge
+			[ -n "$(uci -q get network.${_bridge_name})" ] && [ "$vxlan_mode" = "l2" ] && [ "$vxlan_bridge_if_stored" != "$vxlan_bridge_if" ] && _vxlan_leave_lan_bridge
 			uci -q batch <<-EOF >/dev/null
 				set network.omrvxlan=interface
 				set network.omrvxlan.label="VXLAN tunnel over the VPN"
@@ -1155,7 +1188,7 @@ _get_vxlan() {
 			logger -t "OMR-VPS" "VXLAN tunnel configured over the VPN (mode: $vxlan_mode)"
 			ifup omrvxlan >/dev/null 2>&1
 			ubus call network reload >/dev/null 2>&1
-			/etc/init.d/firewall reload >/dev/null 2>&1
+			"$FIREWALL_INIT" reload >/dev/null 2>&1
 		fi
 	elif [ -n "$(uci -q get network.omrvxlan)" ]; then
 		[ -n "$(uci -q get network.omrvxlanip)" ] && _vxlan_teardown_l3
@@ -1168,7 +1201,7 @@ _get_vxlan() {
 		uci -q delete firewall.omrvxlan
 		uci -q commit firewall
 		ubus call network reload >/dev/null 2>&1
-		/etc/init.d/firewall reload >/dev/null 2>&1
+		"$FIREWALL_INIT" reload >/dev/null 2>&1
 		logger -t "OMR-VPS" "VXLAN tunnel removed"
 	fi
 }
