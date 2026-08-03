@@ -6,12 +6,6 @@ basename="$(basename "$0")"
 
 . /lib/functions.sh
 
-if [ -e /usr/sbin/iptables-nft ]; then
-	IPTABLES="/usr/sbin/iptables-nft"
-else
-	IPTABLES="/usr/sbin/iptables"
-fi
-
 export OMR_TRACKER_STATUS
 export OMR_TRACKER_PREV_STATUS
 export OMR_TRACKER_STATUS_MSG
@@ -85,7 +79,11 @@ _send_mail_alert_xray() {
 
 _xray_rules_missing() {
 	nft_ruleset="$(nft list ruleset 2>/dev/null)"
-	if ! $IPTABLES -w -t nat -L -n 2>/dev/null | grep -q '^xr' && ! printf '%s\n' "$nft_ruleset" | grep -q 'chain xr'; then
+	# After rules_down, the xr_ chains still exist with base rules -- only the
+	# redirect ("goto xr_rules_pre_src_*") is actually removed. Checking for
+	# chain existence alone (grep 'chain xr') never detects this, so rules_up
+	# never gets called once xray comes back up (issue #4339).
+	if ! printf '%s\n' "$nft_ruleset" | grep -qE 'goto xr_rules_pre_src_(tcp|udp)'; then
 		return 0
 	fi
 	return 1
@@ -93,7 +91,10 @@ _xray_rules_missing() {
 
 _xray_rules_present() {
 	nft_ruleset="$(nft list ruleset 2>/dev/null)"
-	if $IPTABLES -w -t nat -L -n 2>/dev/null | grep -q '^xr' || printf '%s\n' "$nft_ruleset" | grep -q 'chain xr'; then
+	# Same rationale as _xray_rules_missing() above (issue #4339): the xr_
+	# chains persist after rules_down, so bare chain existence ('chain xr')
+	# always says "present" even when torn down. Check the actual redirect.
+	if printf '%s\n' "$nft_ruleset" | grep -qE 'goto xr_rules_pre_src_(tcp|udp)'; then
 		return 0
 	fi
 	return 1
