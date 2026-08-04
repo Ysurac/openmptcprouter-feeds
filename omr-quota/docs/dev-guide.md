@@ -1,28 +1,41 @@
 # omr-quota — developer guide
 
-Backend package that enforces monthly data quotas per WAN interface: cuts or
-throttles an interface once its vnstat usage crosses a configured limit.
+Backend package that enforces monthly data quotas: cuts or throttles one or
+more interfaces once their combined vnstat usage crosses a configured limit.
 `luci-app-omr-quota` is the UI on top of this; this document only covers the
 backend package.
+
+Two kinds of quota, both handled by the same daemon:
+
+- **`interface` section** — one quota for a single interface, based only on
+  that interface's own traffic. Section name = the interface name.
+- **`global` section** — one quota combining several interfaces' traffic.
+  When it's reached, every interface it combines is cut/throttled together.
+  The section has a stable UCI name; the `interfaces` option lists what it
+  combines and is required (no single interface to fall back to).
 
 ## Components
 
 | File | Role |
 | --- | --- |
 | `files/bin/omr-quota` | Daemon loop: polls vnstat, decides exceeded/not, applies cut or throttle |
-| `files/etc/init.d/omr-quota` | procd init script: one daemon instance per configured interface |
-| `files/etc/config/omr-quota` | UCI config (defaults, one `interface` section per WAN) |
+| `files/etc/init.d/omr-quota` | procd init script: one daemon instance per configured `interface`/`global` section |
+| `files/etc/config/omr-quota` | UCI config (defaults, one `interface` section per WAN plus an example `global` section) |
 | `files/etc/uci-defaults/omr-quota` | First-boot: registers the package with `ucitrack` so network reloads restart it |
 | `files/usr/libexec/rpcd/quota` | ubus/rpcd plugin (`get_quota`, `set_quota`, `get_status`, `reset_exceeded`) |
 | `files/usr/share/rpcd/acl.d/omr-quota.json` | ACL exposing those ubus methods to the LuCI/admin session |
 
-## Config schema (`omr-quota.<interface>`)
+## Config schema (`omr-quota.<section>`)
 
-Validated in `_validate_section()` in the init script:
+Validated in `_launch_quota()` / `_launch_global_quota()` in the init script
+(split because `interfaces` is absent/optional on `interface` sections but
+required on `global` ones):
 
 - `txquota` / `rxquota` / `ttquota` (uinteger, KiB) — TX / RX / combined quota for the month. `0`/unset disables that check.
-- `interfaces` (space-separated interface names, default current section) —
-  vnstat usage from these interfaces is summed before checking quotas.
+- `interfaces` (space-separated interface names) — **`global` sections only**,
+  required. The interfaces whose vnstat usage is summed *and* which get
+  cut/throttled together when the quota is reached. `interface` sections have
+  no such option: they always meter and enforce on just themselves.
 - `begindate` / `enddate` (date strings accepted by `vnstat -b` and
   `date -d`) — when `begindate` is set, the daemon reads vnstat's total
   traffic since that date instead of the current monthly bucket; `enddate`
@@ -31,8 +44,10 @@ Validated in `_validate_section()` in the init script:
   `ttquota` usage crosses `percent`: `1` blocks if traffic since the last
   calculation exceeds the per-interval budget, `2` applies a downstream
   `tc` speed limit based on the remaining daily volume.
-- `down_interfaces` (space-separated interface names, default current
-  section) — interfaces shaped by daily-budget method `2`.
+- `down_interfaces` (space-separated interface names, default: the quota's
+  own interfaces — the section itself for `interface` sections, the full
+  `interfaces` list for `global` ones) — interfaces shaped by daily-budget
+  method `2`.
 - `percent` (uinteger, default `80`) and `calculation_interval` (uinteger,
   default `120`) — daily-budget trigger threshold and method `1` recalculation
   cadence.
@@ -46,31 +61,42 @@ Validated in `_validate_section()` in the init script:
 - `exceedance_scope` (`month_only` default, or `persistent`) — see below.
 - `reset_exceeded` (bool) — one-shot trigger, cleared automatically once processed.
 
-The section name **is** the logical interface name and is passed as `$1` to
-the daemon (`files/bin/omr-quota`) and used as `procd_open_instance` per
-`config_foreach` in `start_service()`.
+For `interface` sections, the section name **is** the logical interface name
+and is passed as `$1` (`OMR_QUOTA_INTERFACE`) to the daemon
+(`files/bin/omr-quota`). `global` sections have no such identity, so the
+init script passes `"global_<uci section id>"` instead — purely a state-file
+key, never looked up as a real network interface. Both are launched via
+`procd_open_instance` per `config_foreach` in `start_service()`
+(`_launch_quota` for `interface`, `_launch_global_quota` for `global`).
 
 ## Daemon loop (`files/bin/omr-quota`)
 
-One process per interface, launched by `init.d/omr-quota` with quota values
-passed as env vars (`OMR_QUOTA_TX`, `OMR_QUOTA_RX`, `OMR_QUOTA_TT`,
-`OMR_QUOTA_INTERVAL`, `OMR_QUOTA_ACTION`, `OMR_QUOTA_THROTTLE_DL/UL`,
-`OMR_QUOTA_SCOPE`, `OMR_QUOTA_INTERFACES`, `OMR_QUOTA_DOWN_INTERFACES`,
-`OMR_QUOTA_BEGINDATE`, `OMR_QUOTA_ENDDATE`, `OMR_QUOTA_METHOD`,
-`OMR_QUOTA_PERCENT`, `OMR_QUOTA_CALCULATION_INTERVAL`,
-`OMR_QUOTA_BLOCK_LAN`). Each iteration:
+One process per `interface`/`global` section, launched by `init.d/omr-quota`
+with quota values passed as env vars (`OMR_QUOTA_TX`, `OMR_QUOTA_RX`,
+`OMR_QUOTA_TT`, `OMR_QUOTA_INTERVAL`, `OMR_QUOTA_ACTION`,
+`OMR_QUOTA_THROTTLE_DL/UL`, `OMR_QUOTA_SCOPE`, `OMR_QUOTA_INTERFACES`,
+`OMR_QUOTA_DOWN_INTERFACES`, `OMR_QUOTA_BEGINDATE`, `OMR_QUOTA_ENDDATE`,
+`OMR_QUOTA_METHOD`, `OMR_QUOTA_PERCENT`, `OMR_QUOTA_CALCULATION_INTERVAL`,
+`OMR_QUOTA_BLOCK_LAN`). `OMR_QUOTA_INTERFACES` is only ever set by the init
+script for `global` sections (to their `interfaces` list); for `interface`
+sections it's left unset, so it defaults to `$OMR_QUOTA_INTERFACE` ($1,
+the section's own name) everywhere it's read. `target_interfaces` — computed
+once per loop as `${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}` — is
+therefore the single list used for *both* metering and enforcement: an
+`interface` section's list is just itself, a `global` section's list is every
+interface it combines, so exceeding it cuts/throttles all of them together.
+Each iteration:
 
-1. Resolve the real L3 device for every interface in `OMR_QUOTA_INTERFACES`
-   (defaults to the section interface) via `_get_real_interface`, which
-   wraps `ifstatus` and handles both plain interfaces and `@`-prefixed
-   logical/dynamic ones (e.g. mwan/multipath aliases). `ifstatus` reports no
-   `l3_device` while an interface is administratively down — including when
-   *this script* just cut it for quota enforcement — so `_get_real_interface`
-   caches the last resolved device name to `<_TSTATE_DIR>/<iface>.realdev`
-   and falls back to it when the live lookup comes back empty. Without this
-   the next loop reads 0 bytes for a cut interface, sees the quota as no
-   longer exceeded, brings it back up, and cuts it again: an infinite
-   up/down flap.
+1. Resolve the real L3 device for every interface in `target_interfaces` via
+   `_get_real_interface`, which wraps `ifstatus` and handles both plain
+   interfaces and `@`-prefixed logical/dynamic ones (e.g. mwan/multipath
+   aliases). `ifstatus` reports no `l3_device` while an interface is
+   administratively down — including when *this script* just cut it for
+   quota enforcement — so `_get_real_interface` caches the last resolved
+   device name to `<_TSTATE_DIR>/<iface>.realdev` and falls back to it when
+   the live lookup comes back empty. Without this the next loop reads 0
+   bytes for a cut interface, sees the quota as no longer exceeded, brings
+   it back up, and cuts it again: an infinite up/down flap.
 2. `_vnstat_usage` reads rx/tx for each of those devices from
    `vnstat -i <dev> --json` and sums them into `rx`/`tx`/`tt` (KiB). If
    `OMR_QUOTA_BEGINDATE` is set it instead queries
@@ -84,10 +110,12 @@ passed as env vars (`OMR_QUOTA_TX`, `OMR_QUOTA_RX`, `OMR_QUOTA_TT`,
    can also set `exceeded=1` ("daily budget" reason); method `2` sets `cb`,
    a `tc` rate applied via `_apply_downstream_limit`/`_remove_downstream_limit`
    independently of `exceeded`.
-4. Apply `_apply_throttle` / `_remove_throttle`, or `ifdown`/`ifup`, and log
-   the transition once via `logger -t OMR-QUOTA` (edge-triggered on
-   `_prev_exceeded`, not every loop). On the cut path, `_block_lan` /
-   `_unblock_lan` run alongside `ifdown`/`ifup` when `OMR_QUOTA_BLOCK_LAN=1`.
+4. For every interface in `target_interfaces`: apply `_apply_throttle` /
+   `_remove_throttle`, or `ifdown`/`ifup`, and log the transition once via
+   `logger -t OMR-QUOTA` (edge-triggered on `_prev_exceeded`, not every
+   loop). On the cut path, `_block_lan` / `_unblock_lan` run once (not
+   per-interface) alongside the `ifdown`/`ifup` loop when
+   `OMR_QUOTA_BLOCK_LAN=1`.
 5. `sleep "$OMR_QUOTA_INTERVAL"` and repeat — the process never exits on its
    own; procd/`stop` is what tears it down.
 
@@ -99,7 +127,7 @@ does nothing for `exceedance_scope=month_only`: that scope recomputes
 clear and an exceeded month_only quota stayed cut/throttled until vnstat's
 own monthly bucket rolled over.
 
-A baseline file `${OMR_QUOTA_STATE_DIR:-/etc/omr-quota/state}/<interface>.baseline`
+A baseline file `${OMR_QUOTA_STATE_DIR:-/etc/omr-quota/state}/<OMR_QUOTA_INTERFACE>.baseline`
 fixes this: it stores `<year-month> <rx0> <tx0>`, and every loop's summed
 `rx`/`tx` has `rx0`/`tx0` subtracted (clamped to `0`) before quotas are
 checked. `_read_baseline` discards the file (treating it as `0 0`) if its
@@ -119,7 +147,7 @@ persistent-marker cleanup), so a single `reset_exceeded` trigger un-exceeds
 - `month_only`: `exceeded` is recomputed from current vnstat counters every
   loop, so it clears automatically once vnstat rolls over to a new month.
 - `persistent`: once exceeded, a marker file
-  `${OMR_QUOTA_STATE_DIR:-/etc/omr-quota/state}/<interface>.exceeded` is
+  `${OMR_QUOTA_STATE_DIR:-/etc/omr-quota/state}/<OMR_QUOTA_INTERFACE>.exceeded` is
   created and short-circuits `exceeded=1` on every subsequent loop
   regardless of vnstat, even across month boundaries. Only removed by
   `reset_exceeded` (UI/ubus) or manual deletion. This is why
@@ -141,11 +169,11 @@ daily volume `dv = rv / rd`:
   `exceedance_action` (cut/throttle) as a normal quota breach.
 - `method=2` ("limit speed using remaining daily volume"): every loop it
   recomputes a `tc` rate `cb` (kbit/s) from `dv` and the seconds left in the
-  day, and applies it via `_apply_downstream_limit` on `down_interfaces`
-  (default: the section interface) — independent of `exceeded`/`ifdown`, so
-  the interface stays up but shaped. `_remove_downstream_limit` clears the
-  `tc` qdisc once method `2` is no longer selected or the budget check no
-  longer applies.
+  day, and applies it via `_apply_downstream_limit` on
+  `${OMR_QUOTA_DOWN_INTERFACES:-$target_interfaces}` — independent of
+  `exceeded`/`ifdown`, so the interface(s) stay up but shaped.
+  `_remove_downstream_limit` clears the `tc` qdisc once method `2` is no
+  longer selected or the budget check no longer applies.
 
 Both methods are mutually exclusive per section (`method` is a single
 `ListValue`: `0` disabled, `1`, or `2`).
@@ -173,9 +201,11 @@ sub-interfaces can contain one):
   shape ingress directly.
 
 Throttle state is tracked separately from quota-exceeded state, in
-`${OMR_QUOTA_THROTTLE_STATE_DIR:-/tmp/omr-quota}/<interface>.throttled`
+`${OMR_QUOTA_THROTTLE_STATE_DIR:-/tmp/omr-quota}/<OMR_QUOTA_INTERFACE>.throttled`
 (tmpfs — intentionally not persisted across reboot, unlike the exceeded
-marker).
+marker). `<OMR_QUOTA_INTERFACE>` is the daemon identity passed as `$1` — the
+interface name for `interface` sections, `global_<id>` for `global` ones —
+not necessarily a real network interface.
 
 Both `_PERSIST_DIR` and `_TSTATE_DIR` are overridable via env vars
 (`OMR_QUOTA_STATE_DIR`, `OMR_QUOTA_THROTTLE_STATE_DIR`) specifically so the
@@ -202,12 +232,24 @@ month_only quotas at all.
 
 `get_status` recomputes `exceeded` from live vnstat data in addition to
 checking the persistent marker, so it reflects reality even if the daemon
-process for that interface isn't running. Like the daemon, it sums usage
-across `interfaces` (default: the section interface) and, when `begindate`
-is set, queries `vnstat -i <dev> -b <begindate> --json` /
-`traffic.total.*` instead of `traffic.month[-1]`. `_vnstat_month` (in the
-rpcd plugin) and `_vnstat_usage` (in the daemon) are separate implementations
-of the same lookup — keep both in sync when changing the vnstat query.
+process for that section isn't running. Like the daemon, it uses only the
+section's own interface for `interface` sections and sums `interfaces` only
+for `global` sections. When `begindate` is set, it queries
+`vnstat -i <dev> -b <begindate> --json` / `traffic.total.*` instead of
+`traffic.month[-1]`. `_vnstat_month` (in the rpcd plugin) and `_vnstat_usage`
+(in the daemon) are separate implementations of the same lookup — keep both
+in sync when changing the vnstat query.
+
+Every method resolves a section's type via `_section_type` (`uci -q get
+omr-quota.<id>`, returning `interface`/`global`/empty) and derives its
+state-file identity via `_state_id` (`<id>` for `interface`,
+`global_<id>` for `global`) — this must stay in sync with how
+`init.d/omr-quota` names each daemon instance, since `get_status` and
+`reset_exceeded` read/write those same files by that name, not by the raw
+uci section id. `set_quota` accepts an optional `type` (`interface` default,
+or `global`); creating a new `global` section without `interfaces` is
+rejected. An existing section's type can't be changed by `set_quota` — the
+uci section must be deleted and recreated with the new type.
 
 Input is read as a single JSON blob from stdin (`ubus call` convention) and
 picked apart with `jsonfilter`; iface names are sanitized through
@@ -220,6 +262,7 @@ ubus call omr-quota get_quota    '{}'
 ubus call omr-quota get_quota    '{"interface":"wan1"}'
 ubus call omr-quota set_quota    '{"interface":"wan1","enabled":"1","rxquota":"400000","exceedance_action":"throttle","throttle_dl":"5","throttle_ul":"2","exceedance_scope":"persistent"}'
 ubus call omr-quota set_quota    '{"interface":"wan1","ttquota":"500000","method":"2","percent":"80","enddate":"2026-07-31","down_interfaces":"lan"}'
+ubus call omr-quota set_quota    '{"interface":"global1","type":"global","interfaces":"wan1 wan2","enabled":"1","ttquota":"900000"}'
 ubus call omr-quota get_status   '{"interface":"wan1"}'
 ubus call omr-quota reset_exceeded '{"interface":"wan1"}'
 ```
