@@ -514,7 +514,14 @@ end
 function default_proxy(proxy)
 	-- Stop the currently active proxy before switching
 	local prev_proxy = ucic:get("openmptcprouter","settings","proxy") or ""
-	if prev_proxy ~= "" and prev_proxy ~= proxy then
+	local proxy_changed = (prev_proxy ~= proxy)
+	if proxy_changed then
+		-- Stop proxy watchdogs before stopping the old proxy daemon; otherwise
+		-- the still-running watchdog can observe the intentional stop and bring
+		-- the old proxy back up before the tracker service is reconciled.
+		sys.exec("/etc/init.d/omr-tracker stop >/dev/null 2>/dev/null")
+	end
+	if proxy_changed and prev_proxy ~= "" then
 		force_stop_proxy(prev_proxy)
 	end
 	-- Enable/disable proxy services based on selection
@@ -581,6 +588,14 @@ function default_proxy(proxy)
 	ucic:commit("openmptcprouter")
 	-- Start the newly selected proxy
 	force_start_proxy(proxy)
+	-- omr-tracker's per-proxy watchdogs are separate procd service instances
+	-- from the proxy daemons themselves (force_stop_proxy above only stops
+	-- e.g. xray, not omr-tracker-xray) -- without reconciling here, switching
+	-- away from a proxy leaves its tracker orphaned, endlessly trying to
+	-- restart a daemon that was intentionally stopped (issue #4328)
+	if proxy_changed then
+		sys.exec("sh -c '(/etc/init.d/omr-tracker start) >/dev/null 2>/dev/null &'")
+	end
 end
 
 function server_settings(server,server_ip,openmptcprouter_vps_key,openmptcprouter_vps_username)
@@ -720,12 +735,28 @@ local function _as_string(v, default)
 	return tostring(v)
 end
 
+local function shell_quote(value)
+	local s = _as_string(value, "")
+	return "'" .. s:gsub("'", "'\"'\"'") .. "'"
+end
+
+local function curl_auth_header(token)
+	return shell_quote("Authorization: Bearer " .. _as_string(token, ""))
+end
+
 local function _to_flag(v)
 	local s = _as_string(v, "0")
 	if s == "1" or s == "true" or s == "yes" or s == "on" then
 		return "1"
 	end
 	return "0"
+end
+
+local function _to_optional_flag(v)
+	if _as_string(v, "") == "" then
+		return ""
+	end
+	return _to_flag(v)
 end
 
 local function _sanitize_name(v)
@@ -988,7 +1019,7 @@ function wizard_add(args)
 	_set_or_delete("openmptcprouter", "settings", "mptcpovervpn", _as_string(args.mptcpovervpn_vpn, ""))
 	_set_or_delete("openmptcprouter", "settings", "country", _as_string(args.country, ""))
 	_set_or_delete("openmptcprouter", "settings", "dns64", _to_flag(args.dns64))
-	_set_or_delete("openmptcprouter", "settings", "vxlan", _to_flag(args.vxlan))
+	_set_or_delete("openmptcprouter", "settings", "vxlan", _to_optional_flag(args.vxlan))
 	local wizard_vxlan_mode = _as_string(args.vxlan_mode, "")
 	if wizard_vxlan_mode ~= "l2" and wizard_vxlan_mode ~= "l3" then wizard_vxlan_mode = "" end
 	_set_or_delete("openmptcprouter", "settings", "vxlan_mode", wizard_vxlan_mode)
@@ -1362,8 +1393,8 @@ function settings_add(args)
 	_set_or_delete("openmptcprouter", "settings", "restrict_to_lan", _to_flag(args.restricttolan))
 	_set_or_delete("openmptcprouter", "settings", "debug", _to_flag(args.debug))
 	_set_or_delete("openmptcprouter", "settings", "disablegwping", _to_flag(args.disablegwping))
-	_set_or_delete("openmptcprouter", "settings", "status_vps_timeout", _as_string(args.status_vps_timeout, "1"))
-	_set_or_delete("openmptcprouter", "settings", "status_getip_timeout", _as_string(args.status_getip_timeout, "1"))
+	_set_or_delete("openmptcprouter", "settings", "status_vps_timeout", integer_string(args.status_vps_timeout, "1", 1, 30))
+	_set_or_delete("openmptcprouter", "settings", "status_getip_timeout", integer_string(args.status_getip_timeout, "1", 1, 30))
 	_set_or_delete("openmptcprouter", "settings", "status_whois_timeout", _as_string(args.status_whois_timeout, "2"))
 	_set_or_delete("openmptcprouter", "settings", "disableloopdetection", _to_flag(args.disableloopdetection))
 	_set_or_delete("openmptcprouter", "settings", "disableserverhttptest", _to_flag(args.disableserverhttptest))
@@ -1691,10 +1722,10 @@ function update_vps()
 	ucic:foreach("openmptcprouter", "server", function(section)
 		local serverips = _as_string_list(section["ip"])
 		local serverip = serverips[1] or ""
-		local adminport = section["port"] or "65500"
+		local adminport = integer_string(section["port"] or "65500", "65500", 1, 65535)
 		local token = section["token"] or ""
 		if token ~= "" and serverip ~= "" then
-			sys.exec('curl -4 --max-time 20 -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ":" .. adminport .. "/update")
+			sys.exec("curl -4 --max-time 20 -s -k -H " .. curl_auth_header(token) .. " " .. shell_quote("https://" .. serverip .. ":" .. adminport .. "/update"))
 		end
 	end)
 	sys.exec("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
@@ -1902,7 +1933,7 @@ function interfaces_status()
 	mArray.openmptcprouter["omr_time"] = os.time()
 
 	mArray.openmptcprouter["dns"] = false
-	local timeout = uci:get("openmptcprouter","settings","status_getip_timeout") or "1"
+	local timeout = integer_string(uci:get("openmptcprouter","settings","status_getip_timeout") or "1", "1", 1, 30)
 	local dns_test = ""
 	if uci:get("openmptcprouter","settings","external_check") ~= "0" then
 		dns_test = sys.exec("dig +timeout=" .. timeout .. " +tries=1 openmptcprouter.com | grep -e 'ANSWER: 0' -e 'no servers could be reached'")
@@ -1928,11 +1959,11 @@ function interfaces_status()
 	if mArray.openmptcprouter["dns"] then
 		local service_addr = mArray.openmptcprouter["service_addr"]
 		if service_addr ~= "" then
-			mArray.openmptcprouter["service_addr_ip"] = ut.trim(exec_with_timeout(2, "resolveip -4 -t 1 " .. service_addr .. " | head -n 1"))
-			mArray.openmptcprouter["service_addr_ip6"] = ut.trim(exec_with_timeout(2, "resolveip -6 -t 1 " .. service_addr .. " | head -n 1"))
+			mArray.openmptcprouter["service_addr_ip"] = ut.trim(exec_with_timeout(2, "resolveip -4 -t 1 " .. shell_quote(service_addr) .. " | head -n 1"))
+			mArray.openmptcprouter["service_addr_ip6"] = ut.trim(exec_with_timeout(2, "resolveip -6 -t 1 " .. shell_quote(service_addr) .. " | head -n 1"))
 		end
 		if external_check ~= "0" then
-			mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("curl -4 -s -m " .. timeout .. " " .. check_ipv4_website))
+			mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("curl -4 -s -m " .. timeout .. " " .. shell_quote(check_ipv4_website)))
 			if not valid_ipv4(mArray.openmptcprouter["wan_addr"]) then
 				mArray.openmptcprouter["wan_addr"] = ut.trim(sys.exec("dig -4 TXT +timeout=" .. timeout .. " +tries=1 +short o-o.myaddr.l.google.com @ns1.google.com | awk -F'\"' '{print $2}'"))
 			end
@@ -1942,7 +1973,7 @@ function interfaces_status()
 			if mArray.openmptcprouter["ipv6"] == "enabled" or (mArray.openmptcprouter["service_addr_ip6"] ~= "" and mArray.openmptcprouter["service_addr_ip6"] ~= nil) then
 				mArray.openmptcprouter["wan_addr6"] = uci:get("openmptcprouter","omr","public_detected_ipv6") or ""
 				if mArray.openmptcprouter["wan_addr6"] == "" then
-					mArray.openmptcprouter["wan_addr6"] = ut.trim(sys.exec("curl -6 -s -m " .. timeout .. " " .. check_ipv6_website))
+					mArray.openmptcprouter["wan_addr6"] = ut.trim(sys.exec("curl -6 -s -m " .. timeout .. " " .. shell_quote(check_ipv6_website)))
 					if mArray.openmptcprouter["wan_addr6"] == "" then
 						mArray.openmptcprouter["wan_addr6"] = ut.trim(sys.exec("dig -6 TXT +timeout=" .. timeout .. " +tries=1 +short o-o.myaddr.l.google.com @ns1.google.com | awk -F'\"' '{print $2}'"))
 					end
@@ -1960,9 +1991,10 @@ function interfaces_status()
 				local tracker_port = uci:get("shadowsocks-libev","tracker_sss0","local_port") 
 									 or uci:get("shadowsocks-rust","tracker_sss0","local_port") or "1111"
 				if mArray.openmptcprouter["external_check"] then
-					mArray.openmptcprouter["proxy_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m " .. timeout .. " " .. check_ipv4_website))
+					tracker_port = integer_string(tracker_port, "1111", 1, 65535)
+					mArray.openmptcprouter["proxy_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. shell_quote(tracker_ip .. ":" .. tracker_port) .. " -m " .. timeout .. " " .. shell_quote(check_ipv4_website)))
 					if mArray.openmptcprouter["proxy_addr"] == "" then
-						mArray.openmptcprouter["proxy_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. tracker_ip .. ":" .. tracker_port .. " -m " .. timeout .. " ifconfig.co"))
+						mArray.openmptcprouter["proxy_addr"] = ut.trim(sys.exec("curl -s -4 --socks5 " .. shell_quote(tracker_ip .. ":" .. tracker_port) .. " -m " .. timeout .. " ifconfig.co"))
 					end
 				end
 			end
@@ -1987,24 +2019,24 @@ function interfaces_status()
 		local master = uci:get("openmptcprouter",s[".name"],"master") or "1"
 		local current = uci:get("openmptcprouter",s[".name"],"current") or "0"
 		for _, value in ipairs(serverips) do
-			local serverip = exec_with_timeout(2, 'resolveip -t 1 ' .. value .. ' | head -n 1 | tr -d "\\n"')
+			local serverip = exec_with_timeout(2, "resolveip -t 1 " .. shell_quote(value) .. " | head -n 1 | tr -d '\\n'")
 			if serverip ~= "" and (master == "1" or current == "1" or mArray.openmptcprouter["wan_addr"] == serverip or mArray.openmptcprouter["wan_addr6"] == serverip) and mArray.openmptcprouter["vps_admin"] == false then
 				mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter", s[".name"], "omr_version") or ""
 				mArray.openmptcprouter["vps_kernel"] = uci:get("openmptcprouter",s[".name"],"kernel") or ""
 				mArray.openmptcprouter["vps_machine"] = uci:get("openmptcprouter",s[".name"],"machine") or ""
 				mArray.openmptcprouter["vps_whois"] = uci:get("openmptcprouter",s[".name"],"asn") or ""
-				timeout = uci:get("openmptcprouter","settings","status_vps_timeout") or "1"
+				timeout = integer_string(uci:get("openmptcprouter","settings","status_vps_timeout") or "1", "1", 1, 30)
 				if uci:get("openmptcprouter",s[".name"],"admin_error") == "1" then
 					mArray.openmptcprouter["vps_admin_error"] = true
 				end
-				adminport = uci:get("openmptcprouter",s[".name"],"port") or "65500"
+				adminport = integer_string(uci:get("openmptcprouter",s[".name"],"port") or "65500", "65500", 1, 65535)
 				local token = uci:get("openmptcprouter",s[".name"],"token") or ""
 				if token ~= "" then
 					local vpsinfo_json = ""
 					if mArray.openmptcprouter["service_addr_ip"] ~= "" then
-						vpsinfo_json = sys.exec('curl --max-time ' .. timeout .. ' -s -k -H "Authorization: Bearer ' .. token .. '" https://' .. serverip .. ':' .. adminport .. '/status')
+						vpsinfo_json = sys.exec("curl --max-time " .. timeout .. " -s -k -H " .. curl_auth_header(token) .. " " .. shell_quote("https://" .. serverip .. ":" .. adminport .. "/status"))
 					elseif mArray.openmptcprouter["service_addr_ip6"] ~= "" then
-						vpsinfo_json = sys.exec('curl --max-time ' .. timeout .. ' -s -k -H "Authorization: Bearer ' .. token .. '" https://[' .. serverip .. ']:' .. adminport .. '/status')
+						vpsinfo_json = sys.exec("curl --max-time " .. timeout .. " -s -k -H " .. curl_auth_header(token) .. " " .. shell_quote("https://[" .. serverip .. "]:" .. adminport .. "/status"))
 					end
 					if vpsinfo_json ~= "" and vpsinfo_json ~= nil then
 						local status, vpsinfo = pcall(function()
@@ -2098,9 +2130,9 @@ function interfaces_status()
 				if mArray.openmptcprouter["vps_admin"] == false then
 					local vpstest = ""
 					if mArray.openmptcprouter["service_addr_ip"] ~= "" then
-						vpstest = sys.exec('curl --max-time ' .. timeout .. ' -s -k https://' .. serverip .. ':' .. adminport .. '/')
+						vpstest = sys.exec("curl --max-time " .. timeout .. " -s -k " .. shell_quote("https://" .. serverip .. ":" .. adminport .. "/"))
 					elseif mArray.openmptcprouter["service_addr_ip6"] ~= "" then
-						vpstest = sys.exec('curl --max-time ' .. timeout .. ' -s -k https://[' .. serverip .. ']:' .. adminport .. '/')
+						vpstest = sys.exec("curl --max-time " .. timeout .. " -s -k " .. shell_quote("https://[" .. serverip .. "]:" .. adminport .. "/"))
 					end
 					if vpstest == "" then
 						mArray.openmptcprouter["vps_admin_error_msg"] = mArray.openmptcprouter["vps_admin_error_msg"] .. " - No API script answer"
@@ -2140,21 +2172,21 @@ function interfaces_status()
 		if tun_dev ~= "" and tun_dev ~= nil then
 			local peer = get_gateway("omrvpn")
 			if peer == "" then
-				peer = ut.trim(sys.exec("ip -4 r list dev " .. tun_dev .. " | grep via | grep -v default | awk '{print $1}' | grep -v / | tr -d '\n'"))
+				peer = ut.trim(sys.exec("ip -4 r list dev " .. shell_quote(tun_dev) .. " | grep via | grep -v default | awk '{print $1}' | grep -v / | tr -d '\n'"))
 			end
 			if peer == "" then
-				peer = ut.trim(sys.exec("ip -4 r list dev " .. tun_dev .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
+				peer = ut.trim(sys.exec("ip -4 r list dev " .. shell_quote(tun_dev) .. " | grep kernel | awk '/proto kernel/ {print $1}' | grep -v / | tr -d '\n'"))
 			end
 			if peer == "" then
-				peer = ut.trim(sys.exec("ip -4 r list dev " .. tun_dev .. " | grep -m 1 default | awk '/default via/ {print $3}' | grep -v / | tr -d '\n'"))
+				peer = ut.trim(sys.exec("ip -4 r list dev " .. shell_quote(tun_dev) .. " | grep -m 1 default | awk '/default via/ {print $3}' | grep -v / | tr -d '\n'"))
 			end
 			if peer ~= "" then
-				local tunnel_ping_test = ut.trim(sys.exec("ping -w 1 -c 1 -I " .. tun_dev .. " " .. peer .. " | grep '100% packet loss'"))
+				local tunnel_ping_test = ut.trim(sys.exec("ping -w 1 -c 1 -I " .. shell_quote(tun_dev) .. " " .. shell_quote(peer) .. " | grep '100% packet loss'"))
 				mArray.openmptcprouter["tun_state"] = tunnel_ping_test == "" and "UP" or "DOWN"
 				if mArray.openmptcprouter["ipv6"] == "enabled" or (mArray.openmptcprouter["service_addr_ip6"] ~= "" and mArray.openmptcprouter["service_addr_ip6"] ~= nil) then
 					local tunnel_ipv6_gw = uci:get("network","omr6in4","gateway") or ""
 					if tunnel_ipv6_gw ~= "" then
-						local tunnel_ping6_test = ut.trim(sys.exec("ping6 -w 1 -c 1 " .. tunnel_ipv6_gw .. "%6in4-omr6in4 | grep '100% packet loss'"))
+						local tunnel_ping6_test = ut.trim(sys.exec("ping6 -w 1 -c 1 " .. shell_quote(tunnel_ipv6_gw .. "%6in4-omr6in4") .. " | grep '100% packet loss'"))
 						mArray.openmptcprouter["tun6_state"] = tunnel_ping6_test == "" and "UP" or "DOWN"
 					else
 						mArray.openmptcprouter["tun6_state"] = "UNKNOWN"
@@ -2322,11 +2354,11 @@ function interfaces_status()
 		if enabled == "0" then return end
 
 		if ipaddr == "" and ifname ~= "" and proto ~= "dhcpv6" then
-			local addr_output = sys.exec("ip -4 addr show dev " .. ifname .. " 2>/dev/null")
+			local addr_output = sys.exec("ip -4 addr show dev " .. shell_quote(ifname) .. " 2>/dev/null")
 			ipaddr = ut.trim(addr_output:match("inet ([%d%.]+)") or "")
 		end
 		if ip6addr == "" and ifname ~= "" and (ipv6 == "1" or ipv6 == "auto") then
-			local addr6_output = sys.exec("ip -6 addr show dev " .. ifname .. " 2>/dev/null")
+			local addr6_output = sys.exec("ip -6 addr show dev " .. shell_quote(ifname) .. " 2>/dev/null")
 			ip6addr = ut.trim(addr6_output:match("inet6 ([%x:]+)") or "")
 		end
 
@@ -2344,7 +2376,7 @@ function interfaces_status()
 		local current_multipath_state = ""
 		if ifname ~= "" and connectivity ~= "ERROR" then
 			if fs.access("/sys/class/net/" .. ifname) then
-				local ms = ut.trim(sys.exec("multipath " .. ifname .. " | grep deactivated"))
+				local ms = ut.trim(sys.exec("multipath " .. shell_quote(ifname) .. " | grep deactivated"))
 				connectivity = ms == "" and "OK" or "ERROR"
 			else
 				connectivity = "ERROR"
@@ -2353,7 +2385,7 @@ function interfaces_status()
 			connectivity = "ERROR"
 		end
 		if ifname ~= "" and connectivity ~= "ERROR" then
-			local tms = ut.trim(sys.exec("multipath " .. ifname))
+			local tms = ut.trim(sys.exec("multipath " .. shell_quote(ifname)))
 			if string.find(tms,"deactivated") then current_multipath_state = "off"
 			elseif string.find(tms,"default") then current_multipath_state = "on"
 			elseif string.find(tms,"backup") then current_multipath_state = "backup"
@@ -2363,7 +2395,7 @@ function interfaces_status()
 
 		if gateway == "" and proto ~= "dhcpv6" then gateway = get_gateway(interface) end
 		if gateway == "" and ifname ~= "" and ipv6 ~= "1" and ipv6 ~= "auto" and fs.access("/sys/class/net/" .. ifname) then
-			local route_list = sys.exec("ip -4 r list dev " .. ifname)
+			local route_list = sys.exec("ip -4 r list dev " .. shell_quote(ifname))
 			gateway = route_list:match("(%d+%.%d+%.%d+%.%d+)%s+proto kernel") or ""
 			if gateway == "" then
 				gateway = route_list:match("default via (%d+%.%d+%.%d+%.%d+)") or ""
@@ -2374,7 +2406,7 @@ function interfaces_status()
 		end
 		if gateway6 == "" and (ipv6 == "1" or ipv6 == "auto") then gateway6 = get_gateway6(interface) end
 		if gateway6 == "" and ifname ~= "" and (ipv6 == "1" or ipv6 == "auto") and fs.access("/sys/class/net/" .. ifname) then
-			local route6_list = sys.exec("ip -6 r list dev " .. ifname)
+			local route6_list = sys.exec("ip -6 r list dev " .. shell_quote(ifname))
 			gateway6 = route6_list:match("([%x:]+)%s+proto kernel") or ""
 			if gateway6 == "" then
 				gateway6 = route6_list:match("default via ([%x:]+)") or ""
@@ -2389,8 +2421,8 @@ function interfaces_status()
 			if not disable_gw_ping then
 				if gateway ~= "" then
 					local gw_ping_test = ifname ~= "" and
-						ut.trim(sys.exec("ping -w 1 -c 1 -B -I " .. ifname .. " " .. gateway .. " | grep '100% packet loss'")) or
-						ut.trim(sys.exec("ping -w 1 -c 1 " .. gateway .. " | grep '100% packet loss'"))
+						ut.trim(sys.exec("ping -w 1 -c 1 -B -I " .. shell_quote(ifname) .. " " .. shell_quote(gateway) .. " | grep '100% packet loss'")) or
+						ut.trim(sys.exec("ping -w 1 -c 1 " .. shell_quote(gateway) .. " | grep '100% packet loss'"))
 					if gw_ping_test ~= "" then
 						gw_ping = "DOWN"
 						if connectivity == "OK" then connectivity = "WARNING" end
@@ -2400,8 +2432,8 @@ function interfaces_status()
 				end
 				if gateway6 ~= "" then
 					local gw_ping6_test = ifname ~= "" and
-						ut.trim(sys.exec("ping6 -w 1 -c 1 -I " .. ifname .. " " .. gateway6 .. " | grep '100% packet loss'")) or
-						ut.trim(sys.exec("ping6 -w 1 -c 1 " .. gateway6 .. " | grep '100% packet loss'"))
+						ut.trim(sys.exec("ping6 -w 1 -c 1 -I " .. shell_quote(ifname) .. " " .. shell_quote(gateway6) .. " | grep '100% packet loss'")) or
+						ut.trim(sys.exec("ping6 -w 1 -c 1 " .. shell_quote(gateway6) .. " | grep '100% packet loss'"))
 					if gw_ping6_test ~= "" then
 						gw_ping6 = "DOWN"
 						if connectivity == "OK" then connectivity = "WARNING" end
@@ -2413,11 +2445,11 @@ function interfaces_status()
 			if uci:get("openmptcprouter",interface,"manufacturer") == "huawei" and ipaddr ~= "" then
 				local intfdata = ut.trim(exec_with_timeout(2, "omr-huawei " .. ipaddr .. " " .. gateway .. " all"))
 				if intfdata ~= "" then
-					signal      = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $1}'"))
-					operator    = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $2}'"))
-					phonenumber = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $3}'"))
-					donglestate = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $4}'"))
-					networktype = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $5}'"))
+					signal      = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $1}'"))
+					operator    = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $2}'"))
+					phonenumber = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $3}'"))
+					donglestate = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $4}'"))
+					networktype = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $5}'"))
 				end
 			end
 		elseif gateway == "" and gateway6 == "" then
@@ -2433,22 +2465,22 @@ function interfaces_status()
 			if proto == "qmi" then
 				local intfdata = ut.trim(exec_with_timeout(2, "omr-qmi " .. (section['device'] or "") .. " all"))
 				if intfdata ~= "" then
-					signal      = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $1}'"))
-					operator    = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $2}'"))
-					phonenumber = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $3}'"))
-					donglestate = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $4}'"))
-					networktype = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $5}'"))
+					signal      = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $1}'"))
+					operator    = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $2}'"))
+					phonenumber = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $3}'"))
+					donglestate = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $4}'"))
+					networktype = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $5}'"))
 				end
 			elseif proto == "3g" then
-				signal = sys.exec("omr-3g " .. (section['device'] or "") .. " | tr -d '\n'")
+				signal = sys.exec("omr-3g " .. shell_quote(section['device'] or "") .. " | tr -d '\n'")
 			elseif proto == "modemmanager" then
 				local intfdata = ut.trim(exec_with_timeout(2, "omr-modemmanager " .. (section['device'] or "") .. " all"))
 				if intfdata ~= "" then
-					signal      = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $1}'"))
-					operator    = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $2}'"))
-					phonenumber = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $3}'"))
-					donglestate = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $4}'"))
-					networktype = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $5}'"))
+					signal      = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $1}'"))
+					operator    = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $2}'"))
+					phonenumber = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $3}'"))
+					donglestate = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $4}'"))
+					networktype = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $5}'"))
 				end
 			end
 		end
@@ -2466,30 +2498,30 @@ function interfaces_status()
 						for _, value in ipairs(serverips) do
 							if not vps_any_up then
 								local serverip = gateway ~= "" and
-									exec_with_timeout(2, 'resolveip -t 1 -4 ' .. value .. ' | head -n 1') or
-									exec_with_timeout(2, 'resolveip -t 1 -6 ' .. value .. ' | head -n 1')
+									exec_with_timeout(2, "resolveip -t 1 -4 " .. shell_quote(value) .. " | head -n 1") or
+									exec_with_timeout(2, "resolveip -t 1 -6 " .. shell_quote(value) .. " | head -n 1")
 								if serverip == "" then serverip = value end
 								if serverip ~= "" then
-									local spt = sys.exec("ping -B -w 1 -c 1 -I " .. ifname .. " " .. serverip .. " 2>&1")
-									local spr = ut.trim(sys.exec("echo '" .. spt .. "' | grep '100% packet loss'"))
-									local spnb = ut.trim(sys.exec("echo '" .. spt .. "' | grep 'Address not available'"))
-									local spe = ut.trim(sys.exec("echo '" .. spt .. "' | grep -i 'error'"))
+									local spt = sys.exec("ping -B -w 1 -c 1 -I " .. shell_quote(ifname) .. " " .. shell_quote(serverip) .. " 2>&1")
+									local spr = ut.trim(sys.exec("echo " .. shell_quote(spt) .. " | grep '100% packet loss'"))
+									local spnb = ut.trim(sys.exec("echo " .. shell_quote(spt) .. " | grep 'Address not available'"))
+									local spe = ut.trim(sys.exec("echo " .. shell_quote(spt) .. " | grep -i 'error'"))
 									if spe ~= "" or spr ~= "" then
 										server_ping = "DOWN"
 									elseif spnb ~= "" then
-										local spt2 = sys.exec("ping -w 1 -c 1 -I " .. ifname .. " " .. serverip)
-										if ut.trim(sys.exec("echo '" .. spt2 .. "' | grep '100% packet loss'")) ~= "" then
+										local spt2 = sys.exec("ping -w 1 -c 1 -I " .. shell_quote(ifname) .. " " .. shell_quote(serverip))
+										if ut.trim(sys.exec("echo " .. shell_quote(spt2) .. " | grep '100% packet loss'")) ~= "" then
 											server_ping = "DOWN"
 										else
 											mArray.openmptcprouter["vps_status"] = "UP"
 											server_ping = "UP"
-											latency = ut.trim(sys.exec("echo '" .. spt2 .. "' | cut -d '/' -s -f5 | cut -d '.' -f1"))
+											latency = ut.trim(sys.exec("echo " .. shell_quote(spt2) .. " | cut -d '/' -s -f5 | cut -d '.' -f1"))
 											vps_any_up = true
 										end
 									else
 										mArray.openmptcprouter["vps_status"] = "UP"
 										server_ping = "UP"
-										latency = ut.trim(sys.exec("echo '" .. spt .. "' | cut -d '/' -s -f5 | cut -d '.' -f1"))
+										latency = ut.trim(sys.exec("echo " .. shell_quote(spt) .. " | cut -d '/' -s -f5 | cut -d '.' -f1"))
 										vps_any_up = true
 									end
 								end
@@ -2582,8 +2614,8 @@ function interfaces_status()
 
 		local rx, tx = "", ""
 		if ifname ~= "" then
-			rx = ut.trim(sys.exec("devstatus " .. ifname .. " | jsonfilter -e '@.statistics.rx_bytes'"))
-			tx = ut.trim(sys.exec("devstatus " .. ifname .. " | jsonfilter -e '@.statistics.tx_bytes'"))
+			rx = ut.trim(sys.exec("devstatus " .. shell_quote(ifname) .. " | jsonfilter -e '@.statistics.rx_bytes'"))
+			tx = ut.trim(sys.exec("devstatus " .. shell_quote(ifname) .. " | jsonfilter -e '@.statistics.tx_bytes'"))
 		end
 		if state == "down" then connectivity = "ERROR" end
 
@@ -2730,8 +2762,8 @@ function interfaces_only_status()
 		end)
 	end
 	if mArray.openmptcprouter["service_addr"] ~= "" then
-		mArray.openmptcprouter["service_addr_ip"] = ut.trim(exec_with_timeout(2, "resolveip -4 -t 1 " .. mArray.openmptcprouter["service_addr"] .. " | head -n 1"))
-		mArray.openmptcprouter["service_addr_ip6"] = ut.trim(exec_with_timeout(2, "resolveip -6 -t 1 " .. mArray.openmptcprouter["service_addr"] .. " | head -n 1"))
+		mArray.openmptcprouter["service_addr_ip"] = ut.trim(exec_with_timeout(2, "resolveip -4 -t 1 " .. shell_quote(mArray.openmptcprouter["service_addr"]) .. " | head -n 1"))
+		mArray.openmptcprouter["service_addr_ip6"] = ut.trim(exec_with_timeout(2, "resolveip -6 -t 1 " .. shell_quote(mArray.openmptcprouter["service_addr"]) .. " | head -n 1"))
 	end
 
 	mArray.wans = {}
@@ -2764,23 +2796,23 @@ function interfaces_only_status()
 		if enabled == "0" then return end
 
 		if ipaddr == "" and ifname ~= "" and proto ~= "dhcpv6" then
-			ipaddr = ut.trim(sys.exec("ip -4 -br addr ls dev " .. ifname .. " | awk -F'[ /]+' '{print $3}' | tr -d '\n'"))
+			ipaddr = ut.trim(sys.exec("ip -4 -br addr ls dev " .. shell_quote(ifname) .. " | awk -F'[ /]+' '{print $3}' | tr -d '\n'"))
 		end
 		if ipaddr == "" and ifname ~= "" and proto ~= "dhcpv6" then
-			ipaddr = ut.trim(sys.exec("ip -4 addr show dev " .. ifname .. " | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1 | tr -d '\n'"))
+			ipaddr = ut.trim(sys.exec("ip -4 addr show dev " .. shell_quote(ifname) .. " | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1 | tr -d '\n'"))
 		end
 		if ip6addr == "" and ifname ~= "" and (ipv6 == "1" or ipv6 == "auto") then
-			ip6addr = ut.trim(sys.exec("ip -6 -br addr ls dev " .. ifname .. " | awk -F'[ /]+' '{print $3}' | tr -d '\n'"))
+			ip6addr = ut.trim(sys.exec("ip -6 -br addr ls dev " .. shell_quote(ifname) .. " | awk -F'[ /]+' '{print $3}' | tr -d '\n'"))
 		end
 		if ip6addr == "" and ifname ~= "" and (ipv6 == "1" or ipv6 == "auto") then
-			ip6addr = ut.trim(sys.exec("ip -6 addr show dev " .. ifname .. " | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1 | tr -d '\n'"))
+			ip6addr = ut.trim(sys.exec("ip -6 addr show dev " .. shell_quote(ifname) .. " | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1 | tr -d '\n'"))
 		end
 		if ipaddr == "" and ip6addr == "" then connectivity = "ERROR" end
 
 		local current_multipath_state = ""
 		if ifname ~= "" and connectivity ~= "ERROR" then
 			if fs.access("/sys/class/net/" .. ifname) then
-				local ms = ut.trim(sys.exec("multipath " .. ifname .. " | grep deactivated"))
+				local ms = ut.trim(sys.exec("multipath " .. shell_quote(ifname) .. " | grep deactivated"))
 				connectivity = ms == "" and "OK" or "ERROR"
 			else
 				connectivity = "ERROR"
@@ -2789,7 +2821,7 @@ function interfaces_only_status()
 			connectivity = "ERROR"
 		end
 		if ifname ~= "" and connectivity ~= "ERROR" then
-			local tms = ut.trim(sys.exec("multipath " .. ifname))
+			local tms = ut.trim(sys.exec("multipath " .. shell_quote(ifname)))
 			if string.find(tms,"deactivated") then current_multipath_state = "off"
 			elseif string.find(tms,"default") then current_multipath_state = "on"
 			elseif string.find(tms,"backup") then current_multipath_state = "backup"
@@ -2802,8 +2834,8 @@ function interfaces_only_status()
 			if uci:get("openmptcprouter","settings","disablegwping") ~= "1" then
 				if gateway ~= "" then
 					local gpt = ifname ~= "" and
-						ut.trim(sys.exec("ping -w 1 -c 1 -B -I " .. ifname .. " " .. gateway .. " | grep '100% packet loss'")) or
-						ut.trim(sys.exec("ping -w 1 -c 1 " .. gateway .. " | grep '100% packet loss'"))
+						ut.trim(sys.exec("ping -w 1 -c 1 -B -I " .. shell_quote(ifname) .. " " .. shell_quote(gateway) .. " | grep '100% packet loss'")) or
+						ut.trim(sys.exec("ping -w 1 -c 1 " .. shell_quote(gateway) .. " | grep '100% packet loss'"))
 					if gpt ~= "" then
 						gw_ping = "DOWN"
 						if connectivity == "OK" then connectivity = "WARNING" end
@@ -2813,8 +2845,8 @@ function interfaces_only_status()
 				end
 				if gateway6 ~= "" then
 					local gpt6 = ifname ~= "" and
-						ut.trim(sys.exec("ping6 -w 1 -c 1 -I " .. ifname .. " " .. gateway6 .. " | grep '100% packet loss'")) or
-						ut.trim(sys.exec("ping6 -w 1 -c 1 " .. gateway6 .. " | grep '100% packet loss'"))
+						ut.trim(sys.exec("ping6 -w 1 -c 1 -I " .. shell_quote(ifname) .. " " .. shell_quote(gateway6) .. " | grep '100% packet loss'")) or
+						ut.trim(sys.exec("ping6 -w 1 -c 1 " .. shell_quote(gateway6) .. " | grep '100% packet loss'"))
 					if gpt6 ~= "" then
 						gw_ping6 = "DOWN"
 						if connectivity == "OK" then connectivity = "WARNING" end
@@ -2826,11 +2858,11 @@ function interfaces_only_status()
 			if uci:get("openmptcprouter",interface,"manufacturer") == "huawei" and ipaddr ~= "" then
 				local intfdata = ut.trim(exec_with_timeout(2, "omr-huawei " .. ipaddr .. " " .. gateway .. " all"))
 				if intfdata ~= "" then
-					signal      = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $1}'"))
-					operator    = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $2}'"))
-					phonenumber = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $3}'"))
-					donglestate = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $4}'"))
-					networktype = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $5}'"))
+					signal      = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $1}'"))
+					operator    = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $2}'"))
+					phonenumber = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $3}'"))
+					donglestate = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $4}'"))
+					networktype = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $5}'"))
 				end
 			end
 		elseif gateway == "" and gateway6 == "" then
@@ -2846,22 +2878,22 @@ function interfaces_only_status()
 			if proto == "qmi" then
 				local intfdata = ut.trim(exec_with_timeout(2, "omr-qmi " .. (section['device'] or "") .. " all"))
 				if intfdata ~= "" then
-					signal      = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $1}'"))
-					operator    = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $2}'"))
-					phonenumber = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $3}'"))
-					donglestate = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $4}'"))
-					networktype = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $5}'"))
+					signal      = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $1}'"))
+					operator    = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $2}'"))
+					phonenumber = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $3}'"))
+					donglestate = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $4}'"))
+					networktype = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $5}'"))
 				end
 			elseif proto == "3g" then
-				signal = sys.exec("omr-3g " .. (section['device'] or "") .. " | tr -d '\n'")
+				signal = sys.exec("omr-3g " .. shell_quote(section['device'] or "") .. " | tr -d '\n'")
 			elseif proto == "modemmanager" then
 				local intfdata = ut.trim(exec_with_timeout(2, "omr-modemmanager " .. (section['device'] or "") .. " all"))
 				if intfdata ~= "" then
-					signal      = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $1}'"))
-					operator    = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $2}'"))
-					phonenumber = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $3}'"))
-					donglestate = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $4}'"))
-					networktype = ut.trim(sys.exec("echo '"..intfdata.."' | awk -F';' '{print $5}'"))
+					signal      = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $1}'"))
+					operator    = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $2}'"))
+					phonenumber = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $3}'"))
+					donglestate = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $4}'"))
+					networktype = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $5}'"))
 				end
 			end
 		end
@@ -2870,13 +2902,13 @@ function interfaces_only_status()
 		if ifname ~= "" and (gateway ~= "" or gateway6 ~= "") and mArray.openmptcprouter["service_addr"] ~= "" and (ipaddr ~= "" or ip6addr ~= "") and connectivity ~= "ERROR" then
 			local serverip = mArray.openmptcprouter["service_addr"]
 			if serverip ~= "" and uci:get("openmptcprouter","settings","disableserverping") ~= "1" then
-				local spt = sys.exec("ping -B -w 1 -c 1 -I " .. ifname .. " " .. serverip)
-				if ut.trim(sys.exec("echo '" .. spt .. "' | grep '100% packet loss'")) ~= "" then
+				local spt = sys.exec("ping -B -w 1 -c 1 -I " .. shell_quote(ifname) .. " " .. shell_quote(serverip))
+				if ut.trim(sys.exec("echo " .. shell_quote(spt) .. " | grep '100% packet loss'")) ~= "" then
 					server_ping = "DOWN"
 					if connectivity == "OK" then connectivity = "WARNING" end
 				else
 					server_ping = "UP"
-					latency = ut.trim(sys.exec("echo '" .. spt .. "' | cut -d '/' -s -f5 | cut -d '.' -f1"))
+					latency = ut.trim(sys.exec("echo " .. shell_quote(spt) .. " | cut -d '/' -s -f5 | cut -d '.' -f1"))
 				end
 			end
 		end
@@ -2908,8 +2940,8 @@ function interfaces_only_status()
 
 		local rx, tx = "", ""
 		if ifname ~= "" then
-			rx = ut.trim(sys.exec("devstatus " .. ifname .. " | jsonfilter -e '@.statistics.rx_bytes'"))
-			tx = ut.trim(sys.exec("devstatus " .. ifname .. " | jsonfilter -e '@.statistics.tx_bytes'"))
+			rx = ut.trim(sys.exec("devstatus " .. shell_quote(ifname) .. " | jsonfilter -e '@.statistics.rx_bytes'"))
+			tx = ut.trim(sys.exec("devstatus " .. shell_quote(ifname) .. " | jsonfilter -e '@.statistics.tx_bytes'"))
 		end
 		if state == "down" then connectivity = "ERROR" end
 
