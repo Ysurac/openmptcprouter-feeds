@@ -344,6 +344,10 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 	[ -n "$script_alert_down" ] && eval $script_alert_down
 
 	if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] || [ "$OMR_TRACKER_INTERFACE" = "omr6in4" ]; then
+		vpn_disabled_by_user=0
+		if [ "$(uci -q get network.omrvpn.disabled)" = "1" ] || [ "$(uci -q get openmptcprouter.settings.vpn)" = "none" ]; then
+			vpn_disabled_by_user=1
+		fi
 		if [ -z "$OMR_TRACKER_DEVICE_IP" ] && [ -z "$OMR_TRACKER_DEVICE_IP6" ]; then
 			OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_STATUS_MSG No IP"
 		fi
@@ -363,7 +367,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 		else
 			_log "Default gateway disabled, no default gateway set"
 		fi
-		if [ "$(uci -q get openmptcprouter.settings.shadowsocksudp)" = "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.shadowsocks)" = "up" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q get shadowsocks-libev.hi1.mode)" = "tcp_and_udp" ] && [ "$(uci -q get shadowsocks-libev.sss0.obfs)" != "1" ]; then
+		if [ "$vpn_disabled_by_user" != "1" ] && [ "$(uci -q get openmptcprouter.settings.shadowsocksudp)" = "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.shadowsocks)" = "up" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q get shadowsocks-libev.hi1.mode)" = "tcp_and_udp" ] && [ "$(uci -q get shadowsocks-libev.sss0.obfs)" != "1" ]; then
 			_log "Tunnel down use ShadowSocks for UDP"
 			uci -q set shadowsocks-libev.ss_rules.redir_udp='hi1'
 			if /etc/init.d/shadowsocks-libev rules_exist ; then
@@ -371,7 +375,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 				/etc/init.d/shadowsocks-libev rules_up >/dev/null 2>&1
 			fi
 		fi
-		if [ "$(uci -q get network.omrvpn.disabled)" = "1" ]; then
+		if [ "$vpn_disabled_by_user" = "1" ]; then
 			_log "VPS/tunnel disabled by user, skip VPN restart attempts"
 		else
 			if [ "$(uci -q get dsvpn.vpn.enable)" = "1" ]; then
@@ -415,7 +419,9 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 				# restarting again before that only creates a restart loop
 				gtudp_last_restart="$(cat /tmp/omr-tracker-gtudp-last-restart 2>/dev/null)"
 				[ -z "$gtudp_last_restart" ] && gtudp_last_restart=0
-				if [ -f /tmp/omr-tracker-gtudp-holddown ]; then
+					gtudp_init="/etc/init.d/glorytun-udp"
+					[ -x "$gtudp_init" ] || gtudp_init="glorytun-udp"
+					if [ -f /tmp/omr-tracker-gtudp-holddown ]; then
 					_log "Glorytun UDP VPN down, hold-down in progress (waiting for the server to purge its stale paths)"
 				elif [ "$((gtudp_now - gtudp_outage_start))" -ge 900 ]; then
 					# Restarts did not help for 15 minutes: the server path
@@ -425,7 +431,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 					# 004-glorytun-udp-path starts it again afterwards
 					_log "Glorytun UDP VPN still down after 15 minutes of restarts, stop it for 150s so the server purges its stale paths"
 					echo "$gtudp_now" > /tmp/omr-tracker-gtudp-holddown
-					/etc/init.d/glorytun-udp stop >/dev/null 2>&1
+						"$gtudp_init" stop >/dev/null 2>&1
 				elif [ -n "$(glorytun-udp path 2>/dev/null | grep running)" ] && [ "$((gtudp_now - gtudp_error_since))" -lt 300 ]; then
 					_log "Glorytun UDP VPN down but a path is still running, restart skipped (probably a server side issue)"
 				elif [ "$((gtudp_now - gtudp_last_restart))" -ge 60 ]; then
@@ -434,7 +440,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 					# Restart the persistent error delay so with a running
 					# path next restart is only after another 5 minutes
 					echo "$gtudp_now" > /tmp/omr-tracker-gtudp-error-since
-					/etc/init.d/glorytun-udp restart >/dev/null 2>&1
+						"$gtudp_init" restart >/dev/null 2>&1
 				else
 					_log "Glorytun UDP VPN down, restart skipped (restarted less than 60s ago, waiting for paths to be set again)"
 				fi
