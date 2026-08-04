@@ -61,7 +61,9 @@ return view.extend({
 
 	_renderCard: function(iface) {
 		var self = this;
-		var name = iface.name || '?';
+		var name = iface.type === 'global'
+			? _('Global — %s').format(iface.interfaces || '?')
+			: (iface.name || '?');
 		var enabled = iface.enabled === '1' || iface.enabled === 1;
 
 		var bars = [
@@ -86,7 +88,7 @@ return view.extend({
 				E('span', {}, badges)
 			]),
 			bars.length ? E('div', {}, bars) : E('p', { style: 'color:#888;font-style:italic;margin:0' }, [
-				_('No quota configured for this interface.')
+				_('No quota configured.')
 			]),
 			E('div', { style: 'font-size:0.78em;color:#aaa;margin-top:4px' }, [ meta ])
 		]);

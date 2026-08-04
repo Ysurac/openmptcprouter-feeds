@@ -91,7 +91,7 @@ _apply_downstream_limit() {
 	[ -z "$rate_kbit" ] && return
 	mkdir -p "$_TSTATE_DIR"
 	touch "${_TSTATE_DIR}/${OMR_QUOTA_INTERFACE}.downstream"
-	for iface in ${OMR_QUOTA_DOWN_INTERFACES:-$OMR_QUOTA_INTERFACE}; do
+	for iface in ${OMR_QUOTA_DOWN_INTERFACES:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}; do
 		dev="$(_get_real_interface "$iface")"
 		[ -n "$dev" ] && tc qdisc replace dev "$dev" root tbf rate "${rate_kbit}kbit" burst 5k latency 200ms
 	done
@@ -100,7 +100,7 @@ _apply_downstream_limit() {
 _remove_downstream_limit() {
 	local iface dev
 	[ -f "${_TSTATE_DIR}/${OMR_QUOTA_INTERFACE}.downstream" ] || return
-	for iface in ${OMR_QUOTA_DOWN_INTERFACES:-$OMR_QUOTA_INTERFACE}; do
+	for iface in ${OMR_QUOTA_DOWN_INTERFACES:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}; do
 		dev="$(_get_real_interface "$iface")"
 		[ -n "$dev" ] && tc qdisc del dev "$dev" root 2>/dev/null || true
 	done
@@ -221,10 +221,14 @@ last_tt=0
 
 # main loop
 while true; do
-	OMR_QUOTA_REAL_INTERFACE="$(_get_real_interface "$OMR_QUOTA_INTERFACE")"
+	# The interfaces a quota meters are also the interfaces it enforces on:
+	# a per-interface quota's list is just itself, a global quota's list is
+	# every interface it combines -- so exceeding it cuts/throttles all of them.
+	target_interfaces="${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}"
+
 	rx=0
 	tx=0
-	for iface in ${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}; do
+	for iface in $target_interfaces; do
 		real_iface="$(_get_real_interface "$iface")"
 		usage="$(_vnstat_usage "$real_iface")"
 		rxi="$(printf '%s' "$usage" | awk '{print $1}')"
@@ -238,7 +242,6 @@ while true; do
 	[ "$rx" -lt 0 ] && rx=0
 	[ "$tx" -lt 0 ] && tx=0
 	tt=$(( rx + tx ))
-	iface_up="$(ifstatus "$OMR_QUOTA_INTERFACE" | jsonfilter -e '@.up')"
 	cb=""
 
 	exceeded=0
@@ -280,31 +283,44 @@ while true; do
 
 		if [ "${OMR_QUOTA_ACTION:-cut}" = "throttle" ]; then
 			[ "$_prev_exceeded" != "1" ] && \
-				logger -t "OMR-QUOTA" "Throttling $OMR_QUOTA_INTERFACE to ${OMR_QUOTA_THROTTLE_DL:-1}/${OMR_QUOTA_THROTTLE_UL:-1} Mbps: $reason reached"
+				logger -t "OMR-QUOTA" "Throttling $target_interfaces to ${OMR_QUOTA_THROTTLE_DL:-1}/${OMR_QUOTA_THROTTLE_UL:-1} Mbps: $reason reached"
 			mkdir -p "$_TSTATE_DIR"
 			touch "$_tstate_file"
-			_apply_throttle "$OMR_QUOTA_REAL_INTERFACE"
-			# Keep the interface up while throttled
-			[ "$iface_up" = "false" ] && ifup $OMR_QUOTA_INTERFACE
+			for iface in $target_interfaces; do
+				real_iface="$(_get_real_interface "$iface")"
+				[ -n "$real_iface" ] && _apply_throttle "$real_iface"
+				# Keep the interface up while throttled
+				iface_up="$(ifstatus "$iface" | jsonfilter -e '@.up')"
+				[ "$iface_up" = "false" ] && ifup $iface
+			done
 		else
-			# cut: bring the interface down
+			# cut: bring the interface(s) down
 			_block_lan "$reason reached"
-			if [ "$iface_up" = "true" ]; then
-				logger -t "OMR-QUOTA" "Set interface $OMR_QUOTA_INTERFACE down: $reason reached"
-				ifdown $OMR_QUOTA_INTERFACE
-			fi
+			for iface in $target_interfaces; do
+				iface_up="$(ifstatus "$iface" | jsonfilter -e '@.up')"
+				if [ "$iface_up" = "true" ]; then
+					logger -t "OMR-QUOTA" "Set interface $iface down: $reason reached"
+					ifdown $iface
+				fi
+			done
 		fi
 	else
 		# Quota not exceeded — remove any throttle that was active
 		if [ -f "$_tstate_file" ]; then
-			logger -t "OMR-QUOTA" "Removing throttle from $OMR_QUOTA_INTERFACE"
-			_remove_throttle "$OMR_QUOTA_REAL_INTERFACE"
+			logger -t "OMR-QUOTA" "Removing throttle from $target_interfaces"
+			for iface in $target_interfaces; do
+				real_iface="$(_get_real_interface "$iface")"
+				[ -n "$real_iface" ] && _remove_throttle "$real_iface"
+			done
 			rm -f "$_tstate_file"
 		fi
-		if [ "$iface_up" = "false" ]; then
-			logger -t "OMR-QUOTA" "Set interface $OMR_QUOTA_INTERFACE up"
-			ifup $OMR_QUOTA_INTERFACE
-		fi
+		for iface in $target_interfaces; do
+			iface_up="$(ifstatus "$iface" | jsonfilter -e '@.up')"
+			if [ "$iface_up" = "false" ]; then
+				logger -t "OMR-QUOTA" "Set interface $iface up"
+				ifup $iface
+			fi
+		done
 		_unblock_lan
 	fi
 
