@@ -622,7 +622,7 @@ parse_tsping()
 				printf "SET_PROC_PID proc_pids %s %s\n" "${parse_id}_preprocessor" "${parse_preprocessor_pid}" >&"${main_fd}"
 				# accommodate present tsping interval/sleep handling to prevent ping flood with only one pinger
 				tsping_sleep_time=$(( no_pingers == 1 ? ping_response_interval_ms : 0 ))
-				${ping_prefix_string} tsping ${ping_extra_args} --print-timestamps --machine-readable=, --sleep-time "${tsping_sleep_time}" --target-spacing "${ping_response_interval_ms}" "${reflectors[@]:0:${no_pingers}}" 2>/dev/null >&"${parse_preprocessor_fd}" &
+					${ping_prefix_string} tsping ${ping_extra_args} --print-timestamps --machine-readable=, --sleep-time "${tsping_sleep_time}" --target-spacing "${ping_response_interval_ms}" "${reflectors[@]:0:${no_pingers}}" 1>&"${parse_preprocessor_fd}" 2>/dev/null &
 				pinger_pid="${!}"
 				printf "SET_PROC_PID proc_pids %s %s\n" "${parse_id}_pinger" "${pinger_pid}" >&"${main_fd}"
 				continue
@@ -792,7 +792,7 @@ parse_fping()
 				exec {parse_preprocessor_fd}> >(parse_preprocessor)
 				parse_preprocessor_pid="${!}"
 				printf "SET_PROC_PID proc_pids %s %s\n" "${parse_id}_preprocessor" "${parse_preprocessor_pid}" >&"${main_fd}"
-				${ping_prefix_string} fping ${ping_extra_args} --timestamp --loop --period "${reflector_ping_interval_ms}" --interval "${ping_response_interval_ms}" --timeout 10000 "${reflectors[@]:0:${no_pingers}}" 2> /dev/null >&"${parse_preprocessor_fd}" &
+					${ping_prefix_string} fping ${ping_extra_args} --timestamp --loop --period "${reflector_ping_interval_ms}" --interval "${ping_response_interval_ms}" --timeout 10000 "${reflectors[@]:0:${no_pingers}}" 1>&"${parse_preprocessor_fd}" 2>/dev/null &
 				pinger_pid="${!}"
 				printf "SET_PROC_PID proc_pids %s %s\n" "${parse_id}_pinger" "${pinger_pid}" >&"${main_fd}"
 				continue
@@ -937,7 +937,7 @@ parse_ping()
 				exec {parse_preprocessor_fd}> >(parse_preprocessor)
 				parse_preprocessor_pid="${!}"
 				printf "SET_PROC_PID %s %s\n" "proc_pids ${parse_id}_preprocessor" "${parse_preprocessor_pid}" >&"${main_fd}"
-				${ping_prefix_string} ping ${ping_extra_args} -D -i "${reflector_ping_interval_s}" "${reflector}" 2> /dev/null >&"${parse_preprocessor_fd}" &
+					${ping_prefix_string} ping ${ping_extra_args} -D -i "${reflector_ping_interval_s}" "${reflector}" 1>&"${parse_preprocessor_fd}" 2>/dev/null &
 				pinger_pid="${!}"
 				printf "SET_PROC_PID proc_pids %s %s\n" "${parse_id}_pinger" "${pinger_pid}" >&"${main_fd}"
 				continue
