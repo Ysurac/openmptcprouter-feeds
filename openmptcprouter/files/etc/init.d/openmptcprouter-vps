@@ -1198,8 +1198,8 @@ _get_vxlan() {
 				# working. Unwind rather than strand the router.
 				sleep 2
 				vxlan_bridge_status="$(ubus call network.interface.${vxlan_bridge_if} status 2>/dev/null)"
-				if [ "$(echo "$vxlan_bridge_status" | jsonfilter -q -e '@.up')" != "true" ] || \
-				   [ -z "$(echo "$vxlan_bridge_status" | jsonfilter -q -e '@["ipv4-address"][0].address')" ]; then
+				if [ -n "$vxlan_bridge_status" ] && { [ "$(echo "$vxlan_bridge_status" | jsonfilter -q -e '@.up')" != "true" ] || \
+				   [ -z "$(echo "$vxlan_bridge_status" | jsonfilter -q -e '@["ipv4-address"][0].address')" ]; }; then
 					logger -t "OMR-VPS" "VXLAN L2 bridge on ${vxlan_bridge_if} did not come up cleanly -- rolling back to avoid stranding the router"
 					_vxlan_leave_lan_bridge
 					uci -q commit network
@@ -2012,7 +2012,7 @@ _set_openvpn_server() {
 
 
 _set_config_from_vps() {
-	local shadowsocks_disabled vpn glorytun_state redirect shorewall_redirect mlvpn_key openvpn_key dsvpn_key mqvpn_key mqvpn_port mqvpn_user mqvpn_cc mqvpn_scheduler mqvpn_fec_enable_raw mqvpn_fec_enable mqvpn_fec_scheme mqvpn_reinjection_control_raw mqvpn_reinjection_control mqvpn_reinjection_mode mqvpn_reorder_enabled_raw mqvpn_reorder_enabled mqvpn_reorder_max_wait_ms mqvpn_reorder_cap_packets mqvpn_reorder_rules_json mqvpn_rule_idx mqvpn_rule_proto mqvpn_rule_port mqvpn_rule_profile
+	local shadowsocks_disabled vpn glorytun_state redirect shorewall_redirect mlvpn_key openvpn_key dsvpn_key mqvpn_key mqvpn_port mqvpn_user mqvpn_cc mqvpn_scheduler mqvpn_fec_enable_raw mqvpn_fec_enable mqvpn_fec_scheme mqvpn_reinjection_control_raw mqvpn_reinjection_control mqvpn_reinjection_mode mqvpn_reorder_enabled_raw mqvpn_reorder_enabled mqvpn_reorder_max_wait_ms mqvpn_reorder_cap_packets mqvpn_reorder_rules_json mqvpn_rule_idx mqvpn_rule_proto mqvpn_rule_port mqvpn_rule_profile proxy_before
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 
@@ -2063,6 +2063,7 @@ _set_config_from_vps() {
 	# Set current Proxy
 	current_proxy="$(uci -q get openmptcprouter.settings.proxy)"
 	if [ -z "$current_proxy" ] || ([ -n "$vps_lastchange" ] && [ "$vps_lastchange" -gt "$lastchange" ]) || [ "$user_permission" = "ro" ]; then
+		proxy_before="$current_proxy"
 		current_proxy="$(echo "$vps_config" | jsonfilter -q -e '@.proxy.current')"
 		if [ -n "$current_proxy" ]; then
 			uci -q batch <<-EOF >/dev/null
@@ -2135,6 +2136,13 @@ _set_config_from_vps() {
 					commit openmptcprouter
 				EOF
 			fi
+			# omr-tracker only reconciles which per-proxy watchdog instances
+			# are running when it (re)starts. Without this, switching the
+			# active proxy here (the VPS-poll path, as opposed to the local
+			# wizard Save & Apply path which already restarts omr-tracker)
+			# leaves the old proxy's tracker process orphaned, endlessly
+			# trying to restart a proxy that was intentionally disabled.
+			[ "$proxy_before" != "$current_proxy" ] && /etc/init.d/omr-tracker restart >/dev/null 2>&1
 		fi
 	fi
 
