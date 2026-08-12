@@ -223,7 +223,7 @@ return view.extend({
 		o.modalonly = true;
 
 		o = s.option(form.Flag, 'check_quality', _('Check link quality'),
-			_('Mark the interface down when latency or packet loss crosses the thresholds below.'));
+			_('Mark the interface down when latency, packet loss or congestion crosses the thresholds below.'));
 		o.depends('type', 'ping');
 		o.default = false;
 		o.modalonly = true;
@@ -276,6 +276,26 @@ return view.extend({
 		o.value('10');
 		o.value('20');
 		o.value('25');
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'failure_congestion', _('Failure congestion score'),
+			_('Congestion score (0-100, computed by omr-metrics from bufferbloat, loss, jitter and queue depth) above this value is treated as a failure. Leave empty to ignore congestion. Requires the omr-metrics package.'));
+		o.depends('check_quality', '1');
+		o.datatype = 'range(0, 100)';
+		o.value('60');
+		o.value('70');
+		o.value('80');
+		o.value('90');
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'recovery_congestion', _('Recovery congestion score'),
+			_('Congestion score must fall below this value before the interface is considered recovered. Leave empty to ignore congestion. Requires the omr-metrics package.'));
+		o.depends('check_quality', '1');
+		o.datatype = 'range(0, 100)';
+		o.value('40');
+		o.value('50');
+		o.value('60');
+		o.value('70');
 		o.modalonly = true;
 
 		o = s.option(form.Value, "timeout", _("Ping timeout"),
