@@ -832,21 +832,63 @@ _intf_rule_xray_rules() {
 	fi
 }
 
+# _bypass_intf_id <sanitized-device> -- returns a stable, small positive
+# integer identifying this WAN for firewall-mark/routing-table purposes
+# (the 0x539<id>/0x6539<id> mark suffix and PBR table id used throughout
+# this file).
+#
+# Deliberately NOT derived from network.<intf>.metric (the previous
+# scheme, still visible in git history): metric is a live routing-priority
+# knob the user/DHCP/wizard can change at any time for reasons unrelated
+# to bypass-mark identity, and unlike an id, was never guaranteed distinct
+# across WANs -- confirmed live (issue #3251, test 10q against the nft
+# sibling of this script, same root cause): two WANs both left at the
+# same/unset metric collapsed to the exact same mark, silently making
+# every dest-IP/MAC/port bypass rule targeting either WAN indistinguishable
+# from the other. Assigns and persists a fresh id (one past the highest
+# currently in use) the first time a device is seen, then reuses it on
+# every later reload; also self-heals a stale id inherited from the old
+# metric-keyed scheme if it turns out to collide with another device's id.
+_bypass_intf_id() {
+	local dev="$1"
+	local id
+	id="$(uci -q get omr-bypass.$dev.id)"
+	if [ -n "$id" ]; then
+		local pair other_dev other_id collision=""
+		for pair in $(uci show omr-bypass 2>/dev/null \
+				| sed -n "s/^omr-bypass\.\([^.]*\)\.id='\([0-9]*\)'\$/\1:\2/p"); do
+			other_dev="${pair%%:*}"
+			other_id="${pair##*:}"
+			if [ "$other_dev" != "$dev" ] && [ "$other_id" = "$id" ]; then
+				collision=1
+				break
+			fi
+		done
+		[ -z "$collision" ] && { echo "$id"; return; }
+	fi
+	local max=0 v
+	for v in $(uci show omr-bypass 2>/dev/null \
+			| sed -n "s/^omr-bypass\.[^.]*\.id='\([0-9]*\)'\$/\1/p"); do
+		[ "$v" -gt "$max" ] && max="$v"
+	done
+	id=$((max + 1))
+	uci -q set omr-bypass.$dev=interface
+	uci -q set omr-bypass.$dev.id="$id"
+	uci -q commit omr-bypass
+	echo "$id"
+}
 _intf_rule() {
 	local intf
 	intf=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
 	[ -n "$(echo $intf | grep '@')" ] && intf=$(ifstatus "$1" | jsonfilter -q -e '@["device"]')
 	[ -z "$intf" ] && config_get intf $1 device
 	[ -n "$(echo $intf | grep '/')" ] && return
-	#count=$((count+1))
-	config_get count $1 metric
-	local mode
-	#config_get mode $1 multipath "off"
-	#[ "$mode" = "off" ] && return
-	[ -z "$count" ] && return
 	[ -z "$intf" ] && return
 	intf=$(echo $intf | sed -e 's/\./_/')
 	[ "$(echo $1 | grep _dev)" != "" ] && return
+	local count
+	count=$(_bypass_intf_id "$intf")
+	[ -z "$count" ] && return
 	[ -z "$RELOAD" ] || [ "$(ipset --list | grep omr_dst_bypass_$intf)" = "" ] && {
 		unset RELOAD
 		ipset -q flush omr_dst_bypass_$intf > /dev/null 2>&1
@@ -896,8 +938,12 @@ _intf_rule() {
 		_intf_rule_xray_rules
 	fi
 
-	uci -q set omr-bypass.$intf=interface
-	uci -q set omr-bypass.$intf.id=$count
+	# omr-bypass.$intf.id itself is already owned and persisted by
+	# _bypass_intf_id() above -- re-deriving it from $count here would
+	# just be writing back the same value, but doing it unconditionally
+	# on every reload is exactly the pattern that let it silently drift
+	# when $count used to come from a mutable source (metric); leave it
+	# alone now that it's stable.
 }
 
 _bypass_ip_set() {

@@ -9,7 +9,24 @@ EXTRA_COMMANDS="reload_rules bypass_asn"
 
 # dnsmasq writes one nftset= line per UCI ipset entry; its config parser has a
 # ~1024-byte line buffer, so cap how many domains go into each entry.
-_BYPASS_MAX_DOMAINS_PER_DNSIPSET=30
+#
+# A flat domain-COUNT cap is not actually a safe proxy for that byte limit:
+# the generated line is "nftset=" + "/<domain>" per domain + a trailing
+# "/4#inet#fw4#<set4>,6#inet#fw4#<set6>" tag (plus any DSCP set names added
+# on top), so its real size depends on domain-name length and interface-name
+# length too, not just domain count. 30 domains of ~30-31 bytes each (a
+# perfectly ordinary length -- e.g. "d25xi40x97liuc.cloudfront.net" already
+# appears in this tree's own DSCP domain lists) lands EXACTLY at 1024 bytes,
+# i.e. right on top of the crash threshold with zero margin, not under it.
+# _BYPASS_MAX_DOMAINS_PER_DNSIPSET is kept only as a generous sanity backstop
+# against unbounded uci list growth; _dnsipset_should_split() below tracks
+# actual accumulated domain-name bytes per slot and is what actually decides
+# when to spill into a new omr_dst_bypass_<intf>_d<N> section.
+_BYPASS_MAX_DOMAINS_PER_DNSIPSET=200
+# Safety margin under the ~1024-byte line buffer: leaves headroom for the
+# "/4#inet#fw4#<set4>,6#inet#fw4#<set6>" tag (grows with interface-name
+# length) plus any extra DSCP set names appended to the same ipset entry.
+_BYPASS_MAX_DNSIPSET_LINE_BYTES=700
 
 # Still used by ndpi
 if [ -e /usr/sbin/iptables-nft ]; then
@@ -299,21 +316,32 @@ _bypass_domain() {
 		# Domains are spread across omr_dst_bypass_${intf}, omr_dst_bypass_${intf}_d1,
 		# _d2, ... so each generates a short enough nftset= line in dnsmasq.conf.
 		if [ -n "$intf" ]; then
-			local _dnsipset_slot _dnsipset_cnt _dnsipset_key
+			local _dnsipset_slot _dnsipset_cnt _dnsipset_bytes _dnsipset_key _dnsipset_add_bytes
 			eval "_dnsipset_slot=\${_dnsipset_slot_${intf}:-0}"
 			eval "_dnsipset_cnt=\${_dnsipset_cnt_${intf}:-0}"
+			eval "_dnsipset_bytes=\${_dnsipset_bytes_${intf}:-0}"
 			if [ "$_dnsipset_slot" = "0" ]; then
 				_dnsipset_key="omr_dst_bypass_${intf}"
 			else
 				_dnsipset_key="omr_dst_bypass_${intf}_d${_dnsipset_slot}"
 			fi
 			if ! uci -q get dhcp.${_dnsipset_key}.domain 2>/dev/null | grep -qw "$domain"; then
-				if [ "$_dnsipset_cnt" -ge "$_BYPASS_MAX_DOMAINS_PER_DNSIPSET" ]; then
+				# Each domain costs len(domain)+1 in the generated nftset= line
+				# (a leading "/" separator per entry) -- split into a new slot
+				# BEFORE this domain would push the line past the safety
+				# margin, not after (issue #3242's byte-buffer overrun, not a
+				# domain-count problem -- see the comment on
+				# _BYPASS_MAX_DNSIPSET_LINE_BYTES above).
+				_dnsipset_add_bytes=$((${#domain} + 1))
+				if [ "$_dnsipset_cnt" -ge "$_BYPASS_MAX_DOMAINS_PER_DNSIPSET" ] || \
+				   [ "$((_dnsipset_bytes + _dnsipset_add_bytes))" -gt "$_BYPASS_MAX_DNSIPSET_LINE_BYTES" ]; then
 					_dnsipset_slot=$((_dnsipset_slot + 1))
 					_dnsipset_key="omr_dst_bypass_${intf}_d${_dnsipset_slot}"
 					eval "_dnsipset_slot_${intf}=${_dnsipset_slot}"
 					eval "_dnsipset_cnt_${intf}=0"
+					eval "_dnsipset_bytes_${intf}=0"
 					_dnsipset_cnt=0
+					_dnsipset_bytes=0
 					uci -q batch <<-EOIPSET
 						set dhcp.${_dnsipset_key}=ipset
 						set dhcp.${_dnsipset_key}.table='fw4'
@@ -324,6 +352,7 @@ _bypass_domain() {
 				fi
 				uci -q add_list dhcp.${_dnsipset_key}.domain="$domain"
 				eval "_dnsipset_cnt_${intf}=$((_dnsipset_cnt + 1))"
+				eval "_dnsipset_bytes_${intf}=$((_dnsipset_bytes + _dnsipset_add_bytes))"
 				uci -q set firewall.omr_dst_bypass_${intf}_4.enabled='1'
 				add_domains="true"
 			fi
@@ -1676,12 +1705,27 @@ boot() {
 }
 
 start_service() {
-	# Prevent concurrent/cascading invocations (procd triggers on firewall/network commits)
+	# Prevent concurrent/cascading invocations (procd triggers on firewall/network commits).
+	# This is serialization, not a "do nothing else is happening" check: reload_rules/start is
+	# also called directly (and often, not just via procd triggers) by other packages -- proxy
+	# init scripts on restart, omr-schedule, the interface-change rpcd hook -- so some other
+	# invocation holding the lock at any given moment is a routine, not exceptional, occurrence.
+	# A losing invocation used to give up immediately, silently dropping whatever config change
+	# (e.g. a newly added bypass entry) triggered it until some unrelated future trigger happened
+	# to run start_service again -- observed as an intermittent miss of freshly added entries
+	# (issue #4340). Retry for a bounded window (a normal run finishes in a few seconds, see the
+	# hash-gate above) so a losing invocation waits for the winner instead of no-op'ing; still
+	# degrades to the old skip-and-log behavior if the lock never frees (e.g. a killed holder).
 	local _lock="/var/run/omr-bypass.lock"
-	if ! mkdir "$_lock" 2>/dev/null; then
-		logger -t "omr-bypass" "Another instance running, skipping concurrent call"
-		return
-	fi
+	local _lock_wait=0
+	while ! mkdir "$_lock" 2>/dev/null; do
+		_lock_wait=$((_lock_wait + 1))
+		if [ "$_lock_wait" -ge 15 ]; then
+			logger -t "omr-bypass" "Another instance still running after ${_lock_wait}s, skipping concurrent call"
+			return
+		fi
+		sleep 1
+	done
 	trap "rmdir '$_lock' 2>/dev/null" EXIT HUP INT TERM
 
 	#local count

@@ -7,8 +7,12 @@
 # classified by nDPId is bypassed according to omr-bypass protocol rules.
 #
 # Usage: ndpid-consumer <proto_list>
-#   proto_list: space-separated entries of the form  proto:intf:intfid
-#               as written by _bypass_proto_collect_ndpid in omr-bypass-nft.
+#   proto_list: space-separated entries of the form  proto:intf:intfid:dscp
+#               as written by _bypass_ndpid_collect_proto in omr-bypass-nft.
+#               intf and dscp are independent and either may be empty: intf
+#               drives the routing-bypass fwmark set, dscp drives the
+#               omr_dscp_<class> ipset -- a rule can populate one, the
+#               other, or both from the same detected flow.
 
 PIDFILE="/var/run/omr-bypass-ndpid.pid"
 SOCK="/var/run/ndpid/distributor.sock"
@@ -63,23 +67,29 @@ while true; do
 		for entry in $proto_list; do
 			bp=$(echo "$entry" | cut -d: -f1)
 			intf=$(echo "$entry" | cut -d: -f2)
+			dscp=$(echo "$entry" | cut -d: -f4)
 			bp_lower=$(echo "$bp" | tr '[:upper:]' '[:lower:]')
 			if [ "$bp_lower" = "$app" ] || [ "$bp_lower" = "$base" ] || \
 			   echo "$proto_str" | grep -qi "^${bp}$" || \
 			   echo "$proto_str" | grep -qi "\.${bp}$" || \
 			   echo "$proto_str" | grep -qi "^${bp}\."; then
+				# Routing-bypass fwmark and DSCP marking are independent --
+				# a rule can have an interface, a dscp class, or both (same
+				# convention as _bypass_asn/_dscp_ip for the static lists).
 				if [ "$is_v6" = "1" ]; then
 					if [ "$intf" = "all" ]; then
 						nft add element inet fw4 bypass6_${bp} { "$dst_ip" } 2>/dev/null
-					else
+					elif [ -n "$intf" ]; then
 						nft add element inet fw4 omr_dst_bypass_${intf}_6 { "$dst_ip" } 2>/dev/null
 					fi
+					[ -n "$dscp" ] && nft add element inet fw4 omr_dscp_${dscp}_6 { "$dst_ip" } 2>/dev/null
 				else
 					if [ "$intf" = "all" ]; then
 						nft add element inet fw4 bypass_${bp} { "$dst_ip" } 2>/dev/null
-					else
+					elif [ -n "$intf" ]; then
 						nft add element inet fw4 omr_dst_bypass_${intf}_4 { "$dst_ip" } 2>/dev/null
 					fi
+					[ -n "$dscp" ] && nft add element inet fw4 omr_dscp_${dscp}_4 { "$dst_ip" } 2>/dev/null
 				fi
 			fi
 		done
