@@ -97,7 +97,7 @@ MY_DEPENDS := \
     (TARGET_x86||TARGET_x86_64):kmod-r8169 \
     !(TARGET_mt7623||TARGET_ipq806x):luci-app-smartdns logd TARGET_x86_64:kmod-i40e \
     omr-banudpip luci-app-upnp kmod-inet-diag (TARGET_x86||TARGET_x86_64):luci-app-bpftune LINUX_6_18:kmod-ovpn luci-app-mqvpn luci-app-omr-metrics luci-app-irqbalance mptcp-bpf-weight mptcp-weight-manager \
-    mptcp-bpf-weight-rr mptcp-bpf-dscp mptcp-dscp-manager (TARGET_x86||TARGET_x86_64):luci-app-ndpid
+    mptcp-bpf-weight-rr mptcp-bpf-dscp mptcp-dscp-manager (TARGET_x86||TARGET_x86_64):luci-app-ndpid luci-app-omr-events
 
 # kmod-ovpn-dco-v2
 # kmod-swconfig swconfig
