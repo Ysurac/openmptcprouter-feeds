@@ -1,0 +1,80 @@
+mptcp-bpf-weight for Debian (server/VPS side)
+===============================================
+
+This is the server/VPS counterpart of the router's OpenWrt
+mptcp-bpf-weight and mptcp-weight-manager packages built by the same
+openmptcprouter-feeds source tree (see that repo's ARCHITECTURE.md for
+the router-vs-VPS split, and mptcp-bpf-dscp's identical README for the
+analogous DSCP-scheduler split this one mirrors).
+
+On the router, each WAN has its own local IP, so weights are set per WAN
+via that IP (endpoint_weights map). On this VPS, every subflow arrives
+on the same local IP, so weight by MPTCP remote endpoint id instead
+(weight_remote_id map, shared with mptcp-bpf-weight-rr):
+
+    mptcp-scheduler-weight.sh set id <N> <weight>
+
+<N> is the MPTCP endpoint id the router assigned to the WAN that should
+carry that weight. On the router that id is network.<iface>.ip4table,
+kept stable across reconnects (DHCP renewal, mobile reconnects) once the
+router's mptcp/multipath script passes it explicitly to
+'ip mptcp endpoint add ... id <N>' instead of letting the kernel
+auto-assign one. Look it up on the router with:
+
+    uci get network.<iface>.ip4table
+
+The router's openmptcprouter-vps init script syncs this automatically:
+whenever network.<iface>.multipath_weight changes, its
+040-multipath-weight tracker hook calls set_mptcp_weight_vps, which
+POSTs the current weights to this VPS's /mptcp_weight API route (see
+omradmin.py) -- no manual copying needed, mirroring how DSCP's
+dscp_remote_id sync works via /mptcp_dscp.
+
+    mptcp-scheduler-weight.sh show
+
+lists every currently configured weight, both by interface/IP and by
+remote id.
+
+Which scheduler
+----------------
+
+bpf_weight always sends on the single highest-weight active subflow
+(only one WAN carries traffic for a given weight tier at a time). For
+the weighted-round-robin alternative that instead distributes send
+bursts across ALL active subflows proportionally to weight (every
+active WAN still carries some traffic, just not equally), install
+mptcp-bpf-weight-rr - a separate source/binary package, see its own
+debian/README.Debian. Install whichever matches the router's
+network.globals.mptcp_scheduler setting; installing both is harmless,
+but only enable (systemctl enable) the one matching that setting, since
+both ultimately write the same net.mptcp.scheduler sysctl. Either way,
+this package's mptcp-weight-manager is what configures weights - it
+works against both schedulers' shared BPF maps.
+
+Service
+-------
+
+mptcp-bpf-weight.service loads /usr/share/bpf/scheduler/mptcp_bpf_weight.o,
+pins it (and its maps) under /sys/fs/bpf/mptcp, and sets it as
+net.mptcp.scheduler at boot. This changes the *system-wide* default
+MPTCP scheduler on this host - only install/enable this (or
+mptcp-bpf-weight-rr, not both) on a VPS dedicated to terminating
+OpenMPTCProuter multipath connections.
+
+After building/installing a new .o (e.g. after editing the scheduler),
+run:
+
+    systemctl restart mptcp-bpf-weight
+
+Stopping the service switches net.mptcp.scheduler back to "default"
+before unpinning, so it doesn't leave the sysctl pointed at a scheduler
+name the kernel no longer has registered.
+
+Requirements
+------------
+
+A kernel with MPTCP struct_ops scheduler support (BPF_STRUCT_OPS for
+mptcp_sched_ops), CONFIG_BPF, CONFIG_DEBUG_INFO_BTF and CONFIG_MPTCP
+enabled. This is a fairly recent kernel feature - check
+'bpftool struct_ops register' actually succeeds if the service fails to
+start (see 'systemctl status mptcp-bpf-weight').

@@ -1,0 +1,49 @@
+Source: mptcp-bpf-weight
+Section: net
+Priority: optional
+Maintainer: Yannick Chabanois <contact@openmptcprouter.com>
+Build-Depends: debhelper-compat (= 13), clang, llvm, libbpf-dev, linux-libc-dev
+Standards-Version: 4.6.2
+Homepage: https://www.openmptcprouter.com
+Rules-Requires-Root: no
+
+Package: mptcp-bpf-weight
+Architecture: any
+# No ${shlibs:Depends}: the installed artifact is a BPF-target ELF object
+# loaded by bpftool/the kernel, not a dynamically-linked host executable -
+# see mptcp-bpf-dscp's identical note.
+Depends: ${misc:Depends}, bpftool, procps
+Description: MPTCP BPF single-winner weighted scheduler (server/VPS side)
+ BPF struct_ops MPTCP scheduler that always sends on the single
+ highest-weight active subflow, weighted either by local endpoint IP
+ (router-side, see the OpenWrt mptcp-bpf-weight package in
+ openmptcprouter-feeds) or by MPTCP remote endpoint id (server/VPS-side:
+ every subflow here shares the same local IP, so weights key on the
+ address id the router assigned to the originating WAN instead).
+ .
+ This is the Debian/server counterpart of that OpenWrt package: same BPF
+ program, packaged to run on the VPS half of an OpenMPTCProuter multipath
+ link. Ships a systemd unit that loads and pins the scheduler at boot and
+ sets it as net.mptcp.scheduler. Install mptcp-weight-manager to actually
+ configure weights.
+
+Package: mptcp-weight-manager
+Architecture: all
+# mptcp-bpf-weight-rr is now its own source package (see that package's
+# debian/ directory) - version-pinning against it here isn't possible
+# across source packages, so only the mptcp-bpf-weight alternative is
+# pinned to this source's version.
+Depends: ${misc:Depends}, bpftool, mptcp-bpf-weight (= ${source:Version}) | mptcp-bpf-weight-rr
+Description: CLI to manage the mptcp-bpf-weight(-rr) schedulers' weights
+ mptcp-scheduler-weight.sh: show/set/del per-endpoint weights in the
+ mptcp-bpf-weight/mptcp-bpf-weight-rr schedulers' shared BPF maps (both
+ schedulers use the same endpoint_weights/weight_remote_id maps, so one
+ manager script serves either - mptcp-bpf-weight-rr is packaged
+ separately, see its own source package).
+ .
+ On this (server/VPS) package, use 'mptcp-scheduler-weight.sh set id <N>
+ <weight>' where <N> is the MPTCP endpoint id the router assigned to the
+ WAN that should carry that weight (network.<iface>.ip4table on the
+ router, kept stable across reconnects). The router-side 'set <interface>
+ <weight>' form also works here but is normally useless on a VPS with a
+ single local IP.

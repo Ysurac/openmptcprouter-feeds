@@ -24,6 +24,20 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && \
 		fi
 		[ -n "$(uci -q changes network)" ] && uci -q commit network
 	fi
+	# Keep the VPS's own weight_remote_id map in sync so the weighting
+	# also holds for traffic the VPS sends (downloads) -- see
+	# openmptcprouter-vps's _set_mptcp_weight_vps for details.
+	# Backgrounded and called unconditionally (not gated on the local
+	# "did it change" check above): the function's own cache makes
+	# repeat, no-op calls cheap, and this also catches the case where
+	# only ip4table (the id) changed, not multipath_weight itself.
+	# network.globals.mptcp_dscp_weight_vps_sync: unset/anything but "0"
+	# means enabled (same shared toggle as 041-multipath-dscp) -- explicit
+	# opt-out for anyone who doesn't want this HTTPS round trip / VPS-side
+	# state at all.
+	if [ "$(uci -q get network.globals.mptcp_dscp_weight_vps_sync)" != "0" ]; then
+		( /etc/init.d/openmptcprouter-vps set_mptcp_weight_vps >/dev/null 2>&1 & )
+	fi
 fi
 
 exit 0

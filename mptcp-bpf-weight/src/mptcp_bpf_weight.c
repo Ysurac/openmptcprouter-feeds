@@ -38,6 +38,21 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } endpoint_weights SEC(".maps");
 
+/* Server/VPS-side counterpart of endpoint_weights: every subflow shares
+ * the same local IP there, so a local-IP-keyed weight can't distinguish
+ * WANs. Keys on the MPTCP remote endpoint id instead (the address id the
+ * router assigned to the originating WAN, stable across the router's WAN
+ * IP changing) -- same map shape/purpose as mptcp_bpf_dscp's
+ * dscp_remote_id, set via mptcp-scheduler-weight.sh set id <N> <weight>.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__type(key, __u8);    /* subflow->remote_id */
+	__type(value, __u32); /* weight, same semantics as endpoint_weights */
+	__uint(max_entries, 64);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} weight_remote_id SEC(".maps");
+
 static __always_inline __u64 div_u64(__u64 dividend, __u32 divisor)
 {
 	return dividend / divisor;
@@ -102,6 +117,23 @@ int BPF_PROG(bpf_weight_get_send, struct mptcp_sock *msk)
 		local_ip = ssk->__sk_common.skc_rcv_saddr;
 		weight = 100; /* neutral default */
 		w_ptr = bpf_map_lookup_elem(&endpoint_weights, &local_ip);
+		if (!w_ptr) {
+			__u8 remote_id = subflow->remote_id;
+
+			/* endpoint_weights (local-IP-keyed) found nothing --
+			 * fall back to remote_id keying. On the router this
+			 * is a harmless no-op: subflow->remote_id there
+			 * identifies the peer's (VPS's) address, which is
+			 * the same single id for every WAN, so it's never a
+			 * useful key on that side. On the VPS, where every
+			 * subflow's local IP is identical (so
+			 * endpoint_weights always misses), remote_id is the
+			 * id the router assigned to the WAN that opened this
+			 * subflow -- the only thing that DOES distinguish
+			 * WANs there.
+			 */
+			w_ptr = bpf_map_lookup_elem(&weight_remote_id, &remote_id);
+		}
 		if (w_ptr && *w_ptr > 0)
 			weight = *w_ptr;
 
