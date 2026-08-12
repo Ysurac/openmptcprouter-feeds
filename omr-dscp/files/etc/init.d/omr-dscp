@@ -33,6 +33,36 @@ _ipt6() {
 	$IP6TABLES -w -t mangle "$@" 2>&1 >/dev/null
 }
 
+# See the identical helper in omr-dscp-nft's init script for the full
+# rationale/UCI-path references -- shared config schema
+# (files/etc/config/dscp's "OMR proxy" rule uses 'auto_dest_port proxy'
+# instead of a static, easily-stale dest_port), so this variant needs the
+# same resolution or that rule would silently fall back to
+# config_get's 0:65535 default and mark ALL tcp traffic instead of none.
+_resolve_auto_dest_port() {
+	case "$1" in
+		proxy)
+			proxy="$(uci -q get openmptcprouter.settings.proxy)"
+			case "$proxy" in
+				shadowsocks)
+					uci -q get shadowsocks-libev.sss0.server_port
+					;;
+				shadowsocks-rust)
+					uci -q get shadowsocks-rust.sss0.server_port
+					;;
+				*v2ray*)
+					v2ray_protocol="$(uci -q get v2ray.omrout.protocol)"
+					[ -n "$v2ray_protocol" ] && uci -q get v2ray.omrout.s_${v2ray_protocol}_port
+					;;
+				*xray*)
+					xray_protocol="$(uci -q get xray.omrout.protocol)"
+					[ -n "$xray_protocol" ] && uci -q get xray.omrout.s_${xray_protocol}_port
+					;;
+			esac
+			;;
+	esac
+}
+
 _add_dscp_rule() {
 	_ipt4 -A dscp_prerouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j DSCP --set-dscp-class "$class"
 	_ipt4 -A dscp_prerouting -p "$proto" -s "$src_ip" -d "$dest_ip" "$@" -m comment --comment "$comment" -j RETURN
@@ -85,9 +115,18 @@ _add_dscp_rules() {
 	src_port=""  ; config_get src_port "$1" src_port 0:65535
 	dest_ip=""   ; config_get dest_ip "$1" dest_ip 0.0.0.0/0
 	dest_port="" ; config_get dest_port "$1" dest_port 0:65535
+	auto_dest_port=""; config_get auto_dest_port "$1" auto_dest_port ""
 	class=""     ; config_get class "$1" class
 	direction="" ; config_get direction "$1" direction "upload"
 	comment=""   ; config_get comment "$1" comment "-"
+
+	if [ -n "$auto_dest_port" ]; then
+		dest_port="$(_resolve_auto_dest_port "$auto_dest_port")"
+		# Nothing currently matches (e.g. 'proxy' but no proxy active) --
+		# skip rather than falling back to 0:65535 (which would mark
+		# ALL tcp traffic instead of none).
+		[ -z "$dest_port" ] && return
+	fi
 
 	src_port="$(echo $src_port | sed 's/-/:/g')"
 	dest_port="$(echo $dest_port | sed 's/-/:/g')"
@@ -247,4 +286,8 @@ reload_service() {
 
 service_triggers() {
 	procd_add_reload_trigger dscp glorytun
+	# See the identical trigger in omr-dscp-nft's init script: reapply
+	# rules (regenerating any 'auto_dest_port' resolution) whenever the
+	# active proxy or its port actually changes.
+	procd_add_reload_trigger openmptcprouter shadowsocks-rust shadowsocks-libev v2ray xray
 }

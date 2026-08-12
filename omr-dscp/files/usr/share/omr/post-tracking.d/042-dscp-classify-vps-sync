@@ -1,0 +1,30 @@
+#
+# Copyright (C) 2026 Yannick Chabanois for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+# Sync the router's live omr-dscp/omr-dscp-nft classification (which
+# destination IPs are currently resolved into which DSCP class) into the
+# VPS's own ipset+mangle rules, so the VPS's outbound traffic to those same
+# destinations gets marked with the same DSCP -- see
+# openmptcprouter-vps's _set_dscp_classify_vps for details.
+#
+# Unlike 041-multipath-dscp/040-multipath-weight this isn't gated on
+# $OMR_TRACKER_INTERFACE: the classification table is global, not per-WAN,
+# so it's fine (and intentional) for every WAN's tracker process to call
+# this every cycle -- _set_dscp_classify_vps's own timestamp-file throttle
+# (DSCP_CLASSIFY_MIN_INTERVAL, default 300s) is what actually bounds real
+# work/round-trips, shared across all callers.
+#
+# Backgrounded like the other two VPS syncs: this enumerates several
+# ipset/nft sets and does an HTTPS round trip, and must not stall the
+# post-tracking cascade for other interfaces.
+# Only one of the two omr-dscp/omr-dscp-nft package variants is ever
+# installed, and its init script always lands at /etc/init.d/omr-dscp
+# regardless of which (see omr-dscp/Makefile's install rules).
+[ -x /etc/init.d/omr-dscp ] || exit 0
+
+( /etc/init.d/openmptcprouter-vps set_dscp_classify_vps >/dev/null 2>&1 & )
+
+exit 0

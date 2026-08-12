@@ -18,6 +18,42 @@ config_get lan_device lan ifname
 
 #config_load dscp
 
+# Resolves the actually-active proxy's real VPS-facing port, for classify
+# rules using 'option auto_dest_port' instead of a static 'dest_port' --
+# see the "OMR proxy" rule in files/etc/config/dscp for why a hardcoded
+# port silently stops matching the moment a different proxy/port is
+# configured. No shared helper for this existed anywhere else in the
+# codebase (checked omr-bypass, omr-tracker, openmptcprouter-vps) -- each
+# proxy type's UCI section/option naming is confirmed from the actual
+# config generators, not just uci-defaults:
+#   shadowsocks (libev):  shadowsocks-libev.sss0.server_port
+#   shadowsocks-rust:     shadowsocks-rust.sss0.server_port
+#   v2ray:                v2ray.omrout.s_<protocol>_port, protocol from v2ray.omrout.protocol
+#   xray:                 xray.omrout.s_<protocol>_port, protocol from xray.omrout.protocol
+_resolve_auto_dest_port() {
+	case "$1" in
+		proxy)
+			proxy="$(uci -q get openmptcprouter.settings.proxy)"
+			case "$proxy" in
+				shadowsocks)
+					uci -q get shadowsocks-libev.sss0.server_port
+					;;
+				shadowsocks-rust)
+					uci -q get shadowsocks-rust.sss0.server_port
+					;;
+				*v2ray*)
+					v2ray_protocol="$(uci -q get v2ray.omrout.protocol)"
+					[ -n "$v2ray_protocol" ] && uci -q get v2ray.omrout.s_${v2ray_protocol}_port
+					;;
+				*xray*)
+					xray_protocol="$(uci -q get xray.omrout.protocol)"
+					[ -n "$xray_protocol" ] && uci -q get xray.omrout.s_${xray_protocol}_port
+					;;
+			esac
+			;;
+	esac
+}
+
 _add_dscp_domain() {
 	domain=""; config_get domain "$1" name ""
 	class=""; config_get class "$1" class ""
@@ -91,15 +127,71 @@ _add_dscp_domains_rules() {
 	done
 }
 
+# Writes one firewall 'DSCP' rule section from the caller's current
+# $class/$proto/$src_ip/$dest_ip/$src_port/$dest_port. $2 is the src zone
+# to use, or EMPTY to omit the src option entirely (not set it to "",
+# which is a different thing to fw4 -- see the "both" case below for why
+# that distinction matters). $3 is the dest zone.
+_apply_dscp_rule_fields() {
+	rulename="$1"
+	rsrc="$2"
+	rdst="$3"
+	uci -q batch <<-EOF
+		set firewall.${rulename}=rule
+		set firewall.${rulename}.name="${rulename}"
+		set firewall.${rulename}.target="DSCP"
+		set firewall.${rulename}.set_dscp="$(echo ${class} | tr '[a-z'] '[A-Z]')"
+		set firewall.${rulename}.dest="$rdst"
+		set firewall.${rulename}.src_ip="$src_ip"
+		set firewall.${rulename}.dest_ip="$dest_ip"
+		set firewall.${rulename}.proto="$proto"
+		set firewall.${rulename}.enabled='1'
+	EOF
+	if [ -n "$rsrc" ]; then
+		uci -q set firewall.${rulename}.src="$rsrc"
+	else
+		# Must be genuinely absent, not set to "" -- fw4 only emits an
+		# OUTPUT-hook (mangle_output) nftables rule, matching the
+		# router's OWN locally-generated traffic, when the section has
+		# no src option at all. Confirmed live on the bench.
+		uci -q delete firewall.${rulename}.src 2>/dev/null
+	fi
+	if [ "$(uci -q get openmptcprouter.settings.debug)" = "true" ]; then
+		uci -q set firewall.${rulename}.counter='1'
+	else
+		uci -q set firewall.${rulename}.counter='0'
+	fi
+	rule_src_ports="$(echo $src_port | sed 's/,/ /g')"
+	rule_dest_ports="$(echo $dest_port | sed 's/,/ /g')"
+	for port in $rule_src_ports; do
+		uci -q add_list firewall.${rulename}.src_port="$port"
+	done
+	for port in $rule_dest_ports; do
+		uci -q add_list firewall.${rulename}.dest_port="$port"
+	done
+}
+
 _add_dscp_rules() {
 	proto=""     ; config_get proto "$1" proto all
 	src_ip=""    ; config_get src_ip "$1" src_ip 0.0.0.0/0
 	src_port=""  ; config_get src_port "$1" src_port 0:65535
 	dest_ip=""   ; config_get dest_ip "$1" dest_ip 0.0.0.0/0
 	dest_port="" ; config_get dest_port "$1" dest_port 0:65535
+	auto_dest_port=""; config_get auto_dest_port "$1" auto_dest_port ""
 	class=""     ; config_get class "$1" class
 	direction="" ; config_get direction "$1" direction "upload"
 	comment=""   ; config_get comment "$1" comment "-"
+
+	if [ -n "$auto_dest_port" ]; then
+		dest_port="$(_resolve_auto_dest_port "$auto_dest_port")"
+		if [ -z "$dest_port" ]; then
+			# Nothing currently matches (e.g. 'proxy' but no proxy is
+			# active right now) -- skip this rule entirely rather than
+			# falling back to config_get's 0:65535 default, which would
+			# silently mark ALL tcp traffic instead of none.
+			return
+		fi
+	fi
 
 	src_port="$(echo $src_port | sed 's/:/-/g')"
 	dest_port="$(echo $dest_port | sed 's/:/-/g')"
@@ -107,6 +199,7 @@ _add_dscp_rules() {
 	[ "$proto" = "all" ] && proto="tcp udp"
 	src=""
 	dst=""
+	add_output_rule=0
 	case "$direction" in
 		upload)
 				src="lan"
@@ -115,38 +208,28 @@ _add_dscp_rules() {
 				dst="lan"
 			;;
 		both)
-				# to also use local generated traffic, maybe a local origin should be set...
 				src="*"
 				dst="*"
+				# "both" is also the direction every shipped
+				# router-tunnel rule uses ("OMR proxy"/"OMR vpn":
+				# marking the router's OWN outbound proxy/VPN
+				# connection, not LAN-forwarded traffic) -- but a
+				# plain src=*/dest=* rule only ever lands in
+				# fw4's mangle_forward chain (routed/forwarded
+				# traffic), which never sees packets the router
+				# itself originates. Confirmed live: a proxy's
+				# own outbound tunnel connection showed tos 0x0
+				# on the wire despite this exact rule existing
+				# and being correctly compiled into
+				# mangle_forward, and only started carrying the
+				# configured DSCP class once the companion
+				# mangle_output rule below was added alongside
+				# it.
+				add_output_rule=1
 			;;
 	esac
-	# Apply the rule locally
-	uci -q batch <<-EOF
-		set firewall.omr_dscp_rule$count=rule
-		set firewall.omr_dscp_rule$count.name="omr_dscp_rule$count"
-		set firewall.omr_dscp_rule$count.target="DSCP"
-		set firewall.omr_dscp_rule$count.set_dscp="$(echo ${class} | tr '[a-z'] '[A-Z]')"
-		set firewall.omr_dscp_rule$count.src="$src"
-		set firewall.omr_dscp_rule$count.dest="$dst"
-		set firewall.omr_dscp_rule$count.src_ip="$src_ip"
-		set firewall.omr_dscp_rule$count.dest_ip="$dest_ip"
-		set firewall.omr_dscp_rule$count.proto="$proto"
-		set firewall.omr_dscp_rule$count.enabled='1'
-	EOF
-	if [ "$(uci -q get openmptcprouter.settings.debug)" = "true" ]; then
-		uci -q set firewall.omr_dscp_rule$count.counter='1'
-	else
-		uci -q set firewall.omr_dscp_rule$count.counter='0'
-	fi
-	src_port="$(echo $src_port | sed 's/,/ /g')"
-	dest_port="$(echo $dest_port | sed 's/,/ /g')"
-	for port in $src_port; do
-		uci -q add_list firewall.omr_dscp_rule$count.src_port="$port"
-	done
-	for port in $dest_port; do
-		uci -q add_list firewall.omr_dscp_rule$count.dest_port="$port"
-	done
-	#_add_dscp_rule -m multiport --sports "$src_port" -m multiport --dports "$dest_port"
+	_apply_dscp_rule_fields "omr_dscp_rule$count" "$src" "$dst"
+	[ "$add_output_rule" = "1" ] && _apply_dscp_rule_fields "omr_dscp_rule${count}_output" "" "wan"
 	uci -q commit firewall
 
 }
@@ -239,4 +322,11 @@ reload_service() {
 
 service_triggers() {
 	procd_add_reload_trigger dscp
+	# Reapply rules (regenerating any 'auto_dest_port' resolution, e.g.
+	# the "OMR proxy" rule) whenever the active proxy or its port
+	# actually changes -- these configs only get committed on an actual
+	# proxy switch/reconfigure (see openmptcprouter-vps's proxy-switch
+	# and port-push paths), so this fires proportionally rarely rather
+	# than polling every tracker cycle.
+	procd_add_reload_trigger openmptcprouter shadowsocks-rust shadowsocks-libev v2ray xray
 }
