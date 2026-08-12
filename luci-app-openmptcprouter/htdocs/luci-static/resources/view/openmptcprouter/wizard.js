@@ -210,11 +210,11 @@ return view.extend({
 			fileExists('/etc/init.d/openvpnbonding'),
 			fileExists('/etc/init.d/softethervpnclient'),
 			fileExists('/usr/bin/wg'),
-			callFileExec('/bin/sh', ['-c', '[ -x /usr/bin/apk ] && { apk list 2>/dev/null | grep installed | grep -q luci-app-sqm && echo -n 1 || echo -n 0; } || { opkg list-installed | grep -q luci-app-sqm && echo -n 1 || echo -n 0; }']),
-			callFileExec('/bin/sh', ['-c', '[ -x /usr/bin/apk ] && { apk list 2>/dev/null | grep installed | grep -q luci-app-qos && echo -n 1 || echo -n 0; } || { opkg list-installed | grep -q luci-app-qos && echo -n 1 || echo -n 0; }']),
+			callFileExec('/bin/sh', ['/usr/share/openmptcprouter/detect-pkg.sh', 'luci-app-sqm']),
+			callFileExec('/bin/sh', ['/usr/share/openmptcprouter/detect-pkg.sh', 'luci-app-qos']),
 			callFileExec('/bin/sh', ['-c', 'grep -q aes /proc/cpuinfo && echo -n 1 || echo -n 0']),
-			callFileExec('/bin/sh', ['-c', 'ls /dev/ttyUSB* 2>/dev/null || true']),
-			callFileExec('/bin/sh', ['-c', 'ls /dev/cdc-wdm* 2>/dev/null || true']),
+			callFileExec('/bin/sh', ['/usr/share/openmptcprouter/list-serial.sh', 'ttyUSB']),
+			callFileExec('/bin/sh', ['/usr/share/openmptcprouter/list-serial.sh', 'cdc-wdm']),
 			callFileExec('/bin/sh', ['-c', 'timeout 1 /usr/bin/mmcli -L 2>/dev/null || true']),
 		uci.load('mqvpn').catch(function(){}),
 		fileExists('/usr/sbin/mqvpn')
@@ -541,7 +541,16 @@ return view.extend({
 
 		// ── Proxy ──
 		o = s.taboption('proxy', form.ListValue, 'proxy', _('Default Proxy'));
-		o.rmempty = true;
+		/* rmempty must stay false here: LuCI's CBIValue.parse() calls remove()
+		 * instead of write() whenever the selected formvalue equals o.default
+		 * and rmempty (or optional) is true. Since o.default below is set to
+		 * 'shadowsocks-rust', picking "Shadowsocks-Rust 2022" used to unset
+		 * openmptcprouter.settings.proxy client-side instead of writing it;
+		 * wizardadd() then saw an empty default_proxy and silently kept the
+		 * previously saved proxy, so the selection appeared to revert after
+		 * Save & Apply (#4348). 'None' is already an explicit value below,
+		 * so this option never needs "unset" semantics. */
+		o.rmempty = false;
 		o.description = _('Proxy for TCP (and UDP for V2Ray/XRay).');
 		o.depends('_show_adv', '1');
 		var availProxy = L.toArray(uci.get('openmptcprouter', 'vps', 'available_proxy'));
