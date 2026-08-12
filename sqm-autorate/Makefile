@@ -16,7 +16,7 @@ include $(INCLUDE_DIR)/package.mk
 define Package/$(PKG_NAME)
 SECTION:=net
 CATEGORY:=Network
-DEPENDS:=+bash +tsping
+DEPENDS:=+bash +tsping +rpcd
 TITLE:=SQM Autorate
 endef
 
