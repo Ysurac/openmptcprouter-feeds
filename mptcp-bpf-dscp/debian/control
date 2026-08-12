@@ -1,0 +1,43 @@
+Source: mptcp-bpf-dscp
+Section: net
+Priority: optional
+Maintainer: Yannick Chabanois <contact@openmptcprouter.com>
+Build-Depends: debhelper-compat (= 13), clang, llvm, libbpf-dev, linux-libc-dev
+Standards-Version: 4.6.2
+Homepage: https://www.openmptcprouter.com
+Rules-Requires-Root: no
+
+Package: mptcp-bpf-dscp
+Architecture: any
+# No ${shlibs:Depends}: the installed artifact is a BPF-target ELF object
+# loaded by bpftool/the kernel, not a dynamically-linked host executable -
+# dh_shlibdeps has nothing to compute for it (verified: dpkg-gencontrol
+# warns "used but not defined" if it's left in).
+Depends: ${misc:Depends}, bpftool, procps
+Description: MPTCP BPF DSCP-aware scheduler (server/VPS side)
+ BPF struct_ops MPTCP scheduler that pins a DSCP traffic class to a
+ chosen WAN subflow, either by local endpoint IP (router-side, see the
+ OpenWrt mptcp-bpf-dscp package in openmptcprouter-feeds) or by MPTCP
+ remote endpoint id (server/VPS-side: every subflow here shares the
+ same local IP, so pins key on the address id the router assigned to
+ the originating WAN instead).
+ .
+ This is the Debian/server counterpart of that OpenWrt package: same
+ BPF program, packaged to run on the VPS half of an OpenMPTCProuter
+ multipath link. Ships a systemd unit that loads and pins the
+ scheduler at boot and sets it as net.mptcp.scheduler. Install
+ mptcp-dscp-manager to actually configure DSCP pins.
+
+Package: mptcp-dscp-manager
+Architecture: all
+Depends: ${misc:Depends}, bpftool, mptcp-bpf-dscp (= ${source:Version})
+Description: CLI to manage the mptcp-bpf-dscp scheduler's DSCP pins
+ mptcp-scheduler-dscp.sh: show/set/del DSCP class pins in the
+ mptcp-bpf-dscp scheduler's BPF maps.
+ .
+ On this (server/VPS) package, use 'mptcp-scheduler-dscp.sh set <dscp>
+ id <N>' where <N> is the MPTCP endpoint id the router assigned to the
+ WAN that should carry <dscp> (network.<iface>.ip4table on the router,
+ kept stable across reconnects). The router-side 'set <dscp>
+ <interface>' form also works here but is normally useless on a VPS
+ with a single local IP.

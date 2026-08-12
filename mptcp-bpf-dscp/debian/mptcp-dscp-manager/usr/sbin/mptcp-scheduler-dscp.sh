@@ -196,19 +196,6 @@ set)
 	IFACE="$3"
 
 	found=0
-	# NOT "get_bpf_ep_ip_from_iface ... | while read ...": piping into a
-	# while loop runs the loop in a SUBSHELL under POSIX sh (dash, this
-	# script's own #!/bin/sh on Debian -- confirmed live, "found"'s
-	# post-loop check needs to see what the loop body set), losing the
-	# "found=1" assignment the moment the loop exits. The original used
-	# bash-only "done < <(...)" process substitution to dodge that,
-	# which fails outright on a real POSIX sh with "Syntax error:
-	# redirection unexpected" (also confirmed live) -- process
-	# substitution isn't POSIX, dash doesn't implement it, and this
-	# script's shebang promises plain sh, not bash specifically. A
-	# heredoc keeps the loop in the current shell (no subshell) while
-	# staying POSIX.
-	BPF_EP_IPS_LIST="$(get_bpf_ep_ip_from_iface "$IFACE")"
 	while read -r BPF_EP_IP; do
 		[ -z "$BPF_EP_IP" ] && continue
 		found=1
@@ -222,9 +209,7 @@ set)
 
 		EP_IP=$(printf "%d.%d.%d.%d\n" $(( BPF_EP_IP & 255 )) $(( (BPF_EP_IP >> 8) & 255 )) $(( (BPF_EP_IP >> 16) & 255 )) $(( (BPF_EP_IP >> 24) & 255 )) )
 		echo "DSCP pin updated: dscp=$2 (${val}) interface=$IFACE endpoint_ip=$EP_IP"
-	done <<-EOF
-		$BPF_EP_IPS_LIST
-	EOF
+	done < <(get_bpf_ep_ip_from_iface "$IFACE")
 
 	if [ "$found" -eq 0 ]; then
 		echo "Interface '$IFACE' not found"
@@ -245,20 +230,12 @@ del)
 	;;
 
 debug)
-	# Prefer the plain tracefs mount (/sys/kernel/tracing) -- confirmed
-	# live (bench router + VPS, 2026-08-07) that debugfs's
-	# /sys/kernel/debug/tracing doesn't exist on either machine even
-	# with debugfs mounted, while tracefs is auto-mounted at
-	# /sys/kernel/tracing regardless. Still fall back to the debugfs
-	# path for systems where that's the only one present.
-	TRACE_PIPE="/sys/kernel/tracing/trace_pipe"
-	[ -r "$TRACE_PIPE" ] || TRACE_PIPE="/sys/kernel/debug/tracing/trace_pipe"
-	if [ ! -r "$TRACE_PIPE" ]; then
-		echo "Error: Cannot read BPF trace. Are you root? Is tracefs mounted?"
+	if [ ! -r /sys/kernel/debug/tracing/trace_pipe ]; then
+		echo "Error: Cannot read BPF trace. Are you root? Is debugfs mounted?"
 		exit 1
 	fi
 	echo "Reading BPF trace output (Ctrl+C to stop)..."
-	cat "$TRACE_PIPE"
+	cat /sys/kernel/debug/tracing/trace_pipe
 	exit 0
 	;;
 

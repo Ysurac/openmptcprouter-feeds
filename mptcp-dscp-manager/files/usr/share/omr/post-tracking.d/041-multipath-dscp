@@ -4,18 +4,57 @@
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
 #
-# Sync network.<iface>.mptcp_dscp (list of DSCP classes pinned to this
-# WAN interface) into the bpf_dscp scheduler's dscp_iface BPF map
-# whenever the tracked interface's endpoint IP may have changed.
+# Sync DSCP-to-WAN pins into the bpf_dscp scheduler's dscp_iface BPF map
+# (upload/router-side) whenever the tracked interface's endpoint IP may
+# have changed.
+#
+# Pins live in anonymous `config dscp_pin` sections in `network` (added by
+# luci-app-mptcp's DSCP/Weight Routing page), one row per DSCP class:
+#   config dscp_pin
+#       option dscp 'ef'
+#       option upload_interface 'wan'
+#       option download_interface 'wan2'
+# upload_interface/download_interface are independent -- a class's
+# upload and download sides can be pinned to different WANs. Only
+# upload_interface is actionable here (it drives this router's own
+# send-side subflow choice, dscp_iface); download_interface only matters
+# to the VPS-side sync triggered below (see openmptcprouter-vps's
+# _set_mptcp_dscp_vps, which reads download_interface directly). If two
+# rows name the same dscp, the last one processed wins -- same
+# "no dedup, just re-apply" spirit as the old per-interface list this
+# replaced.
 
 scheduler="$(uci -q get network.globals.mptcp_scheduler)"
 
 if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && \
 	([ "$scheduler" = "mptcp_bpf_dscp.o" ] || [ "$scheduler" = "bpf_dscp" ]) && \
 	([ "$(uci -q get network.${OMR_TRACKER_INTERFACE}.multipath)" = "on" ] || [ "$(uci -q get network.${OMR_TRACKER_INTERFACE}.multipath)" = "master" ] || [ "$(uci -q get network.${OMR_TRACKER_INTERFACE}.multipath)" = "backup" ]); then
-	for dscp in $(uci -q get network.${OMR_TRACKER_INTERFACE}.mptcp_dscp); do
-		/usr/sbin/mptcp-scheduler-dscp.sh set "$dscp" "${OMR_TRACKER_DEVICE}" 2>&1 >/dev/null
+	relevant=0
+	for section in $(uci -q show network 2>/dev/null | sed -n "s/^network\.\([^.=]*\)=dscp_pin\$/\1/p"); do
+		dscp="$(uci -q get network.${section}.dscp)"
+		[ -z "$dscp" ] && continue
+		if [ "$(uci -q get network.${section}.upload_interface)" = "$OMR_TRACKER_INTERFACE" ]; then
+			/usr/sbin/mptcp-scheduler-dscp.sh set "$dscp" "${OMR_TRACKER_DEVICE}" 2>&1 >/dev/null
+			relevant=1
+		fi
+		# download_interface doesn't touch dscp_iface at all (that's a
+		# VPS-side/dscp_remote_id concern), but this interface being
+		# named there still means the VPS sync below needs to run.
+		[ "$(uci -q get network.${section}.download_interface)" = "$OMR_TRACKER_INTERFACE" ] && relevant=1
 	done
+	# Keep the VPS's own dscp_remote_id map in sync so pins also hold for
+	# traffic the VPS sends (downloads) -- see openmptcprouter-vps's
+	# _set_mptcp_dscp_vps for details. Backgrounded: this is an HTTPS round
+	# trip to the VPS and must not stall the tracker's post-tracking chain
+	# for other interfaces; the function's own cache makes repeat,
+	# no-op calls (the common case once synced) cheap.
+	# network.globals.mptcp_dscp_weight_vps_sync: unset/anything but "0"
+	# means enabled (matches LuCI's Flag default="1", which omits writing
+	# UCI at all when left at its default) -- explicit opt-out for anyone
+	# who doesn't want this HTTPS round trip / VPS-side state at all.
+	if [ "$relevant" = "1" ] && [ "$(uci -q get network.globals.mptcp_dscp_weight_vps_sync)" != "0" ]; then
+		( /etc/init.d/openmptcprouter-vps set_mptcp_dscp_vps >/dev/null 2>&1 & )
+	fi
 fi
 
 exit 0

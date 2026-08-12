@@ -1,0 +1,62 @@
+mptcp-bpf-dscp for Debian (server/VPS side)
+=============================================
+
+This is the server/VPS counterpart of the router's OpenWrt
+mptcp-bpf-dscp + mptcp-dscp-manager packages built by the same
+openmptcprouter-feeds source tree (see that repo's ARCHITECTURE.md for
+the router-vs-VPS split, and src/mptcp_bpf_dscp.c's header comment for
+the two pinning modes this scheduler supports).
+
+On the router, each WAN has its own local IP, so DSCP classes are
+pinned to a WAN via that IP (dscp_iface map). On this VPS, every
+subflow arrives on the same local IP, so pin by MPTCP remote endpoint
+id instead (dscp_remote_id map):
+
+    mptcp-scheduler-dscp.sh set <dscp> id <N>
+
+<N> is the MPTCP endpoint id the router assigned to the WAN that
+should carry <dscp> traffic. On the router that id is
+network.<iface>.ip4table, kept stable across reconnects (DHCP renewal,
+mobile reconnects) once the router's mptcp/multipath script passes it
+explicitly to 'ip mptcp endpoint add ... id <N>' instead of letting
+the kernel auto-assign one. Look it up on the router with:
+
+    uci get network.<iface>.ip4table
+
+The router's openmptcprouter-vps init script syncs this automatically:
+whenever network.<iface>.mptcp_dscp changes, its 041-multipath-dscp
+tracker hook calls set_mptcp_dscp_vps, which POSTs the current pins to
+this VPS's /mptcp_dscp API route (see omradmin.py) -- no manual copying
+needed.
+
+    mptcp-scheduler-dscp.sh show
+
+lists every currently configured pin, both by interface/IP and by
+remote id.
+
+Service
+-------
+
+mptcp-bpf-dscp.service loads /usr/share/bpf/scheduler/mptcp_bpf_dscp.o, pins it
+(and its maps) under /sys/fs/bpf/mptcp, and sets it as
+net.mptcp.scheduler at boot. This changes the *system-wide* default
+MPTCP scheduler on this host - only install this package on a VPS
+dedicated to terminating OpenMPTCProuter multipath connections.
+
+After building/installing a new mptcp_bpf_dscp.o (e.g. after editing
+the scheduler), run:
+
+    systemctl restart mptcp-bpf-dscp
+
+Stopping the service switches net.mptcp.scheduler back to "default"
+before unpinning, so it doesn't leave the sysctl pointed at a
+scheduler name the kernel no longer has registered.
+
+Requirements
+------------
+
+A kernel with MPTCP struct_ops scheduler support (BPF_STRUCT_OPS for
+mptcp_sched_ops), CONFIG_BPF, CONFIG_DEBUG_INFO_BTF and CONFIG_MPTCP
+enabled. This is a fairly recent kernel feature - check
+'bpftool struct_ops register' actually succeeds if the service fails
+to start (see 'systemctl status mptcp-bpf-dscp').

@@ -1,0 +1,54 @@
+#!/usr/bin/make -f
+#
+# mptcp-bpf-dscp / mptcp-dscp-manager Debian packaging.
+#
+# This is the server/VPS counterpart of the OpenWrt mptcp-bpf-dscp and
+# mptcp-dscp-manager packages built by this same feed for the router
+# side. It reuses the exact same BPF source (src/mptcp_bpf_dscp.c) and
+# the exact same CLI script (../mptcp-dscp-manager/files/usr/sbin,
+# copied in below) so there's a single source of truth for both build
+# systems - see ARCHITECTURE.md and src/mptcp_bpf_dscp.c's header
+# comment for the router-vs-VPS pinning modes.
+#
+# NOTE: the top-level ./Makefile in this directory is the OpenWrt
+# package.mk-style Makefile used by the router-side .ipk build. It is
+# NOT usable standalone (needs $(TOPDIR)/rules.mk from an OpenWrt
+# buildroot) - that's why dh_auto_build/dh_auto_install are overridden
+# below instead of letting debhelper's default "make"/"make install"
+# invoke it.
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+DEB_HOST_ARCH := $(shell dpkg-architecture -qDEB_HOST_ARCH)
+ifeq ($(DEB_HOST_ARCH),amd64)
+  BPF_TARGET_ARCH := x86
+else ifeq ($(DEB_HOST_ARCH),arm64)
+  BPF_TARGET_ARCH := arm64
+else ifeq ($(DEB_HOST_ARCH),armhf)
+  BPF_TARGET_ARCH := arm
+else
+  BPF_TARGET_ARCH := $(DEB_HOST_ARCH)
+endif
+
+MANAGER_SCRIPT := ../mptcp-dscp-manager/files/usr/sbin/mptcp-scheduler-dscp.sh
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	clang -O2 -g -Wall -target bpf -D__TARGET_ARCH_$(BPF_TARGET_ARCH) \
+		-I src -c src/mptcp_bpf_dscp.c -o src/mptcp_bpf_dscp.o
+	llvm-strip -g src/mptcp_bpf_dscp.o
+	test -f $(MANAGER_SCRIPT)
+	cp $(MANAGER_SCRIPT) debian/mptcp-scheduler-dscp.sh
+	chmod 0755 debian/mptcp-scheduler-dscp.sh debian/load-scheduler.sh
+
+override_dh_auto_test:
+	# No test suite for the compiled BPF object.
+
+override_dh_auto_install:
+	# Nothing to "make install": build artifacts are placed via
+	# debian/*.install (dh_install), not by this Makefile.
+
+override_dh_auto_clean:
+	rm -f src/mptcp_bpf_dscp.o debian/mptcp-scheduler-dscp.sh

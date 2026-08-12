@@ -32,9 +32,12 @@ define Package/mptcp-bpf-dscp
 endef
 
 define Package/mptcp-bpf-dscp/description
-  MPTCP BPF scheduler that pins each DSCP class to a chosen WAN
-  interface. Pins are stored in the pinned dscp_iface BPF map and
-  managed with mptcp-scheduler-dscp.sh (mptcp-dscp-manager package).
+  MPTCP BPF scheduler that pins each DSCP class to a chosen WAN. Pins
+  are stored in the pinned dscp_iface BPF map (keyed by local endpoint
+  IP, for router-side use) and/or the pinned dscp_remote_id BPF map
+  (keyed by MPTCP remote endpoint id, for server/VPS-side use where
+  every subflow shares the same local IP). Both are managed with
+  mptcp-scheduler-dscp.sh (mptcp-dscp-manager package).
 endef
 
 define Build/Prepare
