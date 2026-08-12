@@ -24,7 +24,7 @@ case $1 in
         if [ -f /proc/sys/net/mptcp/mptcp_enabled ]; then
                 echo "  multipath device {on | off | backup }"
         else
-                echo "  multipath device {on | off | signal | backup }"
+                echo "  multipath device {on | off | signal | backup } [id]"
         fi
         echo
         echo "show established conections: -c"
@@ -38,6 +38,11 @@ case $1 in
         echo "Flag on the device, to enable/disable MPTCP for this interface. The backup-flag"
         echo "will allow a subflow to be established across this interface, but only be used"
         echo "as backup."
+        echo
+        echo "Optional trailing [id] (on/signal/backup only): explicit MPTCP endpoint id"
+        echo "(0-255) to pass to 'ip mptcp endpoint add ... id <id>' instead of letting the"
+        echo "kernel auto-assign one. Needed for a stable id per WAN across reconnects, e.g."
+        echo "so a peer (VPS) can pin traffic to this WAN via the subflow's remote_id."
         echo
         exit 0 ;;
    "-c")
@@ -123,6 +128,16 @@ esac
 
 DEVICE="$1"
 TYPE="$2"
+# Optional explicit MPTCP endpoint id (stable across delete/recreate, unlike
+# the kernel's auto-assigned one) so a peer can key on subflow->remote_id.
+# Anything that isn't a plain 0-255 integer is ignored (kernel auto-assigns).
+ENDPOINT_ID="$3"
+case "$ENDPOINT_ID" in
+        ''|*[!0-9]*) ENDPOINT_ID="" ;;
+        *) [ "$ENDPOINT_ID" -ge 0 ] 2>/dev/null && [ "$ENDPOINT_ID" -le 255 ] 2>/dev/null || ENDPOINT_ID="" ;;
+esac
+IDOPT=""
+[ -n "$ENDPOINT_ID" ] && IDOPT="id $ENDPOINT_ID"
 #FLAG_PATH=`find /sys/devices/ -path "*/net/$DEVICE/flags"`
 
 [ -e "/sys/class/net/$DEVICE/" ] || {
@@ -215,7 +230,7 @@ else
                             done
                         }
                         for i in $IP; do
-                            ip mptcp endpoint add $i dev $DEVICE subflow fullmesh
+                            ip mptcp endpoint add $i dev $DEVICE subflow fullmesh $IDOPT
                         done
                         exit 0;;
                 "signal")
@@ -230,7 +245,7 @@ else
                         }
                         for i in $IP; do
                             #ip mptcp endpoint add $i dev $DEVICE signal subflow fullmesh
-                            ip mptcp endpoint add $i dev $DEVICE signal
+                            ip mptcp endpoint add $i dev $DEVICE signal $IDOPT
                         done
                         exit 0;;
                 "backup")
@@ -244,7 +259,7 @@ else
                             done
                         }
                         for i in $IP; do
-                            ip mptcp endpoint add $i dev $DEVICE subflow backup fullmesh
+                            ip mptcp endpoint add $i dev $DEVICE subflow backup fullmesh $IDOPT
                         done
                         exit 0;;
                 "")

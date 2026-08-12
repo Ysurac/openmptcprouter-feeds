@@ -9,6 +9,28 @@ USE_PROCD=1
 . /usr/lib/unbound/iptools.sh
 . /lib/functions/network.sh
 
+restart_scheduler_dependent_services() {
+	local proxy vpn
+	proxy="$(uci -q get openmptcprouter.settings.proxy)"
+	case "$proxy" in
+		shadowsocks) /etc/init.d/shadowsocks-libev restart >/dev/null 2>&1 ;;
+		shadowsocks-rust|shadowsocks-go) /etc/init.d/shadowsocks-rust restart >/dev/null 2>&1 ;;
+		v2ray*) /etc/init.d/v2ray restart >/dev/null 2>&1 ;;
+		xray*) /etc/init.d/xray restart >/dev/null 2>&1 ;;
+	esac
+
+	vpn="$(uci -q get openmptcprouter.settings.vpn)"
+	case "$vpn" in
+		openvpn) /etc/init.d/openvpn restart >/dev/null 2>&1 ;;
+		openvpn_bonding)
+			/etc/init.d/openvpn restart >/dev/null 2>&1
+			/etc/init.d/openvpnbonding restart >/dev/null 2>&1
+			;;
+		glorytun_tcp) /etc/init.d/glorytun restart >/dev/null 2>&1 ;;
+	esac
+	logger -t "MPTCP" "Scheduler changed, restarted proxy=${proxy:-none} vpn=${vpn:-none} (vpn restart skipped unless TCP-based)"
+}
+
 global_multipath_settings() {
 	local multipath mptcp_path_manager mptcp_scheduler mptcp_subflows mptcp_debug mptcp_add_addr_accepted congestion mptcp_checksum mptcp_syn_retries mptcp_fullmesh_num_subflows mptcp_fullmesh_create_on_err mptcp_ndiffports_num_subflows mptcp_rr_cwnd_limited mptcp_rr_num_segments
 	local multipath_status=0
@@ -47,7 +69,11 @@ global_multipath_settings() {
 			echo "net.mptcp.mptcp_enabled=${multipath_status}" >> /etc/sysctl.d/zzz_openmptcprouter.conf
 		fi
 		[ -z "$mptcp_path_manager" ] || sysctl -qew net.mptcp.mptcp_path_manager="$mptcp_path_manager"
-		[ -z "$mptcp_scheduler" ] || sysctl -qew net.mptcp.mptcp_scheduler="$mptcp_scheduler"
+		if [ -n "$mptcp_scheduler" ]; then
+			local prev_sched="$(cat /proc/sys/net/mptcp/mptcp_scheduler 2>/dev/null)"
+			sysctl -qew net.mptcp.mptcp_scheduler="$mptcp_scheduler"
+			[ -n "$prev_sched" ] && [ "$prev_sched" != "$mptcp_scheduler" ] && restart_scheduler_dependent_services
+		fi
 		[ -z "$mptcp_checksum" ] || sysctl -qew net.mptcp.mptcp_checksum="$mptcp_checksum"
 		[ -z "$mptcp_debug" ] || sysctl -qew net.mptcp.mptcp_debug="$mptcp_debug"
 		[ -z "$mptcp_syn_retries" ] || sysctl -qew net.mptcp.mptcp_syn_retries="$mptcp_syn_retries"
@@ -76,6 +102,7 @@ global_multipath_settings() {
 		[ -z "$mptcp_blackhole_timeout" ] || sysctl -qew net.mptcp.blackhole_timeout="$mptcp_blackhole_timeout"
 		if [ -n "$mptcp_scheduler" ]; then
 			local sched="${mptcp_scheduler#mptcp_}"; sched="${sched%.o}"
+			local prev_sched="$(cat /proc/sys/net/mptcp/scheduler 2>/dev/null)"
 			if [ -d /usr/share/bpf/scheduler ]; then
 				local pin_dir="/sys/fs/bpf/mptcp"
 				mkdir -p "$pin_dir"
@@ -87,6 +114,7 @@ global_multipath_settings() {
 				[ -f "$obj" ] && bpftool struct_ops register "$obj" "$pin_dir/" >/dev/null 2>&1
 			fi
 			sysctl -qew net.mptcp.scheduler="$sched" >/dev/null 2>&1
+			[ -n "$prev_sched" ] && [ "$prev_sched" != "$sched" ] && restart_scheduler_dependent_services
 		fi
 	fi
 	[ -z "$congestion" ] || sysctl -qew net.ipv4.tcp_congestion_control="$congestion"
@@ -518,13 +546,13 @@ interface_multipath_settings() {
 	if [ "$(uci -q get openmptcprouter.settings.force_multipath)" != "0" ] && [ -n "$(ip a show dev $iface | grep inet)" ]; then
 		if ([ "$mode" = "master" ] || [ "$mode" = "on" ]) && [ -z "$(multipath $iface | grep default)" ]; then
 			logger -t "MPTCP" "Set $iface to $mode from $(multipath $iface)"
-			multipath "$iface" "on"
+			multipath "$iface" "on" "$id"
 		elif ([ "$mode" = "off" ] || [ -z "$mode" ]) && [ -z "$(multipath $iface | grep deactivated)" ]; then
 			logger -t "MPTCP" "Set $iface to $mode from $(multipath $iface)"
-			multipath "$iface" "$mode"
+			multipath "$iface" "$mode" "$id"
 		elif [ "$mode" = "backup" ] && [ -z "$(multipath $iface | grep backup)" ]; then
 			logger -t "MPTCP" "Set $iface to $mode from $(multipath $iface)"
-			multipath "$iface" "$mode"
+			multipath "$iface" "$mode" "$id"
 		fi
 	fi
 
