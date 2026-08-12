@@ -1,0 +1,215 @@
+#!/bin/sh
+# /usr/libexec/rpcd/sqm-autorate
+# rpcd plugin for sqm-autorate config + live metrics
+#
+# Usage:
+#   ubus call sqm-autorate get_config '{"section":"wan1"}'
+#   ubus call sqm-autorate get_config {}
+#   ubus call sqm-autorate set_config '{"section":"wan1","download":"50000","max_download":"80000","restart":true}'
+#   ubus call sqm-autorate get_metrics '{"section":"wan1"}'
+#   ubus call sqm-autorate get_metrics {}
+
+CONFIG_DIR="/usr/share/sqm-autorate"
+
+# UCI options readable via get_config / settable via set_config -- mirrors
+# what luci-app-sqm-autorate's sqm.js form exposes, plus the autorate-only
+# knobs config_template.sh reads directly. Keep in sync with both when either
+# side gains/loses a field.
+VALID_OPTIONS="enabled autorate interface download min_download max_download \
+	upload min_upload max_upload debug_logging verbosity qdisc script \
+	qdisc_advanced use_mq squash_dscp squash_ingress ingress_ecn egress_ecn \
+	qdisc_really_really_advanced ilimit elimit itarget etarget iqdisc_opts \
+	eqdisc_opts linklayer overhead linklayer_advanced tcMTU tcTSIZE tcMPU \
+	linklayer_adaptation_mechanism output_processing_stats output_load_stats \
+	output_reflector_stats output_cake_changes debug sss_compensation pinger \
+	no_pingers reflector_ping_interval_s delay_thr_ms enable_sleep_functions \
+	connection_active_thr_kpbs sustained_idle_sleep_thr \
+	min_shaper_rates_enforcement startup_wait_s"
+
+_json_str() {
+	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+_section_exists() {
+	[ -n "$(uci -q get "sqm.$1" 2>/dev/null)" ]
+}
+
+_all_sections() {
+	uci -q show sqm 2>/dev/null | grep '=queue$' | cut -d. -f2 | cut -d= -f1
+}
+
+# Emit one queue section as a JSON object of its currently-set options.
+_section_json() {
+	local sec="$1" opt val entries=""
+	for opt in $VALID_OPTIONS; do
+		val=$(uci -q get "sqm.${sec}.${opt}" 2>/dev/null)
+		[ -z "$val" ] && continue
+		[ -n "$entries" ] && entries="${entries},"
+		entries="${entries}\"$(_json_str "$opt")\":\"$(_json_str "$val")\""
+	done
+	printf '{"section":"%s","options":{%s}}' "$(_json_str "$sec")" "$entries"
+}
+
+# tc reports bandwidth/backlog/drop counters as plain text; there is no -j
+# support to rely on here (see tests/cases/11c which parses the same way).
+_iface_metrics_json() {
+	local dev="$1" out bandwidth sent_bytes sent_pkts dropped overlimits backlog_bytes backlog_pkts qdisc_name
+
+	if [ -z "$dev" ] || ! out=$(tc -s qdisc show dev "$dev" 2>/dev/null) || [ -z "$out" ]; then
+		printf '{"device":"%s","exists":false}' "$(_json_str "$dev")"
+		return
+	fi
+
+	qdisc_name=$(printf '%s\n' "$out" | awk 'NR==1{print $2}')
+	bandwidth=$(printf '%s\n' "$out" | grep -o 'bandwidth [^ ]*' | head -n1 | cut -d' ' -f2)
+	sent_bytes=$(printf '%s\n' "$out" | sed -n 's/^ *Sent \([0-9]*\) bytes.*/\1/p' | head -n1)
+	sent_pkts=$(printf '%s\n' "$out" | sed -n 's/^ *Sent [0-9]* bytes \([0-9]*\) pkt.*/\1/p' | head -n1)
+	dropped=$(printf '%s\n' "$out" | sed -n 's/.*dropped \([0-9]*\),.*/\1/p' | head -n1)
+	overlimits=$(printf '%s\n' "$out" | sed -n 's/.*overlimits \([0-9]*\).*/\1/p' | head -n1)
+	backlog_bytes=$(printf '%s\n' "$out" | sed -n 's/^ *backlog \([0-9]*\)b .*/\1/p' | head -n1)
+	backlog_pkts=$(printf '%s\n' "$out" | sed -n 's/^ *backlog [0-9]*b \([0-9]*\)p.*/\1/p' | head -n1)
+
+	printf '{"device":"%s","exists":true,"qdisc":"%s","bandwidth":"%s","sent_bytes":%s,"sent_pkts":%s,"dropped":%s,"overlimits":%s,"backlog_bytes":%s,"backlog_pkts":%s}' \
+		"$(_json_str "$dev")" "$(_json_str "$qdisc_name")" "$(_json_str "$bandwidth")" \
+		"${sent_bytes:-0}" "${sent_pkts:-0}" "${dropped:-0}" "${overlimits:-0}" \
+		"${backlog_bytes:-0}" "${backlog_pkts:-0}"
+}
+
+_metrics_json() {
+	local sec="$1" interface ul_if dl_if pid running config_file base_dl min_dl max_dl base_ul min_ul max_ul
+
+	interface=$(uci -q get "sqm.${sec}.interface" 2>/dev/null)
+	ul_if="$interface"
+	dl_if="ifb4${interface}"
+
+	config_file="${CONFIG_DIR}/config.${sec}.sh"
+	pid=""
+	running="false"
+	if [ -f "$config_file" ]; then
+		pid=$(pgrep -f "cake-autorate.sh ${config_file}" 2>/dev/null | head -n1)
+		[ -n "$pid" ] && running="true"
+	fi
+
+	base_dl=$(uci -q get "sqm.${sec}.download" 2>/dev/null)
+	min_dl=$(uci -q get "sqm.${sec}.min_download" 2>/dev/null)
+	max_dl=$(uci -q get "sqm.${sec}.max_download" 2>/dev/null)
+	base_ul=$(uci -q get "sqm.${sec}.upload" 2>/dev/null)
+	min_ul=$(uci -q get "sqm.${sec}.min_upload" 2>/dev/null)
+	max_ul=$(uci -q get "sqm.${sec}.max_upload" 2>/dev/null)
+
+	printf '{"section":"%s","interface":"%s","autorate_running":%s,"pid":%s,"download":{"base_kbps":"%s","min_kbps":"%s","max_kbps":"%s","tc":%s},"upload":{"base_kbps":"%s","min_kbps":"%s","max_kbps":"%s","tc":%s}}' \
+		"$(_json_str "$sec")" "$(_json_str "$interface")" "$running" "${pid:-null}" \
+		"$(_json_str "$base_dl")" "$(_json_str "$min_dl")" "$(_json_str "$max_dl")" "$(_iface_metrics_json "$dl_if")" \
+		"$(_json_str "$base_ul")" "$(_json_str "$min_ul")" "$(_json_str "$max_ul")" "$(_iface_metrics_json "$ul_if")"
+}
+
+case "$1" in
+	list)
+		echo '{
+  "get_config": { "section": "str" },
+  "set_config": { "section": "str", "restart": false },
+  "get_metrics": { "section": "str" }
+}'
+		# get_config/get_metrics: omit "section" to get every sqm queue section.
+		# set_config: pass any subset of the known sqm option names alongside
+		# "section" (e.g. download, max_download, delay_thr_ms, ...); only
+		# recognised options are applied. restart=true also bounces the
+		# sqm-autorate service afterwards (regenerates and relaunches every
+		# instance -- there is no per-interface restart, see launcher.sh).
+		;;
+
+	call)
+		input=$(cat)
+		case "$2" in
+			get_config)
+				section=$(echo "$input" | jsonfilter -q -e '@.section')
+				if [ -n "$section" ]; then
+					if ! _section_exists "$section"; then
+						echo "{\"error\":\"section '$(_json_str "$section")' not found in sqm config\"}"
+						exit 1
+					fi
+					_section_json "$section"
+				else
+					entries=""
+					for sec in $(_all_sections); do
+						[ -n "$entries" ] && entries="${entries},"
+						entries="${entries}$(_section_json "$sec")"
+					done
+					printf '{"sections":[%s]}' "$entries"
+				fi
+				;;
+
+			set_config)
+				section=$(echo "$input" | jsonfilter -q -e '@.section')
+				restart=$(echo "$input" | jsonfilter -q -e '@.restart')
+
+				if [ -z "$section" ]; then
+					echo '{"error":"missing section parameter"}'
+					exit 1
+				fi
+				if ! _section_exists "$section"; then
+					echo "{\"error\":\"section '$(_json_str "$section")' not found in sqm config\"}"
+					exit 1
+				fi
+
+				applied=""
+				for opt in $VALID_OPTIONS; do
+					val=$(echo "$input" | jsonfilter -q -e "@.${opt}" 2>/dev/null)
+					[ -z "$val" ] && continue
+					# cake-autorate's config validation classifies delay_thr_ms
+					# by whether it contains a decimal point (typeof: float vs
+					# integer) -- a plain integer here fails instance startup
+					# with "not a valid value of type: 'float'" (confirmed on
+					# the bench). Force the decimal so set_config can't
+					# reintroduce that trap.
+					if [ "$opt" = "delay_thr_ms" ]; then
+						case "$val" in
+							*.*) ;;
+							*) val="${val}.0" ;;
+						esac
+					fi
+					uci -q set "sqm.${section}.${opt}=${val}"
+					[ -n "$applied" ] && applied="${applied},"
+					applied="${applied}\"$(_json_str "$opt")\""
+				done
+
+				if [ -z "$applied" ]; then
+					echo '{"error":"no recognised options provided"}'
+					exit 1
+				fi
+
+				uci -q commit sqm
+
+				if [ "$restart" = "true" ]; then
+					/etc/init.d/sqm-autorate restart >/dev/null 2>&1 &
+				fi
+
+				printf '{"result":"ok","section":"%s","applied":[%s],"restarted":%s}' \
+					"$(_json_str "$section")" "$applied" "$([ "$restart" = "true" ] && echo true || echo false)"
+				;;
+
+			get_metrics)
+				section=$(echo "$input" | jsonfilter -q -e '@.section')
+				if [ -n "$section" ]; then
+					if ! _section_exists "$section"; then
+						echo "{\"error\":\"section '$(_json_str "$section")' not found in sqm config\"}"
+						exit 1
+					fi
+					_metrics_json "$section"
+				else
+					entries=""
+					for sec in $(_all_sections); do
+						[ -n "$entries" ] && entries="${entries},"
+						entries="${entries}$(_metrics_json "$sec")"
+					done
+					printf '{"sections":[%s]}' "$entries"
+				fi
+				;;
+
+			*)
+				echo '{"error":"unknown method"}'
+				exit 1
+				;;
+		esac
+		;;
+esac

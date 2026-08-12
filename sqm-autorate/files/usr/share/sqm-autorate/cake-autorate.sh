@@ -612,7 +612,22 @@ parse_tsping()
 
 		case "${command[0]}" in
 			REFLECTOR_RESPONSE)
-				read -r timestamp reflector seq _ _ _ _ _ dl_owd_ms ul_owd_ms checksum <<< "${command[@]:1}"
+				if (( ${#command[@]} == 6 ))
+				then
+					# tsping run in ICMP echo mode (e.g. via '-e'/'--icmp-echo' in ping_extra_args,
+					# used so that reflectors which do not answer ICMP timestamp requests can still
+					# be used) only reports a single round trip time and none of the Originate/
+					# Received/Transmit/Finished timestamps used below to derive dl/ul owd, so fall
+					# back to splitting the rtt evenly across dl and ul, exactly as parse_ping() does
+					# for the plain 'ping' binary, which is likewise rtt-only.
+					read -r timestamp reflector seq rtt_ms checksum <<< "${command[@]:1}"
+					dl_owd_ms="${rtt_ms}"
+					ul_owd_ms="${rtt_ms}"
+					icmp_echo_mode=1
+				else
+					read -r timestamp reflector seq _ _ _ _ _ dl_owd_ms ul_owd_ms checksum <<< "${command[@]:1}"
+					icmp_echo_mode=0
+				fi
 				;;
 
 			START_PINGER)
@@ -681,8 +696,15 @@ parse_tsping()
 		[[ "${timestamp:-}" && "${reflector:-}" && "${seq:-}" && "${dl_owd_ms:-}" && "${ul_owd_ms:-}" && "${checksum:-}" ]] || continue
 		[[ "${checksum}" == "${timestamp}" ]] || continue
 
-		dl_owd_us="${dl_owd_ms}000"
-		ul_owd_us="${ul_owd_ms}000"
+		if ((icmp_echo_mode))
+		then
+			# rtt-only sample (see note above): split evenly between dl and ul
+			dl_owd_us=$(( (dl_owd_ms * 1000) / 2 ))
+			ul_owd_us="${dl_owd_us}"
+		else
+			dl_owd_us="${dl_owd_ms}000"
+			ul_owd_us="${ul_owd_ms}000"
+		fi
 
 		dl_owd_delta_us=$(( dl_owd_us - dl_owd_baselines_us[${reflector}] ))
 		ul_owd_delta_us=$(( ul_owd_us - ul_owd_baselines_us[${reflector}] ))

@@ -42,6 +42,15 @@ _launch_autorate() {
 	procd_set_param limits nofile="51200 51200"
 	procd_set_param respawn 0 10 0
 	procd_set_param stderr 1
+	# launcher.sh's own EXIT/INT/TERM trap (kill_cake_instances) SIGTERMs each
+	# cake-autorate.sh child one-by-one and waits for all of them to exit
+	# before it exits itself. procd's default grace period between SIGTERM
+	# and escalating to SIGKILL is too short for that to reliably finish with
+	# multiple WAN instances running -- if procd SIGKILLs launcher.sh first,
+	# the trap never runs (SIGKILL can't be caught) and every cake-autorate.sh
+	# child is orphaned, running forever until the next reboot. Give the trap
+	# enough room to actually reap its children on every stop/restart/reload.
+	procd_set_param term_timeout 15
 	procd_close_instance
 }
 
