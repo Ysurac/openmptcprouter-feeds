@@ -1,8 +1,10 @@
 #!/bin/sh
 # Saves omr-tracker metrics to JSON for ubus rpcd plugin
 
-METRICS_DIR="/tmp/metrics"
+METRICS_DIR="${OMR_METRICS_DIR:-/tmp/metrics}"
 [ -d "$METRICS_DIR" ] || mkdir -p "$METRICS_DIR"
+OMR_MODEMMANAGER_BIN="${OMR_MODEMMANAGER_BIN:-/bin/omr-modemmanager}"
+OMR_QMI_BIN="${OMR_QMI_BIN:-/usr/bin/omr-qmi}"
 
 case "$OMR_TRACKER_INTERFACE" in
 	omrvpn|OWVPN*) exit 0 ;;
@@ -29,7 +31,7 @@ _get_modem_signal() {
 		[ -z "$device_path" ] && return
 
 		# "all" mode: PERCENT;OPERATOR;NUMBER;STATE;TYPE
-		result=$(/bin/omr-modemmanager "$device_path" all 2>/dev/null)
+		result=$("$OMR_MODEMMANAGER_BIN" "$device_path" all 2>/dev/null)
 		if [ -n "$result" ]; then
 			SIGNAL_QUALITY=$(echo "$result" | cut -d';' -f1)
 			SIGNAL_OPERATOR=$(echo "$result" | cut -d';' -f2)
@@ -39,7 +41,7 @@ _get_modem_signal() {
 		fi
 
 		# "signal" mode: RSSI;RSRP;RSRQ;SINR
-		result=$(/bin/omr-modemmanager "$device_path" signal 2>/dev/null)
+		result=$("$OMR_MODEMMANAGER_BIN" "$device_path" signal 2>/dev/null)
 		if [ -n "$result" ]; then
 			SIGNAL_RSSI=$(echo "$result" | cut -d';' -f1)
 			SIGNAL_RSRP=$(echo "$result" | cut -d';' -f2)
@@ -53,7 +55,7 @@ _get_modem_signal() {
 		[ -z "$qmi_device" ] && return
 
 		# "all" mode: PERCENT;OPERATOR;NUMBER;STATE;TYPE
-		result=$(/usr/bin/omr-qmi "$qmi_device" all 2>/dev/null)
+		result=$("$OMR_QMI_BIN" "$qmi_device" all 2>/dev/null)
 		if [ -n "$result" ]; then
 			SIGNAL_QUALITY=$(echo "$result" | cut -d';' -f1)
 			SIGNAL_OPERATOR=$(echo "$result" | cut -d';' -f2)
@@ -63,7 +65,7 @@ _get_modem_signal() {
 		fi
 
 		# "signal" mode: RSSI;RSRP;RSRQ;SINR
-		result=$(/usr/bin/omr-qmi "$qmi_device" signal 2>/dev/null)
+		result=$("$OMR_QMI_BIN" "$qmi_device" signal 2>/dev/null)
 		if [ -n "$result" ]; then
 			SIGNAL_RSSI=$(echo "$result" | cut -d';' -f1)
 			SIGNAL_RSRP=$(echo "$result" | cut -d';' -f2)
@@ -90,7 +92,7 @@ _get_wifi_signal() {
 	[ -z "$OMR_TRACKER_DEVICE" ] && return
 
 	# Check if the device is a wireless interface
-	[ -d "/sys/class/net/${OMR_TRACKER_DEVICE}/wireless" ] || return
+	[ -d "${OMR_SYS_CLASS_NET_DIR:-/sys/class/net}/${OMR_TRACKER_DEVICE}/wireless" ] || return
 
 	# iwinfo available?
 	command -v iwinfo >/dev/null 2>&1 || return
@@ -99,17 +101,26 @@ _get_wifi_signal() {
 	iw_out=$(iwinfo "$OMR_TRACKER_DEVICE" info 2>/dev/null)
 	[ -z "$iw_out" ] && return
 
-	WIFI_SSID=$(echo "$iw_out" | awk -F'"' '/ESSID:/{print $2}')
-	WIFI_MODE=$(echo "$iw_out" | awk '/Mode:/{print $4}')
-	WIFI_CHANNEL=$(echo "$iw_out" | awk '/Channel:/{gsub(/[^0-9]/,"",$4); print $4}')
-	WIFI_SIGNAL=$(echo "$iw_out" | awk '/Signal:/{print int($2)}')
-	WIFI_NOISE=$(echo "$iw_out" | awk '/Noise:/{print int($2)}')
-	WIFI_BITRATE=$(echo "$iw_out" | awk '/Bit Rate:/{print $3}')
-	WIFI_BSSID=$(echo "$iw_out" | awk '/Access Point:/{print $3}')
+	# iwinfo commonly packs several "Label: value" pairs onto one line
+	# (e.g. "Signal: -55 dBm  Noise: -90 dBm" or "Tx-Power: 20 dBm  Link
+	# Quality: 55/70"), so a fixed field index ($2/$3/$4) picks up the
+	# wrong pair's value depending on what precedes the matched keyword.
+	# Search for the literal label token instead and take the field right
+	# after it, which is correct regardless of what else shares the line.
+	WIFI_SSID=$(echo "$iw_out" | awk -F'"' '/ESSID:/{print $2; exit}')
+	WIFI_MODE=$(echo "$iw_out" | awk '{for(i=1;i<=NF;i++) if($i=="Mode:") {print $(i+1); exit}}')
+	WIFI_CHANNEL=$(echo "$iw_out" | awk '{for(i=1;i<=NF;i++) if($i=="Channel:") {v=$(i+1); gsub(/[^0-9]/,"",v); print v; exit}}')
+	WIFI_SIGNAL=$(echo "$iw_out" | awk '{for(i=1;i<=NF;i++) if($i=="Signal:") {print int($(i+1)); exit}}')
+	WIFI_NOISE=$(echo "$iw_out" | awk '{for(i=1;i<=NF;i++) if($i=="Noise:") {print int($(i+1)); exit}}')
+	WIFI_BITRATE=$(echo "$iw_out" | awk '{for(i=1;i<=NF;i++) if($i=="Rate:") {print $(i+1); exit}}')
+	WIFI_BSSID=$(echo "$iw_out" | awk '{for(i=1;i<=NF;i++) if($i=="Point:") {print $(i+1); exit}}')
 
-	# Link quality from iwinfo (e.g. "Link Quality: 50/70")
+	# Link quality from iwinfo (e.g. "Link Quality: 50/70"). A wrong match
+	# here (see above) used to leave WIFI_QUALITY/WIFI_QUALITY_MAX as a
+	# non-numeric string, which corrupted the JSON output below since
+	# _jval() emits it unquoted.
 	local lq
-	lq=$(echo "$iw_out" | awk '/Link Quality:/{print $3}')
+	lq=$(echo "$iw_out" | awk '{for(i=1;i<=NF;i++) if($i=="Quality:") {print $(i+1); exit}}')
 	if [ -n "$lq" ]; then
 		WIFI_QUALITY=$(echo "$lq" | cut -d'/' -f1)
 		WIFI_QUALITY_MAX=$(echo "$lq" | cut -d'/' -f2)
@@ -267,7 +278,7 @@ _get_bandwidth_usage() {
 	BW_TX_BPS=""
 
 	[ -z "$OMR_TRACKER_DEVICE" ] && return
-	local sys_base="/sys/class/net/${OMR_TRACKER_DEVICE}/statistics"
+	local sys_base="${OMR_SYS_CLASS_NET_DIR:-/sys/class/net}/${OMR_TRACKER_DEVICE}/statistics"
 	[ -d "$sys_base" ] || return
 
 	local cur_rx cur_tx cur_ts
@@ -469,7 +480,7 @@ BBR_MIN_RTT=""
 BBR_RETRANS=""
 
 # Detect interface type and collect signal
-if [ -d "/sys/class/net/${OMR_TRACKER_DEVICE}/wireless" ]; then
+if [ -d "${OMR_SYS_CLASS_NET_DIR:-/sys/class/net}/${OMR_TRACKER_DEVICE}/wireless" ]; then
 	_get_wifi_signal
 else
 	_get_modem_signal
