@@ -6,7 +6,7 @@ START=85
 
 USE_PROCD=1
 
-EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key set_gre_tunnel set_vxlan token set_bypass_ips set_vpn_ip"
+EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key set_gre_tunnel set_vxlan token set_bypass_ips set_vpn_ip set_mptcp_dscp_vps set_mptcp_weight_vps set_dscp_classify_vps"
 
 . /usr/lib/unbound/iptools.sh
 
@@ -1468,6 +1468,230 @@ _set_mptcp_vps() {
 	else
 		echo 1
 	fi
+}
+
+_get_dscp_vps_pin() {
+	local section="$1" dscp remote_id download_iface
+	# Reads network's anonymous `config dscp_pin` sections (added by
+	# luci-app-mptcp's DSCP/Weight Routing page), one row per DSCP class
+	# with independent upload_interface/download_interface. Only
+	# download_interface matters here -- the download side is deliberately
+	# free to point at a different WAN than the upload pin
+	# (041-multipath-dscp/dscp_iface handles upload, locally, and never
+	# looks at this field at all).
+	download_iface="$(uci -q get network.${section}.download_interface)"
+	[ -z "$download_iface" ] && return
+	dscp="$(uci -q get network.${section}.dscp)"
+	[ -z "$dscp" ] && return
+	remote_id="$(uci -q get network.${download_iface}.ip4table)"
+	[ -z "$remote_id" ] && return
+	[ -n "$dscp_pins" ] && dscp_pins="${dscp_pins},"
+	dscp_pins="${dscp_pins}{\"dscp\":\"${dscp}\",\"remote_id\":${remote_id}}"
+}
+
+# Pushes network's dscp_pin rows' download_interface (router-side pick of
+# which WAN should carry each DSCP class on the way *down*, see
+# mptcp-dscp-manager) to the VPS as {dscp -> MPTCP remote endpoint id}
+# pairs, so the VPS's own bpf_dscp scheduler can pin its send-side subflow
+# choice for the same DSCP classes via dscp_remote_id -- see
+# mptcp-bpf-dscp/debian/README.Debian for why that map is keyed by
+# remote_id instead of local IP on the VPS. Closes the "no automated
+# sync... copy the number over manually" gap that doc used to describe.
+# download_interface is independent of the same row's upload_interface
+# (applied locally, separately, by 041-multipath-dscp) -- a class's
+# upload and download sides can legitimately be pinned to different WANs.
+#
+# Skips the round trip to the VPS entirely (not even a GET) when the
+# locally-desired pin set matches the last one we successfully pushed,
+# cached in $dscp_vps_pins_cache -- cheap enough to call unconditionally
+# from a tracker hook every cycle. The cache is process-ephemeral (/tmp),
+# which is intentional: it forces one real push after every reboot,
+# matching the BPF map itself also resetting on reboot.
+_set_mptcp_dscp_vps() {
+	local dscp_pins="" desired dscp_vps_pins_cache="/tmp/.mptcp_dscp_vps_pins-${servername}"
+	config_load network
+	config_foreach _get_dscp_vps_pin dscp_pin
+	desired="[${dscp_pins}]"
+	if [ "$(cat "$dscp_vps_pins_cache" 2>/dev/null)" = "$desired" ]; then
+		echo 1
+		return
+	fi
+	result=$(_set_json "mptcp_dscp" "{\"pins\":${desired}}")
+	if [ -n "$result" ]; then
+		echo "$desired" > "$dscp_vps_pins_cache"
+		echo "$result"
+	fi
+}
+
+# Standalone entry point (see EXTRA_COMMANDS) so the mptcp-dscp-manager
+# tracker hook can trigger a sync without going through the full
+# _config_service()/start_service() cycle. Bootstraps servername/token
+# itself, same pattern as _set_vps_firewall's standalone use.
+set_mptcp_dscp_vps() {
+	local dscpservername=$1
+	if [ -z "$dscpservername" ]; then
+		config_load openmptcprouter
+		config_foreach set_mptcp_dscp_vps server
+		return
+	fi
+	servername=$dscpservername
+	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	token=""
+	_login
+	[ -z "$token" ] && return
+	_set_mptcp_dscp_vps
+}
+
+_get_weight_vps_pin() {
+	local iface="$1" weight remote_id
+	weight="$(uci -q get network.${iface}.multipath_weight)"
+	[ -z "$weight" ] && return
+	remote_id="$(uci -q get network.${iface}.ip4table)"
+	[ -z "$remote_id" ] && return
+	[ -n "$weight_pins" ] && weight_pins="${weight_pins},"
+	weight_pins="${weight_pins}{\"remote_id\":${remote_id},\"weight\":${weight}}"
+}
+
+# VPS-side counterpart of _set_mptcp_dscp_vps, same reasoning: pushes
+# network.<iface>.multipath_weight (router-side bpf_weight/bpf_weight_rr
+# weights, see mptcp-weight-manager) to the VPS as
+# {MPTCP remote endpoint id -> weight} pairs, so the VPS's own scheduler
+# can weight its send-side subflow choice for the same WANs via
+# weight_remote_id instead of defaulting to neutral 100 for everything.
+_set_mptcp_weight_vps() {
+	local weight_pins="" desired weight_vps_pins_cache="/tmp/.mptcp_weight_vps_pins-${servername}"
+	config_load network
+	config_foreach _get_weight_vps_pin interface
+	desired="[${weight_pins}]"
+	if [ "$(cat "$weight_vps_pins_cache" 2>/dev/null)" = "$desired" ]; then
+		echo 1
+		return
+	fi
+	result=$(_set_json "mptcp_weight" "{\"weights\":${desired}}")
+	if [ -n "$result" ]; then
+		echo "$desired" > "$weight_vps_pins_cache"
+		echo "$result"
+	fi
+}
+
+# Standalone entry point (see EXTRA_COMMANDS), same bootstrap pattern as
+# set_mptcp_dscp_vps.
+set_mptcp_weight_vps() {
+	local wservername=$1
+	if [ -z "$wservername" ]; then
+		config_load openmptcprouter
+		config_foreach set_mptcp_weight_vps server
+		return
+	fi
+	servername=$wservername
+	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	token=""
+	_login
+	[ -z "$token" ] && return
+	_set_mptcp_weight_vps
+}
+
+# Reads one DSCP class's current ipset/nftables-set members on this router
+# ($2 = "4" or "6"), trying both the legacy iptables+ipset naming (omr-dscp:
+# omr_dscp-<class> / omr_dscp6-<class>) and the fw4/nftables naming
+# (omr-dscp-nft: omr_dscp_<class>_4 / omr_dscp_<class>_6) -- exactly one of
+# the two variants is installed, the other command is just a silent no-op.
+# `nft list set`'s plain text output (not -j/JSON) is used deliberately: its
+# "elements = { a, b, c }" line has been a stable format for years and is a
+# single sed+tr away from a token list, whereas the JSON element shape
+# differs (bare string vs {"prefix":...} object) depending on whether an
+# entry was inserted as a single IP or a CIDR, which would need two
+# different jsonfilter paths to cover reliably.
+_get_dscp_class_members() {
+	local class="$1" fam="$2" legacy_name
+
+	[ "$fam" = "6" ] && legacy_name="omr_dscp6-${class}" || legacy_name="omr_dscp-${class}"
+
+	ipset -q -o save list "$legacy_name" 2>/dev/null | awk '/^add/ {print $3}'
+	nft list set inet fw4 "omr_dscp_${class}_${fam}" 2>/dev/null \
+		| sed -n 's/.*elements = { *\(.*[^ ]\) *}.*/\1/p' \
+		| tr ',' '\n' | sed 's/^ *//;s/ *$//' | grep -v '^$'
+}
+
+_get_dscp_classify_entries() {
+	local class="$1" cidr
+	for cidr in $(_get_dscp_class_members "$class" 4) $(_get_dscp_class_members "$class" 6); do
+		[ -n "$dscp_classify_entries" ] && dscp_classify_entries="${dscp_classify_entries},"
+		dscp_classify_entries="${dscp_classify_entries}{\"dscp\":\"${class}\",\"cidr\":\"${cidr}\"}"
+	done
+}
+
+# Pushes the router's live omr-dscp/omr-dscp-nft classification (which
+# destination IPs are currently resolved into which DSCP class, e.g. by
+# domain lists such as config/dscp's `config domains` and
+# videochatipv4.list/videochatipv6.list) to the VPS, so the VPS's own
+# outbound traffic to those same destinations -- e.g. ssserver's connection
+# on behalf of a proxied session, see shadowsocks-rust's
+# 002-add-dynamic-per-connection-dscp-reflection.patch for the router-side
+# half of this -- can be marked with the same DSCP via a mirrored
+# ipset+mangle rule on the VPS, without ever needing the DSCP bits
+# themselves to survive the router->VPS hop on the wire.
+#
+# Unlike _set_mptcp_dscp_vps/_set_mptcp_weight_vps (a handful of pins that
+# rarely change), this table can run into hundreds of resolved IPs and
+# grows continuously as LAN devices browse to newly-resolved destinations,
+# so on top of the same "skip if unchanged" cache this also self-throttles
+# to at most one real attempt (enumerating up to 9 classes x 2 families of
+# ipset/nft lookups, then an HTTPS round trip) per
+# DSCP_CLASSIFY_MIN_INTERVAL seconds, independent of how often the calling
+# hook itself fires.
+_set_dscp_classify_vps() {
+	local dscp_classify_entries="" desired class now last \
+		dscp_classify_cache="/tmp/.dscp_classify_vps-${servername}" \
+		dscp_classify_ts="/tmp/.dscp_classify_vps_ts-${servername}"
+
+	now=$(date +%s)
+	last=$(cat "$dscp_classify_ts" 2>/dev/null)
+	if [ -n "$last" ] && [ $((now - last)) -lt "${DSCP_CLASSIFY_MIN_INTERVAL:-300}" ]; then
+		echo 1
+		return
+	fi
+	echo "$now" > "$dscp_classify_ts"
+
+	for class in cs0 cs1 cs2 cs3 cs4 cs5 cs6 cs7 ef; do
+		_get_dscp_classify_entries "$class"
+	done
+	desired="[${dscp_classify_entries}]"
+	if [ "$(cat "$dscp_classify_cache" 2>/dev/null)" = "$desired" ]; then
+		echo 1
+		return
+	fi
+	result=$(_set_json "dscp_classify" "{\"entries\":${desired}}")
+	if [ -n "$result" ]; then
+		echo "$desired" > "$dscp_classify_cache"
+		echo "$result"
+	fi
+}
+
+# Standalone entry point (see EXTRA_COMMANDS), same bootstrap pattern as
+# set_mptcp_dscp_vps/set_mptcp_weight_vps.
+set_dscp_classify_vps() {
+	local dcservername=$1
+	if [ -z "$dcservername" ]; then
+		config_load openmptcprouter
+		config_foreach set_dscp_classify_vps server
+		return
+	fi
+	servername=$dcservername
+	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	token=""
+	_login
+	[ -z "$token" ] && return
+	_set_dscp_classify_vps
 }
 
 _set_vpn_vps() {
