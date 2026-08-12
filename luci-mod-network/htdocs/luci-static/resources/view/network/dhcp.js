@@ -1051,6 +1051,16 @@ return view.extend({
 			o.value(ipv4, ipaddrs[ipv4] ? '%s (%s)'.format(ipv4, ipaddrs[ipv4]) : ipv4);
 		});
 
+		so = ss.option(form.Value, 'gw',
+			_('Gateway IPv4 Address'),
+			_('Custom IPv4 gateway to advertise to this host instead of the default one, or <em>ignore</em> to not send a gateway.'));
+		so.rmempty = true;
+		so.datatype = 'or(ip4addr,"ignore")';
+		so.value('ignore', _('Ignore'));
+		L.sortedKeys(ipaddrs, null, 'addr').forEach(function(ipv4) {
+			so.value(ipv4, ipaddrs[ipv4] ? '%s (%s)'.format(ipv4, ipaddrs[ipv4]) : ipv4);
+		});
+
 		so = ss.option(form.Value, 'leasetime',
 			_('Lease time'),
 			_('Host-specific lease time, e.g. <code>5m</code>, <code>3h</code>, <code>7d</code>.'));
