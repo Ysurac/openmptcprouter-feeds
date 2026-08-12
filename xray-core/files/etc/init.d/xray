@@ -2467,6 +2467,19 @@ rules_exist() {
 }
 
 rules_up() {
+	# Don't self-heal missing rules by restarting an xray that isn't even
+	# supposed to be running: xray.main.enabled is the only correct signal
+	# for that (NOT network.omrvpn.disabled -- that's the VPN interface's own
+	# flag and is unrelated to whether v2ray/xray, which can run standalone
+	# with no VPN at all, should be up). Without this, whenever wait_proxy=0
+	# and no instance is configured/enabled (disabled server, proxy switched
+	# away, empty/broken outbound config, ...), the missing rules file makes
+	# every caller of rules_up() -- procd, the omr-tracker-xray watchdog, the
+	# firewall.xray-rules hotplug, manual restart -- re-trigger
+	# `/etc/init.d/xray restart &` forever, independent of procd's own
+	# respawn handling (issue #4347, same mechanism as v2ray).
+	[ "$(uci -q get xray.main.enabled)" = "1" ] || return 0
+
 	if [ -f "${xrrules_nft}.down" ]; then
 		for f in $xrrules_nft*.down; do
 			mv -f "$f" "$(echo "$f" | sed 's/.down//g')"
@@ -2475,6 +2488,21 @@ rules_up() {
 		conntrack -F 2>/dev/null || true
 	elif [ ! -f "$xrrules_nft" ]; then
 		/etc/init.d/xray restart &
+	elif ! nft list ruleset 2>/dev/null | grep -qE 'goto xr_rules_pre_src_(tcp|udp)'; then
+		# The include file itself is present and not parked in .down (so by
+		# file-state alone the rules "should" already be live), but an
+		# external full nftables rebuild/flush -- e.g. a firewall reload
+		# triggered by an unrelated service restart or netifd interface
+		# churn racing the same restart_all_async() cascade that (re)started
+		# xray -- can drop the actually *live* redirect without ever
+		# touching this file (issues #4337/#3251). File presence alone is
+		# therefore not sufficient evidence the rules are live; the
+		# omr-tracker-xray watchdog already checks this same live "goto"
+		# marker (not bare chain existence, see its _xray_rules_missing())
+		# for exactly this reason -- mirror that check here so rules_up()
+		# actually repairs what it's asked to instead of silently no-op'ing.
+		fw4 -q reload
+		conntrack -F 2>/dev/null || true
 	fi
 }
 
