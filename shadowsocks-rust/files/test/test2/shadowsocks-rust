@@ -9,7 +9,7 @@
 USE_PROCD=1
 START=99
 
-EXTRA_COMMANDS="rules_up rules_down rules_exist rules_reset"
+EXTRA_COMMANDS="rules_up rules_down rules_exist"
 
 . /usr/lib/unbound/iptools.sh
 
@@ -39,7 +39,6 @@ ss_mkjson_server_conf_() {
 	[ -z "$password" ] || json_add_string password "$password"
 	[ -z "$plugin" ] || json_add_string plugin "$plugin"
 	[ -z "$plugin_opts" ] || json_add_string plugin_opts "$plugin_opts"
-	[ -z "$dscp" ] || json_add_int outbound_dscp "$dscp"
 }
 
 ss_mkjson_ss_local_conf() {
@@ -47,6 +46,10 @@ ss_mkjson_ss_local_conf() {
 }
 
 ss_mkjson_ss_redir_conf() {
+	ss_mkjson_server_conf
+}
+
+ss_mkjson_ss_tun_conf() {
 	ss_mkjson_server_conf
 }
 
@@ -91,6 +94,7 @@ ss_xxx() {
 	json_add_boolean reuse_port "$reuse_port"
 	json_add_boolean no_delay "$no_delay"
 	json_add_boolean mptcp "$mptcp"
+	[ -z "$mode" ] || json_add_string mode "$mode"
 	#[ "$cfgtype" != "ss_local" ] && json_add_string protocol "${cfgtype/ss_/}"
 	if [ "$cfgtype" != "ss_tunnel" ]; then
 		[ "$cfgtype" != "ss_local" ] && json_add_string protocol "${cfgtype/ss_/}"
@@ -99,7 +103,11 @@ ss_xxx() {
 		[ -z "$local_ipv4_address" ] || json_add_string local_ipv4_address "$local_ipv4_address"
 		[ -z "$local_ipv6_address" ] || json_add_string local_ipv6_address "$local_ipv6_address"
 	fi
-	[ -z "$mode" ] || json_add_string mode "$mode"
+	if [ "$cfgtype" = "ss_tun" ]; then
+		[ -z "$interface_address" ] || json_add_string tun_interface_address "$interface_address"
+		json_add_string tun_interface_name "$cfg"
+		json_add_string tun_interface_destination "lo0"
+	fi
 	[ -z "$mtu" ] || json_add_int mtu "$mtu"
 	[ -z "$timeout" ] || json_add_int timeout "$timeout"
 	[ -z "$keep_alive" ] || json_add_int keep_alive "$keep_alive"
@@ -114,7 +122,6 @@ ss_xxx() {
 		echo "$cfgtype $cfg: uci option bind_address deprecated, please switch to local_address" >&2
 		procd_append_param command -b "$bind_address"
 	fi
-	procd_set_param nice 10
 	procd_set_param file "$confjson"
 	procd_set_param respawn
 	procd_close_instance
@@ -135,9 +142,6 @@ ss_rules_cb() {
 	if [ "$cfgtype" = ss_redir ]; then
 		config_get cfgserver "$cfg" server
 		config_get server "$cfgserver" server
-		local srv_password
-		srv_password=$(uci -q get "shadowsocks-rust.${cfgserver}.password" 2>/dev/null)
-		[ -n "$srv_password" ] || return
 		if [ -z "$ss_redir_servers" ]; then
 			ss_redir_servers="$server"
 		else
@@ -157,47 +161,13 @@ ss_redir_ports() {
 	server=$(uci -q get shadowsocks-rust.$1.server)
 	disabled=$(uci -q get shadowsocks-rust.$1.disabled)
 	server_disabled=$(uci -q get shadowsocks-rust.${server}.disabled)
-	password=$(uci -q get "shadowsocks-rust.${server}.password" 2>/dev/null)
-	if [ "$disabled" != "1" ] && [ "$server_disabled" != "1" ] && [ -n "$password" ]; then
+	if [ "$disabled" != "1" ] && [ "$server_disabled" != "1" ]; then
 		if [ "$port" -lt "$min_ss_redir_ports" ]; then
 			min_ss_redir_ports=$port
 		fi
 		if [ "$port" -gt "$max_ss_redir_ports" ]; then
 			max_ss_redir_ports=$port
 		fi
-	fi
-}
-
-ss_collect_redir_info() {
-	local cfg="$1"
-	local port srv_ip cfgserver disabled srv_disabled password mode
-
-	disabled=$(uci -q get shadowsocks-rust.$cfg.disabled)
-	[ "$disabled" = "1" ] && return
-	cfgserver=$(uci -q get shadowsocks-rust.$cfg.server)
-	srv_disabled=$(uci -q get shadowsocks-rust.${cfgserver}.disabled)
-	[ "$srv_disabled" = "1" ] && return
-	password=$(uci -q get "shadowsocks-rust.${cfgserver}.password" 2>/dev/null)
-	[ -z "$password" ] && return
-
-	srv_ip=$(uci -q get shadowsocks-rust.${cfgserver}.server)
-	if [ -n "$srv_ip" ] && [ -z "$(echo "$ss_redir_servers" | grep "$srv_ip")" ]; then
-		if [ -z "$ss_redir_servers" ]; then
-			ss_redir_servers="$srv_ip"
-		else
-			ss_redir_servers="$ss_redir_servers $srv_ip"
-		fi
-	fi
-
-	port=$(uci -q get shadowsocks-rust.$cfg.local_port)
-	mode=$(uci -q get shadowsocks-rust.$cfg.mode)
-	mode="${mode:-tcp_only}"
-
-	if [ "$mode" = "tcp_only" ] || [ "$mode" = "tcp_and_udp" ]; then
-		eval "ss_rules_redir_tcp_$cfg=$port"
-	fi
-	if [ "$mode" = "udp_only" ] || [ "$mode" = "tcp_and_udp" ]; then
-		eval "ss_rules_redir_udp_$cfg=$port"
 	fi
 }
 
@@ -216,7 +186,7 @@ ss_rules_nft_gen() {
 	config_get server "$cfg" server
 	[ "$(uci -q get shadowsocks-rust.${server}.disabled)" = "1" ] && return 2
 
-	if [ "$redir_tcp" = "all" ]; then
+	if [ "$ss_rules_redir_tcp_$redir_tcp" = "all" ]; then
 		min_ss_redir_ports="65535"
 		max_ss_redir_ports="0"
 		config_load shadowsocks-rust
@@ -228,7 +198,7 @@ ss_rules_nft_gen() {
 			all_ss_redir_ports=$min_ss_redir_ports
 		fi
 		local_port_tcp="$all_ss_redir_ports"
-		if [ "$redir_udp" = "all" ] || [ "$redir_udp" = "hi1" ]; then
+		if [ "$ss_rules_redir_udp_$redir_udp" = "all" ] || [ "$ss_rules_redir_udp_$redir_udp" = "hi1" ]; then
 			local_port_udp="$min_ss_redir_ports"
 		fi
 	else
@@ -257,7 +227,8 @@ ss_rules_nft_gen() {
 	json_add_string o_redir_tcp_port "$local_port_tcp"
 	json_add_string o_redir_udp_port "$local_port_udp"
 	json_add_string o_ifnames "$ifnames"
-	json_add_string o_tproxy "$tproxy"
+	json_add_boolean o_tproxy "$tproxy"
+	json_add_string o_tun "$tun_redirect"
 	json_add_string o_local_default "$local_default"
 	json_add_string o_src_bypass "$src_ips_bypass"
 	json_add_string o_src_forward "$src_ips_forward"
@@ -270,7 +241,6 @@ ss_rules_nft_gen() {
 	json_add_string o_dst_default "$dst_default"
 	json_add_string o_nft_tcp_extra "$nft_tcp_extra"
 	json_add_string o_nft_udp_extra "$nft_udp_extra"
-	json_add_string o_tun "$tun_mode"
 	json_dump -i >"$tmp.json"
 
 	if utpl -S -F "$tmp.json" "$ssrules_uc" >"$tmp.nft" \
@@ -295,13 +265,6 @@ ss_rules_nft_reset() {
 }
 
 ss_rules() {
-	config_load shadowsocks-rust
-	config_foreach ss_collect_redir_info ss_redir
-	if [ -n "$(uci show openmptcprouter)" ]; then
-		config_load openmptcprouter
-		config_foreach ss_omr_servers server
-		config_load shadowsocks-rust
-	fi
 	if ! ss_rules_nft_gen; then
 		ss_rules_nft_reset
 	fi
@@ -311,8 +274,6 @@ rules_up() {
 	if [ -f "${ssrules_nft}.down" ]; then
 		mv -f "${ssrules_nft}.down" "$ssrules_nft"
 		fw4 -q reload
-	elif [ ! -f "$ssrules_nft" ]; then
-		ss_rules
 	fi
 }
 
@@ -325,15 +286,13 @@ rules_down() {
 
 rules_exist() {
 	if [ -f "$ssrules_nft" ]; then
-		exit 0
+		return 0
 	else
-		exit 1
+		return 1
 	fi
 }
 
-rules_reset() {
-	ss_rules
-}
+
 
 start_service() {
 	local cfgtype
@@ -343,28 +302,14 @@ start_service() {
 	}
 	mkdir -p "$ss_confdir"
 	config_load shadowsocks-rust
-	for cfgtype in ss_local ss_redir ss_server ss_tunnel; do
+	for cfgtype in ss_local ss_redir ss_server ss_tunnel ss_tun; do
 		config_foreach ss_xxx "$cfgtype" "$cfgtype"
 	done
 	if [ -n "$(uci show openmptcprouter)" ]; then
 		config_load openmptcprouter
 		config_foreach ss_omr_servers server
 	fi
-	# Let the kernel copy each newly-accepted TCP connection's inbound DSCP onto that
-	# socket's own outgoing ToS/Traffic-Class field, so a redirected connection already
-	# classified by an upstream firewall rule (e.g. omr-dscp, matching by destination) can
-	# be reflected per-connection onto the matching outbound proxy socket instead of only
-	# the ss_redir/server instance's static dscp option -- see
-	# patches/002-add-dynamic-per-connection-dscp-reflection.patch.
-	sysctl -qew net.ipv4.tcp_reflect_tos=1
-	if grep -q net.ipv4.tcp_reflect_tos /etc/sysctl.d/zzz_openmptcprouter.conf; then
-		sed -i "s:^net.ipv4.tcp_reflect_tos=[0-1]*:net.ipv4.tcp_reflect_tos=1:" /etc/sysctl.d/zzz_openmptcprouter.conf
-	else
-		echo "net.ipv4.tcp_reflect_tos=1" >> /etc/sysctl.d/zzz_openmptcprouter.conf
-	fi
-	local wait_proxy
-	wait_proxy=$(uci -q get shadowsocks-rust.ss_rules.wait_proxy 2>/dev/null)
-	[ "${wait_proxy:-1}" = "0" ] && ss_rules
+	ss_rules
 }
 
 stop_service() {
@@ -391,6 +336,7 @@ service_triggers() {
 	validate_ss_rules_section
 	validate_ss_server_section
 	validate_ss_tunnel_section
+	validate_ss_tun_section
 	procd_close_validate
 }
 
@@ -424,8 +370,7 @@ validate_common_server_options_() {
 		'key:string' \
 		"method:or($stream_methods, $aead_methods)" \
 		'plugin:string' \
-		'plugin_opts:string' \
-		'dscp:range(0,63)'
+		'plugin_opts:string'
 }
 
 validate_common_client_options_() {
@@ -433,6 +378,16 @@ validate_common_client_options_() {
 		'server:uci("shadowsocks-rust", "@server")' \
 		'local_address:ipaddr:0.0.0.0' \
 		'local_port:port'
+}
+
+validate_common_tun_options_() {
+	validate_common_options_ "$@" \
+		'server:uci("shadowsocks-rust", "@server")' \
+		'outbound_interface:string' \
+		'local_address:ipaddr:127.0.0.1' \
+		'local_port:port:1102' \
+		'tun_interface_destination:string:lo' \
+		'interface_address:cidr:10.255.0.1/24'
 }
 
 validate_common_options_() {
@@ -468,6 +423,11 @@ validate_ss_redir_section() {
 	validate_common_client_options_ ss_redir "$1" "$2"
 }
 
+validate_ss_tun_section() {
+	validate_common_tun_options_ ss_tun "$1" "$2"
+}
+
+
 validate_ss_rules_section() {
 	"${2:-ss_validate}" ss_rules "$1" \
 		'disabled:bool:0' \
@@ -486,9 +446,8 @@ validate_ss_rules_section() {
 		'nft_tcp_extra:string' \
 		'nft_udp_extra:string' \
 		'ifnames:maxlength(15)' \
-		'tun_mode:string' \
 		'tproxy:bool:0' \
-		'wait_proxy:bool:1'
+		'tun_redirect:or("tcp_only", "udp_only", "tcp_and_udp")'
 }
 
 validate_ss_server_section() {

@@ -30,6 +30,7 @@ ss_mkjson_server_conf_() {
 	[ -z "$method" ] || json_add_string method "$method"
 	[ -z "$server" ] || json_add_string server "$server"
 	json_add_int server_port "$server_port"
+	[ -z "$dscp" ] || json_add_int outbound_dscp "$dscp"
 	[ -z "$password" ] || {
 		#password="$(echo $password | sed 's/+/-/g; s/\//_/g;')"
 		json_add_string password "$password"
@@ -313,6 +314,18 @@ start_service() {
 	done
 	# Add rule to match traffic marked by firewall for bypass
 	ip rule add prio 1 fwmark 0x539 lookup 991337 > /dev/null 2>&1
+	# Let the kernel copy each newly-accepted TCP connection's inbound DSCP onto that
+	# socket's own outgoing ToS/Traffic-Class field, so a redirected connection already
+	# classified by an upstream firewall rule (e.g. omr-dscp, matching by destination) can
+	# be reflected per-connection onto the matching outbound proxy socket instead of only
+	# the ss_redir/server instance's static dscp option -- see
+	# patches/002-add-dynamic-per-connection-dscp-reflection.patch.
+	sysctl -qew net.ipv4.tcp_reflect_tos=1
+	if grep -q net.ipv4.tcp_reflect_tos /etc/sysctl.d/zzz_openmptcprouter.conf; then
+		sed -i "s:^net.ipv4.tcp_reflect_tos=[0-1]*:net.ipv4.tcp_reflect_tos=1:" /etc/sysctl.d/zzz_openmptcprouter.conf
+	else
+		echo "net.ipv4.tcp_reflect_tos=1" >> /etc/sysctl.d/zzz_openmptcprouter.conf
+	fi
 	rules_up
 	[ -f /etc/firewall.gre-tunnel ] && sh /etc/firewall.gre-tunnel > /dev/null 2>&1
 }
@@ -424,7 +437,8 @@ validate_common_server_options_() {
 		'plugin_opts:string' \
 		'obfs:bool:0' \
 		'obfs_plugin:or("v2ray","obfs"):v2ray' \
-		'obfs_type:or("http","tls"):http'
+		'obfs_type:or("http","tls"):http' \
+		'dscp:range(0,63)'
 }
 
 validate_common_client_options_() {

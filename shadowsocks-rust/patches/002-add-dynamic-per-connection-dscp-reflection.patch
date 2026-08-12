@@ -1,0 +1,167 @@
+From: Yannick Chabanois (Ycarus) <contact@openmptcprouter.com>
+Subject: [PATCH] local redir: reflect per-connection DSCP onto the outbound proxy socket
+
+001-add-outbound-dscp-support.patch added a static, per-server-instance
+`outbound_dscp` -- one fixed value for every connection a given
+ss_redir/ss_local instance forwards. That's enough to pin a whole
+dedicated tunnel to one DSCP class, but not to let a single ss_redir
+instance carry sessions of different traffic classes (e.g. one instance
+serving both bulk downloads and video calls) while still tagging each
+outbound proxy connection with *that session's own* class.
+
+Add a read-side counterpart to the existing `set_dscp` (Linux/Android):
+`shadowsocks::net::get_reflected_dscp()`, reading `IP_TOS` / `IPV6_TCLASS`
+off an already-open socket. In the TCP local-redir handler
+(`establish_client_tcp_redir`), read it off the just-accepted client
+socket -- which, given `net.ipv4.tcp_reflect_tos=1`, carries whatever
+DSCP an upstream firewall rule (e.g. omr-dscp, matching by destination)
+already classified that specific connection with -- and use it as a
+per-connection override of the new outbound socket's DSCP instead of
+the server instance's static `outbound_dscp`. Falls back to the static
+value when the accepted connection carries no classification (dscp
+reads back 0/cs0) or `tcp_reflect_tos` isn't enabled.
+
+This is TCP redir only (UDP redir has no persistent per-client socket
+to reflect off, and was out of scope here). Verified with `cargo check
+--bin sslocal --bin ssserver --bin ssmanager --features local-redir`
+(clean build, no warnings), stacked on top of
+001-add-outbound-dscp-support.patch, both from a fresh source
+extraction.
+
+Live-tested on a real bench router (ss_redir with mptcp enabled, dual-
+stack `::` listener) and initially found reading back 0 for every
+connection despite the accepted socket's incoming SYN visibly carrying
+the right DSCP on `tcpdump -i lo`: a dual-stack listener reports an
+accepted v4 client's `local_addr()` as v4-mapped-v6 (`::ffff:a.b.c.d`),
+and reading `IPV6_TCLASS` on that socket does not reflect the v4 ToS
+byte `tcp_reflect_tos` actually set. Fixed by normalizing a v4-mapped
+`local_addr()` before picking IP_TOS vs IPV6_TCLASS, mirroring
+`handle_redir_client`'s own v4-mapped normalization of `daddr` just
+above it. With the fix, the outbound SYN to the remote proxy server
+carries the correct DSCP (confirmed with `tcpdump -v` on the WAN
+interfaces).
+
+Signed-off-by: Yannick Chabanois (Ycarus) <contact@openmptcprouter.com>
+---
+diff --git a/crates/shadowsocks-service/src/local/redir/tcprelay/mod.rs b/crates/shadowsocks-service/src/local/redir/tcprelay/mod.rs
+index 75a95b8..fce6f07 100644
+--- a/crates/shadowsocks-service/src/local/redir/tcprelay/mod.rs
++++ b/crates/shadowsocks-service/src/local/redir/tcprelay/mod.rs
+@@ -9,6 +9,8 @@ use std::{
+ 
+ use log::{debug, error, info, trace};
+ use shadowsocks::{ServerAddr, lookup_then, net::TcpListener as ShadowTcpListener, relay::socks5::Address};
++#[cfg(any(target_os = "linux", target_os = "android"))]
++use shadowsocks::net::{AddrFamily, get_reflected_dscp};
+ use tokio::{
+     net::{TcpListener, TcpStream},
+     time,
+@@ -47,8 +49,45 @@ async fn establish_client_tcp_redir(
+     let server = balancer.best_tcp_server();
+     let svr_cfg = server.server_config();
+ 
+-    let mut remote =
+-        AutoProxyClientStream::connect_with_opts(context, &server, addr, server.connect_opts_ref()).await?;
++    // Reflect this specific connection's own DSCP (typically classified by an upstream firewall
++    // rule matching its destination, e.g. omr-dscp) onto the new outbound socket opened on its
++    // behalf, instead of only the server instance's static `outbound_dscp`. This lets a
++    // downstream MPTCP subflow scheduler steer this one connection by its own traffic class
++    // rather than pinning the whole tunnel to a single class.
++    //
++    // Requires `net.ipv4.tcp_reflect_tos=1` so the kernel actually copies the inbound SYN's
++    // DSCP onto this accepted socket's own ToS/Traffic-Class field; falls back to the server's
++    // static `outbound_dscp` (if any) when that isn't set up or the connection carries no
++    // classification (read comes back 0/cs0).
++    #[cfg(any(target_os = "linux", target_os = "android"))]
++    let connect_opts = {
++        let mut opts = server.connect_opts_ref().clone();
++        if let Ok(mut local_addr) = stream.local_addr() {
++            // A dual-stack (::) listener accepting a v4 client reports local_addr() as
++            // v4-mapped-v6 (::ffff:a.b.c.d): reading IPV6_TCLASS on that socket does NOT
++            // reflect the v4 ToS byte tcp_reflect_tos actually set on it (confirmed live --
++            // tcpdump on lo showed the correct DSCP arriving on the accepted socket's SYN, but
++            // naively using AddrFamily::from(local_addr) here read back 0 every time until this
++            // normalization was added). Mirror handle_redir_client's own v4-mapped normalization
++            // for daddr above, so the getsockopt level matches the family the byte actually
++            // lives in rather than the socket's nominal (dual-stack) family.
++            if let SocketAddr::V6(ref a) = local_addr
++                && let Some(v4) = to_ipv4_mapped(a.ip())
++            {
++                local_addr = SocketAddr::new(IpAddr::from(v4), a.port());
++            }
++            if let Ok(dscp) = get_reflected_dscp(&stream, AddrFamily::from(local_addr))
++                && dscp != 0
++            {
++                opts.dscp = Some(dscp);
++            }
++        }
++        opts
++    };
++    #[cfg(not(any(target_os = "linux", target_os = "android")))]
++    let connect_opts = server.connect_opts_ref().clone();
++
++    let mut remote = AutoProxyClientStream::connect_with_opts(context, &server, addr, &connect_opts).await?;
+ 
+     establish_tcp_tunnel(svr_cfg, &mut stream, &mut remote, peer_addr, addr).await
+ }
+diff --git a/crates/shadowsocks/src/net/mod.rs b/crates/shadowsocks/src/net/mod.rs
+index c8c824b..4895bf8 100644
+--- a/crates/shadowsocks/src/net/mod.rs
++++ b/crates/shadowsocks/src/net/mod.rs
+@@ -10,6 +10,11 @@ pub use self::{
+     tcp::{TcpListener, TcpStream},
+     udp::UdpSocket,
+ };
++// Linux/Android-only, matching `ConnectOpts::dscp`'s own platform gate -- not part of the
++// cross-platform `sys` API surface every platform module must provide (unlike the items above),
++// so it is re-exported separately rather than added to that shared list.
++#[cfg(any(target_os = "linux", target_os = "android"))]
++pub use self::sys::get_reflected_dscp;
+ 
+ mod option;
+ mod sys;
+diff --git a/crates/shadowsocks/src/net/sys/unix/linux/mod.rs b/crates/shadowsocks/src/net/sys/unix/linux/mod.rs
+index ea121bb..28bc749 100644
+--- a/crates/shadowsocks/src/net/sys/unix/linux/mod.rs
++++ b/crates/shadowsocks/src/net/sys/unix/linux/mod.rs
+@@ -409,6 +409,40 @@ fn set_dscp<S: AsRawFd>(socket: &S, af: AddrFamily, dscp: u8) -> io::Result<()>
+     Ok(())
+ }
+ 
++/// Read the DSCP value currently associated with a socket via `IP_TOS` (IPv4) / `IPV6_TCLASS`
++/// (IPv6) -- the read-side counterpart of `set_dscp`.
++///
++/// This is exposed crate-externally (unlike `set_dscp`) so that a caller holding an already
++/// *accepted* socket (e.g. a local transparent-proxy redirect) can reflect that connection's own
++/// DSCP -- typically classified by upstream firewall rules and copied onto the accepted socket's
++/// ToS/Traffic-Class field by the kernel when `net.ipv4.tcp_reflect_tos=1` -- onto a *new*
++/// outbound socket opened on its behalf, achieving per-connection (rather than only
++/// per-listener/static) DSCP propagation.
++pub fn get_reflected_dscp<S: AsRawFd>(socket: &S, af: AddrFamily) -> io::Result<u8> {
++    let (level, name) = match af {
++        AddrFamily::Ipv4 => (libc::IPPROTO_IP, libc::IP_TOS),
++        AddrFamily::Ipv6 => (libc::IPPROTO_IPV6, libc::IPV6_TCLASS),
++    };
++
++    let mut tos: i32 = 0;
++    let mut tos_len = mem::size_of_val(&tos) as libc::socklen_t;
++
++    let ret = unsafe {
++        libc::getsockopt(
++            socket.as_raw_fd(),
++            level,
++            name,
++            &mut tos as *mut _ as *mut _,
++            &mut tos_len,
++        )
++    };
++    if ret != 0 {
++        return Err(io::Error::last_os_error());
++    }
++
++    Ok(((tos >> 2) & 0x3f) as u8)
++}
++
+ #[cfg(target_os = "android")]
+ mod android {
+     use std::{

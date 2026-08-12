@@ -1,0 +1,406 @@
+From: Yannick Chabanois (Ycarus) <contact@openmptcprouter.com>
+Subject: [PATCH] Add outbound DSCP (IP_TOS / IPV6_TCLASS) socket option
+
+shadowsocks-rust already lets outbound sockets be tagged for policy
+routing via SO_MARK (`outbound_fwmark` / `--outbound-fwmark`), but has
+no equivalent for DSCP marking.
+
+Add a `dscp` field to `ConnectOpts` (mirroring `fwmark`) and set it via
+`setsockopt(IP_TOS)` / `setsockopt(IPV6_TCLASS)` when the outbound TCP
+or UDP socket is created, on Linux/Android. Plumb it through the same
+paths as `outbound_fwmark`:
+
+ - JSON config: top-level `outbound_dscp` for sslocal/ssserver/
+   ssmanager, and per-server `outbound_dscp` in the `servers` array
+   (both `SSConfig`/`SSServerExtConfig` and their `Config`/
+   `ServerInstanceConfig` runtime counterparts).
+ - CLI: `--outbound-dscp <0-255>` for sslocal, ssserver and ssmanager.
+
+This lets an outbound shadowsocks connection be tagged with a DSCP
+codepoint at connect time, e.g. so that a downstream MPTCP subflow
+scheduler (such as mptcp_bpf_dscp) can pin the connection to a
+particular WAN based on that DSCP value.
+
+Verified with `cargo check --bin sslocal --bin ssserver --bin
+ssmanager --features local-redir` (clean build, no warnings).
+
+Signed-off-by: Yannick Chabanois (Ycarus) <contact@openmptcprouter.com>
+---
+diff --git a/crates/shadowsocks-service/src/config.rs b/crates/shadowsocks-service/src/config.rs
+index a449e94..c56b704 100644
+--- a/crates/shadowsocks-service/src/config.rs
++++ b/crates/shadowsocks-service/src/config.rs
+@@ -205,6 +205,10 @@ struct SSConfig {
+     #[cfg(any(target_os = "linux", target_os = "android"))]
+     outbound_fwmark: Option<u32>,
+ 
++    #[serde(skip_serializing_if = "Option::is_none")]
++    #[cfg(any(target_os = "linux", target_os = "android"))]
++    outbound_dscp: Option<u8>,
++
+     #[serde(skip_serializing_if = "Option::is_none")]
+     #[cfg(target_os = "freebsd")]
+     outbound_user_cookie: Option<u32>,
+@@ -399,6 +403,10 @@ struct SSServerExtConfig {
+     #[cfg(any(target_os = "linux", target_os = "android"))]
+     outbound_fwmark: Option<u32>,
+ 
++    #[serde(skip_serializing_if = "Option::is_none")]
++    #[cfg(any(target_os = "linux", target_os = "android"))]
++    outbound_dscp: Option<u8>,
++
+     #[serde(skip_serializing_if = "Option::is_none")]
+     #[cfg(target_os = "freebsd")]
+     outbound_user_cookie: Option<u32>,
+@@ -1251,6 +1259,9 @@ pub struct ServerInstanceConfig {
+     /// Server's outbound fwmark / address / interface to support split tunnel
+     #[cfg(any(target_os = "linux", target_os = "android"))]
+     pub outbound_fwmark: Option<u32>,
++    /// Server's outbound DSCP marking
++    #[cfg(any(target_os = "linux", target_os = "android"))]
++    pub outbound_dscp: Option<u8>,
+     #[cfg(target_os = "freebsd")]
+     pub outbound_user_cookie: Option<u32>,
+     pub outbound_bind_addr: Option<IpAddr>,
+@@ -1266,6 +1277,8 @@ impl ServerInstanceConfig {
+             acl: None,
+             #[cfg(any(target_os = "linux", target_os = "android"))]
+             outbound_fwmark: None,
++            #[cfg(any(target_os = "linux", target_os = "android"))]
++            outbound_dscp: None,
+             #[cfg(target_os = "freebsd")]
+             outbound_user_cookie: None,
+             outbound_bind_addr: None,
+@@ -1350,6 +1363,9 @@ pub struct Config {
+     /// Set `SO_MARK` socket option for outbound sockets
+     #[cfg(any(target_os = "linux", target_os = "android"))]
+     pub outbound_fwmark: Option<u32>,
++    /// Set `IP_TOS` / `IPV6_TCLASS` (DSCP) socket option for outbound sockets
++    #[cfg(any(target_os = "linux", target_os = "android"))]
++    pub outbound_dscp: Option<u8>,
+     /// Set `SO_USER_COOKIE` socket option for outbound sockets
+     #[cfg(target_os = "freebsd")]
+     pub outbound_user_cookie: Option<u32>,
+@@ -1500,6 +1516,8 @@ impl Config {
+ 
+             #[cfg(any(target_os = "linux", target_os = "android"))]
+             outbound_fwmark: None,
++            #[cfg(any(target_os = "linux", target_os = "android"))]
++            outbound_dscp: None,
+             #[cfg(target_os = "freebsd")]
+             outbound_user_cookie: None,
+             outbound_bind_interface: None,
+@@ -2201,6 +2219,11 @@ impl Config {
+                     server_instance.outbound_fwmark = Some(outbound_fwmark);
+                 }
+ 
++                #[cfg(any(target_os = "linux", target_os = "android"))]
++                if let Some(outbound_dscp) = svr.outbound_dscp {
++                    server_instance.outbound_dscp = Some(outbound_dscp);
++                }
++
+                 #[cfg(target_os = "freebsd")]
+                 if let Some(outbound_user_cookie) = svr.outbound_user_cookie {
+                     server_instance.outbound_user_cookie = Some(outbound_user_cookie);
+@@ -2363,6 +2386,12 @@ impl Config {
+             nconfig.outbound_fwmark = Some(fwmark);
+         }
+ 
++        // IP_TOS / IPV6_TCLASS (DSCP)
++        #[cfg(any(target_os = "linux", target_os = "android"))]
++        if let Some(dscp) = config.outbound_dscp {
++            nconfig.outbound_dscp = Some(dscp);
++        }
++
+         // SO_USER_COOKIE
+         #[cfg(target_os = "freebsd")]
+         if let Some(user_cookie) = config.outbound_user_cookie {
+@@ -3036,6 +3065,8 @@ impl fmt::Display for Config {
+                             .and_then(|a| a.file_path().to_str().map(ToOwned::to_owned)),
+                         #[cfg(any(target_os = "linux", target_os = "android"))]
+                         outbound_fwmark: inst.outbound_fwmark,
++                        #[cfg(any(target_os = "linux", target_os = "android"))]
++                        outbound_dscp: inst.outbound_dscp,
+                         #[cfg(target_os = "freebsd")]
+                         outbound_user_cookie: inst.outbound_user_cookie,
+                         outbound_bind_addr: inst.outbound_bind_addr,
+@@ -3136,6 +3167,11 @@ impl fmt::Display for Config {
+             jconf.outbound_fwmark = self.outbound_fwmark;
+         }
+ 
++        #[cfg(any(target_os = "linux", target_os = "android"))]
++        {
++            jconf.outbound_dscp = self.outbound_dscp;
++        }
++
+         #[cfg(target_os = "freebsd")]
+         {
+             jconf.outbound_user_cookie = self.outbound_user_cookie;
+diff --git a/crates/shadowsocks-service/src/local/loadbalancing/server_data.rs b/crates/shadowsocks-service/src/local/loadbalancing/server_data.rs
+index 0a9a2db..7089402 100644
+--- a/crates/shadowsocks-service/src/local/loadbalancing/server_data.rs
++++ b/crates/shadowsocks-service/src/local/loadbalancing/server_data.rs
+@@ -101,6 +101,11 @@ impl ServerIdent {
+             connect_opts.fwmark = Some(fwmark);
+         }
+ 
++        #[cfg(any(target_os = "linux", target_os = "android"))]
++        if let Some(dscp) = svr_cfg.outbound_dscp {
++            connect_opts.dscp = Some(dscp);
++        }
++
+         #[cfg(target_os = "freebsd")]
+         if let Some(user_cookie) = svr_cfg.outbound_user_cookie {
+             connect_opts.user_cookie = Some(user_cookie);
+diff --git a/crates/shadowsocks-service/src/local/mod.rs b/crates/shadowsocks-service/src/local/mod.rs
+index 753f72d..1a5c25c 100644
+--- a/crates/shadowsocks-service/src/local/mod.rs
++++ b/crates/shadowsocks-service/src/local/mod.rs
+@@ -125,6 +125,8 @@ impl Server {
+         let mut connect_opts = ConnectOpts {
+             #[cfg(any(target_os = "linux", target_os = "android"))]
+             fwmark: config.outbound_fwmark,
++            #[cfg(any(target_os = "linux", target_os = "android"))]
++            dscp: config.outbound_dscp,
+             #[cfg(target_os = "freebsd")]
+             user_cookie: config.outbound_user_cookie,
+ 
+diff --git a/crates/shadowsocks-service/src/manager/mod.rs b/crates/shadowsocks-service/src/manager/mod.rs
+index d174d63..4372c20 100644
+--- a/crates/shadowsocks-service/src/manager/mod.rs
++++ b/crates/shadowsocks-service/src/manager/mod.rs
+@@ -36,6 +36,8 @@ pub async fn run(config: Config) -> io::Result<()> {
+     let mut connect_opts = ConnectOpts {
+         #[cfg(any(target_os = "linux", target_os = "android"))]
+         fwmark: config.outbound_fwmark,
++        #[cfg(any(target_os = "linux", target_os = "android"))]
++        dscp: config.outbound_dscp,
+         #[cfg(target_os = "freebsd")]
+         user_cookie: config.outbound_user_cookie,
+ 
+diff --git a/crates/shadowsocks-service/src/manager/server.rs b/crates/shadowsocks-service/src/manager/server.rs
+index c8d9392..03b9aed 100644
+--- a/crates/shadowsocks-service/src/manager/server.rs
++++ b/crates/shadowsocks-service/src/manager/server.rs
+@@ -386,6 +386,8 @@ impl Manager {
+             acl: None, // Set with --acl command line argument
+             #[cfg(any(target_os = "linux", target_os = "android"))]
+             outbound_fwmark: None,
++            #[cfg(any(target_os = "linux", target_os = "android"))]
++            outbound_dscp: None,
+             #[cfg(target_os = "freebsd")]
+             outbound_user_cookie: None,
+             outbound_bind_addr: None,
+diff --git a/crates/shadowsocks-service/src/server/mod.rs b/crates/shadowsocks-service/src/server/mod.rs
+index 1851480..917d1e5 100644
+--- a/crates/shadowsocks-service/src/server/mod.rs
++++ b/crates/shadowsocks-service/src/server/mod.rs
+@@ -64,6 +64,8 @@ pub async fn run(config: Config) -> io::Result<()> {
+     let mut connect_opts = ConnectOpts {
+         #[cfg(any(target_os = "linux", target_os = "android"))]
+         fwmark: config.outbound_fwmark,
++        #[cfg(any(target_os = "linux", target_os = "android"))]
++        dscp: config.outbound_dscp,
+         #[cfg(target_os = "freebsd")]
+         user_cookie: config.outbound_user_cookie,
+ 
+@@ -124,6 +126,11 @@ pub async fn run(config: Config) -> io::Result<()> {
+             connect_opts.fwmark = Some(fwmark);
+         }
+ 
++        #[cfg(any(target_os = "linux", target_os = "android"))]
++        if let Some(dscp) = inst.outbound_dscp {
++            connect_opts.dscp = Some(dscp);
++        }
++
+         #[cfg(target_os = "freebsd")]
+         if let Some(user_cookie) = inst.outbound_user_cookie {
+             connect_opts.user_cookie = Some(user_cookie);
+diff --git a/crates/shadowsocks/src/net/option.rs b/crates/shadowsocks/src/net/option.rs
+index 3e9d903..699f070 100644
+--- a/crates/shadowsocks/src/net/option.rs
++++ b/crates/shadowsocks/src/net/option.rs
+@@ -49,6 +49,13 @@ pub struct ConnectOpts {
+     #[cfg(any(target_os = "linux", target_os = "android"))]
+     pub fwmark: Option<u32>,
+ 
++    /// DSCP (Differentiated Services Code Point) to tag outbound packets with, going to be set
++    /// by `setsockopt` with `IP_TOS` (IPv4) / `IPV6_TCLASS` (IPv6). Useful for policy routing /
++    /// QoS classification downstream, e.g. MPTCP subflow schedulers that pick a WAN based on the
++    /// socket's DSCP value.
++    #[cfg(any(target_os = "linux", target_os = "android"))]
++    pub dscp: Option<u8>,
++
+     /// FreeBSD SO_USER_COOKIE
+     /// https://www.freebsd.org/cgi/man.cgi?query=setsockopt&sektion=2
+     #[cfg(target_os = "freebsd")]
+diff --git a/crates/shadowsocks/src/net/sys/unix/linux/mod.rs b/crates/shadowsocks/src/net/sys/unix/linux/mod.rs
+index b77c7bf..ea121bb 100644
+--- a/crates/shadowsocks/src/net/sys/unix/linux/mod.rs
++++ b/crates/shadowsocks/src/net/sys/unix/linux/mod.rs
+@@ -82,6 +82,11 @@ impl TcpStream {
+             set_bindtodevice(&socket, iface)?;
+         }
+ 
++        // Set IP_TOS / IPV6_TCLASS for DSCP marking, e.g. for MPTCP subflow scheduling
++        if let Some(dscp) = opts.dscp {
++            set_dscp(&socket, AddrFamily::from(addr), dscp)?;
++        }
++
+         set_common_sockopt_for_connect(addr, &socket, opts)?;
+ 
+         if !opts.tcp.fastopen {
+@@ -344,6 +349,11 @@ pub async fn bind_outbound_udp_socket(bind_addr: &SocketAddr, config: &ConnectOp
+         set_bindtodevice(&socket, iface)?;
+     }
+ 
++    // Set IP_TOS / IPV6_TCLASS for DSCP marking, e.g. for MPTCP subflow scheduling
++    if let Some(dscp) = config.dscp {
++        set_dscp(&socket, af, dscp)?;
++    }
++
+     Ok(socket)
+ }
+ 
+@@ -369,6 +379,36 @@ fn set_bindtodevice<S: AsRawFd>(socket: &S, iface: &str) -> io::Result<()> {
+     Ok(())
+ }
+ 
++/// Set DSCP on an outbound socket via `IP_TOS` (IPv4) / `IPV6_TCLASS` (IPv6).
++///
++/// `dscp` is the 6-bit DSCP codepoint (e.g. `0x2E` for EF); it occupies the upper 6 bits of the
++/// IPv4 ToS byte / IPv6 Traffic Class octet, so it is shifted left by 2 before being applied.
++fn set_dscp<S: AsRawFd>(socket: &S, af: AddrFamily, dscp: u8) -> io::Result<()> {
++    let tos: i32 = (dscp as i32) << 2;
++
++    let (level, name, opt_name) = match af {
++        AddrFamily::Ipv4 => (libc::IPPROTO_IP, libc::IP_TOS, "IP_TOS"),
++        AddrFamily::Ipv6 => (libc::IPPROTO_IPV6, libc::IPV6_TCLASS, "IPV6_TCLASS"),
++    };
++
++    let ret = unsafe {
++        libc::setsockopt(
++            socket.as_raw_fd(),
++            level,
++            name,
++            &tos as *const _ as *const _,
++            mem::size_of_val(&tos) as libc::socklen_t,
++        )
++    };
++    if ret != 0 {
++        let err = io::Error::last_os_error();
++        error!("set {} error: {}", opt_name, err);
++        return Err(err);
++    }
++
++    Ok(())
++}
++
+ #[cfg(target_os = "android")]
+ mod android {
+     use std::{
+diff --git a/src/service/local.rs b/src/service/local.rs
+index 786f2ce..addd86b 100644
+--- a/src/service/local.rs
++++ b/src/service/local.rs
+@@ -311,6 +311,18 @@ pub fn define_command_line_options(mut app: Command) -> Command {
+         );
+     }
+ 
++    #[cfg(any(target_os = "linux", target_os = "android"))]
++    {
++        app = app.arg(
++            Arg::new("OUTBOUND_DSCP")
++                .long("outbound-dscp")
++                .num_args(1)
++                .action(ArgAction::Set)
++                .value_parser(clap::value_parser!(u8))
++                .help("Set IP_TOS / IPV6_TCLASS (DSCP) option for outbound sockets"),
++        );
++    }
++
+     #[cfg(target_os = "freebsd")]
+     {
+         app = app.arg(
+@@ -869,6 +881,11 @@ pub fn create(matches: &ArgMatches) -> ShadowsocksResult<(Runtime, impl Future<O
+             config.outbound_fwmark = Some(*mark);
+         }
+ 
++        #[cfg(any(target_os = "linux", target_os = "android"))]
++        if let Some(dscp) = matches.get_one::<u8>("OUTBOUND_DSCP") {
++            config.outbound_dscp = Some(*dscp);
++        }
++
+         #[cfg(target_os = "freebsd")]
+         if let Some(user_cookie) = matches.get_one::<u32>("OUTBOUND_USER_COOKIE") {
+             config.outbound_user_cookie = Some(*user_cookie);
+diff --git a/src/service/manager.rs b/src/service/manager.rs
+index c0e2d76..8fe9d77 100644
+--- a/src/service/manager.rs
++++ b/src/service/manager.rs
+@@ -222,6 +222,18 @@ pub fn define_command_line_options(mut app: Command) -> Command {
+         );
+     }
+ 
++    #[cfg(any(target_os = "linux", target_os = "android"))]
++    {
++        app = app.arg(
++            Arg::new("OUTBOUND_DSCP")
++                .long("outbound-dscp")
++                .num_args(1)
++                .action(ArgAction::Set)
++                .value_parser(clap::value_parser!(u8))
++                .help("Set IP_TOS / IPV6_TCLASS (DSCP) option for outbound sockets"),
++        );
++    }
++
+     #[cfg(target_os = "freebsd")]
+     {
+         app = app.arg(
+@@ -332,6 +344,11 @@ pub fn create(matches: &ArgMatches) -> ShadowsocksResult<(Runtime, impl Future<O
+             config.outbound_fwmark = Some(*mark);
+         }
+ 
++        #[cfg(any(target_os = "linux", target_os = "android"))]
++        if let Some(dscp) = matches.get_one::<u8>("OUTBOUND_DSCP") {
++            config.outbound_dscp = Some(*dscp);
++        }
++
+         #[cfg(target_os = "freebsd")]
+         if let Some(user_cookie) = matches.get_one::<u32>("OUTBOUND_USER_COOKIE") {
+             config.outbound_user_cookie = Some(*user_cookie);
+diff --git a/src/service/server.rs b/src/service/server.rs
+index eef03d8..00b0642 100644
+--- a/src/service/server.rs
++++ b/src/service/server.rs
+@@ -234,6 +234,18 @@ pub fn define_command_line_options(mut app: Command) -> Command {
+         );
+     }
+ 
++    #[cfg(any(target_os = "linux", target_os = "android"))]
++    {
++        app = app.arg(
++            Arg::new("OUTBOUND_DSCP")
++                .long("outbound-dscp")
++                .num_args(1)
++                .action(ArgAction::Set)
++                .value_parser(clap::value_parser!(u8))
++                .help("Set IP_TOS / IPV6_TCLASS (DSCP) option for outbound sockets"),
++        );
++    }
++
+     #[cfg(target_os = "freebsd")]
+     {
+         app = app.arg(
+@@ -410,6 +422,11 @@ pub fn create(matches: &ArgMatches) -> ShadowsocksResult<(Runtime, impl Future<O
+             config.outbound_fwmark = Some(*mark);
+         }
+ 
++        #[cfg(any(target_os = "linux", target_os = "android"))]
++        if let Some(dscp) = matches.get_one::<u8>("OUTBOUND_DSCP") {
++            config.outbound_dscp = Some(*dscp);
++        }
++
+         #[cfg(target_os = "freebsd")]
+         if let Some(user_cookie) = matches.get_one::<u32>("OUTBOUND_USER_COOKIE") {
+             config.outbound_user_cookie = Some(*user_cookie);
