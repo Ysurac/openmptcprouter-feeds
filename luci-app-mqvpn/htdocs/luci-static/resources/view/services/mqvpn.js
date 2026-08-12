@@ -175,6 +175,10 @@ return L.view.extend({
 		o.rmempty = true;
 		o.depends('fec_enable', '1');
 
+		o = s.option(form.Flag, 'sync_path_labels', _('Sync path labels to server'));
+		o.description = _('Announce this path\'s weight and DSCP mask (set via the control API\'s set_path_weight/set_path_dscp_mask) to the server, so it adopts the same labels for downlink scheduling. Disable to stop announcing entirely -- the server then cannot adopt this client\'s labels regardless of its own setting. Both labels are managed on the Network page\'s "DSCP / Weight Routing" section, not here -- weight per WAN, and DSCP class pins (upload side only; mqvpn\'s downlink always mirrors upload, it cannot be pinned to a different WAN).');
+		o.default = o.enabled;
+
 		o = s.option(form.Value, 'init_max_path_id', _('Initial max path ID'));
 		o.description = _('draft-21 initial_max_path_id transport parameter. Lower it (e.g. 2) to force PATHS_BLOCKED for testing; leave empty for the default');
 		o.datatype = 'uinteger';
