@@ -11,6 +11,7 @@
 #   mqvpn-path add <iface> [backup]
 #   mqvpn-path remove <iface>
 #   mqvpn-path weight <iface> <value>
+#   mqvpn-path dscp <iface> <mask>
 
 MQVPN_API_HOST="$(uci -q get mqvpn.control.control_addr 2>/dev/null || echo '127.0.0.1')"
 MQVPN_API_PORT="$(uci -q get mqvpn.control.control_port 2>/dev/null || echo '9091')"
@@ -24,12 +25,14 @@ _usage() {
 	echo "       $0 add <iface> [backup]"
 	echo "       $0 remove <iface>"
 	echo "       $0 weight <iface> <value>"
+	echo "       $0 dscp <iface> <mask>"
 	exit 1
 }
 
 cmd="$1"
 iface="$2"
 weight_value="$3"
+dscp_mask="$3"
 
 case "$cmd" in
 	list)
@@ -65,6 +68,21 @@ case "$cmd" in
 				;;
 			*)
 				echo "Failed to set weight: $iface -> $weight_value (${result:-no response from mqvpn API})" >&2
+				exit 1
+				;;
+		esac
+		;;
+	dscp)
+		if [ -z "$iface" ] || [ -z "$dscp_mask" ]; then
+			_usage
+		fi
+		result=$(_api "{\"cmd\":\"set_path_dscp_mask\",\"iface\":\"$iface\",\"mask\":$dscp_mask}")
+		case "$result" in
+			*'"ok":true'*)
+				echo "Set DSCP mask: $iface -> $dscp_mask"
+				;;
+			*)
+				echo "Failed to set DSCP mask: $iface -> $dscp_mask (${result:-no response from mqvpn API})" >&2
 				exit 1
 				;;
 		esac
