@@ -114,6 +114,14 @@ return L.view.extend({
 		return m.checkDepends();
 	};
 
+	o = s.option(form.Flag, "mptcp_dscp_weight_vps_sync", _("Mirror DSCP/weight pins to gateway"),
+		_("When using a DSCP or weight BPF scheduler, also sync each WAN’s pin to the gateway (VPS) so it also holds for traffic the gateway sends (downloads), not just traffic the router sends (uploads). Disabling this only stops future syncs -- it does not remove pins already pushed to the gateway."));
+	o.default = "1";
+	o.depends("mptcp_scheduler", "bpf_dscp");
+	o.depends("mptcp_scheduler", "bpf_weight");
+	o.depends("mptcp_scheduler", "bpf_weight_rr");
+	o.depends("mptcp_scheduler", "bpf_burstweight");
+
 	if (parseFloat(boardinfo.kernel.substring(0,4)) < 6) {
 		o = s.option(form.Value, "mptcp_syn_retries", _("Multipath TCP SYN retries"));
 		o.datatype = "uinteger";
