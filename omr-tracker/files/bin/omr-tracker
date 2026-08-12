@@ -23,6 +23,9 @@ export OMR_TRACKER_SIZE
 export OMR_TRACKER_MAX_TTL
 export OMR_TRACKER_LOSS
 export OMR_TRACKER_JITTER
+export OMR_TRACKER_FAILURE_CONGESTION
+export OMR_TRACKER_RECOVERY_CONGESTION
+export OMR_TRACKER_CONGESTION_SCORE
 export OMR_TRACKER_RTT_MIN
 export OMR_TRACKER_RTT_MAX
 export OMR_TRACKER_STATUS
@@ -101,6 +104,21 @@ _restart() {
 		OMR_TRACKER_HOSTS6="${OMR_TRACKER_HOSTS6#* } $OMR_TRACKER_HOST6"
 		_init_rto
 	}
+}
+
+# Read the congestion score (0-100) omr-metrics computed for this interface
+# on the *previous* post-tracking cycle (post-tracking.d/040-metrics runs
+# after this loop's quality gate, so the freshest score is always one cycle
+# behind - same lag as any other cross-hook data). Silently yields an empty
+# OMR_TRACKER_CONGESTION_SCORE when omr-metrics isn't installed or hasn't
+# written a sample yet, so the check below is a no-op in that case.
+_read_congestion() {
+	OMR_TRACKER_CONGESTION_SCORE=
+	[ -z "$OMR_TRACKER_FAILURE_CONGESTION" ] && [ -z "$OMR_TRACKER_RECOVERY_CONGESTION" ] && return
+	command -v jsonfilter >/dev/null 2>&1 || return
+	local metrics_file="${OMR_METRICS_DIR:-/tmp/metrics}/${OMR_TRACKER_INTERFACE}.json"
+	[ -f "$metrics_file" ] || return
+	OMR_TRACKER_CONGESTION_SCORE=$(jsonfilter -i "$metrics_file" -q -e '@.congestion.score' 2>/dev/null)
 }
 
 _post_tracking() {
@@ -811,6 +829,7 @@ while true; do
 		fi
 	fi
 	if [ "$OMR_TRACKER_CHECK_QUALITY" = "1" ]; then
+		_read_congestion
 		if [ "$OMR_TRACKER_PREV_STATUS" = "OK" ] && [ "$OMR_TRACKER_STATUS" = "OK" ]; then
 			if [ -n "$OMR_TRACKER_LOSS" ] && [ -n "$OMR_TRACKER_RECOVERY_LOSS" ] && [ "$OMR_TRACKER_LOSS" -ge "$OMR_TRACKER_FAILURE_LOSS" ]; then
 				OMR_TRACKER_STATUS="ERROR"
@@ -818,6 +837,9 @@ while true; do
 			elif [ -n "$OMR_TRACKER_LATENCY" ] && [ -n "$OMR_TRACKER_FAILURE_LATENCY" ] && [ "$OMR_TRACKER_LATENCY" -ge "$OMR_TRACKER_FAILURE_LATENCY" ]; then
 				OMR_TRACKER_STATUS="ERROR"
 				OMR_TRACKER_STATUS_MSG="Latency is $OMR_TRACKER_LATENCY this is more than failure limit defined at $OMR_TRACKER_FAILURE_LATENCY"
+			elif [ -n "$OMR_TRACKER_CONGESTION_SCORE" ] && [ -n "$OMR_TRACKER_FAILURE_CONGESTION" ] && [ "$OMR_TRACKER_CONGESTION_SCORE" -ge "$OMR_TRACKER_FAILURE_CONGESTION" ] 2>/dev/null; then
+				OMR_TRACKER_STATUS="ERROR"
+				OMR_TRACKER_STATUS_MSG="Congestion score is $OMR_TRACKER_CONGESTION_SCORE this is more than failure limit defined at $OMR_TRACKER_FAILURE_CONGESTION"
 			fi
 		elif [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ] && [ "$OMR_TRACKER_STATUS" = "OK" ]; then
 			if [ -n "$OMR_TRACKER_LOSS" ] && [ -n "$OMR_TRACKER_RECOVERY_LOSS" ] && [ "$OMR_TRACKER_LOSS" -ge "$OMR_TRACKER_RECOVERY_LOSS" ]; then
@@ -826,6 +848,9 @@ while true; do
 			elif [ -n "$OMR_TRACKER_LATENCY" ] && [ -n "$OMR_TRACKER_RECOVERY_LATENCY" ] && [ "$OMR_TRACKER_LATENCY" -ge "$OMR_TRACKER_RECOVERY_LATENCY" ]; then
 				OMR_TRACKER_STATUS="ERROR"
 				OMR_TRACKER_STATUS_MSG="Latency is $OMR_TRACKER_LATENCY this is more than recovery limit defined at $OMR_TRACKER_RECOVERY_LATENCY"
+			elif [ -n "$OMR_TRACKER_CONGESTION_SCORE" ] && [ -n "$OMR_TRACKER_RECOVERY_CONGESTION" ] && [ "$OMR_TRACKER_CONGESTION_SCORE" -ge "$OMR_TRACKER_RECOVERY_CONGESTION" ] 2>/dev/null; then
+				OMR_TRACKER_STATUS="ERROR"
+				OMR_TRACKER_STATUS_MSG="Congestion score is $OMR_TRACKER_CONGESTION_SCORE this is more than recovery limit defined at $OMR_TRACKER_RECOVERY_CONGESTION"
 			fi
 		fi
 	fi

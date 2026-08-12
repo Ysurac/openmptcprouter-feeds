@@ -578,6 +578,51 @@ del_default_route6() {
     _del_default_route_common "$1" true
 }
 
+# del_default_route/6 only ever remove a default route ON $OMR_TRACKER_DEVICE
+# (the VPN's own tunnel device), so they never touch the raw-WAN default
+# routes installed by other mechanisms while defaultgw was enabled:
+#  - the per-WAN "own gateway, own metric" fallback route 003-up adds once
+#    via `ip r add default via <gw> dev <wan> metric <network.<wan>.metric>`
+#    (and its IPv6 twin at metric 6<metric>) -- an ADD, never a REPLACE, and
+#    nothing ever deletes it again, so it outlives both the WAN's own up/down
+#    cycles and settings.defaultgw being switched off afterwards
+#  - the shared ECMP "default metric 1" (and backup "metric 999") balancing
+#    routes built from every multipath WAN's gateway
+# Called when settings.defaultgw=0 and the tracked VPN interface just went
+# down, so that "no internet if VPS are down" (the option's own LuCI
+# description) actually holds: no raw WAN may be left as a main-table
+# default-route nexthop, not just the ones this handler itself manages.
+_purge_wan_default_route() {
+	local iface="$1"
+	local multipath device metric
+
+	case "$iface" in
+		omrvpn|glorytun|omr6in4|"") return;;
+	esac
+	config_get multipath "$iface" multipath
+	case "$multipath" in
+		on|master|backup) ;;
+		*) return;;
+	esac
+	device=$(_get_interface_device "$iface")
+	[ -z "$device" ] && return
+	metric=$(uci -q get "network.${iface}.metric")
+
+	[ -n "$metric" ] && ip route del default dev "$device" metric "$metric" >/dev/null 2>&1
+	ip route del default dev "$device" >/dev/null 2>&1
+	[ -n "$metric" ] && ip -6 route del default dev "$device" metric "6$metric" >/dev/null 2>&1
+	ip -6 route del default dev "$device" >/dev/null 2>&1
+}
+
+purge_wan_default_routes() {
+	config_load network
+	config_foreach _purge_wan_default_route interface
+	ip route del default metric 1 >/dev/null 2>&1
+	ip route del default metric 999 >/dev/null 2>&1
+	ip -6 route del default metric 1 >/dev/null 2>&1
+	ip -6 route del default metric 999 >/dev/null 2>&1
+}
+
 _del_server_route_common() {
 	local server="$1"
 	local ipv6="${2:-false}"

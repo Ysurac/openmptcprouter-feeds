@@ -1,0 +1,111 @@
+#!/bin/sh
+#
+# Copyright (C) 2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+# Pushes this WAN's upload-side DSCP pins (network's anonymous
+# `config dscp_pin` sections, upload_interface field -- see
+# mptcp-dscp-manager's 041-multipath-dscp hook and luci-app-mptcp's
+# DSCP/Weight Routing page) into mqvpn as a per-path DSCP mask via the
+# control API's set_path_dscp_mask, mirroring how 006-mqvpn-weight pushes
+# multipath_weight via set_path_weight.
+#
+# mqvpn has no equivalent of MPTCP's independent dscp_remote_id map: a
+# dscp_pin row's download_interface is NOT applied here at all, only
+# upload_interface. The mqvpn control API's own "sync_path_labels"
+# setting (when enabled) announces this path's mask to the server so it
+# adopts the same association for its own downlink scheduling -- i.e.
+# mqvpn's download side always *mirrors* whichever WAN carries the class
+# on upload, it cannot be pinned to a different WAN the way MPTCP's
+# bpf_dscp scheduler can. This is a protocol limitation, not something
+# this hook chooses -- if that ever changes, revisit before assuming
+# download_interface can be wired up here too.
+
+if [ "$(uci -q get mqvpn.settings.enable)" != "1" ]; then
+	exit 0
+fi
+
+if [ -z "$OMR_TRACKER_DEVICE" ] || [ -z "$OMR_TRACKER_INTERFACE" ]; then
+	exit 0
+fi
+
+# Don't manage VPN interfaces
+if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" = "1" ]; then
+	exit 0
+fi
+
+if [ "$(pgrep -f mqvpn)" = "" ]; then
+	exit 0
+fi
+
+multipath_config=$(uci -q get "openmptcprouter.$OMR_TRACKER_INTERFACE.multipath")
+[ -z "$multipath_config" ] && multipath_config=$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath" || echo "off")
+
+if [ "$multipath_config" != "on" ] && [ "$multipath_config" != "master" ] && [ "$multipath_config" != "backup" ]; then
+	exit 0
+fi
+
+# Mirrors mptcp-scheduler-dscp.sh's dscp_to_val -- deliberately duplicated
+# rather than shelling out to that script, so this hook doesn't gain a
+# dependency on mptcp-dscp-manager being installed (mqvpn's DSCP masking
+# is independent of the MPTCP bpf_dscp scheduler).
+_dscp_to_val() {
+	case "$1" in
+		cs0) echo 0 ;;
+		cs1) echo 8 ;;
+		cs2) echo 16 ;;
+		cs3) echo 24 ;;
+		cs4) echo 32 ;;
+		cs5) echo 40 ;;
+		cs6) echo 48 ;;
+		cs7) echo 56 ;;
+		le) echo 1 ;;
+		af11) echo 10 ;;
+		af12) echo 12 ;;
+		af13) echo 14 ;;
+		af21) echo 18 ;;
+		af22) echo 20 ;;
+		af23) echo 22 ;;
+		af31) echo 26 ;;
+		af32) echo 28 ;;
+		af33) echo 30 ;;
+		af41) echo 34 ;;
+		af42) echo 36 ;;
+		af43) echo 38 ;;
+		ef) echo 46 ;;
+		''|*[!0-9]*) echo "" ;;
+		*) [ "$1" -ge 0 ] 2>/dev/null && [ "$1" -le 63 ] 2>/dev/null && echo "$1" || echo "" ;;
+	esac
+}
+
+# Bitmask over the 64 DSCP codepoints (bit N set == this path carries
+# class N on upload): one bit per row in network's dscp_pin sections
+# whose upload_interface names this interface.
+mask=0
+for section in $(uci -q show network 2>/dev/null | sed -n "s/^network\.\([^.=]*\)=dscp_pin\$/\1/p"); do
+	[ "$(uci -q get network.${section}.upload_interface)" = "$OMR_TRACKER_INTERFACE" ] || continue
+	dscp="$(uci -q get network.${section}.dscp)"
+	val="$(_dscp_to_val "$dscp")"
+	[ -z "$val" ] && continue
+	mask=$((mask | (1 << val)))
+done
+
+# network.<iface>.mqvpn_dscp_mask mirrors the mask last applied to this
+# path -- same "re-apply on re-add even if unchanged" reasoning as
+# 006-mqvpn-weight's network.<iface>.weight cache.
+current_mask="$(uci -q get "network.$OMR_TRACKER_INTERFACE.mqvpn_dscp_mask")"
+[ -z "$current_mask" ] && current_mask=0
+
+if [ "$mask" != "$current_mask" ]; then
+	_log "mqvpn: set DSCP mask $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $mask"
+	if mqvpn-path dscp "$OMR_TRACKER_DEVICE" "$mask" >/dev/null 2>&1; then
+		uci -q set "network.$OMR_TRACKER_INTERFACE.mqvpn_dscp_mask=$mask"
+		[ -n "$(uci -q changes network)" ] && uci -q commit network
+	else
+		_log "mqvpn: failed to set DSCP mask $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $mask"
+	fi
+fi
+
+exit 0
