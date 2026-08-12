@@ -32,6 +32,9 @@ return view.extend({
 	/* Auto-refresh interval in seconds */
 	POLL_INTERVAL: 5,
 
+	/* Number of samples kept per interface for the quality trend graph */
+	HISTORY_LEN: 60,
+
 	load: function() {
 		return Promise.all([
 			callMetricsGetAll(),
@@ -306,9 +309,255 @@ return view.extend({
 
 		if (!hasData) return null;
 
-		return E('div', { style: 'display:inline-block;padding:8px 12px;background:#f9f9f9;border-radius:4px' }, [
+		return E('div', { style: 'flex:0 0 auto;min-width:260px;padding:8px 12px;background:#f9f9f9;border-radius:4px' }, [
 			E('h4', { style: 'margin:0 0 4px;font-size:0.95em;color:#333' }, [ _('Forecast') ]),
 			E('table', { style: 'border-collapse:collapse' }, [ tbody ])
+		]);
+	},
+
+	/* ------------------------------------------------------------------ *
+	 *  Quality trend graph (client-side rolling buffer, per interface)    *
+	 * ------------------------------------------------------------------ */
+
+	/* Append the current sample of each interface to its rolling history. There
+	 * is no history endpoint on the router (get_all only reflects the current
+	 * /tmp/metrics/<iface>.json snapshot), so the browser accumulates its own
+	 * buffer across polls for as long as the view stays open. */
+	_pushHistory: function(ifaces) {
+		var self = this;
+		if (!self._history) self._history = {};
+		var now = Date.now();
+		(ifaces || []).forEach(function(iface) {
+			var name = iface.interface;
+			if (!name) return;
+			var cong = iface.congestion || {};
+			var h = self._history[name] || (self._history[name] = []);
+			h.push({
+				ts:      now,
+				latency: iface.latency != null ? Number(iface.latency) : null,
+				loss:    iface.loss    != null ? Number(iface.loss)    : null,
+				score:   cong.score    != null ? Number(cong.score)   : null
+			});
+			if (h.length > self.HISTORY_LEN)
+				h.splice(0, h.length - self.HISTORY_LEN);
+		});
+	},
+
+	/* Map a series of values (nulls allowed) to an SVG polyline "points" string
+	 * against an explicit [min,max] range, so the caller controls the scale
+	 * (e.g. a fixed 0-100 range for a score) instead of it floating per-frame. */
+	_pathFromRange: function(values, w, h, pad, min, max) {
+		var defined = values.filter(function(v) { return v != null; });
+		if (defined.length < 2) return null;
+
+		var span = (max - min) || 1;
+		var innerH = h - pad * 2;
+		var n = values.length;
+
+		var pts = [];
+		values.forEach(function(v, i) {
+			if (v == null) return;
+			var x = (n > 1) ? (i / (n - 1) * w) : 0;
+			var y = pad + innerH - ((v - min) / span) * innerH;
+			pts.push(x.toFixed(1) + ',' + y.toFixed(1));
+		});
+		return pts.join(' ');
+	},
+
+	/* One labelled sparkline row: color dot + name, chart, current value (with
+	 * unit) and the visible min-max range so the scale is never ambiguous.
+	 * Hovering the chart shows the exact value + time under the cursor. */
+	_renderQualitySparkline: function(m, history) {
+		var self   = this;
+		var values = history.map(function(s) { return s[m.key]; });
+		var defined = values.filter(function(v) { return v != null; });
+		if (defined.length < 2) return null;
+
+		var NS = 'http://www.w3.org/2000/svg';
+		var W = 600, H = 40, PAD = 4;
+		var n = values.length;
+
+		var min, max;
+		if (m.fixedMin != null && m.fixedMax != null) {
+			min = m.fixedMin;
+			max = m.fixedMax;
+		} else {
+			min = Math.min.apply(null, defined);
+			max = Math.max.apply(null, defined);
+			var rangePad = (max - min) * 0.15 || 1;
+			min -= rangePad;
+			max += rangePad;
+		}
+
+		var points = self._pathFromRange(values, W, H, PAD, min, max);
+		var last   = defined[defined.length - 1];
+
+		var svg = document.createElementNS(NS, 'svg');
+		svg.setAttribute('width', '100%');
+		svg.setAttribute('height', String(H));
+		svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+		svg.setAttribute('preserveAspectRatio', 'none');
+		svg.style.cssText = 'display:block;background:#fff;border:1px solid #eee;border-radius:3px;cursor:crosshair';
+
+		/* Faint vertical guides at start/middle/end, so the timeline row below
+		 * (which shares this exact width) lines up with something on the chart */
+		[0, W / 2, W].forEach(function(x) {
+			var gl = document.createElementNS(NS, 'line');
+			gl.setAttribute('x1', String(x)); gl.setAttribute('x2', String(x));
+			gl.setAttribute('y1', '0');       gl.setAttribute('y2', String(H));
+			gl.setAttribute('stroke', '#eee');
+			gl.setAttribute('stroke-width', '1');
+			gl.setAttribute('vector-effect', 'non-scaling-stroke');
+			svg.appendChild(gl);
+		});
+
+		if (points) {
+			var poly = document.createElementNS(NS, 'polyline');
+			poly.setAttribute('points', points);
+			poly.setAttribute('fill', 'none');
+			poly.setAttribute('stroke', m.color);
+			poly.setAttribute('stroke-width', '1.75');
+			poly.setAttribute('vector-effect', 'non-scaling-stroke');
+			svg.appendChild(poly);
+		}
+
+		/* Hover crosshair (hidden until the pointer enters the chart) */
+		var hoverLine = document.createElementNS(NS, 'line');
+		hoverLine.setAttribute('y1', '0');
+		hoverLine.setAttribute('y2', String(H));
+		hoverLine.setAttribute('stroke', '#666');
+		hoverLine.setAttribute('stroke-width', '1');
+		hoverLine.setAttribute('vector-effect', 'non-scaling-stroke');
+		hoverLine.style.display = 'none';
+		svg.appendChild(hoverLine);
+
+		var hoverDot = document.createElementNS(NS, 'circle');
+		hoverDot.setAttribute('r', '3');
+		hoverDot.setAttribute('fill', m.color);
+		hoverDot.setAttribute('stroke', '#fff');
+		hoverDot.setAttribute('stroke-width', '1');
+		hoverDot.style.display = 'none';
+		svg.appendChild(hoverDot);
+
+		var tooltip = E('div', {
+			style: 'position:absolute;top:-4px;transform:translate(-50%,-100%);' +
+			       'background:#333;color:#fff;font-size:0.72em;padding:2px 6px;' +
+			       'border-radius:3px;white-space:nowrap;pointer-events:none;display:none;z-index:1'
+		});
+
+		var updateHover = function(clientX) {
+			var rect = svg.getBoundingClientRect();
+			if (!rect.width) return;
+			var relX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+			var idx  = Math.round(relX / rect.width * (n - 1));
+			var v    = values[idx];
+
+			var svgX = (n > 1) ? (idx / (n - 1) * W) : 0;
+			hoverLine.setAttribute('x1', String(svgX));
+			hoverLine.setAttribute('x2', String(svgX));
+			hoverLine.style.display = 'block';
+
+			if (v != null) {
+				var innerH = H - PAD * 2;
+				var y = PAD + innerH - ((v - min) / ((max - min) || 1)) * innerH;
+				hoverDot.setAttribute('cx', String(svgX));
+				hoverDot.setAttribute('cy', String(y));
+				hoverDot.style.display = 'block';
+			} else {
+				hoverDot.style.display = 'none';
+			}
+
+			tooltip.style.left = relX + 'px';
+			tooltip.style.display = 'block';
+			tooltip.textContent = self._fmtClock(history[idx].ts) + '  ' +
+				(v != null ? Number(v).toFixed(m.decimals) + (m.unit ? ' ' + m.unit : '') : '—');
+		};
+
+		var hideHover = function() {
+			hoverLine.style.display = 'none';
+			hoverDot.style.display  = 'none';
+			tooltip.style.display   = 'none';
+		};
+
+		svg.addEventListener('mousemove', function(ev) { updateHover(ev.clientX); });
+		svg.addEventListener('mouseleave', hideHover);
+		svg.addEventListener('touchmove', function(ev) {
+			if (ev.touches && ev.touches[0]) updateHover(ev.touches[0].clientX);
+		});
+		svg.addEventListener('touchend', hideHover);
+
+		return E('div', { style: 'display:flex;align-items:center;gap:10px;margin-bottom:8px' }, [
+			E('span', {
+				style: 'flex:0 0 auto;width:90px;font-size:0.82em;color:#555;display:flex;align-items:center;gap:5px'
+			}, [
+				E('span', { style: 'display:inline-block;width:8px;height:8px;flex:0 0 auto;border-radius:50%;background:' + m.color }),
+				m.label
+			]),
+			E('span', { style: 'flex:1;min-width:120px;position:relative;display:block' }, [ svg, tooltip ]),
+			E('span', { style: 'flex:0 0 auto;width:72px;text-align:right;font-size:0.88em;font-weight:600;color:#333' }, [
+				Number(last).toFixed(m.decimals) + (m.unit ? ' ' + m.unit : '')
+			]),
+			E('span', { style: 'flex:0 0 auto;width:88px;text-align:right;font-size:0.72em;color:#999' }, [
+				Math.round(min) + '–' + Math.round(max) + (m.unit ? ' ' + m.unit : '')
+			])
+		]);
+	},
+
+	_fmtClock: function(ts) {
+		var d = new Date(ts);
+		var pad2 = function(n) { return ('0' + n).slice(-2); };
+		return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+	},
+
+	/* Timeline row shown once under all sparklines. It reuses the exact same
+	 * label/chart/value/range column widths as each sparkline row so its three
+	 * clock ticks land under the start/middle/end of every chart above it. */
+	_renderQualityTimeline: function(history) {
+		var self = this;
+		var n = history.length;
+		var mid = Math.floor((n - 1) / 2);
+
+		return E('div', { style: 'display:flex;align-items:center;gap:10px;margin-top:-2px' }, [
+			E('span', { style: 'flex:0 0 auto;width:90px' }),
+			E('span', {
+				style: 'flex:1;min-width:120px;display:flex;justify-content:space-between;' +
+				       'font-size:0.68em;color:#999'
+			}, [
+				E('span', {}, [ self._fmtClock(history[0].ts) ]),
+				E('span', {}, [ self._fmtClock(history[mid].ts) ]),
+				E('span', {}, [ self._fmtClock(history[n - 1].ts) ])
+			]),
+			E('span', { style: 'flex:0 0 auto;width:72px' }),
+			E('span', { style: 'flex:0 0 auto;width:88px' })
+		]);
+	},
+
+	_renderQualityGraph: function(history) {
+		var self = this;
+		if (!history || history.length < 2) return null;
+
+		var metrics = [
+			{ key: 'score',   color: '#2196f3', label: _('Congestion'), unit: '/100', decimals: 0, fixedMin: 0, fixedMax: 100 },
+			{ key: 'latency', color: '#ff9800', label: _('Latency'),    unit: 'ms',    decimals: 1 },
+			{ key: 'loss',    color: '#f44336', label: _('Loss'),       unit: '%',     decimals: 1 }
+		];
+
+		var rows = metrics
+			.map(function(m) { return self._renderQualitySparkline(m, history); })
+			.filter(Boolean);
+
+		if (!rows.length) return null;
+
+		var windowSec   = history.length * self.POLL_INTERVAL;
+		var windowLabel = windowSec >= 60 ? Math.round(windowSec / 60) + 'min' : windowSec + 's';
+
+		return E('div', { style: 'width:100%;margin-top:10px;padding:10px 12px;background:#f9f9f9;border-radius:4px' }, [
+			E('h4', { style: 'margin:0 0 8px;font-size:0.95em;color:#333' }, [
+				_('Quality trend'),
+				E('span', { style: 'font-weight:normal;color:#999;font-size:0.8em' }, [ ' (' + _('last') + ' ' + windowLabel + ')' ])
+			]),
+			E('div', {}, rows),
+			self._renderQualityTimeline(history)
 		]);
 	},
 
@@ -337,7 +586,7 @@ return view.extend({
 			rows.push([ self._help(_('Score'), _('Model quality score (0–100) — higher means this interface is preferred')),
 				self._signalBar(Math.round(s)) ]);
 
-		return E('div', { style: 'display:inline-block;padding:8px 12px;background:#f9f9f9;border-radius:4px' }, [
+		return E('div', { style: 'flex:0 0 auto;min-width:220px;padding:8px 12px;background:#f9f9f9;border-radius:4px' }, [
 			E('h4', { style: 'margin:0 0 4px;font-size:0.95em;color:#333' }, [ _('Decision') ]),
 			self._kvTable(rows)
 		]);
@@ -514,6 +763,8 @@ return view.extend({
 			]));
 		}
 
+		var history   = (self._history && self._history[name]) || [];
+		var qgSection = self._renderQualityGraph(history);
 		var fcSection = self._renderForecastSection(forecast || null);
 		var dcSection = self._renderDecisionSection(decision || null, name);
 
@@ -524,6 +775,9 @@ return view.extend({
 			]),
 			E('div', { style: 'display:flex;flex-wrap:wrap;gap:10px' }, cols)
 		];
+
+		/* Full-width so the sparklines get enough horizontal room to be readable */
+		if (qgSection) cardChildren.push(qgSection);
 
 		var extraSections = [];
 		if (fcSection) extraSections.push(fcSection);
@@ -545,6 +799,8 @@ return view.extend({
 		var ifaces     = (data && data.interfaces) ? data.interfaces : [];
 		var container  = document.getElementById('omr-metrics-container');
 		if (!container) return;
+
+		self._pushHistory(ifaces);
 
 		/* Remove existing content */
 		while (container.firstChild) container.removeChild(container.firstChild);
