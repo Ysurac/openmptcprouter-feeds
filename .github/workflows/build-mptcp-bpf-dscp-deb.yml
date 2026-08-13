@@ -1,0 +1,67 @@
+name: Build mptcp-bpf-dscp Debian package
+
+on:
+  push:
+    branches: [develop, master]
+    paths:
+      - 'mptcp-bpf-dscp/**'
+      - 'mptcp-dscp-manager/files/usr/sbin/mptcp-scheduler-dscp.sh'
+  workflow_dispatch:
+
+jobs:
+  build-deb:
+    name: Build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential debhelper devscripts clang llvm libbpf-dev linux-libc-dev
+
+      - name: Build .deb
+        working-directory: mptcp-bpf-dscp
+        run: dpkg-buildpackage -us -uc -b -Zxz
+
+      - name: Upload mptcp-bpf-dscp artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mptcp-bpf-dscp_${{ matrix.arch }}
+          path: mptcp-bpf-dscp_*.deb
+
+      - name: Upload mptcp-dscp-manager artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mptcp-dscp-manager_${{ matrix.arch }}
+          path: mptcp-dscp-manager_*.deb
+
+  release:
+    name: Create release
+    needs: build-deb
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/mptcp-bpf-dscp-v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mptcp-bpf-dscp_*
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mptcp-dscp-manager_*
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: "*.deb"
