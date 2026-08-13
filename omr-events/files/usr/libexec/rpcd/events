@@ -1,0 +1,99 @@
+#!/bin/sh
+# /usr/libexec/rpcd/events
+# rpcd plugin exposing the omr-events interface state-change log via ubus
+#
+# Usage:
+#   ubus call events get_events '{"interface":"wan1","limit":50}'
+#   ubus call events get_events '{"reason":"packet_loss","since":1735000000}'
+#   ubus call events get_summary
+#   ubus call events clear
+
+EVENTS_DIR="${OMR_EVENTS_DIR:-/tmp/omr-events}"
+EVENTS_FILE="${EVENTS_DIR}/events.log"
+
+case "$1" in
+	list)
+		echo '{'
+		echo '  "get_events":  { "interface": "str", "event": "str", "reason": "str", "since": 0, "limit": 0 },'
+		echo '  "get_summary": {},'
+		echo '  "clear":       {}'
+		echo '}'
+		;;
+	call)
+		case "$2" in
+			get_events)
+				input=$(cat)
+				iface=$(echo "$input"  | jsonfilter -q -e '@.interface' 2>/dev/null)
+				evt=$(echo "$input"    | jsonfilter -q -e '@.event'     2>/dev/null)
+				reason=$(echo "$input" | jsonfilter -q -e '@.reason'    2>/dev/null)
+				since=$(echo "$input"  | jsonfilter -q -e '@.since'     2>/dev/null)
+				limit=$(echo "$input"  | jsonfilter -q -e '@.limit'     2>/dev/null)
+
+				case "$limit" in ''|*[!0-9]*) limit=500 ;; esac
+				[ "$limit" = "0" ] && limit=500
+				[ "$limit" -gt 2000 ] 2>/dev/null && limit=2000
+				case "$since" in ''|*[!0-9]*) since=0 ;; esac
+
+				if [ ! -f "$EVENTS_FILE" ]; then
+					echo '{"events":[]}'
+					exit 0
+				fi
+
+				awk -v iface="$iface" -v evt="$evt" -v reason="$reason" -v since="$since" '
+					{
+						line = $0
+						if (iface  != "" && index(line, "\"interface\":\"" iface "\"") == 0) next
+						if (evt    != "" && index(line, "\"event\":\""     evt   "\"") == 0) next
+						if (reason != "" && index(line, "\"reason\":\""    reason "\"") == 0) next
+						if (since+0 > 0) {
+							split(line, a, "\"ts\":")
+							split(a[2], b, ",")
+							if ((b[1]+0) < since+0) next
+						}
+						print line
+					}' "$EVENTS_FILE" 2>/dev/null | tail -n "$limit" | awk '
+					BEGIN { printf "{\"events\":[" }
+					{ printf "%s%s", (NR > 1 ? "," : ""), $0 }
+					END { print "]}" }'
+				;;
+			get_summary)
+				max_age=$(uci -q get omr-events.settings.max_age)
+				[ -z "$max_age" ] && max_age=172800
+				max_size=$(uci -q get omr-events.settings.max_size)
+				[ -z "$max_size" ] && max_size=10485760
+
+				if [ ! -f "$EVENTS_FILE" ]; then
+					printf '{"count":0,"size_bytes":0,"oldest":null,"newest":null,"max_age":%s,"max_size":%s,"per_interface":{}}\n' \
+						"$max_age" "$max_size"
+					exit 0
+				fi
+				count=$(wc -l < "$EVENTS_FILE" 2>/dev/null | tr -d ' ')
+				size=$(wc -c < "$EVENTS_FILE" 2>/dev/null | tr -d ' ')
+				oldest=$(head -n 1 "$EVENTS_FILE" 2>/dev/null | sed -n 's/^{"ts":\([0-9]*\),.*/\1/p')
+				newest=$(tail -n 1 "$EVENTS_FILE" 2>/dev/null | sed -n 's/^{"ts":\([0-9]*\),.*/\1/p')
+
+				per_iface="{"
+				first=1
+				for ifc in $(awk -F'"interface":"' '{split($2,a,"\""); print a[1]}' "$EVENTS_FILE" 2>/dev/null | sort -u); do
+					[ -z "$ifc" ] && continue
+					total=$(grep -c "\"interface\":\"${ifc}\"" "$EVENTS_FILE" 2>/dev/null)
+					down=$(grep "\"interface\":\"${ifc}\"" "$EVENTS_FILE" 2>/dev/null | grep -c '"event":"down"')
+					[ "$first" = "1" ] && first=0 || per_iface="${per_iface},"
+					per_iface="${per_iface}\"${ifc}\":{\"total\":${total:-0},\"down\":${down:-0}}"
+				done
+				per_iface="${per_iface}}"
+
+				printf '{"count":%s,"size_bytes":%s,"oldest":%s,"newest":%s,"max_age":%s,"max_size":%s,"per_interface":%s}\n' \
+					"${count:-0}" "${size:-0}" "${oldest:-null}" "${newest:-null}" "$max_age" "$max_size" "$per_iface"
+				;;
+			clear)
+				: > "$EVENTS_FILE" 2>/dev/null
+				echo '{"result":"ok"}'
+				;;
+			*)
+				echo '{"error": "unknown method"}'
+				exit 1
+				;;
+		esac
+		;;
+esac

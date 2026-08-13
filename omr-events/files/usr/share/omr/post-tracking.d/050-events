@@ -1,0 +1,113 @@
+#!/bin/sh
+#
+# Copyright (C) 2018-2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+# This script logs a timestamped event every time an interface tracked by
+# omr-tracker changes state: up, down, high latency, packet loss or
+# disconnection. The tracker itself already flips OMR_TRACKER_STATUS to
+# ERROR (with a descriptive OMR_TRACKER_STATUS_MSG) on link loss, gateway
+# loss or a latency/packet-loss threshold breach (see omr-tracker's
+# OMR_TRACKER_CHECK_QUALITY logic), so this script only has to watch for a
+# status transition and classify the reason from that message - it does not
+# re-implement any threshold detection.
+#
+# Events are appended as one JSON object per line to $EVENTS_FILE and kept
+# under a configurable age and/or size cap (omr-events.settings.max_age /
+# max_size), whichever limit is hit first. The file lives in /tmp (tmpfs) to
+# avoid flash wear, same as omr-metrics' /tmp/metrics.
+
+[ -z "$OMR_TRACKER_INTERFACE" ] && exit 0
+# Nothing changed: this hook still runs every post-tracking cycle (throttled
+# to OMR_TRACKER_POST_INTERVAL), so bail out cheaply before touching uci/fs.
+[ "$OMR_TRACKER_PREV_STATUS" = "$OMR_TRACKER_STATUS" ] && exit 0
+
+[ "$(uci -q get omr-events.settings.enabled)" = "0" ] && exit 0
+
+EVENTS_DIR="${OMR_EVENTS_DIR:-/tmp/omr-events}"
+EVENTS_FILE="${EVENTS_DIR}/events.log"
+[ -d "$EVENTS_DIR" ] || mkdir -p "$EVENTS_DIR" 2>/dev/null
+
+max_age=$(uci -q get omr-events.settings.max_age)
+[ -z "$max_age" ] && max_age=172800
+max_size=$(uci -q get omr-events.settings.max_size)
+[ -z "$max_size" ] && max_size=10485760
+
+now=$(date +%s)
+
+case "$OMR_TRACKER_STATUS" in
+	OK)    event="up" ;;
+	ERROR) event="down" ;;
+	*)     event="$OMR_TRACKER_STATUS" ;;
+esac
+
+# Classify the free-form tracker message into a short machine-readable
+# reason so a UI/API consumer can filter or color by cause without parsing
+# OMR_TRACKER_STATUS_MSG itself. Patterns mirror the exact strings the
+# tracker daemon and 002-error emit (bin/omr-tracker, post-tracking.d/002-error).
+msg="$OMR_TRACKER_STATUS_MSG"
+case "$msg" in
+	*"Packet loss is"*)          reason="packet_loss" ;;
+	*"Latency is"*)               reason="high_latency" ;;
+	*"link down"*)                 reason="link_down" ;;
+	*"gateway down"*)              reason="gateway_down" ;;
+	*"No answer from server"*)     reason="no_answer" ;;
+	*"No access to server API"*)   reason="no_answer" ;;
+	*"No IP"*|*"ip issues"*)       reason="no_ip" ;;
+	*"Glorytun-UDP path"*)         reason="vpn_path" ;;
+	"")
+		if [ "$event" = "up" ]; then
+			reason="recovered"
+		else
+			reason="unknown"
+		fi
+	;;
+	*) reason="other" ;;
+esac
+
+# JSON-escape the free-form message (backslash and double-quote only, the
+# tracker never emits control characters here)
+msg_esc=$(printf '%s' "$msg" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+
+_jval() {
+	if [ -n "$1" ] && [ "$1" != "--" ]; then
+		echo "$1"
+	else
+		echo "null"
+	fi
+}
+
+# "ts" must stay the first key: the retention pass below extracts it with a
+# cheap awk split instead of a full JSON parse.
+printf '{"ts":%s,"interface":"%s","device":"%s","event":"%s","reason":"%s","message":"%s","latency":%s,"loss":%s}\n' \
+	"$now" "$OMR_TRACKER_INTERFACE" "$OMR_TRACKER_DEVICE" "$event" "$reason" "$msg_esc" \
+	"$(_jval "$OMR_TRACKER_LATENCY")" "$(_jval "$OMR_TRACKER_LOSS")" >> "$EVENTS_FILE" 2>/dev/null
+
+logger -t omr-events "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) $event: ${msg:-$reason}"
+
+# Prune by age then by size (whichever limit is hit first) in a single pass:
+# drop lines older than the cutoff, then drop from the oldest remaining line
+# until the file is back under the size cap.
+cutoff=$((now - max_age))
+awk -v cutoff="$cutoff" -v maxsize="$max_size" '
+	{
+		split($0, a, "\"ts\":")
+		split(a[2], b, ",")
+		ts = b[1] + 0
+		if (ts >= cutoff) {
+			n++
+			lines[n] = $0
+			sz = length($0) + 1
+			sizes[n] = sz
+			total += sz
+		}
+	}
+	END {
+		start = 1
+		while (total > maxsize && start <= n) { total -= sizes[start]; start++ }
+		for (i = start; i <= n; i++) print lines[i]
+	}' "$EVENTS_FILE" > "${EVENTS_FILE}.tmp" 2>/dev/null && mv "${EVENTS_FILE}.tmp" "$EVENTS_FILE" 2>/dev/null
+
+exit 0
