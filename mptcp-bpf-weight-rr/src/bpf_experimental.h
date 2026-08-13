@@ -6,6 +6,19 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
 
+/* bpf_rdonly_cast()/bpf_core_cast() were only added to libbpf's
+ * bpf_core_read.h in 1.4.0 (Mar 2024). Distros with older libbpf-dev
+ * (e.g. Ubuntu 24.04 ships 1.3.0) build against a bpf_core_read.h that
+ * lacks it, so provide the same fallback here as the other helpers below
+ * that predate "stock" libbpf on some build hosts. bpf_core_type_id_kernel()
+ * itself is much older CO-RE plumbing and is present either way.
+ */
+#ifndef bpf_core_cast
+extern void *bpf_rdonly_cast(const void *obj, __u32 btf_id) __ksym __weak;
+#define bpf_core_cast(ptr, type) \
+	((typeof(type) *)bpf_rdonly_cast((ptr), bpf_core_type_id_kernel(type)))
+#endif
+
 #define __contains(name, node) __attribute__((btf_decl_tag("contains:" #name ":" #node)))
 
 /* Description
