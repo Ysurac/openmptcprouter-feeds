@@ -38,13 +38,13 @@ MY_DEPENDS := \
     ca-bundle \
     luci-mod-admin-full luci-app-firewall luci-app-glorytun-tcp luci-app-glorytun-udp luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-theme-argon luci-theme-alpha luci-theme-design luci-base luci-theme-material luci-theme-bootstrap \
     luci-app-omr-tracker luci-app-omr-dscp \
-    luci-app-sqm-autorate sqm-scripts-extra \
+    luci-app-sqm-autorate \
     luci-app-vnstat2 omr-quota luci-app-omr-quota \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail \
     luci-app-wol luci-app-opkg \
     luci-app-uhttpd \
     LINUX_5_4:luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
-    luci-app-openvpn \
+    luci-proto-openvpn \
     shadowsocks-libev-ss-server shadowsocks-libev-ss-redir LINUX_5_4:shadowsocks-libev-ss-rules !LINUX_5_4:shadowsocks-libev-ss-rules-nft shadowsocks-libev-ss-tunnel \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd ip6tables \
     !TARGET_mvebu:speedtestcpp \
@@ -80,7 +80,7 @@ MY_DEPENDS := \
     !(TARGET_mvebu||TARGET_ramips||TARGET_ipq806x||TARGET_mt7623):luci-app-mlvpn !(TARGET_mvebu||TARGET_ramips||TARGET_ipq806x||TARGET_mt7623):mlvpn 464xlat kmod-zram kmod-ipt-nat kmod-ipt-nat6 kmod-tcp-nanqinlang iptables-mod-ipopt igmpproxy ss iptraf-ng \
     luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre vxlan luci-proto-vxlan tcptraceroute luci-proto-mbim luci-app-ttyd luci-mod-dashboard kmod-usb2 libustream-openssl (TARGET_x86||TARGET_x86_64):kmod-ixgbevf (TARGET_x86||TARGET_x86_64):kmod-igbvf \
     hwinfo (TARGET_x86||TARGET_x86_64):dmidecode kmod-bonding luci-proto-bonding luci-app-sysupgrade \
-    luci-theme-openwrt-2020 luci-proto-wireguard luci-app-wireguard kmod-crypto-lib-blake2s  \
+    luci-theme-openwrt-2020 luci-proto-wireguard kmod-crypto-lib-blake2s  \
     !(LINUX_5_4):mptcpd (TARGET_x86||TARGET_x86_64):kmod-igc !TARGET_mvebu:kmod-mmc-spi kmod-macsec usbutils v2ray-core !LINUX_5_4:v2ray-config \
     (TARGET_x86||TARGET_x86_64):kmod-mlx4-core (TARGET_x86||TARGET_x86_64):kmod-mlx5-core \
     !(TARGET_ipq40xx||TARGET_ramips||LINUX_6_6||LINUX_6_10||LINUX_6_11||LINUX_6_12||LINUX_6_18):iptables-mod-ndpi !(TARGET_ipq40xx||TARGET_ramips||LINUX_6_6||LINUX_6_10||LINUX_6_11||LINUX_6_12||LINUX_6_18):kmod-ipt-ndpi libip4tc libip6tc \
