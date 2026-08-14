@@ -1462,6 +1462,17 @@ _set_mptcp_vps() {
 	[ -z "$mptcp_version" ] && mptcp_version="0"
 	[ ! -f /proc/sys/net/mptcp/mptcp_enabled ] && mptcp_version="1"
 	[ -z "$congestion" ] && congestion="bbr"
+	# These four v1-only knobs are recent additions: on a router that
+	# predates them, or where the user never touched them, their uci option
+	# is simply absent and `uci -q get` returns "". Left as "", the JSON
+	# below would post e.g. "close_timeout": "" for an int field the VPS
+	# side declares as `int = 0`, which the VPS's admin API rejects with a
+	# bare 422 before it ever reaches its own error handling -- see
+	# https://github.com/Ysurac/openmptcprouter/issues/4350.
+	[ -z "$close_timeout" ] && close_timeout="0"
+	[ -z "$pm_type" ] && pm_type="0"
+	[ -z "$stale_loss_cnt" ] && stale_loss_cnt="0"
+	[ -z "$syn_retrans_before_tcp_fallback" ] && syn_retrans_before_tcp_fallback="0"
 	if [ "$mptcp_enabled_current" != "$mptcp_enabled" ] || [ "$checksum_current" != "$checksum" ] || ([ "$path_manager_current" != "" ] && [ "$path_manager_current" != "kernel" ] && [ "$path_manager_current" != "$path_manager" ]) || ([ "$scheduler_current" != "" ] && [ "$scheduler_current" != "$scheduler" ]) || ([ "$syn_retries_current" != "" ] && [ "$syn_retries_current" != "$syn_retries" ]) || [ "$congestion_control_current" != "$congestion" ] || [ "$mptcp_version_current" != "$mptcp_version" ] || ([ -n "$close_timeout_current" ] && [ "$close_timeout_current" != "0" ] && [ "$close_timeout_current" != "$close_timeout" ]) || ([ -n "$pm_type_current" ] && [ "$pm_type_current" != "0" ] && [ "$pm_type_current" != "$pm_type" ]) || ([ -n "$stale_loss_cnt_current" ] && [ "$stale_loss_cnt_current" != "0" ] && [ "$stale_loss_cnt_current" != "$stale_loss_cnt" ]) || ([ -n "$syn_retrans_current" ] && [ "$syn_retrans_current" != "0" ] && [ "$syn_retrans_current" != "$syn_retrans_before_tcp_fallback" ]); then
 		settings='{"enabled" : "'$mptcp_enabled'", "checksum": "'$checksum'","path_manager": "'$path_manager'","scheduler": "'$scheduler'","syn_retries": "'$syn_retries'","congestion_control": "'$congestion'","version": "'$mptcp_version'","close_timeout": "'$close_timeout'","pm_type": "'$pm_type'","stale_loss_cnt": "'$stale_loss_cnt'","syn_retrans_before_tcp_fallback": "'$syn_retrans_before_tcp_fallback'"}'
 		echo $(_set_json "mptcp" "$settings")
