@@ -205,9 +205,23 @@ return view.extend({
 		o.datatype = 'uinteger';
 		o.cfgvalue = function() { return sysctl.ip_default_ttl; };
 
-		/* Inverted flags: enabled='0' means the feature is active when checked */
+		/*
+		 * Inverted flags: enabled='0' means the feature is active when checked.
+		 * form.Flag's constructor sets this.default = this.disabled *before*
+		 * this enabled/disabled swap runs, so .default is left holding the
+		 * pre-swap value ('0') instead of the real "unchecked" value ('1').
+		 * With rmempty at its class default of true, LuCI's CBI parse() then
+		 * *removes* the uci option -- instead of writing '0' -- every time the
+		 * checkbox is left checked (formvalue '0' == stale default '0'), on
+		 * every save of this page, not just when the field itself is touched.
+		 * For disable_ipv6 that means the option silently disappears and
+		 * downstream (rpcd + omr-6in4) treats the missing value as "disabled",
+		 * tearing IPv6 down (issue #4352; same rmempty/default collision as
+		 * #4348/#4349). o.rmempty = false forces an explicit write instead.
+		 */
 		o = s.taboption('network', form.Flag, 'disable_ipv6', _('Enable IPv6'));
 		o.enabled = '0'; o.disabled = '1';
+		o.rmempty = false;
 
 		o = s.taboption('network', form.Flag, 'disable_6in4', _('Disable 6in4'));
 
@@ -215,6 +229,7 @@ return view.extend({
 			_('Disable external check'),
 			_('When enabled, checks are done on external sites to get each WAN IP and the IP used to go outside.'));
 		o.enabled = '0'; o.disabled = '1';
+		o.rmempty = false;
 
 		o = s.taboption('network', form.Flag, 'disable_fastopen',
 			_('Disable TCP Fast Open'),
@@ -296,6 +311,8 @@ return view.extend({
 			_('Disable default gateway'),
 			_('Disable default gateway, no internet if VPS are down'));
 		o.enabled = '0'; o.disabled = '1';
+		/* Same rmempty/default collision as disable_ipv6 above (#4352) */
+		o.rmempty = false;
 
 		o = s.taboption('other', form.Flag, 'disableserverping',
 			_('Disable server ping'),
@@ -313,11 +330,15 @@ return view.extend({
 			_('Disable OpenVPN multi clients'),
 			_('Disable OpenVPN multi clients to distribute connections and use more CPU cores'));
 		o.enabled = '0'; o.disabled = '1';
+		/* Same rmempty/default collision as disable_ipv6 above (#4352) */
+		o.rmempty = false;
 
 		o = s.taboption('other', form.Flag, 'tracebox',
 			_('Disable tracebox test'),
 			_('Disable multipath test using tracebox'));
 		o.enabled = '0'; o.disabled = '1';
+		/* Same rmempty/default collision as disable_ipv6 above (#4352) */
+		o.rmempty = false;
 
 		o = s.taboption('other', form.Flag, 'disablemultipathtest',
 			_('Disable multipath test'),
