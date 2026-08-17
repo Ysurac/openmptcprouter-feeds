@@ -1900,7 +1900,14 @@ start_service() {
 	uci -q commit dhcp
 	fwfilechangemd5check=""
 	[ -f /etc/firewall.omr-bypass ] && fwfilechangemd5check="$(md5sum /etc/firewall.omr-bypass)"
-	if [ "$fwfilechangemd5check" = "$fwfilechangemd5" ]; then
+	# Force the heavier fw4/dnsmasq restart path only when the generated
+	# bypass content actually changed (new/removed nft elements). This
+	# comparison used to be inverted ("=" instead of "!="), so it forced a
+	# full fw4 restart + dnsmasq restart on every reload_rules() call even
+	# when nothing changed -- which is the common case for the hourly
+	# omr-schedule IP-refresh cron job, and interrupted established TCP
+	# connections through the tunnel for no reason (issue #4353).
+	if [ "$fwfilechangemd5check" != "$fwfilechangemd5" ]; then
 		RELOAD=""
 	fi
 
