@@ -1345,13 +1345,20 @@ function wizard_add(args)
 end
 
 function settings_add(args)
+	-- settings.js sends one JSON object per server: { redirect_ports, nofwredirect }.
+	-- `value` here is that nested table, not a scalar -- passing it straight to
+	-- _as_string() fell through to tostring(table), writing a Lua table pointer
+	-- string (e.g. "table: 0x...") as redirect_ports, and nofwredirect was read
+	-- from a top-level "nofwredirect_<server>" arg that settings.js never sends
+	-- (it's nested in `value` instead), so it was always forced back to "0"
+	-- regardless of what the user configured (issue #4352).
 	local redirect_ports = _parse_json_table(args.redirect_ports)
 	if type(redirect_ports) == "table" then
 		for server, value in pairs(redirect_ports) do
 			local sname = _sanitize_name(server)
-			if sname ~= "" then
-				redirectports(sname, _as_string(value, "0"))
-				_set_or_delete("openmptcprouter", sname, "nofwredirect", _to_flag(args["nofwredirect_" .. sname]))
+			if sname ~= "" and type(value) == "table" then
+				redirectports(sname, _to_flag(value.redirect_ports))
+				_set_or_delete("openmptcprouter", sname, "nofwredirect", _to_flag(value.nofwredirect))
 			end
 		end
 	end
@@ -1384,7 +1391,12 @@ function settings_add(args)
 		sys.exec("sed -i 's:^net.ipv4.ip_default_ttl=[0-9]*:net.ipv4.ip_default_ttl=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % ip_default_ttl)
 	end
 
-	if args.disable_ipv6 ~= nil then
+	-- An empty string here (rather than nil) used to still reach disableipv6(),
+	-- writing a literal empty value to openmptcprouter.settings.disable_ipv6
+	-- and unconditionally restarting omr-6in4, whose own comparisons treat
+	-- that missing/empty value as "disabled" (issue #4352). Treat blank the
+	-- same as absent: leave the current uci value untouched (fail-safe).
+	if _as_string(args.disable_ipv6, "") ~= "" then
 		disableipv6(_as_string(args.disable_ipv6, "1"))
 	end
 	_set_or_delete("openmptcprouter", "settings", "disable_6in4", _to_flag(args.disable_6in4))
