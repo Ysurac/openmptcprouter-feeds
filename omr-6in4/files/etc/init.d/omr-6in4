@@ -20,7 +20,12 @@ set_shadowsocks_rust_address() {
 set_ipv6_state() {
 	local disable_6in4="$(uci -q get openmptcprouter.settings.disable_6in4)"
 	local disable_ipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
-	[ -z "$disable_ipv6" ] && disable_ipv6="1"
+	# Default a missing/empty value to "0" (IPv6 enabled), matching the
+	# fallback already used by /etc/init.d/openmptcprouter's own config_get
+	# for this same option -- defaulting to "1" here (as before) meant a
+	# value dropped by a CBI save bug (issue #4352) got interpreted as an
+	# explicit request to disable IPv6 instead of leaving it untouched.
+	[ -z "$disable_ipv6" ] && disable_ipv6="0"
 	#previous=$(sysctl -qn net.ipv6.conf.all.disable_ipv6 | tr -d "\n")
 	previous="$(uci -q get network.lan.ipv6)"
 	#sysctl -qw net.ipv6.conf.all.disable_ipv6=$disable_ipv6
@@ -146,6 +151,8 @@ set_ipv6_state() {
 
 set_ipv6_state_intf() {
 	local disable_ipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
+	# Same missing/empty fallback as set_ipv6_state() above (issue #4352).
+	[ -z "$disable_ipv6" ] && disable_ipv6="0"
 	local intf="$1"
 	config_get ip4table $intf ip4table
 	config_get ipv6 $intf ipv6 "0"
@@ -190,14 +197,21 @@ set_ipv6_state_intf() {
 }
 
 start_service() {
-	[ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && {
+	# Resolve disable_ipv6 to a defaulted value ONCE before branching: the
+	# previous two independent "!= 1" / "!= 0" guards below both evaluated
+	# true for a missing/empty value (neither "1" nor "0"), so a save that
+	# dropped the option (issue #4352) ran BOTH the "enabled" setup and the
+	# "disabled" teardown/return in the same pass, tearing IPv6 down and
+	# skipping the procd instance that brings omr-6in4 back up.
+	local disable_ipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
+	[ -z "$disable_ipv6" ] && disable_ipv6="0"
+	if [ "$disable_ipv6" != "1" ]; then
 		if [ "$(uci -q get openmptcprouter.settings.disable_6in4)" != "1" ]; then
 			config_load network
 			config_foreach set_ipv6_state_intf interface
 		fi
 		set_ipv6_state
-	}
-	[ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "0" ] && {
+	else
 		if [ "$(uci -q get openmptcprouter.settings.disable_6in4)" != "1" ]; then
 			config_load network
 			config_foreach set_ipv6_state_intf interface
@@ -205,7 +219,7 @@ start_service() {
 		ifdown omr6in4
 		[ -z "$(/etc/init.d/odhcpd status | grep inactive)" ] && /etc/init.d/odhcpd stop
 		return
-	}
+	fi
 	[ "$(uci -q get openmptcprouter.settings.disable_6in4)" != "1" ] && [ "$(ifstatus omr6in4 | jsonfilter -e '@.up' | tr -d '\n')" != "true" ] && ifup omr6in4
 	multipath 6in4-omr6in4 off 2>&1 >/dev/null
 
