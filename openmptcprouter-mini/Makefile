@@ -37,13 +37,13 @@ MY_DEPENDS := \
     ca-bundle ca-certificates libustream-openssl \
     luci-mod-admin-full luci-app-firewall luci-app-glorytun-tcp luci-app-glorytun-udp luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-base \
     luci-app-omr-tracker luci-app-omr-dscp \
-    luci-app-sqm sqm-scripts-extra \
+    luci-app-sqm \
     luci-app-vnstat2 omr-quota luci-app-omr-quota \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail luci-app-upnp \
     luci-app-opkg \
     luci-app-uhttpd \
     luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
-    luci-app-openvpn \
+    luci-proto-openvpn \
     macvlan \
     shadowsocks-libev-ss-server shadowsocks-libev-ss-tunnel \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd ip6tables \
@@ -72,9 +72,9 @@ MY_DEPENDS := \
     !TARGET_mvebu:kmod-usb-serial !TARGET_mvebu:kmod-usb-serial-option !TARGET_mvebu:kmod-usb-serial-wwan !TARGET_mvebu:usb-modeswitch !TARGET_mvebu:uqmi \
     !TARGET_mvebu:umbim !TARGET_mvebu:kmod-mii !TARGET_mvebu:kmod-usb-net !TARGET_mvebu:kmod-usb-wdm !TARGET_mvebu:kmod-usb-net-qmi-wwan !TARGET_mvebu:kmod-usb-net-cdc-mbim !TARGET_mvebu:umbim \
     !TARGET_mvebu:kmod-usb-net-huawei-cdc-ncm !TARGET_mvebu:kmod-usb-net-rndis !TARGET_mvebu:kmod-usb-net-cdc-ether !TARGET_mvebu:kmod-usb-net-ipheth !TARGET_mvebu:usbmuxd \
-    kmod-rt2800-usb kmod-rtl8xxxu kmod-rtl8192cu kmod-net-rtl8192su \
-    !TARGET_mvebu:luci-proto-qmi wpad-basic kmod-mt7601u kmod-rtl8187 \
-    luci-app-mlvpn mlvpn 464xlat kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-https-dns-proxy kmod-tcp-nanqinlang iptables-mod-ipopt ss \
+    kmod-rt2800-usb kmod-rtl8xxxu kmod-rtl8192cu \
+    !TARGET_mvebu:luci-proto-qmi wpad-basic kmod-mt7601u \
+    luci-app-mlvpn mlvpn 464xlat kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-https-dns-proxy iptables-mod-ipopt ss \
     luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre
 
 OMR_SUPPORTED_LANGS := en
