@@ -3,13 +3,13 @@
 if [ -z "$(uci -q get firewall.omr_dst_videochat_v4)" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set firewall.omr_dst_videochat_v4=ipset
-		set firewall.omr_dst_videochat_v4.name='omr_dst_videochatv4'
+		set firewall.omr_dst_videochat_v4.name='omr_dst_videochat_v4'
 		set firewall.omr_dst_videochat_v4.family='ipv4'
 		set firewall.omr_dst_videochat_v4.loadfile='/etc/luci-uploads/videochatipv4.list'
 		add_list firewall.omr_dst_videochat_v4.match='dest_net'
 		add_list firewall.omr_dst_videochat_v4.match='dest_port'
 		set firewall.omr_dst_videochat_v6=ipset
-		set firewall.omr_dst_videochat_v6.name='omr_dst_videochatv6'
+		set firewall.omr_dst_videochat_v6.name='omr_dst_videochat_v6'
 		set firewall.omr_dst_videochat_v6.family='ipv6'
 		set firewall.omr_dst_videochat_v6.loadfile='/etc/luci-uploads/videochatipv6.list'
 		add_list firewall.omr_dst_videochat_v6.match='dest_net'
@@ -36,7 +36,25 @@ if [ -z "$(uci -q get firewall.omr_dst_videochat_v4)" ]; then
 	EOF
 fi
 
-if [ -z "$(grep videochat /etc/crontab)" ]; then
-	echo '0 1 * * * /usr/bin/wget -O /etc/luci-uploads/videochatipv4.list https://files-update.openmptcprouter.com/videochatipv4.list' > /etc/crontab
-	echo '1 1 * * * /usr/bin/wget -O /etc/luci-uploads/videochatipv6.list https://files-update.openmptcprouter.com/videochatipv6.list && /etc/init.d/firewall reload' > /etc/crontab
+# Migrate: ipset option 'name' was a typo (missing '_') so it never matched what
+# the rule's 'ipset' option references, making fw4 log "references unknown set"
+# and drop the DSCP marking rule entirely.
+if [ "$(uci -q get firewall.omr_dst_videochat_v4.name)" = "omr_dst_videochatv4" ] || \
+   [ "$(uci -q get firewall.omr_dst_videochat_v6.name)" = "omr_dst_videochatv6" ]; then
+	uci -q batch <<-EOF >/dev/null
+		set firewall.omr_dst_videochat_v4.name='omr_dst_videochat_v4'
+		set firewall.omr_dst_videochat_v6.name='omr_dst_videochat_v6'
+		commit firewall
+	EOF
+	if [ -n "$(nft list ruleset 2>/dev/null)" ]; then
+		/sbin/fw4 -q stop >/dev/null 2>&1 || true
+		sleep 2
+		/sbin/fw4 -q flush >/dev/null 2>&1 || true
+		/sbin/fw4 -q start >/dev/null 2>&1 || true
+	fi
+fi
+
+if [ -z "$(grep videochat /etc/crontabs/root 2>/dev/null)" ]; then
+	echo '0 1 * * * /usr/bin/wget -O /etc/luci-uploads/videochatipv4.list https://files-update.openmptcprouter.com/videochatipv4.list' >> /etc/crontabs/root
+	echo '1 1 * * * /usr/bin/wget -O /etc/luci-uploads/videochatipv6.list https://files-update.openmptcprouter.com/videochatipv6.list && /etc/init.d/firewall reload' >> /etc/crontabs/root
 fi
