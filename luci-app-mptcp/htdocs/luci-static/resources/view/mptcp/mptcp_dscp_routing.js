@@ -41,6 +41,15 @@ function isEligibleIface(name) {
 		name !== 'omrvpn' && name !== 'OWVPN' && name !== 'omr6in4';
 }
 
+// Same "multipath actually turned on" whitelist as the bandwidth page's
+// _getMultipathIfaces (multipath.js) and the rpcd backend's
+// multipath_bandwidth: "off"/unset doesn't count.
+function isMultipathEnabledIface(name) {
+	var multipath = uci.get('network', name, 'multipath');
+	return multipath === 'on' || multipath === 'master' ||
+		multipath === 'backup' || multipath === 'handover';
+}
+
 function fillIfaceOptions(option) {
 	option.value('', _('-- not pinned --'));
 	uci.sections('network', 'interface', function(ifc) {
@@ -140,7 +149,9 @@ return L.view.extend({
 
 			if (vpsSyncEnabled) {
 				o = s.option(form.ListValue, 'download_interface', _('Download interface'),
-					_('Gateway (VPS) → router. Only takes effect for MPTCP’s bpf_dscp scheduler (pins the VPS’s own send-side choice via dscp_remote_id) and can be a different WAN than Upload. mqvpn has no equivalent: its downlink always mirrors whichever WAN carries the class on upload, so this field has no effect on mqvpn.'));
+					_('Gateway (VPS) → router. Only takes effect for MPTCP’s bpf_dscp scheduler (pins the VPS’s own send-side choice via dscp_remote_id) and can be a different WAN than Upload.') + ' ' +
+					_('Leave empty to just mirror this row’s Upload interface to the gateway instead -- the same "download always follows upload" behavior mqvpn already has built in natively.') + ' ' +
+					_('mqvpn has no equivalent: its downlink always mirrors whichever WAN carries the class on upload, so this field has no effect on mqvpn.'));
 				o.load = function(section_id) {
 					fillIfaceOptions(this);
 					return this.super('load', [section_id]);
@@ -150,9 +161,10 @@ return L.view.extend({
 
 		if (showWeight) {
 			s = m.section(form.TypedSection, 'interface', _('WAN weight'),
-				_('Used by the *weight MPTCP schedulers (bpf_weight/bpf_weight_rr) and by mqvpn’s "Weighted RTT"/"Weighted Round Robin" schedulers -- same value, applies to both upload and download (mirrored to the gateway automatically). Unlike the DSCP pins above, weight is a single value per WAN, not per traffic class.'));
+				_('Used by the *weight MPTCP schedulers (bpf_weight/bpf_weight_rr) and by mqvpn’s "Weighted RTT"/"Weighted Round Robin" schedulers -- same value, applies to both upload and download (mirrored to the gateway automatically). Unlike the DSCP pins above, weight is a single value per WAN, not per traffic class.') + ' ' +
+				_('Only WANs with Multipath TCP enabled (the “Multipath TCP” option on the MPTCP page’s Interfaces Settings) are listed below.'));
 			s.filter = function(section) {
-				return isEligibleIface(section);
+				return isEligibleIface(section) && isMultipathEnabledIface(section);
 			};
 
 			o = s.option(form.Value, 'multipath_weight', _('Weight'),
