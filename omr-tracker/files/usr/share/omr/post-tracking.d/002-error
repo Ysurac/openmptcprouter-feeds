@@ -380,20 +380,65 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 			_log "VPS/tunnel disabled by user, skip VPN restart attempts"
 		else
 			if [ "$(uci -q get dsvpn.vpn.enable)" = "1" ]; then
-				_log "DSVPN down, restart it"
-				/etc/init.d/dsvpn restart >/dev/null 2>&1
+				# Shared restart cooldown with omr-schedule's 010-services
+				# hook (see the MQVPN watchdog below for the full rationale)
+				dsvpn_last_restart="$(cat /tmp/omr-dsvpn-last-restart 2>/dev/null)"
+				[ -z "$dsvpn_last_restart" ] && dsvpn_last_restart=0
+				dsvpn_now="$(date +%s)"
+				if [ "$((dsvpn_now - dsvpn_last_restart))" -ge 60 ]; then
+					_log "DSVPN down, restart it"
+					echo "$dsvpn_now" > /tmp/omr-dsvpn-last-restart
+					/etc/init.d/dsvpn restart >/dev/null 2>&1
+				else
+					_log "DSVPN down, restart skipped (already restarted less than 60s ago)"
+				fi
 			fi
 			if [ "$(uci -q get mqvpn.settings.enable)" = "1" ]; then
-				_log "mqvn down, restart it"
-				/etc/init.d/mqvpn restart >/dev/null 2>&1
+				# Rate-limit: schedule.d/010-services' watchdog also restarts
+				# MQVPN as soon as it can't find the process. Without this
+				# shared cooldown, both paths can fire within the same outage
+				# and restart it back-to-back, force-closing every open MPTCP
+				# connection through it (confirmed live: a single MQVPN outage
+				# produced 4 tun0 up/down flaps and a shadowsocks-rust crash
+				# loop from the resulting scheduler-restart storm)
+				mqvpn_last_restart="$(cat /tmp/omr-mqvpn-last-restart 2>/dev/null)"
+				[ -z "$mqvpn_last_restart" ] && mqvpn_last_restart=0
+				mqvpn_now="$(date +%s)"
+				if [ "$((mqvpn_now - mqvpn_last_restart))" -ge 60 ]; then
+					_log "mqvn down, restart it"
+					echo "$mqvpn_now" > /tmp/omr-mqvpn-last-restart
+					/etc/init.d/mqvpn restart >/dev/null 2>&1
+				else
+					_log "mqvn down, restart skipped (already restarted less than 60s ago)"
+				fi
 			fi
 			if [ "$(uci -q get mlvpn.general.enable)" = "1" ]; then
-				_log "MLVPN down, restart it"
-				/etc/init.d/mlvpn restart >/dev/null 2>&1
+				# Shared restart cooldown with omr-schedule's 010-services
+				# hook (see the MQVPN watchdog above for the full rationale)
+				mlvpn_last_restart="$(cat /tmp/omr-mlvpn-last-restart 2>/dev/null)"
+				[ -z "$mlvpn_last_restart" ] && mlvpn_last_restart=0
+				mlvpn_now="$(date +%s)"
+				if [ "$((mlvpn_now - mlvpn_last_restart))" -ge 60 ]; then
+					_log "MLVPN down, restart it"
+					echo "$mlvpn_now" > /tmp/omr-mlvpn-last-restart
+					/etc/init.d/mlvpn restart >/dev/null 2>&1
+				else
+					_log "MLVPN down, restart skipped (already restarted less than 60s ago)"
+				fi
 			fi
 			if [ "$(uci -q get glorytun.vpn.enable)" = "1" ]; then
-				_log "Glorytun VPN down, restart it"
-				/etc/init.d/glorytun restart >/dev/null 2>&1
+				# Shared restart cooldown with omr-schedule's 010-services
+				# hook (see the MQVPN watchdog above for the full rationale)
+				glorytun_last_restart="$(cat /tmp/omr-glorytun-last-restart 2>/dev/null)"
+				[ -z "$glorytun_last_restart" ] && glorytun_last_restart=0
+				glorytun_now="$(date +%s)"
+				if [ "$((glorytun_now - glorytun_last_restart))" -ge 60 ]; then
+					_log "Glorytun VPN down, restart it"
+					echo "$glorytun_now" > /tmp/omr-glorytun-last-restart
+					/etc/init.d/glorytun restart >/dev/null 2>&1
+				else
+					_log "Glorytun VPN down, restart skipped (already restarted less than 60s ago)"
+				fi
 			fi
 			if [ "$(uci -q get glorytun-udp.vpn.enable)" = "1" ]; then
 				gtudp_now="$(date +%s)"
@@ -447,12 +492,37 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 				fi
 			fi
 			if [ "$(uci -q get openvpn.omr.enabled)" = "1" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" != "none" ]; then
-				_log "OpenVPN down, restart it"
-				/etc/init.d/openvpn restart omr >/dev/null 2>&1
+				# Shared restart cooldown with omr-schedule's 010-services
+				# hook (see the MQVPN watchdog above for the full rationale)
+				openvpn_last_restart="$(cat /tmp/omr-openvpn-last-restart 2>/dev/null)"
+				[ -z "$openvpn_last_restart" ] && openvpn_last_restart=0
+				openvpn_now="$(date +%s)"
+				if [ "$((openvpn_now - openvpn_last_restart))" -ge 60 ]; then
+					_log "OpenVPN down, restart it"
+					echo "$openvpn_now" > /tmp/omr-openvpn-last-restart
+					/etc/init.d/openvpn restart omr >/dev/null 2>&1
+				else
+					_log "OpenVPN down, restart skipped (already restarted less than 60s ago)"
+				fi
 			fi
-			if [ "$(uci -q get ethersoftvpn.openmptcprouter.enable)" = "1" ]; then
-				_log "SoftEther VPN down, restart it"
-				/etc/init.d/softethervpnclient restart >/dev/null 2>&1
+			# NOTE: this uci package is "softethervpn", not "ethersoftvpn" --
+			# every other caller in the tree (omr-schedule, omr-6in4,
+			# openmptcprouter-vps) uses "softethervpn.openmptcprouter.enable".
+			# The old key here never matched anything, so this branch was
+			# dead code.
+			if [ "$(uci -q get softethervpn.openmptcprouter.enable)" = "1" ]; then
+				# Shared restart cooldown with omr-schedule's 010-services
+				# hook (see the MQVPN watchdog above for the full rationale)
+				softethervpn_last_restart="$(cat /tmp/omr-softethervpn-last-restart 2>/dev/null)"
+				[ -z "$softethervpn_last_restart" ] && softethervpn_last_restart=0
+				softethervpn_now="$(date +%s)"
+				if [ "$((softethervpn_now - softethervpn_last_restart))" -ge 60 ]; then
+					_log "SoftEther VPN down, restart it"
+					echo "$softethervpn_now" > /tmp/omr-softethervpn-last-restart
+					/etc/init.d/softethervpnclient restart >/dev/null 2>&1
+				else
+					_log "SoftEther VPN down, restart skipped (already restarted less than 60s ago)"
+				fi
 			fi
 		fi
 		config_load openmptcprouter
