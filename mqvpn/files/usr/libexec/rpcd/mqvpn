@@ -1,0 +1,106 @@
+#!/bin/sh
+# /usr/libexec/rpcd/mqvpn
+# rpcd plugin bridging mqvpn's local JSON control API (see
+# docs/control-api.md in the mqvpn source tree) onto ubus, so LuCI pages
+# and other local consumers (e.g. prometheus-node-exporter-ucode) don't
+# each need to know how to talk raw JSON-over-TCP to it.
+#
+# Usage:
+#   ubus call mqvpn metrics
+#
+# Combines get_build_info + get_stats + get_status + get_reorder_stats +
+# get_all_fec_stats (only when the build reports fec_enabled) + list_paths
+# (client-only; mqvpn always runs in client mode on an OMR router) into a
+# single response, so a caller only needs one ubus round trip instead of
+# up to six raw control-API connections (the control API allows at most 8
+# concurrent connections total -- see CTRL_MAX_CONNS in control-api.md).
+
+_addr() {
+	local addr
+	addr=$(uci -q get mqvpn.control.control_addr 2>/dev/null)
+	echo "${addr:-127.0.0.1}"
+}
+
+_port() {
+	uci -q get mqvpn.control.control_port 2>/dev/null
+}
+
+# Send one JSON request to the control API and print its raw JSON response
+# (or nothing on timeout/connection failure). $1 = JSON payload.
+_ctrl() {
+	echo "$1" | nc -w 2 "$(_addr)" "$(_port)" 2>/dev/null
+}
+
+# Print $1 unchanged if it looks like a JSON object, otherwise print the
+# JSON literal null -- so the caller can always embed the result of _ctrl
+# directly into a larger JSON object without checking for empty/garbage
+# responses at every call site.
+_json_or_null() {
+	case "$1" in
+		\{*\}) printf '%s' "$1" ;;
+		*) printf 'null' ;;
+	esac
+}
+
+case "$1" in
+	list)
+		echo '{ "metrics": {} }'
+		;;
+	call)
+		case "$2" in
+			metrics)
+				# Input is read but unused -- "metrics" takes no arguments.
+				cat >/dev/null
+
+				enabled=$(uci -q get mqvpn.settings.enable 2>/dev/null)
+				addr=$(_addr)
+				port=$(_port)
+
+				if [ "$enabled" != "1" ]; then
+					printf '{"enabled":false,"reachable":false,"error":"mqvpn is disabled"}\n'
+					exit 0
+				fi
+
+				if [ -z "$port" ]; then
+					printf '{"enabled":true,"reachable":false,"error":"control API is disabled (set a Control API port on the MQVPN settings page)","control":{"addr":"%s"}}\n' "$addr"
+					exit 0
+				fi
+
+				build_info=$(_ctrl '{"cmd":"get_build_info"}')
+				if [ -z "$build_info" ]; then
+					printf '{"enabled":true,"reachable":false,"error":"no response from mqvpn control API (%s:%s) -- is mqvpn running?","control":{"addr":"%s","port":%s}}\n' \
+						"$addr" "$port" "$addr" "$port"
+					exit 0
+				fi
+
+				stats=$(_ctrl '{"cmd":"get_stats"}')
+				status=$(_ctrl '{"cmd":"get_status"}')
+				reorder=$(_ctrl '{"cmd":"get_reorder_stats"}')
+				paths=$(_ctrl '{"cmd":"list_paths"}')
+
+				fec_enabled=$(printf '%s' "$build_info" | jsonfilter -q -e '@.fec_enabled' 2>/dev/null)
+				if [ "$fec_enabled" = "1" ]; then
+					fec=$(_ctrl '{"cmd":"get_all_fec_stats"}')
+				else
+					fec=""
+				fi
+
+				printf '{'
+				printf '"enabled":true,'
+				printf '"reachable":true,'
+				printf '"control":{"addr":"%s","port":%s},' "$addr" "$port"
+				printf '"build_info":%s,' "$(_json_or_null "$build_info")"
+				printf '"stats":%s,' "$(_json_or_null "$stats")"
+				printf '"status":%s,' "$(_json_or_null "$status")"
+				printf '"reorder":%s,' "$(_json_or_null "$reorder")"
+				printf '"paths":%s,' "$(_json_or_null "$paths")"
+				printf '"fec":%s' "$(_json_or_null "$fec")"
+				printf '}\n'
+				;;
+			*)
+				echo '{"error": "unknown method"}'
+				exit 1
+				;;
+		esac
+		;;
+esac
