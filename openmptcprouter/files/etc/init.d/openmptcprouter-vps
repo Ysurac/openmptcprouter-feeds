@@ -1491,7 +1491,14 @@ _get_dscp_vps_pin() {
 	# (041-multipath-dscp/dscp_iface handles upload, locally, and never
 	# looks at this field at all).
 	download_iface="$(uci -q get network.${section}.download_interface)"
-	[ -z "$download_iface" ] && return
+	if [ -z "$download_iface" ]; then
+		# No explicit download pin for this class -- always fall back to
+		# the row's own upload_interface instead of pushing nothing. This
+		# mirrors mqvpn's own downlink, which always follows upload with
+		# no separate field at all.
+		download_iface="$(uci -q get network.${section}.upload_interface)"
+		[ -z "$download_iface" ] && return
+	fi
 	dscp="$(uci -q get network.${section}.dscp)"
 	[ -z "$dscp" ] && return
 	remote_id="$(uci -q get network.${download_iface}.ip4table)"
@@ -1511,6 +1518,9 @@ _get_dscp_vps_pin() {
 # download_interface is independent of the same row's upload_interface
 # (applied locally, separately, by 041-multipath-dscp) -- a class's
 # upload and download sides can legitimately be pinned to different WANs.
+# When a row has no download_interface at all, _get_dscp_vps_pin always
+# falls back to that row's upload_interface instead, so a class only
+# pinned on Upload still gets a gateway-side pin rather than none.
 #
 # Skips the round trip to the VPS entirely (not even a GET) when the
 # locally-desired pin set matches the last one we successfully pushed,
