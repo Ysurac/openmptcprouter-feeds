@@ -87,7 +87,7 @@ return view.extend({
 	},
 
 	_badge: function(text, ok) {
-		return E('span', { 'class': 'label ' + (ok ? 'label-success' : 'label-danger') }, [ text ]);
+		return E('span', { 'class': 'label ' + (ok ? 'success' : 'important') }, [ text ]);
 	},
 
 	/* ------------------------------------------------------------------ *
