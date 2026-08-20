@@ -54,16 +54,26 @@ return L.view.extend({
 
 		m = new form.Map('omr-bypass', _('OMR-Bypass'),_('OpenMPTCProuter IP must be used as DNS.'));
 
-		/*
 		s = m.section(form.TypedSection, 'global', _('Global settings'));
 		s.addremove = false;
 		s.anonymous = true;
 
+		o = s.option(form.ListValue, 'reload_rules_hour', _('Bypassed domains IP refresh'),
+			_('When domain-based bypass rules are used, OpenMPTCProuter periodically refreshes the resolved IPs, which can force a firewall/DNS restart and briefly interrupt existing connections if any IP actually changed. By default this refresh runs once a day at 02:00; pick a different hour, or "Every hour", if needed.'));
+		for (var hourIdx = 0; hourIdx < 24; hourIdx++) {
+			var hourLabel = (hourIdx < 10 ? '0' : '') + hourIdx + ':00';
+			o.value(String(hourIdx), hourLabel);
+		}
+		o.value('hourly', _('Every hour'));
+		o.default = '2';
+		o.optional = true;
+
+		/*
 		o = s.option(form.Flag, 'noipv6', _('Disable IPv6 AAAA DNS results for bypassed domains'));
 		o.default = o.disabled;
 		o.optional = true;
 		*/
-		
+
 		s = m.section(form.GridSection, 'domains', _('Domains'),
 			_('Create rules that match destination domain names. Domain-based bypass requires OpenMPTCProuter DNS to be used by clients.'));
 		s.addremove = true;

@@ -564,9 +564,55 @@ if [ "$(uci -q get openmptcprouter.latest_versions.lc)" = "" ] || [ $(($(date +"
 		_log "Restart OMR-ByPass due to firewall error"
 		/etc/init.d/omr-bypass restart >/dev/null 2>&1
 	}
-	if [ -n "$(uci -q show omr-bypass | grep '=domains')" ]; then
+fi
+
+# OMR-ByPass domain IP refresh (reload_rules) used to piggyback on the
+# above once-an-hour version-check gate, so it always ran hourly with no
+# way to change that. Each reload_rules call can force a full fw4 restart
+# + dnsmasq restart when a bypassed domain's resolved IP actually changed,
+# interrupting established TCP connections through the tunnel (issue
+# #4353). reload_rules_hour lets a user move that disruption to a single
+# low-traffic hour of their choosing instead of every hour.
+#
+# "hourly" is the explicit opt-back-in to the historical once-an-hour
+# cadence; a plain empty/unset value is NOT treated the same, because uci
+# can't tell "explicitly set to empty" from "key never created" (`uci get`
+# returns the same empty result and exit status 1 either way) -- an empty
+# value defaults to hour 2 (matches bypass_asn's existing 2 AM cron) rather
+# than silently keeping everyone on the disruptive hourly cadence forever.
+# 41_omr-bypass writes "2" explicitly for every router on upgrade, so this
+# fallback is normally only hit for the brief window before that runs.
+if [ -n "$(uci -q show omr-bypass | grep '=domains')" ]; then
+	_bypass_reload_hour="$(uci -q get omr-bypass.global.reload_rules_hour)"
+	[ -z "$_bypass_reload_hour" ] && _bypass_reload_hour="2"
+	_bypass_reload_lc="$(uci -q get omr-bypass.global.reload_rules_lc)"
+	_bypass_should_reload=0
+	if [ "$_bypass_reload_hour" = "hourly" ]; then
+		if [ -z "$_bypass_reload_lc" ] || [ $(($(date +"%s") - _bypass_reload_lc)) -gt 3600 ]; then
+			_bypass_should_reload=1
+		fi
+	else
+		_bypass_reload_lastday="$(uci -q get omr-bypass.global.reload_rules_lastday)"
+		_bypass_today="$(date +%Y%m%d)"
+		# Zero-pad to 2 digits without printf/arithmetic: busybox printf's
+		# %d and ash's $(( )) both reject a leading-zero string like "08"/
+		# "09" outright ("invalid number"/"arithmetic syntax error"), and
+		# LuCI's own dropdown stores single digits unpadded (e.g. "8", "0"
+		# for midnight), so a plain string compare against `date +%H`
+		# (always 2 digits) would otherwise never match.
+		_bypass_reload_hour_padded="$_bypass_reload_hour"
+		[ "${#_bypass_reload_hour}" = "1" ] && _bypass_reload_hour_padded="0$_bypass_reload_hour"
+		if [ "$(date +%H)" = "$_bypass_reload_hour_padded" ] && [ "$_bypass_reload_lastday" != "$_bypass_today" ]; then
+			_bypass_should_reload=1
+		fi
+	fi
+	if [ "$_bypass_should_reload" = "1" ]; then
 		_log "Reload OMR-ByPass rules to refresh IPs"
 		/etc/init.d/omr-bypass reload_rules >/dev/null 2>&1
+		uci -q set omr-bypass.global=global
+		uci -q set omr-bypass.global.reload_rules_lc=$(date +"%s")
+		uci -q set omr-bypass.global.reload_rules_lastday="$(date +%Y%m%d)"
+		uci -q commit omr-bypass
 	fi
 fi
 
