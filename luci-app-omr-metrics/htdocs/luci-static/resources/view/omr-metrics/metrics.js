@@ -10,23 +10,50 @@ var callMetricsGetAll = rpc.declare({
 	expect: { '': {} }
 });
 
+/* get_user_info/get_forecast/get_decision each make their own outbound
+ * VPS round-trip on the router side (curl --max-time 10) and can each take
+ * up to ~10s — longer when the VPS metrics API is slow, unreachable, or the
+ * account isn't authorized. rpc.js batches every call fired in the same
+ * tick into one HTTP request; without `nobatch` these three would ride
+ * along with the fast, purely-local get_all in that single batch, and
+ * uhttpd resolves a batch's entries one at a time -- three ~10s calls
+ * serialize into ~30s, which blows past LuCI's default 20s client-side RPC
+ * timeout ("XHR request timed out") and fails the *entire* batch,
+ * including get_all's already-available data. `nobatch: true` gives each
+ * of these its own request so a slow/broken VPS can never block the
+ * always-local get_all, and each still gets the full 20s on its own. */
 var callMetricsGetUserInfo = rpc.declare({
 	object: 'metrics',
 	method: 'get_user_info',
-	expect: { '': {} }
+	expect: { '': {} },
+	nobatch: true
 });
 
 var callMetricsGetForecast = rpc.declare({
 	object: 'metrics',
 	method: 'get_forecast',
-	expect: { '': {} }
+	expect: { '': {} },
+	nobatch: true
 });
 
 var callMetricsGetDecision = rpc.declare({
 	object: 'metrics',
 	method: 'get_decision',
-	expect: { '': {} }
+	expect: { '': {} },
+	nobatch: true
 });
+
+/* Belt-and-suspenders companion to `nobatch` above: even isolated in its
+ * own request, get_user_info/get_forecast/get_decision can still reject
+ * (VPS truly down, a slow DNS lookup pushing past 20s, a 5xx, ...). Without
+ * this, that single rejection would fail the shared Promise.all() below and
+ * blank the whole page -- these three are optional VPS enhancements, not
+ * prerequisites for showing the (already local and available) interface
+ * metrics, so any failure here just degrades to "no data" for that one
+ * section instead of taking down the page. */
+function optional(promise) {
+	return promise.catch(function() { return {}; });
+}
 
 return view.extend({
 	/* Auto-refresh interval in seconds */
@@ -38,9 +65,9 @@ return view.extend({
 	load: function() {
 		return Promise.all([
 			callMetricsGetAll(),
-			callMetricsGetUserInfo(),
-			callMetricsGetForecast(),
-			callMetricsGetDecision()
+			optional(callMetricsGetUserInfo()),
+			optional(callMetricsGetForecast()),
+			optional(callMetricsGetDecision())
 		]);
 	},
 
@@ -845,9 +872,9 @@ return view.extend({
 		poll.add(function() {
 			return Promise.all([
 				callMetricsGetAll(),
-				callMetricsGetUserInfo(),
-				callMetricsGetForecast(),
-				callMetricsGetDecision()
+				optional(callMetricsGetUserInfo()),
+				optional(callMetricsGetForecast()),
+				optional(callMetricsGetDecision())
 			]).then(function(r) {
 				self._buildPage(r[0] || {}, r[1] || {}, r[2] || {}, r[3] || {});
 			});
