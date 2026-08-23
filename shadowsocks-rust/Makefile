@@ -29,6 +29,8 @@ ifeq ($(ARCH),i386)
     RUSTC_LDFLAGS+=-C target-feature=+sse2
 endif
 
+CARGO_PKG_CONFIG_VARS += CARGO_PROFILE_RELEASE_PANIC=abort
+
 define Package/shadowsocks-rust/Default
   define Package/shadowsocks-rust-$(1)
     SECTION:=net
