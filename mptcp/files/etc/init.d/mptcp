@@ -549,8 +549,22 @@ interface_multipath_settings() {
 
 	if [ "$(uci -q get openmptcprouter.settings.force_multipath)" != "0" ] && [ -n "$(ip a show dev $iface | grep inet)" ]; then
 		if ([ "$mode" = "master" ] || [ "$mode" = "on" ]) && [ -z "$(multipath $iface | grep default)" ]; then
-			logger -t "MPTCP" "Set $iface to $mode from $(multipath $iface)"
-			multipath "$iface" "on" "$id"
+			if [ "$(uci -q get openmptcprouter.${config}.state)" = "down" ]; then
+				# omr-tracker still considers this interface down (it only
+				# flips state to "up" once its recovery counter is
+				# satisfied): this reload was triggered by netifd's own
+				# ifup/link-up event, independent of that check, so keep the
+				# endpoint as backup instead of promoting it straight to
+				# master/on - the tracker's own post-tracking (003-up) will
+				# do the real promotion once recovery is actually confirmed.
+				# Prevents re-promoting a still-flaky WAN right after link
+				# recovery (issue #4355).
+				logger -t "MPTCP" "$iface tracker state is down, keep as backup instead of $mode from $(multipath $iface)"
+				multipath "$iface" "backup" "$id"
+			else
+				logger -t "MPTCP" "Set $iface to $mode from $(multipath $iface)"
+				multipath "$iface" "on" "$id"
+			fi
 		elif ([ "$mode" = "off" ] || [ -z "$mode" ]) && [ -z "$(multipath $iface | grep deactivated)" ]; then
 			logger -t "MPTCP" "Set $iface to $mode from $(multipath $iface)"
 			multipath "$iface" "$mode" "$id"

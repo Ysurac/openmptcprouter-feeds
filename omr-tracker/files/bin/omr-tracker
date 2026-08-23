@@ -369,6 +369,9 @@ _host6_raw=""
 _host6_resolved=""
 _host6_resolve_time=0
 _post_tracking_last=0
+# Consecutive successful cycles seen so far while recovering from ERROR; see
+# the tries_up gate below.
+OMR_TRACKER_UP_STREAK=0
 
 # main loop
 while true; do
@@ -853,6 +856,28 @@ while true; do
 				OMR_TRACKER_STATUS_MSG="Congestion score is $OMR_TRACKER_CONGESTION_SCORE this is more than recovery limit defined at $OMR_TRACKER_RECOVERY_CONGESTION"
 			fi
 		fi
+	fi
+
+	# tries_up ("Interface up" in the UI) is documented as "Downed interface
+	# will be deemed up after this many successful ping tests", i.e. N
+	# consecutive good cycles, not just one. Without this gate the block
+	# above flips OMR_TRACKER_STATUS to OK on the very first reachable cycle
+	# after an ERROR, which fires the post-tracking recovery cascade (default
+	# route restore, MPTCP master promotion, weight restore, ...) long before
+	# the configured up counter is satisfied and while the link may still be
+	# flaky right after recovery (issue #4355).
+	if [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ]; then
+		if [ "$OMR_TRACKER_STATUS" = "OK" ]; then
+			OMR_TRACKER_UP_STREAK=$((OMR_TRACKER_UP_STREAK + 1))
+			if [ "$OMR_TRACKER_UP_STREAK" -lt "${OMR_TRACKER_TRIES_UP:-1}" ]; then
+				logger -t "omr-tracker" "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) reachable again, waiting for stable recovery ($OMR_TRACKER_UP_STREAK/${OMR_TRACKER_TRIES_UP:-1})"
+				OMR_TRACKER_STATUS="ERROR"
+			fi
+		else
+			OMR_TRACKER_UP_STREAK=0
+		fi
+	else
+		OMR_TRACKER_UP_STREAK=0
 	fi
 
 	#[ "$OMR_TRACKER_HOSTS" = "$initial_hosts" ] || [ "$OMR_TRACKER_STATUS" = "OK" ] && _post_tracking
