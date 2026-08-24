@@ -56,6 +56,7 @@ var COUNTER_LABELS = {
 	OFOQueueTail: _('Out-of-order segments queued at tail'),
 	OFOQueue: _('Out-of-order segments queued'),
 	OFOMerge: _('Out-of-order segments merged'),
+	RcvPruned: _('Received segments pruned from the receive queue (memory pressure)'),
 
 	/* Subflow lifecycle: stale/blackhole detection and removal */
 	Blackhole: _('Blackhole detected on the path'),
@@ -133,17 +134,6 @@ return view.extend({
 			E('img', { 'src': L.resource('spinner.gif') })
 		]);
 
-		var seeAlso = E('div', { 'class': 'cbi-section' }, [
-			E('legend', {}, [ _('Related pages') ]),
-			E('ul', {}, [
-				E('li', {}, [ E('a', { 'href': L.url('admin/system/openmptcprouter/status') }, [ _('OpenMPTCProuter Network overview / Status') ]) ]),
-				E('li', {}, [ E('a', { 'href': L.url('admin/network/mptcp/mptcp') }, [ _('MPTCP Settings') ]) ]),
-				E('li', {}, [ E('a', { 'href': L.url('admin/network/mptcp/mptcp_fullmesh') }, [ _('MPTCP Fullmesh (subflow map)') ]) ]),
-				E('li', {}, [ E('a', { 'href': L.url('admin/network/mptcp/mptcp_connections') }, [ _('MPTCP Established connections') ]) ]),
-				E('li', {}, [ E('a', { 'href': L.url('admin/network/mptcp/mptcp_monitor') }, [ _('MPTCP monitoring (raw kernel counters)') ]) ])
-			])
-		]);
-
 		var page = E('div', {}, [
 			E('h2', {}, [ _('MPTCP Diagnostics') ]),
 			E('div', { 'class': 'cbi-map-descr' }, [
@@ -151,8 +141,7 @@ return view.extend({
 				  'blackholed/stale subflows, resets, checksum errors, and WANs that never got an MPTCP endpoint ' +
 				  'registered at all. Refreshes automatically every 15 seconds.')
 			]),
-			container,
-			seeAlso
+			container
 		]);
 
 		this.renderAll(container, initialData);
@@ -171,6 +160,7 @@ return view.extend({
 
 		container.appendChild(this.renderIssues(d.issues || []));
 		container.appendChild(this.renderWanTable(d.wans || []));
+		container.appendChild(this.renderSubflowsTable(d.subflows || []));
 		container.appendChild(this.renderSettings(d.settings || {}, d.limits || {}, d.established_count));
 		container.appendChild(this.renderCounters(d.counters || {}));
 	},
@@ -225,6 +215,64 @@ return view.extend({
 						[ ok ? _('registered') : _('missing') ])
 				]),
 				E('td', {}, [ wan.endpoint_flags || '-' ])
+			]));
+		});
+		wrap.appendChild(table);
+		return wrap;
+	},
+
+	renderSubflowsTable: function(subflows) {
+		var wrap = E('div', {}, [ E('h3', {}, [ _('Live MPTCP subflows') ]) ]);
+		if (!subflows.length) {
+			wrap.appendChild(E('p', {}, [
+				_('No active MPTCP subflow found on any multipath-enabled WAN right now.')
+			]));
+			return wrap;
+		}
+
+		var fmtRate = function(bps) {
+			if (bps === undefined || bps === null) return '-';
+			if (bps >= 1000000000) return (bps / 1000000000).toFixed(1) + ' Gbps';
+			if (bps >= 1000000) return (bps / 1000000).toFixed(1) + ' Mbps';
+			if (bps >= 1000) return (bps / 1000).toFixed(1) + ' Kbps';
+			return bps + ' bps';
+		};
+		var fmtPair = function(a, b) {
+			if (a === undefined || a === null) return '-';
+			return (b === undefined || b === null) ? String(a) : a + ' / ' + b;
+		};
+
+		var table = E('table', { 'class': 'omrdiag-wan-table' }, [
+			E('tr', {}, [
+				E('th', {}, [ _('WAN') ]),
+				E('th', {}, [ _('Local') ]),
+				E('th', {}, [ _('Remote') ]),
+				E('th', {}, [ _('Backup') ]),
+				E('th', {}, [ _('cwnd') ]),
+				E('th', {}, [ _('RTT / var (ms)') ]),
+				E('th', {}, [ _('Retrans / total') ]),
+				E('th', {}, [ _('Pacing rate') ]),
+				E('th', {}, [ _('Delivery rate') ])
+			])
+		]);
+		subflows.forEach(function(sf) {
+			table.appendChild(E('tr', {}, [
+				E('td', {}, [ sf.wan || sf.dev || '-' ]),
+				E('td', {}, [ (sf.local_ip || '-') + ':' + (sf.local_port != null ? sf.local_port : '') ]),
+				E('td', {}, [ (sf.remote_ip || '-') + ':' + (sf.remote_port != null ? sf.remote_port : '') ]),
+				E('td', {}, [
+					// "backup" is a normal role (not a health issue), so it
+					// deliberately gets no severity class -- only "active"
+					// (the role actually carrying scheduled traffic) is
+					// highlighted green.
+					E('span', { 'class': 'omrdiag-badge' + (sf.backup ? '' : ' ok') },
+						[ sf.backup ? _('backup') : _('active') ])
+				]),
+				E('td', {}, [ sf.cwnd != null ? String(sf.cwnd) : '-' ]),
+				E('td', {}, [ fmtPair(sf.rtt, sf.rttvar) ]),
+				E('td', {}, [ fmtPair(sf.retrans, sf.retrans_total) ]),
+				E('td', {}, [ fmtRate(sf.pacing_rate) ]),
+				E('td', {}, [ fmtRate(sf.delivery_rate) ])
 			]));
 		});
 		wrap.appendChild(table);

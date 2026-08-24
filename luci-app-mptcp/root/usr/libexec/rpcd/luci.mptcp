@@ -206,6 +206,89 @@ function parse_limits(raw)
 	return limits
 end
 
+-- Live per-subflow TCP metrics via "ss -tin" (no per-WAN "src <ip>" filter --
+-- one call for every established connection on the box, then each
+-- connection's local address is looked up against the endpoints list to
+-- attribute it to a WAN and pick up its id/backup/fullmesh flags). This
+-- mirrors the shell/awk field parsing in omr-metrics' 040-metrics
+-- post-tracking hook, reimplemented natively in Lua here so the Diagnostics
+-- page stays self-contained: no dependency on omr-metrics being installed,
+-- and always a live read rather than whatever omr-tracker last cached for a
+-- WAN that may not have cycled recently.
+--
+-- Known limitation: a connection is only attributed to a WAN if its local
+-- address matches a registered MPTCP endpoint. In practice every
+-- multipath-enabled interface gets one (multipath's "on"/"backup" hotplug
+-- path always registers an endpoint for it), so this only misses a WAN that
+-- somehow never got one -- which "wan_endpoint_status" below already flags
+-- as its own issue.
+local function tobps(s)
+	local v = tonumber((s or ""):match("^[%d%.]+")) or 0
+	if s:find("Gbps") then return math.floor(v * 1000000000)
+	elseif s:find("Mbps") then return math.floor(v * 1000000)
+	elseif s:find("[Kk]bps") then return math.floor(v * 1000)
+	end
+	return math.floor(v)
+end
+
+-- ss prints "ip:port", or "[v6addr]:port" for IPv6.
+local function split_hostport(s)
+	local ip, port = (s or ""):match("^(.-):(%d+)$")
+	if not ip then return s, nil end
+	return (ip:gsub("^%[", ""):gsub("%]$", "")), tonumber(port)
+end
+
+function parse_ss_subflows(raw, endpoints)
+	local by_addr = {}
+	for _, ep in ipairs(endpoints) do by_addr[ep.address] = ep end
+
+	local subflows = {}
+	local cur
+	for line in (raw or ""):gmatch("[^\n]+") do
+		local state, lhost, rhost = line:match("^(%S+)%s+%d+%s+%d+%s+(%S+)%s+(%S+)")
+		if state == "ESTAB" then
+			if cur then subflows[#subflows + 1] = cur end
+			cur = nil
+			local lip, lport = split_hostport(lhost)
+			local rip, rport = split_hostport(rhost)
+			local ep = by_addr[lip]
+			if ep then
+				cur = {
+					dev = ep.dev, endpoint_id = ep.id, backup = ep.backup,
+					local_ip = lip, local_port = lport,
+					remote_ip = rip, remote_port = rport,
+				}
+			end
+		elseif cur then
+			for token in line:gmatch("%S+") do
+				if token:match("^cwnd:") then cur.cwnd = tonumber(token:match(":(%d+)"))
+				elseif token:match("^ssthresh:") then cur.ssthresh = tonumber(token:match(":(%d+)"))
+				elseif token:match("^rtt:") then
+					local r, rv = token:match(":([%d%.]+)/([%d%.]+)")
+					cur.rtt = tonumber(r); cur.rttvar = tonumber(rv)
+				elseif token:match("^retrans:") then
+					local c, t = token:match(":(%d+)/(%d+)")
+					cur.retrans = tonumber(c); cur.retrans_total = tonumber(t)
+				elseif token:match("^bytes_sent:") then cur.bytes_sent = tonumber(token:match(":(%d+)"))
+				elseif token:match("^bytes_acked:") then cur.bytes_acked = tonumber(token:match(":(%d+)"))
+				elseif token:match("^bytes_retrans:") then cur.bytes_retrans = tonumber(token:match(":(%d+)"))
+				elseif token:match("^bytes_received:") then cur.bytes_received = tonumber(token:match(":(%d+)"))
+				elseif token:match("^minrtt:") then cur.min_rtt = tonumber(token:match(":([%d%.]+)"))
+				end
+			end
+			-- pacing_rate/delivery_rate are separate space-joined tokens
+			-- ("pacing_rate 6.4Mbps"), not "key:value" -- match on the whole
+			-- line instead of a single token.
+			local pr = line:match("pacing_rate%s+(%S+)")
+			if pr then cur.pacing_rate = tobps(pr) end
+			local dr = line:match("delivery_rate%s+(%S+)")
+			if dr then cur.delivery_rate = tobps(dr) end
+		end
+	end
+	if cur then subflows[#subflows + 1] = cur end
+	return subflows
+end
+
 -- Per-WAN endpoint cross-check: for every interface the router considers
 -- multipath-enabled, is its device actually registered as an MPTCP
 -- endpoint? If not, that WAN can never carry an MPTCP subflow no matter
@@ -329,6 +412,20 @@ function build_issues(settings, counters, wans)
 			string.format("%d MPTCP data checksum error(s).", counters.DataCsumErr),
 			"Check that 'mptcp_checksum' matches on both the router and the VPS -- a mismatch (or a path " ..
 			"that corrupts data) triggers this.")
+	end
+
+	-- RcvPruned counts data the kernel already received on an MPTCP subflow
+	-- but then had to drop from the receive queue under socket memory
+	-- pressure -- unlike the other counters here, this points at a local
+	-- resource problem on this router (or the VPS, if it's the one pruning),
+	-- not the network path: the data arrived fine and was thrown away anyway.
+	if (counters.RcvPruned or 0) > 0 then
+		add_issue(issues, "warning", "mptcp_rcv_pruned",
+			string.format("%d segment(s) pruned from an MPTCP receive queue (memory pressure).", counters.RcvPruned),
+			"Data that was already received had to be dropped because the socket ran out of receive buffer " ..
+			"space -- a local resource problem, not a network issue. Usually means something is reading from " ..
+			"the proxied connection too slowly (a slow/blocked application) or overall memory is tight. If " ..
+			"this keeps climbing, check free memory and whether any proxy process is stalled.")
 	end
 
 	-- Split by direction, not just summed: which side is doing the closing
@@ -736,6 +833,17 @@ local methods = {
 				established_count = established_count + 1
 			end
 
+			-- Attribute each subflow's device to its UCI interface name
+			-- (endpoints only carry the device, e.g. "eth1", not "wan1").
+			local dev_to_name = {}
+			for _, w in ipairs(wans) do
+				if w.device ~= "" then dev_to_name[w.device] = w.name end
+			end
+			local subflows = parse_ss_subflows(exec_output("ss -tin 2>/dev/null"), endpoints)
+			for _, sf in ipairs(subflows) do
+				sf.wan = dev_to_name[sf.dev] or sf.dev
+			end
+
 			return {
 				settings          = settings,
 				counters          = counters,
@@ -744,6 +852,7 @@ local methods = {
 				wans              = wans,
 				issues            = issues,
 				established_count = established_count,
+				subflows          = subflows,
 			}
 		end
 	},
