@@ -44,23 +44,29 @@ return view.extend({
 			return promise;
 		};
 
+		// Purely cosmetic in-modal section divider (DummyValue, never read
+		// from or written to uci). Pass advanced=true to gate it behind the
+		// "Show advanced settings" toggle like any other option.
+		function heading(name, title, advanced) {
+			var h = s.option(form.DummyValue, name);
+			h.rawhtml = true;
+			h.modalonly = true;
+			h.cfgvalue = function() { return '<h3 style="margin:1em 0 .25em">' + title + '</h3>'; };
+			if (advanced)
+				h.depends('_show_adv', '1');
+			return h;
+		}
+
 		o = s.option(form.Flag, 'enabled', _('Enabled'),
 			_('Enable monitoring and automatic state changes for this interface.'));
 		o.default = false;
 
-		o = s.option(form.ListValue, 'initial_state', _('Initial state'),
-			_('Expect interface state on up event'));
-		o.default = 'online';
-		o.value('online', _('Online'));
-		o.value('offline', _('Offline'));
-		o.modalonly = true;
-
-		o = s.option(form.ListValue, 'family', _('Internet Protocol'),
-			_('Choose whether checks use IPv4 targets, IPv6 targets, or both.'));
-		o.default = 'ipv4';
-		o.value('ipv4', _('IPv4'));
-		o.value('ipv6', _('IPv6'));
-		o.value('ipv4ipv6', _('IPv4 & IPv6'));
+		o = s.option(form.Flag, '_show_adv', _('Show advanced settings'));
+		o.description = _('Reveal additional tracking parameters below: custom hosts, quality checks and interface state thresholds.');
+		o.default = '0';
+		o.cfgvalue = function() { return '0'; };
+		o.write = function() {};
+		o.remove = function() {};
 		o.modalonly = true;
 
 		o = s.option(form.ListValue, 'country', _('Country'),
@@ -79,39 +85,6 @@ return view.extend({
 			};
 			o.value(name, _(name));
 		});
-
-		hostSections.forEach(country => {
-			const cname = country['.name'];
-			let o4 = s.option(form.DynamicList, `_hosts_${cname}`, _('IPv4 Hosts (%s)').format(cname),_('This hostname or IP address will be pinged to determine if the link is up or down. Leave blank to use defaults settings.'));
-			o4.modalonly = true;
-			o4.depends('country', cname);
-			o4.cfgvalue = function (section_id) {
-				return countryData[cname].hosts;
-			};
-			o4.write = function (section_id, formvalue) {
-				uci.set('omr-tracker', cname, 'hosts', formvalue);
-			};
-
-			let o6 = s.option(form.DynamicList, `_hosts6_${cname}`, _('IPv6 Hosts (%s)').format(cname),_('This hostname or IP address will be pinged to determine if the link is up or down. Leave blank to use defaults settings.'));
-			o6.modalonly = true;
-			o6.depends('country', cname);
-			o6.cfgvalue = function (section_id) {
-				return countryData[cname].hosts6;
-			};
-			o6.write = function (section_id, formvalue) {
-				uci.set('omr-tracker', cname, 'hosts6', formvalue);
-			};
-		});
-
-		o = s.option(form.Value, 'latency_ip', _('Custom check IPv4'),
-			_('IPv4 address or hostname used instead of the hosts list to check the connection and latency when no VPS is defined. Leave empty to use the hosts list.'));
-		o.datatype = 'host';
-		o.modalonly = true;
-
-		o = s.option(form.Value, 'latency_ip6', _('Custom check IPv6'),
-			_('IPv6 address or hostname used instead of the hosts list to check the connection and latency when no VPS is defined. Leave empty to use the hosts list.'));
-		o.datatype = 'host';
-		o.modalonly = true;
 
 		o = s.option(form.ListValue, 'type', _('Tracking method'),_('Always ping gateway, then test connection by ping, httping or dns. None mode only ping gateway.'));
 		o.default = 'ping';
@@ -137,20 +110,6 @@ return view.extend({
 			o.value('arping');
 		}
 		*/
-		o = s.option(form.Flag, 'server_http_test', _('Server http test'),
-			_('Check if connection work with http by sending a request to server API'));
-		o.rmempty = false;
-		o.modalonly = true;
-
-		o = s.option(form.Flag, 'server_test', _('Server test'),
-			_('Check if connection work by sending a ping or http request to server over all interfaces, failed if only current interface is not able to.'));
-		o.rmempty = false;
-		o.modalonly = true;
-
-		o = s.option(form.Flag, 'mail_alert', _('Mail alert'),
-			_('Send a mail when connection status change. You need to configure e-mail settings here.'));
-		o.rmempty = false;
-		o.modalonly = true;
 
 		/*
 		o = s.option(form.Flag, 'httping_ssl', _('Enable ssl tracking'),
@@ -179,6 +138,9 @@ return view.extend({
 		o.modalonly = true;
 		*/
 
+		// ── Test: the essentials, visible without opening advanced settings ──
+		heading('_heading_test', _('Test'), false);
+
 		o = s.option(form.ListValue, 'count', _('Ping count'),
 			_('Number of probes sent during each test cycle.'));
 		o.depends('type', 'ping');
@@ -190,112 +152,6 @@ return view.extend({
 		o.value('3');
 		o.value('4');
 		o.value('5');
-		o.modalonly = true;
-
-		o = s.option(form.Value, 'size', _('Ping size'),
-			_('Payload size in bytes for ICMP probes when using ping tracking.'));
-		o.depends('type', 'ping');
-		o.default = '56';
-		o.value('8');
-		o.value('24');
-		o.value('56');
-		o.value('120');
-		o.value('248');
-		o.value('504');
-		o.value('1016');
-		o.value('1472');
-		o.value('2040');
-		o.datatype = 'range(1, 65507)';
-		o.modalonly = true;
-
-		o =s.option(form.Value, 'max_ttl', _('Max TTL'),
-			_('Maximum TTL or hop limit allowed for ping-based checks.'));
-		o.default = '60';
-		o.depends('type', 'ping');
-		o.value('10');
-		o.value('20');
-		o.value('30');
-		o.value('40');
-		o.value('50');
-		o.value('60');
-		o.value('70');
-		o.datatype = 'range(1, 255)';
-		o.modalonly = true;
-
-		o = s.option(form.Flag, 'check_quality', _('Check link quality'),
-			_('Mark the interface down when latency, packet loss or congestion crosses the thresholds below.'));
-		o.depends('type', 'ping');
-		o.default = false;
-		o.modalonly = true;
-
-		o = s.option(form.Value, 'failure_latency', _('Failure latency [ms]'),
-			_('Latency above this value is treated as a failure while quality checks are enabled.'));
-		o.depends('check_quality', '1');
-		o.default = '1000';
-		o.value('25');
-		o.value('50');
-		o.value('75');
-		o.value('100');
-		o.value('150');
-		o.value('200');
-		o.value('250');
-		o.value('300');
-		o.modalonly = true;
-
-		o = s.option(form.Value, 'failure_loss', _('Failure packet loss [%]'),
-			_('Packet loss above this percentage is treated as a failure.'));
-		o.depends('check_quality', '1');
-		o.default = '40';
-		o.value('2');
-		o.value('5');
-		o.value('10');
-		o.value('20');
-		o.value('25');
-		o.modalonly = true;
-
-		o = s.option(form.Value, 'recovery_latency', _('Recovery latency [ms]'),
-			_('Latency must fall below this value before the interface is considered recovered.'));
-		o.depends('check_quality', '1');
-		o.default = '500';
-		o.value('25');
-		o.value('50');
-		o.value('75');
-		o.value('100');
-		o.value('150');
-		o.value('200');
-		o.value('250');
-		o.value('300');
-		o.modalonly = true;
-
-		o = s.option(form.Value, 'recovery_loss', _('Recovery packet loss [%]'),
-			_('Packet loss must fall below this percentage before the interface is considered recovered.'));
-		o.depends('check_quality', '1');
-		o.default = '10';
-		o.value('2');
-		o.value('5');
-		o.value('10');
-		o.value('20');
-		o.value('25');
-		o.modalonly = true;
-
-		o = s.option(form.Value, 'failure_congestion', _('Failure congestion score'),
-			_('Congestion score (0-100, computed by omr-metrics from bufferbloat, loss, jitter and queue depth) above this value is treated as a failure. Leave empty to ignore congestion. Requires the omr-metrics package.'));
-		o.depends('check_quality', '1');
-		o.datatype = 'range(0, 100)';
-		o.value('60');
-		o.value('70');
-		o.value('80');
-		o.value('90');
-		o.modalonly = true;
-
-		o = s.option(form.Value, 'recovery_congestion', _('Recovery congestion score'),
-			_('Congestion score must fall below this value before the interface is considered recovered. Leave empty to ignore congestion. Requires the omr-metrics package.'));
-		o.depends('check_quality', '1');
-		o.datatype = 'range(0, 100)';
-		o.value('40');
-		o.value('50');
-		o.value('60');
-		o.value('70');
 		o.modalonly = true;
 
 		o = s.option(form.Value, "timeout", _("Ping timeout"),
@@ -325,6 +181,185 @@ return view.extend({
 		o.modalonly = true;
 		o.rmempty = false;
 
+		// ── Test settings (advanced): everything else that shapes how the test runs ──
+		heading('_heading_test_settings', _('Test settings'), true);
+
+		o = s.option(form.ListValue, 'initial_state', _('Initial state'),
+			_('Expect interface state on up event'));
+		o.default = 'online';
+		o.value('online', _('Online'));
+		o.value('offline', _('Offline'));
+		o.depends('_show_adv', '1');
+		o.modalonly = true;
+
+		o = s.option(form.ListValue, 'family', _('Internet Protocol'),
+			_('Choose whether checks use IPv4 targets, IPv6 targets, or both.'));
+		o.default = 'ipv4';
+		o.value('ipv4', _('IPv4'));
+		o.value('ipv6', _('IPv6'));
+		o.value('ipv4ipv6', _('IPv4 & IPv6'));
+		o.depends('_show_adv', '1');
+		o.modalonly = true;
+
+		hostSections.forEach(country => {
+			const cname = country['.name'];
+			let o4 = s.option(form.DynamicList, `_hosts_${cname}`, _('IPv4 Hosts (%s)').format(cname),_('This hostname or IP address will be pinged to determine if the link is up or down. Leave blank to use defaults settings.'));
+			o4.modalonly = true;
+			o4.depends({ country: cname, _show_adv: '1' });
+			o4.cfgvalue = function (section_id) {
+				return countryData[cname].hosts;
+			};
+			o4.write = function (section_id, formvalue) {
+				uci.set('omr-tracker', cname, 'hosts', formvalue);
+			};
+
+			let o6 = s.option(form.DynamicList, `_hosts6_${cname}`, _('IPv6 Hosts (%s)').format(cname),_('This hostname or IP address will be pinged to determine if the link is up or down. Leave blank to use defaults settings.'));
+			o6.modalonly = true;
+			o6.depends({ country: cname, _show_adv: '1' });
+			o6.cfgvalue = function (section_id) {
+				return countryData[cname].hosts6;
+			};
+			o6.write = function (section_id, formvalue) {
+				uci.set('omr-tracker', cname, 'hosts6', formvalue);
+			};
+		});
+
+		o = s.option(form.Value, 'latency_ip', _('Custom check IPv4'),
+			_('IPv4 address or hostname used instead of the hosts list to check the connection and latency when no VPS is defined. Leave empty to use the hosts list.'));
+		o.datatype = 'host';
+		o.depends('_show_adv', '1');
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'latency_ip6', _('Custom check IPv6'),
+			_('IPv6 address or hostname used instead of the hosts list to check the connection and latency when no VPS is defined. Leave empty to use the hosts list.'));
+		o.datatype = 'host';
+		o.depends('_show_adv', '1');
+		o.modalonly = true;
+
+		o = s.option(form.Flag, 'server_http_test', _('Server http test'),
+			_('Check if connection work with http by sending a request to server API'));
+		o.rmempty = false;
+		o.depends('_show_adv', '1');
+		o.modalonly = true;
+
+		o = s.option(form.Flag, 'server_test', _('Server test'),
+			_('Check if connection work by sending a ping or http request to server over all interfaces, failed if only current interface is not able to.'));
+		o.rmempty = false;
+		o.depends('_show_adv', '1');
+		o.modalonly = true;
+
+		o = s.option(form.Flag, 'mail_alert', _('Mail alert'),
+			_('Send a mail when connection status change. You need to configure e-mail settings here.'));
+		o.rmempty = false;
+		o.depends('_show_adv', '1');
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'size', _('Ping size'),
+			_('Payload size in bytes for ICMP probes when using ping tracking.'));
+		o.depends({ type: 'ping', _show_adv: '1' });
+		o.default = '56';
+		o.value('8');
+		o.value('24');
+		o.value('56');
+		o.value('120');
+		o.value('248');
+		o.value('504');
+		o.value('1016');
+		o.value('1472');
+		o.value('2040');
+		o.datatype = 'range(1, 65507)';
+		o.modalonly = true;
+
+		o =s.option(form.Value, 'max_ttl', _('Max TTL'),
+			_('Maximum TTL or hop limit allowed for ping-based checks.'));
+		o.default = '60';
+		o.depends({ type: 'ping', _show_adv: '1' });
+		o.value('10');
+		o.value('20');
+		o.value('30');
+		o.value('40');
+		o.value('50');
+		o.value('60');
+		o.value('70');
+		o.datatype = 'range(1, 255)';
+		o.modalonly = true;
+
+		o = s.option(form.Flag, 'check_quality', _('Check link quality'),
+			_('Mark the interface down when latency, packet loss or congestion crosses the thresholds below.'));
+		o.depends({ type: 'ping', _show_adv: '1' });
+		o.default = false;
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'failure_latency', _('Failure latency [ms]'),
+			_('Latency above this value is treated as a failure while quality checks are enabled.'));
+		o.depends({ check_quality: '1', _show_adv: '1' });
+		o.default = '1000';
+		o.value('25');
+		o.value('50');
+		o.value('75');
+		o.value('100');
+		o.value('150');
+		o.value('200');
+		o.value('250');
+		o.value('300');
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'failure_loss', _('Failure packet loss [%]'),
+			_('Packet loss above this percentage is treated as a failure.'));
+		o.depends({ check_quality: '1', _show_adv: '1' });
+		o.default = '40';
+		o.value('2');
+		o.value('5');
+		o.value('10');
+		o.value('20');
+		o.value('25');
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'recovery_latency', _('Recovery latency [ms]'),
+			_('Latency must fall below this value before the interface is considered recovered.'));
+		o.depends({ check_quality: '1', _show_adv: '1' });
+		o.default = '500';
+		o.value('25');
+		o.value('50');
+		o.value('75');
+		o.value('100');
+		o.value('150');
+		o.value('200');
+		o.value('250');
+		o.value('300');
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'recovery_loss', _('Recovery packet loss [%]'),
+			_('Packet loss must fall below this percentage before the interface is considered recovered.'));
+		o.depends({ check_quality: '1', _show_adv: '1' });
+		o.default = '10';
+		o.value('2');
+		o.value('5');
+		o.value('10');
+		o.value('20');
+		o.value('25');
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'failure_congestion', _('Failure congestion score'),
+			_('Congestion score (0-100, computed by omr-metrics from bufferbloat, loss, jitter and queue depth) above this value is treated as a failure. Leave empty to ignore congestion. Requires the omr-metrics package.'));
+		o.depends({ check_quality: '1', _show_adv: '1' });
+		o.datatype = 'range(0, 100)';
+		o.value('60');
+		o.value('70');
+		o.value('80');
+		o.value('90');
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'recovery_congestion', _('Recovery congestion score'),
+			_('Congestion score must fall below this value before the interface is considered recovered. Leave empty to ignore congestion. Requires the omr-metrics package.'));
+		o.depends({ check_quality: '1', _show_adv: '1' });
+		o.datatype = 'range(0, 100)';
+		o.value('40');
+		o.value('50');
+		o.value('60');
+		o.value('70');
+		o.modalonly = true;
+
 		o = s.option(form.Value, 'post_interval', _('Post-tracking interval'),
 			_('Minimum delay between two runs of the post-tracking scripts while the interface state is stable. State changes always trigger them immediately. Higher values reduce CPU load.'));
 		o.default = '10';
@@ -334,6 +369,19 @@ return view.extend({
 		o.value('60', _('%d minute').format('1'));
 		o.value('300', _('%d minutes').format('5'));
 		o.datatype = 'uinteger';
+		o.depends('_show_adv', '1');
+		o.modalonly = true;
+
+		o = s.option(form.Value, 'post_interval_down', _('Post-tracking interval (down)'),
+			_('Minimum delay between two runs of the post-tracking scripts while the interface is down. State changes always trigger them immediately. Leave empty to use 6 times the post-tracking interval above.'));
+		o.default = '60';
+		o.value('30', _('%d seconds').format('30'));
+		o.value('60', _('%d minute').format('1'));
+		o.value('300', _('%d minutes').format('5'));
+		o.value('600', _('%d minutes').format('10'));
+		o.value('1800', _('%d minutes').format('30'));
+		o.datatype = 'uinteger';
+		o.depends('_show_adv', '1');
 		o.modalonly = true;
 
 		o = s.option(form.Value, 'failure_interval', _('Failure interval'),
@@ -351,12 +399,17 @@ return view.extend({
 		o.value('900', _('%d minutes').format('15'));
 		o.value('1800', _('%d minutes').format('30'));
 		o.value('3600', _('%d hour').format('1'));
+		o.depends('_show_adv', '1');
 		o.modalonly = true;
 
 		o = s.option(form.Flag, 'keep_failure_interval', _('Keep failure interval'),
 			_('Keep ping failure interval during failure state'));
 		o.default = false;
+		o.depends('_show_adv', '1');
 		o.modalonly = true;
+
+		// ── Interface state (advanced): failover try-count thresholds ──
+		heading('_heading_iface_state', _('Interface state'), true);
 
 		o = s.option(form.ListValue, 'tries', _('Interface down'),
 			_('Interface will be deemed down after this many failed ping tests'));
@@ -371,6 +424,8 @@ return view.extend({
 		o.value('8');
 		o.value('9');
 		o.value('10');
+		o.depends('_show_adv', '1');
+		o.modalonly = true;
 
 		o = s.option(form.ListValue, 'tries_up', _('Interface up'),
 			_('Downed interface will be deemed up after this many successful ping tests'));
@@ -385,6 +440,8 @@ return view.extend({
 		o.value('8');
 		o.value('9');
 		o.value('10');
+		o.depends('_show_adv', '1');
+		o.modalonly = true;
 
 		o = s.option(form.Flag, 'restart_down', _('Restart if down'),
 			_('Restart interface if detected as down.'));
