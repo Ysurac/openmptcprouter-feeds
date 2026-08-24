@@ -885,13 +885,23 @@ while true; do
 	#[ "$OMR_TRACKER_STATUS" != "$OMR_TRACKER_PREV_STATUS" ] && _post_tracking
 	# The post-tracking cascade sources every script in post-tracking.d (dozens
 	# of forks per run): run it immediately on any state transition so failover
-	# is not delayed, otherwise at most every OMR_TRACKER_POST_INTERVAL seconds
-	# for the periodic refresh work (status, latencies, weights, metrics).
+	# is not delayed. The periodic refresh work (status, latencies, weights,
+	# metrics) is not time-critical, so it runs at the normal
+	# OMR_TRACKER_POST_INTERVAL cadence while the link is OK, but backs off to
+	# the much longer OMR_TRACKER_POST_INTERVAL_DOWN while it stays down: a
+	# dead link has nothing new to report between transitions, so there's no
+	# reason to keep paying the full post-tracking.d fork cost every cycle
+	# for every down interface.
 	printf -v _post_tracking_now '%(%s)T' -1
+	if [ "$OMR_TRACKER_STATUS" = "OK" ]; then
+		_post_tracking_due="${OMR_TRACKER_POST_INTERVAL:-10}"
+	else
+		_post_tracking_due="${OMR_TRACKER_POST_INTERVAL_DOWN:-${OMR_TRACKER_POST_INTERVAL:-10}}"
+	fi
 	if [ "$OMR_TRACKER_STATUS" != "$OMR_TRACKER_PREV_STATUS" ] \
 		|| [ "$OMR_TRACKER_DEVICE_IP" != "$OMR_TRACKER_PREV_DEVICE_IP" ] \
 		|| [ "$OMR_TRACKER_DEVICE_IP6" != "$OMR_TRACKER_PREV_DEVICE_IP6" ] \
-		|| [ $((_post_tracking_now - _post_tracking_last)) -ge "${OMR_TRACKER_POST_INTERVAL:-10}" ]; then
+		|| [ $((_post_tracking_now - _post_tracking_last)) -ge "$_post_tracking_due" ]; then
 		_post_tracking
 		_post_tracking_last=$_post_tracking_now
 	fi
