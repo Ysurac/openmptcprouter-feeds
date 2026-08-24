@@ -620,6 +620,171 @@ return view.extend({
 	},
 
 	/* ------------------------------------------------------------------ *
+	 *  Limiting factors: specific, actionable reasons this WAN might not  *
+	 *  be aggregating (contributing an MPTCP subflow) or might not be     *
+	 *  reaching its full bandwidth right now. Deliberately does not      *
+	 *  re-flag the composite congestion score itself (already shown as   *
+	 *  its own colored bar in the Quality column) -- this surfaces the   *
+	 *  specific root causes instead, using data omr-metrics only started *
+	 *  collecting this session (subflows[], mptcp_endpoint, rwnd/swnd).  *
+	 * ------------------------------------------------------------------ */
+
+	_limitFactors: function(iface) {
+		var factors  = [];
+		var tc       = iface.tc             || {};
+		var bbr      = iface.bbr            || {};
+		var mep      = iface.mptcp_endpoint || {};
+		var subflows = iface.subflows       || [];
+
+		/* ---- aggregation: can this WAN even carry MPTCP traffic? ---- */
+		if (mep.id == null) {
+			factors.push({ severity: 'error', scope: 'aggregation',
+				label: _('No MPTCP endpoint'),
+				detail: _('No MPTCP endpoint is registered for this WAN -- it cannot carry a subflow at all, ' +
+				          'regardless of how healthy the link itself is. Usually fixed by an interface restart.') });
+		} else if (iface.status === 'up' && !subflows.length) {
+			factors.push({ severity: 'warning', scope: 'aggregation',
+				label: _('No active subflow'),
+				detail: _('An MPTCP endpoint is registered for this WAN but no subflow is currently established ' +
+				          'on it, so it is not contributing to aggregation right now.') });
+		} else if (mep.backup) {
+			factors.push({ severity: 'info', scope: 'aggregation',
+				label: _('Backup only'),
+				detail: _('This WAN is marked backup -- it only takes over if active paths fail, it is not ' +
+				          'combined with them for extra bandwidth while they are healthy.') });
+		}
+
+		/* ---- bandwidth: queueing/loss/backpressure capping throughput ---- */
+		if ((tc.dropped || 0) > 0 || (tc.drop_overlimit || 0) > 0 || (tc.flows_plimit || 0) > 0) {
+			factors.push({ severity: 'warning', scope: 'bandwidth',
+				label: _('Queue drops'),
+				detail: _('The outbound queue is dropping packets on this WAN -- that directly caps ' +
+				          'achievable throughput until it clears.') });
+		}
+		if ((tc.ecn_mark || 0) > 0) {
+			factors.push({ severity: 'info', scope: 'bandwidth',
+				label: _('ECN marking'),
+				detail: _('Packets are being ECN-marked instead of dropped -- an early sign of queue ' +
+				          'pressure, milder than outright drops but still worth watching.') });
+		}
+
+		var subRetrans = 0, zeroRwnd = false;
+		subflows.forEach(function(sf) {
+			subRetrans += (sf.retrans_total || 0);
+			if (sf.rwnd === 0) zeroRwnd = true;
+		});
+		if (subRetrans > 0) {
+			factors.push({ severity: 'warning', scope: 'bandwidth',
+				label: _('Subflow retransmissions'),
+				detail: _('One or more MPTCP subflows on this WAN have retransmitted data -- packet loss ' +
+				          'on the path forces the sender to slow down.') });
+		}
+		if (zeroRwnd) {
+			factors.push({ severity: 'warning', scope: 'bandwidth',
+				label: _('Receiver backpressure'),
+				detail: _('A subflow on this WAN currently has a zero receive window -- the far end is ' +
+				          'telling the sender to pause because its own receive buffer is full, not because ' +
+				          'of anything on this path.') });
+		}
+
+		if (bbr.bw != null && bbr.delivery_rate != null && bbr.bw > 0) {
+			var gapPct = 100 * (bbr.bw - bbr.delivery_rate) / bbr.bw;
+			if (gapPct > 30) {
+				factors.push({ severity: 'info', scope: 'bandwidth',
+					label: _('Below estimated capacity'),
+					detail: _('BBR estimates this WAN could sustain more bandwidth than it is currently ' +
+					          'delivering -- the gap points at something other than raw link capacity (an ' +
+					          'idle/light workload, or a bottleneck elsewhere) limiting current throughput.') });
+			}
+		}
+
+		return factors;
+	},
+
+	/* ------------------------------------------------------------------ *
+	 *  Subflows: the raw numbers behind _limitFactors() above, shown as  *
+	 *  one compact row per active MPTCP subflow on this WAN (usually one *
+	 *  -- the proxy tunnel's connection -- but fullmesh can open more).  *
+	 *  Returns null (renders nothing) when there's no active subflow;    *
+	 *  that case is already covered by the "No active subflow" chip.    *
+	 * ------------------------------------------------------------------ */
+
+	_renderSubflows: function(subflows) {
+		var self = this;
+		if (!subflows || !subflows.length) return null;
+
+		var thStyle = 'padding:3px 8px 3px 0;color:#666;font-size:0.8em;font-weight:600;text-align:left;white-space:nowrap';
+		var tdStyle = 'padding:3px 8px 3px 0;font-size:0.88em;white-space:nowrap';
+
+		var thead = E('thead', {}, [
+			E('tr', {}, [
+				E('th', { style: thStyle }, [ _('Remote') ]),
+				E('th', { style: thStyle }, [ self._help(_('RTT'), _('Round-trip time / variance measured on this subflow')) ]),
+				E('th', { style: thStyle }, [ self._help(_('Cwnd'), _('Current TCP congestion window in segments')) ]),
+				E('th', { style: thStyle }, [ self._help(_('Retrans'), _('Total retransmissions on this subflow since it was established')) ]),
+				E('th', { style: thStyle }, [ _('Bytes ↑/↓') ])
+			])
+		]);
+
+		var tbody = E('tbody');
+		subflows.forEach(function(sf) {
+			var remoteLabel = (sf.remote_ip || '—') + (sf.remote_port ? ':' + sf.remote_port : '');
+			var remoteCell = sf.backup
+				? E('span', {}, [
+					remoteLabel + ' ',
+					E('span', {
+						style: 'display:inline-block;padding:0 5px;border-radius:3px;background:#eee;color:#777;font-size:0.78em'
+					}, [ _('backup') ])
+				])
+				: remoteLabel;
+			var rtt = (sf.rtt != null)
+				? sf.rtt.toFixed(1) + (sf.rttvar != null ? '/' + sf.rttvar.toFixed(1) : '') + ' ms'
+				: '—';
+
+			tbody.appendChild(E('tr', {}, [
+				E('td', { style: tdStyle }, [ remoteCell ]),
+				E('td', { style: tdStyle }, [ rtt ]),
+				E('td', { style: tdStyle }, [ self._fmt(sf.cwnd, _('segs')) ]),
+				E('td', { style: tdStyle }, [ self._warnVal(sf.retrans_total, 'error') ]),
+				E('td', { style: tdStyle }, [ self._fmtBytes(sf.bytes_sent) + ' / ' + self._fmtBytes(sf.bytes_received) ])
+			]));
+		});
+
+		return E('table', { style: 'border-collapse:collapse;width:100%' }, [ thead, tbody ]);
+	},
+
+	_renderLimitFactors: function(factors) {
+		var colors = {
+			error:   { bg: '#ffebee', fg: '#c62828', border: '#ef9a9a' },
+			warning: { bg: '#fff3e0', fg: '#e65100', border: '#ffcc80' },
+			info:    { bg: '#e3f2fd', fg: '#1565c0', border: '#90caf9' },
+			ok:      { bg: '#e8f5e9', fg: '#2e7d32', border: '#a5d6a7' }
+		};
+
+		var chip = function(sev, text, tip) {
+			var c = colors[sev] || colors.info;
+			return E('span', {
+				title: tip || '',
+				style: 'display:inline-block;padding:2px 8px;margin:0 6px 4px 0;border-radius:10px;' +
+				       'background:' + c.bg + ';color:' + c.fg + ';border:1px solid ' + c.border + ';' +
+				       'font-size:0.78em;font-weight:600;cursor:' + (tip ? 'help' : 'default')
+			}, [ text ]);
+		};
+
+		if (!factors.length) {
+			return E('div', { style: 'margin-bottom:8px' }, [
+				chip('ok', '✓ ' + _('No limiting factors detected'))
+			]);
+		}
+
+		var wrap = E('div', { style: 'margin-bottom:8px' });
+		factors.forEach(function(f) {
+			wrap.appendChild(chip(f.severity, f.label, f.detail));
+		});
+		return wrap;
+	},
+
+	/* ------------------------------------------------------------------ *
 	 *  Render one interface card                                           *
 	 * ------------------------------------------------------------------ */
 
@@ -632,6 +797,7 @@ return view.extend({
 		var bbr    = iface.bbr         || {};
 		var cong   = iface.congestion  || {};
 		var bw     = iface.bandwidth   || {};
+		var subflows = iface.subflows  || [];
 		var isWifi = sig.type === 'wifi';
 
 		/* ---- connectivity rows ---- */
@@ -762,6 +928,8 @@ return view.extend({
 			]),
 		];
 
+		var subflowsSection = self._renderSubflows(subflows);
+
 		if (bwRows.length) {
 			cols.push(E('div', { style: colStyle }, [
 				E('h4', { style: 'margin:0 0 6px;font-size:0.95em;color:#333' }, [ _('Bandwidth') ]),
@@ -796,12 +964,24 @@ return view.extend({
 		var dcSection = self._renderDecisionSection(decision || null, name);
 
 		var cardChildren = [
-			E('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:10px' }, [
+			E('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px' }, [
 				E('strong', { style: 'font-size:1.05em' }, [ name ]),
 				E('span',   { style: 'font-size:0.8em;color:#888' }, [ _('Updated: ') + tsStr ])
 			]),
+			self._renderLimitFactors(self._limitFactors(iface)),
 			E('div', { style: 'display:flex;flex-wrap:wrap;gap:10px' }, cols)
 		];
+
+		/* Full-width, like the quality graph below: a 5-column subflow table
+		 * needs more room than the 180px-min two-column boxes above can give
+		 * it, and overflow-x:auto keeps a narrow viewport scrollable instead
+		 * of squeezed. */
+		if (subflowsSection) {
+			cardChildren.push(E('div', { style: 'width:100%;margin-top:10px;padding:8px 12px;background:#f9f9f9;border-radius:4px' }, [
+				E('h4', { style: 'margin:0 0 6px;font-size:0.95em;color:#333' }, [ _('Subflows') ]),
+				E('div', { style: 'overflow-x:auto' }, [ subflowsSection ])
+			]));
+		}
 
 		/* Full-width so the sparklines get enough horizontal room to be readable */
 		if (qgSection) cardChildren.push(qgSection);
