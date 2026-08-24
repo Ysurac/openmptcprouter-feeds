@@ -511,6 +511,22 @@ function default_vpn(default_vpn)
 	force_start_vpn(default_vpn)
 end
 
+-- Never let a backend-wide enable auto-enable a *secondary* shadowsocks-rust
+-- server section (sss1 and beyond) that has no address of its own: an
+-- enabled ss_redir/ss_local pointed at an empty "server" crash-loops (issue
+-- #2460). sss1 is the dedicated IPv6 slot (see wizard_add/server_settings
+-- below) and ships disabled with no address until a real IPv6 address is
+-- set for it, so toggling the proxy on must not drag it up before that
+-- happens. sss0 is deliberately exempt: it's the primary slot and existing
+-- callers already rely on default_proxy()/set_proxy_backend_enabled() being
+-- the thing that enables it, address or not (mid-provisioning ordering).
+local function _ssrust_enable_flag(name, want_flag)
+	if name ~= "sss0" and want_flag == "0" and (ucic:get("shadowsocks-rust", name, "server") or "") == "" then
+		return "1"
+	end
+	return want_flag
+end
+
 function default_proxy(proxy)
 	-- Stop the currently active proxy before switching
 	local prev_proxy = ucic:get("openmptcprouter","settings","proxy") or ""
@@ -540,7 +556,8 @@ function default_proxy(proxy)
 	-- shadowsocks-rust: disabled flag on each server section and ss_rules
 	if ucic:get("shadowsocks-rust","sss0") ~= nil then
 		ucic:foreach("shadowsocks-rust", "server", function(s)
-			ucic:set("shadowsocks-rust", s[".name"], "disabled", is_ss_rust and "0" or "1")
+			local want = is_ss_rust and "0" or "1"
+			ucic:set("shadowsocks-rust", s[".name"], "disabled", _ssrust_enable_flag(s[".name"], want))
 		end)
 		if ucic:get("shadowsocks-rust","ss_rules") ~= nil then
 			ucic:set("shadowsocks-rust","ss_rules","disabled", is_ss_rust and "0" or "1")
@@ -598,7 +615,7 @@ function default_proxy(proxy)
 	end
 end
 
-function server_settings(server,server_ip,openmptcprouter_vps_key,openmptcprouter_vps_username)
+function server_settings(server,server_ip,openmptcprouter_vps_key,openmptcprouter_vps_username,server_ip6)
 	-- OpenMPTCProuter VPS
 	if openmptcprouter_vps_username == nil or tostring(openmptcprouter_vps_username) == "" then
 		openmptcprouter_vps_username = "openmptcprouter"
@@ -614,8 +631,13 @@ function server_settings(server,server_ip,openmptcprouter_vps_key,openmptcproute
 	if ucic:get("openmptcprouter",server,"master") == "1" then
 		ucic:set("shadowsocks-libev","sss0","server",server_ip)
 		ucic:set("shadowsocks-rust","sss0","server",server_ip)
-		if ucic:get("shadowsocks-rust","sss1") ~= nil then
-			ucic:set("shadowsocks-rust","sss1","server",server_ip)
+		-- sss1 is the dedicated IPv6 proxy path: only point it somewhere once
+		-- a real IPv6 address was entered for this VPS. Leaving it alone
+		-- otherwise (rather than mirroring server_ip like before) means it
+		-- keeps whatever it already had -- typically empty, which is exactly
+		-- what _ssrust_enable_flag requires to keep it disabled.
+		if ucic:get("shadowsocks-rust","sss1") ~= nil and server_ip6 ~= nil and server_ip6 ~= "" then
+			ucic:set("shadowsocks-rust","sss1","server",server_ip6)
 		end
 		ucic:set("glorytun","vpn","host",server_ip)
 		ucic:set("glorytun-udp","vpn","host",server_ip)
@@ -843,6 +865,14 @@ local function valid_ipv4(ip)
 		and a ~= 127
 end
 
+-- A wizard-entered server address containing a colon is IPv6: the "ip"
+-- DynamicList's "host" datatype never allows a port suffix, so a bare
+-- colon is enough to tell an IPv6 literal apart from an IPv4 address or a
+-- hostname without needing a full RFC parser here.
+local function looks_like_ipv6(ip)
+	return type(ip) == "string" and ip:find(":", 1, true) ~= nil
+end
+
 -- Every uci config the wizard may read or write. Used both to discard
 -- stale staged deltas before applying and to commit everything at the end.
 local wizard_uci_configs = {
@@ -871,7 +901,7 @@ local function set_proxy_backend_enabled(proxy, enabled)
 	elseif proxy == "shadowsocks-rust" or proxy == "shadowsocks-go" then
 		if ucic:get("shadowsocks-rust","sss0") ~= nil then
 			ucic:foreach("shadowsocks-rust", "server", function(s)
-				ucic:set("shadowsocks-rust", s[".name"], "disabled", disabled_flag)
+				ucic:set("shadowsocks-rust", s[".name"], "disabled", _ssrust_enable_flag(s[".name"], disabled_flag))
 			end)
 			if ucic:get("shadowsocks-rust","ss_rules") ~= nil then
 				ucic:set("shadowsocks-rust","ss_rules","disabled", disabled_flag)
@@ -1287,6 +1317,7 @@ function wizard_add(args)
 	end)
 
 	local master_ip = ""
+	local master_ip6 = ""
 	local master_key = ""
 	local master_username = "openmptcprouter"
 	local master_iplist = {}
@@ -1309,8 +1340,36 @@ function wizard_add(args)
 				if #iplist > 0 then
 					ucic:set("openmptcprouter", sid, "ip", iplist)
 					if sid == master and _to_flag(srv.disabled) ~= "1" then
-						master_ip = iplist[1]
 						master_iplist = iplist
+						-- Prefer the first IPv4 entry for the primary (sss0)
+						-- address, matching openmptcprouter-vps's own
+						-- v4-first resolution; fall back to whichever entry
+						-- is first when there's no IPv4 at all (e.g. an
+						-- IPv6-only VPS).
+						for _, ip in ipairs(iplist) do
+							if not looks_like_ipv6(ip) then
+								master_ip = ip
+								break
+							end
+						end
+						if master_ip == "" then
+							master_ip = iplist[1]
+						end
+						-- The first IPv6 entry *distinct from master_ip*
+						-- becomes sss1's dedicated address, giving a
+						-- dual-stack VPS a real second proxy path instead of
+						-- a duplicate tunnel to the same endpoint
+						-- (server_settings leaves sss1 alone when this stays
+						-- empty). The "distinct from master_ip" guard matters
+						-- for an IPv6-only VPS: master_ip already fell back
+						-- to that single address above, so it must not also
+						-- become sss1's address.
+						for _, ip in ipairs(iplist) do
+							if looks_like_ipv6(ip) and ip ~= master_ip then
+								master_ip6 = ip
+								break
+							end
+						end
 					end
 				else
 					ucic:delete("openmptcprouter", sid, "ip")
@@ -1325,7 +1384,7 @@ function wizard_add(args)
 	end
 
 	if master ~= "" and master_ip ~= "" then
-		server_settings(master, master_ip, master_key, master_username)
+		server_settings(master, master_ip, master_key, master_username, master_ip6)
 		-- server_settings sets ip to {master_ip}; restore the full list when there
 		-- are multiple IPs so config_list_foreach can reach all of them.
 		if #master_iplist > 1 then
@@ -1540,6 +1599,21 @@ function force_start_vpn(vpn)
 	elseif vpn == "softethervpn" or vpn == "softether" then
 		sys.exec("/etc/init.d/softethervpnclient start >/dev/null 2>/dev/null")
 	end
+	-- Push the new tunnel's local/remote IP to the VPS once it's actually up,
+	-- so src=vpn port forwards (which the VPS resolves to whatever vpnremoteip
+	-- currently says) get retargeted at the new VPN instead of silently
+	-- DNAT'ing into the previous VPN's now-dead tunnel address. Normally this
+	-- is the hotplug.d/iface/omrvpn script's job (fires set_vpn_ip on ifup of
+	-- the omrvpn logical interface), but that hotplug is only as reliable as
+	-- each VPN backend's own bring-up of that interface, and a bare "does the
+	-- forward still work" check after a VPN switch found it silently didn't
+	-- for every backend tried here -- so poll set_vpn_ip directly instead of
+	-- trusting the hotplug fired. set_vpn_ip already no-ops if the tunnel
+	-- isn't up yet or nothing actually changed (see its own current-vs-cached
+	-- comparison against the VPS config), so repeating it is harmless; poll
+	-- for up to 30s to cover every backend's own negotiation time (glorytun
+	-- TCP/UDP link setup, OpenVPN TLS handshake, mqvpn's own handshake, ...).
+	sys.exec("sh -c 'i=0; while [ $i -lt 15 ]; do sleep 2; /etc/init.d/openmptcprouter-vps set_vpn_ip >/dev/null 2>&1; i=$((i+1)); done >/dev/null 2>/dev/null &'")
 end
 
 function force_stop_vpn(vpn)

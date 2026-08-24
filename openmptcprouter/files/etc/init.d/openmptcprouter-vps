@@ -2305,7 +2305,16 @@ _set_ssrust_server() {
 	elif [ "$value" = "false" ]; then
 		value=0
 	fi
-	if [ "$(echo $1 | grep omr)" != "" ] || [ "$(echo $1 | grep sss)" ]; then 
+	# sss1 is the dedicated IPv6 proxy slot (see the wizard's dual-stack
+	# setup): its "server" address comes from the wizard's IPv6 entry, not
+	# from this v4-preferred $vpsip sync, so leave that one option alone
+	# here -- otherwise every VPS-config refresh would clobber it back to
+	# the IPv4 address. Other options (password, method, ...) still apply
+	# to it uniformly like every other server section.
+	if [ "$1" = "sss1" ] && [ "$option" = "server" ]; then
+		return
+	fi
+	if [ "$(echo $1 | grep omr)" != "" ] || [ "$(echo $1 | grep sss)" ]; then
 		uci -q set shadowsocks-rust.$1.$option=$value
 	fi
 }
@@ -2544,6 +2553,13 @@ _set_config_from_vps() {
 			set shadowsocks-rust.sss0.server_port=$ss_port
 			set shadowsocks-rust.sss0.method=$ss_method
 		EOF
+		# sss1 (the IPv6 slot) is the same VPS on the same port; keep it in
+		# sync too, but only once it actually has an address of its own --
+		# otherwise this would be the only place a bare "server_port" ever
+		# gets set on a still-unconfigured sss1.
+		if [ -n "$(uci -q get shadowsocks-rust.sss1.server)" ]; then
+			uci -q set shadowsocks-rust.sss1.server_port=$ss_port
+		fi
 		config_foreach _set_ssrust_server server "password" $ssgo_sskey
 		config_foreach _set_ssrust_server server "method" $ss_method
 		if [ "$(uci -q get shadowsocks-rust.sss0.server)" != "127.0.0.1" ]; then
