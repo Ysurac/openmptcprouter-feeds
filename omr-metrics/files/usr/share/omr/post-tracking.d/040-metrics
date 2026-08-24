@@ -10,6 +10,34 @@ case "$OMR_TRACKER_INTERFACE" in
 	omrvpn|OWVPN*) exit 0 ;;
 esac
 
+# Query the modem (mmcli/qmi via omr-modemmanager or omr-qmi) at most once
+# per TTL window, caching the raw "all"/"signal" output to a per-interface
+# file. Each query is a D-Bus round-trip (~0.2-0.3s of fork+exec overhead),
+# and signal quality doesn't move fast enough to need a fresh read every
+# single post-tracking cycle, so most cycles just replay the last reading.
+# Default TTL tracks post_interval (3 cycles); override via
+# OMR_TRACKER_MODEM_SIGNAL_TTL if a tighter or looser bound is needed.
+_modem_query_cached() {
+	local bin="$1" device="$2"
+	local cache_file="${METRICS_DIR}/.${OMR_TRACKER_INTERFACE}.modemsig"
+	local ttl="${OMR_TRACKER_MODEM_SIGNAL_TTL:-$(( ${OMR_TRACKER_POST_INTERVAL:-10} * 3 ))}"
+	local now cache_ts
+	now=$(date +%s)
+	MODEM_ALL_RESULT=""
+	MODEM_SIGNAL_RESULT=""
+	if [ -f "$cache_file" ]; then
+		{ read -r cache_ts; read -r MODEM_ALL_RESULT; read -r MODEM_SIGNAL_RESULT; } < "$cache_file" 2>/dev/null
+	fi
+	# Guard against an empty/corrupted cache_ts before doing arithmetic on it
+	case "$cache_ts" in ''|*[!0-9]*) cache_ts="";; esac
+	if [ -n "$cache_ts" ] && [ $(( now - cache_ts )) -lt "$ttl" ] && [ $(( now - cache_ts )) -ge 0 ]; then
+		return
+	fi
+	MODEM_ALL_RESULT=$("$bin" "$device" all 2>/dev/null)
+	MODEM_SIGNAL_RESULT=$("$bin" "$device" signal 2>/dev/null)
+	printf '%s\n%s\n%s\n' "$now" "$MODEM_ALL_RESULT" "$MODEM_SIGNAL_RESULT" > "$cache_file" 2>/dev/null
+}
+
 # Collect modem signal quality if applicable
 _get_modem_signal() {
 	local proto device result
@@ -25,13 +53,20 @@ _get_modem_signal() {
 	OMR_TRACKER_SIGNAL_RSRQ=""
 	OMR_TRACKER_SIGNAL_SINR=""
 
-	if [ "$proto" = "modemmanager" ]; then
-		local device_path
+	if [ "$proto" = "modemmanager" ] || [ "$proto" = "qmi" ]; then
+		local device_path bin
 		device_path=$(uci -q get "network.${OMR_TRACKER_INTERFACE}.device")
 		[ -z "$device_path" ] && return
+		if [ "$proto" = "modemmanager" ]; then
+			bin="$OMR_MODEMMANAGER_BIN"
+		else
+			bin="$OMR_QMI_BIN"
+		fi
+
+		_modem_query_cached "$bin" "$device_path"
 
 		# "all" mode: PERCENT;OPERATOR;NUMBER;STATE;TYPE
-		result=$("$OMR_MODEMMANAGER_BIN" "$device_path" all 2>/dev/null)
+		result="$MODEM_ALL_RESULT"
 		if [ -n "$result" ]; then
 			SIGNAL_QUALITY=$(echo "$result" | cut -d';' -f1)
 			SIGNAL_OPERATOR=$(echo "$result" | cut -d';' -f2)
@@ -41,65 +76,58 @@ _get_modem_signal() {
 		fi
 
 		# "signal" mode: RSSI;RSRP;RSRQ;SINR
-		result=$("$OMR_MODEMMANAGER_BIN" "$device_path" signal 2>/dev/null)
+		result="$MODEM_SIGNAL_RESULT"
 		if [ -n "$result" ]; then
 			SIGNAL_RSSI=$(echo "$result" | cut -d';' -f1)
 			SIGNAL_RSRP=$(echo "$result" | cut -d';' -f2)
 			SIGNAL_RSRQ=$(echo "$result" | cut -d';' -f3)
 			SIGNAL_SINR=$(echo "$result" | cut -d';' -f4)
 		fi
-
-	elif [ "$proto" = "qmi" ]; then
-		local qmi_device
-		qmi_device=$(uci -q get "network.${OMR_TRACKER_INTERFACE}.device")
-		[ -z "$qmi_device" ] && return
-
-		# "all" mode: PERCENT;OPERATOR;NUMBER;STATE;TYPE
-		result=$("$OMR_QMI_BIN" "$qmi_device" all 2>/dev/null)
-		if [ -n "$result" ]; then
-			SIGNAL_QUALITY=$(echo "$result" | cut -d';' -f1)
-			SIGNAL_OPERATOR=$(echo "$result" | cut -d';' -f2)
-			SIGNAL_NUMBER=$(echo "$result" | cut -d';' -f3)
-			SIGNAL_STATE=$(echo "$result" | cut -d';' -f4)
-			SIGNAL_TYPE=$(echo "$result" | cut -d';' -f5)
-		fi
-
-		# "signal" mode: RSSI;RSRP;RSRQ;SINR
-		result=$("$OMR_QMI_BIN" "$qmi_device" signal 2>/dev/null)
-		if [ -n "$result" ]; then
-			SIGNAL_RSSI=$(echo "$result" | cut -d';' -f1)
-			SIGNAL_RSRP=$(echo "$result" | cut -d';' -f2)
-			SIGNAL_RSRQ=$(echo "$result" | cut -d';' -f3)
-			SIGNAL_SINR=$(echo "$result" | cut -d';' -f4)
-		fi
-
 	fi
 }
 
 
-# Collect WiFi signal via iwinfo
-_get_wifi_signal() {
-	WIFI_SIGNAL=""
-	WIFI_NOISE=""
-	WIFI_BITRATE=""
-	WIFI_SSID=""
-	WIFI_BSSID=""
-	WIFI_CHANNEL=""
-	WIFI_MODE=""
-	WIFI_QUALITY=""
-	WIFI_QUALITY_MAX=""
-
-	[ -z "$OMR_TRACKER_DEVICE" ] && return
-
-	# Check if the device is a wireless interface
-	[ -d "${OMR_SYS_CLASS_NET_DIR:-/sys/class/net}/${OMR_TRACKER_DEVICE}/wireless" ] || return
-
-	# iwinfo available?
-	command -v iwinfo >/dev/null 2>&1 || return
+# Query+parse iwinfo at most once per TTL window, caching the parsed fields
+# (same rationale as _modem_query_cached: it's a full netlink round-trip,
+# and a disassociated WiFi-WAN link pays this every cycle just as often as
+# an associated one since nothing here is gated on link state). Sets the
+# WIFI_* globals and returns non-zero when there was nothing to parse
+# (mirrors the original "iw_out empty" early-return).
+_wifi_signal_cached() {
+	local cache_file="${METRICS_DIR}/.${OMR_TRACKER_INTERFACE}.wifisig"
+	local ttl="${OMR_TRACKER_WIFI_SIGNAL_TTL:-$(( ${OMR_TRACKER_POST_INTERVAL:-10} * 3 ))}"
+	local now cache_ts cache_ok
+	now=$(date +%s)
+	if [ -f "$cache_file" ]; then
+		{
+			read -r cache_ts
+			read -r cache_ok
+			read -r WIFI_SSID
+			read -r WIFI_MODE
+			read -r WIFI_CHANNEL
+			read -r WIFI_SIGNAL
+			read -r WIFI_NOISE
+			read -r WIFI_BITRATE
+			read -r WIFI_BSSID
+			read -r WIFI_QUALITY
+			read -r WIFI_QUALITY_MAX
+		} < "$cache_file" 2>/dev/null
+	fi
+	# Guard against an empty/corrupted cache_ts before doing arithmetic on it
+	case "$cache_ts" in ''|*[!0-9]*) cache_ts="";; esac
+	if [ -n "$cache_ts" ] && [ $(( now - cache_ts )) -lt "$ttl" ] && [ $(( now - cache_ts )) -ge 0 ]; then
+		[ "$cache_ok" = "1" ]
+		return
+	fi
 
 	local iw_out
 	iw_out=$(iwinfo "$OMR_TRACKER_DEVICE" info 2>/dev/null)
-	[ -z "$iw_out" ] && return
+	if [ -z "$iw_out" ]; then
+		WIFI_SSID=""; WIFI_MODE=""; WIFI_CHANNEL=""; WIFI_SIGNAL=""; WIFI_NOISE=""
+		WIFI_BITRATE=""; WIFI_BSSID=""; WIFI_QUALITY=""; WIFI_QUALITY_MAX=""
+		printf '%s\n0\n\n\n\n\n\n\n\n\n\n' "$now" > "$cache_file" 2>/dev/null
+		return 1
+	fi
 
 	# iwinfo commonly packs several "Label: value" pairs onto one line
 	# (e.g. "Signal: -55 dBm  Noise: -90 dBm" or "Tx-Power: 20 dBm  Link
@@ -121,10 +149,40 @@ _get_wifi_signal() {
 	# _jval() emits it unquoted.
 	local lq
 	lq=$(echo "$iw_out" | awk '{for(i=1;i<=NF;i++) if($i=="Quality:") {print $(i+1); exit}}')
+	WIFI_QUALITY=""
+	WIFI_QUALITY_MAX=""
 	if [ -n "$lq" ]; then
 		WIFI_QUALITY=$(echo "$lq" | cut -d'/' -f1)
 		WIFI_QUALITY_MAX=$(echo "$lq" | cut -d'/' -f2)
 	fi
+
+	printf '%s\n1\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
+		"$now" "$WIFI_SSID" "$WIFI_MODE" "$WIFI_CHANNEL" "$WIFI_SIGNAL" "$WIFI_NOISE" \
+		"$WIFI_BITRATE" "$WIFI_BSSID" "$WIFI_QUALITY" "$WIFI_QUALITY_MAX" > "$cache_file" 2>/dev/null
+	return 0
+}
+
+# Collect WiFi signal via iwinfo
+_get_wifi_signal() {
+	WIFI_SIGNAL=""
+	WIFI_NOISE=""
+	WIFI_BITRATE=""
+	WIFI_SSID=""
+	WIFI_BSSID=""
+	WIFI_CHANNEL=""
+	WIFI_MODE=""
+	WIFI_QUALITY=""
+	WIFI_QUALITY_MAX=""
+
+	[ -z "$OMR_TRACKER_DEVICE" ] && return
+
+	# Check if the device is a wireless interface
+	[ -d "${OMR_SYS_CLASS_NET_DIR:-/sys/class/net}/${OMR_TRACKER_DEVICE}/wireless" ] || return
+
+	# iwinfo available?
+	command -v iwinfo >/dev/null 2>&1 || return
+
+	_wifi_signal_cached || return
 
 	# Compute a percentage quality if we have signal
 	if [ -n "$WIFI_QUALITY" ] && [ -n "$WIFI_QUALITY_MAX" ] && [ "$WIFI_QUALITY_MAX" -gt 0 ] 2>/dev/null; then
@@ -266,6 +324,210 @@ _get_bbr_stats() {
 	BBR_CWND=$(printf '%s\n' "$parsed" | sed -n 's/^c=//p')
 	BBR_MIN_RTT=$(printf '%s\n' "$parsed" | sed -n 's/^m=//p')
 	BBR_RETRANS=$(printf '%s\n' "$parsed" | sed -n 's/^r=//p')
+}
+
+
+# Look up this WAN's local MPTCP endpoint flags via "ip mptcp endpoint show"
+# (one line per registered endpoint, e.g. "10.0.0.2 id 1 subflow dev eth0" or
+# "10.0.0.5 id 3 subflow backup fullmesh dev eth1" -- same format luci.mptcp's
+# parse_endpoints() reads). Endpoints are keyed by (address, dev), so every
+# subflow sourced from this WAN's IP shares the same flags -- this is a
+# per-WAN lookup, not a per-subflow one.
+# NOTE: call the "ip" applet bare (matches the convention already used by
+# multipath and mptcp-scheduler-*.sh in this feed) and never wrap it in
+# "timeout" -- on busybox userlands "timeout N ip ..." has been confirmed to
+# silently dispatch busybox's own MPTCP-unaware "ip" applet instead of the
+# real /sbin/ip binary.
+_get_mptcp_endpoint_flags() {
+	MPTCP_EP_ID=""
+	MPTCP_EP_SIGNAL="false"
+	MPTCP_EP_SUBFLOW="false"
+	MPTCP_EP_BACKUP="false"
+	MPTCP_EP_FULLMESH="false"
+
+	[ -z "$OMR_TRACKER_DEVICE_IP" ] && return
+	command -v ip >/dev/null 2>&1 || return
+
+	local ep_line
+	ep_line=$(ip mptcp endpoint show 2>/dev/null | awk -v ip="$OMR_TRACKER_DEVICE_IP" '$1==ip{print; exit}')
+	[ -z "$ep_line" ] && return
+
+	MPTCP_EP_ID=$(printf '%s' "$ep_line" | awk '{for(i=1;i<=NF;i++) if($i=="id"){print $(i+1); exit}}')
+	case " $ep_line " in *" signal "*) MPTCP_EP_SIGNAL="true" ;; esac
+	case " $ep_line " in *" subflow "*) MPTCP_EP_SUBFLOW="true" ;; esac
+	case " $ep_line " in *" backup "*) MPTCP_EP_BACKUP="true" ;; esac
+	case " $ep_line " in *" fullmesh "*) MPTCP_EP_FULLMESH="true" ;; esac
+}
+
+
+# Collect per-subflow TCP metrics for this WAN. Two implementations:
+#   1. omr-sockdiag (preferred, when installed): queries the kernel
+#      directly over netlink (NETLINK_SOCK_DIAG/INET_DIAG, the protocol
+#      "ss" itself uses internally) -- see the omr-sockdiag package. No
+#      subprocess text parsing at all, and it's the one that's actually
+#      been live-verified against a real 3-WAN MPTCP fullmesh connection.
+#   2. "ss -tin src <ip>" + awk (fallback, for routers that haven't
+#      installed omr-sockdiag yet): parsed the same way this collector
+#      always has, producing an identical JSON shape either way so callers
+#      never need to know which path actually ran.
+# In OMR's architecture each WAN normally carries exactly one subflow --
+# the proxy tunnel's MPTCP connection to the VPS, sourced from this WAN's
+# local IP -- so this is effectively a per-subflow view, though it will
+# list more than one entry if fullmesh (or anything else) opens multiple
+# connections from this WAN. Unlike _get_bbr_stats() above this is NOT
+# gated to bbr: cwnd/rtt/retrans/bytes counters are available for any
+# congestion control.
+_get_subflow_stats() {
+	SUBFLOWS_JSON="[]"
+
+	[ -z "$OMR_TRACKER_DEVICE_IP" ] && return
+
+	_get_mptcp_endpoint_flags
+
+	if command -v omr-sockdiag >/dev/null 2>&1; then
+		local sd_out
+		sd_out=$(omr-sockdiag -s "$OMR_TRACKER_DEVICE_IP" -b "$MPTCP_EP_BACKUP" 2>/dev/null)
+		case "$sd_out" in
+			\[*\])
+				SUBFLOWS_JSON="$sd_out"
+				return
+				;;
+		esac
+		# Anything else (binary missing its expected output, crashed,
+		# unrecognized args on an older build, ...) falls through to the
+		# ss-based path below rather than leaving subflows empty.
+	fi
+
+	_get_subflow_stats_via_ss
+}
+
+# Fallback for routers without omr-sockdiag installed: the original
+# "ss -tin src <ip>" + awk implementation. Produces the exact same JSON
+# object shape as the omr-sockdiag path above.
+_get_subflow_stats_via_ss() {
+	command -v ss >/dev/null 2>&1 || return
+
+	local ss_out
+	ss_out=$(ss -tin src "$OMR_TRACKER_DEVICE_IP" 2>/dev/null)
+	[ -z "$ss_out" ] && return
+
+	local body
+	body=$(printf '%s\n' "$ss_out" | awk -v backup="$MPTCP_EP_BACKUP" '
+		function tobps(s,   v) {
+			v = s + 0
+			if (index(s, "Gbps")) return int(v * 1000000000)
+			if (index(s, "Mbps")) return int(v * 1000000)
+			if (index(s, "Kbps") || index(s, "kbps")) return int(v * 1000)
+			return int(v)
+		}
+		# ss prints "ip:port", or "[v6addr]:port" for IPv6 -- split on the
+		# last ":<digits>" so the address half survives untouched either way.
+		function split_hostport(s, arr,   pos) {
+			pos = match(s, /:[0-9]+$/)
+			if (pos > 0) {
+				arr["port"] = substr(s, pos + 1)
+				arr["ip"] = substr(s, 1, pos - 1)
+				gsub(/^\[|\]$/, "", arr["ip"])
+			} else {
+				arr["ip"] = s
+				arr["port"] = ""
+			}
+		}
+		function jnum(v) { return (v == "" ? "null" : v + 0) }
+		function jstr(v) { return (v == "" ? "null" : "\"" v "\"") }
+		# Built as a sequence of self-contained "s = s ..." statements (no
+		# line-continuation backslashes) -- a multi-line backslash-continued
+		# printf argument list here was confirmed to trip a gawk parse error
+		# ("syntax error" on the continuation line) even though the same
+		# style parses fine under busybox awk; this form is safe on both.
+		function emit(   lh, ph, s) {
+			split_hostport(lfield, lh)
+			split_hostport(pfield, ph)
+			s = (n++ ? "," : "")
+			s = s "{\"local_ip\":" jstr(lh["ip"])
+			s = s ",\"local_port\":" jnum(lh["port"])
+			s = s ",\"remote_ip\":" jstr(ph["ip"])
+			s = s ",\"remote_port\":" jnum(ph["port"])
+			s = s ",\"cwnd\":" jnum(cwnd)
+			s = s ",\"ssthresh\":" jnum(ssthresh)
+			s = s ",\"rtt\":" jnum(rtt)
+			s = s ",\"rttvar\":" jnum(rttvar)
+			s = s ",\"retrans\":" jnum(retr_cur)
+			s = s ",\"retrans_total\":" jnum(retr_tot)
+			s = s ",\"bytes_sent\":" jnum(bsent)
+			s = s ",\"bytes_acked\":" jnum(backed)
+			s = s ",\"bytes_retrans\":" jnum(bretr)
+			s = s ",\"bytes_received\":" jnum(brecv)
+			s = s ",\"segs_out\":" jnum(sout)
+			s = s ",\"segs_in\":" jnum(segsin)
+			s = s ",\"pacing_rate\":" jnum(pacing)
+			s = s ",\"delivery_rate\":" jnum(delivery)
+			s = s ",\"min_rtt\":" jnum(minrtt)
+			s = s ",\"bbr_bw\":" jnum(bbrbw)
+			s = s ",\"bbr_min_rtt\":" jnum(bbrmrtt)
+			s = s ",\"rwnd\":" jnum(rwnd)
+			s = s ",\"swnd\":" jnum(swnd)
+			s = s ",\"cc\":" jstr(cc)
+			s = s ",\"backup\":" backup "}"
+			printf "%s", s
+		}
+		/^ESTAB/ {
+			if (have) emit()
+			lfield = $4; pfield = $5
+			cwnd=ssthresh=rtt=rttvar=retr_cur=retr_tot=bsent=backed=bretr=brecv=sout=segsin=pacing=delivery=minrtt=cc=bbrbw=bbrmrtt=rwnd=swnd=""
+			have = 1
+			next
+		}
+		have {
+			# The first field of the info line is always the bare
+			# congestion control algorithm name (e.g. "cubic", "bbr"),
+			# not a "key:value" pair, so it never matches any case below.
+			if (cc == "") cc = $1
+			for (i = 1; i <= NF; i++) {
+				f = $i
+				if (substr(f,1,5) == "cwnd:") cwnd = substr(f,6)+0
+				else if (substr(f,1,9) == "ssthresh:") ssthresh = substr(f,10)+0
+				else if (substr(f,1,4) == "rtt:") { split(substr(f,5), rr, "/"); rtt=rr[1]+0; rttvar=rr[2]+0 }
+				else if (substr(f,1,8) == "retrans:") { split(substr(f,9), rt, "/"); retr_cur=rt[1]+0; retr_tot=rt[2]+0 }
+				else if (substr(f,1,11) == "bytes_sent:") bsent = substr(f,12)+0
+				else if (substr(f,1,12) == "bytes_acked:") backed = substr(f,13)+0
+				else if (substr(f,1,14) == "bytes_retrans:") bretr = substr(f,15)+0
+				else if (substr(f,1,15) == "bytes_received:") brecv = substr(f,16)+0
+				else if (substr(f,1,9) == "segs_out:") sout = substr(f,10)+0
+				else if (substr(f,1,8) == "segs_in:") segsin = substr(f,9)+0
+				else if (f == "pacing_rate" && i < NF) pacing = tobps($(i+1))
+				else if (f == "delivery_rate" && i < NF) delivery = tobps($(i+1))
+				else if (substr(f,1,7) == "minrtt:") minrtt = substr(f,8)+0
+				# ss only prints rcv_wnd/snd_wnd when it thinks they are
+				# worth showing (omitted entirely, not printed as 0, in
+				# at least one confirmed-live case) -- unlike the
+				# ssthresh sentinel above this is NOT normalized away
+				# here, since a genuine zero window is a real
+				# backpressure signal, not a placeholder; it just means
+				# this fallback path reports null in that same edge case
+				# where omr-sockdiag (reading tcp_info directly) reports
+				# a real 0.
+				else if (substr(f,1,8) == "rcv_wnd:") rwnd = substr(f,9)+0
+				else if (substr(f,1,8) == "snd_wnd:") swnd = substr(f,9)+0
+				# BBR internal block: bbr:(bw:Xbps,mrtt:N.N,pacing_gain:N,cwnd_gain:N)
+				# -- same "bw"/"mrtt" omr-sockdiag exposes as bbr_bw/bbr_min_rtt
+				# from the kernel tcp_bbr_info struct, kept under the same
+				# field names here so both subflow-collection paths match.
+				else if (substr(f,1,4) == "bbr:" && substr(f,5,1) == "(") {
+					content = f
+					sub(/^bbr:\(/, "", content)
+					sub(/\)$/, "", content)
+					nb = split(content, bp, ",")
+					for (j=1; j<=nb; j++) {
+						if (substr(bp[j],1,3) == "bw:") bbrbw = tobps(substr(bp[j],4))
+						else if (substr(bp[j],1,5) == "mrtt:") bbrmrtt = substr(bp[j],6)+0
+					}
+				}
+			}
+		}
+		END { if (have) emit() }
+	')
+	SUBFLOWS_JSON="[${body}]"
 }
 
 
@@ -435,6 +697,15 @@ _jstr() {
 	fi
 }
 
+# Helper: output a value as a JSON boolean (anything other than "true" is false)
+_jbool() {
+	if [ "$1" = "true" ]; then
+		echo "true"
+	else
+		echo "false"
+	fi
+}
+
 # Initialize signal vars
 SIGNAL_QUALITY=""
 SIGNAL_OPERATOR=""
@@ -479,6 +750,13 @@ BBR_CWND=""
 BBR_MIN_RTT=""
 BBR_RETRANS=""
 
+SUBFLOWS_JSON="[]"
+MPTCP_EP_ID=""
+MPTCP_EP_SIGNAL="false"
+MPTCP_EP_SUBFLOW="false"
+MPTCP_EP_BACKUP="false"
+MPTCP_EP_FULLMESH="false"
+
 # Detect interface type and collect signal
 if [ -d "${OMR_SYS_CLASS_NET_DIR:-/sys/class/net}/${OMR_TRACKER_DEVICE}/wireless" ]; then
 	_get_wifi_signal
@@ -488,6 +766,7 @@ fi
 
 _get_tc_stats
 _get_bbr_stats
+_get_subflow_stats
 _get_bandwidth_usage
 _compute_congestion
 
@@ -556,6 +835,14 @@ cat > "$_tmp" <<EOF
 		"cwnd": $(_jval "$BBR_CWND"),
 		"min_rtt": $(_jval "$BBR_MIN_RTT"),
 		"retrans": $(_jval "$BBR_RETRANS")
+	},
+	"subflows": ${SUBFLOWS_JSON:-[]},
+	"mptcp_endpoint": {
+		"id": $(_jval "$MPTCP_EP_ID"),
+		"signal": $(_jbool "$MPTCP_EP_SIGNAL"),
+		"subflow": $(_jbool "$MPTCP_EP_SUBFLOW"),
+		"backup": $(_jbool "$MPTCP_EP_BACKUP"),
+		"fullmesh": $(_jbool "$MPTCP_EP_FULLMESH")
 	},
 	"congestion": {
 		"score": $(_jval "$CONGESTION_SCORE"),
