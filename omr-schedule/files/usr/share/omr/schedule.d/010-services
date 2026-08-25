@@ -247,7 +247,7 @@ if [ -n "$(uci show openmptcprouter | awk -F= '/password/ { gsub("\047","",$2);p
 fi
 
 
-if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" = "1" ] && [ -n "$(uci -q get dhcp.dnsmasq1.server | grep 127.0.0.1#5353)" ]; then
+if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" = "1" ] && [ -n "$(uci -q get dhcp.@dnsmasq[0].server | grep 127.0.0.1#5353)" ]; then
 	if [ "$(pgrep -f unbound)" = "" ]; then
 		_log "Can't find unbound, restart it..."
 		/etc/init.d/unbound restart >/dev/null 2>&1
@@ -260,23 +260,51 @@ if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" =
 fi
 
 if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" = "1" ] && [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ]; then
-	ROOT_CHECK=$(dig +short +time=3 +tries=1 google.fr @198.41.0.4 2>/dev/null)
-	if [ -n "$ROOT_CHECK" ] && [ -z "$(uci -q get dhcp.dnsmasq1.server | grep '1\.1\.1\.1')" ]; then
-		_log "DNS port 53 hijacked by ISP, bypass unbound and use 1.1.1.1..."
-		uci -q del_list dhcp.dnsmasq1.server='127.0.0.1#5353'
-		uci -q add_list dhcp.dnsmasq1.server='1.1.1.1'
-		uci -q set openmptcprouter.settings.dns_hijacked=1
-		uci -q commit openmptcprouter
-		uci -q commit dhcp
-		/etc/init.d/dnsmasq restart >/dev/null 2>&1
-	elif [ -z "$ROOT_CHECK" ] && [ "$(uci -q get openmptcprouter.settings.dns_hijacked)" = "1" ]; then
-		_log "DNS port 53 hijack resolved, restoring unbound..."
-		uci -q del_list dhcp.dnsmasq1.server='1.1.1.1'
-		uci -q add_list dhcp.dnsmasq1.server='127.0.0.1#5353'
-		uci -q del openmptcprouter.settings.dns_hijacked
-		uci -q commit openmptcprouter
-		uci -q commit dhcp
-		/etc/init.d/dnsmasq restart >/dev/null 2>&1
+	_dns_hijacked_flag="$(uci -q get openmptcprouter.settings.dns_hijacked)"
+	# Nothing to do if dnsmasq isn't on unbound AND we're not already flagged hijacked
+	# (some other/manual config, not ours to touch). Cheap uci reads, so check these
+	# before bothering with the pricier WAN-status loop below.
+	if [ -n "$(uci -q get dhcp.@dnsmasq[0].server | grep '127\.0\.0\.1#5353')" ] || [ "$_dns_hijacked_flag" = "1" ]; then
+		_omr_wan_up=0
+		_omr_wan_up_check() {
+			local multipath
+			config_get multipath "$1" multipath
+			case "$multipath" in
+				on|master|backup) ;;
+				*) return ;;
+			esac
+			[ "$(uci -q get openmptcprouter.$1.state)" = "up" ] && _omr_wan_up=1
+		}
+		config_load network
+		config_foreach _omr_wan_up_check interface
+		if [ "$_omr_wan_up" = "1" ]; then
+			# Throttle to every 15min
+			_dnshijack_now="$(date +%s)"
+			_dnshijack_last="$(cat /tmp/omr-dnshijack-last-check 2>/dev/null)"
+			[ -z "$_dnshijack_last" ] && _dnshijack_last=0
+			if [ "$((_dnshijack_now - _dnshijack_last))" -ge 900 ]; then
+				echo "$_dnshijack_now" > /tmp/omr-dnshijack-last-check
+				ROOT_CHECK=$(dig +short +time=3 +tries=1 google.fr @198.41.0.4 2>/dev/null)
+				ROOT_CHECK_RC=$?
+				if [ "$ROOT_CHECK_RC" -eq 0 ] && [ -n "$ROOT_CHECK" ] && [ -z "$(uci -q get dhcp.@dnsmasq[0].server | grep '1\.1\.1\.1')" ]; then
+					_log "DNS port 53 hijacked by ISP, bypass unbound and use 1.1.1.1..."
+					uci -q del_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+					uci -q add_list dhcp.@dnsmasq[0].server='1.1.1.1'
+					uci -q set openmptcprouter.settings.dns_hijacked=1
+					uci -q commit openmptcprouter
+					uci -q commit dhcp
+					/etc/init.d/dnsmasq restart >/dev/null 2>&1
+				elif [ "$ROOT_CHECK_RC" -eq 0 ] && [ -z "$ROOT_CHECK" ] && [ "$_dns_hijacked_flag" = "1" ]; then
+					_log "DNS port 53 hijack resolved, restoring unbound..."
+					uci -q del_list dhcp.@dnsmasq[0].server='1.1.1.1'
+					uci -q add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+					uci -q del openmptcprouter.settings.dns_hijacked
+					uci -q commit openmptcprouter
+					uci -q commit dhcp
+					/etc/init.d/dnsmasq restart >/dev/null 2>&1
+				fi
+			fi
+		fi
 	fi
 fi
 
@@ -294,9 +322,9 @@ fi
 
 if [ -f /etc/init.d/dnsmasq ] && [ -z "$(uci -q get dhcp.@dnsmasq[0].server)" ]; then
 	uci -q batch <<-EOF >/dev/null
-		add_list dhcp.dnsmasq1.server='127.0.0.1#5353'
-		add_list dhcp.dnsmasq1.server='/lan/'
-		add_list dhcp.dnsmasq1.server='/use-application-dns.net/'
+		add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+		add_list dhcp.@dnsmasq[0].server='/lan/'
+		add_list dhcp.@dnsmasq[0].server='/use-application-dns.net/'
 		commit dhcp
 	EOF
 fi
