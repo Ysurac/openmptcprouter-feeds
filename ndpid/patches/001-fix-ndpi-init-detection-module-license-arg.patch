@@ -1,0 +1,27 @@
+From: OpenMPTCProuter <noreply@openmptcprouter.com>
+Subject: fix ndpi_init_detection_module() call for newer bundled libnDPI
+
+The pinned nDPId source (commit 84285ae) still calls the pre-license-type
+1-argument form of ndpi_init_detection_module(). The bundled libnDPI pin
+(NDPI_COMMIT_HASH, fetched at build time by scripts/get-and-build-libndpi.sh)
+has since gained a required `enum ndpi_license_type` second argument
+(ntop/nDPI commit 0041f29ef07a578e6cd245a1845d84f179fa3d3b and later),
+which breaks the cross build with:
+
+    error: too few arguments to function 'ndpi_init_detection_module'
+
+Pass NDPI_LICENSE_NON_COMMERCIAL_LGPL, matching what nDPI's own tools
+(example/ndpiReader.c, example/reader_util.c) and library internals
+(src/lib/ndpi_main.c) use as their default/non-commercial license value.
+
+--- a/nDPId.c
++++ b/nDPId.c
+@@ -1594,7 +1594,7 @@
+     }
+ #endif
+ 
+-    workflow->ndpi_struct = ndpi_init_detection_module(global_context);
++    workflow->ndpi_struct = ndpi_init_detection_module(global_context, NDPI_LICENSE_NON_COMMERCIAL_LGPL);
+     if (workflow->ndpi_struct == NULL)
+     {
+         logger_early(1, "%s", "BUG: Could not init ndpi detection module");

@@ -1,5 +1,6 @@
 #
 # Copyright (C) 2025 CyberMind.fr (SecuBox Integration)
+# Copyright (C) 2026 Yannick Chabanois (Ycarus) for OpenMPTCProuter
 #
 # This is free software, licensed under the GNU General Public License v3.
 #
@@ -20,10 +21,8 @@ PKG_SOURCE_URL:=https://github.com/utoni/nDPId.git
 PKG_SOURCE_VERSION:=84285ae42d8f70c976a6ee9be6ceb935aa215b18
 PKG_MIRROR_HASH:=skip
 
-# nDPId bundles libnDPI (nDPI) via its own scripts/get-and-build-libndpi.sh,
-# which fetches this exact commit from GitHub at compile time (see NDPI_COMMIT_HASH
-# below). Bump this whenever a newer libnDPI should be pulled in.
-NDPI_COMMIT_HASH:=ff29e7579e2ef9563c082e97ade62a2d18a836ae
+NDPI_COMMIT_HASH:=0041f29ef07a578e6cd245a1845d84f179fa3d3b
+export NDPI_COMMIT_HASH
 
 PKG_MAINTAINER:=CyberMind <contact@cybermind.fr>
 PKG_LICENSE:=GPL-3.0-or-later
@@ -36,11 +35,6 @@ CMAKE_BINARY_SUBDIR:=build
 
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/cmake.mk
-
-# Exported so nDPId's ExternalProject_Add step for libnDPI (which invokes
-# scripts/get-and-build-libndpi.sh via `env ...`) picks it up and fetches
-# this pinned commit instead of falling back to a floating "dev" branch zip.
-MAKE_FLAGS += NDPI_COMMIT_HASH=$(NDPI_COMMIT_HASH)
 
 NINJA := MAKEFLAGS="" $(STAGING_DIR_HOST)/bin/ninja \
 	$(if $(findstring c,$(OPENWRT_VERBOSE)),-v)
@@ -114,10 +108,17 @@ define Package/ndpid/install
 	# Generate protocols.json from bundled nDPI source at build time.
 	# Fall back to the pre-generated static file when nDPI source is not found
 	# (e.g. when the package is installed without rebuilding nDPId from source).
-	NDPI_MAIN=$$(find $(PKG_BUILD_DIR) -name "ndpi_main.c" -path "*/lib/*" 2>/dev/null | head -1); \
-	if [ -n "$$NDPI_MAIN" ]; then \
-		NDPI_SRC=$$(echo "$$NDPI_MAIN" | sed 's|/src/lib/ndpi_main.c||'); \
-		python3 $(CURDIR)/files/gen-protocols.py "$$NDPI_SRC" $(1)/usr/share/ndpid/protocols.json; \
+	#
+	# NOTE: this recipe is folded through BuildPackage's install-$(1) target via
+	# two nested $(call ...) expansions, so shell-side variables/substitutions
+	# need $$$$ (collapses to a single literal $ for the shell), not $$ (which
+	# collapses one level too early: Make itself expands $$NDPI_MAIN as its own
+	# single-letter variable "$N" - empty - immediately followed by the literal
+	# text "DPI_MAIN", silently emptying NDPI_MAIN/NDPI_SRC on every build).
+	NDPI_MAIN=$$$$(find $(PKG_BUILD_DIR) -name "ndpi_main.c" -path "*/lib/*" 2>/dev/null | head -1); \
+	if [ -n "$$$$NDPI_MAIN" ]; then \
+		NDPI_SRC=$$$$(echo "$$$$NDPI_MAIN" | sed 's|/src/lib/ndpi_main.c||'); \
+		python3 $(CURDIR)/files/gen-protocols.py "$$$$NDPI_SRC" $(1)/usr/share/ndpid/protocols.json; \
 	else \
 		$(INSTALL_DATA) ./files/protocols.json $(1)/usr/share/ndpid/protocols.json; \
 	fi
