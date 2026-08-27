@@ -372,7 +372,7 @@ return view.extend({
 				add_server_name: '',
 				disableipv6: uci.get('openmptcprouter', 'settings', 'disable_ipv6') || '1',
 				ula: uci.get('network', 'globals', 'ula_prefix') || '',
-				default_vpn: uci.get('openmptcprouter', 'settings', 'vpn') || 'openvpn',
+				default_vpn: uci.get('openmptcprouter', 'settings', 'vpn') || 'mqvpn',
 				default_proxy: uci.get('openmptcprouter', 'settings', 'proxy') || '',
 				encryption: uci.get('openmptcprouter', 'settings', 'encryption') || (has.aes ? 'aes-256-gcm' : 'chacha20-ietf-poly1305'),
 				shadowsocks_key: uci.get('shadowsocks-libev', 'sss0', 'key') || '',
@@ -507,6 +507,14 @@ return view.extend({
 			: _('No AES instruction set, you should use chacha20.')) +
 			' ' + _('Used for Shadowsocks, V2Ray/XRay, Glorytun and OpenVPN.');
 		o.depends('_show_adv', '1');
+		/* retain must stay true: LuCI's CBIAbstractValue.parse() removes the
+		 * uci value of ANY inactive (dependency-unmet) option unless
+		 * retain=true, regardless of rmempty. Since this option only shows
+		 * when "Show advanced settings" is checked, saving the wizard with
+		 * advanced settings collapsed (the default state) wiped it on every
+		 * save -- not just when the Settings tab was touched (#4350, same
+		 * class as the 'vpn' option below). */
+		o.retain = true;
 
 		o = s.taboption('general', form.Flag, '_force_retrieve', _('Force retrieve settings'));
 		o.rmempty = true;
@@ -525,6 +533,7 @@ return view.extend({
 		o.value('0', _('Enabled'));
 		o.description = _('Disable if server doesn\'t provide IPv6.');
 		o.depends('_show_adv', '1');
+		o.retain = true; /* see encryption's comment above (#4350) */
 
 		o = s.taboption('ipv6', form.Value, '_ula_prefix', _('IPv6 Prefix'));
 		o.rmempty = true;
@@ -538,6 +547,7 @@ return view.extend({
 		o.rmempty = true;
 		o.description = _('Enable if host supports NAT64.');
 		o.depends('_show_adv', '1');
+		o.retain = true; /* see encryption's comment above (#4350) */
 
 		// ── Proxy ──
 		o = s.taboption('proxy', form.ListValue, 'proxy', _('Default Proxy'));
@@ -549,8 +559,15 @@ return view.extend({
 		 * wizardadd() then saw an empty default_proxy and silently kept the
 		 * previously saved proxy, so the selection appeared to revert after
 		 * Save & Apply (#4348). 'None' is already an explicit value below,
-		 * so this option never needs "unset" semantics. */
+		 * so this option never needs "unset" semantics.
+		 *
+		 * retain must also stay true: independently of rmempty, LuCI removes
+		 * the uci value of any option whose depends() aren't met unless
+		 * retain=true. Since this option only shows with advanced settings
+		 * expanded, saving the wizard with them collapsed silently wiped the
+		 * chosen proxy back to buildWizardPayload()'s '' fallback (#4350). */
 		o.rmempty = false;
+		o.retain = true;
 		o.description = _('Proxy for TCP (and UDP for V2Ray/XRay).');
 		o.depends('_show_adv', '1');
 		var availProxy = L.toArray(uci.get('openmptcprouter', 'vps', 'available_proxy'));
@@ -659,6 +676,18 @@ return view.extend({
 		o.rmempty = true;
 		o.description = _('VPN for ICMP (and UDP with Shadowsocks proxy).');
 		o.depends('_show_adv', '1');
+		/* retain=true is required here regardless of rmempty: LuCI's
+		 * CBIAbstractValue.parse() unconditionally calls remove() on any
+		 * option whose depends() are unmet, unless retain=true (checked
+		 * before rmempty is ever consulted). This option only shows with
+		 * "Show advanced settings" checked, so leaving that box unchecked
+		 * (the default) and saving from ANY step -- e.g. adding/removing a
+		 * WAN interface, which calls map.save() -- wiped
+		 * openmptcprouter.settings.vpn client-side even though the user
+		 * never touched the VPN tab. buildWizardPayload() then fell back to
+		 * 'openvpn' and pushed that to the backend, silently replacing the
+		 * configured VPN (e.g. mqvpn) on save. See GH #4350. */
+		o.retain = true;
 		var vpnDefs = {
 			'glorytun_tcp':    ['Glorytun TCP',      has.glorytun],
 			'glorytun_udp':    ['Glorytun UDP',      has.glorytunUdp],
@@ -702,6 +731,7 @@ return view.extend({
 		o.description = _('Set a VXLAN tunnel over the VPN, configured on the server via the API.');
 		o.depends('_show_adv', '1');
 		o.default = '0';
+		o.retain = true; /* see 'vpn' option's comment above (#4350) */
 
 		o = s.taboption('vpn', form.ListValue, 'vxlan_mode', _('VXLAN mode'));
 		o.description = _('Layer 3: a routed point-to-point link over the tunnel. Layer 2: the tunnel is bridged into the LAN, extending its broadcast domain.');
@@ -709,6 +739,7 @@ return view.extend({
 		o.value('l2', _('Layer 2 (bridged into LAN)'));
 		o.default = 'l3';
 		o.depends({ '_show_adv': '1', 'vxlan': '1' });
+		o.retain = true; /* see 'vpn' option's comment above (#4350) */
 
 		o = s.taboption('vpn', form.ListValue, 'vxlan_bridge_if', _('VXLAN bridge interface'));
 		o.description = _('Interface the VXLAN tunnel is bridged into.');
@@ -720,6 +751,7 @@ return view.extend({
 		});
 		o.default = 'lan';
 		o.depends({ '_show_adv': '1', 'vxlan': '1', 'vxlan_mode': 'l2' });
+		o.retain = true; /* see 'vpn' option's comment above (#4350) */
 
 		// ── MPTCP over VPN ──
 		o = s.taboption('mptcpvpn', form.ListValue, 'mptcpovervpn', _('MPTCP over VPN'));
@@ -728,6 +760,7 @@ return view.extend({
 		if (has.openvpn) o.value('openvpn', 'OpenVPN');
 		if (has.wg)      o.value('wireguard', 'WireGuard');
 		o.default = 'wireguard';
+		o.retain = true; /* see 'vpn' option's comment above (#4350) */
 
 		// ── Country ──
 		o = s.taboption('country', form.ListValue, 'country', _('Country'));
@@ -739,6 +772,7 @@ return view.extend({
 		o.value('usa', _('USA'));
 		o.value('custom', _('Custom'));
 		o.default = 'world';
+		o.retain = true; /* see 'vpn' option's comment above (#4350) */
 
 		/* ── Step 3: LAN ───────────────────────────────── */
 		s = m.section(form.TypedSection, 'interface', _('LAN interfaces'));
