@@ -149,7 +149,17 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 	fi
 
 	# Set VPN MTU
-	if [ -n "$OMR_TRACKER_LATENCY" ] && [ -n "$OMR_TRACKER_INTERFACE" ] && { [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ]; }; then
+	# Not for mqvpn: it negotiates and dynamically re-applies its own tun MTU
+	# from the actual QUIC/MASQUE datagram budget (mqvpn_client.c
+	# cb_dgram_mss_updated -> cbs.mtu_updated -> mqvpn_tun_set_mtu). A static
+	# UCI mtu or omr-mtu's raw path-MTU probe below knows nothing about that
+	# per-datagram framing overhead, so it can set a wrong value; worse, an
+	# external `ip link set ... mtu` here desyncs mqvpn's own
+	# last_notified_mtu tracking from the interface's real state, silencing
+	# further mqvpn-side corrections until the next reconnect (live-diagnosed
+	# 2026-08-27 as the cause of large UDP through mqvpn getting silently
+	# dropped with no signal back to the LAN client).
+	if [ -n "$OMR_TRACKER_LATENCY" ] && [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" != "mqvpn" ] && { [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc))) -gt 3600 ]; }; then
 		#_log "Set VPN MTU"
 		serverip=$(uci -q get shadowsocks-libev.sss0.server || uci -q get shadowsocks-rust.sss0.server || uci -q get v2ray.omrout.s_vless_address)
 		if [ -n "$serverip" ]; then
