@@ -47,7 +47,7 @@ _ping_server() {
 
 _ping_server_intf() {
 	local host=$1
-	for intf in $(multipath 2>/dev/null | awk '/default/{print $1}'); do
+	for intf in $mp_default_intfs; do
 		local k=0
 		while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
 			ret=$(ping -w "$OMR_TRACKER_TIMEOUT" -c 1 -q -I "$intf" "${host}" 2>&1)
@@ -81,7 +81,7 @@ _ping_server_intf() {
 				fi
 			fi
 			k=$((k+1))
-			sleep "${intervaltries}"
+			[ "$server_ping" = false ] && sleep "${intervaltries}"
 		done
 	done
 }
@@ -97,14 +97,14 @@ _check_server() {
 		ret=$(curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k "$url")
 		[ -n "$ret" ] && server_ping=true
 		k=$((k+1))
-		sleep "${intervaltries}"
+		[ "$server_ping" = false ] && sleep "${intervaltries}"
 	done
 }
 
 _check_server_intf() {
 	local host=$1 port=$2 valid_ip6 intf k url
 	valid_ip6=$(valid_subnet6 "$host")
-	for intf in $(multipath 2>/dev/null | awk '/default/{print $1}'); do
+	for intf in $mp_default_intfs; do
 		if [ "$valid_ip6" = "ok" ]; then
 			url="https://[${host}%${intf}]:${port}/"
 		else
@@ -119,7 +119,7 @@ _check_server_intf() {
 			fi
 			[ -n "$ret" ] && server_ping=true
 			k=$((k+1))
-			sleep "${intervaltries}"
+			[ "$server_ping" = false ] && sleep "${intervaltries}"
 		done
 	done
 }
@@ -241,15 +241,33 @@ _disable_ss_redirs_by_ip() {
 	[ -n "$servername" ] && config_foreach _disable_redir ss_redir "$servername" "shadowsocks-rust"
 }
 
-# Resolve hostname/IP $1 to a numeric address; sets global $serverip
+# Resolve hostname/IP $1 to a numeric address; sets global $serverip.
+# This runs on every check cycle, so a literal IP short-circuits without the
+# resolveip fork, and hostname lookups are cached for 300s (a failed lookup
+# is not cached, so it retries next cycle).
+declare -A _resolve_cache _resolve_cache_ts
 _resolve_ip() {
-	local ipd=$1 r
+	local ipd=$1 r now
+	case "$ipd" in
+		*:*) serverip="$ipd"; return ;;      # literal IPv6 (hostnames have no colon)
+		*[!0-9.]*) ;;                         # letters present: hostname, resolve below
+		*[0-9]*) serverip="$ipd"; return ;;  # digits and dots only: literal IPv4
+	esac
+	printf -v now '%(%s)T' -1
+	if [ -n "${_resolve_cache[$ipd]}" ] && [ $((now - _resolve_cache_ts[$ipd])) -lt 300 ]; then
+		serverip="${_resolve_cache[$ipd]}"
+		return
+	fi
 	r=$(resolveip -t 5 -4 "$ipd" | head -n 1)
 	if [ -n "$r" ]; then
 		serverip="$r"
 	else
 		r=$(resolveip -t 5 -6 "$ipd" | head -n 1)
 		[ -n "$r" ] && serverip="$r"
+	fi
+	if [ -n "$serverip" ]; then
+		_resolve_cache[$ipd]="$serverip"
+		_resolve_cache_ts[$ipd]=$now
 	fi
 }
 
@@ -300,6 +318,7 @@ _check_master() {
 		set_ip() {
 			ip="$serverip"
 			local ss_libev_server ss_rust_server
+			local state_key="m:${name}:${countips}"
 			ss_libev_server=$(uci -q get shadowsocks-libev.sss${count}.server)
 			ss_rust_server=$(uci -q get shadowsocks-rust.sss${count}.server)
 			if [ "$server_ping" = true ]; then
@@ -326,45 +345,56 @@ _check_master() {
 						_apply_server_config "$ip" "$name"
 					fi
 				fi
-				[ "$_proxy" = "shadowsocks-rust" ] && uci -q set shadowsocks-rust.sss${count}.disabled=0
-				[ "$_proxy" = "shadowsocks" ]      && uci -q set shadowsocks-libev.sss${count}.disabled=0
-				[ "$_vpn"   = "openvpn" ]          && uci -q set openvpn.omr.enabled=1
-				_enable_ss_redirs
-				[ -n "$ip" ] && [ -n "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
-					uci -q del_list openmptcprouter.${name}.ip_down="$ip"
-				uci -q set openmptcprouter.${name}.current='1'
 				OMR_TRACKER_STATUS_MSG="Answer to ping and to API check"
-				_send_mail_alert "up" "$name" "$ip"
+				# Steady state (already up last cycle, config untouched): the
+				# redir re-enable walk, ip_down bookkeeping and up-alert only
+				# matter on a down->up transition or after a config fix, and
+				# their config_load/uci churn was most of this daemon's
+				# idle-cycle CPU cost. The mail/script alerts also belong on
+				# the transition only: one alert per event, not one per cycle.
+				if [ "${_srv_prev_up[$state_key]}" != "1" ] || [ "$changes" = "1" ]; then
+					_proxy=$(uci -q get openmptcprouter.settings.proxy)
+					_vpn=$(uci -q get openmptcprouter.settings.vpn)
+					[ "$_proxy" = "shadowsocks-rust" ] && uci -q set shadowsocks-rust.sss${count}.disabled=0
+					[ "$_proxy" = "shadowsocks" ]      && uci -q set shadowsocks-libev.sss${count}.disabled=0
+					[ "$_vpn"   = "openvpn" ]          && uci -q set openvpn.omr.enabled=1
+					_enable_ss_redirs
+					[ -n "$ip" ] && [ -n "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
+						uci -q del_list openmptcprouter.${name}.ip_down="$ip"
+					uci -q set openmptcprouter.${name}.current='1'
+					_send_mail_alert "up" "$name" "$ip"
+				fi
+				_srv_prev_up[$state_key]="1"
 				OMR_TRACKER_SERVER_IP="$ip"
 				OMR_TRACKER_STATUS="OK"
 				script_alert_up=$(uci -q get omr-tracker.proxy.script_alert_up)
 				[ -n "$script_alert_up" ] && eval "$script_alert_up"
 				count=$((count+1))
 			else
-				[ -n "$ip" ] && \
-					[ -z "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
-					uci -q add_list openmptcprouter.${name}.ip_down="$ip" && \
-					logger -t "OMR-Tracker-Server" "Master server ${name} down ($ip)"
 				OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
-				_disable_ss_redirs_by_ip "$ip"
-				_send_mail_alert "down" "$name" "$ip"
+				if [ "${_srv_prev_up[$state_key]}" != "0" ]; then
+					[ -n "$ip" ] && \
+						[ -z "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
+						uci -q add_list openmptcprouter.${name}.ip_down="$ip" && \
+						logger -t "OMR-Tracker-Server" "Master server ${name} down ($ip)"
+					_disable_ss_redirs_by_ip "$ip"
+					_send_mail_alert "down" "$name" "$ip"
+				fi
+				_srv_prev_up[$state_key]="0"
 				OMR_TRACKER_STATUS="ERROR"
 				script_alert_down=$(uci -q get omr-tracker.proxy.script_alert_down)
 				[ -n "$script_alert_down" ] && eval "$script_alert_down"
 			fi
 		}
-		_proxy=$(uci -q get openmptcprouter.settings.proxy)
-		_vpn=$(uci -q get openmptcprouter.settings.vpn)
 		config_load openmptcprouter
 		config_list_foreach "$1" ip _do_check_ip
 		[ "$oneserverup" = "0" ] && uci -q set openmptcprouter.${name}.current='0'
 		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
-		[ -n "$(uci -q changes shadowsocks-libev)" ] && changes="1"
-		[ -n "$(uci -q changes shadowsocks-rust)" ]  && changes="1"
-		[ -n "$(uci -q changes openvpn)" ]           && changes="1"
-		uci -q commit shadowsocks-libev
-		uci -q commit shadowsocks-rust
-		uci -q commit openvpn
+		# Commit only what actually changed: a no-op `uci commit` still forks
+		# and rewrites nothing but costs file locking and IO every cycle
+		[ -n "$(uci -q changes shadowsocks-libev)" ] && { changes="1"; uci -q commit shadowsocks-libev; }
+		[ -n "$(uci -q changes shadowsocks-rust)" ]  && { changes="1"; uci -q commit shadowsocks-rust; }
+		[ -n "$(uci -q changes openvpn)" ]           && { changes="1"; uci -q commit openvpn; }
 		[ "$changes" = "1" ] && _restart_proxy_services
 		return
 	}
@@ -384,6 +414,7 @@ _check_backup() {
 		set_ip() {
 			ip="$serverip"
 			local ss_libev_server ss_rust_server
+			local state_key="b:${name}:${countips}"
 			ss_libev_server=$(uci -q get shadowsocks-libev.sss${count}.server)
 			ss_rust_server=$(uci -q get shadowsocks-rust.sss${count}.server)
 			if [ "$server_ping" = true ]; then
@@ -409,46 +440,52 @@ _check_backup() {
 					fi
 					sleep "$waittest"
 				fi
-				[ "$_proxy" = "shadowsocks-rust" ] && uci -q set shadowsocks-rust.sss${count}.disabled=0
-				[ "$_proxy" = "shadowsocks" ]      && uci -q set shadowsocks-libev.sss${count}.disabled=0
-				_enable_ss_redirs
-				[ -n "$ip" ] && [ -n "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
-					uci -q del_list openmptcprouter.${name}.ip_down="$ip"
-				uci -q set openmptcprouter.${name}.current='1'
+				OMR_TRACKER_STATUS_MSG="Answer to ping and to API check"
+				# Same steady-state gate as _check_master: only a down->up
+				# transition or a config fix needs the redir/ip_down/alert work
+				if [ "${_srv_prev_up[$state_key]}" != "1" ] || [ "$changes" = "1" ]; then
+					_proxy=$(uci -q get openmptcprouter.settings.proxy)
+					[ "$_proxy" = "shadowsocks-rust" ] && uci -q set shadowsocks-rust.sss${count}.disabled=0
+					[ "$_proxy" = "shadowsocks" ]      && uci -q set shadowsocks-libev.sss${count}.disabled=0
+					_enable_ss_redirs
+					[ -n "$ip" ] && [ -n "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
+						uci -q del_list openmptcprouter.${name}.ip_down="$ip"
+					uci -q set openmptcprouter.${name}.current='1'
+					_send_mail_alert "up" "$name" "$ip"
+				fi
+				_srv_prev_up[$state_key]="1"
 				OMR_TRACKER_SERVER_IP="$ip"
 				OMR_TRACKER_STATUS="OK"
-				OMR_TRACKER_STATUS_MSG="Answer to ping and to API check"
-				_send_mail_alert "up" "$name" "$ip"
 				script_alert_up=$(uci -q get omr-tracker.proxy.script_alert_up)
 				[ -n "$script_alert_up" ] && eval "$script_alert_up"
 				count=$((count+1))
 			else
-				[ -n "$ip" ] && \
-					[ -z "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
-					uci -q add_list openmptcprouter.${name}.ip_down="$ip" && \
-					logger -t "OMR-Tracker-Server" "Backup server ${name} down ($ip)"
-				uci -q set openmptcprouter.${name}.current='0'
-				uci -q commit openmptcprouter
-				_disable_ss_redirs_by_ip "$ip"
 				[ -z "$OMR_TRACKER_STATUS_MSG" ] && OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
-				_send_mail_alert "down" "$name" "$ip"
+				if [ "${_srv_prev_up[$state_key]}" != "0" ]; then
+					[ -n "$ip" ] && \
+						[ -z "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
+						uci -q add_list openmptcprouter.${name}.ip_down="$ip" && \
+						logger -t "OMR-Tracker-Server" "Backup server ${name} down ($ip)"
+					uci -q set openmptcprouter.${name}.current='0'
+					uci -q commit openmptcprouter
+					_disable_ss_redirs_by_ip "$ip"
+					_send_mail_alert "down" "$name" "$ip"
+				fi
+				_srv_prev_up[$state_key]="0"
 				OMR_TRACKER_STATUS="ERROR"
 				script_alert_down=$(uci -q get omr-tracker.proxy.script_alert_down)
 				[ -n "$script_alert_down" ] && eval "$script_alert_down"
 			fi
 			countips=$((countips+1))
 		}
-		_proxy=$(uci -q get openmptcprouter.settings.proxy)
 		config_load openmptcprouter
 		config_list_foreach "$1" ip _do_check_ip
 		[ "$oneserverup" = "0" ] && uci -q set openmptcprouter.${name}.current='0'
 		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
-		[ -n "$(uci -q changes shadowsocks-libev)" ] && changes="1"
-		[ -n "$(uci -q changes shadowsocks-rust)" ]  && changes="1"
-		[ -n "$(uci -q changes openvpn)" ]           && changes="1"
-		uci -q commit shadowsocks-libev
-		uci -q commit shadowsocks-rust
-		uci -q commit openvpn
+		# Commit only what actually changed (see _check_master)
+		[ -n "$(uci -q changes shadowsocks-libev)" ] && { changes="1"; uci -q commit shadowsocks-libev; }
+		[ -n "$(uci -q changes shadowsocks-rust)" ]  && { changes="1"; uci -q commit shadowsocks-rust; }
+		[ -n "$(uci -q changes openvpn)" ]           && { changes="1"; uci -q commit openvpn; }
 		[ "$changes" = "1" ] && _restart_proxy_services
 		[ "$server_ping" = true ] && return
 	}
@@ -461,9 +498,24 @@ interval=${OMR_TRACKER_INTERVAL:-10}
 intervaltries=${OMR_TRACKER_INTERVAL_TRIES:-2}
 retry=${OMR_TRACKER_TRIES:-4}
 waittest=${OMR_TRACKER_WAIT_TEST:-0}
+# Per-"server:ip" up/down state from the previous cycle, so the check
+# functions can tell a transition apart from the steady state
+declare -A _srv_prev_up
+# `multipath` is itself a shell script whose no-arg listing forks per network
+# device, so refresh the default-route interface list at most every 30s
+# instead of on every check. Worst case a hotplugged/removed WAN is seen up
+# to 30s late here; the per-interface checks tolerate a stale entry (a dead
+# interface just fails its probe and the loop moves on).
+mp_default_intfs=""
+_mp_intfs_ts=0
 while true; do
 	server_ping=false
 	oneserverup="0"
+	printf -v _mp_now '%(%s)T' -1
+	if [ $((_mp_now - _mp_intfs_ts)) -ge 30 ]; then
+		mp_default_intfs="$(multipath 2>/dev/null | awk '/default/{print $1}')"
+		_mp_intfs_ts=$_mp_now
+	fi
 	config_load openmptcprouter
 	config_foreach _check_master server
 	[ "$oneserverup" = "0" ] && {
