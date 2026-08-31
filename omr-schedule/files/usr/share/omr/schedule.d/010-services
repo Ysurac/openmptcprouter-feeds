@@ -7,7 +7,19 @@
 #
 # This script check services status and do appropriate actions
 
-if [ -n "$(uci show openmptcprouter | awk -F= '/password/ { gsub("\047","",$2);print $2 }')" ]; then
+# Snapshot the config dump once instead of re-running `uci show
+# openmptcprouter` for every substring test below (each dump forks uci and
+# reserializes the whole config). Refreshed after the get_config commits,
+# whose result the later tests must see.
+_omr_snapshot="$(uci -q show openmptcprouter)"
+_omr_has() {
+	case "$_omr_snapshot" in
+		*"$1"*) return 0;;
+		*) return 1;;
+	esac
+}
+
+if [ -n "$(printf '%s\n' "$_omr_snapshot" | awk -F= '/password/ { gsub("\047","",$2);print $2 }')" ]; then
 	# If a service is down, force restart it
 	omr_schedule_vpn_setting="$(uci -q get openmptcprouter.settings.vpn)"
 	if [ -f /etc/init.d/shadowsocks-libev ] && [ "$(pgrep -f omr-tracker-ss)" = "" ] && [ "$(pgrep -f ss-redir)" = "" ] && [ "$(pgrep -f ss-local)" = "" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "" ] && [ "$(uci -q get shadowsocks-libev.sss0.server)" != "192.168.1.3" ] && [ "$(uci -q get shadowsocks-libev.sss0.key)" != "" ]; then
@@ -196,16 +208,18 @@ if [ -n "$(uci show openmptcprouter | awk -F= '/password/ { gsub("\047","",$2);p
 		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 	fi
 
-	if [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep token_error=\'1\')" != "" ]; then
+	# The set_get_config/token blocks above may have just committed new flags
+	_omr_snapshot="$(uci -q show openmptcprouter)"
+	if [ "$(pgrep -f openmptcprouter-vps)" = "" ] && _omr_has "token_error='1'"; then
 		/etc/init.d/openmptcprouter-vps token >/dev/null 2>&1 &
 		sleep 5
 	fi
-	if [ "$(pgrep -f openmptcprouter-vps)" = "" ] && ([ -z "$(uci -q show openmptcprouter | grep get_config)" ] || [ -n "$(uci -q show openmptcprouter | grep get_config=\'1\')" ] || [ -n "$(uci -q show openmptcprouter | grep admin_error=\'1\')" ]); then
+	if [ "$(pgrep -f openmptcprouter-vps)" = "" ] && (! _omr_has "get_config" || _omr_has "get_config='1'" || _omr_has "admin_error='1'"); then
 		/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &
 		sleep 5
 	fi
 	#if [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && ([ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ] || (([ -e /usr/sbin/iptables-nft-save ] && [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ]) || [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ])); then
-	if [ "$(pgrep -f set_vps_firewall)" = "" ] && [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ -z "$(uci -q show openmptcprouter | grep admin_error=\'1\')" ] && [ -n "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" ]; then
+	if [ "$(pgrep -f set_vps_firewall)" = "" ] && _omr_has "server" && _omr_has "password" && [ "$(pgrep -f openmptcprouter-vps)" = "" ] && ! _omr_has "admin_error='1'" && _omr_has "set_firewall='1'"; then
 		check_server_fw() {
 			[ "$(uci -q get openmptcprouter.$1.set_firewall)" = "1" ] && {
 				_log "Set firewall on server $1"
@@ -511,12 +525,17 @@ _srv_count=$(echo $_srv_daemons | wc -w)
 [ -n "$(uci -q changes shadowsocks-rust)" ] && uci -q commit shadowsocks-rust
 [ -n "$(uci -q changes unbound)" ] && uci -q commit unbound
 [ -n "$(uci -q changes dhcp)" ] && uci -q commit dhcp
-_multipath_fix_shared() {
-	[ "$1" = "$_mf_name" ] && return
+# Devices shared with a multipath-enabled interface must not be "fixed" off.
+# Collect their l3_devices once up front: resolving them inside multipath_fix
+# re-ran ifstatus+jsonfilter for every non-off interface per off-interface
+# (O(n^2) forks each minute). An off-interface can't appear in this list
+# (only non-off ones are collected), so no self-exclusion check is needed.
+_mf_shared_devs=""
+_mf_collect_shared() {
 	config_get _mf_mp "$1" multipath
 	[ "$_mf_mp" = "off" ] || [ -z "$_mf_mp" ] && return
 	_mf_dev="$(ifstatus "$1" 2>/dev/null | jsonfilter -q -e '@.l3_device' | tr -d '\n')"
-	[ "$_mf_dev" = "$_mf_iface" ] && _mf_skip=1
+	[ -n "$_mf_dev" ] && _mf_shared_devs="$_mf_shared_devs $_mf_dev"
 }
 multipath_fix() {
 	config_get multipath "$1" multipath
@@ -525,18 +544,21 @@ multipath_fix() {
 	[ "$(echo $device | grep '@')" ] && return
 	interface="$(ifstatus $1 | jsonfilter -q -e '@.l3_device' | tr -d '\n')"
 	[ -z "$interface" ] && return
+	case " $_mf_shared_devs " in
+		*" $interface "*) return;;
+	esac
 	[ -n "$(multipath $interface | grep deactivated)" ] && return
-	_mf_name="$1" _mf_iface="$interface" _mf_skip=0
-	config_foreach _multipath_fix_shared interface
-	[ "$_mf_skip" = "1" ] && return
 	_log "Fix Multipath status on $1 ($interface)"
 	/etc/init.d/mptcp reload $interface >/dev/null 2>&1
 }
 if [ "$(uci -q get network.globals.multipath)" = "enable" ]; then
 	config_load network
+	config_foreach _mf_collect_shared interface
 	config_foreach multipath_fix interface
 fi
-if [ -n "$(logread | tail -n 2 | grep 'Ring expansion failed')" ]; then
+# logread -l is supported by both ubox logread and the syslog-ng compat
+# wrapper; a bare `logread | tail` dumps the whole ring buffer every minute
+if [ -n "$(logread -l 2 2>/dev/null | grep 'Ring expansion failed')" ]; then
 	_log "Workaround Ring expansion failed problem"
 	echo 1 > /sys/bus/pci/devices/0000:00:00.0/remove
 	sleep 2
@@ -549,7 +571,9 @@ if [ "$(ip r)" = "" ]; then
 fi
 
 #if [ -f /etc/init.d/omr-bypass ] && [ -z "$(pgrep -f omr-bypass)" ] && [ "$(nft list ruleset 2>/dev/null | grep omr_dst_bypass)" = "" ] && [ "$(iptables-save 2>/dev/null | grep omr-bypass)" = "" ]; then
-if [ -f /etc/init.d/omr-bypass ] && [ -z "$(pgrep -f omr-bypass)" ] && [ "$(nft list ruleset 2>/dev/null | grep omr_dst_bypass)" = "" ]; then
+# nft -t (terse) omits set elements: the bypass chains/rules still show, but
+# the dump stays small even with thousands of bypassed IPs in the sets
+if [ -f /etc/init.d/omr-bypass ] && [ -z "$(pgrep -f omr-bypass)" ] && [ "$(nft -t list ruleset 2>/dev/null | grep omr_dst_bypass)" = "" ]; then
 	_log "Can't find omr-bypass rules, restart omr-bypass..."
 	/etc/init.d/omr-bypass start >/dev/null 2>&1
 	sleep 5
@@ -646,5 +670,3 @@ fi
 
 # Remove old hidden config files
 find /etc/config/ -mtime +1 -type f -name '\.*' -exec rm {} +
-
-sleep 10

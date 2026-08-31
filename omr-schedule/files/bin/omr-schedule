@@ -2,7 +2,27 @@
 . /lib/functions.sh
 . /lib/functions/network.sh
 
-#[ -n "$(pgrep -f 'omr-schedule')" ] && exit 0
+# Cron fires this wrapper every minute, but a pass can exceed 60s once a
+# schedule.d part starts restarting services (each restart branch pads with a
+# 5-10s sleep), and overlapping passes double the fork load and race each
+# other's uci commits. pgrep can't guard this: `pgrep -f omr-schedule`
+# matches this very process and every subshell sharing its cmdline (which is
+# why the old guard was disabled). flock ties the lock to the fd's lifetime,
+# so a killed pass releases it automatically.
+if command -v flock >/dev/null 2>&1; then
+	exec 9>/tmp/omr-schedule.lock
+	flock -n 9 || exit 0
+else
+	# mkdir is atomic; a lock left by a crashed pass goes stale after 10
+	# minutes (a normal pass ends well before that)
+	if ! mkdir /tmp/omr-schedule.lock.d 2>/dev/null; then
+		_lock_mtime="$(stat -c '%Y' /tmp/omr-schedule.lock.d 2>/dev/null || echo 0)"
+		[ $(($(date +%s) - _lock_mtime)) -lt 600 ] && exit 0
+		rmdir /tmp/omr-schedule.lock.d 2>/dev/null
+		mkdir /tmp/omr-schedule.lock.d 2>/dev/null || exit 0
+	fi
+	trap 'rmdir /tmp/omr-schedule.lock.d 2>/dev/null' EXIT
+fi
 
 for schedule_bin in /usr/share/omr/schedule.d/*; do
 	[ -x "$schedule_bin" ] && (
