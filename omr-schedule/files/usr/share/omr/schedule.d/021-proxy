@@ -32,21 +32,21 @@ case "$configured_proxy" in
 		xray_enabled=0
 		ss_disable=0
 		;;
-	shadowsocks-rust)
+	shadowsocks-rust|shadowsocks-go)
 		ss_libev_disabled=1
 		ss_rust_disabled=0
 		v2ray_enabled=0
 		xray_enabled=0
 		ss_disable=0
 		;;
-	v2ray)
+	v2ray|v2ray-*)
 		ss_libev_disabled=1
 		ss_rust_disabled=1
 		v2ray_enabled=1
 		xray_enabled=0
 		ss_disable=1
 		;;
-	xray)
+	xray|xray-*)
 		ss_libev_disabled=1
 		ss_rust_disabled=1
 		v2ray_enabled=0
@@ -137,6 +137,65 @@ if [ "$(uci -q get openmptcprouter.settings.shadowsocks_disable)" != "$ss_disabl
 	uci -q set openmptcprouter.settings.shadowsocks_disable="$ss_disable"
 	uci -q commit openmptcprouter
 fi
+
+# Process-level backstop (issue #4357): the blocks above only fire on a flag
+# *delta*. A backend whose disabled flag is already correct but whose daemons
+# were left running (an older default_proxy() set the flag without stopping
+# the service) is never healed by them, and nothing else stops those orphans;
+# ss-local then keeps reconnecting to the VPS forever, spamming "Connection
+# reset by peer" on every tracker probe.
+#
+# Shadowsocks orphans are identified per instance from the -c config path so
+# a custom user section pointing at its own enabled server survives: only
+# instances tied to a disabled (or vanished) server section are cleared, via
+# a service restart -- start_service itself skips disabled instances, so the
+# restart drops the orphans and brings back only legitimate ones. Only run
+# this when the whole backend is supposed to be off: while it is the active
+# proxy, omr-tracker-ss legitimately flips ss_redir sections disabled=1
+# during an outage with the daemons still up, and sweeping then would fight
+# it every minute.
+_sweep_ss_orphans() {
+	local pkg="$1" name pid cmdline section server orphans=0
+	shift
+	[ -f "/etc/init.d/$pkg" ] || return 0
+	for name in "$@"; do
+		for pid in $(pgrep -x "$name" 2>/dev/null); do
+			cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null)"
+			case "$cmdline" in
+				*"/var/etc/$pkg/"*) ;;
+				*) continue ;;
+			esac
+			section="${cmdline##*/}"
+			section="${section#*.}"
+			section="${section%%.json*}"
+			[ -n "$section" ] || continue
+			if [ -z "$(uci -q get "$pkg.$section")" ] || [ "$(uci -q get "$pkg.$section.disabled")" = "1" ]; then
+				orphans=1
+				continue
+			fi
+			server="$(uci -q get "$pkg.$section.server")"
+			[ -n "$server" ] && [ "$(uci -q get "$pkg.$server.disabled")" = "1" ] && orphans=1
+		done
+	done
+	[ "$orphans" = "1" ] || return 0
+	_log "Proxy enforce: ${pkg} instance(s) of a disabled server still running, restarting ${pkg} to clear them (configured proxy: ${configured_proxy})"
+	/etc/init.d/$pkg restart >/dev/null 2>&1
+	changed=1
+}
+
+_sweep_proxy_service() {
+	[ "$2" = "0" ] || return 0
+	[ -f "/etc/init.d/$1" ] || return 0
+	/etc/init.d/$1 running >/dev/null 2>&1 || return 0
+	_log "Proxy enforce: $1 disabled but still running, stopping it (configured proxy: ${configured_proxy})"
+	/etc/init.d/$1 stop >/dev/null 2>&1
+	changed=1
+}
+
+[ "$ss_libev_disabled" = "1" ] && _sweep_ss_orphans shadowsocks-libev ss-local ss-redir ss-tunnel ss-server
+[ "$ss_rust_disabled" = "1" ] && _sweep_ss_orphans shadowsocks-rust sslocal ssserver
+_sweep_proxy_service v2ray "$v2ray_enabled"
+_sweep_proxy_service xray "$xray_enabled"
 
 [ "$changed" = "1" ] && /etc/init.d/omr-tracker start >/dev/null 2>&1
 exit 0
