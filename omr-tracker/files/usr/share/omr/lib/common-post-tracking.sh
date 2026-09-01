@@ -378,6 +378,33 @@ set_route_balancing6() {
 	_set_route_balancing_common "$1" true
 }
 
+# Compare the kernel's default route at a given metric against the nexthop
+# fragments we want installed ("nexthop via <gw> dev <if> weight <w> ...").
+# Returns 0 when the route already carries exactly the expected gateway/device
+# set, 1 otherwise. Grepping the route for the tracked device instead is wrong
+# for interfaces that don't belong in that route (a backup interface is never
+# in the metric-1 route), which made the caller replace and log an already
+# correct route on every tracker cycle (issue #4358).
+# With a single nexthop the kernel flattens the group and drops
+# "nexthop"/"weight" from its output, so weights are ignored there or the
+# route would look different on every cycle.
+_default_route_matches() {
+	local metric="$1"
+	local expected_routes="$2"
+	local nb="${3:-0}"
+	local ipv6="${4:-false}"
+	local ip_cmd="ip"
+	local existing_gws expected_gws
+	[ "$ipv6" = "true" ] && ip_cmd="ip -6"
+	existing_gws=$($ip_cmd route show default metric "$metric" 2>/dev/null | grep -oE 'via [^ ]+ dev [^ ]+( weight [0-9]+)?' | sort | tr '\n' ' ')
+	expected_gws=$(echo "$expected_routes" | grep -oE 'via [^ ]+ dev [^ ]+( weight [0-9]+)?' | sort | tr '\n' ' ')
+	if [ "${nb:-0}" -le 1 ] 2>/dev/null; then
+		existing_gws=$(echo "$existing_gws" | sed 's/ weight [0-9]*//g')
+		expected_gws=$(echo "$expected_gws" | sed 's/ weight [0-9]*//g')
+	fi
+	[ -n "$expected_gws" ] && [ "$existing_gws" = "$expected_gws" ]
+}
+
 _set_server_all_routes_common() {
 	local server=$1
 	local ipv6="${2:-false}"
