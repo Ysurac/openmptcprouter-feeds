@@ -289,6 +289,49 @@ function parse_ss_subflows(raw, endpoints)
 	return subflows
 end
 
+-- Live per-subflow TCP metrics preferring omr-sockdiag -- a raw
+-- NETLINK_SOCK_DIAG/INET_DIAG query of the kernel's tcp_info straight off
+-- the socket (see the omr-sockdiag package) -- over parsing "ss -tin" text.
+-- Same preference order omr-metrics' 040-metrics post-tracking hook already
+-- uses for its own per-WAN subflow collection. omr-sockdiag already emits
+-- JSON with the field names this table already uses, so there is no text
+-- parsing left to do here at all, only the same WAN attribution
+-- parse_ss_subflows does above (a connection's local_ip matched against the
+-- endpoints list -- omr-sockdiag has no MPTCP awareness of its own, it only
+-- knows sockets).
+--
+-- Returns nil when the output is not usable, so the caller can fall back to
+-- parse_ss_subflows. omr-sockdiag itself prints "[]" both when no sockets
+-- match and when the kernel query cannot be opened; if endpoints exist, let
+-- the ss fallback disambiguate that case instead of hiding live subflows.
+function parse_sockdiag_subflows(raw, endpoints)
+	local ok, rows = pcall(jsonc.parse, raw or "")
+	if not ok or type(rows) ~= "table" then return nil end
+	if #rows == 0 and #endpoints > 0 then return nil end
+
+	local by_addr = {}
+	for _, ep in ipairs(endpoints) do by_addr[ep.address] = ep end
+
+	local subflows = {}
+	for _, row in ipairs(rows) do
+		local ep = by_addr[row.local_ip]
+		if ep then
+			subflows[#subflows + 1] = {
+				dev = ep.dev, endpoint_id = ep.id, backup = ep.backup,
+				local_ip = row.local_ip, local_port = row.local_port,
+				remote_ip = row.remote_ip, remote_port = row.remote_port,
+				cwnd = row.cwnd, ssthresh = row.ssthresh,
+				rtt = row.rtt, rttvar = row.rttvar, min_rtt = row.min_rtt,
+				retrans = row.retrans, retrans_total = row.retrans_total,
+				bytes_sent = row.bytes_sent, bytes_acked = row.bytes_acked,
+				bytes_retrans = row.bytes_retrans, bytes_received = row.bytes_received,
+				pacing_rate = row.pacing_rate, delivery_rate = row.delivery_rate,
+			}
+		end
+	end
+	return subflows
+end
+
 -- Per-WAN endpoint cross-check: for every interface the router considers
 -- multipath-enabled, is its device actually registered as an MPTCP
 -- endpoint? If not, that WAN can never carry an MPTCP subflow no matter
@@ -839,7 +882,10 @@ local methods = {
 			for _, w in ipairs(wans) do
 				if w.device ~= "" then dev_to_name[w.device] = w.name end
 			end
-			local subflows = parse_ss_subflows(exec_output("ss -tin 2>/dev/null"), endpoints)
+			local subflows = parse_sockdiag_subflows(exec_output("omr-sockdiag 2>/dev/null"), endpoints)
+			if not subflows then
+				subflows = parse_ss_subflows(exec_output("ss -tin 2>/dev/null"), endpoints)
+			end
 			for _, sf in ipairs(subflows) do
 				sf.wan = dev_to_name[sf.dev] or sf.dev
 			end
