@@ -454,21 +454,11 @@ _launch_xray_tracker() {
 	sleep 1
 }
 
-_dns_server() {
-	local ip=$1
-	resolv=$(resolveip -4 ${ip} | head -n 1)
-	[ -n "${resolv}" ] && [ "${resolv}" != "${ip}" ] && multiserver=true
-	resolv=$(resolveip -6 ${ip} | head -n 1)
-	[ -n "${resolv}" ] && [ "${resolv}" != "${ip}" ] && multiserver=true
-	ipcount=$((ipcount+1))
-}
-
-_multi_server() {
-	local ipcount=0
-	config_get backup $1 backup
-	[ "$backup" = "1" ] && multiserver=true
-	config_list_foreach $1 ip _dns_server
-	[ "$ipcount" != "0" ] && [ "$ipcount" != "1" ] && multiserver=true
+_have_server() {
+	local ip disabled
+	config_get ip "$1" ip
+	config_get disabled "$1" disabled
+	[ -n "$ip" ] && [ "$disabled" != "1" ] && haveserver=true
 }
 
 _gre_tunnel() {
@@ -538,10 +528,22 @@ start_service() {
 			_launch_xray_tracker
 		fi
 	
-		multiserver=false
+		# Launch the server tracker whenever at least one enabled server is
+		# configured: besides master/backup failover it maintains the global
+		# openmptcprouter.omr.server up/down state.
+		haveserver=false
 		config_load openmptcprouter
-		config_foreach _multi_server server
-		[ "$multiserver" = true ] && _launch_server_tracker
+		config_foreach _have_server server
+		[ "$haveserver" = true ] && _launch_server_tracker
+		# omr.proxy / omr.server hold the last state written by their
+		# tracker: when that tracker is not launched at all (proxy set to
+		# "none", no enabled server configured), drop the key so consumers
+		# never read a stale up/down value.
+		[ "$(uci -q get openmptcprouter.settings.proxy)" = "none" ] && \
+			uci -q delete openmptcprouter.omr.proxy
+		[ "$haveserver" != true ] && \
+			uci -q delete openmptcprouter.omr.server
+		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 		gretunnel=false
 		config_load network
 		config_foreach _gre_tunnel interface

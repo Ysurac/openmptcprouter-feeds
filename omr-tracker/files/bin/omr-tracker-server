@@ -508,6 +508,9 @@ declare -A _srv_prev_up
 # interface just fails its probe and the loop moves on).
 mp_default_intfs=""
 _mp_intfs_ts=0
+# Last value written to openmptcprouter.omr.server, so the global up/down
+# state is committed only on a transition, not every cycle
+_omr_server_state=""
 while true; do
 	server_ping=false
 	oneserverup="0"
@@ -522,5 +525,18 @@ while true; do
 		config_load openmptcprouter
 		config_foreach _check_backup server
 	}
+	# Global server state for consumers (LuCI, scripts): "up" while at least
+	# one master or backup server answers, "down" otherwise
+	if [ "$oneserverup" = "1" ]; then
+		srv_state="up"
+	else
+		srv_state="down"
+	fi
+	if [ "$srv_state" != "$_omr_server_state" ]; then
+		uci -q set openmptcprouter.omr=router
+		uci -q set openmptcprouter.omr.server="$srv_state"
+		uci -q commit openmptcprouter
+		_omr_server_state="$srv_state"
+	fi
 	sleep "${interval}"
 done

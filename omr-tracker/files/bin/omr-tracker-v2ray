@@ -129,6 +129,15 @@ _get_ip() {
 	uci -q commit openmptcprouter
 }
 
+# Keep the generic proxy state (openmptcprouter.omr.proxy) in sync with this
+# tracker's view. Guarded on the current value so the steady state costs one
+# uci get per cycle and never a commit.
+_set_omr_proxy_state() {
+	[ "$(uci -q get openmptcprouter.omr.proxy)" = "$1" ] && return
+	uci -q set openmptcprouter.omr.proxy="$1"
+	uci -q commit openmptcprouter
+}
+
 timeout=${OMR_TRACKER_TIMEOUT:-5}
 interval=${OMR_TRACKER_INTERVAL:-10}
 retry=${OMR_TRACKER_TRIES:-4}
@@ -161,7 +170,7 @@ while true; do
 			_log "V2Ray is up (can contact via http ${host})"
 			OMR_TRACKER_STATUS_MSG="V2Ray is up (can contact via http ${host})"
 			uci -q set openmptcprouter.omr.v2ray="up"
-			uci -q commit openmptcprouter.omr
+			uci -q commit openmptcprouter
 			/etc/init.d/openmptcprouter-vps set_vps_firewall
 			_send_mail_alert_v2ray "up"
 			script_alert_up="$(uci -q get omr-tracker.proxy.script_alert_up)"
@@ -183,6 +192,7 @@ while true; do
 		[ "$(uci -q get openmptcprouter.omr.detected_public_ipv4)" = "" ] || ([ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.detected_public_ipv6)" = "" ]) && _get_ip
 		last=0
 		OMR_TRACKER_STATUS="OK"
+		_set_omr_proxy_state "up"
 	else
 		last=$((last + 1 ))
 		[ -z "$nocontact" ] && nocontact="$host" || nocontact="$nocontact, $host"
@@ -191,7 +201,8 @@ while true; do
 				_log "V2Ray is down (can't contact via http ${nocontact})"
 				OMR_TRACKER_STATUS_MSG="V2Ray is down (can't contact via http ${nocontact})"
 				uci -q set openmptcprouter.omr.v2ray="down"
-				uci -q commit openmptcprouter.omr
+				uci -q commit openmptcprouter
+				_set_omr_proxy_state "down"
 				/etc/init.d/openmptcprouter-vps set_vps_firewall
 				/etc/init.d/v2ray rules_down 2> /dev/null
 				_get_ip
