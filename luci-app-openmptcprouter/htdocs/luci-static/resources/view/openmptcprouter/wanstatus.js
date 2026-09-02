@@ -11,18 +11,27 @@ var callOMRStatus = rpc.declare({
 
 return view.extend({
 	load: function() {
-		return callOMRStatus();
+		/* A failed/timed-out first call must not leave the page stuck on
+		 * "Loading view..." with an error banner: render anyway and let the
+		 * poller below retry (#4360). */
+		return callOMRStatus().catch(function() { return {}; });
 	},
 
 
 	pollData: function() {
 		poll.add(L.bind(function() {
+			/* Don't stack a new request while the previous one is running */
+			if (this.pollBusy)
+				return Promise.resolve();
+			this.pollBusy = true;
 			return callOMRStatus().then(L.bind(function(data) {
+				this.pollBusy = false;
 				this.lastData = data || {};
 				this.renderStatus(this.lastData);
-			}, this)).catch(function() {
+			}, this), L.bind(function() {
 				/* Ignore transient poll errors */
-			});
+				this.pollBusy = false;
+			}, this));
 		}, this), 10);
 	},
 
@@ -238,6 +247,7 @@ return view.extend({
 		if (omr.uptime) routerDetails += _('Uptime:') + ' ' + this.esc(String.format('%t', omr.uptime)) + '<br />';
 		if (omr.proxy) routerDetails += _('Proxy:') + ' ' + this.esc(omr.proxy) + '<br />';
 		if (omr.vpn) routerDetails += _('VPN:') + ' ' + this.esc(omr.vpn) + '<br />';
+		if (omr.status_partial) routerDetails += _('Some checks were skipped to keep the status page responsive') + '<br />';
 		var routerWarn = '';
 		if (omr.dns === false) routerWarn += _('DNS issue: can\'t resolve hostname') + '<br />';
 		if (omr.tun_state === 'DOWN') routerWarn += _('VPN tunnel DOWN') + '<br />';

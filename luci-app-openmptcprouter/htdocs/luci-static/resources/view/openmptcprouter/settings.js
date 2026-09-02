@@ -20,7 +20,8 @@ var callSettingsAdd = rpc.declare({
 		'shadowsocksudp', 'v2rayudp', 'ndpi', 'disablefastopen', 'enablenodelay',
 		'obfs', 'obfs_plugin', 'obfs_type',
 		'scaling_min_freq', 'scaling_max_freq', 'scaling_governor',
-		'sfe_enabled', 'sfe_bridge', 'sipalg', 'vxlan', 'vxlan_mode', 'vxlan_bridge_if'
+		'sfe_enabled', 'sfe_bridge', 'sipalg', 'vxlan', 'vxlan_mode', 'vxlan_bridge_if',
+		'status_time_budget'
 	],
 	expect: { '': {} }
 });
@@ -218,9 +219,18 @@ return view.extend({
 		 * downstream (rpcd + omr-6in4) treats the missing value as "disabled",
 		 * tearing IPv6 down (issue #4352; same rmempty/default collision as
 		 * #4348/#4349). o.rmempty = false forces an explicit write instead.
+		 *
+		 * rmempty=false alone is NOT enough: the stale .default ('0') also
+		 * decides how an *unset* option renders -- as CHECKED -- so the very
+		 * next save of this page writes '0' and silently toggles the feature
+		 * on. For external_check that killed the public IP / ASN lookups on
+		 * the status page; for defaultgw it removed the no-VPS internet
+		 * fallback. Every inverted flag therefore also sets o.default to the
+		 * value matching its unset-in-uci behaviour.
 		 */
 		o = s.taboption('network', form.Flag, 'disable_ipv6', _('Enable IPv6'));
 		o.enabled = '0'; o.disabled = '1';
+		o.default = '0'; /* unset = IPv6 enabled */
 		o.rmempty = false;
 
 		o = s.taboption('network', form.Flag, 'disable_6in4', _('Disable 6in4'));
@@ -229,6 +239,7 @@ return view.extend({
 			_('Disable external check'),
 			_('When enabled, checks are done on external sites to get each WAN IP and the IP used to go outside.'));
 		o.enabled = '0'; o.disabled = '1';
+		o.default = '1'; /* unset = external checks enabled */
 		o.rmempty = false;
 
 		o = s.taboption('network', form.Flag, 'disable_fastopen',
@@ -291,6 +302,12 @@ return view.extend({
 			_('Timeout for retrieving Whois WANs IP on status pages'));
 		o.datatype = 'uinteger';
 
+		o = s.taboption('other', form.Value, 'status_time_budget',
+			_('Status page time budget'),
+			_('Maximum time in seconds spent running checks for one status page refresh; remaining checks are skipped once spent. 0 disables all external checks, default is 15'));
+		o.datatype = 'uinteger';
+		o.placeholder = '15';
+
 		o = s.taboption('other', form.Flag, 'disableintfrename',
 			_('Disable interfaces auto rename'),
 			_('Disable renaming interfaces'));
@@ -312,6 +329,7 @@ return view.extend({
 			_('Disable default gateway, no internet if VPS are down'));
 		o.enabled = '0'; o.disabled = '1';
 		/* Same rmempty/default collision as disable_ipv6 above (#4352) */
+		o.default = '1'; /* unset = default gateway enabled */
 		o.rmempty = false;
 
 		o = s.taboption('other', form.Flag, 'disableserverping',
@@ -331,6 +349,7 @@ return view.extend({
 			_('Disable OpenVPN multi clients to distribute connections and use more CPU cores'));
 		o.enabled = '0'; o.disabled = '1';
 		/* Same rmempty/default collision as disable_ipv6 above (#4352) */
+		o.default = '1'; /* unset = multi clients enabled */
 		o.rmempty = false;
 
 		o = s.taboption('other', form.Flag, 'tracebox',
@@ -338,6 +357,7 @@ return view.extend({
 			_('Disable multipath test using tracebox'));
 		o.enabled = '0'; o.disabled = '1';
 		/* Same rmempty/default collision as disable_ipv6 above (#4352) */
+		o.default = '1'; /* unset = tracebox test enabled */
 		o.rmempty = false;
 
 		o = s.taboption('other', form.Flag, 'disablemultipathtest',
@@ -481,7 +501,8 @@ return view.extend({
 				get('sipalg'),
 				get('vxlan'),
 				get('vxlan_mode'),
-				get('vxlan_bridge_if')
+				get('vxlan_bridge_if'),
+				get('status_time_budget')
 			).then(function() {
 				ui.addNotification(null, _('Settings saved and applied successfully.'), 'info');
 			}).catch(function(err) {
