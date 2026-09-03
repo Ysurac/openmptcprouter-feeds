@@ -1892,7 +1892,7 @@ _set_client2client() {
 }
 
 _vps_firewall_redirect_port() {
-	local src proto src_dport section
+	local src proto src_dport section sectype
 	section=$1
 	config_get src $1 src
 	config_get proto $1 proto "tcp udp"
@@ -1906,7 +1906,17 @@ _vps_firewall_redirect_port() {
 	config_get v2ray $1 v2ray "0"
 	config_get name $1 name
 	config_get dmz $1 dmz "0"
-	config_get target $1 target "REDIRECT"
+	config_get sectype $1 TYPE
+	config_get target $1 target ""
+	if [ -z "$target" ]; then
+		# Mirror fw4: a redirect without an explicit target is a DNAT, while
+		# a rule without target has no verdict at all (fw4 renders a bare
+		# counter, issue #4365) -- nothing to open on the VPS, and pushing it
+		# as fwtype "REDIRECT" every pass only spammed the API with entries
+		# the server ignores.
+		[ "$sectype" = "rule" ] && return
+		target="DNAT"
+	fi
 	[ "$target" = "MARK" ] && return
 	[ "$target" = "DSCP" ] && return
 	if [ -z "$src_dport" ] && [ -n "$dest_port" ]; then
@@ -1937,7 +1947,14 @@ _vps_firewall_redirect_port() {
 				checkfw=""
 				if [ "$family" = "ipv4" ]; then
 					if [ "$src_dip" = "" ] && [ "$src_ip" = "" ]; then
-						checkfw=$(echo "$vpsfwlist" | grep "$src_dport	# OMR $username redirect router $src_dport port $protoi")
+						# ACCEPT rules are listed by the VPS as "open router" lines;
+						# grepping for a "redirect router" line here (as before) never
+						# matched, so every pass re-issued shorewallopen for them.
+						if [ "$target" = "ACCEPT" ]; then
+							checkfw=$(echo "$vpsfwlist" | grep "$src_dport	# OMR $username open router $src_dport port $protoi")
+						else
+							checkfw=$(echo "$vpsfwlist" | grep "$src_dport	# OMR $username redirect router $src_dport port $protoi")
+						fi
 					else
 						comment=""
 						[ -n "$src_dip" ] && {
