@@ -194,18 +194,18 @@ return view.extend({
 
 		s.handleAdd = function(ev) {
 			var config_name = this.uciconfig || this.map.config,
-			    section_id = uci.add(config_name, this.sectiontype),
-			    opt1 = this.getOption('src'),
-			    opt2 = this.getOption('dest');
+			    section_id = uci.add(config_name, this.sectiontype);
 
-			opt1.default = 'wan';
-			opt2.default = 'lan';
+			// Preset the zones in uci rather than through a transient
+			// option default: renderMoreOptionsModal() renders
+			// asynchronously, so a default deleted right after the call is
+			// already gone when the widgets are built and the new rule
+			// opened with no source/destination zone.
+			uci.set(config_name, section_id, 'src', 'wan');
+			uci.set(config_name, section_id, 'dest', 'lan');
 
-			this.addedSection = section_id;
+			m.addedSection = section_id;
 			this.renderMoreOptionsModal(section_id);
-
-			delete opt1.default;
-			delete opt2.default;
 		};
 
 		o = s.taboption('general', form.Value, 'name', _('Name'));
@@ -232,6 +232,7 @@ return view.extend({
 		o = s.option(form.Flag, 'enabled', _('Enable'));
 		o.modalonly = false;
 		o.default = o.enabled;
+		o.rmempty = false;
 		o.editable = true;
 		o.tooltip = function(section_id) {
 			var weekdays = uci.get('firewall', section_id, 'weekdays');
@@ -412,6 +413,11 @@ return view.extend({
 		o = s.taboption('general', form.ListValue, 'target', _('Action'));
 		o.modalonly = true;
 		o.default = 'ACCEPT';
+		// luci-base drops an rmempty option whose value equals its default
+		// (luci-base 974b5864e0). Without this the default "accept" is never
+		// written, fw4 renders the rule as a bare counter with no verdict and
+		// the rules list shows an empty Action column.
+		o.rmempty = false;
 		o.value('DROP', _('drop'));
 		o.value('ACCEPT', _('accept'));
 		o.value('REJECT', _('reject'));

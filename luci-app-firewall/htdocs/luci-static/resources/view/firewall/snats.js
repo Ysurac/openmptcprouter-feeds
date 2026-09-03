@@ -287,6 +287,10 @@ return view.extend({
 		o = s.taboption('general', form.ListValue, 'target', _('Action'));
 		o.modalonly = true;
 		o.default = 'SNAT';
+		// Same luci-base default-dropping behaviour as in rules.js: a NAT
+		// rule left on the default SNAT action lost its target and fw4 then
+		// fell back to MASQUERADE, ignoring the configured rewrite address.
+		o.rmempty = false;
 		o.value('SNAT', _('SNAT - Rewrite to specific source IP or port'));
 		o.value('MASQUERADE', _('MASQUERADE - Automatically rewrite to outbound interface IP'));
 		o.value('ACCEPT', _('ACCEPT - Disable address rewriting'));
