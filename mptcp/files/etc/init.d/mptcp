@@ -76,7 +76,10 @@ global_multipath_settings() {
 		if [ -n "$mptcp_scheduler" ]; then
 			local prev_sched="$(cat /proc/sys/net/mptcp/mptcp_scheduler 2>/dev/null)"
 			sysctl -qew net.mptcp.mptcp_scheduler="$mptcp_scheduler"
-			[ -n "$prev_sched" ] && [ "$prev_sched" != "$mptcp_scheduler" ] && restart_scheduler_dependent_services
+			# Restart dependents only when the live scheduler actually changed
+			# (a rejected value leaves it as it was).
+			local new_sched="$(cat /proc/sys/net/mptcp/mptcp_scheduler 2>/dev/null)"
+			[ -n "$prev_sched" ] && [ -n "$new_sched" ] && [ "$prev_sched" != "$new_sched" ] && restart_scheduler_dependent_services
 		fi
 		[ -z "$mptcp_checksum" ] || sysctl -qew net.mptcp.mptcp_checksum="$mptcp_checksum"
 		[ -z "$mptcp_debug" ] || sysctl -qew net.mptcp.mptcp_debug="$mptcp_debug"
@@ -117,8 +120,27 @@ global_multipath_settings() {
 				local obj="/usr/share/bpf/scheduler/mptcp_${sched}.o"
 				[ -f "$obj" ] && bpftool struct_ops register "$obj" "$pin_dir/" >/dev/null 2>&1
 			fi
+			# Only a scheduler the kernel lists can be set. A legacy name left
+			# in uci ('blest' from the v0.9x defaults is not a 6.x scheduler)
+			# or a BPF object that failed to register makes the sysctl fail;
+			# fall back to 'default' rather than silently keeping whatever was
+			# live. The restart decision below compares what was live before
+			# with what is live after: comparing against the requested name
+			# restarted the proxy on every single reload while the request
+			# kept failing (27 "Scheduler changed" restarts in one test run).
+			local avail_sched="$(cat /proc/sys/net/mptcp/available_schedulers 2>/dev/null)"
+			if [ -n "$avail_sched" ]; then
+				case " $avail_sched " in
+					*" $sched "*) ;;
+					*)
+						logger -t "MPTCP" "Scheduler '$sched' is not available (kernel offers: $avail_sched), using 'default'"
+						sched="default"
+						;;
+				esac
+			fi
 			sysctl -qew net.mptcp.scheduler="$sched" >/dev/null 2>&1
-			[ -n "$prev_sched" ] && [ "$prev_sched" != "$sched" ] && restart_scheduler_dependent_services
+			local new_sched="$(cat /proc/sys/net/mptcp/scheduler 2>/dev/null)"
+			[ -n "$prev_sched" ] && [ -n "$new_sched" ] && [ "$prev_sched" != "$new_sched" ] && restart_scheduler_dependent_services
 		fi
 	fi
 	[ -z "$congestion" ] || sysctl -qew net.ipv4.tcp_congestion_control="$congestion"

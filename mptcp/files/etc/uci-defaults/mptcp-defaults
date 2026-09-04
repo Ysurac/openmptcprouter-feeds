@@ -1,9 +1,18 @@
 #!/bin/sh
+# Upstream (6.x) MPTCP exposes the scheduler list; the out-of-tree v0.9x
+# stack (blest/roundrobin/redundant/ecf) does not. Pick a default the running
+# kernel accepts: 'blest' on 6.x is rejected by the sysctl and /etc/init.d/mptcp
+# then falls back to 'default' on every reload while logging about it.
+if [ -f /proc/sys/net/mptcp/available_schedulers ]; then
+	_omr_default_sched='default'
+else
+	_omr_default_sched='blest'
+fi
 if [ "$(uci -q get network.globals.mptcp_path_manager)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
 	set network.globals.multipath='enable'
 	set network.globals.mptcp_path_manager='fullmesh'
-	set network.globals.mptcp_scheduler='blest'
+	set network.globals.mptcp_scheduler='${_omr_default_sched}'
 	set network.globals.congestion='bbr2'
 	set network.globals.mptcp_checksum=0
 	set network.globals.mptcp_debug=0
@@ -20,6 +29,20 @@ if [ "$(uci -q get network.globals.mptcp_path_manager)" = "" ]; then
 	set network.globals.mptcp_syn_retrans_before_tcp_fallback=2
 	commit network
 	EOF
+fi
+# Legacy v0.9x scheduler names carried over to a 6.x kernel: only the names
+# that never exist upstream are migrated (BPF schedulers are not listed in
+# available_schedulers until their object is registered, so they must not be
+# touched here).
+if [ -f /proc/sys/net/mptcp/available_schedulers ]; then
+	case "$(uci -q get network.globals.mptcp_scheduler)" in
+		blest|roundrobin|redundant|ecf)
+			uci -q batch <<-EOF >/dev/null
+			set network.globals.mptcp_scheduler='default'
+			commit network
+			EOF
+			;;
+	esac
 fi
 # BBRv2 is replaced by BBRv3
 if [ "$(uci -q get network.globals.congestion)" = "bbr2" ] && [ -z "$(uname -a | grep 5.4)" ]; then
