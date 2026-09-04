@@ -1,0 +1,19 @@
+#!/bin/sh
+# syslog-ng is the system logger on OpenMPTCProuter images (its /sbin/logread
+# wrapper reads /var/log/messages). ubox's logd binds the very same /dev/log
+# socket: whichever daemon starts last owns it, and a later `log` restart
+# (procd fires one on any system config commit) silently diverts every new
+# logger()/syslog() client into logd's ring buffer, where logread never shows
+# it -- seen live on 2026-09-04, every OMR script message vanished for an
+# hour. Keep a single logger: disable logd when syslog-ng is installed.
+if [ -x /etc/init.d/syslog-ng ] && [ -x /etc/init.d/log ]; then
+	if /etc/init.d/log enabled 2>/dev/null; then
+		/etc/init.d/log disable
+	fi
+	if pidof logd >/dev/null 2>&1; then
+		/etc/init.d/log stop
+		# logd unlinks /dev/log on exit; give the socket back to syslog-ng
+		[ -S /dev/log ] || /etc/init.d/syslog-ng restart
+	fi
+fi
+exit 0

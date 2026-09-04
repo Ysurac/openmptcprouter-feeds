@@ -1,0 +1,47 @@
+#!/bin/sh
+#
+# Copyright (C) 2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+# Give /var/log/messages the same semantics logd gives its ring buffer:
+# `logread` always shows at least the last system.@system[0].log_size KiB.
+#
+# On images that log through syslog-ng, its file() destination has no size
+# limit and the syslog-ng init never reads uci, so log_size is only honoured
+# by logd and the file on tmpfs grows until the filesystem is full (an
+# orphaned mqvpn wrote ~4.9M lines in 3.5 min on 2026-09-04 and took DNS
+# down with it). A copytruncate rotation would bound it but empties the file
+# logread shows right after each rotation. Instead, once the file holds more
+# than twice log_size, keep only the newest log_size KiB in place: syslog-ng
+# writes with O_APPEND, so it simply carries on after the kept tail. The
+# history logread can show therefore stays between log_size and 2*log_size,
+# and the file never exceeds 2*log_size for longer than one schedule tick.
+_omr_msglog="/var/log/messages"
+if [ -f "$_omr_msglog" ] && pidof syslog-ng >/dev/null 2>&1; then
+	_omr_log_size="$(uci -q get system.@system[0].log_size)"
+	case "$_omr_log_size" in
+		''|*[!0-9]*) _omr_log_size=128 ;;
+	esac
+	[ "$_omr_log_size" -lt 16 ] && _omr_log_size=16
+	# tmpfs is sized from RAM (tens of MB on small boards): never let the kept
+	# window exceed 1/8 of the filesystem whatever log_size says.
+	_omr_fs_total_kb="$(df -k "$_omr_msglog" 2>/dev/null | awk 'NR==2{print $2+0}')"
+	if [ "${_omr_fs_total_kb:-0}" -gt 0 ] && [ "$_omr_log_size" -gt "$((_omr_fs_total_kb / 8))" ]; then
+		_omr_log_size="$((_omr_fs_total_kb / 8))"
+	fi
+	_omr_keep="$((_omr_log_size * 1024))"
+	_omr_size="$(ls -ln "$_omr_msglog" 2>/dev/null | awk '{print $5+0}')"
+	if [ "${_omr_size:-0}" -gt "$((_omr_keep * 2))" ]; then
+		# Take one line more than the target so the (possibly cut) first line
+		# can be dropped without going under log_size, then rewrite in place.
+		_omr_trim="${_omr_msglog}.trim"
+		if tail -c "$((_omr_keep + 4096))" "$_omr_msglog" 2>/dev/null | sed '1d' > "$_omr_trim" && [ -s "$_omr_trim" ]; then
+			_omr_top="$(awk '{print $5}' "$_omr_trim" 2>/dev/null | sort | uniq -c | sort -rn | head -n 1 | sed 's/^ *//')"
+			cat "$_omr_trim" > "$_omr_msglog"
+			_log "Trimmed $_omr_msglog from $((_omr_size / 1024)) kB to the newest ${_omr_log_size} kB (system.log_size); busiest source in the kept window: ${_omr_top:-unknown}"
+		fi
+		rm -f "$_omr_trim"
+	fi
+fi

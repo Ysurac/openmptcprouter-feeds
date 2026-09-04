@@ -322,7 +322,14 @@ if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" =
 	fi
 fi
 
-if [ -f /etc/init.d/dnsmasq ]; then
+# dnsmasq is intentionally stopped while this router is a keepalived HA
+# backup (hotplug 551-dnsmasq); only skip the watchdog while keepalived
+# is really alive so a crashed keepalived never leaves dnsmasq down
+_keepalived_backup=0
+[ "$(cat /var/run/keepalived.omr_ha.state 2>/dev/null)" = "BACKUP" ] &&
+	pidof keepalived >/dev/null 2>&1 && _keepalived_backup=1
+
+if [ -f /etc/init.d/dnsmasq ] && [ "$_keepalived_backup" != "1" ]; then
 	if [ "$(pgrep -f dnsmasq)" = "" ]; then
 		_log "Can't find dnsmasq, restart it..."
 		/etc/init.d/dnsmasq restart >/dev/null 2>&1
