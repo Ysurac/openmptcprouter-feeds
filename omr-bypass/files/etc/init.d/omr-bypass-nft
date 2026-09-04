@@ -1912,6 +1912,24 @@ start_service() {
 	fi
 
 
+	# Sets that lost members since _soft_wipe_dynamic snapshotted them: the
+	# light `fw4 reload` below cannot take elements out of a live set, so
+	# flush exactly those sets first and let the reload re-add what is still
+	# configured (one uci get + one grep per set, not per entry).
+	_omr_flush_sets=""
+	if [ -f /tmp/omr-bypass-entries.before ]; then
+		for _ob_sec in $(cut -d' ' -f1 /tmp/omr-bypass-entries.before | sort -u); do
+			_ob_after=" $(uci -q get "firewall.${_ob_sec}.entry") "
+			for _ob_val in $(grep "^${_ob_sec} " /tmp/omr-bypass-entries.before | cut -d' ' -f2); do
+				case "$_ob_after" in
+					*" $_ob_val "*) ;;
+					*) _omr_flush_sets="$_omr_flush_sets $_ob_sec"; break ;;
+				esac
+			done
+		done
+		rm -f /tmp/omr-bypass-entries.before
+	fi
+
 	# Restore proxy nft rules parked as .down before any fw4 run (issue #4313);
 	# unconditional because a reload with no uci delta skips the block below,
 	# and a restored file still needs an fw4 pass to be loaded
@@ -1928,6 +1946,11 @@ start_service() {
 			sleep 1
 		}
 		[ -n "$RELOAD" ] && {
+			for _ob_sec in $_omr_flush_sets; do
+				_ob_set="$(uci -q get "firewall.${_ob_sec}.name")"
+				nft flush set inet fw4 "${_ob_set:-$_ob_sec}" >/dev/null 2>&1
+			done
+			[ -n "$_omr_flush_sets" ] && logger -t "omr-bypass" "Flushed stale elements from set(s):$_omr_flush_sets"
 			fw4 reload || logger -t "omr-bypass" "ERROR: fw4 reload failed"
 		}
 	fi
@@ -2011,7 +2034,23 @@ _soft_wipe_dynamic() {
 	# skeleton: the config_foreach loops in start_service rebuild that state
 	# from the current config (so removed entries disappear), while the hash
 	# gate can still skip the expensive batch apply.
-	local key
+	local key sec v
+	# fw4's light `reload` (firewall4 2025.03+) only adds the set elements the
+	# generated ruleset declares and never removes existing ones (verified
+	# live: a deleted entry stayed in omr_dst_bypass_all_4 through `fw4
+	# reload` and `fw4 reload-sets`; only `fw4 restart` dropped it). Before the
+	# inverted-md5 fix for issue #4353 every reload_rules took the restart
+	# path, which hid this. Remember what each set held before the wipe so
+	# start_service can flush the sets that lost members right before the
+	# light reload re-adds the survivors.
+	_omr_entries_before="/tmp/omr-bypass-entries.before"
+	: > "$_omr_entries_before"
+	for key in $(uci -q show firewall 2>/dev/null | grep -E '^firewall\.(omr6?_dst_bypass|omr_dscp)_[^.]+\.entry=' | cut -d= -f1); do
+		sec="${key#firewall.}"; sec="${sec%.entry}"
+		for v in $(uci -q get "$key"); do
+			echo "$sec $v"
+		done >> "$_omr_entries_before"
+	done
 	for key in $(uci -q show firewall 2>/dev/null | grep -E '^firewall\.(omr6?_dst_bypass|omr_dscp)_[^.]+\.(entry|src_mac|src_ip|src_port|dest_port)=' | cut -d= -f1); do
 		uci -q delete "$key"
 	done
