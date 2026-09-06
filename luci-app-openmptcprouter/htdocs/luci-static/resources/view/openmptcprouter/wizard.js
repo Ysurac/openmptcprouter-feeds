@@ -940,9 +940,11 @@ return view.extend({
 
 		// IPv6 — proto=dhcp; the backend manages a companion "<intf>_6"
 		// DHCPv6 interface on the same device (SLAAC needs odhcp6c, the
-		// kernel ignores RAs on a router). Stored in openmptcprouter.<intf>
-		// because /etc/init.d/openmptcprouter rewrites network.<intf>.ipv6
-		// from the global IPv6 setting.
+		// kernel ignores RAs on a router). The companion stays at
+		// multipath=off and is hidden from the WAN lists: the device's
+		// MPTCP/SQM state belongs to this parent interface. Stored in
+		// openmptcprouter.<intf> because /etc/init.d/openmptcprouter
+		// rewrites network.<intf>.ipv6 from the global IPv6 setting.
 		o = s.option(form.ListValue, '_ipv6', _('IPv6'));
 		o.value('0', _('Disabled'));
 		o.value('1', _('Enabled (SLAAC/DHCPv6)'));

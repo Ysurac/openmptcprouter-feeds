@@ -62,7 +62,16 @@ omr_set_settings() {
 	local ifname
 	local multipath
 	# DHCPv6 companion interfaces (<intf>_6) are managed through their parent
-	case "$1" in *_6) return ;; esac
+	case "$1" in *_6)
+		# The companion shares the parent's device and must stay at
+		# multipath=off so it never counts as a WAN of its own (#4329);
+		# earlier wizard versions copied the parent's value there.
+		if [ "$(uci -q get network.$1.proto)" = "dhcpv6" ] && [ -n "$(uci -q get network.${1%_6})" ] && [ "$(uci -q get network.$1.multipath)" != "off" ]; then
+			uci -q set network.$1.multipath=off
+			[ -n "$(uci -q get openmptcprouter.$1)" ] && uci -q set openmptcprouter.$1.multipath=off
+		fi
+		return ;;
+	esac
 	config_get multipath "$1" multipath
 	network_get_device ifname $1
 	[ -z "$ifname" ] && network_get_physdev ifname $1
