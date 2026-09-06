@@ -112,7 +112,22 @@ if [ "$(uci -q get glorytun-udp.vpn.key)" = "" ] && [ "$(uci -q get glorytun.vpn
 	uci -q commit glorytun-udp
 fi
 
-if [ "$(uci -q get network.tun0.mtu)" = "1200" ] || [ -z "$(uci -q get network.tun0.mtu)" ]; then
+_omr_vpn="$(uci -q get openmptcprouter.settings.vpn)"
+if [ -z "$_omr_vpn" ] || [ "$_omr_vpn" = "mqvpn" ]; then
+	if [ -z "$(uci -q get network.tun0)" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set network.tun0=device
+			set network.tun0.name='tun0'
+			commit network
+		EOF
+	fi
+	if [ -n "$(uci -q get network.tun0.mtu)" ]; then
+		uci -q batch <<-EOF >/dev/null
+			delete network.tun0.mtu
+			commit network
+		EOF
+	fi
+elif [ "$(uci -q get network.tun0.mtu)" = "1200" ] || [ -z "$(uci -q get network.tun0.mtu)" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set network.tun0=device
 		set network.tun0.name='tun0'
@@ -178,7 +193,7 @@ if [ "$NBCPU" -gt 1 ] && [ -z "$(uci -q get openvpn.omr2)" ]; then
 			set openvpn.omr$c.passtos=1
 			set openvpn.omr$c.no_delay=1
 		EOF
-		[ -z "$(uci -q get firewall.zone_vpn.device | grep tun$((c-1)))" ] && add_list firewall.zone_vpn.device=tun$((c-1))
+		[ -z "$(uci -q get firewall.zone_vpn.device | grep tun$((c-1)))" ] && uci -q add_list firewall.zone_vpn.device=tun$((c-1))
 
 	done
 	uci -q commit openvpn
