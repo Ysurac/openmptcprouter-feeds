@@ -5,18 +5,34 @@
 
 /etc/init.d/mptcp enabled || exit 0
 
-if [ "$ACTION" = ifupdate -a -n "$IFUPDATE_ADDRESSES" ] && [ -n "$(uci -q get network.$INTERFACE.multipath)" ] && [ "$(uci -q get network.$INTERFACE.multipath)" != "off" ]; then
+# A DHCPv6 companion "<intf>_6" (wizard IPv6 SLAAC/DHCPv6 option on a DHCP
+# WAN, #4329) shares its parent's device and is kept at multipath=off so it
+# never counts as a WAN of its own (status page, MPTCP pages, trackers).
+# Its events still matter for the shared device: a new SLAAC address must
+# refresh the MPTCP endpoints, and its ifup must re-run the parent's IPv6
+# routing (mptcp reload reads the gateway from "<intf>_6" status), so the
+# multipath decision is keyed on the parent interface instead.
+MP_INTERFACE="$INTERFACE"
+case "$INTERFACE" in
+	*_6)
+		if [ "$(uci -q get network.$INTERFACE.proto)" = "dhcpv6" ] && [ -n "$(uci -q get network.${INTERFACE%_6})" ]; then
+			MP_INTERFACE="${INTERFACE%_6}"
+		fi
+	;;
+esac
+MULTIPATH="$(uci -q get network.$MP_INTERFACE.multipath)"
+
+if [ "$ACTION" = ifupdate -a -n "$IFUPDATE_ADDRESSES" ] && [ -n "$MULTIPATH" ] && [ "$MULTIPATH" != "off" ]; then
 	logger -t "mptcp" "New IP ($IFUPDATE_ADDRESSES) for $INTERFACE ($DEVICE)"
 	multipath $DEVICE off 2>&1 >/dev/null || exit 0
 	multipath $DEVICE on 2>&1 >/dev/null || exit 0
-elif [ "$ACTION" = ifupdate ] && [ -n "$(uci -q get network.$INTERFACE.multipath)" ] && [ "$(uci -q get network.$INTERFACE.multipath)" != "off" ]; then
+elif [ "$ACTION" = ifupdate ] && [ -n "$MULTIPATH" ] && [ "$MULTIPATH" != "off" ]; then
 	logger -t "mptcp" "Update of $INTERFACE ($DEVICE)"
 	multipath $DEVICE off 2>&1 >/dev/null || exit 0
 	multipath $DEVICE on 2>&1 >/dev/null || exit 0
-elif [ "$ACTION" = ifup -o "$ACTION" = iflink  -o "$ACTION" = link-up ] && [ -z "$(echo $DEVICE | grep oip | grep gre)" ] && [ -n "$(uci -q get network.$INTERFACE.multipath)" ] && [ "$(uci -q get network.$INTERFACE.multipath)" != "off" ]; then
+elif [ "$ACTION" = ifup -o "$ACTION" = iflink  -o "$ACTION" = link-up ] && [ -z "$(echo $DEVICE | grep oip | grep gre)" ] && [ -n "$MULTIPATH" ] && [ "$MULTIPATH" != "off" ]; then
 	logger -t "mptcp" "Reloading mptcp config due to $ACTION of $INTERFACE ($DEVICE)"
 	/etc/init.d/mptcp reload "$DEVICE" >/dev/null || exit 0
 elif [ "$ACTION" = ifdown -o "$ACTION" = link-down ]; then
 	multipath $DEVICE off 2>&1 >/dev/null || exit 0
 fi
-

@@ -1255,12 +1255,15 @@ function wizard_add(args)
 				-- IPv6 on a DHCP WAN (#4329) needs odhcp6c, so manage a
 				-- companion "<name>_6" DHCPv6 interface on the same device;
 				-- the tracker and post-tracking pick the address up from the
-				-- shared device and read the gateway from "<name>_6" status
+				-- shared device and read the gateway from "<name>_6" status.
+				-- It is kept at multipath=off: the device's MPTCP state
+				-- belongs to the parent (the mptcp init skips *_6 and the
+				-- 30-mptcp hotplug maps a companion event onto its parent),
+				-- and any other value made it show up as a second WAN on the
+				-- status and MPTCP pages.
 				local companion = name .. "_6"
 				if not managed_names[companion] then
 					if proto == "dhcp" and itf_ipv6 == "1" and _dev ~= "" then
-						local comp_mp = _as_string(itf.multipath, "on")
-						if comp_mp == "master" then comp_mp = "on" end
 						if ucic:get("network", companion) == nil then
 							ucic:set("network", companion, "interface")
 							ucic:set("network", companion, "reqaddress", "try")
@@ -1270,7 +1273,7 @@ function wizard_add(args)
 						end
 						ucic:set("network", companion, "proto", "dhcpv6")
 						ucic:set("network", companion, "device", _dev)
-						ucic:set("network", companion, "multipath", comp_mp)
+						ucic:set("network", companion, "multipath", "off")
 					elseif ucic:get("network", companion, "proto") == "dhcpv6" then
 						ucic:delete("network", companion)
 						ucic:delete("openmptcprouter", companion)
@@ -2550,6 +2553,9 @@ function interfaces_status()
 			end
 		end
 
+		-- DHCPv6 companion of a DHCP WAN (#4329): shares the parent's
+		-- device, never a WAN of its own
+		if interface:match("_6$") and proto == "dhcpv6" and uci:get("network", interface:sub(1, -3)) then return end
 		if multipath == "off" then return end
 		if enabled == "0" then return end
 
@@ -3003,6 +3009,9 @@ function interfaces_only_status()
 		local ifname = get_device(interface) or ""
 		if ifname == "" then ifname = section["device"] or "" end
 
+		-- DHCPv6 companion of a DHCP WAN (#4329): shares the parent's
+		-- device, never a WAN of its own
+		if interface:match("_6$") and proto == "dhcpv6" and uci:get("network", interface:sub(1, -3)) then return end
 		if multipath == "off" then return end
 		if enabled == "0" then return end
 

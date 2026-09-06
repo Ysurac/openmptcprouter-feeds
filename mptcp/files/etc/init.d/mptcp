@@ -190,6 +190,27 @@ interface_max_metric() {
 	esac
 }
 
+# sqm-scripts (cake / htb+fq_codel / hfsc set up by /usr/lib/sqm) and
+# qos-scripts own the root qdisc of the devices they shape. Replacing it with
+# fq below silently deleted the egress shaper on every "mptcp reload <device>"
+# (tracker status change, IP change, ifup hotplug) while SQM's state file still
+# claimed it was running, so SQM never re-applied it until its next restart:
+# LuCI and the wizard showed SQM enabled, tc showed plain fq (#4329).
+# Leave the root qdisc alone whenever another shaper manages this device.
+_root_qdisc_managed_elsewhere() {
+	local dev="$1" config="$2" state_dir sec
+	[ -n "$dev" ] || return 1
+	state_dir="$(. /etc/sqm/sqm.conf 2>/dev/null; echo "${SQM_STATE_DIR:-/var/run/sqm}")"
+	[ -f "${state_dir}/${dev}.state" ] && return 0
+	# an enabled sqm queue on this device: named after the interface by the
+	# wizard, or an anonymous section created from the LuCI SQM page
+	for sec in $(uci -q show sqm 2>/dev/null | sed -n "s/^sqm\.\([^.]*\)\.interface='${dev}'\$/\1/p"); do
+		[ "$(uci -q get sqm.${sec}.enabled)" = "1" ] && return 0
+	done
+	[ "$(uci -q get qos.${config}.enabled)" = "1" ] && return 0
+	return 1
+}
+
 interface_multipath_settings() {
 	local mode iface proto metric ip4table qdisc
 	local config="$1"
@@ -433,7 +454,7 @@ interface_multipath_settings() {
 			#ifconfig $iface txqueuelen 1000 > /dev/null 2>&1
 			ip link set dev $iface txqueuelen 1000 > /dev/null 2>&1
 		fi
-		tc qdisc replace dev $iface root ${qdisc:-fq} > /dev/null 2>&1
+		_root_qdisc_managed_elsewhere "$iface" "$config" || tc qdisc replace dev $iface root ${qdisc:-fq} > /dev/null 2>&1
 	fi
 	if [ -z "$gateway" ] && [ -n "$network" ]; then
 		if [ "$uci_route" = "1" ]; then
@@ -469,7 +490,7 @@ interface_multipath_settings() {
 			#ifconfig $iface txqueuelen 1000 > /dev/null 2>&1
 			ip link set dev $iface txqueuelen 1000 > /dev/null 2>&1
 		fi
-		tc qdisc replace dev $iface root ${qdisc:-fq} > /dev/null 2>&1
+		_root_qdisc_managed_elsewhere "$iface" "$config" || tc qdisc replace dev $iface root ${qdisc:-fq} > /dev/null 2>&1
 	fi
 	if [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$config" != "omr6in4" ]; then
 		# IPv6 Updates:
