@@ -117,6 +117,63 @@ _set_omr_proxy_state() {
 	uci -q commit openmptcprouter
 }
 
+# Is the procd instance of the ss_redir section $1 (in $_ss_cfg) running?
+# Both shadowsocks init scripts name their instances "<cfgtype>.<section>".
+_ss_redir_running() {
+	[ "$(ubus -S call service list "{\"name\":\"${_ss_cfg}\"}" 2>/dev/null \
+		| jsonfilter -q -e "@[\"${_ss_cfg}\"].instances[\"ss_redir.$1\"].running")" = "true" ]
+}
+
+# Print the ss_redir sections pointing at ${server} that are enabled in uci but
+# have no running procd instance. The ss_rules redirect range is built from the
+# uci state and the kernel hands a DNAT range to its first free port, so one
+# such section makes every proxied TCP connection (router and LAN) get refused
+# on the loopback: only a service restart brings the instance back, a
+# rules_reset alone re-points the range at the dead port.
+_ss_missing_redirs() {
+	local _missing=""
+	_check_redir() {
+		[ "$(uci -q get ${_ss_cfg}.$1.server)" != "$2" ] && return
+		[ "$(uci -q get ${_ss_cfg}.$1.disabled)" = "1" ] && return
+		_ss_redir_running "$1" || _missing="${_missing:+$_missing }$1"
+	}
+	config_load "$_ss_cfg"
+	config_foreach _check_redir ss_redir "${server}"
+	printf '%s' "$_missing"
+}
+
+# Number of ss_redir sections pointing at ${server} still enabled in uci. Zero
+# once the down path has disabled them, which keeps that path from firing (and
+# reloading the firewall twice) on every further failed cycle.
+_ss_active_redirs() {
+	local _n=0
+	_count_redir() {
+		[ "$(uci -q get ${_ss_cfg}.$1.server)" != "$2" ] && return
+		[ "$(uci -q get ${_ss_cfg}.$1.disabled)" = "1" ] && return
+		_n=$((_n + 1))
+	}
+	# config_foreach iterates nothing until the package is loaded in this
+	# process: a server that never came up would otherwise never be marked down
+	config_load "$_ss_cfg"
+	config_foreach _count_redir ss_redir "${server}"
+	printf '%s' "$_n"
+}
+
+# Restart the proxy service when _ss_missing_redirs finds something, re-checked
+# once after a short pause so a restart already in progress is not doubled.
+# Returns 0 when a restart was issued.
+_ss_restart_if_redir_missing() {
+	local _missing
+	_missing="$(_ss_missing_redirs)"
+	[ -n "$_missing" ] || return 1
+	sleep 2
+	_missing="$(_ss_missing_redirs)"
+	[ -n "$_missing" ] || return 1
+	_log "Shadowsocks $type ${server}: redir instance ${_missing} not running, restart ${_ss_cfg}"
+	/etc/init.d/${_ss_cfg} restart >/dev/null 2>&1
+	return 0
+}
+
 timeout=${OMR_TRACKER_TIMEOUT:-5}
 interval=${OMR_TRACKER_INTERVAL:-10}
 retry=${OMR_TRACKER_TRIES:-4}
@@ -169,7 +226,10 @@ while true; do
 				config_load "$_ss_cfg"
 				config_foreach _remove_rule ss_redir "${server}"
 				uci -q commit "$_ss_cfg"
-				/etc/init.d/${_ss_cfg} rules_reset 2>/dev/null
+				# The sections re-enabled above have no running instance when the
+				# service was restarted while they were disabled: restart it then,
+				# a rules_reset alone would redirect to a port nobody listens on
+				_ss_restart_if_redir_missing || /etc/init.d/${_ss_cfg} rules_reset 2>/dev/null
 			fi
 			#[ "$type" = "libev" ] && /etc/init.d/shadowsocks-libev rules_up 2> /dev/null
 			#[ "$type" = "rust" ] && /etc/init.d/shadowsocks-rust rules_up 2> /dev/null
@@ -210,6 +270,9 @@ while true; do
 			fi
 		fi
 		[ "$(uci -q get openmptcprouter.omr.detected_public_ipv4)" = "" ] || { [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.detected_public_ipv6)" = "" ]; } && _get_ip
+		# First healthy cycle of this tracker process: catch a redir section that
+		# was re-enabled without a service restart before this process existed
+		[ -n "$_ss_cfg" ] && [ -z "$OMR_TRACKER_PREV_STATUS" ] && _ss_restart_if_redir_missing
 		last=0
 		OMR_TRACKER_STATUS="OK"
 		_set_omr_proxy_state "up"
@@ -224,17 +287,10 @@ while true; do
 		rust)
 			serverip="$(uci -q get shadowsocks-rust.${server}.server)"
 			disabled="$(uci -q get shadowsocks-rust.${server}.disabled)"
-			config_foreach shadowsocks-rust ${server}
 			;;
 		esac
 		ssredir=0
-		if [ -n "$_ss_cfg" ]; then
-			_remove_rule() {
-				[ "$(uci -q get ${_ss_cfg}.$1.server)" = "$2" ] && ssredir=$((ssredir + 1))
-			}
-			config_foreach _remove_rule ss_redir "${server}"
-			uci -q commit "$_ss_cfg"
-		fi
+		[ -n "$_ss_cfg" ] && ssredir="$(_ss_active_redirs)"
 
 		[ "${last}" -ge "${retry}" ] && [ "$ssredir" -ge 1 ] && {
 			nft_ruleset="$(nft list ruleset 2>/dev/null)"

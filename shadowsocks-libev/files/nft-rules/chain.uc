@@ -39,6 +39,26 @@ function get_ifnames() {
 	return res;
 }
 
+// Port expression for the TCP redirect/tproxy statement. One port is used as
+// is; several (space or comma separated, every enabled ss_redir instance when
+// ss_rules.redir_tcp is "all") become a round-robin over the list: the kernel
+// would hand a plain "1100-1101" DNAT range to its first free port every time,
+// so no connection ever reached the other instances. NAT rules run once per
+// new connection, so "numgen inc" spreads connections, not packets.
+function redir_target(ports) {
+	let list = [];
+	for (let p in split(ports, /[ \t\n,]+/)) {
+		p = trim(p);
+		if (p) push(list, p);
+	}
+	if (length(list) <= 1)
+		return trim(ports);
+	let entries = [];
+	for (let i = 0; i < length(list); i++)
+		push(entries, sprintf("%d : %s", i, list[i]));
+	return sprintf("numgen inc mod %d map { %s }", length(list), join(", ", entries));
+}
+
 let type, hook, priority, redir_port, rules_name;
 rules_name = o_oip_rules_name;
 if (proto == "tcp") {
@@ -107,9 +127,9 @@ chain ss_rules_dst_{{ proto }} {
 {%   if (proto == "tcp"): %}
 chain ss_rules_forward_{{ proto }} {
 {%	if (rules_name != ""): %}
-	meta l4proto tcp {{ o_nft_tcp_extra }} ip saddr @ss_rules_src_forward_oip_{{ rules_name }} redirect to :{{ redir_port }};
+	meta l4proto tcp {{ o_nft_tcp_extra }} ip saddr @ss_rules_src_forward_oip_{{ rules_name }} redirect to :{{ redir_target(redir_port) }};
 {%	else %}
-	meta l4proto tcp {{ o_nft_tcp_extra }} redirect to :{{ redir_port }};
+	meta l4proto tcp {{ o_nft_tcp_extra }} redirect to :{{ redir_target(redir_port) }};
 {%	endif %}
 }
 {%	let local_verdict = get_local_verdict(); if (local_verdict): %}

@@ -166,6 +166,7 @@ ss_redir_ports() {
 	server_redir=$(uci -q get shadowsocks-libev.$1.server)
 	disabled=$(uci -q get shadowsocks-libev.$1.disabled)
 	server_disabled=$(uci -q get shadowsocks-libev.${server_redir}.disabled)
+	mode=$(uci -q get shadowsocks-libev.$1.mode)
 	if [ "$disabled" != "1" ] && [ "$server_disabled" != "1" ] && [ "$server" = "$server_redir" ]; then
 		if [ "$port" -lt "$min_ss_redir_ports" ]; then
 			min_ss_redir_ports=$port
@@ -173,6 +174,7 @@ ss_redir_ports() {
 		if [ "$port" -gt "$max_ss_redir_ports" ]; then
 			max_ss_redir_ports=$port
 		fi
+		[ "$mode" = "udp_only" ] || ss_redir_tcp_ports="$ss_redir_tcp_ports $port"
 	fi
 }
 
@@ -218,14 +220,14 @@ ss_rules_nft_gen() {
 #	if [ "$ss_rules_redir_tcp_$redir_tcp" = "all" ]; then
 		min_ss_redir_ports="65535"
 		max_ss_redir_ports="0"
+		ss_redir_tcp_ports=""
 		config_load shadowsocks-libev
 		config_foreach ss_redir_ports ss_redir $server
-		if [ "$min_ss_redir_ports" != "$max_ss_redir_ports" ]; then
-			all_ss_redir_ports=$min_ss_redir_ports-$max_ss_redir_ports
-		else
-			all_ss_redir_ports=$min_ss_redir_ports
-		fi
-		local_port_tcp="$all_ss_redir_ports"
+		# The exact list of enabled TCP redir ports, not a min-max range: the
+		# kernel gives a DNAT range to its first free port (no balancing) and a
+		# disabled section in the middle would leave a dead port inside the
+		# range. The template round-robins new connections over the list.
+		local_port_tcp="$(echo $ss_redir_tcp_ports | tr ' ' '\n' | sort -nu | tr '\n' ' ' | sed 's/ *$//')"
 		if [ "$ss_rules_redir_udp_$redir_udp" = "all" ] || [ "$ss_rules_redir_udp_$redir_udp" = "hi1" ]; then
 			local_port_udp="$min_ss_redir_ports"
 		fi
