@@ -9,7 +9,13 @@ OMR_QUOTA_INTERFACE="$1"
 shift
 
 _PERSIST_DIR="${OMR_QUOTA_STATE_DIR:-/etc/omr-quota/state}"
-_TSTATE_DIR="${OMR_QUOTA_THROTTLE_STATE_DIR:-/tmp/omr-quota}"
+# Runtime marker directory (tmpfs). This is a cross-package interface, not a
+# private detail: omr-tracker's post-tracking.d/002-error reads the *.cut
+# markers here so a quota cut is not mistaken for a connectivity failure, and
+# it resolves the directory as OMR_QUOTA_RUNTIME_DIR -- so that is the
+# canonical name. OMR_QUOTA_THROTTLE_STATE_DIR stays accepted: it is what the
+# omr-quota unit tests already pass.
+_TSTATE_DIR="${OMR_QUOTA_RUNTIME_DIR:-${OMR_QUOTA_THROTTLE_STATE_DIR:-/tmp/omr-quota}}"
 
 # Enforcement markers, keyed by this daemon's identity ($1 -- the interface
 # name for "interface" sections, "global_<id>" for "global" ones). Besides
@@ -66,11 +72,27 @@ _vnstat_usage() {
 	[ -z "$dev" ] && { printf '0 0 0'; return; }
 
 	if [ -n "$OMR_QUOTA_BEGINDATE" ]; then
-		json="$(vnstat -i "$dev" -b "$OMR_QUOTA_BEGINDATE" --json 2>/dev/null)" || {
+		# Usage since a date has to come from the *daily* buckets. The obvious
+		# "vnstat -i <dev> -b <date> --json" + traffic.total does not work:
+		# -b only bounds vnstat's list output, while traffic.total is the
+		# interface's whole recorded history, so the date was silently ignored
+		# and a begindate quota counted every byte vnstat had ever seen for
+		# that device. Proved on the bench: -b <first of month>, -b
+		# <yesterday> and -b <a future day> all returned 694221137, while the
+		# daily sums for the same dates were 694221137, 411937225 and 0.
+		# Note vnstat only keeps a limited daily history (DailyDays, 30 by
+		# default), so a begindate older than that counts from the oldest day
+		# still in the database.
+		json="$(vnstat -i "$dev" --json d -b "$OMR_QUOTA_BEGINDATE" 2>/dev/null)" || {
 			printf '0 0 0'; return
 		}
-		rx_bytes="$(printf '%s' "$json" | jsonfilter -q -e '@.interfaces[0].traffic.total.rx' | tr -d "\n")"
-		tx_bytes="$(printf '%s' "$json" | jsonfilter -q -e '@.interfaces[0].traffic.total.tx' | tr -d "\n")"
+		# printf in awk rather than print: print applies awk's OFMT/CONVFMT
+		# to a non-integral or very large sum (%.6g), which the numeric check
+		# below would reject; "%.0f" always renders a plain integer. (Busybox
+		# awk on the bench prints these magnitudes as integers either way --
+		# this is belt and braces, not a reproduced failure.)
+		rx_bytes="$(printf '%s' "$json" | jsonfilter -q -e '@.interfaces[0].traffic.day[*].rx' | awk '{s+=$1} END{printf "%.0f", s+0}')"
+		tx_bytes="$(printf '%s' "$json" | jsonfilter -q -e '@.interfaces[0].traffic.day[*].tx' | awk '{s+=$1} END{printf "%.0f", s+0}')"
 	else
 		json="$(vnstat -i "$dev" --json 2>/dev/null)" || {
 			printf '0 0 0'; return
@@ -84,25 +106,67 @@ _vnstat_usage() {
 	printf '%s %s 1' "$(( rx_bytes / 1024 ))" "$(( tx_bytes / 1024 ))"
 }
 
-_apply_throttle() {
-	local dev="$1"
-	local dl_kbit=$(( ${OMR_QUOTA_THROTTLE_DL:-1} * 1000 ))
-	local ul_kbit=$(( ${OMR_QUOTA_THROTTLE_UL:-1} * 1000 ))
+# SQM (cake/htb+fq_codel via /usr/lib/sqm) owns the root qdisc of the devices
+# it shapes. Our tbf replaces it, so a device that SQM manages has to be
+# handed over explicitly: stop SQM before shaping (otherwise its state file
+# claims it is running while our tbf is installed, and any "sqm reload" puts
+# cake back on top of us) and start it again after unshaping (otherwise the
+# user's shaper is silently gone once a quota clears, while SQM still reports
+# it active -- the same failure mode as issue #4329, where mptcp's fq default
+# wiped cake). Paths are overridable for the unit tests.
+_SQM_RUN="${OMR_QUOTA_SQM_RUN:-/usr/lib/sqm/run.sh}"
+
+# _sqm_manages <dev>: is this device shaped by SQM (running, or configured)?
+_sqm_manages() {
+	local dev="$1" state_dir sec
+	[ -n "$dev" ] || return 1
+	[ -x "$_SQM_RUN" ] || return 1
+	state_dir="${OMR_QUOTA_SQM_STATE_DIR:-$(. /etc/sqm/sqm.conf 2>/dev/null; echo "${SQM_STATE_DIR:-/var/run/sqm}")}"
+	[ -f "${state_dir}/${dev}.state" ] && return 0
+	for sec in $(uci -q show sqm 2>/dev/null | sed -n "s/^sqm\.\([^.]*\)\.interface='${dev}'\$/\1/p"); do
+		[ "$(uci -q get sqm.${sec}.enabled)" = "1" ] && return 0
+	done
+	return 1
+}
+
+# _shape_device <dev> <dl kbit> <ul kbit> <burst> <latency>: bidirectional
+# shaping, the only way tc can limit what a device *receives*.
+#
+# Egress is a tbf on the device's own root qdisc. Ingress cannot be shaped
+# directly, so all incoming traffic is redirected (u32/mirred) to an IFB
+# device that carries its own tbf -- the standard Linux trick. The IFB name
+# is "ifb-<dev>" with "/" sanitized to "-", since MPTCP sub-interfaces can
+# contain one.
+#
+# Both the throttle action and the daily-budget speed limit go through this:
+# the budget limit used to install the egress tbf only, which on a WAN device
+# limits upload and leaves download untouched. Measured on the bench with a
+# derived 2 Mbit/s limit: upload 1897 kbit/s, download 20003 kbit/s, i.e. a
+# "limit speed using remaining daily volume" that did not slow the direction
+# the volume is actually spent on.
+_shape_device() {
+	local dev="$1" dl_kbit="$2" ul_kbit="$3" burst="$4" latency="$5"
 	local ifb_dev="ifb-$(echo "$dev" | tr '/' '-')"
+	if _sqm_manages "$dev"; then
+		logger -t "OMR-QUOTA" "Taking over the SQM shaper on $dev"
+		"$_SQM_RUN" stop "$dev" >/dev/null 2>&1
+	fi
 	modprobe ifb 2>/dev/null || true
 	if ! ip link show "$ifb_dev" > /dev/null 2>&1; then
 		ip link add name "$ifb_dev" type ifb
 	fi
 	ip link set "$ifb_dev" up
-	tc qdisc replace dev "$dev" root tbf rate "${ul_kbit}kbit" burst 32768 latency 400ms
+	tc qdisc replace dev "$dev" root tbf rate "${ul_kbit}kbit" burst "$burst" latency "$latency"
 	tc qdisc add dev "$dev" handle ffff: ingress 2>/dev/null || true
 	tc filter del dev "$dev" parent ffff: 2>/dev/null || true
 	tc filter add dev "$dev" parent ffff: protocol all u32 match u32 0 0 \
 		action mirred egress redirect dev "$ifb_dev"
-	tc qdisc replace dev "$ifb_dev" root tbf rate "${dl_kbit}kbit" burst 32768 latency 400ms
+	tc qdisc replace dev "$ifb_dev" root tbf rate "${dl_kbit}kbit" burst "$burst" latency "$latency"
 }
 
-_remove_throttle() {
+# _unshape_device <dev>: undo _shape_device, including the IFB device, and
+# give the device back to SQM if that is what shapes it normally
+_unshape_device() {
 	local dev="$1"
 	local ifb_dev="ifb-$(echo "$dev" | tr '/' '-')"
 	tc qdisc del dev "$dev" root 2>/dev/null || true
@@ -111,6 +175,21 @@ _remove_throttle() {
 		tc qdisc del dev "$ifb_dev" root 2>/dev/null || true
 		ip link del "$ifb_dev" 2>/dev/null || true
 	fi
+	if _sqm_manages "$dev"; then
+		logger -t "OMR-QUOTA" "Restoring the SQM shaper on $dev"
+		"$_SQM_RUN" start "$dev" >/dev/null 2>&1
+	fi
+}
+
+_apply_throttle() {
+	_shape_device "$1" \
+		"$(( ${OMR_QUOTA_THROTTLE_DL:-1} * 1000 ))" \
+		"$(( ${OMR_QUOTA_THROTTLE_UL:-1} * 1000 ))" \
+		32768 400ms
+}
+
+_remove_throttle() {
+	_unshape_device "$1"
 }
 
 # _wait_iface_up <iface> [seconds]: after ifup, wait (bounded) for netifd to
@@ -132,22 +211,40 @@ _wait_iface_up() {
 
 _apply_downstream_limit() {
 	local rate_kbit="$1"
-	local iface dev
+	local iface dev list prev
 	[ -z "$rate_kbit" ] && return
+	list="${OMR_QUOTA_DOWN_INTERFACES:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}"
+	# down_interfaces can be edited while a daily-budget limit is active (the
+	# daemon is relaunched with the new list). Drop the shaper from the
+	# interfaces that are no longer targets first, or their tbf stays in
+	# place for good: the marker written below is the only record of what was
+	# shaped, and it is about to be overwritten with the new list.
+	if [ -f "$_downstream_file" ]; then
+		prev="$(cat "$_downstream_file")"
+		for iface in $prev; do
+			case " $list " in *" $iface "*) continue ;; esac
+			dev="$(_get_real_interface "$iface")"
+			[ -n "$dev" ] && _unshape_device "$dev"
+		done
+	fi
 	mkdir -p "$_TSTATE_DIR"
-	printf '%s' "${OMR_QUOTA_DOWN_INTERFACES:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}" > "$_downstream_file"
-	for iface in ${OMR_QUOTA_DOWN_INTERFACES:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}; do
+	printf '%s' "$list" > "$_downstream_file"
+	for iface in $list; do
 		dev="$(_get_real_interface "$iface")"
-		[ -n "$dev" ] && tc qdisc replace dev "$dev" root tbf rate "${rate_kbit}kbit" burst 5k latency 200ms
+		# the derived rate is a volume budget, so it caps both directions
+		[ -n "$dev" ] && _shape_device "$dev" "$rate_kbit" "$rate_kbit" 5k 200ms
 	done
 }
 
 _remove_downstream_limit() {
-	local iface dev
+	local iface dev list
 	[ -f "$_downstream_file" ] || return
-	for iface in ${OMR_QUOTA_DOWN_INTERFACES:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}; do
+	# what was actually shaped, not what the current environment says: the
+	# two differ exactly when down_interfaces changed under a live limit
+	list="$(cat "$_downstream_file")"
+	for iface in ${list:-${OMR_QUOTA_DOWN_INTERFACES:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}}; do
 		dev="$(_get_real_interface "$iface")"
-		[ -n "$dev" ] && tc qdisc del dev "$dev" root 2>/dev/null || true
+		[ -n "$dev" ] && _unshape_device "$dev"
 	done
 	rm -f "$_downstream_file"
 }
@@ -274,7 +371,7 @@ _undo_enforcement() {
 		list="$(cat "$_downstream_file")"
 		for iface in ${list:-${OMR_QUOTA_DOWN_INTERFACES:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}}; do
 			dev="$(_get_real_interface "$iface")"
-			[ -n "$dev" ] && tc qdisc del dev "$dev" root 2>/dev/null || true
+			[ -n "$dev" ] && _unshape_device "$dev"
 		done
 		rm -f "$_downstream_file"
 		undone=1
@@ -304,7 +401,7 @@ fi
 
 _calculate_budget_limit() {
 	local tt="$1"
-	local now today midnight end_ts today_ts rd rv dv mm seconds_left percent threshold
+	local now today midnight end_ts today_ts rd rv dv mm seconds_left percent threshold ci
 
 	[ -n "$OMR_QUOTA_TT" ] && [ "$OMR_QUOTA_TT" -gt 0 ] || return
 	[ -n "$OMR_QUOTA_ENDDATE" ] || return
@@ -330,7 +427,24 @@ _calculate_budget_limit() {
 	[ "$mm" -ge 1439 ] && mm=1439
 
 	if [ "${OMR_QUOTA_METHOD:-0}" = "1" ]; then
-		if [ "$(( now - last_calculation ))" -gt "${OMR_QUOTA_CALCULATION_INTERVAL:-120}" ]; then
+		# The checkpoint (last_tt) has to survive at least one poll: the main
+		# loop measures "usage since the checkpoint" *after* this function
+		# runs, so a calculation_interval at or below the poll interval moves
+		# the checkpoint to the current usage on every single iteration, the
+		# measured growth is always 0 and the budget can never be exceeded --
+		# method 1 is silently inert. Seen on the bench with
+		# calculation_interval=1 and interval=5: two 150 KB traffic bursts
+		# against a 2 KiB budget produced no cut in five minutes. Clamp to
+		# twice the poll interval and say so once.
+		ci="${OMR_QUOTA_CALCULATION_INTERVAL:-120}"
+		if [ "$ci" -le "${OMR_QUOTA_INTERVAL:-60}" ]; then
+			if [ "${_budget_ci_warned:-0}" != "1" ]; then
+				logger -t "OMR-QUOTA" "calculation_interval (${ci}s) must be longer than the poll interval (${OMR_QUOTA_INTERVAL:-60}s) to measure a daily budget: using $(( ${OMR_QUOTA_INTERVAL:-60} * 2 ))s"
+				_budget_ci_warned=1
+			fi
+			ci=$(( ${OMR_QUOTA_INTERVAL:-60} * 2 ))
+		fi
+		if [ "$(( now - last_calculation ))" -gt "$ci" ]; then
 			cv=$(( dv / (1440 - mm + 1) ))
 			last_tt=$tt
 			last_calculation=$now
