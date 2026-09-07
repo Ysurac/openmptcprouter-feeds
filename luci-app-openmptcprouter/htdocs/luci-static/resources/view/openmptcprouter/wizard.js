@@ -1045,6 +1045,17 @@ return view.extend({
 		o.value('master', _('Master'));
 		o.value('backup', _('Backup'));
 		o.default = 'on';
+		/* rmempty must stay false: LuCI removes the uci value instead of
+		 * writing it whenever the selected formvalue equals o.default and
+		 * rmempty (or optional) is true (see the 'proxy' option above, #4348).
+		 * With o.default = 'on', picking "Enabled" therefore deleted
+		 * network.<iface>.multipath instead of setting it, and mptcp's init
+		 * script then restored the previous mode from its own copy in
+		 * openmptcprouter.<iface>.multipath: a WAN that had once been set to
+		 * "Backup" came back as backup however often it was set to "Enabled"
+		 * here (discussion #4368). Every mode is an explicit value below, so
+		 * this option never needs "unset" semantics. */
+		o.rmempty = false;
 
 		o = s.option(form.Value, '_ttl', _('Force TTL'));
 		o.rmempty = true;

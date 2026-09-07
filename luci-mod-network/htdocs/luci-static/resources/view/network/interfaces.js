@@ -1236,6 +1236,12 @@ return view.extend({
 				o.value('master',_('Master'));
 				o.value('backup',_('Backup'));
 				o.default = 'off';
+				/* LuCI removes the uci value instead of writing it when the
+				 * selected value equals o.default and rmempty is true, so
+				 * picking "Disabled" left network.<iface>.multipath unset and
+				 * mptcp's init script restored the previous mode from
+				 * openmptcprouter.<iface>.multipath (discussion #4368). */
+				o.rmempty = false;
 
 				o = nettools.replaceOption(s,'advanced', form.Value, 'addlatency', _('Additional latency'));
 				o.datatype = 'uinteger';
