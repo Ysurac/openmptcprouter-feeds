@@ -52,14 +52,35 @@ required on `global` ones):
   default `120`) — daily-budget trigger threshold and method `1` recalculation
   cadence.
 - `block_lan` (bool, default `0`) — with cut action, also flips
-  `firewall.zone_lan.input` to `DROP` and stops `shadowsocks-rust.sss0` while
-  quota enforcement is active, restoring both when the quota clears.
+  `firewall.zone_lan.input` to `DROP` while quota enforcement is active. This
+  blocks every transparent proxy uniformly without changing proxy UCI state
+  or fighting `omr-schedule`; the router itself stays reachable from the LAN
+  (LuCI, SSH, DNS, DHCP, ping) through explicit
+  `firewall.omr_quota_lan_*` ACCEPT rules, see below.
 - `interval` (uinteger, default `30`) — seconds between daemon polls.
 - `enabled` (bool, default `0`).
 - `exceedance_action` (`cut` default, or `throttle`).
 - `throttle_dl` / `throttle_ul` (uinteger, Mbps, default `1`) — used only when `exceedance_action=throttle`.
 - `exceedance_scope` (`month_only` default, or `persistent`) — see below.
 - `reset_exceeded` (bool) — one-shot trigger, cleared automatically once processed.
+
+`reset_exceeded` is processed (`_reset_baseline_if_requested`: persistent
+marker removed, one-shot flag cleared) **before** the `enabled` / quota-value
+early returns, so a reset requested on a disabled quota is honoured too --
+otherwise the flag stayed set and the persistent marker cut the interface
+again the moment the quota was re-enabled, with no way to clear it from the
+UI while disabled. (The baseline itself is only recorded by a launched
+daemon, so it applies once the quota is enabled again.)
+
+`_track_vnstat` makes sure vnstat counts the *device* behind each quota'd
+interface (`l3_device`, or `device` for `@` aliases -- vnstat knows
+`eth1`/`pppoe-wan`, not `wan1`): it appends the device to
+`vnstat.@vnstat[-1].interface` if it isn't listed, commits, and reloads
+vnstat once. Interfaces whose device can't be resolved at that moment (down
+at boot) are skipped. The previous version appended the *logical* name --
+never counted by vnstat -- and, matching the whole space-joined list
+instead of one entry, appended it again on every reload as an uncommitted
+uci change that any later `uci commit vnstat` would have written out.
 
 For `interface` sections, the section name **is** the logical interface name
 and is passed as `$1` (`OMR_QUOTA_INTERFACE`) to the daemon
@@ -115,9 +136,27 @@ Each iteration:
    `logger -t OMR-QUOTA` (edge-triggered on `_prev_exceeded`, not every
    loop). On the cut path, `_block_lan` / `_unblock_lan` run once (not
    per-interface) alongside the `ifdown`/`ifup` loop when
-   `OMR_QUOTA_BLOCK_LAN=1`.
+   `OMR_QUOTA_BLOCK_LAN=1`. On the throttle path an interface that is down
+   (typically: cut by the previous daemon before the action was switched to
+   throttle) is brought up **first** and `_wait_iface_up` waits (bounded,
+   10 s) for netifd to report it up before `_apply_throttle` runs -- the
+   ifup hotplug runs `mptcp reload <dev>`, which replaces the device's root
+   qdisc, so a tbf installed while the interface was still down was wiped a
+   second later and the upload ran unshaped until the next poll. (`mptcp`'s
+   `_root_qdisc_managed_elsewhere` guard also leaves a `tbf` root alone
+   now, so a later `mptcp reload` -- tracker status change, IP change --
+   doesn't lift the throttle either.) The loop records what it enforces in
+   the markers described below.
 5. `sleep "$OMR_QUOTA_INTERVAL"` and repeat — the process never exits on its
    own; procd/`stop` is what tears it down.
+
+`_vnstat_usage` distinguishes a valid zero counter from an unreadable sample
+(missing device, failed command, or incomplete JSON). If any member of a quota
+has an unreadable sample while a cut/throttle marker or the previous loop says
+enforcement is active, the loop preserves that enforcement until a complete
+sample proves the quota is no longer exceeded. This prevents a temporary
+vnstat failure during modem teardown from being interpreted as a month reset
+and triggering an `ifup`.
 
 ### Usage baseline / `reset_exceeded` (`_read_baseline`, `OMR_QUOTA_RESET_BASELINE`)
 
@@ -141,6 +180,45 @@ main loop. `init.d/omr-quota` sets that env var whenever
 `reset_exceeded=1` is set on the section (in addition to its existing
 persistent-marker cleanup), so a single `reset_exceeded` trigger un-exceeds
 *both* scopes immediately, regardless of which one is configured.
+
+### Enforcement markers and undo mode (`OMR_QUOTA_UNDO=1`)
+
+The daemon records what it currently enforces under `_TSTATE_DIR`
+(`${OMR_QUOTA_THROTTLE_STATE_DIR:-/tmp/omr-quota}`), keyed by its identity
+(`$1`), each file listing the interfaces concerned (space separated):
+
+| Marker | Written when | Removed when |
+| --- | --- | --- |
+| `<id>.cut` | the cut path runs (`target_interfaces`) | the not-exceeded path brings the interfaces up, or a throttle daemon takes over |
+| `<id>.throttled` | the throttle path runs (`target_interfaces`) | the not-exceeded path runs `_remove_throttle` |
+| `<id>.downstream` | `_apply_downstream_limit` (down interfaces, daily-budget method 2) | `_remove_downstream_limit` |
+| `<id>.blocklan` | `_block_lan` actually flips the LAN input to DROP | `_unblock_lan` |
+
+Two consumers besides the daemon itself:
+
+- **`get_status`** (rpcd) reports `cut` / `throttled` from `<id>.cut` /
+  `<id>.throttled`.
+- **`OMR_QUOTA_UNDO=1 /bin/omr-quota <id>`** runs `_undo_enforcement` and
+  exits instead of entering the loop: it removes the tc shapers of the
+  interfaces listed in `.throttled` / `.downstream` (device resolved through
+  the `<iface>.realdev` cache, since a cut interface has no `l3_device`),
+  restores the LAN input if `.blocklan` exists, `ifup`s the interfaces listed
+  in `.cut`, deletes the markers and logs
+  `Quota enforcement for <id> lifted`. `init.d/omr-quota` calls it from
+  `start_service` for every marker whose section is no longer active
+  (`_quota_active`: missing, disabled, no quota value, or a `global` section
+  without `interfaces`) and from `service_stopped` for every marker on a
+  real stop. Without this, disabling or removing a quota whose interface was
+  cut left it down for good, and a throttled one stayed shaped: the daemon
+  was simply not relaunched and nothing else knew what it had done.
+
+  A `reload` (`reload_service` = stop + start, with `_OMR_QUOTA_RELOADING`
+  set so `service_stopped` does nothing) deliberately does **not** undo the
+  enforcement of quotas that stay enabled: their daemons are relaunched and
+  carry on, so a network or omr-quota config change never causes an
+  ifup/ifdown flap of a legitimately cut interface. `restart` (rc.common's
+  own stop + start) does lift everything and lets the new daemons re-enforce
+  on their first loop.
 
 ### Exceedance scope
 
@@ -181,13 +259,40 @@ Both methods are mutually exclusive per section (`method` is a single
 ### LAN block on cut (`_block_lan` / `_unblock_lan`)
 
 When `block_lan=1` and `exceedance_action=cut`, bringing the interface down
-also sets `firewall.zone_lan.input=DROP` (committed + `firewall reload`) and
-stops `shadowsocks-rust` if `shadowsocks-rust.sss0` is currently set to
-`ss_rules`, disabling that section so it doesn't restart on its own. Both are
-reverted (`ACCEPT` / re-enable + start) in `_unblock_lan` once the interface
-is brought back up. This is meant to stop LAN clients from silently falling
-back to another route (e.g. a second WAN or the proxy) once the quota'd
-interface is cut.
+also sets `firewall.zone_lan.input=DROP` (committed + `firewall reload`), then
+restores `ACCEPT` in `_unblock_lan` once the interface is brought back up.
+Proxy processes and their UCI enabled/disabled state are deliberately left
+unchanged: stopping one backend was incomplete (the others stayed running),
+and `omr-schedule/021-proxy` could immediately restore the configured one.
+The firewall policy itself blocks every transparent-proxy redirect (ss, xray,
+v2ray, hysteria) because each is delivered to the router's own input path.
+
+**The router itself always stays reachable from the LAN.** A bare
+`input=DROP` would also cut LuCI, SSH, DNS and DHCP — the admin could no
+longer open the quota page to lift the block, and clients would lose their
+leases while it lasts. So `_block_lan` creates three named rule sections
+alongside the policy flip, which fw4 evaluates in `input_lan` *before* the
+zone's policy jump:
+
+| Section | Match | Purpose |
+| --- | --- | --- |
+| `firewall.omr_quota_lan_tcp` | `src=lan proto=tcp dest_port=<luci> <ssh> 53` | LuCI (uhttpd `listen_http`/`listen_https` ports, default `80 443`), SSH (every `dropbear.*.Port`, default `22`), DNS |
+| `firewall.omr_quota_lan_udp` | `src=lan proto=udp dest_port=53 67 547` | DNS, DHCPv4 server, DHCPv6 server |
+| `firewall.omr_quota_lan_icmp` | `src=lan proto=icmp` | ping and IPv6 neighbour discovery (fw4 expands `icmp` to `icmp` + `ipv6-icmp`) |
+
+Ports are read live (`_lan_access_tcp_ports` / `_uci_ports`) so a LuCI or
+SSH daemon moved to a non-default port stays reachable; each service falls
+back to its stock default when its config exposes nothing. `_unblock_lan`
+deletes the three sections together with the policy revert. Both functions
+key their "already done" check on the policy *and* the presence of
+`firewall.omr_quota_lan_tcp`: an `input=DROP` left by an older daemon without
+the rules still gets them added, and access rules left behind after someone
+restored `input=ACCEPT` by hand are still cleaned up.
+
+Note that DNS resolution keeps working for LAN clients during a block (the
+router's resolver answers over whatever uplink remains), and forwarding from
+the `lan` zone is not touched: only traffic addressed to the router itself is
+dropped.
 
 ### Throttle mechanism
 
@@ -203,9 +308,13 @@ sub-interfaces can contain one):
 Throttle state is tracked separately from quota-exceeded state, in
 `${OMR_QUOTA_THROTTLE_STATE_DIR:-/tmp/omr-quota}/<OMR_QUOTA_INTERFACE>.throttled`
 (tmpfs — intentionally not persisted across reboot, unlike the exceeded
-marker). `<OMR_QUOTA_INTERFACE>` is the daemon identity passed as `$1` — the
-interface name for `interface` sections, `global_<id>` for `global` ones —
-not necessarily a real network interface.
+marker; see the markers table above). `<OMR_QUOTA_INTERFACE>` is the daemon
+identity passed as `$1` — the interface name for `interface` sections,
+`global_<id>` for `global` ones — not necessarily a real network interface.
+Only the daemon may delete this marker: it is what makes the not-exceeded
+path run `_remove_throttle`. `reset_exceeded` used to delete it, so the
+relaunched daemon never tore the shaper down -- the interface silently
+stayed at the throttle rate while `get_status` said `throttled=false`.
 
 Both `_PERSIST_DIR` and `_TSTATE_DIR` are overridable via env vars
 (`OMR_QUOTA_STATE_DIR`, `OMR_QUOTA_THROTTLE_STATE_DIR`) specifically so the
@@ -222,9 +331,11 @@ its quota values once at launch (via env vars) and won't notice a live UCI
 change otherwise.
 
 `reset_exceeded` no longer clears the persistent marker file directly —
-it clears the throttle-state file, sets `reset_exceeded=1` in UCI, and
-reloads, delegating to the exact same `init.d/omr-quota` path the
-UCI-option trigger uses. That path both removes the persistent marker *and*
+it sets `reset_exceeded=1` in UCI and reloads, delegating to the exact same
+`init.d/omr-quota` path the UCI-option trigger uses. It must **not** touch
+the daemon's `<id>.throttled` marker (an earlier version did): the
+relaunched daemon only removes the tc shaper when it finds that marker and
+the quota is no longer exceeded. That path both removes the persistent marker *and*
 sets `OMR_QUOTA_RESET_BASELINE=1` for the relaunch, which is what actually
 un-exceeds an `exceedance_scope=month_only` quota (see the daemon's usage
 baseline section above) — a plain `rm` of the marker file never affected
@@ -232,7 +343,13 @@ month_only quotas at all.
 
 `get_status` recomputes `exceeded` from live vnstat data in addition to
 checking the persistent marker, so it reflects reality even if the daemon
-process for that section isn't running. Like the daemon, it uses only the
+process for that section isn't running. It also reports `throttled` and
+`cut` from the daemon's `<id>.throttled` / `<id>.cut` markers. Its
+`_get_real_iface` falls back to the daemon's `<iface>.realdev` cache (then
+to netifd's configured `device`) when `ifstatus` has no `l3_device` -- the
+normal state of a *cut* interface; without that fallback it read 0 bytes
+for a cut interface and reported the very quota it had just enforced as
+not exceeded (`rx_kib 0`, `exceeded false`) for as long as it stayed cut. Like the daemon, it uses only the
 section's own interface for `interface` sections and sums `interfaces` only
 for `global` sections. When `begindate` is set, it queries
 `vnstat -i <dev> -b <begindate> --json` / `traffic.total.*` instead of
@@ -258,11 +375,26 @@ picked apart with `jsonfilter`; iface names are sanitized through
 ## Manual ubus calls
 
 ```
-ubus call omr-quota get_quota    '{}'
-ubus call omr-quota get_quota    '{"interface":"wan1"}'
-ubus call omr-quota set_quota    '{"interface":"wan1","enabled":"1","rxquota":"400000","exceedance_action":"throttle","throttle_dl":"5","throttle_ul":"2","exceedance_scope":"persistent"}'
-ubus call omr-quota set_quota    '{"interface":"wan1","ttquota":"500000","method":"2","percent":"80","enddate":"2026-07-31","down_interfaces":"lan"}'
-ubus call omr-quota set_quota    '{"interface":"global1","type":"global","interfaces":"wan1 wan2","enabled":"1","ttquota":"900000"}'
-ubus call omr-quota get_status   '{"interface":"wan1"}'
-ubus call omr-quota reset_exceeded '{"interface":"wan1"}'
+ubus call quota get_quota    '{}'
+ubus call quota get_quota    '{"interface":"wan1"}'
+ubus call quota set_quota    '{"interface":"wan1","enabled":"1","rxquota":"400000","exceedance_action":"throttle","throttle_dl":"5","throttle_ul":"2","exceedance_scope":"persistent"}'
+ubus call quota set_quota    '{"interface":"wan1","ttquota":"500000","method":"2","percent":"80","enddate":"2026-07-31","down_interfaces":"lan"}'
+ubus call quota set_quota    '{"interface":"global1","type":"global","interfaces":"wan1 wan2","enabled":"1","ttquota":"900000"}'
+ubus call quota get_status   '{"interface":"wan1"}'
+ubus call quota reset_exceeded '{"interface":"wan1"}'
 ```
+
+## Tests
+
+- `tests/run_tests.sh` -- mocked unit tests of the daemon (`test_001_quota.sh`:
+  cut/throttle/scope/budget/block_lan/baseline logic;
+  `test_002_enforcement_markers.sh`: markers, ifup-before-tbf ordering, undo
+  mode). Run locally with bash, no router needed.
+- `../tests/cases/88-omr-quota-*.sh` -- bench integration case: drives the
+  real rpcd -> init -> daemon -> vnstat/ifdown/tc chain on a router's
+  non-master WANs (cut, cut->throttle, iperf3 throughput through the VPS
+  server when `iperf.<vps>` is configured, reset, persistent scope, disable
+  while cut, global quota, service stop) and restores everything afterwards.
+  `sudo ./tests/run.sh <router> --only=88`.
+- `../luci-app-omr-quota/tests/test_quota_ui.py` -- Playwright UI test of
+  the LuCI page.

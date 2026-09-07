@@ -4,7 +4,7 @@
 # Methods:
 #   get_quota       - read quota config for one interface or all
 #   set_quota       - write quota config for one interface
-#   get_status      - read current month usage and exceeded/throttled state
+#   get_status      - read current month usage and exceeded/throttled/cut state
 #   reset_exceeded  - clear the persistent exceeded state for one interface
 #
 # Each entry is either an "interface" section (single interface, its own
@@ -13,12 +13,12 @@
 # backward compatibility; "interfaces" is required when type=global.
 #
 # Usage examples:
-#   ubus call omr-quota get_quota    '{}'
-#   ubus call omr-quota get_quota    '{"interface":"wan1"}'
-#   ubus call omr-quota set_quota    '{"interface":"wan1","enabled":"1","rxquota":"400000","exceedance_action":"throttle","throttle_dl":"5","throttle_ul":"2","exceedance_scope":"persistent"}'
-#   ubus call omr-quota set_quota    '{"interface":"global1","type":"global","interfaces":"wan1 wan2","enabled":"1","ttquota":"900000"}'
-#   ubus call omr-quota get_status   '{"interface":"wan1"}'
-#   ubus call omr-quota reset_exceeded '{"interface":"wan1"}'
+#   ubus call quota get_quota    '{}'
+#   ubus call quota get_quota    '{"interface":"wan1"}'
+#   ubus call quota set_quota    '{"interface":"wan1","enabled":"1","rxquota":"400000","exceedance_action":"throttle","throttle_dl":"5","throttle_ul":"2","exceedance_scope":"persistent"}'
+#   ubus call quota set_quota    '{"interface":"global1","type":"global","interfaces":"wan1 wan2","enabled":"1","ttquota":"900000"}'
+#   ubus call quota get_status   '{"interface":"wan1"}'
+#   ubus call quota reset_exceeded '{"interface":"wan1"}'
 
 _PERSIST_DIR="/etc/omr-quota/state"
 _TSTATE_DIR="/tmp/omr-quota"
@@ -41,6 +41,15 @@ _get_real_iface() {
 			real=$(ifstatus "$iface" 2>/dev/null | jsonfilter -q -e '@.l3_device')
 			;;
 	esac
+	# No l3_device while the interface is administratively down -- which is
+	# exactly the state a "cut" quota leaves it in. Fall back to the device
+	# the daemon cached while it was up (the <iface>.realdev file
+	# _get_real_interface in /bin/omr-quota maintains), then to netifd's
+	# configured device. Without this get_status read 0 bytes for a cut
+	# interface and reported the very quota it had just enforced as not
+	# exceeded (rx_kib 0, exceeded false) for as long as it stayed cut.
+	[ -z "$real" ] && [ -f "${_TSTATE_DIR}/${iface}.realdev" ] && real=$(cat "${_TSTATE_DIR}/${iface}.realdev")
+	[ -z "$real" ] && real=$(ifstatus "$iface" 2>/dev/null | jsonfilter -q -e '@.device')
 	printf '%s' "$real"
 }
 
@@ -174,10 +183,12 @@ _quota_status_json() {
 	[ "$tx_kib" -lt 0 ] && tx_kib=0
 	tt_kib=$(( rx_kib + tx_kib ))
 
-	# Exceeded / throttled state
-	local exceeded=false throttled=false
+	# Exceeded / throttled / cut state (markers kept by the daemon, see
+	# /bin/omr-quota; "cut" = the daemon currently holds the interface(s) down)
+	local exceeded=false throttled=false cut=false
 	[ -f "${_PERSIST_DIR}/${state_id}.exceeded" ] && exceeded=true
 	[ -f "${_TSTATE_DIR}/${state_id}.throttled" ] && throttled=true
+	[ -f "${_TSTATE_DIR}/${state_id}.cut" ] && cut=true
 
 	# Derive exceeded from current data too (covers month_only scope)
 	if [ "$exceeded" = "false" ]; then
@@ -201,9 +212,9 @@ _quota_status_json() {
 		[ "$tt_pct" -gt 100 ] && tt_pct=100
 	fi
 
-	printf '{"name":"%s","type":"%s","interfaces":"%s","enabled":"%s","exceeded":%s,"throttled":%s,"rx_kib":%d,"tx_kib":%d,"tt_kib":%d,"rxquota":%d,"txquota":%d,"ttquota":%d,"rx_pct":%d,"tx_pct":%d,"tt_pct":%d,"exceedance_action":"%s","exceedance_scope":"%s"}' \
+	printf '{"name":"%s","type":"%s","interfaces":"%s","enabled":"%s","exceeded":%s,"throttled":%s,"cut":%s,"rx_kib":%d,"tx_kib":%d,"tt_kib":%d,"rxquota":%d,"txquota":%d,"ttquota":%d,"rx_pct":%d,"tx_pct":%d,"tt_pct":%d,"exceedance_action":"%s","exceedance_scope":"%s"}' \
 		"$(_json_str "$iface")" "$(_json_str "$type")" "$(_json_str "$interfaces")" "$(_json_str "$enabled")" \
-		"$exceeded" "$throttled" \
+		"$exceeded" "$throttled" "$cut" \
 		"$rx_kib" "$tx_kib" "$tt_kib" \
 		"$rxquota" "$txquota" "$ttquota" \
 		"$rx_pct" "$tx_pct" "$tt_pct" \
@@ -307,9 +318,12 @@ case "$1" in
 				# marker *and* record a fresh usage baseline -- the latter is
 				# what actually un-exceeds an exceedance_scope=month_only
 				# quota, which has no persistent marker of its own to clear.
-				type=$(_section_type "$iface")
-				state_id=$(_state_id "$iface" "$type")
-				rm -f "${_TSTATE_DIR}/${state_id}.throttled"
+				# The daemon's <id>.throttled marker is deliberately left in
+				# place: the relaunched daemon only tears the tc shaper down
+				# (_remove_throttle) when it finds that marker and the quota
+				# is no longer exceeded. Deleting it here made the reset
+				# "succeed" while the interface silently stayed shaped at the
+				# throttle rate, with get_status reporting throttled=false.
 				uci -q set "omr-quota.${iface}.reset_exceeded=1" 2>/dev/null
 				uci -q commit omr-quota 2>/dev/null
 				/etc/init.d/omr-quota reload >/dev/null 2>&1

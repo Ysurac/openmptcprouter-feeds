@@ -69,7 +69,7 @@ function addQuotaFields(s, downInterfacesHint) {
 	o.rmempty = false;
 
 	o = s.option(form.Flag, 'block_lan', _('Block LAN and proxy when cut'),
-		_('Set firewall LAN input to DROP and stop shadowsocks-rust while the quota is exceeded.'));
+		_('Set firewall LAN input to DROP while the quota is exceeded, blocking every transparent proxy without changing proxy service state. The router itself stays reachable from the LAN (LuCI, SSH, DNS, DHCP, ping).'));
 	o.default = '0';
 	o.rmempty = false;
 	o.depends('exceedance_action', 'cut');

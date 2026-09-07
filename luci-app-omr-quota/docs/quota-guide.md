@@ -42,7 +42,7 @@ interface's quota entirely.
 | **Daily budget method** | Optional extra guard once combined usage passes the threshold: either block when the current interval spends too much of the remaining daily allowance, or rate-limit downstream interfaces based on the remaining daily volume. |
 | **Budget threshold (%)** | Percentage of the combined quota after which daily-budget enforcement starts. |
 | **Budget calculation interval (s)** | How often the interval budget is recalculated for the blocking daily-budget method. |
-| **Block LAN and proxy when cut** | When using the cut action, also sets LAN input to `DROP` and stops `shadowsocks-rust`; both are restored when the quota clears. |
+| **Block LAN and proxy when cut** | When using the cut action, sets LAN input to `DROP`, uniformly blocking all transparent proxies without changing their service state; LAN input is restored when the quota clears. |
 | **Action when quota is reached** | **Cut** — bring the interface down (`ifdown`) for the rest of the month; or **Throttle** — leave it up but rate-limit it. |
 | **Enforcement scope** | **This month only** — the cut/throttle clears automatically once the new month's counter starts; or **All future months** — once triggered, the interface stays cut/throttled at every future month rollover until you explicitly reset it below. |
 

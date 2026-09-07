@@ -70,7 +70,8 @@ return L.view.extend({
 		o.value('info',  _('Info'));
 		o.value('warn',  _('Warning'));
 		o.value('error', _('Error'));
-		o.default = 'info';
+		o.description = _('Warning is the default: it keeps the log quiet while still recording why a tunnel failed to establish. Error hides the tunnel setup result entirely; raise to Info when reporting a tunnel problem.');
+		o.default = 'warn';
 
 		o = s.option(form.Value, 'mtu', _('MTU'));
 		o.description = _('TUN MTU cap in bytes (1280–9000, leave empty for auto)');
