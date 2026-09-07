@@ -22,17 +22,29 @@ case "$INTERFACE" in
 esac
 MULTIPATH="$(uci -q get network.$MP_INTERFACE.multipath)"
 
+# Re-add the endpoint in the mode the interface is configured for, not always
+# as an active subflow: a WAN set to "backup" was promoted to a normal subflow
+# on every DHCP renew / RA refresh of its interface. "master" has no endpoint
+# flag of its own, it is an active subflow like "on" (see mptcp's init script).
+# The explicit endpoint id keeps the id of a WAN stable across those events, so
+# the peer can still pin traffic to it by the subflow remote_id.
+case "$MULTIPATH" in
+	backup)  MULTIPATH_MODE="backup" ;;
+	*)       MULTIPATH_MODE="on" ;;
+esac
+MULTIPATH_ID="$(uci -q get network.$MP_INTERFACE.metric)"
+
 if [ "$ACTION" = ifupdate -a -n "$IFUPDATE_ADDRESSES" ] && [ -n "$MULTIPATH" ] && [ "$MULTIPATH" != "off" ]; then
 	logger -t "mptcp" "New IP ($IFUPDATE_ADDRESSES) for $INTERFACE ($DEVICE)"
-	multipath $DEVICE off 2>&1 >/dev/null || exit 0
-	multipath $DEVICE on 2>&1 >/dev/null || exit 0
+	multipath $DEVICE off >/dev/null 2>&1 || exit 0
+	multipath $DEVICE $MULTIPATH_MODE $MULTIPATH_ID >/dev/null 2>&1 || exit 0
 elif [ "$ACTION" = ifupdate ] && [ -n "$MULTIPATH" ] && [ "$MULTIPATH" != "off" ]; then
 	logger -t "mptcp" "Update of $INTERFACE ($DEVICE)"
-	multipath $DEVICE off 2>&1 >/dev/null || exit 0
-	multipath $DEVICE on 2>&1 >/dev/null || exit 0
+	multipath $DEVICE off >/dev/null 2>&1 || exit 0
+	multipath $DEVICE $MULTIPATH_MODE $MULTIPATH_ID >/dev/null 2>&1 || exit 0
 elif [ "$ACTION" = ifup -o "$ACTION" = iflink  -o "$ACTION" = link-up ] && [ -z "$(echo $DEVICE | grep oip | grep gre)" ] && [ -n "$MULTIPATH" ] && [ "$MULTIPATH" != "off" ]; then
 	logger -t "mptcp" "Reloading mptcp config due to $ACTION of $INTERFACE ($DEVICE)"
 	/etc/init.d/mptcp reload "$DEVICE" >/dev/null || exit 0
 elif [ "$ACTION" = ifdown -o "$ACTION" = link-down ]; then
-	multipath $DEVICE off 2>&1 >/dev/null || exit 0
+	multipath $DEVICE off >/dev/null 2>&1 || exit 0
 fi

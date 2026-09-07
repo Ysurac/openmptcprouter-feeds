@@ -182,7 +182,18 @@ interface_max_metric() {
 		loopback)
 			;;
 		*)
-			config_get metric "$config" ip4table
+			# Called with the openmptcprouter config loaded, where the routing
+			# table id lives in "metric" (network.<iface>.ip4table is the same
+			# value in the network config): reading ip4table here always got an
+			# empty string, so every WAN raised a shell "out of range" error and
+			# count stayed 0. Interfaces added afterwards then restarted metric
+			# allocation from 1 in interface_multipath_settings and collided with
+			# the routing tables, route metrics and MPTCP endpoint ids of the
+			# existing ones.
+			config_get metric "$config" metric
+			case "$metric" in
+				''|*[!0-9]*) return 0 ;;
+			esac
 			if [ "$metric" -gt "$count" ] && [ "$metric" -lt "1000" ]; then
 				count=$metric
 			fi
@@ -208,6 +219,13 @@ _root_qdisc_managed_elsewhere() {
 		[ "$(uci -q get sqm.${sec}.enabled)" = "1" ] && return 0
 	done
 	[ "$(uci -q get qos.${config}.enabled)" = "1" ] && return 0
+	# omr-quota shapes an interface whose quota is exceeded with a tbf root
+	# qdisc (throttle action, daily-budget speed limit); nothing else in OMR
+	# installs tbf. Replacing it with fq lifted the quota's speed limit until
+	# the daemon's next poll -- on every ifup hotplug / tracker status change.
+	case "$(tc qdisc show dev "$dev" root 2>/dev/null)" in
+		"qdisc tbf "*) return 0 ;;
+	esac
 	return 1
 }
 
@@ -267,8 +285,15 @@ interface_multipath_settings() {
 		done
 	}
 	[ "$mode" = "" ] && {
+		# Migration path for configs that only ever had the mode in the
+		# openmptcprouter copy. Log it: it also fires when something dropped
+		# network.<iface>.multipath behind the user's back, in which case the
+		# interface silently comes back in its previous mode (#4368).
 		mode="$(uci -q get openmptcprouter.${config}.multipath)"
-		[ -n "$mode" ] && uci -q set network.${config}.multipath="$mode"
+		[ -n "$mode" ] && {
+			logger -t "MPTCP" "No multipath setting for $config, restoring $mode from openmptcprouter config"
+			uci -q set network.${config}.multipath="$mode"
+		}
 	}
 	[ "$mode" = "" ] && {
 		[ "$config" = "lan" ] && mode="off"
