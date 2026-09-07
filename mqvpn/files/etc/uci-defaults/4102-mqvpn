@@ -8,4 +8,30 @@ if [ "$(uci -q get mqvpn.interface.tun_name)" = "" ]; then
 	EOF
 fi
 
+# Raise the old shipped default log level 'error' to 'warn'.
+#
+# mqvpn logs the whole tunnel-establishment ladder at INFO ("Extended CONNECT
+# sent" -> "tunnel 200 OK" -> "ADDRESS_ASSIGN" -> "TUN device tun0 created")
+# and the deciding failure at WARN ("tunnel non-200 status=403", "tunnel
+# malformed :status", "path stuck in PENDING"). At 'error' a router that never
+# builds its tun records nothing but xquic's own connection-teardown report,
+# which says "local close" even on a clean restart -- so a tunnel that fails
+# between the QUIC handshake and the MASQUE address assignment leaves no usable
+# evidence at all (issue 4367).
+#
+# 'warn' costs almost nothing: measured on a 3-WAN bench over ~3 minutes
+# including one WAN flap, 4 WARN + 3 ERROR lines against 87 INFO lines.
+#
+# One-shot, marked in mqvpn.settings: a user who deliberately picks 'error'
+# afterwards must not have it overridden again on the next package upgrade.
+if [ "$(uci -q get mqvpn.settings.log_level_default_migrated)" != "1" ]; then
+	[ "$(uci -q get mqvpn.interface.log_level)" = "error" ] && \
+		uci -q set mqvpn.interface.log_level='warn'
+	uci -q batch <<-EOF >/dev/null
+		set mqvpn.settings=settings
+		set mqvpn.settings.log_level_default_migrated='1'
+		commit mqvpn
+	EOF
+fi
+
 exit 0

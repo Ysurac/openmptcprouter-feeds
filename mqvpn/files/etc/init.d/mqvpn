@@ -13,6 +13,11 @@ USE_PROCD=1
 
 CONF=/var/run/mqvpn.conf
 
+# The key shipped in /etc/config/mqvpn: identical on every OMR router until
+# openmptcprouter-vps overwrites it with the one the VPS API reports. Refusing
+# to start on it is the counterpart of the 203.0.113.1 placeholder-IP check.
+PLACEHOLDER_KEY='mPyVpoQWcp/5gr404xvS19aRC03o0XS2mrb2tZJ1Ii4='
+
 _bool() { [ "$1" = "1" ] && echo "true" || echo "false"; }
 
 generate_config() {
@@ -71,7 +76,7 @@ generate_config() {
 	config_get user auth user
 
 	config_get tun_name interface tun_name 'mqvpn0'
-	config_get log_level interface log_level 'info'
+	config_get log_level interface log_level 'warn'
 	config_get mtu interface mtu ''
 	config_get_bool kill_switch interface kill_switch 0
 	config_get_bool reconnect interface reconnect 1
@@ -104,6 +109,13 @@ generate_config() {
 	[ -z "$ip" ] && { logger -t mqvpn "No server address configured"; return 1; }
 	[ "$ip" = "203.0.113.1" ] && { logger -t mqvpn "Server IP is not configured (placeholder 203.0.113.1)"; return 1; }
 	[ -z "$key" ]     && { logger -t mqvpn "No auth key configured"; return 1; }
+	# A router whose VPS config sync never completed still holds the shipped
+	# placeholder key, so mqvpn would connect, get a 403 on every CONNECT-IP and
+	# never build its tun -- with nothing in the log at the default level to say
+	# why (issue 4367). The same incomplete sync leaves shadowsocks-rust server
+	# sections without a password, which crash-loops their instances (issue 3898),
+	# so this is usually not the only symptom.
+	[ "$key" = "$PLACEHOLDER_KEY" ] && { logger -t mqvpn "Auth key is still the placeholder shipped in /etc/config/mqvpn: the VPS configuration has not been retrieved yet, so the server would reject every tunnel with 403. Not starting. Re-run the setup wizard or check the VPS API (logread -e OMR-VPS)."; return 1; }
 
 	mkdir -p /var/run
 
