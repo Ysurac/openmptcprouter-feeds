@@ -1,14 +1,229 @@
 #!/bin/sh
 #
-# Copyright (C) 2018-2025 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+# Copyright (C) 2018-2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
 #
+# Sourced by the post-tracking.d scripts from the omr-tracker bash process.
 
 . /lib/functions/network.sh
+. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
 
-debug=$(uci -q get openmptcprouter.settings.debug)
+# ── Per-run caches ────────────────────────────────────────────────────────────
+# A post-tracking run for one interface walks every network interface and
+# every server, and each step used to fork uci/ubus/ifstatus/jsonfilter again
+# for values that don't change within the run: ~400 forks per cycle per WAN
+# (traced live on a 2-core MT7981 where the trackers alone kept the load
+# above 2.5). Everything below reads the openmptcprouter/network configs and
+# each interface's netifd status once and answers from shell variables.
+#
+# The caches live in the sourcing shell: fill them from the parent shell
+# (plain function calls), never only inside a $(...) substitution where the
+# copy would be thrown away with the subshell.
+
+_omr_nl='
+'
+_OMR_UCI_CACHE=""
+_OMR_UCI_CACHE_LOADED=""
+_OMR_UCI_MAP_OK=""
+
+# The config cache is a bash associative array keyed by "pkg.section.option"
+# (lookups are O(1)), worth about 200 ms of CPU per 003-up run on the MT7981
+# this was written for: that script alone used to fork ~85 "uci get" calls
+# (~4 ms each) walking every interface and server.
+# Two dead ends measured on the way there are worth not repeating:
+#  - scanning the "uci show" text with ${blob#*key} per lookup: bash tries
+#    every prefix length, i.e. quadratic in the ~30 KB dump, tens of ms of
+#    CPU per lookup -- far worse than the forks it replaced;
+#  - filling the array with a "while read" loop over the ~350 dump lines:
+#    ~120 ms, versus ~15 ms for one uci dump, ~40 ms for one awk pass and
+#    ~17 ms to eval the array literal it produces.
+# The load is lazy, so a script that reads only a couple of options (and
+# would lose on the build) never triggers it -- use plain "uci -q get"
+# there.
+#
+# uci quotes values exactly the way the shell does ('...', an embedded quote
+# written as '\''), so the dump needs no re-quoting to become an array
+# literal; only multi-value lists (opt='a' 'b') are joined into one word.
+# Two safety nets, because a syntax error inside eval does not just fail --
+# it terminates the shell running it, which here is the post-tracking
+# subshell doing route management:
+#  - keys that could break the literal are dropped in awk, and every key is
+#    emitted quoted so bracketed section names (@device[0]) stay intact;
+#  - the literal is parsed in a subshell first, so a malformed one costs
+#    that throwaway subshell and nothing else.
+# Without bash, or when the map ends up empty for any reason, the getters
+# fall back to plain "uci get".
+_omr_uci_cache_load() {
+	[ -n "$_OMR_UCI_CACHE_LOADED" ] && return 0
+	_OMR_UCI_CACHE_LOADED=1
+	_OMR_UCI_MAP_OK=""
+	_OMR_UCI_CACHE="${_omr_nl}$(command uci -q show openmptcprouter 2>/dev/null; command uci -q show network 2>/dev/null)${_omr_nl}"
+	[ -n "$BASH_VERSION" ] || return 0
+	local _lit
+	# NOTE: the key filter uses index() rather than a bracket expression:
+	# busybox awk silently fails to match a class containing an escaped
+	# "]", which made this drop every line and yield an empty map.
+	_lit="$(awk -v q="'" -F= '
+		/^[^=]+\.[^=]+\.[^=]+=/ {
+			k = $1
+			if (index(k, "\"") || index(k, "\\")) next
+			v = substr($0, length(k) + 2)
+			gsub(q " " q, " ", v)
+			printf "[\"%s\"]=%s ", k, v
+		}' <<<"$_OMR_UCI_CACHE")"
+	unset _OMR_UCI_MAP
+	declare -gA _OMR_UCI_MAP
+	[ -n "$_lit" ] || return 0
+	if ( eval "declare -A _t=( $_lit )" ) 2>/dev/null; then
+		eval "_OMR_UCI_MAP=( $_lit )"
+		[ "${#_OMR_UCI_MAP[@]}" -gt 0 ] && _OMR_UCI_MAP_OK=1
+	fi
+	return 0
+}
+
+_omr_uci_cache_flush() {
+	_OMR_UCI_CACHE_LOADED=""
+	_OMR_UCI_CACHE=""
+	_OMR_UCI_MAP_OK=""
+}
+
+# Every uci write done through the scripts invalidates the cached view so a
+# value set earlier in the run is read back correctly.
+uci() {
+	case " $* " in
+		*" set "*|*" del "*|*" delete "*|*" add_list "*|*" del_list "*|*" batch "*|*" batch"|*" revert "*|*" rename "*|*" reorder "*|*" import "*|*" commit "*|*" commit")
+			_omr_uci_cache_flush ;;
+	esac
+	command uci "$@"
+}
+
+# _omr_uci_get_var <var> <package.section.option> [<default>]
+# Assigns the option's value (default when unset) without forking. Only the
+# openmptcprouter and network packages are cached; anything else goes to uci.
+_omr_uci_get_var() {
+	local _var="$1" _key="$2" _def="${3:-}" _val
+	case "$_key" in
+		openmptcprouter.*.*|network.*.*)
+			if [ -n "$BASH_VERSION" ]; then
+				_omr_uci_cache_load
+				if [ -n "$_OMR_UCI_MAP_OK" ]; then
+					if [ -n "${_OMR_UCI_MAP["$_key"]+set}" ]; then
+						_val="${_OMR_UCI_MAP["$_key"]}"
+						eval "$_var=\$_val"
+						return 0
+					fi
+					eval "$_var=\$_def"
+					return 1
+				fi
+			fi
+			;;
+	esac
+	_val="$(command uci -q get "$_key" 2>/dev/null)" || { eval "$_var=\$_def"; return 1; }
+	eval "$_var=\$_val"
+	return 0
+}
+
+# _omr_uci_get <package.section.option>  -- drop-in for "uci -q get"
+_omr_uci_get() {
+	local _v
+	_omr_uci_get_var _v "$1" || return 1
+	printf '%s\n' "$_v"
+}
+
+# _omr_uci_has <literal>: does the cached openmptcprouter/network config
+# contain this text (e.g. "get_config='1'")? Replaces "uci show | grep".
+_omr_uci_has() {
+	_omr_uci_cache_load
+	case "$_OMR_UCI_CACHE" in
+		*"$1"*) return 0 ;;
+	esac
+	return 1
+}
+
+# Interface status: one "ubus call network.interface.<name> status" and one
+# jsonfilter per interface and run, memoized. Sets the _J_* fields for the
+# requested interface:
+#   _J_UP 1/0, _J_L3 l3_device, _J_DEV device,
+#   _J_GW4 / _J_GW4I active/inactive default IPv4 nexthop,
+#   _J_GW6 / _J_GW6I active/inactive default IPv6 nexthop,
+#   _J_GW6S _J_GW6S64 _J_GW6S56 inactive IPv6 nexthop by source prefix
+_omr_ifstatus_reset() {
+	_J_UP=""; _J_L3=""; _J_DEV=""
+	_J_GW4=""; _J_GW4I=""
+	_J_GW6=""; _J_GW6I=""; _J_GW6S=""; _J_GW6S64=""; _J_GW6S56=""
+}
+
+_omr_ifstatus_fetch() {
+	local _if="$1" _ip6 _out
+	_omr_uci_get_var _ip6 "network.${_if}.ip6"
+	set -- -e '_J_UP=@.up' -e '_J_L3=@.l3_device' -e '_J_DEV=@.device' \
+		-e '_J_GW4=@.route[@.target="0.0.0.0"].nexthop' \
+		-e '_J_GW4I=@.inactive.route[@.target="0.0.0.0"].nexthop' \
+		-e '_J_GW6=@.route[@.target="::"].nexthop' \
+		-e '_J_GW6I=@.inactive.route[@.target="::"].nexthop'
+	[ -n "$_ip6" ] && set -- "$@" \
+		-e "_J_GW6S=@.inactive.route[@.source=\"${_ip6}\"].nexthop" \
+		-e "_J_GW6S64=@.inactive.route[@.source=\"${_ip6}/64\"].nexthop" \
+		-e "_J_GW6S56=@.inactive.route[@.source=\"${_ip6}/56\"].nexthop"
+	# jsonfilter prints "export NAME='value'; " per matching expression and
+	# exits non-zero as soon as one expression has no match: ignore the code.
+	_out="$(command ubus call "network.interface.${_if}" status 2>/dev/null | jsonfilter "$@" 2>/dev/null)"
+	_out="${_out//export /}"
+	printf '%s' "$_out"
+}
+
+_omr_ifstatus_load() {
+	local _if="$1" _memo
+	_omr_ifstatus_reset
+	[ -n "$_if" ] || return 1
+	case "$_if" in
+		*[!A-Za-z0-9_]*)
+			eval "$(_omr_ifstatus_fetch "$_if")"
+			return 0 ;;
+	esac
+	eval "_memo=\${_OMR_IFC_${_if}-}"
+	if [ -z "$_memo" ]; then
+		_memo="$(_omr_ifstatus_fetch "$_if")"
+		[ -n "$_memo" ] || _memo=" "
+		eval "_OMR_IFC_${_if}=\$_memo"
+	fi
+	eval "$_memo"
+	return 0
+}
+
+# _omr_if_up <interface>: exit 0 when netifd reports the interface up
+_omr_if_up() {
+	_omr_ifstatus_load "$1"
+	[ "$_J_UP" = "1" ]
+}
+
+# resolveip results, memoized per family and name for the run
+_OMR_RES_CACHE=""
+_omr_resolve_var() {
+	local _var="$1" _fam="$2" _name="$3" _key _rest _val
+	[ -n "$_name" ] || { eval "$_var=''"; return; }
+	_key="${_omr_nl}${_fam} ${_name}="
+	case "$_OMR_RES_CACHE" in
+		*"$_key"*)
+			_rest="${_OMR_RES_CACHE#*"$_key"}"
+			_val="${_rest%%"${_omr_nl}"*}"
+			;;
+		*)
+			_val="$(resolveip "$_fam" -t 5 "$_name" 2>/dev/null)"
+			_val="${_val%%"${_omr_nl}"*}"
+			_OMR_RES_CACHE="${_OMR_RES_CACHE}${_key}${_val}${_omr_nl}"
+			;;
+	esac
+	eval "$_var=\$_val"
+}
+
+# Read with a plain uci get, not through the cache: several scripts source
+# this library only to log something (002-error's early exits, 001-initialize)
+# and must not pay for building the config map just to learn whether debug
+# logging is on.
+debug=$(command uci -q get openmptcprouter.settings.debug 2>/dev/null)
 
 find_network_device() {
 	local interface="${1}"
@@ -30,86 +245,115 @@ find_network_device() {
 	echo "${device_section}"
 }
 
-# Common function to get multipath config to reduce code duplication
-_get_multipath_config() {
-	local interface="$1"
-	local config
+# _omr_get_multipath_config_var <var> <interface>
+_omr_get_multipath_config_var() {
+	local _var="$1" interface="$2" config mptcp_over_vpn multipathvpn
 
-	config=$(uci -q get "openmptcprouter.${interface}.multipath")
-	[ -z "$config" ] && config=$(uci -q get "network.${interface}.multipath")
+	_omr_uci_get_var config "openmptcprouter.${interface}.multipath"
+	[ -z "$config" ] && _omr_uci_get_var config "network.${interface}.multipath"
 	[ -z "$config" ] && config="off"
 
 	# Handle VPN multipath
-	if [ "$(uci -q get "openmptcprouter.${interface}.multipathvpn")" = "1" ]; then
-		local mptcp_over_vpn=$(uci -q get "openmptcprouter.settings.mptcpovervpn")
+	_omr_uci_get_var multipathvpn "openmptcprouter.${interface}.multipathvpn"
+	if [ "$multipathvpn" = "1" ]; then
+		_omr_uci_get_var mptcp_over_vpn "openmptcprouter.settings.mptcpovervpn"
 		if [ "$mptcp_over_vpn" = "openvpn" ]; then
-			config=$(uci -q get "openmptcprouter.ovpn${interface}.multipath")
+			_omr_uci_get_var config "openmptcprouter.ovpn${interface}.multipath"
 		elif [ "$mptcp_over_vpn" = "wireguard" ]; then
-			config=$(uci -q get "openmptcprouter.wg${interface}.multipath")
+			_omr_uci_get_var config "openmptcprouter.wg${interface}.multipath"
 		fi
 		[ -z "$config" ] && config="off"
 	fi
-	echo "$config"
+	eval "$_var=\$config"
+}
+
+# Common function to get multipath config to reduce code duplication
+_get_multipath_config() {
+	local _c
+	_omr_get_multipath_config_var _c "$1"
+	echo "$_c"
+}
+
+# _omr_get_interface_device_var <var> <interface> [<suffix>]
+_omr_get_interface_device_var() {
+	local _var="$1" interface="$2" suffix="${3:-}" device
+
+	_omr_ifstatus_load "${interface}${suffix}"
+	device="$_J_L3"
+	if [ -z "$device" ]; then
+		_omr_ifstatus_load "${interface}_4"
+		device="$_J_L3"
+	fi
+	[ -z "$device" ] && _omr_uci_get_var device "network.${interface}.ifname"
+	[ -z "$device" ] && _omr_uci_get_var device "network.${interface}.device"
+
+	# Handle special device names with '@'
+	case "$device" in
+		*@*)
+			_omr_ifstatus_load "$interface"
+			device="$_J_DEV"
+			;;
+	esac
+	eval "$_var=\$device"
 }
 
 # Common function to get interface device with fallback chain
 _get_interface_device() {
-	local interface="$1"
-	local suffix="${2:-}"
-	local device
+	local _d
+	_omr_get_interface_device_var _d "$1" "${2:-}"
+	echo "$_d"
+}
 
-	# Try different methods to get device
-	device=$(ifstatus "${interface}${suffix}" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
-	[ -z "$device" ] && device=$(ifstatus "${interface}_4" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
-	[ -z "$device" ] && device=$(uci -q get "network.${interface}.ifname")
-	[ -z "$device" ] && device=$(uci -q get "network.${interface}.device")
+# _omr_get_interface_gateway_var <var> <interface> [true|false]
+_omr_get_interface_gateway_var() {
+	local _var="$1" interface="$2" ipv6="${3:-false}" gateway
 
-	# Handle special device names with '@'
-	if [ -n "$(echo "$device" | grep '@')" ]; then
-		device=$(ifstatus "$interface" 2>/dev/null | jsonfilter -q -e '@["device"]')
+	if [ "$ipv6" = "true" ]; then
+		_omr_uci_get_var gateway "network.${interface}.ip6gw"
+		if [ -z "$gateway" ]; then
+			_omr_ifstatus_load "$interface"
+			gateway="$_J_GW6S"
+			[ -z "$gateway" ] && gateway="$_J_GW6S64"
+			[ -z "$gateway" ] && gateway="$_J_GW6S56"
+			[ -z "$gateway" ] && gateway="$_J_GW6I"
+			[ -z "$gateway" ] && gateway="$_J_GW6"
+		fi
+		if [ -z "$gateway" ]; then
+			_omr_ifstatus_load "${interface}_6"
+			gateway="$_J_GW6I"
+			[ -z "$gateway" ] && gateway="$_J_GW6"
+		fi
+	else
+		_omr_uci_get_var gateway "network.${interface}.gateway"
+		if [ -z "$gateway" ]; then
+			_omr_ifstatus_load "$interface"
+			gateway="$_J_GW4I"
+			[ -z "$gateway" ] && gateway="$_J_GW4"
+		fi
+		if [ -z "$gateway" ]; then
+			_omr_ifstatus_load "${interface}_4"
+			gateway="$_J_GW4I"
+		fi
 	fi
-
-	echo "$device"
+	eval "$_var=\$gateway"
 }
 
 # Common function to get interface gateway with fallback chain
 _get_interface_gateway() {
-	local interface="$1"
-	local ipv6="${2:-false}"
-	local gateway
-
-	if [ "$ipv6" = "true" ]; then
-		gateway=$(uci -q get "network.${interface}.ip6gw")
-		local interface_ip6=$(uci -q get "network.${interface}.ip6")
-
-		# Try different jsonfilter queries for IPv6
-		[ -z "$gateway" ] && gateway=$(ubus call network.interface."$interface" status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${interface_ip6}\"].nexthop" | tr -d "\n")
-		[ -z "$gateway" ] && gateway=$(ubus call network.interface."$interface" status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${interface_ip6}/64\"].nexthop" | tr -d "\n")
-		[ -z "$gateway" ] && gateway=$(ubus call network.interface."$interface" status 2>/dev/null | jsonfilter -q -l 1 -e "@.inactive.route[@.source=\"${interface_ip6}/56\"].nexthop" | tr -d "\n")
-		[ -z "$gateway" ] && gateway=$(ubus call network.interface."$interface" status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
-		[ -z "$gateway" ] && gateway=$(ubus call network.interface."$interface" status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
-		[ -z "$gateway" ] && gateway=$(ubus call network.interface."${interface}_6" status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="::"].nexthop' | tr -d "\n")
-		[ -z "$gateway" ] && gateway=$(ubus call network.interface."${interface}_6" status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="::"].nexthop' | tr -d "\n")
-	else
-		gateway=$(uci -q get "network.${interface}.gateway")
-		# Try different jsonfilter queries for IPv4
-		[ -z "$gateway" ] && gateway=$(ubus call network.interface."$interface" status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
-		[ -z "$gateway" ] && gateway=$(ubus call network.interface."$interface" status 2>/dev/null | jsonfilter -q -l 1 -e '@.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
-		[ -z "$gateway" ] && gateway=$(ubus call network.interface."${interface}_4" status 2>/dev/null | jsonfilter -q -l 1 -e '@.inactive.route[@.target="0.0.0.0"].nexthop' | tr -d "\n")
-	fi
-
-	echo "$gateway"
+	local _g
+	_omr_get_interface_gateway_var _g "$1" "${2:-false}"
+	echo "$_g"
 }
 
 _set_route_common() {
-	local multipath_config_route interface_gw interface_if
+	local multipath_config_route interface_gw interface_if defaultgw
 	INTERFACE=$1
 	PREVINTERFACE=$2
 	SETDEFAULT="${3:-yes}"
 	ipv6="${4:-false}"
-	
+
 	[ -z "$INTERFACE" ] && return
-	
+
 	# Set IP command and table based on IP version
 	if [ "$ipv6" = "true" ]; then
 		ip_cmd="ip -6"
@@ -121,19 +365,20 @@ _set_route_common() {
 		route_target="0.0.0.0"
 	fi
 
-	multipath_config_route=$(_get_multipath_config $INTERFACE)
+	_omr_get_multipath_config_var multipath_config_route "$INTERFACE"
 
 	#network_get_device interface_if $INTERFACE
-	interface_up=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
-	interface_if=$(_get_interface_device "$INTERFACE")
-	interface_current_config=$(uci -q get openmptcprouter.$INTERFACE.state || echo "up")
+	if _omr_if_up "$INTERFACE"; then interface_up="true"; else interface_up="false"; fi
+	_omr_get_interface_device_var interface_if "$INTERFACE"
+	_omr_uci_get_var interface_current_config "openmptcprouter.$INTERFACE.state" "up"
 	if [ "$multipath_config_route" != "off" ] && [ "$SETROUTE" != true ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$interface_current_config" = "up" ] && [ "$interface_up" = "true" ]; then
-		interface_gw=$(_get_interface_gateway "$INTERFACE" "$ipv6")
-		
+		_omr_get_interface_gateway_var interface_gw "$INTERFACE" "$ipv6"
+
 		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ]; then
 			[ "$debug" = "true" ] && [ "$SETDEFAULT" = "yes" ] && _log "$PREVINTERFACE down. Replace default route by $interface_gw dev $interface_if"
 			[ "$debug" = "true" ] && [ "$SETDEFAULT" != "yes" ] && _log "$PREVINTERFACE down. Replace default in table 991337 route by $interface_gw dev $interface_if"
-			if [ "$SETDEFAULT" = "yes" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
+			_omr_uci_get_var defaultgw openmptcprouter.settings.defaultgw
+			if [ "$SETDEFAULT" = "yes" ] && [ "$defaultgw" != "0" ]; then
 				$ip_cmd route replace default scope global metric 1 via $interface_gw dev $interface_if $initcwrwnd >/dev/null 2>&1
 			fi
 			$ip_cmd route replace default via $interface_gw dev $interface_if table "$table_id" $initcwrwnd >/dev/null 2>&1 && SETROUTE=true
@@ -158,23 +403,22 @@ _set_server_default_route_common() {
 
 	if [ "$ipv6" = "true" ]; then
 		ip_cmd="ip -6"
-		resolve_cmd="resolveip -6"
+		resolve_cmd="-6"
 		gateway_var="$OMR_TRACKER_DEVICE_GATEWAY6"
 	else
 		ip_cmd="ip"
-		resolve_cmd="resolveip -4"
+		resolve_cmd="-4"
 		gateway_var="$OMR_TRACKER_DEVICE_GATEWAY"
 	fi
 
 	server_route() {
 		local serverip multipath_config_route
-		serverip=$1
-		[ -n "$serverip" ] && serverip="$($resolve_cmd -t 5 $serverip | head -n 1 | tr -d '\n')"
-		
+		_omr_resolve_var serverip "$resolve_cmd" "$1"
+
 		config_get disabled $server disabled
 		[ "$disabled" = "1" ] && return
 
-		multipath_config_route=$(_get_multipath_config $OMR_TRACKER_INTERFACE)
+		_omr_get_multipath_config_var multipath_config_route "$OMR_TRACKER_INTERFACE"
 
 		if [ -n "$serverip" ] && [ -n "$gateway_var" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$multipath_config_route" != "off" ]; then
 			local existing_route=$($ip_cmd route show "$serverip" 2>/dev/null | grep "via ${gateway_var}" | grep "dev ${OMR_TRACKER_DEVICE}")
@@ -201,15 +445,15 @@ delete_server_default_route_common() {
 
 	if [ "$ipv6" = "true" ]; then
 		ip_cmd="ip -6"
-		resolve_cmd="resolveip -6"
+		resolve_cmd="-6"
 	else
 		ip_cmd="ip"
-		resolve_cmd="resolveip -4"
+		resolve_cmd="-4"
 	fi
 
 	delete_route() {
-		local serverip=$1
-		[ -n "$serverip" ] && serverip="$($resolve_cmd -t 5 $serverip | head -n 1 | tr -d '\n')"
+		local serverip
+		_omr_resolve_var serverip "$resolve_cmd" "$1"
 		config_get disabled $server disabled
 		[ "$disabled" = "1" ] && return
 		if [ "$serverip" != "" ] && [ "$($ip_cmd route show $serverip metric 1)" != "" ]; then
@@ -227,72 +471,88 @@ delete_server_default_route6() {
 	_common_delete_server_default_route $1 true
 }
 
+# Append "nexthop via <gw> dev <if> weight <w>" for one interface to the
+# route-fragment variables named by the caller (routesintf*/routesbalancing*).
+# Shared by the two sweeps below; the weight rules are unchanged: explicit
+# network/openmptcprouter weight, else 100 for the master, 1 otherwise.
+# _omr_route_fragment_var <var> <interface> <multipath_config> <gateway> <device>
+_omr_route_fragment_var() {
+	local _var="$1" INTERFACE="$2" multipath_config_route="$3" interface_gw="$4" interface_if="$5" weight
+	_omr_uci_get_var weight "network.$INTERFACE.weight"
+	if [ -z "$weight" ]; then
+		_omr_uci_get_var weight "openmptcprouter.$INTERFACE.weight"
+	fi
+	if [ -z "$weight" ]; then
+		if [ "$multipath_config_route" = "master" ]; then
+			weight=100
+		else
+			weight=1
+		fi
+	fi
+	eval "$_var=\"nexthop via \$interface_gw dev \$interface_if weight \$weight\""
+}
+
 _set_routes_intf_common() {
 	local multipath_config_route
-	local interface_if
+	local interface_if interface_gw interface_vpn interface_current_config route_fragment
 	local INTERFACE=$1
-	local ipv6="${2:false}"
+	local ipv6="${2:-false}"
 	[ -z "$INTERFACE" ] && return
 	[ "$INTERFACE" = "omrvpn" ] && return
 	[ "$INTERFACE" = "omr6in4" ] && return
 
-	multipath_config_route=$(_get_multipath_config $INTERFACE)
+	# Cheapest checks first: everything below is ANDed, so the order of the
+	# tests doesn't change the outcome, only how much is looked up for
+	# interfaces that are down or excluded.
+	_omr_if_up "$INTERFACE" || return
+	_omr_uci_get_var interface_current_config "openmptcprouter.$INTERFACE.state" "up"
+	[ "$interface_current_config" = "up" ] || return
+	_omr_uci_get_var interface_vpn "openmptcprouter.$INTERFACE.vpn" "0"
+	_omr_uci_get_var _allmptcpovervpn openmptcprouter.settings.allmptcpovervpn
+	{ [ "$interface_vpn" = "0" ] || [ "$_allmptcpovervpn" = "0" ]; } || return
+	_omr_get_multipath_config_var multipath_config_route "$INTERFACE"
+	[ "$multipath_config_route" != "off" ] || return
+	_omr_get_interface_device_var interface_if "$INTERFACE"
+	[ -n "$interface_if" ] || return
 
-	#network_get_device interface_if $INTERFACE
-	interface_if=$(_get_interface_device "$INTERFACE")
-	interface_up=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
-	#multipath_current_config=$(multipath $interface_if | grep 'deactivated')
-	interface_current_config=$(uci -q get openmptcprouter.$INTERFACE.state || echo "up")
-	interface_vpn=$(uci -q get openmptcprouter.$INTERFACE.vpn || echo "0")
-	if { [ "$interface_vpn" = "0" ] || [ "$(uci -q get openmptcprouter.settings.allmptcpovervpn)" = "0" ]; } && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ] && [ "$interface_if" != "" ] && [ "$interface_up" = "true" ]; then
-		interface_gw=$(_get_interface_gateway "$INTERFACE" "$ipv6")
-		#if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ -n "$serverip" ] && [ "$(ip route show $serverip | grep $interface_if)" = "" ]; then
-		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ -z "$(echo $interface_gw | grep :)" ]; then
-			if [ "$(uci -q get network.$INTERFACE.weight)" != "" ]; then
-				weight=$(uci -q get network.$INTERFACE.weight)
-			elif [ "$(uci -q get openmptcprouter.$INTERFACE.weight)" != "" ]; then
-				weight=$(uci -q get openmptcprouter.$INTERFACE.weight)
-			elif [ "$multipath_config_route" = "master" ]; then
-				weight=100
+	_omr_get_interface_gateway_var interface_gw "$INTERFACE" "$ipv6"
+	#if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ] && [ -n "$serverip" ] && [ "$(ip route show $serverip | grep $interface_if)" = "" ]; then
+	[ -n "$interface_gw" ] || return
+	case "$interface_gw" in *:*) return ;; esac
+
+	# Build routes based on IPv6 flag and backup status
+	_omr_route_fragment_var route_fragment "$INTERFACE" "$multipath_config_route" "$interface_gw" "$interface_if"
+
+	if [ "$multipath_config_route" = "backup" ]; then
+		if [ "$ipv6" = "true" ]; then
+			nbintfb6=$((nbintfb6+1))
+			if [ -z "$routesintfbackup6" ]; then
+				routesintfbackup6="$route_fragment"
 			else
-				weight=1
+				routesintfbackup6="$routesintfbackup6 $route_fragment"
 			fi
-
-			# Build routes based on IPv6 flag and backup status
-			local route_fragment="nexthop via $interface_gw dev $interface_if weight $weight"
-
-			if [ "$multipath_config_route" = "backup" ]; then
-				if [ "$ipv6" = "true" ]; then
-					nbintfb6=$((nbintfb6+1))
-					if [ -z "$routesintfbackup6" ]; then
-						routesintfbackup6="$route_fragment"
-					else
-						routesintfbackup6="$routesintfbackup6 $route_fragment"
-					fi
-				else
-					nbintfb=$((nbintfb+1))
-					if [ -z "$routesintfbackup" ]; then
-						routesintfbackup="$route_fragment"
-					else
-						routesintfbackup="$routesintfbackup $route_fragment"
-					fi
-				fi
+		else
+			nbintfb=$((nbintfb+1))
+			if [ -z "$routesintfbackup" ]; then
+				routesintfbackup="$route_fragment"
 			else
-				if [ "$ipv6" = "true" ]; then
-					nbintf6=$((nbintf6+1))
-					if [ -z "$routesintf6" ]; then
-						routesintf6="$route_fragment"
-					else
-						routesintf6="$routesintf6 $route_fragment"
-					fi
-				else
-					nbintf=$((nbintf+1))
-					if [ -z "$routesintf" ]; then
-						routesintf="$route_fragment"
-					else
-						routesintf="$routesintf $route_fragment"
-					fi
-				fi
+				routesintfbackup="$routesintfbackup $route_fragment"
+			fi
+		fi
+	else
+		if [ "$ipv6" = "true" ]; then
+			nbintf6=$((nbintf6+1))
+			if [ -z "$routesintf6" ]; then
+				routesintf6="$route_fragment"
+			else
+				routesintf6="$routesintf6 $route_fragment"
+			fi
+		else
+			nbintf=$((nbintf+1))
+			if [ -z "$routesintf" ]; then
+				routesintf="$route_fragment"
+			else
+				routesintf="$routesintf $route_fragment"
 			fi
 		fi
 	fi
@@ -305,67 +565,63 @@ set_routes_intf6() {
 	_set_routes_intf_common "$1" true
 }
 
+# NOTE: this sweep always looks up the IPv4 gateway and files the fragment
+# under the IPv4 or IPv6 variables depending on the caller's global "ipv6"
+# variable (not on its own second argument) -- long-standing behaviour that
+# 003-up's balancing blocks rely on, kept as is.
 _set_route_balancing_common() {
-	local multipath_config_route interface_gw interface_if
+	local multipath_config_route interface_gw interface_if interface_vpn interface_current_config route_fragment
 	INTERFACE=$1
 	[ -z "$INTERFACE" ] && return
 	[ "$INTERFACE" = "omrvpn" ] && return
 	[ "$INTERFACE" = "omr6in4" ] && return
-	multipath_config_route=$(_get_multipath_config $INTERFACE)
 
-	#network_get_device interface_if $INTERFACE
-	interface_if=$(_get_interface_device "$INTERFACE")
-	interface_up=$(ifstatus "$INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
-	interface_current_config=$(uci -q get openmptcprouter.$INTERFACE.state || echo "up")
-	interface_vpn=$(uci -q get openmptcprouter.$INTERFACE.vpn || echo "0")
-	if { [ "$interface_vpn" = "0" ] || [ "$(uci -q get openmptcprouter.settings.allmptcpovervpn)" = "0" ]; } && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ] && [ "$interface_up" = "true" ]; then
-		interface_gw=$(_get_interface_gateway "$INTERFACE" false)
+	_omr_if_up "$INTERFACE" || return
+	_omr_uci_get_var interface_current_config "openmptcprouter.$INTERFACE.state" "up"
+	[ "$interface_current_config" = "up" ] || return
+	_omr_uci_get_var interface_vpn "openmptcprouter.$INTERFACE.vpn" "0"
+	_omr_uci_get_var _allmptcpovervpn openmptcprouter.settings.allmptcpovervpn
+	{ [ "$interface_vpn" = "0" ] || [ "$_allmptcpovervpn" = "0" ]; } || return
+	_omr_get_multipath_config_var multipath_config_route "$INTERFACE"
+	[ "$multipath_config_route" != "off" ] || return
+	_omr_get_interface_device_var interface_if "$INTERFACE"
+	[ -n "$interface_if" ] || return
 
-		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ]; then
-			if [ "$(uci -q get network.$INTERFACE.weight)" != "" ]; then
-				weight=$(uci -q get network.$INTERFACE.weight)
-			elif [ "$(uci -q get openmptcprouter.$INTERFACE.weight)" != "" ]; then
-				weight=$(uci -q get openmptcprouter.$INTERFACE.weight)
-			elif [ "$multipath_config_route" = "master" ]; then
-				weight=100
+	_omr_get_interface_gateway_var interface_gw "$INTERFACE" false
+	[ -n "$interface_gw" ] || return
+
+	_omr_route_fragment_var route_fragment "$INTERFACE" "$multipath_config_route" "$interface_gw" "$interface_if"
+
+	if [ "$multipath_config_route" = "backup" ]; then
+		if [ "$ipv6" = "true" ]; then
+			nbintfb6=$((nbintfb6+1))
+			if [ -z "$routesbalancingbackup6" ]; then
+				routesbalancingbackup6="$route_fragment"
 			else
-				weight=1
+				routesbalancingbackup6="$routesbalancingbackup6 $route_fragment"
 			fi
-
-			local route_fragment="nexthop via $interface_gw dev $interface_if weight $weight"
-
-			if [ "$multipath_config_route" = "backup" ]; then
-				if [ "$ipv6" = "true" ]; then
-					nbintfb6=$((nbintfb6+1))
-					if [ -z "$routesbalancingbackup6" ]; then
-						routesbalancingbackup6="$route_fragment"
-					else
-						routesbalancingbackup6="$routesbalancingbackup6 $route_fragment"
-					fi
-				else
-					nbintfb=$((nbintfb+1))
-					if [ -z "$routesbalancingbackup" ]; then
-						routesbalancingbackup="$route_fragment"
-					else
-						routesbalancingbackup="$routesbalancingbackup $route_fragment"
-					fi
-				fi
+		else
+			nbintfb=$((nbintfb+1))
+			if [ -z "$routesbalancingbackup" ]; then
+				routesbalancingbackup="$route_fragment"
 			else
-				if [ "$ipv6" = "true" ]; then
-					nbintf6=$((nbintf6+1))
-					if [ -z "$routesbalancing6" ]; then
-						routesbalancing6="$route_fragment"
-					else
-						routesbalancing6="$routesbalancing6 $route_fragment"
-					fi
-				else
-					nbintf=$((nbintf+1))
-					if [ -z "$routesbalancing" ]; then
-						routesbalancing="$route_fragment"
-					else
-						routesbalancing="$routesbalancing $route_fragment"
-					fi
-				fi
+				routesbalancingbackup="$routesbalancingbackup $route_fragment"
+			fi
+		fi
+	else
+		if [ "$ipv6" = "true" ]; then
+			nbintf6=$((nbintf6+1))
+			if [ -z "$routesbalancing6" ]; then
+				routesbalancing6="$route_fragment"
+			else
+				routesbalancing6="$routesbalancing6 $route_fragment"
+			fi
+		else
+			nbintf=$((nbintf+1))
+			if [ -z "$routesbalancing" ]; then
+				routesbalancing="$route_fragment"
+			else
+				routesbalancing="$routesbalancing $route_fragment"
 			fi
 		fi
 	fi
@@ -413,16 +669,16 @@ _set_server_all_routes_common() {
 
 	if [ "$ipv6" = "true" ]; then
 		ip_cmd="ip -6"
-		resolve_cmd="resolveip -6"
+		resolve_cmd="-6"
 		routes_var="routesintf6"
-		backup_var="routesintfbackup6" 
+		backup_var="routesintfbackup6"
 		nbintf_var="nbintf6"
 		nbintfb_var="nbintfb6"
 		gateway_var="$OMR_TRACKER_DEVICE_GATEWAY6"
 		suffix="_6"
 	else
 		ip_cmd="ip"
-		resolve_cmd="resolveip -4"
+		resolve_cmd="-4"
 		routes_var="routesintf"
 		backup_var="routesintfbackup"
 		nbintf_var="nbintf"
@@ -433,15 +689,14 @@ _set_server_all_routes_common() {
 
 	server_route() {
 		local serverip multipath_config_route interface_if interface_up
-		serverip=$1
-		[ -n "$serverip" ] && serverip="$($resolve_cmd -t 5 $serverip | head -n 1 | tr -d '\n')"
+		_omr_resolve_var serverip "$resolve_cmd" "$1"
 		config_get disabled $server disabled
 		[ "$disabled" = "1" ] && return
 		#network_get_device interface_if $OMR_TRACKER_INTERFACE
-		interface_if=$(_get_interface_device "$OMR_TRACKER_INTERFACE")
-		interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+		_omr_get_interface_device_var interface_if "$OMR_TRACKER_INTERFACE"
+		if _omr_if_up "$OMR_TRACKER_INTERFACE"; then interface_up="true"; else interface_up="false"; fi
 
-		multipath_config_route=$(_get_multipath_config $OMR_TRACKER_INTERFACE)
+		_omr_get_multipath_config_var multipath_config_route "$OMR_TRACKER_INTERFACE"
 
 		if [ "$serverip" != "" ] && [ "$multipath_config_route" != "off" ]; then
 			eval "${routes_var}=''"
@@ -455,12 +710,13 @@ _set_server_all_routes_common() {
 			else
 				config_foreach set_routes_intf interface
 			fi
-			
+
 			# Get current values
-			local current_routes=$(eval "echo \$${routes_var}")
-			local current_backup=$(eval "echo \$${backup_var}")
-			local current_nbintf=$(eval "echo \$${nbintf_var}")
-			local current_nbintfb=$(eval "echo \$${nbintfb_var}")
+			local current_routes current_backup current_nbintf current_nbintfb
+			eval "current_routes=\$${routes_var}"
+			eval "current_backup=\$${backup_var}"
+			eval "current_nbintf=\$${nbintf_var}"
+			eval "current_nbintfb=\$${nbintfb_var}"
 
 			if [ -n "$current_routes" ]; then
 				local existing_gws
@@ -519,12 +775,12 @@ _set_server_route_common() {
 
 	if [ "$ipv6" = "true" ]; then
 		ip_cmd="ip -6"
-		resolve_cmd="resolveip -6"
+		resolve_cmd="-6"
 		gateway_var="$OMR_TRACKER_DEVICE_GATEWAY6"
 		suffix="_6"
 	else
 		ip_cmd="ip"
-		resolve_cmd="resolveip -4"
+		resolve_cmd="-4"
 		gateway_var="$OMR_TRACKER_DEVICE_GATEWAY"
 		suffix="_4"
 	fi
@@ -533,20 +789,18 @@ _set_server_route_common() {
 		local serverip multipath_config_route interface_if interface_up interface_current_config
 		local metric
 
-		serverip="$1"
-		[ -n "$serverip" ] && serverip="$($resolve_cmd -t 5 "$serverip" | head -n 1 | tr -d '\n')"
+		_omr_resolve_var serverip "$resolve_cmd" "$1"
 
 		config_get disabled "$server" disabled
 		[ "$disabled" = "1" ] && return
 
-		metric="${2:-$(uci -q get "network.${OMR_TRACKER_INTERFACE}.metric")}"
-		#"
-		multipath_config_route=$(_get_multipath_config "$OMR_TRACKER_INTERFACE")
+		metric="$2"
+		[ -n "$metric" ] || _omr_uci_get_var metric "network.${OMR_TRACKER_INTERFACE}.metric"
+		_omr_get_multipath_config_var multipath_config_route "$OMR_TRACKER_INTERFACE"
 
-		interface_if=$(_get_interface_device "$OMR_TRACKER_INTERFACE")
-		interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
-		interface_current_config=$(uci -q get "openmptcprouter.${OMR_TRACKER_INTERFACE}.state")
-		[ -z "$interface_current_config" ] && interface_current_config="up"
+		_omr_get_interface_device_var interface_if "$OMR_TRACKER_INTERFACE"
+		if _omr_if_up "$OMR_TRACKER_INTERFACE"; then interface_up="true"; else interface_up="false"; fi
+		_omr_uci_get_var interface_current_config "openmptcprouter.${OMR_TRACKER_INTERFACE}.state" "up"
 
 		if [ -n "$serverip" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$gateway_var" ] && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ] && [ "$interface_up" = "true" ]; then
 			local existing_route=$($ip_cmd route show "$serverip" 2>/dev/null | grep "via ${gateway_var}" | grep "dev ${OMR_TRACKER_DEVICE}")
@@ -560,12 +814,12 @@ _set_server_route_common() {
 	config_list_foreach "$server" ip server_route
 
 	# Set default route if conditions are met
-	local default_gw_enabled=$(uci -q get "openmptcprouter.settings.defaultgw")
-	local interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
-	local interface_current_config=$(uci -q get "openmptcprouter.${OMR_TRACKER_INTERFACE}.state")
-	[ -z "$interface_current_config" ] && interface_current_config="up"
-	local multipath_config_route=$(_get_multipath_config "$OMR_TRACKER_INTERFACE")
-	local metric=$(uci -q get "network.${OMR_TRACKER_INTERFACE}.metric")
+	local default_gw_enabled interface_up interface_current_config multipath_config_route metric
+	_omr_uci_get_var default_gw_enabled "openmptcprouter.settings.defaultgw"
+	if _omr_if_up "$OMR_TRACKER_INTERFACE"; then interface_up="true"; else interface_up="false"; fi
+	_omr_uci_get_var interface_current_config "openmptcprouter.${OMR_TRACKER_INTERFACE}.state" "up"
+	_omr_get_multipath_config_var multipath_config_route "$OMR_TRACKER_INTERFACE"
+	_omr_uci_get_var metric "network.${OMR_TRACKER_INTERFACE}.metric"
 
 	if [ "$default_gw_enabled" != "0" ] && [ -n "$metric" ] && [ -n "$gateway_var" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ] && [ "$interface_up" = "true" ]; then
 		local existing_default=$($ip_cmd route show dev "$OMR_TRACKER_DEVICE" metric "$metric" 2>/dev/null | grep default | grep "$gateway_var")
@@ -631,9 +885,9 @@ _purge_wan_default_route() {
 		on|master|backup) ;;
 		*) return;;
 	esac
-	device=$(_get_interface_device "$iface")
+	_omr_get_interface_device_var device "$iface"
 	[ -z "$device" ] && return
-	metric=$(uci -q get "network.${iface}.metric")
+	_omr_uci_get_var metric "network.${iface}.metric"
 
 	[ -n "$metric" ] && ip route del default dev "$device" metric "$metric" >/dev/null 2>&1
 	ip route del default dev "$device" >/dev/null 2>&1
@@ -658,17 +912,17 @@ _del_server_route_common() {
 	[ -z "$OMR_TRACKER_DEVICE" ] && return
 	if [ "$ipv6" = "true" ]; then
 		ip_cmd="ip -6"
-		resolve_cmd="resolveip -6"
+		resolve_cmd="-6"
 		gateway_var="$OMR_TRACKER_DEVICE_GATEWAY6"
 	else
 		ip_cmd="ip"
-		resolve_cmd="resolveip -4"
+		resolve_cmd="-4"
 		gateway_var="$OMR_TRACKER_DEVICE_GATEWAY"
 	fi
 
 	remove_route() {
-		local serverip="$1"
-		[ -n "$serverip" ] && serverip="$($resolve_cmd -t 5 "$serverip" | head -n 1 | tr -d '\n')"
+		local serverip
+		_omr_resolve_var serverip "$resolve_cmd" "$1"
 
 		if [ -n "$serverip" ]; then
 			# A nexthop group route can't be deleted by device: 'route del dev X'
@@ -682,7 +936,7 @@ _del_server_route_common() {
 			if [ -z "$OMR_TRACKER_INTERFACE" ]; then
 				metric=0
 			else
-				metric=$(uci -q get "network.${OMR_TRACKER_INTERFACE}.metric")
+				_omr_uci_get_var metric "network.${OMR_TRACKER_INTERFACE}.metric"
 			fi
 
 			# Try to delete route with metric first, then without
@@ -697,7 +951,7 @@ _del_server_route_common() {
 	# Remove default route
 	if [ -n "$gateway_var" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
 		[ -n "$($ip_cmd route show default via "$gateway_var" dev "$OMR_TRACKER_DEVICE" 2>/dev/null)" ] && $ip_cmd route del default via "$gateway_var" dev "$OMR_TRACKER_DEVICE" >/dev/null 2>&1
-	elif [ -n "$OMR_TRACKER_DEVICE" ]; then 
+	elif [ -n "$OMR_TRACKER_DEVICE" ]; then
 		[ -n "$($ip_cmd route show default dev "$OMR_TRACKER_DEVICE" 2>/dev/null)" ] && $ip_cmd route del default dev "$OMR_TRACKER_DEVICE" >/dev/null 2>&1
 	fi
 }
@@ -757,4 +1011,3 @@ set_vpn_balancing_routes() {
 	_log "allvpnroutes: $allvpnroutes"
 	[ -n "$allvpnroutes" ] && ip route replace default scope global${allvpnroutes} >/dev/null 2>&1
 }
-

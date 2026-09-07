@@ -14,6 +14,9 @@
 . "${OMR_LIB_DIR:-/usr/share/omr/lib}/common-post-tracking.sh"
 
 if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$OMR_TRACKER_INTERFACE" != "omr6in4" ]; then
+	# Plain uci gets on purpose: this script reads only a couple of options,
+	# so building the library's config map (see common-post-tracking.sh)
+	# would cost more than the forks it saves
 	if [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.disabled)" = "1" ]; then
 		_log "Disable MPTCP & Tracker on the disabled interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE)"
 		/etc/init.d/mptcp reload "$OMR_TRACKER_DEVICE" >/dev/null 2>&1
@@ -64,11 +67,14 @@ if [ -n "$(grep z8109ax /etc/board.json)" ] && [ "$(uci -q get network.modem1.pr
 fi
 
 # Force unbound DNS resolution on IPv4 if n IPv6 set
-_unbound_lc=$(uci -q get openmptcprouter.settings.unbound_lc)
+# The minute-rate unbound_lc timestamp lives in uci state (tmpfs): committed
+# to /etc/config it was a flash write every 60 s (see omr-state.sh)
+_unbound_lc=$(omr_state_get openmptcprouter.settings.unbound_lc)
+[ -z "$_unbound_lc" ] && _unbound_lc=$(uci -q get openmptcprouter.settings.unbound_lc)
 _unbound_now=$(date +%s)
 if [ -n "$(uci -q show unbound)" ] && { [ -z "$_unbound_lc" ] || [ $((_unbound_now - _unbound_lc)) -gt 60 ]; }; then
-	uci -q set openmptcprouter.settings.unbound_lc="$_unbound_now"
-	uci -q commit openmptcprouter
+	omr_state_migrate openmptcprouter settings unbound_lc
+	omr_state_set openmptcprouter settings unbound_lc "$_unbound_now"
 	if [ -n "$(ip -6 r show scope global)" ]; then
 		uci -q set unbound.ub_main.protocol='mixed'
 	else

@@ -8,23 +8,36 @@
 # This script save latencies and set additionnal latencies if set on interface
 
 { [ "$OMR_TRACKER_STATUS" = "ERROR" ] || [ -z "$OMR_TRACKER_INTERFACE" ]; }&& exit 0
-interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+interface_up=$(ubus call network.interface."$OMR_TRACKER_INTERFACE" status 2>/dev/null | jsonfilter -q -e '@["up"]')
 [ "$interface_up" != "true" ] && exit 0
 
+. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
+
 [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_LATENCY" ] && {
-	[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.latency)" != "" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency_previous="$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.latency)"
-	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency="$OMR_TRACKER_LATENCY"
+	# latency/latency_previous change on every cycle: they are volatile state
+	# kept in the uci state directory (tmpfs), not committed to flash. The
+	# state view falls back to the config value, so read the previous latency
+	# first, then drop the copies older firmwares left in /etc/config so plain
+	# "uci get" doesn't keep returning a frozen value.
+	_prev_latency="$(omr_state_get openmptcprouter.$OMR_TRACKER_INTERFACE.latency)"
+	omr_state_migrate openmptcprouter "$OMR_TRACKER_INTERFACE" latency latency_previous
+	if [ -n "$_prev_latency" ]; then
+		omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" latency_previous "$_prev_latency" latency "$OMR_TRACKER_LATENCY"
+	else
+		omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" latency "$OMR_TRACKER_LATENCY"
+	fi
 	#[ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.latency_max)" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency_max="$OMR_TRACKER_LATENCY"
 	#[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.latency_max)" -lt "$OMR_TRACKER_LATENCY" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency_max="$OMR_TRACKER_LATENCY"
-	if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath)" = "on" ] && { [ "$(uci -q get openmptcprouter.settings.master)" = "dynamic" ] || { { [ "$(uci -q get openmptcprouter.settings.master)" = "change" ] || [ "$(uci -q get openmptcprouter.settings.master)" = "" ]; } && [ "$(uci -q get openmptcprouter.settings.master_lcintf | grep $OMR_TRACKER_INTERFACE)" = "" ]; }; }; then
+	_master_setting="$(uci -q get openmptcprouter.settings.master)"
+	if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath)" = "on" ] && { [ "$_master_setting" = "dynamic" ] || { { [ "$_master_setting" = "change" ] || [ "$_master_setting" = "" ]; } && [ "$(uci -q get openmptcprouter.settings.master_lcintf | grep $OMR_TRACKER_INTERFACE)" = "" ]; }; }; then
 		masterintf="$(uci -q show openmptcprouter | grep -m 1 multipath=\'master\' | cut -d'.' -f2)"
 		[ -z "$masterintf" ] && masterintf="$(uci -q show network | grep -m 1 multipath=\'master\' | cut -d'.' -f2)"
-		masterlatency="$(uci -q get openmptcprouter.$masterintf.latency | tr -d '\n')"
+		masterlatency="$(omr_state_get openmptcprouter.$masterintf.latency | tr -d '\n')"
 		if [ -z "$masterlatency" ] || { [ -n "$masterintf" ] && [ "$(uci -q get openmptcprouter.$masterintf.state)" = "down" ]; }; then
 			masterlatency=1000
 		fi
 		if [ -n "$masterintf" ] && { [ "$masterlatency" != "" ] || [ "$(uci -q get openmptcprouter.$masterintf.state)" = "down" ]; }; then
-			if { { [ "$(uci -q get openmptcprouter.settings.master)" = "change" ] || [ "$(uci -q get openmptcprouter.settings.master)" = "" ]; } && [ "$OMR_TRACKER_LATENCY" -lt $(awk "BEGIN {printf \"%i\",${masterlatency}/1.5}") ]; } || { [ "$(uci -q get openmptcprouter.settings.master)" = "dynamic" ] && [ "$OMR_TRACKER_LATENCY" -lt "$((masterlatency/2))" ] && [ -n "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.latency_previous)" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.latency_previous)" -lt "$((masterlatency/2))" ]; }; then
+			if { { [ "$_master_setting" = "change" ] || [ "$_master_setting" = "" ]; } && [ "$OMR_TRACKER_LATENCY" -lt $(awk "BEGIN {printf \"%i\",${masterlatency}/1.5}") ]; } || { [ "$_master_setting" = "dynamic" ] && [ "$OMR_TRACKER_LATENCY" -lt "$((masterlatency/2))" ] && [ -n "$_prev_latency" ] && [ "$_prev_latency" -lt "$((masterlatency/2))" ]; }; then
 				uci -q set network.$masterintf.multipath='on'
 				uci -q set openmptcprouter.$masterintf.multipath='on'
 				uci -q set network.$OMR_TRACKER_INTERFACE.multipath='master'
@@ -32,30 +45,35 @@ interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e 
 				if [ "$(uci -q get openmptcprouter.settings.master_lcintf | grep $OMR_TRACKER_INTERFACE)" = "" ]; then
 					uci -q add_list openmptcprouter.settings.master_lcintf="$OMR_TRACKER_INTERFACE"
 				fi
-				if [ "$(uci -q get openmptcprouter.settings.master)" = "" ]; then
+				if [ "$_master_setting" = "" ]; then
 					uci -q set openmptcprouter.settings.master="change"
 				fi
-				if [ "$(uci -q get openmptcprouter.settings.master)" != "dynamic" ]; then
+				if [ "$_master_setting" != "dynamic" ]; then
 					[ -n "$(uci -q changes network)" ] && uci -q commit network
 					[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 				fi
 				_log "Change master interface from $masterintf ($masterlatency ms) to $OMR_TRACKER_INTERFACE ($OMR_TRACKER_LATENCY ms)"
 			fi
 		fi
+		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 	fi
-	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 }
 
 if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
 	addlatency=$(uci -q get network.${OMR_TRACKER_INTERFACE}.addlatency)
 	[ -z "$addlatency" ] && addlatency="0"
-	if [ "$addlatency" = "0" ] && [ "$(tc qdisc show dev $OMR_TRACKER_DEVICE | grep delay)" != "" ]; then
+	_tc_qdisc="$(tc qdisc show dev $OMR_TRACKER_DEVICE 2>/dev/null)"
+	case "$_tc_qdisc" in
+		*delay*) _tc_has_delay=1 ;;
+		*) _tc_has_delay="" ;;
+	esac
+	if [ "$addlatency" = "0" ] && [ -n "$_tc_has_delay" ]; then
 		tc qdisc del dev ${OMR_TRACKER_DEVICE} root netem >/dev/null 2>&1
 	fi
 	if [ "$addlatency" != "0" ]; then
-		if [ "$(tc qdisc show dev $OMR_TRACKER_DEVICE | grep delay)" = "" ]; then
+		if [ -z "$_tc_has_delay" ]; then
 			tc qdisc add dev ${OMR_TRACKER_DEVICE} root netem delay ${addlatency}ms >/dev/null 2>&1
-		elif [ "$(tc qdisc show dev $OMR_TRACKER_DEVICE | awk '/delay/ { print $10 }' | sed 's/ms//')" != "$addlatency" ]; then
+		elif [ "$(printf '%s\n' "$_tc_qdisc" | awk '/delay/ { print $10 }' | sed 's/ms//')" != "$addlatency" ]; then
 			tc qdisc replace dev ${OMR_TRACKER_DEVICE} root netem delay ${addlatency}ms >/dev/null 2>&1
 		fi
 	fi
