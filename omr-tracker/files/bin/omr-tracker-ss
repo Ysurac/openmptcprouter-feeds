@@ -159,6 +159,27 @@ _ss_active_redirs() {
 	printf '%s' "$_n"
 }
 
+# Flip every ss_redir section pointing at ${server} to disabled=$1, so the
+# redirect port list the shadowsocks init builds follows this tracker's view of
+# its server. Self-contained on purpose: config_foreach walks $CONFIG_SECTIONS,
+# which only a config_load in the *calling* shell fills in, and every other
+# config_load here runs inside a command substitution
+# (_ss_active_redirs/_ss_missing_redirs). The down path used to open-code this
+# loop without its own config_load, so on a server that never came up it
+# iterated nothing: the redirs stayed enabled, _ss_active_redirs kept returning
+# >=1 and the whole down path (rules_down + fw4 reload + ping + mail alert)
+# re-ran every cycle while the dead port stayed in the redirect map.
+_ss_set_redirs_disabled() {
+	local _want="$1"
+	_set_redir_disabled() {
+		[ "$(uci -q get ${_ss_cfg}.$1.server)" != "$2" ] && return
+		uci -q set ${_ss_cfg}.$1.disabled="$_want"
+	}
+	config_load "$_ss_cfg"
+	config_foreach _set_redir_disabled ss_redir "${server}"
+	uci -q commit "$_ss_cfg"
+}
+
 # Restart the proxy service when _ss_missing_redirs finds something, re-checked
 # once after a short pause so a restart already in progress is not doubled.
 # Returns 0 when a restart was issued.
@@ -219,13 +240,7 @@ while true; do
 			uci -q set openmptcprouter.omr.ss_${server}="up"
 			uci -q commit openmptcprouter
 			if [ -n "$_ss_cfg" ]; then
-				_remove_rule() {
-					[ "$(uci -q get ${_ss_cfg}.$1.server)" != "$2" ] && return
-					uci -q set ${_ss_cfg}.$1.disabled=0
-				}
-				config_load "$_ss_cfg"
-				config_foreach _remove_rule ss_redir "${server}"
-				uci -q commit "$_ss_cfg"
+				_ss_set_redirs_disabled 0
 				# The sections re-enabled above have no running instance when the
 				# service was restarted while they were disabled: restart it then,
 				# a rules_reset alone would redirect to a port nobody listens on
@@ -304,12 +319,7 @@ while true; do
 				[ "$type" = "libev" ] && /etc/init.d/shadowsocks-libev rules_down 2>/dev/null
 				[ "$type" = "rust" ] && /etc/init.d/shadowsocks-rust rules_down 2>/dev/null
 				if [ -n "$_ss_cfg" ]; then
-					_remove_rule() {
-						[ "$(uci -q get ${_ss_cfg}.$1.server)" != "$2" ] && return
-						uci -q set ${_ss_cfg}.$1.disabled=1
-					}
-					config_foreach _remove_rule ss_redir "${server}"
-					uci -q commit "$_ss_cfg"
+					_ss_set_redirs_disabled 1
 					/etc/init.d/${_ss_cfg} rules_reset 2>/dev/null
 				fi
 				_get_ip

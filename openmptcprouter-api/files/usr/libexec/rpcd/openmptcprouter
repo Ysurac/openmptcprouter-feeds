@@ -520,8 +520,21 @@ end
 -- happens. sss0 is deliberately exempt: it's the primary slot and existing
 -- callers already rely on default_proxy()/set_proxy_backend_enabled() being
 -- the thing that enables it, address or not (mid-provisioning ordering).
+-- "No address of its own" also covers the shipped placeholder: the default
+-- shadowsocks-rust.config gives every server section server='127.0.0.1', so
+-- a plain emptiness test lets sss1 be enabled pointing at an address nothing
+-- answers on. That is worse than the crash loop it was meant to prevent,
+-- because ss_rules.redir_tcp="all" then round-robins new TCP connections over
+-- hi1 *and* hi2 and roughly half of them are black-holed. 192.168.1.3 is the
+-- placeholder older releases shipped, still recognised here for configs that
+-- were never provisioned before an upgrade.
+local _ss_placeholder_addr = {
+	[""] = true, ["127.0.0.1"] = true, ["::1"] = true, ["192.168.1.3"] = true,
+}
+
 local function _ssrust_enable_flag(name, want_flag)
-	if name ~= "sss0" and want_flag == "0" and (ucic:get("shadowsocks-rust", name, "server") or "") == "" then
+	if name ~= "sss0" and want_flag == "0"
+	   and _ss_placeholder_addr[ucic:get("shadowsocks-rust", name, "server") or ""] then
 		return "1"
 	end
 	return want_flag
@@ -2096,7 +2109,7 @@ function interfaces_status()
 	mArray.openmptcprouter["proxy"] = uci:get("openmptcprouter", "settings", "proxy") or ""
 
 	mArray.openmptcprouter["service_addr"] = uci:get("shadowsocks-libev", "sss0", "server") or uci:get("shadowsocks-rust", "sss0", "server") or ""
-	if mArray.openmptcprouter["service_addr"] == "" or mArray.openmptcprouter["service_addr"] == "192.168.1.3" then
+	if _ss_placeholder_addr[mArray.openmptcprouter["service_addr"]] then
 		mArray.openmptcprouter["service_addr"] = ""
 		ucic:foreach("openmptcprouter", "server", function(s)
 			local serverip = _first_nonempty_string(uci:get("openmptcprouter",s[".name"],"ip"))
@@ -2968,7 +2981,7 @@ function interfaces_only_status()
 	mArray.openmptcprouter["service_addr_ip6"] = ""
 
 	mArray.openmptcprouter["service_addr"] = uci:get("shadowsocks-libev","sss0","server") or ""
-	if mArray.openmptcprouter["service_addr"] == "" or mArray.openmptcprouter["service_addr"] == "192.168.1.3" then
+	if _ss_placeholder_addr[mArray.openmptcprouter["service_addr"]] then
 		mArray.openmptcprouter["service_addr"] = ""
 		ucic:foreach("openmptcprouter", "server", function(s)
 			local serverip = _first_nonempty_string(uci:get("openmptcprouter",s[".name"],"ip"))
