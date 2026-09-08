@@ -1,0 +1,174 @@
+#
+# Copyright (C) 2026 Yannick Chabanois for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+# Feeds omr-metrics' per-WAN congestion score (queuing delay, loss, jitter,
+# TC backlog/ECN, BBR delivery gap, signal quality -- see 040-metrics in the
+# omr-metrics package) into cake-autorate's own OWD-based bufferbloat
+# threshold (sqm.<iface>.delay_thr_ms), instead of the two running as fully
+# independent control loops: cake-autorate reacts sub-second to queuing
+# delay it measures itself via ICMP timestamps, but has no visibility into
+# loss/jitter/signal/TC-queue conditions omr-metrics already tracks, so a
+# WAN that's degrading on those fronts without yet showing up as OWD delay
+# only gets cake-autorate's normal (comparatively insensitive) threshold.
+#
+# cake-autorate.sh itself is never touched (see docs/dev-guide.md, it is
+# treated as an upstream black box with no live "reload config" signal) --
+# this only ever writes sqm.<iface>.delay_thr_ms via UCI and, when the
+# change is significant enough, asks the sqm-autorate rpcd plugin's
+# restart_instance to kill+respawn just that one WAN's cake-autorate
+# instance so it re-reads the new value (every other WAN's instance, and
+# its warm OWD baselines/shaper rate, is left untouched).
+#
+# Opt-in per WAN via: uci set sqm.<iface>.congestion_sync='1'
+# (default off -- this periodically restarts the WAN's autorate instance).
+# Turning it back off is handled here too: as long as a baseline is still
+# recorded for the WAN, the next run restores delay_thr_ms to it (one
+# restart), deletes the baseline, and stops -- so disabling the feature
+# never leaves a WAN silently stuck at a tightened threshold.
+#
+# Tunables (all sqm.<iface>.*, all optional):
+#   congestion_sync_factor_moderate  delay_thr_ms multiplier at congestion
+#                                     score >=40  (default 0.75)
+#   congestion_sync_factor_high      ... at score >=60           (0.5)
+#   congestion_sync_factor_severe    ... at score >=80           (0.3)
+#   congestion_sync_min_delay_thr_ms floor below which the threshold is
+#                                     never tightened              (10.0)
+#   congestion_sync_cooldown_s       minimum time between two sync-triggered
+#                                     restarts of this WAN's instance (120)
+#   congestion_sync_base_delay_thr_ms
+#     captured automatically (from the WAN's delay_thr_ms at the time
+#     congestion_sync was first turned on) as the un-tightened ceiling
+#     every target is computed from -- never itself overwritten by this
+#     script once set. To force a new baseline (e.g. after manually
+#     retuning bufferbloat sensitivity), clear this option; it is
+#     recaptured from the WAN's current delay_thr_ms on the next run.
+#     Deleted by this script itself only when it restores the baseline
+#     after congestion_sync was turned off (see above).
+#
+# Score bands mirror omr-metrics' own none/low/moderate/high/severe
+# buckets (see 040-metrics' _compute_congestion); "none"/"low" always map
+# to factor 1.0 (baseline, i.e. defer entirely to cake-autorate's own OWD
+# measurement) rather than being independently configurable.
+
+_iface="$OMR_TRACKER_INTERFACE"
+[ -n "$_iface" ] || exit 0
+[ "$OMR_TRACKER_STATUS" = "OK" ] || exit 0
+
+# SQM_AUTORATE_DIR is overridable for tests; production always uses the
+# real install path (same default launcher.sh/the rpcd plugin use).
+config_file="${SQM_AUTORATE_DIR:-/usr/share/sqm-autorate}/config.${_iface}.sh"
+last_action_file="${OMR_METRICS_DIR:-/tmp/metrics}/.${_iface}.sqm_congestion_sync"
+
+# cake-autorate's config validation types delay_thr_ms as a float and
+# rejects a value without a decimal point at instance startup, so every
+# value this script writes goes through here first.
+_norm() {
+	awk -v v="$1" 'BEGIN{printf "%.1f", v+0}'
+}
+
+_request_restart() {
+	# Only meaningful once autorate actually generated (and, in practice,
+	# launched) an instance for this WAN -- see sqm-autorate's init.d
+	# _config_autorate for the enabled/autorate/download/upload qualification.
+	[ -f "$config_file" ] || return 0
+	ubus call sqm-autorate restart_instance "{\"section\":\"${_iface}\"}" >/dev/null 2>&1
+}
+
+base="$(uci -q get "sqm.${_iface}.congestion_sync_base_delay_thr_ms")"
+
+if [ "$(uci -q get "sqm.${_iface}.congestion_sync")" != "1" ]; then
+	# Feature off (or never on) for this WAN. A baseline still on record
+	# means it was on earlier and may have left delay_thr_ms tightened:
+	# put the baseline back exactly once and forget it. This deliberately
+	# runs before the instance-config check below so it also covers a WAN
+	# whose autorate was disabled outright (no config.<iface>.sh any more)
+	# -- the UCI value is fixed either way, the restart is simply skipped.
+	# sqm.js keeps congestion_sync_base_delay_thr_ms (retain) precisely so
+	# this path can still see it after the form hid it together with the
+	# other congestion_sync_* fields.
+	[ -n "$base" ] || exit 0
+	restore="$(_norm "$base")"
+	current="$(uci -q get "sqm.${_iface}.delay_thr_ms")"
+	uci -q delete "sqm.${_iface}.congestion_sync_base_delay_thr_ms"
+	if [ -n "$current" ] && [ "$(_norm "$current")" != "$restore" ]; then
+		uci -q set "sqm.${_iface}.delay_thr_ms=${restore}"
+		uci -q commit sqm
+		logger -t "sqm-autorate-congestion-sync" "interface ${_iface}: congestion sync disabled -- restoring delay_thr_ms ${current} -> ${restore}ms, requesting per-interface restart"
+		_request_restart
+	else
+		uci -q commit sqm
+	fi
+	rm -f "$last_action_file"
+	exit 0
+fi
+
+[ -f "$config_file" ] || exit 0
+
+command -v jsonfilter >/dev/null 2>&1 || exit 0
+metrics_file="${OMR_METRICS_DIR:-/tmp/metrics}/${_iface}.json"
+[ -f "$metrics_file" ] || exit 0
+
+score=$(jsonfilter -i "$metrics_file" -q -e '@.congestion.score' 2>/dev/null)
+score_int="${score%%.*}"
+case "$score_int" in ''|*[!0-9]*) exit 0 ;; esac
+
+factor_severe="$(uci -q get "sqm.${_iface}.congestion_sync_factor_severe")"
+factor_high="$(uci -q get "sqm.${_iface}.congestion_sync_factor_high")"
+factor_moderate="$(uci -q get "sqm.${_iface}.congestion_sync_factor_moderate")"
+: "${factor_severe:=0.3}" "${factor_high:=0.5}" "${factor_moderate:=0.75}"
+
+if [ "$score_int" -ge 80 ]; then
+	band="severe"; factor="$factor_severe"
+elif [ "$score_int" -ge 60 ]; then
+	band="high"; factor="$factor_high"
+elif [ "$score_int" -ge 40 ]; then
+	band="moderate"; factor="$factor_moderate"
+else
+	band="none"; factor="1.0"
+fi
+
+# Capture the ceiling this and every future target is computed from, once,
+# the first time the feature runs for this WAN.
+if [ -z "$base" ]; then
+	base="$(uci -q get "sqm.${_iface}.delay_thr_ms")"
+	[ -z "$base" ] && base="250.0" # config_template.sh's own fallback default
+	uci -q set "sqm.${_iface}.congestion_sync_base_delay_thr_ms=${base}"
+	uci -q commit sqm
+fi
+
+min_delay="$(uci -q get "sqm.${_iface}.congestion_sync_min_delay_thr_ms")"
+: "${min_delay:=10.0}"
+
+target=$(awk -v base="$base" -v factor="$factor" -v floor="$min_delay" 'BEGIN{v=base*factor; if (v<floor) v=floor; printf "%.1f", v}')
+
+current="$(uci -q get "sqm.${_iface}.delay_thr_ms")"
+[ -z "$current" ] && current="250.0"
+current_norm="$(_norm "$current")"
+
+# Nothing to do: already at the value this band calls for.
+[ "$target" = "$current_norm" ] && exit 0
+
+cooldown_s="$(uci -q get "sqm.${_iface}.congestion_sync_cooldown_s")"
+: "${cooldown_s:=120}"
+now=$(date +%s)
+last_action=0
+[ -f "$last_action_file" ] && read -r last_action < "$last_action_file" 2>/dev/null
+case "$last_action" in ''|*[!0-9]*) last_action=0 ;; esac
+
+if [ "$last_action" -gt 0 ] 2>/dev/null && [ $((now - last_action)) -lt "$cooldown_s" ]; then
+	exit 0
+fi
+
+uci -q set "sqm.${_iface}.delay_thr_ms=${target}"
+uci -q commit sqm
+
+logger -t "sqm-autorate-congestion-sync" "interface ${_iface}: congestion score ${score_int} (band ${band}) -- delay_thr_ms ${current_norm} -> ${target}ms, requesting per-interface restart"
+
+_request_restart
+
+printf '%s' "$now" > "$last_action_file"
+
+exit 0

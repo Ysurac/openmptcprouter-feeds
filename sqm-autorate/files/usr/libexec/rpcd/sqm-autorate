@@ -8,8 +8,12 @@
 #   ubus call sqm-autorate set_config '{"section":"wan1","download":"50000","max_download":"80000","restart":true}'
 #   ubus call sqm-autorate get_metrics '{"section":"wan1"}'
 #   ubus call sqm-autorate get_metrics {}
+#   ubus call sqm-autorate restart_instance '{"section":"wan1"}'
 
-CONFIG_DIR="/usr/share/sqm-autorate"
+# Overridable for tests; production always uses the defaults below (same
+# defaults launcher.sh uses, and for the same reason).
+CONFIG_DIR="${SQM_AUTORATE_DIR:-/usr/share/sqm-autorate}"
+RUN_DIR="${SQM_AUTORATE_RUN_DIR:-/var/run/sqm-autorate}"
 
 # UCI options readable via get_config / settable via set_config -- mirrors
 # what luci-app-sqm-autorate's sqm.js form exposes, plus the autorate-only
@@ -24,7 +28,11 @@ VALID_OPTIONS="enabled autorate interface download min_download max_download \
 	output_reflector_stats output_cake_changes debug sss_compensation pinger \
 	no_pingers reflector_ping_interval_s delay_thr_ms enable_sleep_functions \
 	connection_active_thr_kpbs sustained_idle_sleep_thr \
-	min_shaper_rates_enforcement startup_wait_s"
+	min_shaper_rates_enforcement startup_wait_s \
+	congestion_sync congestion_sync_base_delay_thr_ms \
+	congestion_sync_factor_moderate congestion_sync_factor_high \
+	congestion_sync_factor_severe congestion_sync_min_delay_thr_ms \
+	congestion_sync_cooldown_s"
 
 _json_str() {
 	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
@@ -103,19 +111,56 @@ _metrics_json() {
 		"$(_json_str "$base_ul")" "$(_json_str "$min_ul")" "$(_json_str "$max_ul")" "$(_iface_metrics_json "$ul_if")"
 }
 
+
+# Ask launcher.sh to kill+respawn only this section's cake-autorate.sh
+# instance, leaving every other WAN's warm state untouched (see
+# launcher.sh's handle_restart_requests). Returns an error rather than
+# silently no-op'ing when the service (or this one instance) isn't running,
+# so callers can tell the difference from a successful restart.
+_restart_instance() {
+	local sec="$1"
+
+	local config_file="${CONFIG_DIR}/config.${sec}.sh"
+	if [ ! -f "$config_file" ]; then
+		echo "{\"error\":\"no generated instance config for section '$(_json_str "$sec")' -- is autorate enabled for it?\"}"
+		return 1
+	fi
+
+	local launcher_pid=""
+	[ -f "${RUN_DIR}/launcher.pid" ] && read -r launcher_pid < "${RUN_DIR}/launcher.pid"
+	if [ -z "$launcher_pid" ] || ! kill -0 "$launcher_pid" 2>/dev/null; then
+		echo '{"error":"sqm-autorate launcher is not running -- use set_config with restart:true, or start the service"}'
+		return 1
+	fi
+
+	mkdir -p "${RUN_DIR}/restart-request"
+	: > "${RUN_DIR}/restart-request/${sec}"
+	kill -USR1 "$launcher_pid" 2>/dev/null
+
+	printf '{"result":"ok","section":"%s","restarted_instance":true}' "$(_json_str "$sec")"
+}
+
 case "$1" in
 	list)
 		echo '{
   "get_config": { "section": "str" },
   "set_config": { "section": "str", "restart": false },
-  "get_metrics": { "section": "str" }
+  "get_metrics": { "section": "str" },
+  "restart_instance": { "section": "str" }
 }'
 		# get_config/get_metrics: omit "section" to get every sqm queue section.
 		# set_config: pass any subset of the known sqm option names alongside
 		# "section" (e.g. download, max_download, delay_thr_ms, ...); only
-		# recognised options are applied. restart=true also bounces the
+		# recognised options are applied. restart=true bounces the whole
 		# sqm-autorate service afterwards (regenerates and relaunches every
-		# instance -- there is no per-interface restart, see launcher.sh).
+		# instance). For a config change scoped to one WAN, prefer applying
+		# it with restart:false and then calling restart_instance for just
+		# that section instead -- it leaves every other WAN's cake-autorate
+		# instance (and its warm OWD baselines/shaper rate) untouched.
+		# restart_instance: signals launcher.sh to kill+respawn only the
+		# named section's cake-autorate.sh, re-reading sqm.<section>.* from
+		# UCI fresh (no live "reload config" path exists in cake-autorate
+		# itself, see docs/dev-guide.md).
 		;;
 
 	call)
@@ -204,6 +249,19 @@ case "$1" in
 					done
 					printf '{"sections":[%s]}' "$entries"
 				fi
+				;;
+
+			restart_instance)
+				section=$(echo "$input" | jsonfilter -q -e '@.section')
+				if [ -z "$section" ]; then
+					echo '{"error":"missing section parameter"}'
+					exit 1
+				fi
+				if ! _section_exists "$section"; then
+					echo "{\"error\":\"section '$(_json_str "$section")' not found in sqm config\"}"
+					exit 1
+				fi
+				_restart_instance "$section" || exit 1
 				;;
 
 			*)

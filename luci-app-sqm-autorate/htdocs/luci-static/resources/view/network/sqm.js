@@ -276,26 +276,80 @@ return view.extend({
 		o.default = "4";
 		o.depends("autorate","1");
 
+		// cake-autorate types these by whether the value carries a decimal
+		// point (typeof float vs integer) and refuses to start an instance
+		// whose value has the wrong type, so always persist a float here.
+		var writeFloat = function(section_id, value) {
+			if (value != null && value !== '' && String(value).indexOf('.') < 0)
+				value = String(value) + '.0';
+			return form.Value.prototype.write.call(this, section_id, value);
+		};
+
 		o = s.taboption("tab_autorate", form.Value, "delay_thr_ms",_("delay threshold in ms:"));
 		o.default = "25.0";
+		o.datatype = 'ufloat';
+		o.write = writeFloat;
 		o.depends("autorate","1");
 
-		o = s.taboption("tab_autorate", form.Flag, "enable_sleep_function", _("Sleep functionnality"));
+		o = s.taboption("tab_autorate", form.Flag, "enable_sleep_functions", _("Sleep functionnality"));
 		o.default = true;
 		o.depends("autorate","1");
 
-		o = s.taboption("tab_autorate", form.Value, "connection_active_thr_kbps",_("Threshold in Kbit/s below which dl/ul is considered idle"));
-		o.default = "500";
+		o = s.taboption("tab_autorate", form.Value, "connection_active_thr_kpbs",_("Threshold in Kbit/s below which dl/ul is considered idle"));
+		o.default = "1000";
+		o.datatype = 'uinteger';
 		o.depends("autorate","1");
 
-		o = s.taboption("tab_autorate", form.Value, "substained_idle_sleep_thr_s",_("Time threshold to put pingers to sleep on substained dl/ul achieved rate < idle_threshold"));
-		o.default = "60";
+		o = s.taboption("tab_autorate", form.Value, "sustained_idle_sleep_thr",_("Time threshold to put pingers to sleep on substained dl/ul achieved rate < idle_threshold"));
+		o.default = "150.0";
+		o.datatype = 'ufloat';
+		o.write = writeFloat;
 		o.depends("autorate","1");
 
 		o = s.taboption("tab_autorate", form.Value, "startup_wait_s",_("Number of seconds to wait on startup:"));
 		o.default = "60.0";
 		o.datatype = 'float'
 		o.depends("autorate","1");
+
+		o = s.taboption("tab_autorate", form.Flag, "congestion_sync", _("Sync bufferbloat threshold with congestion score"),
+			_("When enabled, this WAN's delay threshold is periodically tightened or relaxed to track omr-metrics' congestion score for this interface (loss, jitter, TC queue, signal quality) instead of relying only on cake-autorate's own delay measurement. This restarts this WAN's autorate instance whenever the threshold actually changes; other WANs are not affected. Turning it off restores the baseline delay threshold below on the next tracker cycle. Requires omr-metrics."));
+		o.default = false;
+		o.depends("autorate","1");
+
+		o = s.taboption("tab_autorate", form.Value, "congestion_sync_factor_moderate", _("Delay threshold factor at moderate congestion (score ≥40)"));
+		o.datatype = "and(ufloat,min(0))";
+		o.default = "0.75";
+		o.depends({ autorate: "1", congestion_sync: "1" });
+
+		o = s.taboption("tab_autorate", form.Value, "congestion_sync_factor_high", _("Delay threshold factor at high congestion (score ≥60)"));
+		o.datatype = "and(ufloat,min(0))";
+		o.default = "0.5";
+		o.depends({ autorate: "1", congestion_sync: "1" });
+
+		o = s.taboption("tab_autorate", form.Value, "congestion_sync_factor_severe", _("Delay threshold factor at severe congestion (score ≥80)"));
+		o.datatype = "and(ufloat,min(0))";
+		o.default = "0.3";
+		o.depends({ autorate: "1", congestion_sync: "1" });
+
+		o = s.taboption("tab_autorate", form.Value, "congestion_sync_min_delay_thr_ms", _("Minimum delay threshold this sync will ever set (ms)"));
+		o.datatype = "and(ufloat,min(0))";
+		o.default = "10.0";
+		o.depends({ autorate: "1", congestion_sync: "1" });
+
+		o = s.taboption("tab_autorate", form.Value, "congestion_sync_cooldown_s", _("Minimum time between two sync-triggered restarts (seconds)"));
+		o.datatype = "and(uinteger,min(0))";
+		o.default = "120";
+		o.depends({ autorate: "1", congestion_sync: "1" });
+
+		o = s.taboption("tab_autorate", form.Value, "congestion_sync_base_delay_thr_ms",
+			_("Baseline delay threshold (ms)"),
+			_("Captured automatically from \"delay threshold in ms\" the first time this is enabled; every target above is computed as a fraction of this value, which is never overwritten automatically afterwards. Clear this field to recapture it from the current delay threshold. It is kept when the sync is turned off so the delay threshold can be restored to it."));
+		o.datatype = "and(ufloat,min(0))";
+		o.depends({ autorate: "1", congestion_sync: "1" });
+		// Survive being hidden: 050-congestion-sync needs this value to
+		// restore delay_thr_ms after congestion_sync (or autorate) is turned
+		// off; without retain LuCI deletes it with the other hidden fields.
+		o.retain = true;
 
 
 		return m.render();

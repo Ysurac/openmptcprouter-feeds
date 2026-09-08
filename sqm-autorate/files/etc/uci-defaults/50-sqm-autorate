@@ -14,4 +14,41 @@ uci -q batch <<-EOF >/dev/null
 	commit ucitrack
 EOF
 
+# Older luci-app-sqm-autorate wrote three autorate options under names
+# config_template.sh never read, so whatever the user entered there was
+# silently ignored. Carry each value over to the key the template actually
+# reads (never clobbering one already set under the right name) and drop
+# the dead key.
+. /lib/functions.sh
+
+_migrate_autorate_keys() {
+	local sec="$1" pair old new val cur
+	for pair in \
+		enable_sleep_function:enable_sleep_functions \
+		connection_active_thr_kbps:connection_active_thr_kpbs \
+		substained_idle_sleep_thr_s:sustained_idle_sleep_thr; do
+		old="${pair%%:*}"
+		new="${pair##*:}"
+		val="$(uci -q get "sqm.${sec}.${old}")"
+		[ -n "$val" ] || continue
+		cur="$(uci -q get "sqm.${sec}.${new}")"
+		if [ -z "$cur" ]; then
+			# cake-autorate types this one as a float and refuses to start
+			# an instance whose value has no decimal point.
+			if [ "$new" = "sustained_idle_sleep_thr" ]; then
+				case "$val" in
+					*.*) ;;
+					*) val="${val}.0" ;;
+				esac
+			fi
+			uci -q set "sqm.${sec}.${new}=${val}"
+		fi
+		uci -q delete "sqm.${sec}.${old}"
+	done
+}
+
+config_load sqm
+config_foreach _migrate_autorate_keys queue
+uci -q commit sqm
+
 exit 0
