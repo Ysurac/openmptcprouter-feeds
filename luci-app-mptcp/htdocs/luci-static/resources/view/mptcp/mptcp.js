@@ -295,10 +295,11 @@ return L.view.extend({
 	o.default = "off";
 	// Same rmempty/default collision as mptcp_pm_type above: without this,
 	// every interface currently set to "off" has network.<iface>.multipath
-	// silently deleted on each Save & Apply of this page. Currently harmless
-	// (the init script's own fallback for an absent value is also "off"),
-	// but keep the persisted value explicit so a future fallback change
-	// can't quietly flip behavior for these interfaces too.
+	// silently deleted on each Save & Apply of this page. Not harmless: the
+	// init script falls back to its own copy of the mode in
+	// openmptcprouter.<iface>.multipath before it falls back to "off", so a
+	// deleted setting brings back whatever mode the interface had before
+	// (discussion #4368).
 	o.rmempty = false;
 
 	o = s.option(form.Value, "multipath_weight", _("Weight"), _("Only used by *weight schedulers/path managers. Ignored if no weight scheduler is selected.") + '<br />' + _("A weight >100 make it more attractive, a weight <100 make it less attractive. Max 256"));
