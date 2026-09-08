@@ -44,6 +44,10 @@ _login() {
 	password="$(uci -q get openmptcprouter.${servername}.password)"
 	serverport="$(uci -q get openmptcprouter.${servername}.port)"
 	#[ -z "$server" ] && server="$(uci -q get openmptcprouter.${servername}.ip)"
+	if [ -z "$username" ] || [ -z "$password" ]; then
+		logger -t "OMR-VPS" "No credentials for server ${servername} yet, not asking for a token"
+		return
+	fi
 	if [ -z "$token" ]; then
 		login_on_server() {
 			[ -n "$token" ] && return
@@ -52,16 +56,19 @@ _login() {
 			#resolve="$(resolveip -t 5 $server)"
 			valid_ip6=$(valid_subnet6 $server)
 			if [ "$valid_ip6" = "ok" ]; then
-				auth=`curl -6 --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://[$server]:$serverport/token`
+				auth=`curl -6 --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "username=${username}&password=${password}" https://[$server]:$serverport/token`
 			else
-				auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://$server:$serverport/token`
+				auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "username=${username}&password=${password}" https://$server:$serverport/token`
 			fi
+			# An answer that carries no access_token is the server rejecting
+			# us, not a broken path: retrying it once per interface only adds
+			# fail2ban strikes. Only retry when nothing came back at all.
 			if [ -z "$auth" ]; then
 				for intf in $(multipath 2>/dev/null | awk '/default/ { print $1 }'); do
 					if [ "$valid_ip6" = "ok" ]; then
-						auth=`curl -6 --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://[$server]:$serverport/token`
+						auth=`curl -6 --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "username=${username}&password=${password}" https://[$server]:$serverport/token`
 					else
-						auth=`curl --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d 'username='$username'&password='$password https://$server:$serverport/token`
+						auth=`curl --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "username=${username}&password=${password}" https://$server:$serverport/token`
 					fi
 					[ -n "$auth" ] && break
 				done
