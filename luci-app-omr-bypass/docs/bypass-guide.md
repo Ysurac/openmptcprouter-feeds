@@ -135,6 +135,32 @@ at once (e.g. *Chat*, *Streaming*, *Social*) instead of picking individual
 protocols — the categories are pulled from the same proto JSON file, so
 whatever the router lists as a category shows up here automatically.
 
+## Bypass rules and port forwarding
+
+A bypass rule decides where a connection *your side* opens goes out. It
+never applies to the reply traffic of a connection someone opened *from
+outside* through a port forward, even when that connection is on a
+bypassed port:
+
+* **A port forward relayed by your VPS** (a port forward with the VPN as
+  its source zone, which is what OMR pushes to the server) arrives over
+  the tunnel, so its answers go back over the tunnel. That stays true with
+  a bypass rule on the same port — otherwise the answer would leave a WAN
+  still carrying the tunnel's address and the remote end would never see
+  it. Note WireGuard makes this easy to run into: it sends from its own
+  `ListenPort`, so with both ends on the same port a *destination* port
+  rule matches the answers too.
+* **A port forward reached directly on a WAN address** (a port forward
+  whose source zone is `wan`, for a WAN that is reachable from outside)
+  answers through the WAN it came in on, whichever interface the default
+  route or a bypass rule would otherwise pick.
+
+So if what you want is a service behind the router reachable *without*
+going through the VPS at all — a WireGuard endpoint, say — add the port
+forward with **wan** as its source zone and have the remote peer connect
+to that WAN's own public address. A bypass rule for the same port only
+covers the connections your side starts.
+
 ## DPI Flows
 
 ```

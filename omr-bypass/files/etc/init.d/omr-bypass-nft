@@ -49,6 +49,12 @@ fi
 # firewall config, and callers invoke this in per-proto/per-interface loops.
 _omr_fw_zones=""
 
+# Networks of the wan* firewall zone(s), cached the same way and for the
+# same reason: _intf_rule needs to know whether the interface it is
+# generating marks for is one traffic can come *in* on (see the reply-path
+# chain below), and it runs once per network interface.
+_omr_wan_networks=""
+
 # TLD list for wildcard domain expansion: fetch it from IANA at most once
 # per run — callers need it once per wildcard domain, and each failed
 # attempt costs the full curl timeout when the WAN is not up yet.
@@ -75,6 +81,24 @@ _get_firewall_zones() {
 	}
 	config_foreach get_all_zones zone
 	echo $all_zones
+}
+
+_get_wan_networks() {
+	if [ -n "$_omr_wan_networks" ]; then
+		echo $_omr_wan_networks
+		return
+	fi
+	config_load firewall
+	wan_networks=""
+	get_wan_networks() {
+		config_get name "$1" name
+		config_get networks "$1" network
+		case "$(echo "$name" | tr 'A-Z' 'a-z')" in
+			wan*) wan_networks="$wan_networks $networks" ;;
+		esac
+	}
+	config_foreach get_wan_networks zone
+	echo $wan_networks
 }
 
 _add_proto() {
@@ -175,6 +199,153 @@ _bypass_ip() {
 			done
 		fi
 	fi
+}
+
+# Reply-path routing for connections that came in from outside (issue #4369)
+#
+# A bypass rule is about where a connection *goes out*: fw4 renders its MARK
+# rule into mangle_prerouting with the LAN devices as iifname, so it also
+# matches the packets a port-forwarded LAN server sends back. Those packets
+# are the reply direction of a connection that was opened from outside, and
+# conntrack has already decided what source address they will leave with
+# (the address the connection came in on), so steering them out of a bypass
+# interface only makes the answer unroutable: a forward reached over omrvpn
+# leaves a WAN carrying the tunnel address, and one reached on a WAN address
+# leaves through whatever the default route happens to be. Either way the
+# remote end never sees the reply, which is what "bypass and port forwarding
+# do not play along" comes down to.
+#
+# Two halves fix it, both in one chain that runs right after fw4's own
+# mangle_prerouting (so it has the last word on the mark) and still well
+# before the routing decision:
+#
+#  * every connection coming in on a wan-zone device gets that device's
+#    bypass mark stored in its ct mark, and the reply packets get it put
+#    back -- a port forward reached directly on a WAN address now answers
+#    through that same WAN, instead of following the default route into the
+#    VPN. This is what makes a port forward work "in both directions" on a
+#    bypassed/direct interface at all.
+#  * a reply packet of a connection that came in anywhere else (typically
+#    omrvpn, i.e. every port forward relayed by the VPS) gets any bypass
+#    mark taken back off, so it keeps following the route its own ingress
+#    interface implies instead of being hijacked by a rule that was meant
+#    for LAN-originated traffic.
+#
+# Only the marks this run generated are cleared, never an unrelated mark:
+# the proxies' tproxy chains sit at the same prerouting hook and use mark
+# 0x1 to get packets delivered locally.
+#
+# This goes in an include file of its own rather than into
+# /etc/firewall.omr-bypass, whose first line is an "is shadowsocks in the
+# ruleset" guard that exits the whole script: reply-path routing has to
+# hold for every proxy setting, including none at all.
+#
+# The chain is generated as an nft script and applied in ONE transaction,
+# not as a dozen "nft add rule ... 2>/dev/null || true" calls. Those fail
+# independently, and the two rules that carry the whole point of the chain
+# are the last ones: a run that lost the race against a concurrent fw4
+# pass left the six harmless per-WAN save rules in place and dropped both
+# reply rules, so the chain looked installed while doing nothing at all
+# (observed once on the bench, silently). One transaction is all-or-
+# nothing, needs one nft invocation instead of ten, and a failure is
+# logged instead of discarded.
+_REPLY_INCLUDE="/etc/firewall.omr-bypass-reply"
+_REPLY_NFT="/etc/firewall.omr-bypass-reply.nft"
+_reply_chain_written=""
+_reply_marks=""
+_reply_wan_marks=""
+
+_reply_ensure_chain() {
+	[ -n "$_reply_chain_written" ] && return
+	_reply_chain_written=1
+	# Declare-then-flush-then-fill, all inside the one transaction: the
+	# declaration creates the chain when fw4 has just rebuilt the table
+	# (and is a no-op when it is still there), and the flush is what keeps
+	# a re-run from stacking duplicate rules.
+	cat > "$_REPLY_NFT" <<-'EOF'
+		table inet fw4 {
+			chain omr_bypass_reply {
+				type filter hook prerouting priority mangle + 5; policy accept;
+			}
+		}
+		flush chain inet fw4 omr_bypass_reply
+		table inet fw4 {
+			chain omr_bypass_reply {
+	EOF
+	cat > "$_REPLY_INCLUDE" <<-EOF
+		[ -f $_REPLY_NFT ] || exit 0
+		nft -f $_REPLY_NFT || logger -t "omr-bypass" "omr_bypass_reply: reply-path rules not applied (see $_REPLY_NFT)"
+		exit 0
+	EOF
+}
+
+# Remember every mark the skeleton hands out, so the "don't hijack a reply"
+# rule below can name them all and nothing else.
+_reply_add_mark() {
+	local mark
+	for mark in "$@"; do
+		[ -z "$mark" ] && continue
+		case "$_reply_marks" in *" $mark "*) continue ;; esac
+		_reply_marks="${_reply_marks} $mark "
+	done
+}
+
+# Same for the subset actually stored in ct marks, so the restore rule can
+# match on those values only and never copies a ct mark some other package
+# owns into the packet mark.
+_reply_add_wan_mark() {
+	local mark
+	for mark in "$@"; do
+		[ -z "$mark" ] && continue
+		case "$_reply_wan_marks" in *" $mark "*) continue ;; esac
+		_reply_wan_marks="${_reply_wan_marks} $mark "
+	done
+}
+
+# ct mark 0x0 as a match keeps this to one write per connection instead of
+# one per packet, and leaves a connection alone once it is remembered.
+_reply_wan_rule() {
+	local dev="$1" count="$2"
+	[ -z "$dev" ] && return
+	_reply_ensure_chain
+	_reply_add_wan_mark "0x4539${count}" "0x6539${count}"
+	cat >> "$_REPLY_NFT" <<-EOF
+		iifname "$dev" meta nfproto ipv4 ct direction original ct mark 0x0 counter ct mark set 0x4539${count} comment "omr_bypass_reply_save_${dev}_4"
+		iifname "$dev" meta nfproto ipv6 ct direction original ct mark 0x0 counter ct mark set 0x6539${count} comment "omr_bypass_reply_save_${dev}_6"
+	EOF
+}
+
+_reply_finish() {
+	# The chain earns its keep even on a router with no wan-zone device to
+	# remember (no save rule ran): the "don't hijack a reply" rule below is
+	# what keeps VPS-relayed port forwards working.
+	[ -z "$_reply_marks" ] && return
+	_reply_ensure_chain
+	local mark markset="" wanmarkset=""
+	for mark in $_reply_marks; do
+		markset="${markset:+$markset, }$mark"
+	done
+	for mark in $_reply_wan_marks; do
+		wanmarkset="${wanmarkset:+$wanmarkset, }$mark"
+	done
+	# Restore: only the values stored above, so a ct mark another package
+	# owns is never copied into the packet mark.
+	local notstored=""
+	if [ -n "$wanmarkset" ]; then
+		notstored="ct mark != { $wanmarkset } "
+		cat >> "$_REPLY_NFT" <<-EOF
+			ct direction reply ct mark { $wanmarkset } counter meta mark set ct mark comment "omr_bypass_reply_restore"
+		EOF
+	fi
+	# Neutralise: a reply of a connection that came in somewhere we did not
+	# remember (omrvpn above all) keeps its own ingress route.
+	[ -n "$markset" ] && cat >> "$_REPLY_NFT" <<-EOF
+		ct direction reply ${notstored}meta mark { $markset } counter meta mark set 0x0 comment "omr_bypass_reply_unhijack"
+	EOF
+	cat >> "$_REPLY_NFT" <<-'EOF'
+		}
+		}
+	EOF
 }
 
 _dscp_chain_written=""
@@ -1096,10 +1267,24 @@ _intf_rule() {
 	#[ "$mode" = "off" ] && return
 	[ "$intf" != "all" ] && [ -z "$count" ] && return
 	[ -z "$intf" ] && return
+	# The sanitized form below is a uci section-name key: it turns "." and
+	# "-" into "_", so it is not the device name any more. An nft iifname
+	# needs the real one (a vlan or bridge WAN would otherwise get a rule
+	# naming a device that does not exist -- and nft takes an unknown
+	# iifname string happily, so it would just never match).
+	local rawdev="$intf"
 	intf=$(_sanitize_intf_key "$intf")
 	case "$1" in *_dev*) return ;; esac
 	[ "$intf" = "lo" ] && return
 	[ -z "$intf" ] && return
+	# Marks handed out below must never survive on the reply packets of a
+	# connection that was opened from outside (issue #4369), and a
+	# connection coming in on a wan-zone device has to be remembered so its
+	# reply leaves the same way it arrived.
+	_reply_add_mark "0x4539${count}" "0x6539${count}"
+	case " $_omr_wan_networks " in
+		*" $1 "*) _reply_wan_rule "$rawdev" "$count" ;;
+	esac
 #	[ -z "$RELOAD" ] || [ "$(uci show firewall.omr_dst_bypass_$intf_4)" = "" ] && {
 		#unset RELOAD
 		#echo "firewall omr_dst_bypass ipset"
@@ -1761,6 +1946,9 @@ start_service() {
 	add_domains="false"
 	_dscp_chain_written=""
 	_dscp_ipset_vals=""
+	_reply_chain_written=""
+	_reply_marks=""
+	_reply_wan_marks=""
 	[ -d /proc/net/xt_ndpi ] && {
 		config_load omr-bypass
 		config_foreach _add_proto proto
@@ -1779,10 +1967,12 @@ start_service() {
 	_v2ray_enabled=$(uci -q get v2ray.main.enabled)
 	_xray_enabled=$(uci -q get xray.main.enabled)
 	_omr_fw_zones="$(_get_firewall_zones)"
+	_omr_wan_networks="$(_get_wan_networks)"
 	#noipv6="$(uci -q get omr-bypass.global.noipv6)"
 	fwfilechangemd5=""
 	[ -f /etc/firewall.omr-bypass ] && fwfilechangemd5="$(md5sum /etc/firewall.omr-bypass)"
-	rm -f /etc/firewall.omr-bypass
+	[ -f "$_REPLY_NFT" ] && fwfilechangemd5="${fwfilechangemd5} $(md5sum "$_REPLY_NFT")"
+	rm -f /etc/firewall.omr-bypass "$_REPLY_INCLUDE" "$_REPLY_NFT"
 	#cat > /etc/firewall.omr-bypass <<-EOF
 	##!/bin/sh
 	##nft insert rule inet fw4 ss_rules_dst_tcp ip daddr @omr_dst_bypass_all accept
@@ -1803,6 +1993,11 @@ start_service() {
 		set firewall.omr_bypass.type='script'
 		set firewall.omr_bypass.path='/etc/firewall.omr-bypass'
 		set firewall.omr_bypass.fw4_compatible='1'
+		set firewall.omr_bypass_reply=include
+		set firewall.omr_bypass_reply.enabled='1'
+		set firewall.omr_bypass_reply.type='script'
+		set firewall.omr_bypass_reply.path='$_REPLY_INCLUDE'
+		set firewall.omr_bypass_reply.fw4_compatible='1'
 	EOF
 	#echo "intf_rule"
 	config_load network
@@ -1810,6 +2005,9 @@ start_service() {
 	_intf_rule all
 	_intf_rule srv_vpn1
 	_intf_rule_none
+	# Needs every mark _intf_rule handed out, so it closes the chain here
+	# rather than inside the loop.
+	_reply_finish
 	local ndpi_rules=""
 
 #	ip rule add prio 1 fwmark 0x4539 lookup 991337 > /dev/null 2>&1
@@ -1900,6 +2098,7 @@ start_service() {
 	uci -q commit dhcp
 	fwfilechangemd5check=""
 	[ -f /etc/firewall.omr-bypass ] && fwfilechangemd5check="$(md5sum /etc/firewall.omr-bypass)"
+	[ -f "$_REPLY_NFT" ] && fwfilechangemd5check="${fwfilechangemd5check} $(md5sum "$_REPLY_NFT")"
 	# Force the heavier fw4/dnsmasq restart path only when the generated
 	# bypass content actually changed (new/removed nft elements). This
 	# comparison used to be inverted ("=" instead of "!="), so it forced a
@@ -1988,6 +2187,7 @@ stop_service() {
 #	$IP6TABLESSAVE --counters 2>/dev/null | grep -v omr-bypass6 | $IP6TABLESRESTORE -w --counters 2>/dev/null
 	# disable all rules
 	uci -q set firewall.omr_bypass.enabled='0'
+	uci -q set firewall.omr_bypass_reply.enabled='0'
 	_dhcp_delete_batch=""
 	config_load dhcp
 	config_foreach _delete_dhcp_ipset ipset
