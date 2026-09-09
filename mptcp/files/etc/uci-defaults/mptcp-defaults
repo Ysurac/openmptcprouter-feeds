@@ -8,10 +8,21 @@ if [ -f /proc/sys/net/mptcp/available_schedulers ]; then
 else
 	_omr_default_sched='blest'
 fi
+# Same for the path manager: mainline registers its path managers by name
+# and advertises the list, and the out-of-tree v0.9x names
+# (default/fullmesh/ndiffports/binder/netlink) exist nowhere there --
+# 'kernel' is the in-kernel netlink path manager, the one that actually
+# creates the extra subflows. Sending a v0 name to the VPS leaves a
+# 'net.mptcp.path_manager=fullmesh' line there that fails at every boot.
+if [ -f /proc/sys/net/mptcp/available_path_managers ]; then
+	_omr_default_pm='kernel'
+else
+	_omr_default_pm='fullmesh'
+fi
 if [ "$(uci -q get network.globals.mptcp_path_manager)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
 	set network.globals.multipath='enable'
-	set network.globals.mptcp_path_manager='fullmesh'
+	set network.globals.mptcp_path_manager='${_omr_default_pm}'
 	set network.globals.mptcp_scheduler='${_omr_default_sched}'
 	set network.globals.congestion='bbr2'
 	set network.globals.mptcp_checksum=0
@@ -39,6 +50,20 @@ if [ -f /proc/sys/net/mptcp/available_schedulers ]; then
 		blest|roundrobin|redundant|ecf)
 			uci -q batch <<-EOF >/dev/null
 			set network.globals.mptcp_scheduler='default'
+			commit network
+			EOF
+			;;
+	esac
+fi
+# Legacy v0.9x path manager names carried over to a 6.x kernel. Only the
+# names that never exist upstream are migrated, and every one of them is an
+# in-kernel path manager, so they all map onto 'kernel'; a name this kernel
+# does register ('userspace', a BPF path manager) is left alone.
+if [ -f /proc/sys/net/mptcp/available_path_managers ]; then
+	case "$(uci -q get network.globals.mptcp_path_manager)" in
+		default|fullmesh|ndiffports|binder|netlink)
+			uci -q batch <<-EOF >/dev/null
+			set network.globals.mptcp_path_manager='kernel'
 			commit network
 			EOF
 			;;
