@@ -31,7 +31,7 @@ options; older kernels (<6) show a different, longer set of legacy fields
 |---|---|
 | **Multipath TCP** | Read-only indicator of whether MPTCP is enabled network-wide. |
 | **Multipath TCP checksum** | Enables MPTCP-level checksums (extra integrity check, minor overhead). |
-| **Multipath TCP path-manager** | `default` or `fullmesh` (OMR's normal choice — creates subflows between every local/remote address pair). |
+| **Multipath TCP path-manager** | Populated live from `/proc/sys/net/mptcp/available_path_managers`: `kernel` (OMR's normal choice — the in-kernel netlink path manager, which creates the subflows itself) or `userspace` (delegates that to `mptcpd`), plus any BPF path manager the kernel registers. On a kernel that advertises no list, the out-of-tree v0.9x names (`default`/`fullmesh`, and on kernels <6 also `ndiffports`/`binder`/`netlink`) are offered instead. This value is also what gets pushed to the VPS. |
 | **Multipath TCP scheduler** | Which subflow the kernel picks to send data on. `default`, or a BPF scheduler (`bpf_burst`, `bpf_red`, `bpf_first`, `bpf_rr`, plus any custom `.o` dropped into `/usr/share/bpf/scheduler` — auto-discovered and listed here). On kernels <6, classic in-tree schedulers (round-robin, redundant, BLEST, ECF) are offered instead. |
 | **Congestion Control** | Populated live from `sysctl net.ipv4.tcp_available_congestion_control` — pick any congestion control algorithm your kernel has compiled in. Default is `cubic`; this bench uses `bbr`. |
 | **Path Manager type** *(kernel ≥6 only)* | In-kernel (simpler, default) vs. userspace (delegates subflow decisions to `mptcpd`). |

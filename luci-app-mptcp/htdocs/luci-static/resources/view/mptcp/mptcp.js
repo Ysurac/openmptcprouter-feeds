@@ -20,13 +20,22 @@ var callSystemBoard = rpc.declare({
 return L.view.extend({
     load: function() {
 	return Promise.all([
-	    L.resolveDefault(callSystemBoard(), {})
+	    L.resolveDefault(callSystemBoard(), {}),
+	    L.resolveDefault(fs.read('/proc/sys/net/mptcp/available_path_managers'), '')
 	]);
     },
 
     render: function(res) {
 	var m, s, o;
 	var boardinfo = res[0];
+	// Mainline MPTCP registers its path managers by name and advertises the
+	// list here ('kernel userspace', plus any BPF path manager). A kernel
+	// that advertises nothing is either the out-of-tree v0.9x stack or a 6.x
+	// one predating net.mptcp.path_manager: there the legacy vocabulary below
+	// is all we have to go on.
+	var availablePathManagers = String(res[1] || '').trim().split(/\s+/).filter(function(name) {
+		return name.length > 0;
+	});
 
 	function normalizeSchedulerValue(value) {
 		if (value == null)
@@ -39,6 +48,27 @@ return L.view.extend({
 
 		if (normalized.startsWith('mptcp_'))
 			normalized = normalized.slice(6);
+
+		return normalized;
+	}
+
+	// Every out-of-tree v0.9x path manager (default/fullmesh/ndiffports/
+	// binder/netlink) is an in-kernel one, so on a kernel that registers its
+	// path managers by name they all mean the same thing: 'kernel'. A config
+	// upgraded from that stack, or restored from such a backup, still carries
+	// one of those names, which is not in the list and would leave the
+	// dropdown showing nothing.
+	function normalizePathManagerValue(value) {
+		if (value == null)
+			return value;
+
+		var normalized = String(value).trim();
+
+		if (normalized === '' || availablePathManagers.indexOf(normalized) >= 0)
+			return normalized;
+
+		if (availablePathManagers.indexOf('kernel') >= 0)
+			return 'kernel';
 
 		return normalized;
 	}
@@ -62,14 +92,28 @@ return L.view.extend({
 		o.value(0, _("disable"));
 	}
 
-	o = s.option(form.ListValue, "mptcp_path_manager", _("Multipath TCP path-manager"), _("Default is fullmesh"));
-	o.value("default", _("default"));
-	o.value("fullmesh", "fullmesh");
+	if (availablePathManagers.length > 0) {
+		o = s.option(form.ListValue, "mptcp_path_manager", _("Multipath TCP path-manager"),
+			_("Path managers registered by the running kernel. 'kernel' is the in-kernel one, which creates the extra subflows itself; 'userspace' hands that over to mptcpd."));
+		availablePathManagers.forEach(function(name) {
+			o.value(name, name);
+		});
+		o.cfgvalue = function(section_id) {
+			return normalizePathManagerValue(uci.get('network', section_id, 'mptcp_path_manager'));
+		};
+		o.write = function(section_id, value) {
+			uci.set('network', section_id, 'mptcp_path_manager', normalizePathManagerValue(value));
+		};
+	} else {
+		o = s.option(form.ListValue, "mptcp_path_manager", _("Multipath TCP path-manager"), _("Default is fullmesh"));
+		o.value("default", _("default"));
+		o.value("fullmesh", "fullmesh");
 
-	if (parseFloat(boardinfo.kernel.substring(0,4)) < 6) {
-		o.value("ndiffports", "ndiffports");
-		o.value("binder", "binder");
-		o.value("netlink", _("Netlink"));
+		if (parseFloat(boardinfo.kernel.substring(0,4)) < 6) {
+			o.value("ndiffports", "ndiffports");
+			o.value("binder", "binder");
+			o.value("netlink", _("Netlink"));
+		}
 	}
 
 	var scheduler = s.option(form.ListValue, "mptcp_scheduler", _("Multipath TCP scheduler"), _('BPF schedulers (not available on all platforms):') + '<br />' +
