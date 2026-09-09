@@ -441,6 +441,32 @@ return view.extend({
 		};
 
 		/* ── Step 1: Servers ───────────────────────────── */
+		/* Server sections whose API key was edited in this form, and whether
+		 * the "Force retrieve settings" flag below is ticked by us rather
+		 * than by the user (so reverting the field can untick it again while
+		 * a manual tick is never taken away). */
+		var editedServerKeys = {};
+		var forceRetrieveAutoTicked = false;
+
+		function setForceRetrieve(map) {
+			var pending = Object.keys(editedServerKeys).length > 0;
+			var opt = map.lookupOption('_force_retrieve', 'settings');
+			var el = opt ? opt[0].getUIElement(opt[1]) : null;
+			if (!el)
+				return;
+
+			if (pending) {
+				if (el.getValue() !== '1') {
+					el.setValue('1');
+					forceRetrieveAutoTicked = true;
+				}
+			}
+			else if (forceRetrieveAutoTicked) {
+				el.setValue('0');
+				forceRetrieveAutoTicked = false;
+			}
+		}
+
 		s = m.section(form.TypedSection, 'server', _('Server settings'));
 		s.addremove = true;
 		s.anonymous = false;
@@ -464,6 +490,18 @@ return view.extend({
 		o = s.option(form.Value, 'password', _('Server key'));
 		o.rmempty = true;
 		o.description = _('Key to configure and retrieve others keys from Server.');
+		/* A different API key means none of the keys stored locally can still
+		 * be the ones this server knows about, so tick "Force retrieve
+		 * settings" as soon as the field is edited. It stays an ordinary
+		 * checkbox: unticking it before saving wins. */
+		o.onchange = function(ev, sid, val) {
+			if ((val || '') !== (this.cfgvalue(sid) || ''))
+				editedServerKeys[sid] = true;
+			else
+				delete editedServerKeys[sid];
+
+			setForceRetrieve(this.map);
+		};
 
 		o = s.option(form.Flag, 'master', _('Set server as master'));
 		o.rmempty = true;
@@ -525,6 +563,16 @@ return view.extend({
 			if (val === '1') uci.set('openmptcprouter', 'settings', 'forceretrieve', '1');
 		};
 		o.remove = function() {};
+		/* The stock parse() never write()s an option whose dependencies are
+		 * unmet, and this one is hidden until "Show advanced settings" is
+		 * checked. Editing a server key ticks it from setForceRetrieve()
+		 * above -- most of the time with advanced settings still collapsed --
+		 * so read the widget directly instead of dropping the flag. */
+		o.parse = function(sid) {
+			if (this.formvalue(sid) === '1')
+				this.write(sid, '1');
+			return Promise.resolve();
+		};
 
 		// ── IPv6 ──
 		o = s.taboption('ipv6', form.ListValue, 'disable_ipv6', _('Enable IPv6'));
@@ -1275,6 +1323,10 @@ return view.extend({
 			var self = this;
 			return origRenderContents.apply(this, arguments).then(function(node) {
 				decorateWizard(node || self.root);
+				/* Adding or removing a server section re-renders the whole
+				 * map with fresh widgets: put back the "Force retrieve
+				 * settings" tick an edited server key had asked for. */
+				setForceRetrieve(self);
 				return node;
 			});
 		};
