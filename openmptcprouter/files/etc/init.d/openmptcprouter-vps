@@ -1436,7 +1436,7 @@ _set_redirect_ports_from_vps() {
 }
 
 _set_mptcp_vps() {
-	local settings
+	local settings path_manager_changed
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 	mptcp_enabled_current="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.enabled')"
@@ -1480,7 +1480,26 @@ _set_mptcp_vps() {
 	[ -z "$pm_type" ] && pm_type="0"
 	[ -z "$stale_loss_cnt" ] && stale_loss_cnt="0"
 	[ -z "$syn_retrans_before_tcp_fallback" ] && syn_retrans_before_tcp_fallback="0"
-	if [ "$mptcp_enabled_current" != "$mptcp_enabled" ] || [ "$checksum_current" != "$checksum" ] || ([ "$path_manager_current" != "" ] && [ "$path_manager_current" != "kernel" ] && [ "$path_manager_current" != "$path_manager" ]) || ([ "$scheduler_current" != "" ] && [ "$scheduler_current" != "$scheduler" ]) || ([ "$syn_retries_current" != "" ] && [ "$syn_retries_current" != "$syn_retries" ]) || [ "$congestion_control_current" != "$congestion" ] || [ "$mptcp_version_current" != "$mptcp_version" ] || ([ -n "$close_timeout_current" ] && [ "$close_timeout_current" != "0" ] && [ "$close_timeout_current" != "$close_timeout" ]) || ([ -n "$pm_type_current" ] && [ "$pm_type_current" != "0" ] && [ "$pm_type_current" != "$pm_type" ]) || ([ -n "$stale_loss_cnt_current" ] && [ "$stale_loss_cnt_current" != "0" ] && [ "$stale_loss_cnt_current" != "$stale_loss_cnt" ]) || ([ -n "$syn_retrans_current" ] && [ "$syn_retrans_current" != "0" ] && [ "$syn_retrans_current" != "$syn_retrans_before_tcp_fallback" ]); then
+	# The VPS reports the path manager its own kernel really registered, and
+	# maps the out-of-tree v0.9x vocabulary (default/fullmesh/ndiffports/
+	# binder/netlink, all of them in-kernel path managers) onto mainline's
+	# 'kernel' before applying it. So 'kernel' there against one of those
+	# names here is not a difference worth pushing -- re-sending 'fullmesh'
+	# at every sync only makes the VPS warn and renormalize it again -- while
+	# 'kernel' there against 'userspace' here is a real change and used to be
+	# swallowed by a blanket "ignore 'kernel'" test, leaving the switch to
+	# mptcpd's userspace PM stuck on the router until some *other* mptcp
+	# setting happened to change too.
+	path_manager_changed=0
+	if [ -n "$path_manager_current" ] && [ "$path_manager_current" != "$path_manager" ]; then
+		path_manager_changed=1
+		if [ "$path_manager_current" = "kernel" ]; then
+			case "$path_manager" in
+				default|fullmesh|ndiffports|binder|netlink) path_manager_changed=0 ;;
+			esac
+		fi
+	fi
+	if [ "$mptcp_enabled_current" != "$mptcp_enabled" ] || [ "$checksum_current" != "$checksum" ] || [ "$path_manager_changed" = "1" ] || ([ "$scheduler_current" != "" ] && [ "$scheduler_current" != "$scheduler" ]) || ([ "$syn_retries_current" != "" ] && [ "$syn_retries_current" != "$syn_retries" ]) || [ "$congestion_control_current" != "$congestion" ] || [ "$mptcp_version_current" != "$mptcp_version" ] || ([ -n "$close_timeout_current" ] && [ "$close_timeout_current" != "0" ] && [ "$close_timeout_current" != "$close_timeout" ]) || ([ -n "$pm_type_current" ] && [ "$pm_type_current" != "0" ] && [ "$pm_type_current" != "$pm_type" ]) || ([ -n "$stale_loss_cnt_current" ] && [ "$stale_loss_cnt_current" != "0" ] && [ "$stale_loss_cnt_current" != "$stale_loss_cnt" ]) || ([ -n "$syn_retrans_current" ] && [ "$syn_retrans_current" != "0" ] && [ "$syn_retrans_current" != "$syn_retrans_before_tcp_fallback" ]); then
 		settings='{"enabled" : "'$mptcp_enabled'", "checksum": "'$checksum'","path_manager": "'$path_manager'","scheduler": "'$scheduler'","syn_retries": "'$syn_retries'","congestion_control": "'$congestion'","version": "'$mptcp_version'","close_timeout": "'$close_timeout'","pm_type": "'$pm_type'","stale_loss_cnt": "'$stale_loss_cnt'","syn_retrans_before_tcp_fallback": "'$syn_retrans_before_tcp_fallback'"}'
 		echo $(_set_json "mptcp" "$settings")
 	else
@@ -3129,6 +3148,7 @@ _set_config_from_vps() {
 	if [ "$noerror" = "1" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set openmptcprouter.${servername}.get_config=0
+			delete openmptcprouter.settings.forceretrieve
 			commit openmptcprouter
 		EOF
 	fi
@@ -3344,6 +3364,13 @@ _config_service() {
 			return
 		fi
 	fi
+	# "Force retrieve settings" in the wizard (and the post-upgrade
+	# zzzzz-omr-update uci-default) only raise a global flag: turn it into a
+	# real get_config for the server we actually talk to. Restricted to
+	# master/current because get_config is never cleared on the other servers,
+	# and a lingering one keeps omr-tracker's "get_config='1'" check true and
+	# reruns this service on every tracker cycle.
+	[ "$(uci -q get openmptcprouter.settings.forceretrieve)" = "1" ] && { [ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q get openmptcprouter.${servername}.current)" = "1" ]; } && uci -q set openmptcprouter.${servername}.get_config=1
 	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && ([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q get openmptcprouter.${servername}.current)" = "1" ]) && {
 		_set_config_from_vps
 		_get_gre_tunnel
