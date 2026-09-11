@@ -18,7 +18,7 @@ if [ "$(uci -q get omr-tracker.omrvpn)" = "" ]; then
 		set omr-tracker.omrvpn.initial_state='online'
 		set omr-tracker.omrvpn.family='ipv4'
 		set omr-tracker.omrvpn.reliability='1'
-		set omr-tracker.omrvpn.count='1'
+		set omr-tracker.omrvpn.count='3'
 		set omr-tracker.omrvpn.failure_interval='3'
 		set omr-tracker.omrvpn.tries_up='1'
 		commit omr-tracker
@@ -28,6 +28,21 @@ fi
 if [ "$(uci -q get omr-tracker.omrvpn.enabled)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set omr-tracker.omrvpn.enabled=1
+		commit omr-tracker
+	EOF
+fi
+
+# The tunnel's liveness ping is now its quality measurement: omrvpn's
+# "gateway" is the far end of the tunnel on the VPS, so omr-tracker keeps
+# that ping's latency/jitter/loss instead of discarding them the way it does
+# for a WAN's one-hop gateway. A single packet cannot express either jitter
+# (mdev over one sample is 0.0) or loss (a 100%-loss ping is rejected before
+# its numbers are read, so loss could only ever read 0), hence 1 -> 3.
+# Migrating only the old shipped value leaves a deliberately chosen count
+# alone -- except a chosen 1, which is indistinguishable from it.
+if [ "$(uci -q get omr-tracker.omrvpn.count)" = "1" ]; then
+	uci -q batch <<-EOF >/dev/null
+		set omr-tracker.omrvpn.count=3
 		commit omr-tracker
 	EOF
 fi

@@ -7,8 +7,8 @@
 # Runs in a tight poll loop; interval is controlled by OMR_METRICS_INTERVAL
 # (seconds, default 30) which is set by the init.d script.
 
-METRICS_DIR="/tmp/metrics"
-STATE_DIR="/tmp/omr-metrics-send"
+METRICS_DIR="${OMR_METRICS_DIR:-/tmp/metrics}"
+STATE_DIR="${OMR_METRICS_STATE_DIR:-/tmp/omr-metrics-send}"
 INTERVAL="${OMR_METRICS_INTERVAL:-30}"
 
 _log() {
@@ -140,6 +140,21 @@ _send_cycle() {
 
 	for json_file in "${METRICS_DIR}"/*.json; do
 		[ -f "$json_file" ] || continue
+
+		# POST /metrics is a per-WAN store on the VPS, and the omrvpn /
+		# OWVPN* tunnel is not a WAN: it carries the aggregate of every
+		# WAN, so feeding it in adds a phantom interface the decision
+		# model then hands a weight to (omr-weight-sync writes those back
+		# into UCI and the BPF map). 040-metrics normally doesn't even
+		# collect the tunnel, but it stays filtered here too so a build
+		# that does collect it -- for the local rpcd/LuCI views, which
+		# drop the tunnel on their own -- still never ships it.
+		local iface="${json_file##*/}"
+		iface="${iface%.json}"
+		case "$iface" in
+			omrvpn|OWVPN*) continue ;;
+		esac
+
 		local payload
 		payload=$(cat "$json_file" 2>/dev/null)
 		[ -z "$payload" ] && continue

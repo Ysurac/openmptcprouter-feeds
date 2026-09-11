@@ -45,6 +45,7 @@ export OMR_TRACKER_INTERVAL_TRIES
 export OMR_TRACKER_INTERVAL
 export OMR_TRACKER_NO_BIND
 export OMR_TRACKER_TYPE
+export OMR_TRACKER_GATEWAY_IS_REMOTE
 
 #dscp=56   # set DSCP CS7 (56) in outgoing packets
 
@@ -393,6 +394,22 @@ OMR_TRACKER_PREV_STATUS=""
 	done
 }
 
+# Whether this interface's "gateway" is actually a remote endpoint, which
+# decides if the liveness ping below is worth measuring (see _ping's third
+# argument and _apply_ping_metrics). For a WAN it is not: the gateway is one
+# hop away on the ISP side, so its RTT says nothing about the path, and
+# quality is taken from the real target instead (VPS IP, else latency_ip,
+# else the hosts list). The omrvpn/OWVPN* tunnel is the exception -- its
+# gateway is the far end of the tunnel on the VPS, so that one ping already
+# crosses the whole aggregated path and carries the tunnel's real latency,
+# jitter and loss. Those interfaces are tracked with type "none", which
+# breaks out of the loop before any target probe runs, so this ping is the
+# only measurement they will ever get -- keep it instead of discarding it.
+case "$OMR_TRACKER_INTERFACE" in
+	omrvpn|OWVPN*) OMR_TRACKER_GATEWAY_IS_REMOTE="yes" ;;
+	*)             OMR_TRACKER_GATEWAY_IS_REMOTE="no" ;;
+esac
+
 _host4_raw=""
 _host4_resolved=""
 _host4_resolve_time=0
@@ -643,10 +660,10 @@ while true; do
 						break
 					fi
 					if [ -n "$OMR_TRACKER_DEVICE_ROUTE" ]; then
-						_ping "$OMR_TRACKER_DEVICE_ROUTE" "$OMR_TRACKER_DEVICE" "no"
+						_ping "$OMR_TRACKER_DEVICE_ROUTE" "$OMR_TRACKER_DEVICE" "$OMR_TRACKER_GATEWAY_IS_REMOTE"
 						status=$?
 					else
-						_ping "$OMR_TRACKER_DEVICE_GATEWAY" "$OMR_TRACKER_DEVICE" "no"
+						_ping "$OMR_TRACKER_DEVICE_GATEWAY" "$OMR_TRACKER_DEVICE" "$OMR_TRACKER_GATEWAY_IS_REMOTE"
 						status=$?
 					fi
 					if [ "$status" -eq 0 ] && [ "$OMR_TRACKER_TYPE" = "none" ]; then
@@ -768,7 +785,7 @@ while true; do
 					#	_ping "$OMR_TRACKER_DEVICE_ROUTE" "$OMR_TRACKER_DEVICE" "no"
 					#	status=$?
 					#else
-						_ping "$OMR_TRACKER_DEVICE_GATEWAY6" "$OMR_TRACKER_DEVICE" "no"
+						_ping "$OMR_TRACKER_DEVICE_GATEWAY6" "$OMR_TRACKER_DEVICE" "$OMR_TRACKER_GATEWAY_IS_REMOTE"
 						status=$?
 					#fi
 					if [ "$status" -eq 0 ] && [ "$OMR_TRACKER_TYPE" = "none" ]; then

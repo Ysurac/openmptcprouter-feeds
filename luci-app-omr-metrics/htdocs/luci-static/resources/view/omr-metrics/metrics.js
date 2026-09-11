@@ -104,6 +104,16 @@ return view.extend({
 		return val + ' B/s';
 	},
 
+	/* The omrvpn/OWVPN* tunnel is in get_all like any other interface, but it
+	 * is not a WAN: it carries the aggregate of every WAN, so it gets its own
+	 * group on the page and the WAN-only readings are left out of its card
+	 * (see _renderCard/_limitFactors). Name-based, the same convention the
+	 * rest of the UI uses to spot it (luci-app-mptcp does the same). */
+	_isVpnIface: function(name) {
+		var n = String(name || '').toLowerCase();
+		return n === 'omrvpn' || n.indexOf('owvpn') === 0;
+	},
+
 	/* Render val as plain string; colour it if > 0 (orange warn, red error) */
 	_warnVal: function(val, severity) {
 		if (val === null || val === undefined) return '—';
@@ -629,29 +639,36 @@ return view.extend({
 	 *  collecting this session (subflows[], mptcp_endpoint, rwnd/swnd).  *
 	 * ------------------------------------------------------------------ */
 
-	_limitFactors: function(iface) {
+	_limitFactors: function(iface, isVpn) {
 		var factors  = [];
 		var tc       = iface.tc             || {};
 		var bbr      = iface.bbr            || {};
 		var mep      = iface.mptcp_endpoint || {};
 		var subflows = iface.subflows       || [];
 
-		/* ---- aggregation: can this WAN even carry MPTCP traffic? ---- */
-		if (mep.id == null) {
-			factors.push({ severity: 'error', scope: 'aggregation',
-				label: _('No MPTCP endpoint'),
-				detail: _('No MPTCP endpoint is registered for this WAN -- it cannot carry a subflow at all, ' +
-				          'regardless of how healthy the link itself is. Usually fixed by an interface restart.') });
-		} else if (iface.status === 'up' && !subflows.length) {
-			factors.push({ severity: 'warning', scope: 'aggregation',
-				label: _('No active subflow'),
-				detail: _('An MPTCP endpoint is registered for this WAN but no subflow is currently established ' +
-				          'on it, so it is not contributing to aggregation right now.') });
-		} else if (mep.backup) {
-			factors.push({ severity: 'info', scope: 'aggregation',
-				label: _('Backup only'),
-				detail: _('This WAN is marked backup -- it only takes over if active paths fail, it is not ' +
-				          'combined with them for extra bandwidth while they are healthy.') });
+		/* ---- aggregation: can this WAN even carry MPTCP traffic? ----
+		 * Skipped for the VPN tunnel: it is the aggregate itself, never a
+		 * member of it, so it has no MPTCP endpoint by design and flagging
+		 * that as an error would be a permanent false alarm. Everything
+		 * below (queue drops, retransmissions, backpressure, BBR headroom)
+		 * reads the same on a tunnel as on a WAN and is kept. */
+		if (!isVpn) {
+			if (mep.id == null) {
+				factors.push({ severity: 'error', scope: 'aggregation',
+					label: _('No MPTCP endpoint'),
+					detail: _('No MPTCP endpoint is registered for this WAN -- it cannot carry a subflow at all, ' +
+					          'regardless of how healthy the link itself is. Usually fixed by an interface restart.') });
+			} else if (iface.status === 'up' && !subflows.length) {
+				factors.push({ severity: 'warning', scope: 'aggregation',
+					label: _('No active subflow'),
+					detail: _('An MPTCP endpoint is registered for this WAN but no subflow is currently established ' +
+					          'on it, so it is not contributing to aggregation right now.') });
+			} else if (mep.backup) {
+				factors.push({ severity: 'info', scope: 'aggregation',
+					label: _('Backup only'),
+					detail: _('This WAN is marked backup -- it only takes over if active paths fail, it is not ' +
+					          'combined with them for extra bandwidth while they are healthy.') });
+			}
 		}
 
 		/* ---- bandwidth: queueing/loss/backpressure capping throughput ---- */
@@ -788,7 +805,7 @@ return view.extend({
 	 *  Render one interface card                                           *
 	 * ------------------------------------------------------------------ */
 
-	_renderCard: function(iface, forecast, decision) {
+	_renderCard: function(iface, forecast, decision, isVpn) {
 		var self   = this;
 		var name   = iface.interface || '?';
 		var sig    = iface.signal      || {};
@@ -960,15 +977,30 @@ return view.extend({
 
 		var history   = (self._history && self._history[name]) || [];
 		var qgSection = self._renderQualityGraph(history);
-		var fcSection = self._renderForecastSection(forecast || null);
-		var dcSection = self._renderDecisionSection(decision || null, name);
+		/* Forecast and Decision both come from the VPS, keyed by interface
+		 * name, and the tunnel's metrics are deliberately never sent there
+		 * (omr-metrics-send drops them) -- so anything that did come back
+		 * under its name would be stale or someone else's. Not asked for. */
+		var fcSection = isVpn ? null : self._renderForecastSection(forecast || null);
+		var dcSection = isVpn ? null : self._renderDecisionSection(decision || null, name);
+
+		var title = [ E('strong', { style: 'font-size:1.05em' }, [ name ]) ];
+		if (isVpn)
+			title.push(E('span', {
+				title: _('The VPN tunnel to the server: every WAN is aggregated into it, so its ' +
+				         'latency, loss and queue reflect the combined connection rather than one ' +
+				         'link. It is not a WAN, and its metrics are not reported to the server.'),
+				style: 'display:inline-block;margin-left:8px;padding:1px 7px;border-radius:10px;' +
+				       'background:#ede7f6;color:#4527a0;border:1px solid #b39ddb;' +
+				       'font-size:0.72em;font-weight:600;cursor:help'
+			}, [ _('VPN tunnel') ]));
 
 		var cardChildren = [
 			E('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px' }, [
-				E('strong', { style: 'font-size:1.05em' }, [ name ]),
+				E('div', {}, title),
 				E('span',   { style: 'font-size:0.8em;color:#888' }, [ _('Updated: ') + tsStr ])
 			]),
-			self._renderLimitFactors(self._limitFactors(iface)),
+			self._renderLimitFactors(self._limitFactors(iface, isVpn)),
 			E('div', { style: 'display:flex;flex-wrap:wrap;gap:10px' }, cols)
 		];
 
@@ -1024,12 +1056,28 @@ return view.extend({
 			return;
 		}
 
+		/* WANs first, then the tunnel(s) they feed -- appending the tunnel
+		 * instead of leaving it in get_all's readdir order keeps the WAN
+		 * list where it has always been. */
+		var wans = [], vpns = [];
 		ifaces.forEach(function(iface) {
-			var n = (iface.interface || '').toLowerCase();
-			if (n === 'omrvpn' || n === 'owvpn') return;
-			var ifaceFc = (forecast && forecast[iface.interface]) || null;
-			container.appendChild(self._renderCard(iface, ifaceFc, decision || null));
+			(self._isVpnIface(iface.interface) ? vpns : wans).push(iface);
 		});
+
+		wans.forEach(function(iface) {
+			var ifaceFc = (forecast && forecast[iface.interface]) || null;
+			container.appendChild(self._renderCard(iface, ifaceFc, decision || null, false));
+		});
+
+		if (vpns.length) {
+			container.appendChild(E('h3', { style: 'margin:20px 0 4px;font-size:1.1em' }, [ _('VPN tunnel') ]));
+			container.appendChild(E('p', { style: 'color:#555;margin:0 0 12px;font-size:0.9em' }, [
+				_('The aggregate of every WAN above, as measured on the tunnel to the server.')
+			]));
+			vpns.forEach(function(iface) {
+				container.appendChild(self._renderCard(iface, null, null, true));
+			});
+		}
 	},
 
 	render: function(results) {

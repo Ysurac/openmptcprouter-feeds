@@ -12,9 +12,16 @@ METRICS_DIR="${OMR_METRICS_DIR:-/tmp/metrics}"
 OMR_MODEMMANAGER_BIN="${OMR_MODEMMANAGER_BIN:-/bin/omr-modemmanager}"
 OMR_QMI_BIN="${OMR_QMI_BIN:-/usr/bin/omr-qmi}"
 
-case "$OMR_TRACKER_INTERFACE" in
-	omrvpn|OWVPN*) exit 0 ;;
-esac
+# The omrvpn/OWVPN* tunnel is collected like every other interface: it is
+# what the LAN actually sends through, so its latency/loss to the VPS, its
+# queue and its own subflows are worth showing (the LuCI page renders it as
+# a separate "VPN tunnel" group, not as a WAN). The WAN-only collectors
+# below need no guard for it -- no wireless sysfs dir and a non-modem proto
+# skip the signal readers, and no MPTCP endpoint / weight / cost / asn
+# exists for a tunnel, so those fields just stay null.
+# What must not happen is shipping it: POST /metrics on the VPS is a
+# per-WAN store feeding the decision model, so omr-metrics-send drops the
+# tunnel's file before sending.
 
 # One clock read for the whole run
 _now=$(date +%s)
@@ -996,3 +1003,52 @@ cat > "$_tmp" <<EOF
 }
 EOF
 mv "$_tmp" "${METRICS_DIR}/${OMR_TRACKER_INTERFACE}.json"
+
+# Drop the files of interfaces that no longer exist. Nothing else ever
+# removes them: this hook only writes, and the rpcd plugin, the LuCI page and
+# omr-metrics-send all simply enumerate whatever sits in METRICS_DIR -- so a
+# removed interface (a test fixture, a WAN someone deleted) kept its card on
+# the metrics page, and kept being POSTed to the VPS as a phantom WAN, until
+# the next reboot cleared tmpfs.
+#
+# Both conditions are needed. A missing UCI section is the reliable "this
+# interface is gone" signal; age alone is not, because a down interface keeps
+# refreshing legitimately, just 6x slower (post_interval_down). And age is
+# needed on top, because a section deleted while its tracker still runs would
+# otherwise have its file removed here and rewritten on the next cycle,
+# forever.
+#
+# Runs at most once per OMR_METRICS_REAP_INTERVAL (default 300s), whichever
+# interface's cycle happens to reach it first, and costs one find for the
+# whole directory plus one uci call per stale file.
+_reap_removed_interfaces() {
+	local interval ttl last_reap state_file stale iface _f
+	interval="${OMR_METRICS_REAP_INTERVAL:-300}"
+	ttl="${OMR_METRICS_STALE_TTL:-600}"
+	state_file="${METRICS_DIR}/.reap"
+
+	last_reap=0
+	[ -f "$state_file" ] && read -r last_reap < "$state_file" 2>/dev/null
+	case "$last_reap" in ''|*[!0-9]*) last_reap=0 ;; esac
+	[ $((_now - last_reap)) -lt "$interval" ] && return
+	printf '%s\n' "$_now" > "$state_file"
+
+	# -mmin takes whole minutes, so the effective TTL is rounded down to one.
+	stale=$(find "$METRICS_DIR" -maxdepth 1 -name '*.json' -mmin "+$((ttl / 60))" 2>/dev/null)
+	[ -z "$stale" ] && return
+
+	# Unquoted on purpose: one path per line, and a UCI section name can hold
+	# neither spaces nor globbing characters.
+	for _f in $stale; do
+		iface="${_f##*/}"
+		iface="${iface%.json}"
+		[ -n "$(uci -q get "network.${iface}")" ] && continue
+		rm -f "$_f" \
+			"${METRICS_DIR}/.${iface}.bw" \
+			"${METRICS_DIR}/.${iface}.modemsig" \
+			"${METRICS_DIR}/.${iface}.tmp"
+		logger -t omr-metrics "dropped metrics of ${iface}: no longer a configured interface, last sample older than ${ttl}s"
+	done
+}
+
+_reap_removed_interfaces

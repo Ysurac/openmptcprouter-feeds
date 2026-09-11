@@ -32,8 +32,14 @@ for your account): your VPS account username, how many metric entries
 it holds for you, first/last-seen timestamps, and which interfaces it has
 data for.
 
-Below that, one card per tracked interface (VPN-internal interfaces like
-`omrvpn`/`OWVPN` are filtered out), each with up to six sections —
+Below that, one card per tracked interface — the WANs first, then a **VPN
+tunnel** group for `omrvpn`/`OWVPN*`. The tunnel card carries the same
+sections, read on the tunnel device: its latency and loss are to the VPS
+over the combined connection rather than over one link, so it is the
+number to look at for "what the LAN actually gets". It is not a WAN, so
+the aggregation chips (MPTCP endpoint/subflow/backup) and the VPS-side
+**Forecast**/**Decision** sections are left off its card, and its metrics
+are never reported to the VPS. Each card has up to six sections —
 sections only appear when there's data to show, so e.g. **Signal** is
 absent on wired WANs and **BBR** is absent unless BBR congestion control
 is active:
