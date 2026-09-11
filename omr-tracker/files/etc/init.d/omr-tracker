@@ -479,9 +479,33 @@ _cleanup_locks() {
 	fi
 }
 
+# True when <command line> is that of a tracker daemon for <interface>.
+# The interface is the tracker's last argument, so the match has to be on the
+# whole "omr-tracker <interface>" token: a plain substring test also answers
+# yes for "wan" while only wan1 is running.
+_tracker_cmdline_matches() {
+	case " $1 " in
+		*"omr-tracker $2 "*) return 0 ;;
+	esac
+	return 1
+}
+
+# Is a tracker daemon already running for interface $1?
+_tracker_running() {
+	local pid ppid
+	for pid in $(pgrep -f omr-tracker); do
+		# stderr is redirected first on purpose: a pid that exits between the
+		# pgrep and this read makes the shell, not tr, report the open error.
+		_tracker_cmdline_matches "$(tr '\0' ' ' 2>/dev/null < "/proc/$pid/cmdline")" "$1" || continue
+		ppid="$(awk '/^PPid:/ {print $2}' "/proc/$pid/status" 2>/dev/null)"
+		[ "$ppid" = "1" ] && return 0
+	done
+	return 1
+}
+
 start_interface() {
 	[ -z "$1" ] && return
-	[ -n "$(pgrep -f "omr-tracker $1")" ] && return
+	_tracker_running "$1" && return
 	_cleanup_locks "$1"
 	config_load network
 	_launch_tracker $1
@@ -574,7 +598,7 @@ restart_service() {
 		procd_kill "omr-tracker" "$1" 2>/dev/null
 		# wait for the instance to actually exit instead of a blind sleep
 		local _kill_wait=0
-		while [ -n "$(pgrep -f "omr-tracker $1")" ] && [ "$_kill_wait" -lt 3 ]; do
+		while _tracker_running "$1" && [ "$_kill_wait" -lt 3 ]; do
 			sleep 1
 			_kill_wait=$((_kill_wait + 1))
 		done
