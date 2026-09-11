@@ -1,0 +1,200 @@
+#!/bin/sh
+#
+# 1920-omr-network creates the stock wan1/wan2/... interfaces, and every
+# default that follows it hard-codes those names: 1960-omr-qos makes
+# qos.wan1/qos.wan2, 2040-omr-sqm makes sqm.wan1/sqm.wan2, 1970-omr-vnstat
+# monitors network.wan1.device, and the omr-quota package ships wan1/wan2
+# sections of its own.
+#
+# 1920 bows out on two platforms though: one whose network is provisioned
+# by steer-cloud-init (which names its interfaces after the cloud config,
+# not after wanN), and one flashed over a config that already carries its
+# own layout. There the wanN sections never exist and all of the above are
+# left pointing at interfaces that are not there: sqm and qos queues on an
+# empty device, vnstat counting nothing, omr-quota offering two phantom
+# links to put a quota on.
+#
+# Re-point them at the WANs the platform actually has. A WAN here is what
+# omr-tracker itself calls one: a network interface whose "multipath" is
+# set to anything but "off". The stock names are handed out in order, the
+# master first since it is the primary link; a stock name with no real WAN
+# left to stand for is dropped rather than kept dangling.
+
+. /lib/functions.sh
+
+# Nothing to do on a normal box: 1920-omr-network made wan1/wan2 itself.
+[ -n "$(uci -q get network.wan1)" ] && exit 0
+[ -n "$(uci -q get network.wan2)" ] && exit 0
+
+_OMR_STOCK_WANS="wan1 wan2 wan3 wan4 wan5 wan6 wan7 wan8"
+_omr_real_wans=""
+
+_omr_collect_wan() {
+	local multipath proto
+	config_get multipath "$1" multipath
+	config_get proto "$1" proto
+	{ [ -z "$multipath" ] || [ "$multipath" = "off" ]; } && return 0
+	[ "$proto" = "none" ] && return 0
+	case "$1" in
+		lan|lan[0-9]*|loopback|omrvpn|glorytun*|vpn[0-9]*) return 0 ;;
+	esac
+	if [ "$multipath" = "master" ]; then
+		_omr_real_wans="$1${_omr_real_wans:+ $_omr_real_wans}"
+	else
+		_omr_real_wans="${_omr_real_wans:+$_omr_real_wans }$1"
+	fi
+}
+
+config_load network
+config_foreach _omr_collect_wan interface
+
+# No multipath interface at all: leave the defaults alone, there is nothing
+# better to point them at.
+[ -z "$_omr_real_wans" ] && exit 0
+
+# A real WAN that is itself called wanN already is the name the defaults
+# use, so it replaces nothing.
+_omr_avail=""
+for _omr_w in $_omr_real_wans; do
+	case " $_OMR_STOCK_WANS " in *" $_omr_w "*) continue ;; esac
+	_omr_avail="${_omr_avail:+$_omr_avail }$_omr_w"
+done
+[ -z "$_omr_avail" ] && exit 0
+
+# The uci "device" of a modemmanager/qmi link is a /sys or /dev path, not a
+# network device, and a wifi station interface carries none at all. Fall back
+# to the l3 device ubus knows when the interface is already up (installing a
+# package re-runs this script on a live system), and hand back nothing rather
+# than a path no qdisc can attach to.
+_omr_wan_device() {
+	local dev
+	dev="$(uci -q get "network.$1.device")"
+	case "$dev" in
+		/*) dev="" ;;
+	esac
+	# jsonfilter exits non-zero when it matches nothing, so swallow it:
+	# a down interface would otherwise abort a hand run under "sh -e"
+	# halfway through the remap, leaving the renames staged uncommitted.
+	[ -n "$dev" ] || dev="$(ubus call "network.interface.$1" status 2>/dev/null | \
+		jsonfilter -q -e '@.l3_device' 2>/dev/null)" || dev=""
+	printf '%s' "$dev"
+}
+
+# Rename one <config>.<stock> section to the WAN taking its place. Returns
+# true only when the rename really happened, so the caller knows whether
+# the section it is about to touch is the one it just moved.
+_omr_rename_section() {
+	local cfg="$1" old="$2" new="$3"
+	[ -n "$(uci -q get "$cfg.$old")" ] || return 1
+	# Nothing to rename to, or the WAN already has a section of its own:
+	# the stock one is a leftover either way.
+	if [ -z "$new" ] || [ -n "$(uci -q get "$cfg.$new")" ]; then
+		uci -q delete "$cfg.$old"
+		return 1
+	fi
+	uci -q rename "$cfg.$old=$new"
+}
+
+_omr_remap() {
+	local old="$1" new="$2" dev=""
+
+	[ -n "$new" ] && dev="$(_omr_wan_device "$new")"
+
+	# sqm attaches its queue to the device, not to the uci interface. The
+	# one 2040-omr-sqm wrote is the device of a wanN that is not here, and
+	# on a box reflashed over another layout it can even name a live LAN
+	# port, so it is replaced whether or not a new device could be found.
+	if _omr_rename_section sqm "$old" "$new"; then
+		uci -q set "sqm.$new.interface=$dev"
+	fi
+	# qos-scripts takes the device from the section name unless the section
+	# carries an explicit "interface", which the wanN ones do not.
+	if _omr_rename_section qos "$old" "$new"; then
+		[ -n "$dev" ] && [ -n "$(uci -q get "qos.$new.interface")" ] && \
+			uci -q set "qos.$new.interface=$dev"
+	fi
+	_omr_rename_section omr-quota "$old" "$new"
+	return 0
+}
+
+_omr_from=""
+_omr_to=""
+_omr_idx=0
+for _omr_w in $_OMR_STOCK_WANS; do
+	[ -n "$(uci -q get "network.$_omr_w")" ] && continue
+	_omr_idx=$((_omr_idx + 1))
+	# awk, not cut: cut -f prints the whole line when it holds no
+	# delimiter, so a single available WAN would answer for every name.
+	_omr_new="$(echo "$_omr_avail" | awk -v i="$_omr_idx" '{print $i}')"
+	_omr_remap "$_omr_w" "$_omr_new"
+	_omr_from="${_omr_from:+$_omr_from }$_omr_w"
+	_omr_to="${_omr_to:+$_omr_to }${_omr_new:--}"
+done
+
+# "-" marks a stock name that was dropped: its token disappears from the
+# lists below instead of being replaced.
+_omr_lookup() {
+	local want="$1" f t i=1
+	for f in $_omr_from; do
+		if [ "$f" = "$want" ]; then
+			t="$(echo "$_omr_to" | awk -v i="$i" '{print $i}')"
+			[ "$t" = "-" ] || printf '%s' "$t"
+			return 0
+		fi
+		i=$((i + 1))
+	done
+	printf '%s' "$want"
+}
+
+_omr_remap_list() {
+	local key="$1" cur tok m out=""
+	cur="$(uci -q get "$key")"
+	[ -n "$cur" ] || return 0
+	for tok in $cur; do
+		m="$(_omr_lookup "$tok")"
+		[ -n "$m" ] && out="${out:+$out }$m"
+	done
+	[ "$out" = "$cur" ] && return 0
+	if [ -z "$out" ]; then
+		uci -q delete "$key"
+	else
+		uci -q set "$key=$out"
+	fi
+}
+
+# omr-quota also names WANs inside options: the per-interface
+# "down_interfaces", and a global quota's "interfaces"/"down_interfaces".
+for _omr_sec in $(uci -q show omr-quota 2>/dev/null | sed -n 's/^omr-quota\.\([^.=]*\)=.*/\1/p'); do
+	_omr_remap_list "omr-quota.$_omr_sec.interfaces"
+	_omr_remap_list "omr-quota.$_omr_sec.down_interfaces"
+done
+
+# vnstat counts devices, and 1970-omr-vnstat read them off network.wan1 and
+# network.wan2: with those missing it wrote empty entries. Fill an empty list
+# only -- a list holding anything was either already right or is the admin's,
+# and the modems it watches are not ones this script could have named.
+_omr_devs=""
+for _omr_w in $_omr_real_wans; do
+	_omr_d="$(_omr_wan_device "$_omr_w")"
+	[ -n "$_omr_d" ] && _omr_devs="${_omr_devs:+$_omr_devs }$_omr_d"
+done
+if [ -n "$_omr_devs" ] && [ -n "$(uci -q get vnstat.@vnstat[-1])" ]; then
+	# Unquoted on purpose: collapses the empty entries 1970 may have left.
+	_omr_cur="$(uci -q get vnstat.@vnstat[-1].interface)"
+	_omr_cur="$(echo $_omr_cur)"
+	if [ -z "$_omr_cur" ]; then
+		uci -q delete vnstat.@vnstat[-1].interface
+		for _omr_d in $_omr_devs; do
+			uci -q add_list "vnstat.@vnstat[-1].interface=$_omr_d"
+		done
+	fi
+fi
+
+uci -q commit sqm
+uci -q commit qos
+uci -q commit omr-quota
+uci -q commit vnstat
+
+rm -f /tmp/luci-indexcache
+
+exit 0
