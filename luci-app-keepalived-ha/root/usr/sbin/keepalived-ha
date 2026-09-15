@@ -1,0 +1,58 @@
+#!/bin/sh
+# CLI for the OpenMPTCProuter keepalived HA easy-setup engine.
+#
+# Copyright 2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Licensed to the public under the GNU General Public License v3.
+
+KAHA_LIB="${KAHA_LIB:-/usr/share/keepalived-ha/setup.sh}"
+. "$KAHA_LIB"
+
+usage() {
+	cat <<EOF
+Usage: keepalived-ha <command> [args]
+
+	apply [my_ip] [pubkey]     (re)generate the HA config on this node from
+	                           the keepalived.ha UCI section
+	push <ip> [user] [pass]    configure a peer router through its LuCI RPC
+	genkey                     create the keepalived-sync SSH key, print pubkey
+	status                     print HA status as JSON
+EOF
+}
+
+cmd="$1"
+[ $# -gt 0 ] && shift
+
+case "$cmd" in
+	apply)
+		if kaha_apply "$1" "$2"; then
+			echo "OK"
+		else
+			echo "ERROR: $KAHA_ERROR" >&2
+			exit 1
+		fi
+		;;
+	push)
+		if kaha_push_peer "$1" "$2" "$3"; then
+			echo "OK"
+		else
+			echo "ERROR: $KAHA_ERROR" >&2
+			exit 1
+		fi
+		;;
+	genkey)
+		if kaha_genkey; then
+			kaha_pubkey
+		else
+			echo "ERROR: $KAHA_ERROR" >&2
+			exit 1
+		fi
+		;;
+	status)
+		kaha_status
+		echo
+		;;
+	*)
+		usage
+		exit 1
+		;;
+esac

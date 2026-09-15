@@ -1,0 +1,199 @@
+#!/bin/sh
+# shellcheck shell=ash
+#
+# rpcd backend for the OpenMPTCProuter keepalived HA easy-setup page.
+#
+# Copyright 2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+# Licensed to the public under the GNU General Public License v3.
+
+. /usr/share/libubox/jshn.sh
+
+KAHA_LIB="${KAHA_LIB:-/usr/share/keepalived-ha/setup.sh}"
+. "$KAHA_LIB"
+
+result_ok() {
+	json_init
+	json_add_boolean ok 1
+	while [ $# -ge 2 ]; do
+		json_add_string "$1" "$2"
+		shift 2
+	done
+	json_dump
+}
+
+result_err() {
+	json_init
+	json_add_boolean ok 0
+	json_add_string error "${1:-$KAHA_ERROR}"
+	json_dump
+}
+
+do_apply_local() {
+	local my_ip pk role first
+
+	my_ip=$(kaha_detect_my_ip)
+	first=$(kaha_first_router)
+	pk=''
+	role='backup'
+	if [ -n "$my_ip" ] && [ "$my_ip" = "$first" ]; then
+		role='primary'
+		kaha_genkey >/dev/null 2>&1
+		pk=$(kaha_pubkey)
+	fi
+
+	if kaha_apply "$my_ip" "$pk"; then
+		result_ok role "$role" my_ip "${my_ip:-}" pubkey "${pk:-}"
+	else
+		result_err
+	fi
+}
+
+do_setup_remote() {
+	local vip interface vrid advert_int track_omrvpn track_proxy track_wans manage_dhcp
+	local routers my_ip pubkey
+
+	json_load "$1"
+	json_get_var vip vip
+	json_get_var interface interface
+	json_get_var vrid vrid
+	json_get_var advert_int advert_int
+	json_get_var track_omrvpn track_omrvpn
+	json_get_var track_proxy track_proxy
+	json_get_var track_wans track_wans
+	json_get_var manage_dhcp manage_dhcp
+	json_get_var routers routers
+	json_get_var my_ip my_ip
+	json_get_var pubkey pubkey
+
+	[ -n "$vip" ] || {
+		result_err "missing vip"
+		return
+	}
+	[ -n "$routers" ] || {
+		result_err "missing routers"
+		return
+	}
+	[ -n "$my_ip" ] || {
+		result_err "missing my_ip"
+		return
+	}
+
+	kaha_setup_remote_settings "$vip" "$interface" "$vrid" "$advert_int" \
+		"$track_omrvpn" "$manage_dhcp" "$routers" "$pubkey" "$track_proxy" \
+		"$track_wans"
+
+	if kaha_apply "$my_ip" "$pubkey"; then
+		result_ok my_ip "$my_ip"
+	else
+		result_err
+	fi
+}
+
+do_push_peer() {
+	local ip username password
+
+	json_load "$1"
+	json_get_var ip ip
+	json_get_var username username
+	json_get_var password password
+
+	[ -n "$ip" ] || {
+		result_err "missing peer ip"
+		return
+	}
+
+	if kaha_push_peer "$ip" "${username:-root}" "$password"; then
+		result_ok ip "$ip"
+	else
+		result_err
+	fi
+}
+
+do_check_peer() {
+	local ip username password out tmpf
+
+	json_load "$1"
+	json_get_var ip ip
+	json_get_var username username
+	json_get_var password password
+
+	[ -n "$ip" ] || {
+		result_err "missing peer ip"
+		return
+	}
+
+	# redirect instead of command substitution so KAHA_ERROR survives
+	tmpf=$(mktemp /tmp/kaha_check.XXXXXX)
+	if kaha_check_peer "$ip" "${username:-root}" "$password" >"$tmpf"; then
+		out=$(cat "$tmpf")
+		json_init
+		json_add_boolean ok 1
+		json_add_string ip "$ip"
+		json_add_string remote_role "$(echo "$out" | jsonfilter -q -e '@.role')"
+		json_add_boolean remote_configured "$([ "$(echo "$out" | jsonfilter -q -e '@.configured')" = "true" ] && echo 1 || echo 0)"
+		json_dump
+	else
+		result_err
+	fi
+	rm -f "$tmpf"
+}
+
+do_genkey() {
+	if kaha_genkey; then
+		result_ok pubkey "$(kaha_pubkey)"
+	else
+		result_err
+	fi
+}
+
+case "$1" in
+	list)
+		json_init
+		json_add_object status
+		json_close_object
+		json_add_object genkey
+		json_close_object
+		json_add_object apply_local
+		json_close_object
+		json_add_object push_peer
+		json_add_string ip "ip"
+		json_add_string username "username"
+		json_add_string password "password"
+		json_close_object
+		json_add_object check_peer
+		json_add_string ip "ip"
+		json_add_string username "username"
+		json_add_string password "password"
+		json_close_object
+		json_add_object setup_remote
+		json_add_string vip "vip"
+		json_add_string interface "interface"
+		json_add_string vrid "vrid"
+		json_add_string advert_int "advert_int"
+		json_add_string track_omrvpn "track_omrvpn"
+		json_add_string track_proxy "track_proxy"
+		json_add_string track_wans "track_wans"
+		json_add_string manage_dhcp "manage_dhcp"
+		json_add_string routers "routers"
+		json_add_string my_ip "my_ip"
+		json_add_string pubkey "pubkey"
+		json_close_object
+		json_dump
+		;;
+	call)
+		read -r input
+		case "$2" in
+			status) kaha_status ;;
+			genkey) do_genkey ;;
+			apply_local) do_apply_local ;;
+			push_peer) do_push_peer "$input" ;;
+			check_peer) do_check_peer "$input" ;;
+			setup_remote) do_setup_remote "$input" ;;
+			*)
+				json_init
+				json_add_string error "invalid method"
+				json_dump
+				;;
+		esac
+		;;
+esac
