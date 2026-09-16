@@ -23,7 +23,7 @@ account.
 - [Bonded VPN links](#bonded-vpn-links): [DSVPN](#dsvpn) · [Glorytun TCP](#glorytun-tcp) · [Glorytun UDP](#glorytun-udp) · [MLVPN](#mlvpn) · [MQVPN](#mqvpn)
 - [Proxy & routing](#proxy--routing): [Shadowsocks-libev](#shadowsocks-libev) · [Shadowsocks-Rust](#shadowsocks-rust) · [OMR-Bypass](#omr-bypass)
 - [Monitoring & alerts](#monitoring--alerts): [OMR-Tracker Manager](#omr-tracker-manager) · [Interface Events](#interface-events) · [WAN Metrics](#wan-metrics) · [iPerf](#iperf) · [nDPId](#ndpid)
-- [System](#system): [Firewall](#firewall) · [bpftune](#bpftune) · [E-Mail](#e-mail) · [Shutdown](#shutdown) · [SmartDNS](#smartdns) · [Sysupgrade](#sysupgrade)
+- [System](#system): [Firewall](#firewall) · [High availability](#high-availability-vrrp) · [bpftune](#bpftune) · [E-Mail](#e-mail) · [Shutdown](#shutdown) · [SmartDNS](#smartdns) · [Sysupgrade](#sysupgrade)
 - [Appearance](#appearance): [Themes](#themes)
 - [A note on completeness](#a-note-on-completeness)
 
@@ -917,8 +917,8 @@ rules.
 
 ## System
 
-Administrative pages: network security, background tuning, alerts, power,
-DNS, and firmware.
+Administrative pages: network security, redundancy, background tuning,
+alerts, power, DNS, and firmware.
 
 ### Firewall
 
@@ -941,6 +941,47 @@ lists, so you only see and manage your own entries.
 | NAT Rules | Control the source address used for outbound/forwarded traffic. |
 | IP Sets | Reusable address lists for use in rules. |
 | Custom Rules | Raw iptables commands, run after every firewall restart. |
+
+### High availability (VRRP)
+
+```
+https://<router-ip>/cgi-bin/luci/admin/services/keepalived/ha
+```
+
+![High availability](images/keepalived-ha.png)
+
+Runs two (or more) OpenMPTCProuter boxes on the same LAN as a redundant
+pair. The clients use one shared **virtual IP** as their gateway and DNS,
+and that address always sits on whichever router is currently healthy — if
+one router dies, loses its aggregation tunnel, or loses its proxy, another
+one picks the address up in about three seconds.
+
+You fill this page in once, on one router: the LAN IP of every router in
+preferred-master order, the virtual IP, and the LuCI password of the other
+routers. **Save & Deploy HA** then generates the whole setup — VRRP
+instance, health tracking, configuration sync, DHCP options — on every
+router in the list, over their web interface. The credentials are used
+once and never stored. The app must be installed on every router.
+
+| Field | Meaning |
+|---|---|
+| Enable HA | Unticking it and deploying again removes everything this page generated. Do that on each router: unlike the other settings, the disable is not pushed to the peers. |
+| Virtual IP | The shared address the clients use as gateway and DNS. Must be a free address, not one of the routers'. |
+| Router IPs | The LAN IP of every router, in order of preference — the first entry is the preferred master and the source of the config sync. |
+| LAN interface | Which interface carries the shared address. `lan` is resolved to the right device on each router, which is what you want for a mixed pair. |
+| Virtual router ID | VRRP group number; the same on all routers, unique on the LAN. |
+| Advertisement interval (s) | Failover takes roughly three times this value. |
+| Track VPN / proxy / WAN health | Hand the virtual IP to a healthy backup when this router's tunnel, proxy, or a WAN link fails, even though the router itself is still running. All on by default. |
+| Advertise VIP via DHCP | Hands the virtual IP to clients as their gateway and DNS. |
+
+The **Status** table at the top shows which role this router holds, its
+live VRRP state (`MASTER` holds the virtual IP), and the result of the
+last configuration sync with each peer. **Test peer connections** checks
+the other routers without changing anything.
+
+Each router keeps its own WAN and VPS configuration — those are never
+synchronized, and each router needs its own VPS user. Established
+connections do not survive a failover; new ones work immediately.
 
 ### bpftune
 
@@ -1122,6 +1163,7 @@ manual's summary isn't enough:
 | [Interface Events](#interface-events) | [luci-app-omr-events/docs/events-guide.md](../luci-app-omr-events/docs/events-guide.md) |
 | [WAN Metrics](#wan-metrics) | [luci-app-omr-metrics/docs/metrics-guide.md](../luci-app-omr-metrics/docs/metrics-guide.md) + [settings-guide.md](../luci-app-omr-metrics/docs/settings-guide.md) |
 | [nDPId](#ndpid) | [luci-app-ndpid/docs/ndpid-guide.md](../luci-app-ndpid/docs/ndpid-guide.md) |
+| [High availability (VRRP)](#high-availability-vrrp) | [luci-app-keepalived-ha/docs/ha-guide.md](../luci-app-keepalived-ha/docs/ha-guide.md) |
 
 Three more user guides exist for pages this manual doesn't have a
 dedicated section for yet:
