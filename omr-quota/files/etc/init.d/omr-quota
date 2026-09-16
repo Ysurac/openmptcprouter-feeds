@@ -74,6 +74,7 @@ _launch_quota() {
 	local txquota rxquota ttquota interval enabled interface
 	local exceedance_action throttle_dl throttle_ul exceedance_scope reset_exceeded reset_baseline
 	local down_interfaces begindate enddate method percent calculation_interval block_lan
+	local live_counters
 	uci_validate_section omr-quota "interface" "$1" \
 		'txquota:uinteger'  \
 		'rxquota:uinteger'  \
@@ -91,6 +92,7 @@ _launch_quota() {
 		'throttle_dl:uinteger:1' \
 		'throttle_ul:uinteger:1' \
 		'exceedance_scope:string:month_only' \
+		'live_counters:bool:1' \
 		'reset_exceeded:bool:0'
 	interface=$1
 
@@ -125,6 +127,10 @@ _launch_quota() {
 	procd_append_param env "OMR_QUOTA_THROTTLE_DL=$throttle_dl"
 	procd_append_param env "OMR_QUOTA_THROTTLE_UL=$throttle_ul"
 	procd_append_param env "OMR_QUOTA_SCOPE=$exceedance_scope"
+	# Advanced escape hatch: 0 goes back to metering vnstat's database alone,
+	# i.e. a quota that can only notice it is exceeded at vnstatd's next
+	# SaveInterval flush. See the live-counter block in /bin/omr-quota.
+	procd_append_param env "OMR_QUOTA_LIVE_COUNTERS=$live_counters"
 	procd_append_param env "OMR_QUOTA_RESET_BASELINE=$reset_baseline"
 	procd_set_param respawn 0 10 0
 	procd_set_param stderr 1
@@ -140,7 +146,7 @@ _launch_global_quota() {
 	local txquota rxquota ttquota interval enabled interfaces
 	local exceedance_action throttle_dl throttle_ul exceedance_scope reset_exceeded reset_baseline
 	local down_interfaces begindate enddate method percent calculation_interval block_lan
-	local state_id
+	local state_id live_counters
 	uci_validate_section omr-quota "global" "$1" \
 		'interfaces:string' \
 		'txquota:uinteger'  \
@@ -159,6 +165,7 @@ _launch_global_quota() {
 		'throttle_dl:uinteger:1' \
 		'throttle_ul:uinteger:1' \
 		'exceedance_scope:string:month_only' \
+		'live_counters:bool:1' \
 		'reset_exceeded:bool:0'
 
 	state_id="global_$1"
@@ -190,6 +197,10 @@ _launch_global_quota() {
 	procd_append_param env "OMR_QUOTA_THROTTLE_DL=$throttle_dl"
 	procd_append_param env "OMR_QUOTA_THROTTLE_UL=$throttle_ul"
 	procd_append_param env "OMR_QUOTA_SCOPE=$exceedance_scope"
+	# Advanced escape hatch: 0 goes back to metering vnstat's database alone,
+	# i.e. a quota that can only notice it is exceeded at vnstatd's next
+	# SaveInterval flush. See the live-counter block in /bin/omr-quota.
+	procd_append_param env "OMR_QUOTA_LIVE_COUNTERS=$live_counters"
 	procd_append_param env "OMR_QUOTA_RESET_BASELINE=$reset_baseline"
 	procd_set_param respawn 0 10 0
 	procd_set_param stderr 1

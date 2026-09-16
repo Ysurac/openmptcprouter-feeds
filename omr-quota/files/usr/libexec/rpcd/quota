@@ -72,6 +72,58 @@ _vnstat_month() {
 	printf '%s %s' "${rx:-0}" "${tx:-0}"
 }
 
+# Read-only twin of the live-counter correction in /bin/omr-quota (like
+# _vnstat_month above is the twin of its _vnstat_usage -- keep them in sync).
+# vnstatd only flushes its counters to the database every SaveInterval minutes
+# (5 by default), so a status read straight from vnstat is up to five minutes
+# stale and LuCI would show a usage bar frozen well below what the daemon is
+# already enforcing on. The daemon owns the per-device live state; this only
+# consumes it, so the page shows the same number the quota is checked against.
+_SYSFS_NET="/sys/class/net"
+
+_uptime() {
+	local up rest
+	read -r up rest < /proc/uptime 2>/dev/null || return 1
+	up="${up%%.*}"
+	case "$up" in ''|*[!0-9]*) return 1 ;; esac
+	printf '%s' "$up"
+}
+
+# _live_delta <dev> <vnstat rx KiB> <vnstat tx KiB>: "<rx KiB> <tx KiB>" seen
+# by the kernel since that vnstat sample, "0 0" when there is no usable state
+# (no daemon running for this device, or its state has expired).
+_live_delta() {
+	local dev="$1" vrx="$2" vtx="$3"
+	local file exp pvrx pvtx arx atx lrx ltx now rx tx krx ktx n ok
+	[ -n "$dev" ] || { printf '0 0'; return; }
+	file="${_TSTATE_DIR}/live.$(echo "$dev" | tr '/' '-')"
+	[ -f "$file" ] || { printf '0 0'; return; }
+	now="$(_uptime)" || { printf '0 0'; return; }
+	rx="$(cat "${_SYSFS_NET}/${dev}/statistics/rx_bytes" 2>/dev/null)"
+	tx="$(cat "${_SYSFS_NET}/${dev}/statistics/tx_bytes" 2>/dev/null)"
+	case "$rx" in ''|*[!0-9]*) printf '0 0'; return ;; esac
+	case "$tx" in ''|*[!0-9]*) printf '0 0'; return ;; esac
+	krx=$(( rx / 1024 )); ktx=$(( tx / 1024 ))
+
+	read -r exp pvrx pvtx arx atx lrx ltx < "$file"
+	ok=1
+	for n in "${exp:-x}" "${pvrx:-x}" "${pvtx:-x}" "${arx:-x}" "${atx:-x}" "${lrx:-x}" "${ltx:-x}"; do
+		case "$n" in ''|*[!0-9]*) ok=0 ;; esac
+	done
+	[ "$ok" = "1" ] || { printf '0 0'; return; }
+	[ "$now" -gt "$exp" ] && { printf '0 0'; return; }
+
+	# vnstatd has flushed since the daemon's last poll: its anchor predates
+	# that flush and would count the flushed traffic twice -- use the same
+	# fallback the daemon does, the kernel reading of its previous poll.
+	if [ "$vrx" != "$pvrx" ] || [ "$vtx" != "$pvtx" ]; then
+		arx="$lrx"; atx="$ltx"
+	fi
+	[ "$krx" -lt "$arx" ] && arx="$krx"
+	[ "$ktx" -lt "$atx" ] && atx="$ktx"
+	printf '%s %s' "$(( krx - arx ))" "$(( ktx - atx ))"
+}
+
 # uci section type ("interface" or "global"), empty if the section doesn't exist
 _section_type() {
 	uci -q get "omr-quota.${1}" 2>/dev/null
@@ -112,6 +164,7 @@ _quota_config_json() {
 	local type=$(_section_type "$iface")
 	local enabled txquota rxquota ttquota interval action dl ul scope
 	local interfaces down_interfaces begindate enddate method percent calculation_interval block_lan
+	local live_counters
 	enabled=$(uci -q get "omr-quota.${iface}.enabled"          2>/dev/null); enabled=${enabled:-0}
 	txquota=$(uci -q get "omr-quota.${iface}.txquota"          2>/dev/null); txquota=${txquota:-0}
 	rxquota=$(uci -q get "omr-quota.${iface}.rxquota"          2>/dev/null); rxquota=${rxquota:-0}
@@ -130,18 +183,19 @@ _quota_config_json() {
 	percent=$(uci -q get "omr-quota.${iface}.percent"          2>/dev/null); percent=${percent:-80}
 	calculation_interval=$(uci -q get "omr-quota.${iface}.calculation_interval" 2>/dev/null); calculation_interval=${calculation_interval:-120}
 	block_lan=$(uci -q get "omr-quota.${iface}.block_lan"      2>/dev/null); block_lan=${block_lan:-0}
+	live_counters=$(uci -q get "omr-quota.${iface}.live_counters" 2>/dev/null); live_counters=${live_counters:-1}
 	action=$(uci -q get "omr-quota.${iface}.exceedance_action" 2>/dev/null); action=${action:-cut}
 	dl=$(uci -q get "omr-quota.${iface}.throttle_dl"           2>/dev/null); dl=${dl:-1}
 	ul=$(uci -q get "omr-quota.${iface}.throttle_ul"           2>/dev/null); ul=${ul:-1}
 	scope=$(uci -q get "omr-quota.${iface}.exceedance_scope"   2>/dev/null); scope=${scope:-month_only}
-	printf '{"name":"%s","type":"%s","enabled":"%s","txquota":%s,"rxquota":%s,"ttquota":%s,"interval":%s,"interfaces":"%s","down_interfaces":"%s","begindate":"%s","enddate":"%s","method":%s,"percent":%s,"calculation_interval":%s,"block_lan":"%s","exceedance_action":"%s","throttle_dl":%s,"throttle_ul":%s,"exceedance_scope":"%s"}' \
+	printf '{"name":"%s","type":"%s","enabled":"%s","txquota":%s,"rxquota":%s,"ttquota":%s,"interval":%s,"interfaces":"%s","down_interfaces":"%s","begindate":"%s","enddate":"%s","method":%s,"percent":%s,"calculation_interval":%s,"block_lan":"%s","exceedance_action":"%s","throttle_dl":%s,"throttle_ul":%s,"exceedance_scope":"%s","live_counters":"%s"}' \
 		"$(_json_str "$iface")" "$(_json_str "$type")" "$(_json_str "$enabled")" \
 		"$txquota" "$rxquota" "$ttquota" "$interval" \
 		"$(_json_str "$interfaces")" "$(_json_str "$down_interfaces")" \
 		"$(_json_str "$begindate")" "$(_json_str "$enddate")" \
 		"$method" "$percent" "$calculation_interval" "$(_json_str "$block_lan")" \
 		"$(_json_str "$action")" "$dl" "$ul" \
-		"$(_json_str "$scope")"
+		"$(_json_str "$scope")" "$(_json_str "$live_counters")"
 }
 
 _quota_status_json() {
@@ -166,6 +220,7 @@ _quota_status_json() {
 
 	# Current month usage from vnstat
 	local metered real_iface usage rx_bytes tx_bytes rx_kib tx_kib tt_kib
+	local iface_rx iface_tx delta
 	rx_kib=0
 	tx_kib=0
 	for metered in $interfaces; do
@@ -173,8 +228,11 @@ _quota_status_json() {
 		usage=$(_vnstat_month "$real_iface" "$begindate")
 		rx_bytes=$(printf '%s' "$usage" | awk '{print $1}')
 		tx_bytes=$(printf '%s' "$usage" | awk '{print $2}')
-		rx_kib=$(( rx_kib + rx_bytes / 1024 ))
-		tx_kib=$(( tx_kib + tx_bytes / 1024 ))
+		iface_rx=$(( rx_bytes / 1024 ))
+		iface_tx=$(( tx_bytes / 1024 ))
+		delta=$(_live_delta "$real_iface" "$iface_rx" "$iface_tx")
+		rx_kib=$(( rx_kib + iface_rx + ${delta%% *} ))
+		tx_kib=$(( tx_kib + iface_tx + ${delta##* } ))
 	done
 	local baseline rx_base tx_base
 	baseline=$(_read_baseline "$state_id")
@@ -226,7 +284,7 @@ _quota_status_json() {
 
 case "$1" in
 	list)
-		printf '{"get_quota":{"interface":""},"set_quota":{"interface":"","type":"","enabled":"","txquota":"","rxquota":"","ttquota":"","interval":"","interfaces":"","down_interfaces":"","begindate":"","enddate":"","method":"","percent":"","calculation_interval":"","block_lan":"","exceedance_action":"","throttle_dl":"","throttle_ul":"","exceedance_scope":""},"get_status":{"interface":""},"reset_exceeded":{"interface":""}}\n'
+		printf '{"get_quota":{"interface":""},"set_quota":{"interface":"","type":"","enabled":"","txquota":"","rxquota":"","ttquota":"","interval":"","interfaces":"","down_interfaces":"","begindate":"","enddate":"","method":"","percent":"","calculation_interval":"","block_lan":"","exceedance_action":"","throttle_dl":"","throttle_ul":"","exceedance_scope":"","live_counters":""},"get_status":{"interface":""},"reset_exceeded":{"interface":""}}\n'
 		;;
 
 	call)
@@ -277,7 +335,7 @@ case "$1" in
 					exit 1
 				fi
 				# Apply every provided non-empty field
-				for field in enabled txquota rxquota ttquota interval interfaces down_interfaces begindate enddate method percent calculation_interval block_lan exceedance_action throttle_dl throttle_ul exceedance_scope; do
+				for field in enabled txquota rxquota ttquota interval interfaces down_interfaces begindate enddate method percent calculation_interval block_lan exceedance_action throttle_dl throttle_ul exceedance_scope live_counters; do
 					val=$(printf '%s' "$input" | jsonfilter -q -e "@.${field}")
 					[ -n "$val" ] && uci -q set "omr-quota.${iface}.${field}=${val}"
 				done

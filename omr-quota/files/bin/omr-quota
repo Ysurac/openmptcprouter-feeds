@@ -106,6 +106,196 @@ _vnstat_usage() {
 	printf '%s %s 1' "$(( rx_bytes / 1024 ))" "$(( tx_bytes / 1024 ))"
 }
 
+# ── Live kernel counters ──────────────────────────────────────────────────────
+#
+# vnstat is the metering *reference* -- it survives reboots, knows about
+# months and is what the whole package is configured against -- but it is not
+# live: vnstatd keeps its counters in memory and only writes them to its
+# database every SaveInterval minutes (5 by default, and OpenWrt ships the
+# stock vnstat.conf with every interval commented out, so that default is what
+# runs). `vnstat --json` is therefore up to five minutes behind reality, and a
+# quota checked against it alone is blind for exactly that long: on a fast WAN
+# a single speedtest passes gigabytes inside one save window and the quota is
+# only *seen* as reached at the next flush, long after it was crossed. Field
+# report on a Starlink WAN: the quota was overshot by 42% before the cut.
+#
+# So the live traffic the kernel has counted since vnstat's last sample is
+# added on top of it, from /sys/class/net/<dev>/statistics/{rx,tx}_bytes.
+# State per *device* (shared by every quota metering it -- whoever polls first
+# moves the anchor for all of them), in the runtime dir:
+#
+#   <valid until> <vnstat rx> <vnstat tx> <anchor rx> <anchor tx> <last rx> <last tx>
+#
+# all in KiB except the first field, a /proc/uptime deadline. Usage is
+# `vnstat_now + (kernel_now - anchor)`, and the anchor moves to the *previous*
+# poll's kernel reading every time the vnstat sample changes, i.e. every time
+# vnstatd has flushed. The traffic between that poll and the flush is then
+# counted twice -- at most one poll interval of it, which errs on the side of
+# cutting slightly early; anchoring on the *current* reading instead would
+# lose that same window entirely. The error never accumulates: vnstat's value
+# is absolute and the anchor is reset at every flush.
+#
+# Resolution goes from SaveInterval (5 min) down to the poll interval, without
+# touching vnstat's own configuration. Where the counters cannot be read (no
+# such device -- notably an interface this daemon has cut) the delta is 0 and
+# metering falls back to plain vnstat, which is what it used to be.
+_SYSFS_NET="${OMR_QUOTA_SYSFS_DIR:-/sys/class/net}"
+
+# How long a live state stays usable without a refresh. Past it the state is
+# thrown away and the anchor starts over at the current reading: a daemon that
+# comes back after a real gap (service stopped, quota disabled for a while)
+# would otherwise re-anchor on a kernel reading from before the gap, while
+# vnstat has had all that time to catch up on its own -- counting the gap's
+# traffic twice.
+case "${OMR_QUOTA_INTERVAL:-}" in
+	''|*[!0-9]*) _live_ttl=180 ;;
+	*)           _live_ttl=$(( OMR_QUOTA_INTERVAL * 3 )); [ "$_live_ttl" -lt 60 ] && _live_ttl=60 ;;
+esac
+
+# _uptime: whole seconds since boot. Monotonic on purpose -- an NTP step at
+# boot must not make a live state look fresh (or stale) by hours. The runtime
+# dir is tmpfs, so a reboot drops every state file along with the clock.
+_uptime() {
+	local up rest
+	read -r up rest < /proc/uptime 2>/dev/null || return 1
+	up="${up%%.*}"
+	case "$up" in ''|*[!0-9]*) return 1 ;; esac
+	printf '%s' "$up"
+}
+
+# _kernel_counters <dev>: "<rx KiB> <tx KiB>" straight from the kernel, or a
+# non-zero exit when the device has no readable counters.
+_kernel_counters() {
+	local dev="$1" rx tx
+	[ -n "$dev" ] || return 1
+	rx="$(cat "${_SYSFS_NET}/${dev}/statistics/rx_bytes" 2>/dev/null)"
+	tx="$(cat "${_SYSFS_NET}/${dev}/statistics/tx_bytes" 2>/dev/null)"
+	case "$rx" in ''|*[!0-9]*) return 1 ;; esac
+	case "$tx" in ''|*[!0-9]*) return 1 ;; esac
+	printf '%s %s' "$(( rx / 1024 ))" "$(( tx / 1024 ))"
+}
+
+# _live_delta <dev> <vnstat rx KiB> <vnstat tx KiB>: "<rx KiB> <tx KiB>" of
+# traffic the kernel has counted since that vnstat sample, updating the
+# device's live state. "0 0" when the feature is off or the counters are
+# unreadable. Keep in sync with the read-only twin in the rpcd plugin.
+_live_delta() {
+	local dev="$1" vrx="$2" vtx="$3"
+	local now kernel krx ktx file ok n
+	local exp pvrx pvtx arx atx lrx ltx
+
+	[ "${OMR_QUOTA_LIVE_COUNTERS:-1}" = "0" ] && { printf '0 0'; return; }
+	now="$(_uptime)"                || { printf '0 0'; return; }
+	kernel="$(_kernel_counters "$dev")" || { printf '0 0'; return; }
+	krx="${kernel%% *}"; ktx="${kernel##* }"
+
+	file="${_TSTATE_DIR}/live.$(echo "$dev" | tr '/' '-')"
+	ok=0
+	if [ -f "$file" ]; then
+		read -r exp pvrx pvtx arx atx lrx ltx < "$file"
+		ok=1
+		for n in "${exp:-x}" "${pvrx:-x}" "${pvtx:-x}" "${arx:-x}" "${atx:-x}" "${lrx:-x}" "${ltx:-x}"; do
+			case "$n" in ''|*[!0-9]*) ok=0 ;; esac
+		done
+		[ "$ok" = "1" ] && [ "$now" -gt "$exp" ] && ok=0
+	fi
+
+	if [ "$ok" != "1" ]; then
+		# no usable state: anchor here, so this poll contributes nothing
+		arx="$krx"; atx="$ktx"
+	elif [ "$vrx" != "$pvrx" ] || [ "$vtx" != "$pvtx" ]; then
+		# vnstatd flushed since the previous poll -- re-anchor on it
+		arx="$lrx"; atx="$ltx"
+	fi
+	# device recreated (ifdown/ifup, modem reconnect, driver reload): the
+	# kernel counters restart at 0, so anything below the anchor is a reset
+	[ "$krx" -lt "$arx" ] && arx="$krx"
+	[ "$ktx" -lt "$atx" ] && atx="$ktx"
+
+	mkdir -p "$_TSTATE_DIR"
+	printf '%s %s %s %s %s %s %s' \
+		"$(( now + _live_ttl ))" "$vrx" "$vtx" "$arx" "$atx" "$krx" "$ktx" \
+		> "${file}.new" && mv "${file}.new" "$file"
+
+	printf '%s %s' "$(( krx - arx ))" "$(( ktx - atx ))"
+}
+
+# _vnstat_register <dev>: make vnstat count this device.
+#
+# `_track_vnstat` in the init does this at service start, but only for an
+# interface netifd can resolve *right then*. A WAN that is down at that moment
+# -- no carrier on the port, modem not up yet, DHCP not finished -- is skipped,
+# and nothing ever comes back to it: the procd trigger is on the *network
+# config*, not on interface state, and the package ships no hotplug. Found on a
+# router whose WAN port had nothing plugged in when the image first booted:
+# `vnstat -i eth1 --json` answered "No interface matching eth1 found in
+# database" for good, so a quota enabled on that WAN read 0 bytes of usage
+# forever and silently never applied -- and nothing in the UI said so.
+#
+# So the daemon repairs it itself, the first time it resolves a device vnstat
+# does not know. Once per device per boot: the marker is a *directory* in the
+# tmpfs runtime dir, created atomically, so two daemons metering the same
+# device (an interface quota and a global one) cannot both add it to the list.
+# One attempt only -- if it does not help, retrying every poll would churn uci
+# and restart vnstatd forever.
+_VNSTAT_INIT="${OMR_QUOTA_VNSTAT_INIT:-/etc/init.d/vnstat}"
+
+_vnstat_register() {
+	local dev="$1" list marker
+	[ -n "$dev" ] || return
+	[ "${OMR_QUOTA_VNSTAT_AUTOADD:-1}" = "0" ] && return
+	marker="${_TSTATE_DIR}/vnstatadd.$(echo "$dev" | tr '/' '-')"
+	# already attempted for this device since boot
+	[ -d "$marker" ] && return
+	# A device name can outlive the device itself (the realdev cache keeps
+	# serving it while the interface is cut): only ever register something
+	# that exists right now.
+	_kernel_counters "$dev" >/dev/null 2>&1 || return
+	# vnstat itself is the authority on what it counts, not the uci list: a
+	# device can sit in the list and still be missing from the database, or
+	# be counted without being listed. Known but with no usable sample yet
+	# just means vnstatd has not written a bucket for it -- that comes on its
+	# own at the next flush, and must not consume the one repair attempt.
+	vnstat --dbiflist 2>/dev/null | grep -qw -- "$dev" && return
+	[ -n "$(uci -q get vnstat.@vnstat[-1])" ] || return
+
+	mkdir -p "$_TSTATE_DIR"
+	mkdir "$marker" 2>/dev/null || return
+
+	list="$(uci -q get vnstat.@vnstat[-1].interface)"
+	case " $list " in
+		*" $dev "*) ;;
+		*)
+			uci -q add_list "vnstat.@vnstat[-1].interface=$dev"
+			uci -q commit vnstat
+			;;
+	esac
+	logger -t "OMR-QUOTA" "vnstat was not counting $dev: registering it so the quota on $OMR_QUOTA_INTERFACE can be metered"
+	"$_VNSTAT_INIT" reload >/dev/null 2>&1
+}
+
+# _interface_usage <iface>: "<rx KiB> <tx KiB> <complete>" for one metered
+# interface -- its vnstat sample with the live kernel delta added on top. The
+# delta is only trusted when the vnstat sample itself is complete: without a
+# reference to add it to it would be meaningless.
+_interface_usage() {
+	local iface="$1"
+	local dev usage rest rx tx complete delta
+	dev="$(_get_real_interface "$iface")"
+	usage="$(_vnstat_usage "$dev")"
+	rx="${usage%% *}"; rest="${usage#* }"
+	tx="${rest%% *}"; complete="${rest##* }"
+	if [ "$complete" = "1" ]; then
+		delta="$(_live_delta "$dev" "$rx" "$tx")"
+		rx=$(( rx + ${delta%% *} ))
+		tx=$(( tx + ${delta##* } ))
+	else
+		# no usable sample: vnstat may simply not know this device
+		_vnstat_register "$dev"
+	fi
+	printf '%s %s %s' "$rx" "$tx" "$complete"
+}
+
 # SQM (cake/htb+fq_codel via /usr/lib/sqm) owns the root qdisc of the devices
 # it shapes. Our tbf replaces it, so a device that SQM manages has to be
 # handed over explicitly: stop SQM before shaping (otherwise its state file
@@ -484,10 +674,12 @@ _read_baseline() {
 if [ "${OMR_QUOTA_RESET_BASELINE:-0}" = "1" ]; then
 	_rx0=0; _tx0=0
 	for iface in ${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}; do
-		real_iface="$(_get_real_interface "$iface")"
-		usage="$(_vnstat_usage "$real_iface")"
-		_rx0=$(( _rx0 + $(printf '%s' "$usage" | awk '{print $1}') ))
-		_tx0=$(( _tx0 + $(printf '%s' "$usage" | awk '{print $2}') ))
+		# same measure as the main loop (vnstat + live delta), or the
+		# baseline would be smaller than the readings it is subtracted from
+		usage="$(_interface_usage "$iface")"
+		_usage_rest="${usage#* }"
+		_rx0=$(( _rx0 + ${usage%% *} ))
+		_tx0=$(( _tx0 + ${_usage_rest%% *} ))
 	done
 	mkdir -p "$_PERSIST_DIR"
 	printf '%s %s %s' "$(date +%Y-%m)" "$_rx0" "$_tx0" > "$_baseline_file"
@@ -509,11 +701,11 @@ while true; do
 	tx=0
 	usage_complete=1
 	for iface in $target_interfaces; do
-		real_iface="$(_get_real_interface "$iface")"
-		usage="$(_vnstat_usage "$real_iface")"
-		rxi="$(printf '%s' "$usage" | awk '{print $1}')"
-		txi="$(printf '%s' "$usage" | awk '{print $2}')"
-		[ "$(printf '%s' "$usage" | awk '{print $3}')" = "1" ] || usage_complete=0
+		usage="$(_interface_usage "$iface")"
+		usage_rest="${usage#* }"
+		rxi="${usage%% *}"
+		txi="${usage_rest%% *}"
+		[ "${usage_rest##* }" = "1" ] || usage_complete=0
 		rx=$(( rx + ${rxi:-0} ))
 		tx=$(( tx + ${txi:-0} ))
 	done

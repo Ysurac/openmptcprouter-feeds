@@ -57,12 +57,49 @@ months** reveals a reset control:
 | **Upload limit (Mbps)** | Same, for upload. |
 | **Reset exceeded state** | Only shown when scope is **All future months**. Tick and save to clear the persistent "exceeded" flag for this interface — it recovers on the next check interval instead of staying cut/throttled forever. |
 
+## How accurate is it?
+
+Usage is checked every **Interval** seconds, and what is checked is
+`vnstat`'s counter **plus the traffic the kernel has counted since vnstat's
+last sample**. That second part matters: `vnstatd` keeps its counters in
+memory and only writes them to its database every `SaveInterval` minutes (5
+by default), so a quota measured on `vnstat` alone is blind for up to five
+minutes — on a fast link (Starlink, fibre) a single speedtest passes several
+gigabytes inside that window and the quota is only *seen* as reached long
+after it was crossed. Reading the live kernel counters on top brings the
+resolution down to the polling interval, so the overshoot is bounded by what
+the link can pass in a few seconds rather than in five minutes.
+
+Two consequences worth knowing:
+
+- The figure shown on this page is the same corrected one the daemon
+  enforces on, so it can be slightly ahead of what `vnstat` itself reports on
+  the command line. They converge at vnstat's next flush.
+- It still is not instant. Sizing a quota right at an operator's hard cap is
+  never a good idea; leave a margin of whatever the link can pass in a few
+  polling intervals. Setting a smaller **Interval** tightens it further, and
+  the **Daily budget method** (rate-limit) bounds the overshoot mechanically
+  by slowing the link down before the hard limit is reached.
+
+One thing the daemon now fixes on its own: vnstat has to be told which
+*devices* to count, and that registration used to happen only when the
+service started. An interface that was down at that moment (nothing plugged
+in, modem not up yet) was skipped and never registered afterwards, so a quota
+on it metered 0 bytes and silently never applied. The daemon now registers the
+device the first time it sees vnstat has no data for it, logging
+`vnstat was not counting <device>` — once per device, no restart needed.
+
+Should you ever need the reported usage to match `vnstat` exactly, the UCI
+option `live_counters` (`uci set omr-quota.<section>.live_counters=0`) goes
+back to metering vnstat's database alone, with the five-minute blind window
+that implies. It has no field on this page on purpose.
+
 ## How enforcement actually works
 
 Each enabled interface runs its own `/bin/omr-quota <interface>` daemon
-(started by `/etc/init.d/omr-quota`), polling `vnstat`'s monthly
-rx/tx counters for that interface every **Interval** seconds and comparing
-them against whichever of TX/RX/TX+RX quotas are set:
+(started by `/etc/init.d/omr-quota`), polling the counters for that interface
+every **Interval** seconds and comparing them against whichever of TX/RX/TX+RX
+quotas are set:
 
 - **Cut** just runs `ifdown`/`ifup` on the interface as the quota is
   crossed/not crossed.
@@ -71,8 +108,8 @@ them against whichever of TX/RX/TX+RX quotas are set:
   interface that egress traffic is redirected through — removing the
   shaping automatically once no longer exceeded.
 - With **This month only** scope, "exceeded" is purely derived from the
-  current month's vnstat counters, so it naturally clears when the month
-  rolls over and the counter resets.
+  current month's counters, so it naturally clears when the month rolls over
+  and the counter resets.
 - With **All future months** scope, the first time the quota is crossed
   the daemon drops a marker file
   (`/etc/omr-quota/state/<interface>.exceeded`) that forces `exceeded`

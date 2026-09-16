@@ -26,6 +26,19 @@ Two kinds of quota, both handled by the same daemon:
 
 ## Config schema (`omr-quota.<section>`)
 
+The package ships `wan1`, `wan2` and the `global1` example. On a platform
+whose WANs are not called `wanN` -- provisioned by steer-cloud-init, or
+flashed over a config that carries its own layout --
+`openmptcprouter/files/etc/uci-defaults/2096-omr-wan-names` renames those
+sections onto the WANs the box really has (master first) and, since it can
+only hand over as many names as there are sections, **creates one for every
+remaining real WAN**: a third link -- a second modem, a wifi uplink -- used
+to end up with no section at all and no entry on the quota page, with nothing
+saying why. Created sections carry the shipped values with `enabled=0`; an
+interface that already has a section is never touched, so re-running the
+script (which happens when the package is reinstalled on a live system)
+cannot resurrect or enable anything.
+
 Validated in `_launch_quota()` / `_launch_global_quota()` in the init script
 (split because `interfaces` is absent/optional on `interface` sections but
 required on `global` ones):
@@ -52,6 +65,11 @@ required on `global` ones):
 - `percent` (uinteger, default `80`) and `calculation_interval` (uinteger,
   default `120`) — daily-budget trigger threshold and method `1` recalculation
   cadence.
+- `live_counters` (bool, default `1`) — add the kernel's live byte counters
+  on top of vnstat's last sample when metering, so a quota is noticed within
+  one poll instead of within vnstat's `SaveInterval`. Advanced escape hatch;
+  see [Live kernel counters](#live-kernel-counters-_live_delta-_interface_usage)
+  for what setting it to `0` gives back.
 - `block_lan` (bool, default `0`) — with cut action, also flips
   `firewall.zone_lan.input` to `DROP` while quota enforcement is active. This
   blocks every transparent proxy uniformly without changing proxy UCI state
@@ -138,8 +156,11 @@ Each iteration:
    limited daily history (`DailyDays`, 30 by default), so a `begindate`
    older than that meters from the oldest day still in the database.
 
-   The summed `rx`/`tx` are then reduced by the current baseline (see below)
-   before `tt` is derived.
+   `_interface_usage` then adds the *live* kernel delta on top of that
+   sample (see below) — vnstat's database is up to five minutes stale — and
+   the summed `rx`/`tx` are reduced by the current baseline before `tt` is
+   derived. When the sample is unusable while the device did resolve,
+   `_vnstat_register` repairs vnstat's tracking of it (see below).
 3. Compare `rx`/`tx`/`tt` against the configured quotas to compute
    `exceeded`. `_calculate_budget_limit` additionally derives a daily-budget
    signal (see below) once usage crosses `OMR_QUOTA_PERCENT`: method `1`
@@ -173,6 +194,134 @@ sample proves the quota is no longer exceeded. This prevents a temporary
 vnstat failure during modem teardown from being interpreted as a month reset
 and triggering an `ifup`.
 
+### Live kernel counters (`_live_delta`, `_interface_usage`)
+
+vnstat is the metering *reference* — it survives reboots, knows about months
+and is what the whole package is configured against — but it is **not live**.
+`vnstatd` keeps its counters in memory and only writes them to its database
+every `SaveInterval` **minutes**, 5 by default, and OpenWrt ships the stock
+`/etc/vnstat.conf` with every interval commented out, so that default is what
+runs (`UpdateInterval 20`, `SaveInterval 5`; the database lands in
+`/var/lib/vnstat`, i.e. tmpfs, with OMR's 2-hourly `vnstat_backup` cron for
+persistence). `vnstat --json` is therefore up to five minutes behind reality.
+
+A quota checked against that alone is blind for exactly that long. On a fast
+WAN a single speedtest passes gigabytes inside one save window and is metered
+in one lump at the next flush, long after the quota was crossed — the field
+report this was written against is a Starlink WAN overshooting its quota by
+42% before the cut, the whole overshoot being one speedtest that vnstat had
+not written down yet.
+
+So `_interface_usage` meters `vnstat_sample + kernel_delta_since_that_sample`,
+the delta coming from `/sys/class/net/<dev>/statistics/{rx,tx}_bytes`
+(`OMR_QUOTA_SYSFS_DIR` overrides the root for the unit tests). `_live_delta`
+keeps one state file per **device** in the runtime dir — `live.<dev>`, shared
+by every quota metering that device, whoever polls first moving the anchor for
+all of them:
+
+```
+<valid until> <vnstat rx> <vnstat tx> <anchor rx> <anchor tx> <last rx> <last tx>
+```
+
+every field in KiB except the first, a `/proc/uptime` deadline. Each poll:
+
+- **No usable state** (first poll, or expired) → anchor on the current
+  reading, contribute nothing this round.
+- **vnstat sample unchanged** → anchor untouched, delta is
+  `kernel_now - anchor`.
+- **vnstat sample changed** (vnstatd has flushed) → re-anchor on the
+  *previous poll's* kernel reading, not the current one. The traffic between
+  that poll and the flush is then counted twice — at most one poll interval of
+  it, erring on the side of cutting slightly early; anchoring on the current
+  reading instead would lose that same window entirely. The error never
+  accumulates: vnstat's value is absolute and the anchor resets at every flush.
+- **Kernel counter below the anchor** (device recreated by ifup, a modem
+  reconnect, a driver reload) → re-anchor on it. Without this every later
+  delta is negative and masks real usage until the counter catches up.
+
+The deadline is `3 × interval`, at least 60 s. Past it the state is thrown
+away: a daemon coming back after a real gap (service stopped, quota disabled
+for a while) would otherwise re-anchor on a reading from before the gap, while
+vnstat has had all that time to record the same traffic itself — counting it
+twice.
+
+The delta is only added when the vnstat sample is complete (see above): with no
+reference to add it to, a delta measures nothing. An interface whose device is
+gone — notably one this daemon has cut — has no readable counters, the delta is
+`0 0` and metering is exactly what it was before this existed.
+
+Net effect: enforcement resolution goes from `SaveInterval` (5 min) down to the
+poll `interval`, without touching vnstat's own configuration. Verified live on
+a router: 20 MiB pushed at once, `get_status` moved `5222 → 25936 KiB` within
+8 s while vnstat's month counter and its database mtime did not move at all;
+forcing a flush right after left the reported usage at `25948 KiB` instead of
+jumping to ~46700, i.e. no double count across the flush boundary.
+
+`live_counters=0` (`OMR_QUOTA_LIVE_COUNTERS`) restores the old vnstat-only
+metering, for anyone who needs the reported figure to match `vnstat` exactly.
+
+### vnstat self-repair (`_vnstat_register`)
+
+`_track_vnstat` in the init registers a quota's device with vnstat at service
+start, but only one netifd can resolve **right then**. A WAN that is down at
+that moment — nothing plugged into the port, modem not up yet, DHCP not
+finished — is skipped, and nothing ever comes back to it: the procd trigger is
+`procd_add_reload_trigger omr-quota network`, i.e. a change of the network
+*config*, not of interface state, and the package ships no hotplug script.
+
+Found on a router whose WAN port had nothing plugged in when the image first
+booted (`eth1`: `NO-CARRIER`, `rx_bytes` 0). Its uci list held the two modems
+and never `eth1`, `1970-omr-vnstat` is gated on `openmptcprouter.latest_versions`
+being empty (so it is dead after the first boot) and reads `network.wan1.device`
+which does not exist on a platform with renamed WANs, and
+`2096-omr-wan-names` fills the vnstat list **only when it is empty**. So
+`vnstat -i eth1 --json` answered `Error: No interface matching "eth1" found in
+database` for good: a quota enabled on that WAN would read an incomplete sample
+every poll, meter 0 bytes, and silently never apply — with nothing in the UI
+saying so.
+
+So the daemon repairs it itself. When `_interface_usage` gets an **unusable
+sample for a device it did resolve**, `_vnstat_register` adds that device to
+`vnstat.@vnstat[-1].interface`, commits, and reloads vnstat (which runs
+`vnstat --add --force -i <dev>` for every listed device and signals vnstatd).
+Four guards:
+
+- **The device must exist right now** (`_kernel_counters` succeeds). A device
+  name outlives the device itself — `_get_real_interface` keeps serving the
+  cached one while the interface is cut — and registering a phantom name would
+  leave a dead entry in vnstat's database.
+- **vnstat itself is the authority**, not the uci list: `vnstat --dbiflist`
+  decides. A device can sit in the list and be missing from the database, or
+  be counted without being listed. A device vnstat *does* know but has no
+  bucket for yet (the state right after any registration, until vnstatd's next
+  flush) needs no repair and must not consume the attempt.
+- **Once per device per boot**, the marker being a *directory* under the tmpfs
+  runtime dir (`vnstatadd.<dev>`), created with `mkdir` — atomic, so two
+  daemons metering the same device (an interface quota and a global one) cannot
+  both add it. Retrying every poll would churn uci and restart vnstatd forever
+  when the registration does not help.
+- **A `vnstat.@vnstat[-1]` section must exist** to add to.
+
+`OMR_QUOTA_VNSTAT_AUTOADD=0` disables it. No uci option: a quota metering
+nothing is never what anyone configured.
+
+Reproducing it by hand on a router, on any up interface with a quota (this is
+the live verification, since the bench case deliberately does not touch
+vnstat's database — removing a device drops its history):
+
+```sh
+uci -q del_list vnstat.@vnstat[-1].interface=<dev>; uci -q commit vnstat
+/etc/init.d/vnstat reload; vnstat --remove -i <dev> --force
+rm -rf /tmp/omr-quota/vnstatadd.<dev>
+# within one poll interval:
+#   OMR-QUOTA: vnstat was not counting <dev>: registering it so the quota on <iface> can be metered
+#   vnstatd: Monitoring (3): ... <dev> ...
+```
+
+Measured on a router: break at 11:29:04, repair logged at 11:29:06, vnstatd
+monitoring it again at 11:29:20, and still exactly one log line and one list
+entry three poll intervals later.
+
 ### Usage baseline / `reset_exceeded` (`_read_baseline`, `OMR_QUOTA_RESET_BASELINE`)
 
 `reset_exceeded` only ever cleared the `persistent`-scope marker file, which
@@ -189,9 +338,11 @@ tag doesn't match the current `date +%Y-%m`, so a real month rollover isn't
 permanently masked by a stale baseline.
 
 The baseline is (re)recorded at daemon launch when `OMR_QUOTA_RESET_BASELINE=1`
-is passed in the environment: the daemon sums current vnstat usage across
-`OMR_QUOTA_INTERFACES` and writes it as the new baseline before entering the
-main loop. `init.d/omr-quota` sets that env var whenever
+is passed in the environment: the daemon sums current usage across
+`OMR_QUOTA_INTERFACES` — through `_interface_usage`, i.e. the same
+vnstat-plus-live-delta measure the main loop compares against, or the baseline
+would be systematically smaller than the readings it is subtracted from — and
+writes it as the new baseline before entering the main loop. `init.d/omr-quota` sets that env var whenever
 `reset_exceeded=1` is set on the section (in addition to its existing
 persistent-marker cleanup), so a single `reset_exceeded` trigger un-exceeds
 *both* scopes immediately, regardless of which one is configured.
@@ -466,6 +617,13 @@ un-exceeds an `exceedance_scope=month_only` quota (see the daemon's usage
 baseline section above) — a plain `rm` of the marker file never affected
 month_only quotas at all.
 
+`get_status` applies the same live-counter correction as the daemon, through a
+**read-only** twin of `_live_delta`: the daemon owns the `live.<dev>` state,
+the plugin only consumes it (and ignores it when it is missing or expired), so
+the page shows the number the quota is actually enforced on rather than one up
+to five minutes old. Keep the two in sync, like `_vnstat_month` and
+`_vnstat_usage`.
+
 `get_status` recomputes `exceeded` from live vnstat data in addition to
 checking the persistent marker, so it reflects reality even if the daemon
 process for that section isn't running. It also reports `throttled` and
@@ -539,7 +697,17 @@ ubus call quota reset_exceeded '{"interface":"wan1"}'
   duration -- one left enabled cuts its own WAN and can flip
   `firewall.zone_lan.input` to DROP while the case runs.
 
-  Two more things it deliberately does not do. It never waits for fresh
+  Phase 1b is about the live-counter correction: that the daemon keeps a
+  well-formed, unexpired `live.<dev>` state, that `get_status` really reports
+  vnstat's sample plus the kernel delta (recomputed on the router from the
+  same inputs), that fresh traffic shows up within one poll interval while
+  vnstat's database has not been rewritten at all, and that forcing a flush
+  (`SIGHUP` to vnstatd, what `/etc/init.d/vnstat reload` sends) does not make
+  the usage jump -- the double count the re-anchoring rule exists to avoid.
+  It runs with a quota value that can never be reached, so it enforces
+  nothing.
+
+  Two more things the case deliberately does not do. It never waits for fresh
   traffic to reach a quota: vnstat serves only what its database holds and
   vnstatd flushes on `SaveInterval` (5 minutes by default), so a quota
   measured against a freshly reset baseline stays un-exceeded for minutes
@@ -567,5 +735,16 @@ ubus call quota reset_exceeded '{"interface":"wan1"}'
   changes, `interval`, the ubus/ACL surface, and the SQM hand-off (it enables
   SQM on the test WAN itself, then puts it back).
   `sudo ./tests/run.sh <router> --only=89`.
+- `tests/test_004_live_counters.sh` -- the live kernel-counter correction:
+  anchoring, the re-anchor on a vnstat flush, counter resets, expired state,
+  `live_counters=0`, an incomplete vnstat sample, a global quota summing every
+  member's delta, and the baseline recording the corrected usage. The mock
+  environment has its own empty `/sys/class/net` (`MOCK_SYSFS_DIR`), so a test
+  that says nothing about kernel counters gets none -- rather than silently
+  reading a real device of the build host that shares the mock's name.
+  It also covers `_vnstat_register`: a device vnstat does not know gets added,
+  committed and vnstat reloaded exactly once; one vnstat already counts is left
+  alone; a device that is not there, a usable sample, and a missing
+  `vnstat.@vnstat[-1]` section register nothing.
 - `../luci-app-omr-quota/tests/test_quota_ui.py` -- Playwright UI test of
   the LuCI page.
