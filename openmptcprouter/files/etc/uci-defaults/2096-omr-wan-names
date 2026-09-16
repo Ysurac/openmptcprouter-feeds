@@ -106,11 +106,14 @@ _omr_remap() {
 	if _omr_rename_section sqm "$old" "$new"; then
 		uci -q set "sqm.$new.interface=$dev"
 	fi
-	# qos-scripts takes the device from the section name unless the section
-	# carries an explicit "interface", which the wanN ones do not.
+	# qos-scripts resolves the device from the section name (generate.sh's
+	# find_ifname -> network_get_device), so renaming the section is all a
+	# wanN one needs. The option that overrides that is "device", not
+	# "interface" -- an "interface" option is read by nothing -- and only a
+	# section that already carries one gets it rewritten.
 	if _omr_rename_section qos "$old" "$new"; then
-		[ -n "$dev" ] && [ -n "$(uci -q get "qos.$new.interface")" ] && \
-			uci -q set "qos.$new.interface=$dev"
+		[ -n "$dev" ] && [ -n "$(uci -q get "qos.$new.device")" ] && \
+			uci -q set "qos.$new.device=$dev"
 	fi
 	_omr_rename_section omr-quota "$old" "$new"
 	return 0
@@ -178,10 +181,13 @@ done
 # omr-quota carries wan1 and wan2 (plus the global1 example), so the pass
 # above can hand over at most two names: a third WAN -- a second modem, a
 # wifi uplink -- was left with no section at all and never showed up on the
-# quota page, with nothing saying why. The values are the ones the package
-# ships in /etc/config/omr-quota; "enabled" stays 0, so this creates a slot
-# and never an active quota -- reinstalling the package re-runs this script
-# on a live system, and that must not start metering anything on its own.
+# quota page, with nothing saying why. The values are a copy of the wan1
+# section in omr-quota's own /etc/config/omr-quota and have to be kept in
+# step with it by hand -- a third WAN that meters on a different schedule
+# from wan1/wan2 is a surprise nothing explains. "enabled" stays 0, so this
+# creates a slot and never an active quota -- reinstalling the package
+# re-runs this script on a live system, and that must not start metering
+# anything on its own.
 # An interface that already has a section (its own, or one just renamed onto
 # it) is left exactly as it is.
 _omr_quota_section() {
@@ -193,7 +199,7 @@ _omr_quota_section() {
 		set omr-quota.$iface.txquota=100000
 		set omr-quota.$iface.rxquota=400000
 		set omr-quota.$iface.ttquota=500000
-		set omr-quota.$iface.interval=10
+		set omr-quota.$iface.interval=2
 		set omr-quota.$iface.down_interfaces=$iface
 		set omr-quota.$iface.method=0
 		set omr-quota.$iface.percent=80

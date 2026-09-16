@@ -55,7 +55,7 @@ months** reveals a reset control:
 |---|---|
 | **Download limit (Mbps)** | Applied via `tc`/`tbf` on an `ifb` device once throttled — the max download speed while over quota. |
 | **Upload limit (Mbps)** | Same, for upload. |
-| **Reset exceeded state** | Only shown when scope is **All future months**. Tick and save to clear the persistent "exceeded" flag for this interface — it recovers on the next check interval instead of staying cut/throttled forever. |
+| **Reset exceeded state** | Tick and save to lift an exceeded quota now, whichever scope it uses. It clears the persistent "exceeded" flag *and* records usage-so-far as a baseline, so the interface recovers on the next check interval instead of staying cut/throttled until the month rolls over. |
 
 ## How accurate is it?
 
@@ -118,3 +118,9 @@ quotas are set:
   marker file; this only actually happens when the `omr-quota` service
   (re)starts, so tick it and then **Save & Apply** (not just save the
   form) for the reset to take effect.
+- With **This month only** scope there is no marker to delete: `exceeded` is
+  recomputed from the live totals on every poll, so a quota stays enforced
+  for as long as those totals are over the limit. **Reset exceeded state**
+  is what lifts it early — it records the usage so far as a baseline that is
+  subtracted from every later reading, which is why the same tick works for
+  both scopes.

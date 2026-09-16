@@ -77,8 +77,9 @@ _vnstat_month() {
 # vnstatd only flushes its counters to the database every SaveInterval minutes
 # (5 by default), so a status read straight from vnstat is up to five minutes
 # stale and LuCI would show a usage bar frozen well below what the daemon is
-# already enforcing on. The daemon owns the per-device live state; this only
-# consumes it, so the page shows the same number the quota is checked against.
+# already enforcing on. The daemon owns the live state of each quota/device
+# pair; this only consumes it, so the page shows the same number the quota is
+# checked against.
 _SYSFS_NET="/sys/class/net"
 
 _uptime() {
@@ -89,14 +90,17 @@ _uptime() {
 	printf '%s' "$up"
 }
 
-# _live_delta <dev> <vnstat rx KiB> <vnstat tx KiB>: "<rx KiB> <tx KiB>" seen
-# by the kernel since that vnstat sample, "0 0" when there is no usable state
-# (no daemon running for this device, or its state has expired).
+# _live_delta <state id> <dev> <vnstat rx KiB> <vnstat tx KiB>: "<rx KiB>
+# <tx KiB>" seen by the kernel since that vnstat sample, "0 0" when there is
+# no usable state (no daemon running for this quota's device, or its state has
+# expired). The state is per quota *and* device -- a section with a begindate
+# reads a different vnstat sample than one without, so they cannot share an
+# anchor; see the long note in /bin/omr-quota.
 _live_delta() {
-	local dev="$1" vrx="$2" vtx="$3"
+	local state_id="$1" dev="$2" vrx="$3" vtx="$4"
 	local file exp pvrx pvtx arx atx lrx ltx now rx tx krx ktx n ok
 	[ -n "$dev" ] || { printf '0 0'; return; }
-	file="${_TSTATE_DIR}/live.$(echo "$dev" | tr '/' '-')"
+	file="${_TSTATE_DIR}/live.${state_id}.$(echo "$dev" | tr '/' '-')"
 	[ -f "$file" ] || { printf '0 0'; return; }
 	now="$(_uptime)" || { printf '0 0'; return; }
 	rx="$(cat "${_SYSFS_NET}/${dev}/statistics/rx_bytes" 2>/dev/null)"
@@ -230,7 +234,7 @@ _quota_status_json() {
 		tx_bytes=$(printf '%s' "$usage" | awk '{print $2}')
 		iface_rx=$(( rx_bytes / 1024 ))
 		iface_tx=$(( tx_bytes / 1024 ))
-		delta=$(_live_delta "$real_iface" "$iface_rx" "$iface_tx")
+		delta=$(_live_delta "$state_id" "$real_iface" "$iface_rx" "$iface_tx")
 		rx_kib=$(( rx_kib + iface_rx + ${delta%% *} ))
 		tx_kib=$(( tx_kib + iface_tx + ${delta##* } ))
 	done

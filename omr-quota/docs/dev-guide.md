@@ -168,11 +168,13 @@ Each iteration:
    a `tc` rate applied via `_apply_downstream_limit`/`_remove_downstream_limit`
    independently of `exceeded`.
 4. For every interface in `target_interfaces`: apply `_apply_throttle` /
-   `_remove_throttle`, or `ifdown`/`ifup`, and log the transition once via
+   `_remove_throttle`, or `ifdown`, and log the transition once via
    `logger -t OMR-QUOTA` (edge-triggered on `_prev_exceeded`, not every
    loop). On the cut path, `_block_lan` / `_unblock_lan` run once (not
-   per-interface) alongside the `ifdown`/`ifup` loop when
-   `OMR_QUOTA_BLOCK_LAN=1`. On the throttle path an interface that is down
+   per-interface) alongside the `ifdown` loop when
+   `OMR_QUOTA_BLOCK_LAN=1`. The recovery direction is *not* driven by
+   `target_interfaces`: it raises the interfaces listed in `<id>.ifdown`, the
+   ones this daemon actually took down (see the marker table below). On the throttle path an interface that is down
    (typically: cut by the previous daemon before the action was switched to
    throttle) is brought up **first** and `_wait_iface_up` waits (bounded,
    10 s) for netifd to report it up before `_apply_throttle` runs -- the
@@ -215,9 +217,9 @@ not written down yet.
 So `_interface_usage` meters `vnstat_sample + kernel_delta_since_that_sample`,
 the delta coming from `/sys/class/net/<dev>/statistics/{rx,tx}_bytes`
 (`OMR_QUOTA_SYSFS_DIR` overrides the root for the unit tests). `_live_delta`
-keeps one state file per **device** in the runtime dir — `live.<dev>`, shared
-by every quota metering that device, whoever polls first moving the anchor for
-all of them:
+keeps one state file per **quota and device** in the runtime dir —
+`live.<id>.<dev>`, `<id>` being the daemon identity (the interface name, or
+`global_<section>`):
 
 ```
 <valid until> <vnstat rx> <vnstat tx> <anchor rx> <anchor tx> <last rx> <last tx>
@@ -244,6 +246,16 @@ away: a daemon coming back after a real gap (service stopped, quota disabled
 for a while) would otherwise re-anchor on a reading from before the gap, while
 vnstat has had all that time to record the same traffic itself — counting it
 twice.
+
+The `<id>` in the file name is not decoration. "Has the sample changed" is the
+only flush signal there is, and two quotas metering one device do not
+necessarily read the same sample: a section with a `begindate` sums daily
+buckets from that date, one without reads the month bucket. While they shared a
+single `live.<dev>`, each poll saw a "changed" sample, re-anchored on the
+*other* daemon's last reading and returned one poll interval of traffic instead
+of everything since the flush — the very blindness the correction exists to
+remove. `test_004` case 079b interleaves two such quotas over one device and
+fails the moment the state is shared again.
 
 The delta is only added when the vnstat sample is complete (see above): with no
 reference to add it to, a delta measures nothing. An interface whose device is
@@ -356,9 +368,25 @@ The daemon records what it currently enforces under `_TSTATE_DIR`
 | Marker | Written when | Removed when |
 | --- | --- | --- |
 | `<id>.cut` | the cut path runs (`target_interfaces`) | the not-exceeded path brings the interfaces up, or a throttle daemon takes over |
+| `<id>.ifdown` | the cut path actually calls `ifdown` on an interface (cumulative across polls) | the same places as `<id>.cut` |
 | `<id>.throttled` | the throttle path runs (`target_interfaces`) | the not-exceeded path runs `_remove_throttle` |
 | `<id>.downstream` | `_apply_downstream_limit` (down interfaces, daily-budget method 2) | `_remove_downstream_limit` |
 | `<id>.blocklan` | `_block_lan` actually flips the LAN input to DROP | `_unblock_lan` |
+
+`<id>.cut` and `<id>.ifdown` look redundant and are not. `<id>.cut` is the
+cross-package one: 002-error reads its *contents* so that every interface a
+quota cut covers — the members of a global quota included — is recognised as
+an administrative decision rather than a connectivity failure. `<id>.ifdown`
+is the narrower record of what the daemon itself took down, and it is the only
+thing it will ever raise again. They differ whenever an interface a quota
+covers was already down when the quota was crossed: it belongs in `.cut` (do
+not "recover" it) but not in `.ifdown` (it was not ours to take down, so it is
+not ours to put back). Raising the whole `.cut` list instead meant an
+interface the admin had just brought down came back up on the very next poll —
+at the shipped `interval` of 2s, a fight the admin cannot win. A recovery that
+finds a `<id>.cut` with no `<id>.ifdown` beside it treats it as a marker from a
+daemon older than the split and raises the whole list once, so a router
+upgraded mid-cut does not keep its WAN down for good.
 
 The directory is resolved as
 `${OMR_QUOTA_RUNTIME_DIR:-${OMR_QUOTA_THROTTLE_STATE_DIR:-/tmp/omr-quota}}`
@@ -404,7 +432,8 @@ Two consumers besides the daemon itself:
   interfaces listed in `.throttled` / `.downstream` (device resolved through
   the `<iface>.realdev` cache, since a cut interface has no `l3_device`),
   restores the LAN input if `.blocklan` exists, `ifup`s the interfaces listed
-  in `.cut`, deletes the markers and logs
+  in `.ifdown` (falling back to `.cut` when only that older marker is
+  present), deletes the markers and logs
   `Quota enforcement for <id> lifted`. Without this, disabling or removing a
   quota whose interface was cut left it down for good, and a throttled one
   stayed shaped: the daemon was simply not relaunched and nothing else knew
@@ -618,7 +647,8 @@ baseline section above) — a plain `rm` of the marker file never affected
 month_only quotas at all.
 
 `get_status` applies the same live-counter correction as the daemon, through a
-**read-only** twin of `_live_delta`: the daemon owns the `live.<dev>` state,
+**read-only** twin of `_live_delta`: the daemon owns the `live.<id>.<dev>`
+state,
 the plugin only consumes it (and ignores it when it is missing or expired), so
 the page shows the number the quota is actually enforced on rather than one up
 to five minutes old. Keep the two in sync, like `_vnstat_month` and
@@ -698,7 +728,7 @@ ubus call quota reset_exceeded '{"interface":"wan1"}'
   `firewall.zone_lan.input` to DROP while the case runs.
 
   Phase 1b is about the live-counter correction: that the daemon keeps a
-  well-formed, unexpired `live.<dev>` state, that `get_status` really reports
+  well-formed, unexpired `live.<id>.<dev>` state, that `get_status` really reports
   vnstat's sample plus the kernel delta (recomputed on the router from the
   same inputs), that fresh traffic shows up within one poll interval while
   vnstat's database has not been rewritten at all, and that forcing a flush

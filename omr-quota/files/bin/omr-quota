@@ -24,11 +24,23 @@ _TSTATE_DIR="${OMR_QUOTA_RUNTIME_DIR:-${OMR_QUOTA_THROTTLE_STATE_DIR:-/tmp/omr-q
 # disabled or removed (OMR_QUOTA_UNDO=1, see _undo_enforcement below):
 # without them a cut interface stayed down, and a throttled one stayed
 # shaped, once its quota was turned off -- nothing else knew about them.
-#   <id>.cut         interfaces this daemon brought down (ifdown)
+#   <id>.cut         interfaces this daemon's cut covers
+#   <id>.ifdown      of those, the ones it actually called ifdown on
 #   <id>.throttled   interfaces this daemon shapes with _apply_throttle
 #   <id>.downstream  interfaces shaped by the daily-budget speed limit
 #   <id>.blocklan    the LAN block (firewall lan input DROP) is in effect
+#
+# .cut and .ifdown are deliberately two files. .cut is the cross-package
+# one: 002-error reads its *contents* so that any interface a quota cut
+# covers -- including the members of a global quota -- is not mistaken for a
+# connectivity failure and "recovered" with an ifup. .ifdown is the narrower
+# record of what this daemon itself took down, and it is the only thing it
+# will ever raise again: an interface the admin (or another service) had
+# already put down is not this daemon's to raise, and raising it on every
+# poll meant the quota daemon fought whoever had brought it down, once per
+# poll interval, for as long as both stayed in disagreement.
 _cut_file="${_TSTATE_DIR}/${OMR_QUOTA_INTERFACE}.cut"
+_ifdown_file="${_TSTATE_DIR}/${OMR_QUOTA_INTERFACE}.ifdown"
 _tstate_file="${_TSTATE_DIR}/${OMR_QUOTA_INTERFACE}.throttled"
 _downstream_file="${_TSTATE_DIR}/${OMR_QUOTA_INTERFACE}.downstream"
 _blocklan_file="${_TSTATE_DIR}/${OMR_QUOTA_INTERFACE}.blocklan"
@@ -121,8 +133,7 @@ _vnstat_usage() {
 #
 # So the live traffic the kernel has counted since vnstat's last sample is
 # added on top of it, from /sys/class/net/<dev>/statistics/{rx,tx}_bytes.
-# State per *device* (shared by every quota metering it -- whoever polls first
-# moves the anchor for all of them), in the runtime dir:
+# State file "live.<id>.<dev>" in the runtime dir, one per quota *and* device:
 #
 #   <valid until> <vnstat rx> <vnstat tx> <anchor rx> <anchor tx> <last rx> <last tx>
 #
@@ -134,6 +145,15 @@ _vnstat_usage() {
 # cutting slightly early; anchoring on the *current* reading instead would
 # lose that same window entirely. The error never accumulates: vnstat's value
 # is absolute and the anchor is reset at every flush.
+#
+# The <id> in the file name is what keeps two quotas metering the same device
+# apart. The stored vnstat sample is what tells the next poll whether vnstatd
+# has flushed, and they do not necessarily read the same one: a section with a
+# "begindate" sums daily buckets from that date, one without reads the month
+# bucket. Sharing a single live.<dev> made every poll see a "changed" sample,
+# re-anchor on the other daemon's last reading, and hand back one poll interval
+# of traffic instead of everything since the flush -- exactly the blindness
+# this mechanism exists to remove (tests/test_004, case 079b).
 #
 # Resolution goes from SaveInterval (5 min) down to the poll interval, without
 # touching vnstat's own configuration. Where the counters cannot be read (no
@@ -175,10 +195,18 @@ _kernel_counters() {
 	printf '%s %s' "$(( rx / 1024 ))" "$(( tx / 1024 ))"
 }
 
+# _live_state_file <id> <dev>: this quota's live state for one device. Keep
+# in sync with the read-only twin in the rpcd plugin, which has to address
+# exactly the same file.
+_live_state_file() {
+	printf '%s/live.%s.%s' "$_TSTATE_DIR" "$1" "$(echo "$2" | tr '/' '-')"
+}
+
 # _live_delta <dev> <vnstat rx KiB> <vnstat tx KiB>: "<rx KiB> <tx KiB>" of
-# traffic the kernel has counted since that vnstat sample, updating the
-# device's live state. "0 0" when the feature is off or the counters are
-# unreadable. Keep in sync with the read-only twin in the rpcd plugin.
+# traffic the kernel has counted since that vnstat sample, updating this
+# quota's live state for the device. "0 0" when the feature is off or the
+# counters are unreadable. Keep in sync with the read-only twin in the rpcd
+# plugin.
 _live_delta() {
 	local dev="$1" vrx="$2" vtx="$3"
 	local now kernel krx ktx file ok n
@@ -189,7 +217,7 @@ _live_delta() {
 	kernel="$(_kernel_counters "$dev")" || { printf '0 0'; return; }
 	krx="${kernel%% *}"; ktx="${kernel##* }"
 
-	file="${_TSTATE_DIR}/live.$(echo "$dev" | tr '/' '-')"
+	file="$(_live_state_file "$OMR_QUOTA_INTERFACE" "$dev")"
 	ok=0
 	if [ -f "$file" ]; then
 		read -r exp pvrx pvtx arx atx lrx ltx < "$file"
@@ -572,12 +600,20 @@ _undo_enforcement() {
 		rm -f "$_blocklan_file"
 		undone=1
 	fi
-	if [ -f "$_cut_file" ]; then
-		list="$(cat "$_cut_file")"
-		for iface in ${list:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}; do
+	if [ -f "$_ifdown_file" ] || [ -f "$_cut_file" ]; then
+		# Same rule as the main loop's recovery: only what this daemon took
+		# down, with a lone <id>.cut (a marker predating <id>.ifdown) read as
+		# the whole target list for one last time.
+		if [ -f "$_ifdown_file" ]; then
+			list="$(cat "$_ifdown_file")"
+		else
+			list="$(cat "$_cut_file")"
+			list="${list:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}"
+		fi
+		for iface in $list; do
 			[ "$(ifstatus "$iface" | jsonfilter -q -e '@.up')" = "true" ] || ifup $iface
 		done
-		rm -f "$_cut_file"
+		rm -f "$_cut_file" "$_ifdown_file"
 		undone=1
 	fi
 	[ "$undone" = "1" ] && logger -t "OMR-QUOTA" "Quota enforcement for $OMR_QUOTA_INTERFACE lifted"
@@ -774,20 +810,33 @@ while true; do
 				real_iface="$(_get_real_interface "$iface")"
 				[ -n "$real_iface" ] && _apply_throttle "$real_iface"
 			done
-			# a cut quota switched to throttle: its interfaces are up again
-			rm -f "$_cut_file"
+			# a cut quota switched to throttle: its interfaces are up again,
+			# so nothing is owed an ifup any more
+			rm -f "$_cut_file" "$_ifdown_file"
 		else
 			# cut: bring the interface(s) down
 			_block_lan "$reason reached"
 			mkdir -p "$_TSTATE_DIR"
 			printf '%s' "$target_interfaces" > "$_cut_file"
+			# Cumulative, not "what went down this poll": from the second
+			# poll on they are all already down and that would read empty.
+			ifdown_list=""
+			[ -f "$_ifdown_file" ] && ifdown_list="$(cat "$_ifdown_file")"
 			for iface in $target_interfaces; do
 				iface_up="$(ifstatus "$iface" | jsonfilter -e '@.up')"
 				if [ "$iface_up" = "true" ]; then
 					logger -t "OMR-QUOTA" "Set interface $iface down: $reason reached"
 					ifdown $iface
+					case " $ifdown_list " in
+						*" $iface "*) ;;
+						*) ifdown_list="${ifdown_list:+$ifdown_list }$iface" ;;
+					esac
 				fi
 			done
+			# Left absent rather than written empty when the quota cut
+			# nothing itself (every interface it covers was already down):
+			# absent means "owes no ifup", which is exactly the case.
+			[ -n "$ifdown_list" ] && printf '%s' "$ifdown_list" > "$_ifdown_file"
 		fi
 	else
 		# Quota not exceeded — remove any throttle that was active
@@ -799,14 +848,26 @@ while true; do
 			done
 			rm -f "$_tstate_file"
 		fi
-		for iface in $target_interfaces; do
+		# Raise back exactly what this daemon took down -- not every
+		# interface the quota covers. <id>.ifdown is that list; a lone
+		# <id>.cut is a marker from a daemon older than it, which recorded
+		# the whole target list, so honour that once rather than leaving an
+		# upgraded router's interface down for good.
+		up_list=""
+		if [ -f "$_ifdown_file" ]; then
+			up_list="$(cat "$_ifdown_file")"
+		elif [ -f "$_cut_file" ]; then
+			up_list="$(cat "$_cut_file")"
+			up_list="${up_list:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}"
+		fi
+		for iface in $up_list; do
 			iface_up="$(ifstatus "$iface" | jsonfilter -e '@.up')"
 			if [ "$iface_up" = "false" ]; then
 				logger -t "OMR-QUOTA" "Set interface $iface up"
 				ifup $iface
 			fi
 		done
-		rm -f "$_cut_file"
+		rm -f "$_cut_file" "$_ifdown_file"
 		_unblock_lan
 	fi
 

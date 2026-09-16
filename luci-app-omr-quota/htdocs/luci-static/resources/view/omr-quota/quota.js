@@ -92,9 +92,15 @@ function addQuotaFields(s, downInterfacesHint) {
 	o.default = 'month_only';
 	o.rmempty = false;
 
+	// Offered for both scopes on purpose. "persistent" has a marker file to
+	// delete, but "month_only" — the default — has none: it recomputes
+	// "exceeded" from live vnstat totals every poll, so the only way to
+	// un-exceed it before the calendar month rolls over is the usage baseline
+	// the init script records when this flag is set. Gating the flag on
+	// "persistent" left exactly the quotas that need it with no way out of a
+	// cut short of `ubus call quota reset_exceeded` from a shell.
 	o = s.option(form.Flag, 'reset_exceeded', _('Reset exceeded state'),
-		_('Tick and save to clear the persistent exceeded flag — the interface(s) recover on the next check interval'));
-	o.depends('exceedance_scope', 'persistent');
+		_('Tick and save to lift an exceeded quota now: it clears the persistent flag and records the usage so far as the new baseline, so the interface(s) recover on the next check interval instead of waiting for the month to roll over'));
 	o.rmempty = true;
 }
 
