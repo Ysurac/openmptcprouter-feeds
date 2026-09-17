@@ -3,6 +3,16 @@
 # Copyright (C) 2015 ovh.com
 # Copyright (C) 2017 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 
+# network.globals.multipath='disable' means the kernel is running with
+# net.mptcp.enabled=0. Asking for an MPTCP socket then fails outright with
+# ENOPROTOOPT ("Protocol not available") -- the kernel has no implicit
+# fallback to plain TCP, every caller has to do it itself, and most don't.
+# Only an explicit "disable" counts, so this package keeps its stock
+# behaviour wherever network.globals.multipath doesn't exist at all.
+_omr_mptcp_globally_disabled() {
+	[ "$(uci -q get network.globals.multipath)" = "disable" ]
+}
+
 START=90
 STOP=10
 
@@ -81,6 +91,10 @@ start_instance() {
 		${dev:+dev "$dev"} 
 
 	[ "${mode}" = "listener" ] && procd_append_param command listener
+	# Glorytun asks the kernel for an MPTCP socket when told "mptcp"; with
+	# MPTCP globally off that socket cannot be created, so drop the argument
+	# and let it run over plain TCP instead of failing to connect at all.
+	[ "${mptcp}" = "1" ] && _omr_mptcp_globally_disabled && mptcp=0
 	[ "${mptcp}" = "1" ] && procd_append_param command mptcp
 	[ "${chacha20}" = "1" ] && procd_append_param command chacha20
 	[ "${multiqueue}" = "1" ] && procd_append_param command multiqueue
