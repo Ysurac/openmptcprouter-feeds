@@ -525,10 +525,20 @@ start_service() {
 		config_load shadowsocks-rust
 		config_foreach _initialize_shadowsocks_rust_tracker server
 	
-		if [ "$(uci -q get network.globals.multipath)" = "enable" ]; then
-			config_load network
-			config_foreach _launch_tracker interface
-		fi
+		# NOT gated on network.globals.multipath: _launch_tracker already
+		# skips every interface whose own multipath is unset or "off", and
+		# the tunnel (omrvpn/glorytun) is explicitly exempt from that filter.
+		# Gating the whole loop on the global switch meant a router with MPTCP
+		# globally disabled - set by hand, or pushed by a VPS whose API
+		# answers mptcp.enabled=0 (see openmptcprouter-vps _get_config) -
+		# launched no WAN tracker and, worse, no omrvpn tracker at all: nothing
+		# installed the default route through the tunnel, no WAN ever failed
+		# over, and every interface state/latency on the status page stayed
+		# frozen, i.e. "MPTCP disabled -> nothing works". The multipath command
+		# itself stays guarded where it is actually called (003-up,
+		# 010-services), which is all commit b78f2340 needed to do.
+		config_load network
+		config_foreach _launch_tracker interface
 
 		if [ "$ss_enable" = "1" ]; then
 			config_load shadowsocks-libev
