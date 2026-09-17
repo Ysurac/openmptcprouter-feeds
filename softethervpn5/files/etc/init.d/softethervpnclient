@@ -1,5 +1,15 @@
 #!/bin/sh /etc/rc.common
 
+# network.globals.multipath='disable' means the kernel is running with
+# net.mptcp.enabled=0. Asking for an MPTCP socket then fails outright with
+# ENOPROTOOPT ("Protocol not available") -- the kernel has no implicit
+# fallback to plain TCP, every caller has to do it itself, and most don't.
+# Only an explicit "disable" counts, so this package keeps its stock
+# behaviour wherever network.globals.multipath doesn't exist at all.
+_omr_mptcp_globally_disabled() {
+	[ "$(uci -q get network.globals.multipath)" = "disable" ]
+}
+
 START=92
 USE_PROCD=1
 
@@ -22,7 +32,13 @@ start_service() {
 
 	procd_open_instance
 	procd_set_param env LANG=en_US.UTF-8
-	procd_set_param command mptcpize run /var/softethervpn/vpnclient start --foreground
+	# Same mptcpize caveat as dsvpn: no fallback, so with MPTCP globally off
+	# the client cannot create a socket and procd respawns it forever.
+	if _omr_mptcp_globally_disabled; then
+		procd_set_param command /var/softethervpn/vpnclient start --foreground
+	else
+		procd_set_param command mptcpize run /var/softethervpn/vpnclient start --foreground
+	fi
 	procd_set_param respawn
 	procd_set_param stdout 1
 	procd_set_param stderr 1
