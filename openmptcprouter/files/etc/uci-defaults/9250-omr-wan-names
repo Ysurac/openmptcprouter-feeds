@@ -7,7 +7,8 @@
 # sections of its own.
 #
 # 1920 bows out on two platforms though: one whose network is provisioned
-# by steer-cloud-init (which names its interfaces after the cloud config,
+# by another default (9200-steer-network, which names its interfaces after
+# the product's own layout -- WAN, Cellular1, Cellular2, WiFiWAN2G... -- and
 # not after wanN), and one flashed over a config that already carries its
 # own layout. There the wanN sections never exist and all of the above are
 # left pointing at interfaces that are not there: sqm and qos queues on an
@@ -48,9 +49,14 @@ _omr_collect_wan() {
 config_load network
 config_foreach _omr_collect_wan interface
 
-# No multipath interface at all: leave the defaults alone, there is nothing
-# better to point them at.
-[ -z "$_omr_real_wans" ] && exit 0
+# No multipath interface at all. Either this box genuinely has none, or its
+# layout is written by something that has not run yet (a cloud push, a
+# provisioning default numbered after this one). Exit non-zero rather than
+# 0: uci_apply_defaults only deletes the scripts that succeeded, so this one
+# is kept and tried again at the next boot instead of giving up for good on
+# a box whose WANs simply were not there yet. Nothing has been changed at
+# this point, so there is nothing to undo either.
+[ -z "$_omr_real_wans" ] && exit 1
 
 # A real WAN that is itself called wanN already is the name the defaults
 # use, so it replaces nothing.
