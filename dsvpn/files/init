@@ -1,6 +1,16 @@
 #!/bin/sh /etc/rc.common
 # Copyright (C) 2019 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter project
 
+# network.globals.multipath='disable' means the kernel is running with
+# net.mptcp.enabled=0. Asking for an MPTCP socket then fails outright with
+# ENOPROTOOPT ("Protocol not available") -- the kernel has no implicit
+# fallback to plain TCP, every caller has to do it itself, and most don't.
+# Only an explicit "disable" counts, so this package keeps its stock
+# behaviour wherever network.globals.multipath doesn't exist at all.
+_omr_mptcp_globally_disabled() {
+	[ "$(uci -q get network.globals.multipath)" = "disable" ]
+}
+
 START=90
 STOP=10
 
@@ -75,7 +85,11 @@ start_instance() {
 
 	_log "starting ${PROG_NAME} ${1} instance $*"
 
-	if version_over_5_4; then
+	# mptcpize LD_PRELOADs a socket() that always asks for IPPROTO_MPTCP and
+	# never falls back, so with MPTCP globally off dsvpn cannot create its
+	# socket at all ("Couldn't create connection: Protocol not available")
+	# and procd just respawns it forever. Run it unwrapped instead.
+	if version_over_5_4 && ! _omr_mptcp_globally_disabled; then
 		PROG="mptcpize run ${PROG}"
 	fi
 
