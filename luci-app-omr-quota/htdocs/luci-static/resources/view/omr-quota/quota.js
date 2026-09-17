@@ -69,7 +69,7 @@ function addQuotaFields(s, downInterfacesHint) {
 	o.rmempty = false;
 
 	o = s.option(form.Flag, 'block_lan', _('Block LAN and proxy when cut'),
-		_('Set firewall LAN input to DROP while the quota is exceeded, blocking every transparent proxy without changing proxy service state. The router itself stays reachable from the LAN (LuCI, SSH, DNS, DHCP, ping).'));
+		_('Block LAN traffic while the quota is exceeded: firewall LAN input is set to DROP, which stops every transparent proxy without changing proxy service state, and forwarded LAN traffic is rejected, which stops bypassed flows and the VPN tunnel. The router itself stays reachable from the LAN (LuCI, SSH, DNS, DHCP, ping) and LAN to LAN traffic keeps working.'));
 	o.default = '0';
 	o.rmempty = false;
 	o.depends('exceedance_action', 'cut');
