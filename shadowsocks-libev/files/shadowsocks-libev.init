@@ -7,6 +7,16 @@
 # See /LICENSE for more information.
 #
 
+# network.globals.multipath='disable' means the kernel is running with
+# net.mptcp.enabled=0. Asking for an MPTCP socket then fails outright with
+# ENOPROTOOPT ("Protocol not available") -- the kernel has no implicit
+# fallback to plain TCP, every caller has to do it itself, and most don't.
+# Only an explicit "disable" counts, so this package keeps its stock
+# behaviour wherever network.globals.multipath doesn't exist at all.
+_omr_mptcp_globally_disabled() {
+	[ "$(uci -q get network.globals.multipath)" = "disable" ]
+}
+
 USE_PROCD=1
 EXTRA_COMMANDS="rules_up rules_down rules_exist"
 START=91
@@ -100,6 +110,12 @@ ss_xxx() {
 	json_add_boolean fast_open "$fast_open"
 	json_add_boolean reuse_port "$reuse_port"
 	json_add_boolean no_delay "$no_delay"
+	# sslocal/ss-local create their sockets with IPPROTO_MPTCP when this is
+	# true: with MPTCP off a socks/http listener panics at startup
+	# ("create local: Protocol not available") and every outbound connection
+	# of a redir listener fails ("socket: Protocol not available" ->
+	# "invalid remote addr"), i.e. the proxy is up and carries nothing.
+	_omr_mptcp_globally_disabled && mptcp=0
 	json_add_boolean mptcp "$mptcp"
 	[ -z "$local_address" ] || json_add_string local_address "$local_address"
 	[ -z "$local_port" ] || json_add_int local_port "$local_port"
