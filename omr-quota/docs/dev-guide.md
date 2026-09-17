@@ -29,7 +29,7 @@ Two kinds of quota, both handled by the same daemon:
 The package ships `wan1`, `wan2` and the `global1` example. On a platform
 whose WANs are not called `wanN` -- provisioned by steer-cloud-init, or
 flashed over a config that carries its own layout --
-`openmptcprouter/files/etc/uci-defaults/2096-omr-wan-names` renames those
+`openmptcprouter/files/etc/uci-defaults/9250-omr-wan-names` renames those
 sections onto the WANs the box really has (master first) and, since it can
 only hand over as many names as there are sections, **creates one for every
 remaining real WAN**: a third link -- a second modem, a wifi uplink -- used
@@ -190,7 +190,18 @@ Each iteration:
    own; procd/`stop` is what tears it down.
 
 `_vnstat_usage` distinguishes a valid zero counter from an unreadable sample
-(missing device, failed command, or incomplete JSON). If any member of a quota
+(missing device, failed command, or incomplete JSON). A device vnstat **knows
+but has written no bucket for** counts as a valid zero, not as unreadable:
+that is the state of every freshly registered device until vnstatd's next
+flush, five minutes away by default, and `interfaces[0].name` coming back with
+the device's name is what tells the two apart. Treating it as unreadable meant
+refusing the live delta as well -- a delta needs a reference to sit on -- so a
+WAN registered a moment ago metered **nothing at all** for those minutes.
+Measured on a router with the shipped build: 20 MiB pushed right after the
+device was registered, `get_status` still reporting 0 KiB a minute later; with
+the fix the same push showed up at the first poll, 20884 KiB at t+10s, while
+vnstat's month bucket was still empty. That is the "the quota takes more than
+three minutes to move" a field tester reported. If any member of a quota
 has an unreadable sample while a cut/throttle marker or the previous loop says
 enforcement is active, the loop preserves that enforcement until a complete
 sample proves the quota is no longer exceeded. This prevents a temporary
@@ -287,7 +298,7 @@ booted (`eth1`: `NO-CARRIER`, `rx_bytes` 0). Its uci list held the two modems
 and never `eth1`, `1970-omr-vnstat` is gated on `openmptcprouter.latest_versions`
 being empty (so it is dead after the first boot) and reads `network.wan1.device`
 which does not exist on a platform with renamed WANs, and
-`2096-omr-wan-names` fills the vnstat list **only when it is empty**. So
+`9250-omr-wan-names` fills the vnstat list **only when it is empty**. So
 `vnstat -i eth1 --json` answered `Error: No interface matching "eth1" found in
 database` for good: a quota enabled on that WAN would read an incomplete sample
 every poll, meter 0 bytes, and silently never apply — with nothing in the UI

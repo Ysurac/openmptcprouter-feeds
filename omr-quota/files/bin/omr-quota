@@ -111,6 +111,21 @@ _vnstat_usage() {
 		}
 		rx_bytes="$(printf '%s' "$json" | jsonfilter -q -e '@.interfaces[0].traffic.month[-1].rx' | tr -d "\n")"
 		tx_bytes="$(printf '%s' "$json" | jsonfilter -q -e '@.interfaces[0].traffic.month[-1].tx' | tr -d "\n")"
+		# vnstat knows the device but has not written a bucket for it yet.
+		# That is a real zero, not an unreadable sample: it is the state of
+		# every freshly registered device until vnstatd's next flush, five
+		# minutes away by default. Rejecting it made such a WAN meter
+		# *nothing at all* for those minutes -- the live counters included,
+		# since a delta with no reference to sit on is not added. Measured on
+		# a router: 20 MiB pushed right after the device was registered, and
+		# the quota still read 0 KiB a minute later. Only a device vnstat
+		# does not know at all (no interfaces[0].name to match) stays
+		# unreadable.
+		if [ -z "$rx_bytes" ] && [ -z "$tx_bytes" ] && \
+		   [ "$(printf '%s' "$json" | jsonfilter -q -e '@.interfaces[0].name' | tr -d "\n")" = "$dev" ]; then
+			rx_bytes=0
+			tx_bytes=0
+		fi
 	fi
 
 	case "$rx_bytes" in ''|*[!0-9]*) printf '0 0 0'; return ;; esac
