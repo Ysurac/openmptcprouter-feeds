@@ -50,6 +50,47 @@ wizard fetches the rest of the server-side settings (encryption keys for
 Shadowsocks/V2Ray/XRay/Glorytun/etc.) automatically — you normally don't
 need to type those in by hand.
 
+### Removing a server
+
+The red **Remove** button on a server block deletes that entry. Deleting the
+last one turns the router back into a plain multi-WAN router: the tunnel
+interface (`omrvpn`) is brought down and disabled, the VPN daemon is stopped,
+and the active proxy is stopped and disabled, so traffic goes straight out of
+the WANs again. Failover between the WANs keeps working; only the aggregation
+through the VPS is gone.
+
+To remove the VPS *for good*, do it in one pass, before saving:
+
+1. Step 1 — **Remove** every server block.
+2. Step 2 — tick **Show advanced settings**, then set **Default Proxy** to
+   *None* and **Default VPN** to *None*.
+3. **Save & Apply**.
+
+Step 2 matters: without it `openmptcprouter.settings.proxy`/`.vpn` still name
+a backend, so the router keeps a VPS-shaped configuration and the next server
+you add is picked up with those old settings.
+
+The equivalent from the command line:
+
+```sh
+uci -q delete openmptcprouter.<servername>     # once per server section
+uci -q set openmptcprouter.settings.proxy=none
+uci -q set openmptcprouter.settings.vpn=none
+uci -q set network.omrvpn.disabled=1
+uci -q commit
+/etc/init.d/omr-tracker restart
+```
+
+When no server is configured the wizard still shows one empty server block —
+that is a convenience for the next setup, not a leftover. It is dropped again
+on save unless you type an address or a key into it, so a router deliberately
+left without a VPS keeps it that way.
+
+`network.omrvpn` itself, its firewall zone and the `omr6in4` interface are
+permanent parts of an OMR image (they are re-created by the uci-defaults on
+every firmware upgrade). Disabled and with no VPN selected they carry no
+traffic; deleting them by hand only means they come back on the next upgrade.
+
 ## Step 2 — Settings
 
 ![Settings step, basic view](images/wizard/02-settings.png)

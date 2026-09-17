@@ -103,6 +103,21 @@ setup simple.
 | Calculate speed | Runs an automatic speed test for this connection. |
 | Download / Upload speed (Kb/s) | Manually set or corrected line speed, used for shaping. |
 
+**Removing the server**
+
+To stop using a VPS altogether, do all of it in a single pass of the wizard:
+**Remove** every server block in step 1, then in step 2 set **Default Proxy**
+and **Default VPN** to *None*, and Save & Apply. The router drops back to a
+plain multi-WAN router — the tunnel is brought down and disabled, the VPN and
+the proxy are stopped, and traffic leaves directly through the WANs, with
+failover between them still working. Leaving the proxy/VPN set to something
+other than *None* keeps a VPS-shaped configuration behind, which is what makes
+a removal look like it did not stick.
+
+With no server configured the wizard still shows one empty server block: it is
+there so the next setup has a form to fill in, and it is discarded again on
+save unless you type an address or a key into it.
+
 > **In practice** — run the wizard once during initial setup, and again
 > whenever you add or remove a server or WAN link. Steps 1–2 rarely need
 > revisiting after the first pass; steps 3–4 are where you'll come back to

@@ -340,13 +340,28 @@ return view.extend({
 			var master = '';
 			uci.sections('openmptcprouter', 'server', function(srv) {
 				var sid = srv['.name'];
+				var ips = uniqueValues(uci.get('openmptcprouter', sid, 'ip'));
+				var password = uci.get('openmptcprouter', sid, 'password') || '';
+
+				/* Skip a section that was added client-side (the empty "vps"
+				 * placeholder below, or "Add a new server" clicked and left
+				 * alone) and still has neither an address nor a key: sending
+				 * it would persist an addressless server, which the backend
+				 * then has to treat as "a VPS is configured". After deleting
+				 * the last real VPS that made the next save start the VPN and
+				 * the proxy right back up. Sections that already exist in uci
+				 * are always sent, so emptying a real server still updates it. */
+				if (!ips.length && password === '' &&
+				    origServerNames.indexOf(sid) === -1)
+					return;
+
 				if (!master && (uci.get('openmptcprouter', sid, 'master') === '1'))
 					master = sid;
 
 				servers.push({
 					name: sid,
-					ips: uniqueValues(uci.get('openmptcprouter', sid, 'ip')),
-					password: uci.get('openmptcprouter', sid, 'password') || '',
+					ips: ips,
+					password: password,
 					username: uci.get('openmptcprouter', sid, 'username') || 'openmptcprouter',
 					disabled: uci.get('openmptcprouter', sid, 'disabled') || '0'
 				});
@@ -401,6 +416,11 @@ return view.extend({
 			};
 		}
 
+		/* First-run convenience: show one empty server form when none is
+		 * configured. It stays client-side only -- buildWizardPayload() drops
+		 * it again unless an address or a key was actually typed in -- so a
+		 * router deliberately left without a VPS does not get one back on
+		 * every save. */
 		var srvCount = 0;
 		uci.sections('openmptcprouter', 'server', function() { srvCount++; });
 		if (srvCount === 0) uci.add('openmptcprouter', 'server', 'vps');
