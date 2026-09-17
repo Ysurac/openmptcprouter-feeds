@@ -4,6 +4,16 @@
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
 
+# network.globals.multipath='disable' means the kernel is running with
+# net.mptcp.enabled=0. Asking for an MPTCP socket then fails outright with
+# ENOPROTOOPT ("Protocol not available") -- the kernel has no implicit
+# fallback to plain TCP, every caller has to do it itself, and most don't.
+# Only an explicit "disable" counts, so this package keeps its stock
+# behaviour wherever network.globals.multipath doesn't exist at all.
+_omr_mptcp_globally_disabled() {
+	[ "$(uci -q get network.globals.multipath)" = "disable" ]
+}
+
 START=90
 STOP=10
 
@@ -215,6 +225,18 @@ start_uci_instance() {
 	config_get ipchange "$s" ipchange
 	config_get script_security "$s" script_security
 	config_get_bool mptcp "$s" mptcp true
+	# The command line below expands this as ${mptcp:+--mptcp}, which only
+	# tests for emptiness: config_get_bool's "0" is non-empty, so
+	# `option mptcp 0` passed --mptcp anyway. Normalise it to empty.
+	[ "$mptcp" = "1" ] || mptcp=""
+	# --mptcp is fatal when the kernel has MPTCP off: openvpn dies with
+	# "Cannot create MPTCP socket: Protocol not available (errno=92) /
+	# Exiting due to fatal error" before its own TCP fallback can run
+	# (create_socket_mptcp reported the failure with M_ERR, which is fatal,
+	# so the "if (sock->sd == -1) ... fallback to TCP" branch in
+	# create_socket() was unreachable -- fixed in
+	# patches/900-add-MPTCP-support, but old builds still need this).
+	_omr_mptcp_globally_disabled && mptcp=""
 
 	[ ! -d "/var/run" ] && mkdir -p "/var/run"
 
