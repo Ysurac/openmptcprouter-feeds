@@ -33,6 +33,17 @@ _ss_server_configured() {  # _ss_server_configured <package> <section>
 	return 0
 }
 
+# _prog_name <uci option holding a binary path> <default name>: print the
+# process name procd gives the daemon, i.e. the basename of the configured
+# binary, falling back to <default name> when the option is unset. Used with
+# `pgrep -x` so a watchdog test can't match its own tracker or this script.
+_prog_name() {
+	local _p
+	_p="$(uci -q get "$1")"
+	_p="${_p##*/}"
+	printf '%s\n' "${_p:-$2}"
+}
+
 if [ -n "$(printf '%s\n' "$_omr_snapshot" | awk -F= '/password/ { gsub("\047","",$2);print $2 }')" ]; then
 	# If a service is down, force restart it
 	omr_schedule_vpn_setting="$(uci -q get openmptcprouter.settings.vpn)"
@@ -165,12 +176,17 @@ if [ -n "$(printf '%s\n' "$_omr_snapshot" | awk -F= '/password/ { gsub("\047",""
 			_log "Can't find SoftEther VPN, restart skipped (already restarted less than 60s ago)"
 		fi
 	fi
-	if [ "$(pgrep -f v2ray)" = "" ] && [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ -f /etc/init.d/v2ray ]; then
+	# pgrep -f matches the whole cmdline, so "v2ray" also matched
+	# omr-tracker-v2ray (and this script's own /etc/init.d/omr-tracker
+	# children): the dead-daemon branch could never fire. -x matches the
+	# process name alone, which procd takes from v2ray.main.v2ray_file.
+	if [ "$(pgrep -x "$(_prog_name v2ray.main.v2ray_file v2ray)")" = "" ] && [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ -f /etc/init.d/v2ray ]; then
 		_log "Can't find V2Ray, restart it..."
 		/etc/init.d/v2ray restart >/dev/null 2>&1
 		sleep 5
 	fi
-	if [ "$(pgrep -f xray)" = "" ] && [ "$(uci -q get xray.main.enabled)" = "1" ] && [ -f /etc/init.d/xray ]; then
+	# Same as V2Ray above: -f "xray" also matches omr-tracker-xray.
+	if [ "$(pgrep -x "$(_prog_name xray.main.xray_file xray)")" = "" ] && [ "$(uci -q get xray.main.enabled)" = "1" ] && [ -f /etc/init.d/xray ]; then
 		_log "Can't find XRay, restart it..."
 		/etc/init.d/xray restart >/dev/null 2>&1
 		sleep 5
