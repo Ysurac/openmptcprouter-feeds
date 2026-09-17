@@ -325,13 +325,40 @@ function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspee
 	local ul = tonumber(uploadspeed) or 0
 	local sqm_on = tostring(sqmenabled) == "1"
 
+	-- _as_string is declared further down the file, so normalise here
+	proto   = (proto   ~= nil) and tostring(proto)   or ""
+	ipaddr  = (ipaddr  ~= nil) and tostring(ipaddr)  or ""
+	netmask = (netmask ~= nil) and tostring(netmask) or ""
+	gateway = (gateway ~= nil) and tostring(gateway) or ""
+
 	if proto ~= "other" and proto ~= "" then
 		ucic:set("network",intf,"proto",proto)
 	end
-	if ipaddr ~= "" then ucic:set("network",intf,"ipaddr",ipaddr) else ucic:delete("network",intf,"ipaddr") end
+
+	-- ipaddr/netmask/gateway only mean something on a static interface, so
+	-- they are keyed on the proto the interface ends up with: a caller that
+	-- leaves proto out ('' / 'other') keeps the configured one.
+	local eff_proto = proto
+	if eff_proto == "" or eff_proto == "other" then
+		eff_proto = ucic:get("network",intf,"proto") or ""
+	end
+
+	-- Blank means "not given", never "erase it": the wizard's rmempty strips
+	-- default-valued fields and an API caller changing only the speeds sends
+	-- none of the addressing args (they default to ""). Wiping ipaddr left a
+	-- static interface with no address that still answered ARP for the LAN
+	-- prefix, so LAN clients lost the router. Same fail-safe as the netmask
+	-- branch below and as _set_flag_if_given. They are cleared only when the
+	-- interface is (or becomes) non-static, where they have no meaning; an
+	-- address is changed by sending the new one, not by sending a blank.
+	if ipaddr ~= "" then
+		ucic:set("network",intf,"ipaddr",ipaddr)
+	elseif eff_proto ~= "static" then
+		ucic:delete("network",intf,"ipaddr")
+	end
 	if netmask ~= "" then
 		ucic:set("network",intf,"netmask",netmask)
-	elseif proto == "static" then
+	elseif eff_proto == "static" then
 		-- rmempty strips default '255.255.255.0' from the wizard form; keep existing or apply default
 		if ucic:get("network",intf,"netmask") == nil then
 			ucic:set("network",intf,"netmask","255.255.255.0")
@@ -339,7 +366,11 @@ function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspee
 	else
 		ucic:delete("network",intf,"netmask")
 	end
-	if gateway ~= "" then ucic:set("network",intf,"gateway",gateway) else ucic:delete("network",intf,"gateway") end
+	if gateway ~= "" then
+		ucic:set("network",intf,"gateway",gateway)
+	elseif eff_proto ~= "static" then
+		ucic:delete("network",intf,"gateway")
+	end
 
 	ucic:delete("openmptcprouter",intf,"lc")
 	ucic:save("openmptcprouter")
