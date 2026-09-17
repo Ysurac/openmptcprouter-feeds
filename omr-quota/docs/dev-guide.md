@@ -71,11 +71,12 @@ required on `global` ones):
   see [Live kernel counters](#live-kernel-counters-_live_delta-_interface_usage)
   for what setting it to `0` gives back.
 - `block_lan` (bool, default `0`) — with cut action, also flips
-  `firewall.zone_lan.input` to `DROP` while quota enforcement is active. This
-  blocks every transparent proxy uniformly without changing proxy UCI state
-  or fighting `omr-schedule`; the router itself stays reachable from the LAN
-  (LuCI, SSH, DNS, DHCP, ping) through explicit
-  `firewall.omr_quota_lan_*` ACCEPT rules, see below.
+  `firewall.zone_lan.input` to `DROP` and rejects forwarded LAN traffic while
+  quota enforcement is active. This blocks every transparent proxy uniformly
+  without changing proxy UCI state or fighting `omr-schedule`; the router
+  itself stays reachable from the LAN (LuCI, SSH, DNS, DHCP, ping) and LAN to
+  LAN traffic keeps working, through explicit `firewall.omr_quota_lan_*`
+  rules, see below.
 - `interval` (uinteger, default `30`) — seconds between daemon polls.
 - `enabled` (bool, default `0`).
 - `exceedance_action` (`cut` default, or `throttle`).
@@ -371,7 +372,7 @@ The daemon records what it currently enforces under `_TSTATE_DIR`
 | `<id>.ifdown` | the cut path actually calls `ifdown` on an interface (cumulative across polls) | the same places as `<id>.cut` |
 | `<id>.throttled` | the throttle path runs (`target_interfaces`) | the not-exceeded path runs `_remove_throttle` |
 | `<id>.downstream` | `_apply_downstream_limit` (down interfaces, daily-budget method 2) | `_remove_downstream_limit` |
-| `<id>.blocklan` | `_block_lan` actually flips the LAN input to DROP | `_unblock_lan` |
+| `<id>.blocklan` | `_block_lan` actually flips the LAN input to DROP and installs the forward block | `_unblock_lan` |
 
 `<id>.cut` and `<id>.ifdown` look redundant and are not. `<id>.cut` is the
 cross-package one: 002-error reads its *contents* so that every interface a
@@ -552,6 +553,8 @@ zone's policy jump:
 | `firewall.omr_quota_lan_tcp` | `src=lan proto=tcp dest_port=<luci> <ssh> 53` | LuCI (uhttpd `listen_http`/`listen_https` ports, default `80 443`), SSH (every `dropbear.*.Port`, default `22`), DNS |
 | `firewall.omr_quota_lan_udp` | `src=lan proto=udp dest_port=53 67 547` | DNS, DHCPv4 server, DHCPv6 server |
 | `firewall.omr_quota_lan_icmp` | `src=lan proto=icmp` | ping and IPv6 neighbour discovery (fw4 expands `icmp` to `icmp` + `ipv6-icmp`) |
+| `firewall.omr_quota_lan_fwd_local` | `src=lan dest=lan proto=all` ACCEPT | keeps a second LAN network, a macvlan or an L2 VXLAN peer bridged into the `lan` zone talking locally |
+| `firewall.omr_quota_lan_fwd` | `src=lan dest=* proto=all` REJECT | cuts everything a LAN client sends *through* the router |
 
 Ports are read live (`_lan_access_tcp_ports` / `_uci_ports`) so a LuCI or
 SSH daemon moved to a non-default port stays reachable; each service falls
@@ -562,10 +565,58 @@ key their "already done" check on the policy *and* the presence of
 the rules still gets them added, and access rules left behind after someone
 restored `input=ACCEPT` by hand are still cleaned up.
 
+The zone policy only covers traffic addressed to the router, which is where
+every transparent-proxy redirect lands. Everything a LAN client sends
+*through* the router — a flow `omr-bypass` steered straight out a WAN, the VPN
+tunnel, a plain route out a WAN the quota does not cover — is forwarded, not
+input, so `input=DROP` on its own left it flowing and the block stopped the
+proxies only. The last two sections close that path: `omr_quota_lan_fwd_local`
+(lan → lan stays ACCEPT), then `omr_quota_lan_fwd` (lan → `*` REJECT). REJECT
+rather than DROP so a client fails fast instead of hanging on every connection.
+
+Two things about those two are load-bearing, and both were found by rendering
+the real ruleset with `fw4 print` rather than reasoning about it:
+
+- **`proto='all'` is required.** A `config rule` with no `proto` defaults to
+  tcp+udp, and fw4 renders it as two `meta l4proto tcp` / `meta l4proto udp`
+  rules. ICMP, ESP, GRE and everything else would walk straight past the
+  block.
+- **Both must be first among the config's rule sections**, which is why
+  `_add_lan_access_rules` ends with `uci reorder ...=0` on each (REJECT first,
+  so the ACCEPT that is reordered after it lands in front). fw4 parses every
+  `config rule` in config-file order into a single list and renders
+  `forward_lan` in that order, with the zone's forwarding jumps after them
+  (`fw4.uc` parses `config forwarding` only once all rules are done, and
+  `rules(chain)` is a plain order-preserving filter). uci appends new named
+  sections at the *end* of the file, so without the reorder the stock
+  `Allow-Lan-to-Wan` rule — `firewall.rule11`, near the top of every OMR
+  config — jumps to `accept_to_wan` before the block is ever reached and the
+  REJECT only ever bites lan → vpn. The reorder is re-asserted on every block,
+  so a user rule added later cannot slip in front either.
+
+Note both directions are subject to `chain forward`'s
+`ct state vmap { established : accept, related : accept }`, which fw4 puts
+ahead of every zone jump: the block stops *new* flows, established sessions
+drain on their own. The same has always been true of the `input=DROP`.
+
+Both "already done" guards test `omr_quota_lan_fwd` as well as
+`omr_quota_lan_tcp`, so a router left blocked by a daemon older than the
+forward rules gets them added on the next poll instead of short-circuiting.
+
 Note that DNS resolution keeps working for LAN clients during a block (the
-router's resolver answers over whatever uplink remains), and forwarding from
-the `lan` zone is not touched: only traffic addressed to the router itself is
-dropped.
+router's resolver answers over whatever uplink remains), and that the router
+answers ping throughout regardless of any of this: `1980-omr-firewall` ships
+`Allow-All-Ping-Input` (`src='*'`, no `dest`), which fw4 renders into the
+top-level `chain input` ahead of every per-zone jump, so it outranks the
+`zone_lan.input=DROP` installed here. `omr_quota_lan_icmp` is still worth
+keeping — it covers all ICMP from the LAN, not just echo-request (IPv6
+neighbour discovery in particular).
+
+This is deliberately all-or-nothing, like the `input=DROP` it accompanies: it
+is not scoped to the quota's own interfaces. With a per-interface quota on a
+multi-WAN router, `block_lan` therefore cuts LAN traffic over the *remaining*
+uplinks too — which is what the option's label promises, and why it is opt-in
+and defaults to `0`.
 
 ### Throttle mechanism
 

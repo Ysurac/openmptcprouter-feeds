@@ -477,7 +477,7 @@ _remove_downstream_limit() {
 # rules are named UCI sections (idempotent to re-create, removed as a set
 # on unblock); LuCI/SSH ports are read from the live uhttpd/dropbear config
 # with the stock defaults as fallback.
-_LAN_ACCESS_RULES="omr_quota_lan_tcp omr_quota_lan_udp omr_quota_lan_icmp"
+_LAN_ACCESS_RULES="omr_quota_lan_tcp omr_quota_lan_udp omr_quota_lan_icmp omr_quota_lan_fwd_local omr_quota_lan_fwd"
 
 # _uci_ports <default> [values...]: print the sorted unique numeric ports
 # found in <values> (bare ports or listen specs like 0.0.0.0:80 / [::]:443),
@@ -525,6 +525,45 @@ _add_lan_access_rules() {
 	uci -q set firewall.omr_quota_lan_icmp.src='lan'
 	uci -q set firewall.omr_quota_lan_icmp.proto='icmp'
 	uci -q set firewall.omr_quota_lan_icmp.target='ACCEPT'
+	# The zone policy only covers traffic addressed to the router, which is
+	# where every transparent-proxy redirect lands. Everything a LAN client
+	# sends *through* the router -- a bypassed flow, the VPN tunnel, a plain
+	# route out a remaining WAN -- is forwarded, not input, so input=DROP
+	# left it flowing and the block stopped the proxies only. These two
+	# rules close the forward path: lan->lan stays accepted (a second LAN
+	# network, a macvlan, an L2 VXLAN peer bridged into the lan zone keeps
+	# working locally), everything else from lan is rejected. REJECT, not
+	# DROP, so a client fails fast instead of hanging on every connection.
+	#
+	# proto='all' is required. A rule with no proto defaults to tcp+udp, and
+	# fw4 then emits it as two `meta l4proto tcp/udp` rules -- ICMP, ESP,
+	# GRE and everything else would walk straight past the block.
+	uci -q set firewall.omr_quota_lan_fwd_local=rule
+	uci -q set firewall.omr_quota_lan_fwd_local.name='OMR quota: keep LAN to LAN traffic'
+	uci -q set firewall.omr_quota_lan_fwd_local.src='lan'
+	uci -q set firewall.omr_quota_lan_fwd_local.dest='lan'
+	uci -q set firewall.omr_quota_lan_fwd_local.proto='all'
+	uci -q set firewall.omr_quota_lan_fwd_local.target='ACCEPT'
+
+	uci -q set firewall.omr_quota_lan_fwd=rule
+	uci -q set firewall.omr_quota_lan_fwd.name='OMR quota: block forwarded LAN traffic'
+	uci -q set firewall.omr_quota_lan_fwd.src='lan'
+	uci -q set firewall.omr_quota_lan_fwd.dest='*'
+	uci -q set firewall.omr_quota_lan_fwd.proto='all'
+	uci -q set firewall.omr_quota_lan_fwd.target='REJECT'
+
+	# Both must come FIRST among the firewall's rule sections. fw4 parses
+	# every `config rule` in config-file order into one list and renders
+	# forward_lan in that order (the zone's forwarding jumps come after, as
+	# fw4 parses `config forwarding` only once all rules are done), and uci
+	# appends new named sections at the end of the file. Without this the
+	# stock `Allow-Lan-to-Wan` rule -- near the top of every OMR config --
+	# jumps to accept_to_wan before the block is ever reached, and the
+	# REJECT only ever bites lan->vpn. Re-asserted on every block, so a user
+	# rule added later cannot slip in front. Reordered last-to-first: each
+	# reorder to index 0 pushes the previous one down.
+	uci -q reorder firewall.omr_quota_lan_fwd=0
+	uci -q reorder firewall.omr_quota_lan_fwd_local=0
 }
 
 _del_lan_access_rules() {
@@ -538,8 +577,12 @@ _block_lan() {
 	[ "${OMR_QUOTA_BLOCK_LAN:-0}" = "1" ] || return
 	# Already blocked *with* the router-access rules in place. An input=DROP
 	# left by an older daemon without them still gets the rules added.
+	# omr_quota_lan_fwd is part of the test too: a daemon older than the
+	# forward block left input=DROP and the input rules behind, and that
+	# state still needs the forward pair added.
 	[ "$(uci -q get firewall.zone_lan.input)" = "DROP" ] && \
-		[ -n "$(uci -q get firewall.omr_quota_lan_tcp)" ] && return
+		[ -n "$(uci -q get firewall.omr_quota_lan_tcp)" ] && \
+		[ -n "$(uci -q get firewall.omr_quota_lan_fwd)" ] && return
 
 	logger -t "OMR-QUOTA" "Block LAN interfaces: $1"
 	uci -q set firewall.zone_lan.input='DROP'
@@ -555,7 +598,8 @@ _unblock_lan() {
 	# Nothing to lift: input already ACCEPT and no leftover access rules
 	# (e.g. input restored by hand while the rules were still there).
 	if [ "$(uci -q get firewall.zone_lan.input)" = "ACCEPT" ] && \
-	   [ -z "$(uci -q get firewall.omr_quota_lan_tcp)" ]; then
+	   [ -z "$(uci -q get firewall.omr_quota_lan_tcp)" ] && \
+	   [ -z "$(uci -q get firewall.omr_quota_lan_fwd)" ]; then
 		rm -f "$_blocklan_file"
 		return
 	fi
