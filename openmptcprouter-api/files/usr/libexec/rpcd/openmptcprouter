@@ -1,12 +1,23 @@
 #!/usr/bin/env lua
 
 local math  = require "math"
-local sys   = require "luci.sys"
-local json  = require("luci.json")
-local fs    = require("nixio.fs")
-local net   = require "luci.model.network".init()
-local ucic  = require "luci.model.uci".cursor()
 local jsonc  = require "luci.jsonc"
+
+-- rpcd runs `<plugin> list` on every script of /usr/libexec/rpcd at each
+-- startup, one after the other and with no timeout, and only registers its
+-- library plugins (luci, luci-rpc, file, iwinfo) once the last script
+-- answered: whatever this file loads here is paid for by the whole LuCI RPC
+-- surface, which stays unreachable meanwhile. `list` needs nothing but jsonc,
+-- so the LuCI models -- luci.model.network.init() alone forks `brctl show` --
+-- are only pulled in for a real call.
+local sys, json, fs, net, ucic
+if arg[1] ~= "list" then
+	sys   = require "luci.sys"
+	json  = require("luci.json")
+	fs    = require("nixio.fs")
+	net   = require "luci.model.network".init()
+	ucic  = require "luci.model.uci".cursor()
+end
 
 function file_exists(name)
 	local f = io.open(name, "r")
@@ -2859,7 +2870,9 @@ function interfaces_status()
 				end
 			end
 			if publicIP6 ~= "" then
-				whois6 = uci:get("openmptcprouter",interface,"asn") or ""
+				-- asn6, not asn: both families used to share one field, so a
+				-- dual stack WAN showed its IPv6 netname for both (#4375)
+				whois6 = uci:get("openmptcprouter",interface,"asn6") or ""
 				if whois6 == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
 					whois6 = ut.trim(exec_with_timeout(2, "whois " .. publicIP6 .. " | grep -i 'netname' | awk '{print $2}'"))
 				end
