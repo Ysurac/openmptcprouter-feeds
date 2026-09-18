@@ -11,6 +11,23 @@ METRICS_DIR="${OMR_METRICS_DIR:-/tmp/metrics}"
 STATE_DIR="${OMR_METRICS_STATE_DIR:-/tmp/omr-metrics-send}"
 INTERVAL="${OMR_METRICS_INTERVAL:-30}"
 
+# Login backoff caps, in seconds. A POST /token the server *answers* with a
+# rejection is a failed login on the VPS side: fail2ban's omradmin jail counts
+# it and bans the router's public IP off port 65500 after a handful of them,
+# which then looks exactly like "can ping server vps, no server API answer"
+# and takes the whole VPS API -- not just metrics -- down with it. So a
+# rejection backs off much harder than a path that simply did not answer.
+LOGIN_BACKOFF_REJECTED="${OMR_METRICS_LOGIN_BACKOFF_REJECTED:-1800}"
+LOGIN_BACKOFF_NO_ANSWER="${OMR_METRICS_LOGIN_BACKOFF_NO_ANSWER:-300}"
+
+# Token of the server currently being served, and the credentials it was
+# resolved from. Set by _server_creds/_login, consumed by _post_metrics, so
+# one cycle logs in at most once per server instead of once per metrics file.
+SRV_TOKEN=""
+SRV_TOKEN_KEY=""
+SRV_USERNAME=""
+SRV_PASSWORD=""
+
 _log() {
 	logger -t "omr-metrics-send" "$@"
 }
@@ -20,66 +37,150 @@ _is_ip6() {
 	return 1
 }
 
-# Obtain a Bearer token via POST /token and save it in UCI.
-# $1 = full UCI key to store the token (e.g. "omr-metrics.settings.token"
-#      or "openmptcprouter.<name>.token")
-# Prints the token on stdout; prints nothing on failure.
-_login() {
-	local uci_token_key="$1" server="$2" serverport="$3" username="$4" password="$5"
-	local auth token
+# State-file stem for one (server section, server address) pair: each address
+# is a distinct network path with its own public IP, so it earns its own
+# fail2ban strikes and its own backoff.
+_state_key() {
+	printf '%s' "${1}_${2}" | tr -c 'A-Za-z0-9._-' '_'
+}
 
-	if [ -z "$username" ] || [ -z "$password" ]; then
-		_log "no credentials for ${server} yet, skipping login"
+# Credentials change (wizard save, key paste) invalidate a backoff: the user
+# just told us the old ones were wrong, retry immediately.
+_cred_fingerprint() {
+	printf '%s:%s' "$SRV_USERNAME" "$SRV_PASSWORD" | md5sum 2>/dev/null | cut -c1-8
+}
+
+# True when a login attempt for this server path is allowed right now.
+_login_allowed() {
+	local file="${STATE_DIR}/${1}.login_backoff" fails next fprint now
+	[ -f "$file" ] || return 0
+	read -r fails next fprint < "$file" 2>/dev/null
+	[ -z "$next" ] && return 0
+	[ "$fprint" != "$(_cred_fingerprint)" ] && {
+		rm -f "$file" 2>/dev/null
+		return 0
+	}
+	now=$(date +%s)
+	[ "$now" -ge "$next" ]
+}
+
+# Record a failed login and arm the next retry. $2 is the backoff cap for this
+# kind of failure; the delay doubles from the poll interval up to that cap, so
+# the first few retries stay well under any sane fail2ban maxretry/findtime.
+_login_failed() {
+	local key="$1" cap="$2" file fails next delay now
+	file="${STATE_DIR}/${key}.login_backoff"
+	fails=0
+	[ -f "$file" ] && read -r fails next < "$file" 2>/dev/null
+	case "$fails" in ''|*[!0-9]*) fails=0 ;; esac
+	fails=$((fails + 1))
+	delay="$INTERVAL"
+	local n=1
+	while [ "$n" -lt "$fails" ] && [ "$delay" -lt "$cap" ]; do
+		delay=$((delay * 2))
+		n=$((n + 1))
+	done
+	[ "$delay" -gt "$cap" ] && delay="$cap"
+	now=$(date +%s)
+	printf '%s %s %s\n' "$fails" "$((now + delay))" "$(_cred_fingerprint)" > "$file"
+	echo "$delay"
+}
+
+_login_ok() {
+	rm -f "${STATE_DIR}/${1}.login_backoff" 2>/dev/null
+}
+
+# Obtain a Bearer token via POST /token and save it in UCI and SRV_TOKEN.
+# $1 = server section name (for the backoff state), $2 = address, $3 = port.
+# Returns 0 when SRV_TOKEN holds a token.
+_login() {
+	local servername="$1" server="$2" serverport="$3"
+	local key resp code body delay
+
+	key=$(_state_key "$servername" "$server")
+
+	if [ -z "$SRV_USERNAME" ] || [ -z "$SRV_PASSWORD" ]; then
+		# Nothing to send yet (wizard not filled in): don't touch the API
+		# at all, and let the backoff rate-limit the log line. The
+		# credential fingerprint clears it as soon as a key is entered.
+		_login_allowed "$key" && {
+			_login_failed "$key" "$LOGIN_BACKOFF_NO_ANSWER" >/dev/null
+			_log "no credentials for ${server} yet, skipping login"
+		}
 		return 1
 	fi
 
+	_login_allowed "$key" || return 1
+
 	if _is_ip6 "$server"; then
-		auth=$(curl -6 --max-time 10 -s -k \
+		resp=$(curl -6 --max-time 10 -s -k -w '%{http_code}' \
 			-H "accept: application/json" \
 			-H "Content-Type: application/x-www-form-urlencoded" \
-			-X POST -d "username=${username}&password=${password}" \
+			-X POST -d "username=${SRV_USERNAME}&password=${SRV_PASSWORD}" \
 			"https://[${server}]:${serverport}/token" 2>/dev/null)
 	else
-		auth=$(curl --max-time 10 -s -k \
+		resp=$(curl --max-time 10 -s -k -w '%{http_code}' \
 			-H "accept: application/json" \
 			-H "Content-Type: application/x-www-form-urlencoded" \
-			-X POST -d "username=${username}&password=${password}" \
+			-X POST -d "username=${SRV_USERNAME}&password=${SRV_PASSWORD}" \
 			"https://${server}:${serverport}/token" 2>/dev/null)
 	fi
+	# -w appends the status to the body, so the last three characters are
+	# the code ("000" when the connection never happened).
+	code=$(printf '%s' "$resp" | tail -c 3)
+	body=${resp%???}
 
-	token=$(echo "$auth" | jsonfilter -q -e '@.access_token' 2>/dev/null)
-	if [ -n "$token" ]; then
-		uci -q set "${uci_token_key}=${token}"
-	else
-		_log "login failed (${server})"
+	SRV_TOKEN=$(printf '%s' "$body" | jsonfilter -q -e '@.access_token' 2>/dev/null)
+	if [ -n "$SRV_TOKEN" ]; then
+		uci -q set "${SRV_TOKEN_KEY}=${SRV_TOKEN}"
+		_login_ok "$key"
+		return 0
 	fi
-	printf '%s' "$token"
+
+	case "$code" in
+		4*|5*)
+			# The API answered and turned us down: credentials, not path.
+			delay=$(_login_failed "$key" "$LOGIN_BACKOFF_REJECTED")
+			_log "login rejected by ${server} (HTTP ${code}), next try in ${delay}s"
+			;;
+		2*)
+			delay=$(_login_failed "$key" "$LOGIN_BACKOFF_REJECTED")
+			_log "no access_token in the answer from ${server} (HTTP ${code}), next try in ${delay}s"
+			;;
+		*)
+			delay=$(_login_failed "$key" "$LOGIN_BACKOFF_NO_ANSWER")
+			_log "no answer from the API on ${server}, next try in ${delay}s"
+			;;
+	esac
+	return 1
 }
 
-# POST one JSON payload to /metrics on a single server.
+# Load the credentials and any stored token for one server into SRV_*.
+_server_creds() {
+	local servername="$1"
+
+	# Prefer global credentials from omr-metrics config if username is set there.
+	SRV_USERNAME=$(uci -q get "omr-metrics.settings.username" 2>/dev/null)
+	if [ -n "$SRV_USERNAME" ]; then
+		SRV_TOKEN=$(uci -q get "omr-metrics.settings.token" 2>/dev/null)
+		SRV_PASSWORD=$(uci -q get "omr-metrics.settings.password" 2>/dev/null)
+		SRV_TOKEN_KEY="omr-metrics.settings.token"
+	else
+		SRV_TOKEN=$(uci -q get "openmptcprouter.${servername}.token" 2>/dev/null)
+		SRV_USERNAME=$(uci -q get "openmptcprouter.${servername}.username" 2>/dev/null)
+		SRV_PASSWORD=$(uci -q get "openmptcprouter.${servername}.password" 2>/dev/null)
+		SRV_TOKEN_KEY="openmptcprouter.${servername}.token"
+	fi
+}
+
+# POST one JSON payload to /metrics on a single server, using SRV_TOKEN.
 # Retries once with a fresh token on HTTP 401.
 # Returns 0 on HTTP 200, 1 on any other outcome.
 _post_metrics() {
 	local servername="$1" server="$2" serverport="$3" payload="$4"
-	local token username password url http_code uci_token_key
+	local url http_code
 
-	# Prefer global credentials from omr-metrics config if username is set there.
-	username=$(uci -q get "omr-metrics.settings.username" 2>/dev/null)
-	if [ -n "$username" ]; then
-		token=$(uci -q get "omr-metrics.settings.token" 2>/dev/null)
-		password=$(uci -q get "omr-metrics.settings.password" 2>/dev/null)
-		uci_token_key="omr-metrics.settings.token"
-	else
-		token=$(uci -q get "openmptcprouter.${servername}.token" 2>/dev/null)
-		username=$(uci -q get "openmptcprouter.${servername}.username" 2>/dev/null)
-		password=$(uci -q get "openmptcprouter.${servername}.password" 2>/dev/null)
-		uci_token_key="openmptcprouter.${servername}.token"
-	fi
-
-	if [ -z "$token" ]; then
-		token=$(_login "$uci_token_key" "$server" "$serverport" "$username" "$password")
-	fi
-	[ -z "$token" ] && return 1
+	[ -z "$SRV_TOKEN" ] && return 1
 
 	if _is_ip6 "$server"; then
 		url="https://[${server}]:${serverport}/metrics"
@@ -90,22 +191,27 @@ _post_metrics() {
 	http_code=$(curl --max-time 10 -s -k \
 		-o /dev/null -w "%{http_code}" \
 		-H "accept: application/json" \
-		-H "Authorization: Bearer ${token}" \
+		-H "Authorization: Bearer ${SRV_TOKEN}" \
 		-H "Content-Type: application/json" \
 		-X POST -d "${payload}" "$url" 2>/dev/null)
 
 	if [ "$http_code" = "401" ]; then
-		token=$(_login "$uci_token_key" "$server" "$serverport" "$username" "$password")
-		[ -z "$token" ] && return 1
+		SRV_TOKEN=""
+		_login "$servername" "$server" "$serverport" || return 1
 		http_code=$(curl --max-time 10 -s -k \
 			-o /dev/null -w "%{http_code}" \
 			-H "accept: application/json" \
-			-H "Authorization: Bearer ${token}" \
+			-H "Authorization: Bearer ${SRV_TOKEN}" \
 			-H "Content-Type: application/json" \
 			-X POST -d "${payload}" "$url" 2>/dev/null)
 	fi
 
-	[ "$http_code" = "200" ] && return 0
+	if [ "$http_code" = "200" ]; then
+		# The stored token still works: whatever tripped an earlier
+		# backoff is over.
+		_login_ok "$(_state_key "$servername" "$server")"
+		return 0
+	fi
 
 	# 404/501 means the metrics module is not loaded on the VPS.
 	# Mark this server as unavailable so we stop trying until restarted.
@@ -115,8 +221,29 @@ _post_metrics() {
 		return 1
 	fi
 
-	#_log "POST ${url}: HTTP ${http_code:-timeout}"
+	#_log "POST ${url}: HTTP ${http_code}"
 	return 1
+}
+
+# Ship every payload of this cycle to one server address, logging in at most
+# once for the whole batch.
+_send_to_server() {
+	local servername="$1" server="$2" serverport="$3" files="$4"
+	local json_file payload
+
+	_server_creds "$servername"
+	[ -z "$SRV_TOKEN" ] && { _login "$servername" "$server" "$serverport" || return 1; }
+
+	for json_file in $files; do
+		payload=$(cat "$json_file" 2>/dev/null)
+		[ -z "$payload" ] && continue
+		_post_metrics "$servername" "$server" "$serverport" "$payload"
+		# A lost token or a server without the metrics module applies to
+		# the whole batch: stop instead of replaying it file by file.
+		[ -z "$SRV_TOKEN" ] && return 1
+		[ -f "${STATE_DIR}/${servername}.no_metrics" ] && return 1
+	done
+	return 0
 }
 
 # One send cycle: read all JSON files and dispatch to every configured server.
@@ -138,6 +265,11 @@ _send_cycle() {
 
 	[ -z "$custom_server" ] && [ -z "$server_names" ] && return
 
+	# Collect the payload files once. Every server gets the same batch, and
+	# the per-server login has to happen once per cycle, not once per file:
+	# a failing login repeated per file is what turns one wrong key into a
+	# fail2ban ban of the router's own IP.
+	local payload_files="" json_file iface
 	for json_file in "${METRICS_DIR}"/*.json; do
 		[ -f "$json_file" ] || continue
 
@@ -149,41 +281,41 @@ _send_cycle() {
 		# collect the tunnel, but it stays filtered here too so a build
 		# that does collect it -- for the local rpcd/LuCI views, which
 		# drop the tunnel on their own -- still never ships it.
-		local iface="${json_file##*/}"
+		iface="${json_file##*/}"
 		iface="${iface%.json}"
 		case "$iface" in
 			omrvpn|OWVPN*) continue ;;
 		esac
 
-		local payload
-		payload=$(cat "$json_file" 2>/dev/null)
-		[ -z "$payload" ] && continue
+		payload_files="${payload_files} ${json_file}"
+	done
+	[ -z "$payload_files" ] && return
 
-		# If a custom omr-metrics server is configured, use it exclusively.
-		if [ -n "$custom_server" ]; then
-			[ -f "${STATE_DIR}/omr_metrics_custom.no_metrics" ] || \
-				_post_metrics "omr_metrics_custom" "$custom_server" "$custom_serverport" "$payload"
-			continue
-		fi
+	# If a custom omr-metrics server is configured, use it exclusively.
+	if [ -n "$custom_server" ]; then
+		[ -f "${STATE_DIR}/omr_metrics_custom.no_metrics" ] && return
+		_send_to_server "omr_metrics_custom" "$custom_server" "$custom_serverport" "$payload_files"
+		return
+	fi
 
-		for servername in $server_names; do
-			local disabled serverport server_ips
-			disabled=$(uci -q get "openmptcprouter.${servername}.disabled" 2>/dev/null)
-			[ "$disabled" = "1" ] && continue
+	local servername
+	for servername in $server_names; do
+		local disabled serverport server_ips server
+		disabled=$(uci -q get "openmptcprouter.${servername}.disabled" 2>/dev/null)
+		[ "$disabled" = "1" ] && continue
 
-			# Skip servers where the metrics endpoint was found unavailable.
-			[ -f "${STATE_DIR}/${servername}.no_metrics" ] && continue
+		# Skip servers where the metrics endpoint was found unavailable.
+		[ -f "${STATE_DIR}/${servername}.no_metrics" ] && continue
 
-			serverport=$(uci -q get "openmptcprouter.${servername}.port" 2>/dev/null)
-			[ -z "$serverport" ] && serverport="65500"
+		serverport=$(uci -q get "openmptcprouter.${servername}.port" 2>/dev/null)
+		[ -z "$serverport" ] && serverport="65500"
 
-			server_ips=$(uci -q get "openmptcprouter.${servername}.ip" 2>/dev/null)
-			[ -z "$server_ips" ] && continue
+		server_ips=$(uci -q get "openmptcprouter.${servername}.ip" 2>/dev/null)
+		[ -z "$server_ips" ] && continue
 
-			for server in $server_ips; do
-				[ -n "$server" ] && \
-					_post_metrics "$servername" "$server" "$serverport" "$payload"
-			done
+		for server in $server_ips; do
+			[ -n "$server" ] && \
+				_send_to_server "$servername" "$server" "$serverport" "$payload_files"
 		done
 	done
 }
