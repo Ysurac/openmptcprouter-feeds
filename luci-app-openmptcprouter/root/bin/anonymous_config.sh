@@ -7,6 +7,7 @@ uci show | \
 	-e "/detected_public_ipv6=/s/......$/xxxxxx'/" \
 	-e "/detected_ss_ipv6=/s/......$/xxxxxx'/" \
 	-e "/publicip=/s/......$/xxxxxx'/" \
+	-e "/publicip6=/s/......$/xxxxxx'/" \
 	-e "/\.host=/s/......$/xxxxxx'/" \
 	-e "/\.ip=/s/......$/xxxxxx'/" \
 	-e "/\.ipv6='2/s/=....../='xxxxxx/" \

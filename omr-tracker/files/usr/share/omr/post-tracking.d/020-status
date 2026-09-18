@@ -115,11 +115,38 @@ _apply_mtu() {
 	_set_device_mtu "$_mtu"
 }
 
+# IPv4 and IPv6 shared publicip the same way they shared the MTU: on a dual
+# stack WAN each family read the other family's address, called it a change,
+# logged one, and wrote its own over it. Two bogus "New public ip detected"
+# lines per refresh, and whatever else reads publicip -- the routing loop
+# check below, the WAN address list pushed to the VPS, the status page --
+# was handed an IPv6 address in a field meant for the IPv4 one (issue
+# #4375). IPv6 lives in publicip6 now, which is what the status API already
+# reads. Move an address an earlier firmware left in the wrong field instead
+# of reporting it as a change.
+_publicip_migrate() {
+	local _stored
+	[ -z "$OMR_TRACKER_INTERFACE" ] && return 0
+	_stored="$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.publicip)"
+	case "$_stored" in
+		*:*)
+			[ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.publicip6)" ] && \
+				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.publicip6="$_stored"
+			uci -q delete openmptcprouter.$OMR_TRACKER_INTERFACE.publicip
+			;;
+	esac
+}
+
 # Save wan settings for status page
 if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ -z "$_lc" ] || [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.state)" = "down" ] || [ $((_now + $((30 + RANDOM % 10)) - _lc)) -gt 3600 ]; }; then
 	[ "$_debug" = "true" ] && _log "Get status and settings for $OMR_TRACKER_INTERFACE..."
+	_publicip_migrate
 	ipaddr=""
 	ip6addr=""
+	# One per family too: the IPv6 branch used to write the IPv4 netname
+	# into asn whenever its own whois found nothing
+	asn=""
+	asn6=""
 	if [ "$_external_check" != "0" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ]; then
 		[ -n "$OMR_TRACKER_DEVICE_IP" ] && ipaddr="$(omr-ip-intf $OMR_TRACKER_DEVICE)"
 		[ -n "$OMR_TRACKER_DEVICE_IP6" ] && ip6addr="$(omr-ip6-intf $OMR_TRACKER_DEVICE)"
@@ -253,7 +280,10 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ -z "$_lc" ] || [ "$(uci -q get openmpt
 	}
 	[ -n "$ip6addr" ] && {
 		if [ "$_external_check" != "0" ]; then
-			asn="$(whois $ip6addr 2>/dev/null | grep -m 1 -i 'netname' | awk '{print $2}')"
+			whoistimeout=$(uci -q get openmptcprouter.settings.status_whois_timeout)
+			[ -z "$whoistimeout" ] && whoistimeout=2
+			# Unbounded here, so a slow registry stalled post-tracking
+			asn6="$(timeout $whoistimeout whois $ip6addr 2>/dev/null | grep -m 1 -i 'netname' | awk '{print $2}')"
 		fi
 		[ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE)" ] && {
 			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE=interface
@@ -267,18 +297,22 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ -z "$_lc" ] || [ "$(uci -q get openmpt
 				uci -q set openmptcprouter.latest_versions.lc="$_now"
 			}
 		fi
-		[ -n "$ip6addr" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.publicip)" != "$ip6addr" ] && {
-			previousip6=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.publicip)
-			_log "New public ip detected for $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE): $ip6addr"
+		[ -n "$ip6addr" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.publicip6)" != "$ip6addr" ] && {
+			previousip6=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.publicip6)
+			if [ -n "$previousip6" ]; then
+				_log "New public IPv6 detected for $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE): $ip6addr (previous: $previousip6)"
+			else
+				_log "New public IPv6 detected for $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE): $ip6addr (Refresh IP data)"
+			fi
 			#/etc/init.d/mptcp enabled && ([ "$OMR_TRACKER_DEVICE_IP6" = "$ip6addr" ] || [ "$OMR_TRACKER_DEVICE_IP" = "$previousip6" ]) && {
 			#	_log "Reload MPTCP for $OMR_TRACKER_DEVICE"
 			#	/etc/init.d/mptcp reload "$OMR_TRACKER_DEVICE" >/dev/null 2>&1
 			#}
-			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.publicip="$ip6addr"
+			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.publicip6="$ip6addr"
 		}
 		[ -n "$OMR_TRACKER_LATENCY" ] && omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" latency "$OMR_TRACKER_LATENCY"
-		[ -n "$asn" ] && {
-			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.asn="$asn"
+		[ -n "$asn6" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.asn6)" != "$asn6" ] && {
+			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.asn6="$asn6"
 		}
 		omrtracebox=""
 		_tracebox_running=$(pgrep -f tracebox)
