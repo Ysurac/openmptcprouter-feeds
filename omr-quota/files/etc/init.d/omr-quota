@@ -104,7 +104,16 @@ _launch_quota() {
 	# and the marker cut the interface again the moment the quota was
 	# re-enabled, with no way to clear it from the UI while disabled.
 	reset_baseline=$(_reset_baseline_if_requested "$interface" "$reset_exceeded" "$interface")
-	[ -z "$txquota" ] && [ -z "$rxquota" ] && [ -z "$ttquota" ] && return
+	# Enabled with nothing to enforce. The section is inert: no daemon, no
+	# vnstat registration, no metering at all -- and the quota page still
+	# shows the interface as enabled, so "I added my interface and nothing
+	# happens" had no answer anywhere, not even in the log. Say it once per
+	# start. (Ticking the interface on and leaving the limits empty is what
+	# the LuCI form produces, so this is the normal way to get here.)
+	if [ -z "$txquota" ] && [ -z "$rxquota" ] && [ -z "$ttquota" ]; then
+		[ "$enabled" = "0" ] || logger -t "OMR-QUOTA" "Quota on $interface is enabled but has no TX/RX/TX+RX limit: nothing is metered or enforced for it"
+		return
+	fi
 	[ "$enabled" = "0" ] && return
 	[ -z "$down_interfaces" ] && down_interfaces="$interface"
 
@@ -172,8 +181,15 @@ _launch_global_quota() {
 	state_id="global_$1"
 	_SECTIONS_SEEN=$((_SECTIONS_SEEN + 1))
 	reset_baseline=$(_reset_baseline_if_requested "$state_id" "$reset_exceeded" "$1")
-	[ -z "$interfaces" ] && return
-	[ -z "$txquota" ] && [ -z "$rxquota" ] && [ -z "$ttquota" ] && return
+	# same two silent no-ops as above, for a global quota
+	if [ -z "$interfaces" ]; then
+		[ "$enabled" = "0" ] || logger -t "OMR-QUOTA" "Global quota $1 is enabled but combines no interface: nothing is metered or enforced for it"
+		return
+	fi
+	if [ -z "$txquota" ] && [ -z "$rxquota" ] && [ -z "$ttquota" ]; then
+		[ "$enabled" = "0" ] || logger -t "OMR-QUOTA" "Global quota $1 is enabled but has no TX/RX/TX+RX limit: nothing is metered or enforced for it"
+		return
+	fi
 	[ "$enabled" = "0" ] && return
 	[ -z "$down_interfaces" ] && down_interfaces="$interfaces"
 
