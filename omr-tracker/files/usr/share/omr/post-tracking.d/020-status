@@ -20,6 +20,101 @@ _external_check=$(uci -q get openmptcprouter.settings.external_check)
 _tracebox=$(uci -q get openmptcprouter.settings.tracebox)
 _lc=$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)
 
+# IPv4 and IPv6 share the device, so they share its MTU. Each family used to
+# write the link on its own: on a dual stack WAN the two results fought over
+# it and every disagreement cost a carrier reset (issue #4374). Collect both
+# results here, then apply the narrower one once, and only when it really
+# differs from the live value.
+_mtu_cfg=""
+_mtu_cfg_done=""
+_mtu4=""
+_mtu6=""
+# Set when the server list held nothing but a placeholder address: only then
+# is the public resolver used, exactly as before this was a single "else"
+_mtu4_nosrv=""
+_mtu6_nosrv=""
+
+# The MTU a user configured, from the interface section or from the device
+# section carrying this device. The IPv6 branch used to ask
+# find_network_device() for the latter, but 020-status never sources the
+# library defining it, so a configured device MTU was simply ignored here.
+_config_device_mtu() {
+	local _out _sec
+	[ -z "$OMR_TRACKER_DEVICE" ] && return 0
+	_out=$(uci -q show network)
+	# Fixed strings all the way: a device name can carry a dot (eth0.835)
+	_sec=$(printf '%s\n' "$_out" | grep -F ".name='${OMR_TRACKER_DEVICE}'" | head -1 | cut -d. -f1-2)
+	[ -z "$_sec" ] && return 0
+	printf '%s\n' "$_out" | grep -qF "${_sec}='device'" || return 0
+	printf '%s\n' "$_out" | grep -F "${_sec}.mtu='" | head -1 | cut -d"'" -f2
+}
+
+# True when an explicit MTU is configured: detection must not fight it
+_mtu_config() {
+	if [ -z "$_mtu_cfg_done" ]; then
+		_mtu_cfg_done=1
+		_mtu_cfg="$(uci -q get network.${OMR_TRACKER_INTERFACE}.mtu)"
+		[ -z "$_mtu_cfg" ] && _mtu_cfg="$(_config_device_mtu)"
+	fi
+	[ -n "$_mtu_cfg" ]
+}
+
+# Keep only a plain number: a probe that failed must not reach the link
+_mtu_valid() {
+	case "$1" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	[ "$1" -ge 552 ] && [ "$1" -le 9216 ]
+}
+
+# One probe per family and per interface: the callbacks below run once per
+# configured server address, and the target must match the family or the
+# probe pings nothing. The public resolvers are only a last resort, used
+# after the server list turned out to hold no usable address.
+_probe_mtu4() {
+	{ [ -n "$_mtu4" ] || [ -z "$1" ] || [ -z "$OMR_TRACKER_DEVICE_IP" ] || \
+	  [ -z "$OMR_TRACKER_DEVICE" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; } && return 0
+	_mtu_config && return 0
+	_mtu4=$(omr-mtu "$OMR_TRACKER_DEVICE_IP" "$1")
+	_mtu_valid "$_mtu4" || _mtu4=""
+}
+
+_probe_mtu6() {
+	{ [ -n "$_mtu6" ] || [ -z "$1" ] || [ -z "$OMR_TRACKER_DEVICE_IP6" ] || \
+	  [ -z "$OMR_TRACKER_DEVICE" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; } && return 0
+	_mtu_config && return 0
+	_mtu6=$(omr-mtu6 "$OMR_TRACKER_DEVICE_IP6" "$1")
+	_mtu_valid "$_mtu6" || _mtu6=""
+}
+
+_set_device_mtu() {
+	local _mtu="$1" _cur
+	{ [ -z "$_mtu" ] || [ -z "$OMR_TRACKER_DEVICE" ] || [ -z "$OMR_TRACKER_INTERFACE" ]; } && return 0
+	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu="$_mtu"
+	_cur=$(ip --json link show dev "$OMR_TRACKER_DEVICE" 2>/dev/null | jsonfilter -q -e '@[0].mtu' | tr -d '\n')
+	[ "$_cur" = "$_mtu" ] && return 0
+	_log "Set MTU of $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) to $_mtu (was ${_cur:-unknown})"
+	ip link set dev "$OMR_TRACKER_DEVICE" mtu "$_mtu" > /dev/null 2>&1 || \
+		_log "Can't set MTU $_mtu on $OMR_TRACKER_DEVICE"
+}
+
+_apply_mtu() {
+	local _mtu
+	# An explicit configuration always wins over detection
+	if _mtu_config && _mtu_valid "$_mtu_cfg"; then
+		_set_device_mtu "$_mtu_cfg"
+		return 0
+	fi
+	_mtu="$_mtu4"
+	if _mtu_valid "$_mtu6" && { ! _mtu_valid "$_mtu" || [ "$_mtu6" -lt "$_mtu" ]; }; then
+		_mtu="$_mtu6"
+	fi
+	_mtu_valid "$_mtu" || return 0
+	# IPv6 needs 1280 bytes: leave the link alone instead of breaking it
+	[ -n "$ip6addr" ] && [ "$_mtu" -lt 1280 ] && return 0
+	_set_device_mtu "$_mtu"
+}
+
 # Save wan settings for status page
 if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ -z "$_lc" ] || [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.state)" = "down" ] || [ $((_now + $((30 + RANDOM % 10)) - _lc)) -gt 3600 ]; }; then
 	[ "$_debug" = "true" ] && _log "Get status and settings for $OMR_TRACKER_INTERFACE..."
@@ -137,37 +232,18 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ -z "$_lc" ] || [ "$(uci -q get openmpt
 					*) uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$omrtracebox" ;;
 					esac
 				}
-				#if [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$(uci -q get glorytun.vpn.enable)" != "1" ] && [ "$(uci -q get glorytun-udp.vpn.enable)" != "1" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
-				if [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
-					if [ -n "$(uci -q get network.${OMR_TRACKER_INTERFACE}.mtu)" ]; then
-						mtu="$(uci -q get network.${OMR_TRACKER_INTERFACE}.mtu)"
-						[ -n "$mtu" ] && {
-							uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
-							ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
-						}
-					elif [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
-						if [ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ]; then
-							_cur_mtu=$(ip --json link show dev $OMR_TRACKER_DEVICE | jsonfilter -e '@[0].mtu' | tr -d '\n')
-							mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP $serverip)
-							[ -n "$mtu" ] && [ "$mtu" != "$_cur_mtu" ] && {
-								uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
-								ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
-							}
-						else
-							_cur_mtu=$(ip --json link show dev $OMR_TRACKER_DEVICE | jsonfilter -e '@[0].mtu' | tr -d '\n')
-							mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP 1.1.1.1)
-							[ -n "$mtu" ] && [ "$mtu" != "$_cur_mtu" ] && {
-								uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
-								ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
-							}
-						fi
-					fi
-				fi
+				case "$serverip" in
+					''|127.0.0.1) _mtu4_nosrv=1 ;;
+					*:*) ;; # IPv6 address, not this family
+					*) _probe_mtu4 "$serverip" ;;
+				esac
 			}
 			config_list_foreach $1 ip omr_tracebox_mtu
 		}
 		config_load openmptcprouter
 		config_foreach traceboxmtutest server
+		# Placeholder server address only: the configured ones come first
+		[ -n "$_mtu4_nosrv" ] && _probe_mtu4 "1.1.1.1"
 #		[ "$_tracebox" = "0" ] && [ -n "$OMR_TRACKER_DEVICE" ] && {
 #			mptcpsupport="$(omr-mptcp-intf $OMR_TRACKER_DEVICE)"
 #			[ -n "$mptcpsupport" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$mptcpsupport"
@@ -217,39 +293,25 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ -z "$_lc" ] || [ "$(uci -q get openmpt
 					*) uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mptcp_status="$omrtracebox" ;;
 					esac
 				}
-				#if [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ "$(uci -q get glorytun.vpn.enable)" != "1" ] && [ "$(uci -q get glorytun-udp.vpn.enable)" != "1" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
-				if [ "$OMR_TRACKER_INTERFACE" != "omrvpn" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
-					network_device=$(find_network_device ${OMR_TRACKER_INTERFACE})
-					if [ -n "$network_device" ] && [ -n "$(uci -q get network.${network_device}.mtu)" ]; then
-						mtu=$(uci -q get network.${network_device}.mtu)
-						[ -n "$mtu" ] && {
-							uci -q set openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu=$mtu
-							ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
-						}
-					elif [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
-						if [ -n "$serverip" ] && [ "$serverip" != "127.0.0.1" ]; then
-							mtu=$(omr-mtu6 $OMR_TRACKER_DEVICE_IP6 $serverip)
-							[ -n "$mtu" ] && {
-								uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
-								ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
-							}
-						else
-							mtu=$(omr-mtu6 $OMR_TRACKER_DEVICE_IP6 2606:4700:4700::1111)
-							[ -n "$mtu" ] && {
-								uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu=$mtu
-								ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
-							}
-						fi
-					fi
-				fi
+				# This probe used to be gated on the IPv4 device address,
+				# so an IPv6 only WAN was never measured at all
+				case "$serverip" in
+					''|127.0.0.1|::1) _mtu6_nosrv=1 ;;
+					*:*) _probe_mtu6 "$serverip" ;;
+					*) ;; # IPv4 address, not this family
+				esac
 			}
 			config_list_foreach $1 ip omr_tracebox_mtu
 		}
 		config_load openmptcprouter
 		config_foreach traceboxmtutest server
+		[ -n "$_mtu6_nosrv" ] && _probe_mtu6 "2606:4700:4700::1111"
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='up'
 		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc="$_now"
 	}
+	# One link, one MTU: whatever each family measured above is applied here,
+	# once, and only if it differs from what the device already carries
+	{ [ -n "$ipaddr" ] || [ -n "$ip6addr" ]; } && _apply_mtu
 	# No shadowsocks ping here: when external_check=0 the branch above already
 	# set lc=$_now unconditionally, so a per-WAN ping to the proxy server could
 	# only ever rewrite the value it just wrote.

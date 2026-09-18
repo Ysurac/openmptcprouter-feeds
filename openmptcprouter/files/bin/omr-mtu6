@@ -1,21 +1,52 @@
 #!/bin/sh
+#
+# Probe the largest IPv6 packet that gets through between a local source
+# address and a destination, and print it as an MTU.
+#
+# Usage: omr-mtu6 <source-ip6> <destination> [max_mtu] [min_mtu]
 
-PKT_SIZE=1472
 INTERFACE="$1"
 HOSTNAME="$2"
 
-#count=$(ping -q -w 1 -M do -c 1 -s $PKT_SIZE -I $INTERFACE $HOSTNAME | grep -cE 'Message too long|100% packet loss')
-#count=$(ping -B -w 1 -M do -c 1 -s $PKT_SIZE -I $INTERFACE $HOSTNAME 2>&1 | grep -c 'Message too long')
-count=$(ping -6 -B -w 2 -M do -c 3 -s $PKT_SIZE -I $INTERFACE $HOSTNAME 2>&1 | grep -cE 'Message too long|100% packet loss')
+# "ping -6 -s N" puts N + 40 (IPv6 header) + 8 (ICMPv6 echo header) bytes on
+# the wire: payload 1452 is a 1500 bytes packet and payload 1232 the 1280
+# bytes IPv6 minimum MTU. Using the IPv4 overhead here reported every path
+# 20 bytes too small and could never reach 1280 (issue #4373).
+OVERHEAD=48
+MAX_MTU="${3:-1500}"
+MIN_MTU="${4:-1280}"
 
-while [ $count -ge 1 ]; do
-	PKT_SIZE=$((PKT_SIZE - 1))
-	if [ "$PKT_SIZE" -lt "1252" ]; then 
-		exit 0
+{ [ -z "$INTERFACE" ] || [ -z "$HOSTNAME" ]; } && exit 2
+
+lo=$((MIN_MTU - OVERHEAD))
+hi=$((MAX_MTU - OVERHEAD))
+[ "$hi" -lt "$lo" ] && exit 2
+
+# Only a real answer proves the size got through. Deciding on the absence of
+# an error instead made any ping failure (wrong address family, unreachable
+# destination, ping missing) look like a success and print the maximum.
+_fits() {
+	_out=$(ping -6 -B -w 2 -M do -c 3 -s "$1" -I "$INTERFACE" "$HOSTNAME" 2>&1)
+	printf '%s' "$_out" | grep -qE '[1-9][0-9]*( packets)? received'
+}
+
+# Fast path: the maximum already works
+if _fits "$hi"; then
+	printf "%d" $((hi + OVERHEAD))
+	exit 0
+fi
+
+# Nothing in our range answers: print nothing rather than a made up MTU
+_fits "$lo" || exit 1
+
+# Binary search, invariant: lo works, hi does not
+while [ $((hi - lo)) -gt 1 ]; do
+	mid=$(( (lo + hi) / 2 ))
+	if _fits "$mid"; then
+		lo=$mid
+	else
+		hi=$mid
 	fi
-	#count=$(ping -q -w 1 -M do -c 1 -s $PKT_SIZE -I $INTERFACE $HOSTNAME | grep -cE 'Message too long|100% packet loss')
-	#count=$(ping -B -w 1 -M do -c 1 -s $PKT_SIZE -I $INTERFACE $HOSTNAME 2>&1 | grep -c 'Message too long')
-	count=$(ping -6 -B -w 2 -M do -c 3 -s $PKT_SIZE -I $INTERFACE $HOSTNAME 2>&1 | grep -cE 'Message too long|100% packet loss')
 done
 
-printf "$((PKT_SIZE + 28))"
+printf "%d" $((lo + OVERHEAD))

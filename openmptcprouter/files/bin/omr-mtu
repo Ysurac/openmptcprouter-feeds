@@ -1,35 +1,50 @@
 #!/bin/sh
+#
+# Probe the largest IPv4 packet that gets through between a local source
+# address and a destination, and print it as an MTU.
+#
+# Usage: omr-mtu <source-ip> <destination> [max_mtu] [min_mtu]
 
 INTERFACE="$1"
 HOSTNAME="$2"
 
-_too_big() {
-	count=$(ping -B -w 2 -M do -c 3 -s "$1" -I "$INTERFACE" "$HOSTNAME" 2>&1 | grep -cE 'Message too long|100% packet loss')
-	[ "$count" -ge 1 ]
+# "ping -s N" puts N + 20 (IPv4 header) + 8 (ICMP echo header) bytes on the
+# wire: payload 1472 is a 1500 bytes packet.
+OVERHEAD=28
+MAX_MTU="${3:-1500}"
+MIN_MTU="${4:-1280}"
+
+{ [ -z "$INTERFACE" ] || [ -z "$HOSTNAME" ]; } && exit 2
+
+lo=$((MIN_MTU - OVERHEAD))
+hi=$((MAX_MTU - OVERHEAD))
+[ "$hi" -lt "$lo" ] && exit 2
+
+# Only a real answer proves the size got through. Deciding on the absence of
+# an error instead made any ping failure (wrong address family, unreachable
+# destination, ping missing) look like a success and print the maximum.
+_fits() {
+	_out=$(ping -B -w 2 -M do -c 3 -s "$1" -I "$INTERFACE" "$HOSTNAME" 2>&1)
+	printf '%s' "$_out" | grep -qE '[1-9][0-9]*( packets)? received'
 }
 
-lo=1252
-hi=1472
-
-# Fast path: max size already works
-if ! _too_big $hi; then
-	printf "%d" $((hi + 28))
+# Fast path: the maximum already works
+if _fits "$hi"; then
+	printf "%d" $((hi + OVERHEAD))
 	exit 0
 fi
 
-# Nothing in our range works
-if _too_big $lo; then
-	exit 0
-fi
+# Nothing in our range answers: print nothing rather than a made up MTU
+_fits "$lo" || exit 1
 
-# Binary search: invariant: lo works, hi fails
+# Binary search, invariant: lo works, hi does not
 while [ $((hi - lo)) -gt 1 ]; do
 	mid=$(( (lo + hi) / 2 ))
-	if _too_big "$mid"; then
-		hi=$mid
-	else
+	if _fits "$mid"; then
 		lo=$mid
+	else
+		hi=$mid
 	fi
 done
 
-printf "%d" $((lo + 28))
+printf "%d" $((lo + OVERHEAD))
