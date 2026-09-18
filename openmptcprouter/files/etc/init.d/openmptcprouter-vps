@@ -1770,10 +1770,15 @@ _set_proxy_vps() {
 }
 
 _get_local_wan_ip() {
-	wanip="$(uci -q get openmptcprouter.$1.publicip)"
-	[ -n "$wanip" ] && {
-		[ -z "$wanips" ] && wanips=$wanip || wanips="$wanips"'\n'"$wanip"
-	}
+	local wanip
+	# publicip is the IPv4 one again since #4375, so the IPv6 address has to
+	# be asked for by name: shadowsocks' local.acl takes either family, and
+	# an IPv6 only WAN would otherwise contribute nothing at all
+	for wanip in "$(uci -q get openmptcprouter.$1.publicip)" "$(uci -q get openmptcprouter.$1.publicip6)"; do
+		[ -n "$wanip" ] && {
+			[ -z "$wanips" ] && wanips=$wanip || wanips="$wanips"'\n'"$wanip"
+		}
+	done
 }
 
 _set_wan_ip() {
@@ -2385,6 +2390,44 @@ _set_openvpn_server() {
 	fi
 }
 
+# OpenVPN refuses to start a tls_client config that has no CA ("Options error:
+# You must define CA file (--ca) or CA path (--capath)...") and procd then
+# respawns it every five seconds forever, so tun0 never appears and the router
+# silently stays on Direct Output with nothing but that one error in the log.
+# A server that hands out the legacy static key but no client certificate set
+# put the router in exactly that state (github #4377). Credentials have to
+# match the mode before the section may be turned on.
+_openvpn_client_ready() {
+	local section="$1" ca secret
+	if [ "$(uci -q get openvpn.${section}.tls_client)" = "1" ]; then
+		ca="$(uci -q get openvpn.${section}.ca)"
+		[ -n "$ca" ] && [ -s "$ca" ]
+		return $?
+	fi
+	secret="$(uci -q get openvpn.${section}.secret)"
+	[ -n "$secret" ] && [ -s "$secret" ]
+}
+
+# config_foreach-compatible option remover. $1 = section, $2 = option.
+_del_openvpn_option() {
+	[ "$(echo $1 | grep omr)" = "" ] && return
+	uci -q delete openvpn.$1.$2
+}
+
+# config_foreach-compatible "enabled" setter that never turns on a section
+# which cannot possibly start. $1 = section, $2 = wanted state.
+_set_openvpn_enabled() {
+	local section="$1" wanted="$2"
+	[ "$(echo $section | grep omr)" = "" ] && return
+	if [ "$wanted" = "1" ] && ! _openvpn_client_ready "$section"; then
+		[ "$(uci -q get openvpn.${section}.enabled)" = "1" ] && \
+			logger -t "OMR-VPS" "OpenVPN ${section}: server sent no usable credentials, keeping it off instead of looping on a start error"
+		_set_openvpn_server "$section" "enabled" "0"
+		return
+	fi
+	_set_openvpn_server "$section" "enabled" "$wanted"
+}
+
 
 _set_config_from_vps() {
 	local shadowsocks_disabled vpn glorytun_state redirect shorewall_redirect mlvpn_key openvpn_key dsvpn_key mqvpn_key mqvpn_port mqvpn_user mqvpn_cc mqvpn_scheduler mqvpn_fec_enable_raw mqvpn_fec_enable mqvpn_fec_scheme mqvpn_reinjection_control_raw mqvpn_reinjection_control mqvpn_reinjection_mode mqvpn_reorder_enabled_raw mqvpn_reorder_enabled mqvpn_reorder_max_wait_ms mqvpn_reorder_cap_packets mqvpn_reorder_rules_json mqvpn_rule_idx mqvpn_rule_proto mqvpn_rule_port mqvpn_rule_profile proxy_before
@@ -2763,7 +2806,12 @@ _set_config_from_vps() {
 		fi
 		config_load openvpn
 		config_foreach _set_openvpn_server openvpn "port" "$openvpn_port"
-		config_foreach _set_openvpn_server openvpn "secret" "/etc/luci-uploads/openvpn.key"
+		# The static key is the legacy setup. The current client config is
+		# tls_client, and openvpn rejects --secret together with --tls-client,
+		# so only wire it up where it is actually the mode in use -- the
+		# certificate block below is what enables a tls_client section.
+		[ "$(uci -q get openvpn.omr.tls_client)" != "1" ] && \
+			config_foreach _set_openvpn_server openvpn "secret" "/etc/luci-uploads/openvpn.key"
 
 		#uci -q batch <<-EOF >/dev/null
 		#	set openvpn.omr.port=$openvpn_port
@@ -2771,9 +2819,9 @@ _set_config_from_vps() {
 		#EOF
 		if [ "$(uci -q get openmptcprouter.settings.openvpn_lb)" = "0" ]; then
 			config_foreach _set_openvpn_server openvpn "enabled" "0"
-			uci -q set openvpn.omr.enabled=$openvpn_state
+			_set_openvpn_enabled omr "$openvpn_state"
 		else
-			config_foreach _set_openvpn_server openvpn "enabled" "$openvpn_state"
+			config_foreach _set_openvpn_enabled openvpn "$openvpn_state"
 		fi
 		#if [ "$openvpn_state" = "1" ]; then
 		#	uci -q set openvpn.omr.enabled=$openvpn_state
@@ -2818,18 +2866,22 @@ _set_config_from_vps() {
 		fi
 
 		config_load openvpn
-		if [ "$(uci -q get openmptcprouter.settings.openvpn_lb)" = "0" ]; then
-			config_foreach _set_openvpn_server openvpn "enabled" "0"
-			uci -q set openvpn.omr.enabled=$openvpn_state
-		else
-			config_foreach _set_openvpn_server openvpn "enabled" "$openvpn_state"
-		fi
 		config_foreach _set_openvpn_server openvpn "key" "/etc/luci-uploads/client.key"
 		[ -n "$openvpn_client_crt" ] && config_foreach _set_openvpn_server openvpn "cert" "/etc/luci-uploads/client.crt"
 		config_foreach _set_openvpn_server openvpn "ca" "/etc/luci-uploads/ca.crt"
 		config_foreach _set_openvpn_server openvpn "tls_client" "1"
 		config_foreach _set_openvpn_server openvpn "client" "1"
 		config_foreach _set_openvpn_server openvpn "allow_recursive_routing" "1"
+		# A tls_client section and a static key are mutually exclusive for
+		# openvpn, and the block above just made this one tls_client.
+		config_foreach _del_openvpn_option openvpn "secret"
+		# "enabled" comes last: the readiness check reads the options set above.
+		if [ "$(uci -q get openmptcprouter.settings.openvpn_lb)" = "0" ]; then
+			config_foreach _set_openvpn_server openvpn "enabled" "0"
+			_set_openvpn_enabled omr "$openvpn_state"
+		else
+			config_foreach _set_openvpn_enabled openvpn "$openvpn_state"
+		fi
 
 		#uci -q batch <<-EOF >/dev/null
 		#	set openvpn.omr.port=$openvpn_port
