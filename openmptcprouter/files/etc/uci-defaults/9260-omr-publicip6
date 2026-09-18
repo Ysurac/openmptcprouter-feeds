@@ -1,0 +1,43 @@
+#!/bin/sh
+#
+# Until issue #4375, post-tracking's 020-status stored the detected public
+# IPv4 and IPv6 addresses in the same option, openmptcprouter.<wan>.publicip,
+# each family overwriting the other on a dual stack WAN. IPv6 has its own
+# option now (publicip6, the one the status API already reads), and
+# 020-status moves a misplaced address the next time it refreshes that WAN.
+#
+# That refresh is up to an hour away though, and only happens for a WAN with
+# a running tracker: until then the status page shows an IPv6 address in the
+# IPv4 column and the address list pushed to the VPS carries it as a WAN v4
+# address. Move them all here instead, once, right after the upgrade.
+
+. /lib/functions.sh
+
+_omr_publicip6_fix() {
+	local stored
+
+	stored="$(uci -q get "openmptcprouter.$1.publicip")"
+	# A colon is what makes it an IPv6 address: nothing else uci stores here
+	# carries one, and an empty option is not touched at all.
+	case "$stored" in
+		*:*) ;;
+		*) return 0 ;;
+	esac
+
+	# An existing publicip6 is the newer of the two: 020-status wrote it
+	# from this same detection, so the stale copy is simply dropped.
+	[ -z "$(uci -q get "openmptcprouter.$1.publicip6")" ] && \
+		uci -q set "openmptcprouter.$1.publicip6=$stored"
+	uci -q delete "openmptcprouter.$1.publicip"
+
+	# The netname was shared the same way. There is no telling which family
+	# the stored one describes, so it is left for the next refresh rather
+	# than copied into asn6 as if it were the IPv6 one.
+}
+
+config_load openmptcprouter
+config_foreach _omr_publicip6_fix interface
+
+uci -q commit openmptcprouter
+
+exit 0
