@@ -386,11 +386,40 @@ if [ "$(pgrep miniupnpd)" = "" ] && [ "$(uci -q get upnpd.config.enabled)" = "1"
 	sleep 5
 fi
 
-if [ "$(pgrep rpcd)" = "" ] && [ -f /etc/init.d/rpcd ]; then
-	_log "Can't find rpcd, restart it..."
-	/etc/init.d/rpcd enable >/dev/null 2>&1
-	/etc/init.d/rpcd restart >/dev/null 2>&1
-	sleep 5
+# rpcd registers its library plugins (luci, luci-rpc, file, iwinfo) only once
+# it ran `list` on every /usr/libexec/rpcd script, one after the other and with
+# no timeout, and all of that happens before it starts serving requests. A
+# script that hangs there leaves a live rpcd process which answers nothing, and
+# LuCI then fails every call with "RPC call to luci/getFeatures failed with
+# error -32000: Object not found". A pid test can't see that state, so probe
+# the object rpcd registers last instead. rpcd is legitimately object-less for
+# the moment its plugins need at startup, hence the miss must be confirmed by a
+# second pass before the restart.
+_rpcd_no_objects="/tmp/.omr-rpcd-no-objects"
+if [ -f /etc/init.d/rpcd ]; then
+	if [ -z "$(pgrep -x rpcd)" ]; then
+		_log "Can't find rpcd, restart it..."
+		/etc/init.d/rpcd enable >/dev/null 2>&1
+		/etc/init.d/rpcd restart >/dev/null 2>&1
+		rm -f "$_rpcd_no_objects"
+		sleep 5
+	elif [ -f /usr/lib/rpcd/luci.so ]; then
+		# an empty listing means ubusd itself is unreachable: restarting
+		# rpcd would fix nothing there
+		_ubus_objects="$(ubus -t 3 list 2>/dev/null)"
+		if [ -n "$_ubus_objects" ] && ! echo "$_ubus_objects" | grep -qx luci; then
+			if [ -f "$_rpcd_no_objects" ]; then
+				_log "rpcd is running but registers no ubus object, restart it..."
+				/etc/init.d/rpcd restart >/dev/null 2>&1
+				rm -f "$_rpcd_no_objects"
+				sleep 5
+			else
+				touch "$_rpcd_no_objects"
+			fi
+		else
+			rm -f "$_rpcd_no_objects"
+		fi
+	fi
 fi
 if [ "$(pgrep dbus)" = "" ] && [ -f /etc/init.d/dbus ]; then
 	_log "Can't find dbus, restart it..."
