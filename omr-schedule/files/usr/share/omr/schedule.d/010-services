@@ -409,7 +409,15 @@ if [ -f /etc/init.d/rpcd ]; then
 		_ubus_objects="$(ubus -t 3 list 2>/dev/null)"
 		if [ -n "$_ubus_objects" ] && ! echo "$_ubus_objects" | grep -qx luci; then
 			if [ -f "$_rpcd_no_objects" ]; then
-				_log "rpcd is running but registers no ubus object, restart it..."
+				# rpcd waits for `<plugin> list` without any timeout, so the
+				# child still around names whatever it is stuck on: log it,
+				# the restart makes that evidence disappear
+				_stuck="$(ps ww 2>/dev/null | sed -n 's|.*/usr/libexec/rpcd/\([^ ]*\) list.*|\1|p' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
+				if [ -n "$_stuck" ]; then
+					_log "rpcd is running but registers no ubus object (stuck on the list of: $_stuck), restart it..."
+				else
+					_log "rpcd is running but registers no ubus object, restart it..."
+				fi
 				/etc/init.d/rpcd restart >/dev/null 2>&1
 				rm -f "$_rpcd_no_objects"
 				sleep 5
