@@ -20,6 +20,20 @@ INTERVAL="${OMR_METRICS_INTERVAL:-30}"
 LOGIN_BACKOFF_REJECTED="${OMR_METRICS_LOGIN_BACKOFF_REJECTED:-1800}"
 LOGIN_BACKOFF_NO_ANSWER="${OMR_METRICS_LOGIN_BACKOFF_NO_ANSWER:-300}"
 
+# First delay after each kind of failure, before the doubling starts.
+#
+# A rejection has to start high, not at the poll interval: doubling from 30s
+# puts login attempts at t=0, 30, 90, 210 and 450 seconds, i.e. five failed
+# logins inside the ten minutes a fail2ban jail configured maxretry 5 /
+# findtime 600 looks at -- which bans the router's own public IP off port
+# 65500 and takes the whole VPS API down with it, the exact outcome this
+# backoff exists to avoid. Starting at 300s puts the first two retries at
+# t=300 and t=900: at most two strikes per findtime window, whatever the
+# jail's maxretry is. A request nobody answered is not a failed login and
+# does not earn a strike, so that path keeps retrying from the poll interval.
+LOGIN_FIRST_REJECTED="${OMR_METRICS_LOGIN_FIRST_REJECTED:-300}"
+LOGIN_FIRST_NO_ANSWER="${OMR_METRICS_LOGIN_FIRST_NO_ANSWER:-$INTERVAL}"
+
 # Token of the server currently being served, and the credentials it was
 # resolved from. Set by _server_creds/_login, consumed by _post_metrics, so
 # one cycle logs in at most once per server instead of once per metrics file.
@@ -65,16 +79,17 @@ _login_allowed() {
 }
 
 # Record a failed login and arm the next retry. $2 is the backoff cap for this
-# kind of failure; the delay doubles from the poll interval up to that cap, so
-# the first few retries stay well under any sane fail2ban maxretry/findtime.
+# kind of failure and $3 the delay it starts from; the delay doubles from $3
+# up to $2, so the attempts a fail2ban jail can see stay under its maxretry.
 _login_failed() {
-	local key="$1" cap="$2" file fails next delay now
+	local key="$1" cap="$2" first="$3" file fails next delay now
 	file="${STATE_DIR}/${key}.login_backoff"
 	fails=0
 	[ -f "$file" ] && read -r fails next < "$file" 2>/dev/null
 	case "$fails" in ''|*[!0-9]*) fails=0 ;; esac
 	fails=$((fails + 1))
-	delay="$INTERVAL"
+	case "$first" in ''|*[!0-9]*) first="$INTERVAL" ;; esac
+	delay="$first"
 	local n=1
 	while [ "$n" -lt "$fails" ] && [ "$delay" -lt "$cap" ]; do
 		delay=$((delay * 2))
@@ -104,7 +119,7 @@ _login() {
 		# at all, and let the backoff rate-limit the log line. The
 		# credential fingerprint clears it as soon as a key is entered.
 		_login_allowed "$key" && {
-			_login_failed "$key" "$LOGIN_BACKOFF_NO_ANSWER" >/dev/null
+			_login_failed "$key" "$LOGIN_BACKOFF_NO_ANSWER" "$LOGIN_FIRST_NO_ANSWER" >/dev/null
 			_log "no credentials for ${server} yet, skipping login"
 		}
 		return 1
@@ -140,15 +155,15 @@ _login() {
 	case "$code" in
 		4*|5*)
 			# The API answered and turned us down: credentials, not path.
-			delay=$(_login_failed "$key" "$LOGIN_BACKOFF_REJECTED")
+			delay=$(_login_failed "$key" "$LOGIN_BACKOFF_REJECTED" "$LOGIN_FIRST_REJECTED")
 			_log "login rejected by ${server} (HTTP ${code}), next try in ${delay}s"
 			;;
 		2*)
-			delay=$(_login_failed "$key" "$LOGIN_BACKOFF_REJECTED")
+			delay=$(_login_failed "$key" "$LOGIN_BACKOFF_REJECTED" "$LOGIN_FIRST_REJECTED")
 			_log "no access_token in the answer from ${server} (HTTP ${code}), next try in ${delay}s"
 			;;
 		*)
-			delay=$(_login_failed "$key" "$LOGIN_BACKOFF_NO_ANSWER")
+			delay=$(_login_failed "$key" "$LOGIN_BACKOFF_NO_ANSWER" "$LOGIN_FIRST_NO_ANSWER")
 			_log "no answer from the API on ${server}, next try in ${delay}s"
 			;;
 	esac
