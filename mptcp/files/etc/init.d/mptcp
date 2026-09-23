@@ -113,12 +113,25 @@ global_multipath_settings() {
 			if [ -d /usr/share/bpf/scheduler ]; then
 				local pin_dir="/sys/fs/bpf/mptcp"
 				mkdir -p "$pin_dir"
-				# Unregister any previously pinned struct_ops to avoid conflicts
+				# Unregister any previously pinned struct_ops to avoid conflicts.
+				# Deleting the pinned link is what unregisters it; bpftool's
+				# "unregister" takes a map id or name, never a pinned path, so
+				# `unregister pinned "$pin"` exited 255 on a usage error and the
+				# `&& rm -f` behind it never ran. Pins then accumulated, every
+				# scheduler ever selected stayed registered, and re-registering
+				# a rebuilt object failed with "File exists" -- silently, since
+				# the output was discarded, so the router kept running the OLD
+				# program after an upgrade shipped a fixed one.
 				for pin in "$pin_dir"/*; do
-					[ -e "$pin" ] && bpftool struct_ops unregister pinned "$pin" >/dev/null 2>&1 && rm -f "$pin"
+					[ -e "$pin" ] || continue
+					rm -f "$pin"
 				done
 				local obj="/usr/share/bpf/scheduler/mptcp_${sched}.o"
-				[ -f "$obj" ] && bpftool struct_ops register "$obj" "$pin_dir/" >/dev/null 2>&1
+				if [ -f "$obj" ]; then
+					local reg_err
+					reg_err="$(bpftool struct_ops register "$obj" "$pin_dir/" 2>&1)" || \
+						logger -t "MPTCP" "Failed to register BPF scheduler $obj: $reg_err"
+				fi
 			fi
 			# Only a scheduler the kernel lists can be set. A legacy name left
 			# in uci ('blest' from the v0.9x defaults is not a 6.x scheduler)
