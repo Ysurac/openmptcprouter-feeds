@@ -28,10 +28,19 @@ function addQuotaFields(s, downInterfacesHint) {
 	o.placeholder = 'YYYY-MM-DD';
 	o.rmempty = true;
 
+	/* retain: form.js removes any option whose dependencies are not
+	 * satisfied, so a plain Save on this page deleted every setting behind a
+	 * method/action that happens to be off right now -- 15 removals staged on
+	 * a two-interface router that had simply been opened and saved, the
+	 * threshold, the calculation interval, the downstream interfaces and both
+	 * throttle limits among them. They are settings the user entered, not
+	 * leftovers: keep them so switching the method (or the action) back finds
+	 * them where they were left. Same fix as the wizard's #4350. */
 	o = s.option(form.Value, 'enddate', _('End date'));
 	o.datatype = 'date';
 	o.placeholder = 'YYYY-MM-DD';
 	o.rmempty = true;
+	o.retain = true;
 	o.depends('method', '1');
 	o.depends('method', '2');
 
@@ -49,17 +58,20 @@ function addQuotaFields(s, downInterfacesHint) {
 	o = s.option(form.Value, 'percent', _('Budget threshold (%)'));
 	o.datatype = 'range(1,100)';
 	o.placeholder = '80';
+	o.retain = true;
 	o.depends('method', '1');
 	o.depends('method', '2');
 
 	o = s.option(form.Value, 'calculation_interval', _('Budget calculation interval (s)'));
 	o.datatype = 'uinteger';
 	o.placeholder = '120';
+	o.retain = true;
 	o.depends('method', '1');
 
 	o = s.option(form.Value, 'down_interfaces', _('Downstream limit interfaces'), downInterfacesHint);
 	o.placeholder = 'lan';
 	o.rmempty = true;
+	o.retain = true;
 	o.depends('method', '2');
 
 	o = s.option(form.ListValue, 'exceedance_action', _('Action when quota is reached'));
@@ -72,18 +84,21 @@ function addQuotaFields(s, downInterfacesHint) {
 		_('Block LAN traffic while the quota is exceeded: firewall LAN input is set to DROP, which stops every transparent proxy without changing proxy service state, and forwarded LAN traffic is rejected, which stops bypassed flows and the VPN tunnel. The router itself stays reachable from the LAN (LuCI, SSH, DNS, DHCP, ping) and LAN to LAN traffic keeps working.'));
 	o.default = '0';
 	o.rmempty = false;
+	o.retain = true;
 	o.depends('exceedance_action', 'cut');
 
 	o = s.option(form.Value, 'throttle_dl', _('Download limit (Mbps)'),
 		_('Maximum download speed applied to the interface(s) when quota is exceeded'));
 	o.datatype = 'uinteger';
 	o.placeholder = '1';
+	o.retain = true;
 	o.depends('exceedance_action', 'throttle');
 
 	o = s.option(form.Value, 'throttle_ul', _('Upload limit (Mbps)'),
 		_('Maximum upload speed applied to the interface(s) when quota is exceeded'));
 	o.datatype = 'uinteger';
 	o.placeholder = '1';
+	o.retain = true;
 	o.depends('exceedance_action', 'throttle');
 
 	o = s.option(form.ListValue, 'exceedance_scope', _('Enforcement scope'));
