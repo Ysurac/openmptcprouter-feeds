@@ -35,9 +35,18 @@ return L.view.extend({
 		o.description = _('TLS SNI/verification name, if different from the server address');
 		o.rmempty = true;
 
+		/* rmempty = false on every option below whose value the daemon always
+		 * needs: form.js drops an option whose value equals the widget default,
+		 * so simply opening this page and saving it queued the removal of the
+		 * log level, the kill switch, the congestion control, auto WAN and the
+		 * rest -- 15 removals in total with the depends()-gated ones. A missing
+		 * option is only harmless while every reader's idea of the default
+		 * matches this page's, which is exactly the assumption that broke in
+		 * #4348, #4349 and #4352. */
 		o = s.option(form.Flag, 'insecure', _('Insecure TLS'));
 		o.description = _('Skip TLS certificate verification');
 		o.default = o.enabled;
+		o.rmempty = false;
 
 		s = m.section(form.NamedSection, 'tls', 'tls', _('TLS'));
 		s.addremove = false;
@@ -72,6 +81,7 @@ return L.view.extend({
 		o.value('error', _('Error'));
 		o.description = _('Warning is the default: it keeps the log quiet while still recording why a tunnel failed to establish. Error hides the tunnel setup result entirely; raise to Info when reporting a tunnel problem.');
 		o.default = 'warn';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'mtu', _('MTU'));
 		o.description = _('TUN MTU cap in bytes (1280–9000, leave empty for auto)');
@@ -82,15 +92,29 @@ return L.view.extend({
 		o = s.option(form.Flag, 'kill_switch', _('Kill switch'));
 		o.description = _('Block all traffic if the VPN tunnel goes down');
 		o.default = o.disabled;
+		o.rmempty = false;
 
 		o = s.option(form.Flag, 'reconnect', _('Reconnect'));
 		o.description = _('Automatically reconnect on failure');
 		o.default = o.enabled;
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'reconnect_interval', _('Reconnect interval'));
 		o.description = _('Seconds between reconnection attempts');
 		o.datatype = 'uinteger';
 		o.default = '5';
+		/* rmempty = false for the same reason as the flags above: the stored
+		 * value is the one the daemon reads (init.d falls back to 5 only when
+		 * the option is absent), so it has to be written, not dropped for
+		 * matching the widget's default. */
+		o.rmempty = false;
+		/* retain: an option whose dependency is off is removed by form.js on
+		 * every save, so merely opening this page and saving it deleted the
+		 * settings behind each disabled feature -- the reinjection mode, the
+		 * FEC scheme, both reorder limits and the manual path lists. Keep
+		 * them, so turning the feature back on finds what was configured for
+		 * it. Same fix as the wizard's #4350. */
+		o.retain = true;
 		o.depends('reconnect', '1');
 
 		o = s.option(form.Flag, 'route_via_server', _('Route via server'));
@@ -100,6 +124,7 @@ return L.view.extend({
 		o = s.option(form.Flag, 'no_routes', _('No automatic routes'));
 		o.description = _('Skip all automatic route setup and manage routes manually');
 		o.default = o.disabled;
+		o.rmempty = false;
 
 		o = s.option(form.DynamicList, 'dns', _('DNS servers'));
 		o.datatype = 'ipaddr';
@@ -145,15 +170,17 @@ return L.view.extend({
 		o.value('unlimited', _('Unlimited'));
 		o.value('none',      _('None'));
 		o.default = 'bbr2';
-		o.rmempty = true;
+		o.rmempty = false;
 
 		o = s.option(form.Flag, 'auto_wan', _('Auto WAN'));
 		o.description = _('Automatically add WAN interfaces as multipath paths. If disabled, use the paths defined below.');
 		o.default = o.enabled;
+		o.rmempty = false;
 
 		o = s.option(form.Flag, 'reinjection_control', _('Reinjection control'));
 		o.description = _('Enable reinjection control');
 		o.default = o.disabled;
+		o.rmempty = false;
 
 		o = s.option(form.ListValue, 'reinjection_mode', _('Reinjection mode'));
 		o.value('', _('Default'));
@@ -161,11 +188,13 @@ return L.view.extend({
 		o.value('deadline', _('Deadline'));
 		o.value('dgram', _('Datagram'));
 		o.rmempty = true;
+		o.retain = true;
 		o.depends('reinjection_control', '1');
 
 		o = s.option(form.Flag, 'fec_enable', _('FEC'));
 		o.description = _('Enable Forward Error Correction');
 		o.default = o.disabled;
+		o.rmempty = false;
 
 		o = s.option(form.ListValue, 'fec_scheme', _('FEC scheme'));
 		o.value('galois_calculation', _('Galois Calculation'));
@@ -174,6 +203,7 @@ return L.view.extend({
 		o.value('xor',                _('XOR'));
 		o.default = 'reed_solomon';
 		o.rmempty = true;
+		o.retain = true;
 		o.depends('fec_enable', '1');
 
 		o = s.option(form.Flag, 'sync_path_labels', _('Sync path labels to server'));
@@ -188,11 +218,13 @@ return L.view.extend({
 		o = s.option(form.DynamicList, 'path', _('Paths'));
 		o.description = _('Network interfaces to use as multipath paths');
 		o.rmempty = true;
+		o.retain = true;
 		o.depends('auto_wan', '0');
 
 		o = s.option(form.DynamicList, 'backup_path', _('Backup paths'));
 		o.description = _('Network interfaces to use as backup multipath paths');
 		o.rmempty = true;
+		o.retain = true;
 		o.depends('auto_wan', '0');
 
 		s = m.section(form.NamedSection, 'reorder', 'reorder', _('Reorder'));
@@ -201,12 +233,14 @@ return L.view.extend({
 		o = s.option(form.Flag, 'enabled', _('Enable reorder buffer'));
 		o.description = _('Enable reorder buffer for inner UDP (off by default)');
 		o.default = o.disabled;
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'max_wait_ms', _('Max wait (ms)'));
 		o.description = _('Max hold time before releasing a gap (ms)');
 		o.datatype = 'uinteger';
 		o.placeholder = '30';
 		o.rmempty = true;
+		o.retain = true;
 		o.depends('enabled', '1');
 
 		o = s.option(form.Value, 'cap_packets', _('Cap packets'));
@@ -214,6 +248,7 @@ return L.view.extend({
 		o.datatype = 'uinteger';
 		o.placeholder = '1024';
 		o.rmempty = true;
+		o.retain = true;
 		o.depends('enabled', '1');
 
 		s = m.section(form.TypedSection, 'reorder_rule', _('Reorder rules'));
