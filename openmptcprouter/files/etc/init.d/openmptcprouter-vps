@@ -273,9 +273,19 @@ _set_mlvpn_vps() {
 	fi
 }
 
+# Echo the value the config pull should use for one mqvpn option: nothing when
+# the router already has its own (the user configured it on the MQVPN page and
+# _set_mqvpn_vps pushes it to the server), the server's value otherwise so a
+# fresh setup is still seeded from it.
+_mqvpn_local_wins() {
+	[ -n "$(uci -q get "$1")" ] && return 0
+	echo "$2"
+}
+
 _set_mqvpn_vps() {
 	local enabled port key scheduler cc fec_enable fec_scheme reinjection_control reinjection_mode
-	local current_port
+	local current_port current_scheduler current_cc current_fec_enable current_fec_scheme
+	local current_reinjection_control current_reinjection_mode
 	enabled="$(uci -q get mqvpn.settings.enable)"
 	[ "$enabled" != "1" ] && echo "MQVPN disabled" && return
 	# mqvpn.server.port is the user intent: push it to the server when it differs
@@ -287,28 +297,65 @@ _set_mqvpn_vps() {
 	[ -z "$current_port" ] && echo 1 && return
 	key="$(uci -q get mqvpn.auth.key)"
 	[ -z "$key" ] && echo "MQVPN key not set" && return
-	if [ "$current_port" != "$port" ]; then
-		scheduler="$(uci -q get mqvpn.multipath.scheduler)"
-		[ -z "$scheduler" ] && scheduler="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.scheduler')"
-		[ -z "$scheduler" ] && scheduler="wlb"
-		cc="$(uci -q get mqvpn.multipath.cc)"
-		[ -z "$cc" ] && cc="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.cc')"
-		[ -z "$cc" ] && cc="bbr2"
-		fec_enable="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.fec_enable')"
-		[ -z "$fec_enable" ] && fec_enable="false"
-		fec_scheme="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.fec_scheme')"
-		[ -z "$fec_scheme" ] && fec_scheme="xor"
-		reinjection_control="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reinjection_control')"
-		[ -z "$reinjection_control" ] && reinjection_control="false"
-		reinjection_mode="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reinjection_mode')"
-		[ -z "$reinjection_mode" ] && reinjection_mode="default"
+
+	current_scheduler="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.scheduler')"
+	current_cc="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.cc')"
+	current_fec_enable="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.fec_enable')"
+	current_fec_scheme="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.fec_scheme')"
+	current_reinjection_control="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reinjection_control')"
+	current_reinjection_mode="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reinjection_mode')"
+
+	scheduler="$(uci -q get mqvpn.multipath.scheduler)"
+	[ -z "$scheduler" ] && scheduler="$current_scheduler"
+	[ -z "$scheduler" ] && scheduler="wlb"
+	cc="$(uci -q get mqvpn.multipath.cc)"
+	[ -z "$cc" ] && cc="$current_cc"
+	# "None" is offered by the LuCI list but is not in the server's cc enum:
+	# sending it fails the whole request with a validation error, which would
+	# take the scheduler and FEC down with it.
+	case "$cc" in
+		bbr2|bbr|cubic|new_reno|copa|unlimited) ;;
+		*) cc="bbr2" ;;
+	esac
+	fec_enable="$(uci -q get mqvpn.multipath.fec_enable)"
+	case "$fec_enable" in
+		1) fec_enable="true" ;;
+		0) fec_enable="false" ;;
+		*) fec_enable="$current_fec_enable"; [ -z "$fec_enable" ] && fec_enable="false" ;;
+	esac
+	fec_scheme="$(uci -q get mqvpn.multipath.fec_scheme)"
+	[ -z "$fec_scheme" ] && fec_scheme="$current_fec_scheme"
+	case "$fec_scheme" in
+		galois_calculation|packet_mask|reed_solomon|xor) ;;
+		*) fec_scheme="xor" ;;
+	esac
+	reinjection_control="$(uci -q get mqvpn.multipath.reinjection_control)"
+	case "$reinjection_control" in
+		1) reinjection_control="true" ;;
+		0) reinjection_control="false" ;;
+		*) reinjection_control="$current_reinjection_control"; [ -z "$reinjection_control" ] && reinjection_control="false" ;;
+	esac
+	reinjection_mode="$(uci -q get mqvpn.multipath.reinjection_mode)"
+	[ -z "$reinjection_mode" ] && reinjection_mode="$current_reinjection_mode"
+	case "$reinjection_mode" in
+		default|deadline|dgram) ;;
+		*) reinjection_mode="default" ;;
+	esac
+
+	local push=0
+	[ "$current_port" != "$port" ] && push=1
+	[ -n "$current_scheduler" ] && [ "$current_scheduler" != "$scheduler" ] && push=1
+	[ -n "$current_cc" ] && [ "$current_cc" != "$cc" ] && push=1
+	[ -n "$current_fec_enable" ] && [ "$current_fec_enable" != "$fec_enable" ] && push=1
+	[ -n "$current_fec_scheme" ] && [ "$current_fec_scheme" != "$fec_scheme" ] && push=1
+	[ -n "$current_reinjection_control" ] && [ "$current_reinjection_control" != "$reinjection_control" ] && push=1
+	[ -n "$current_reinjection_mode" ] && [ "$current_reinjection_mode" != "$reinjection_mode" ] && push=1
+	if [ "$push" = "1" ]; then
 		local settings result
 		settings='{"key": "'$key'", "port": '$port', "scheduler": "'$scheduler'", "cc": "'$cc'", "fec_enable": '$fec_enable', "fec_scheme": "'$fec_scheme'", "reinjection_control": '$reinjection_control', "reinjection_mode": "'$reinjection_mode'"}'
 		result=$(_set_json "mqvpn" "$settings")
 		[ -n "$result" ] && uci -q set openmptcprouter.${servername}.get_config="1"
-		# The server moved its QUIC listener: restart the client so it
-		# reconnects on the new port instead of retrying the stale session
-		[ -n "$result" ] && /etc/init.d/mqvpn restart >/dev/null 2>&1
+		[ -n "$result" ] && [ "$current_port" != "$port" ] && /etc/init.d/mqvpn restart >/dev/null 2>&1
 		echo $result
 	else
 		echo 1
@@ -2390,13 +2437,7 @@ _set_openvpn_server() {
 	fi
 }
 
-# OpenVPN refuses to start a tls_client config that has no CA ("Options error:
-# You must define CA file (--ca) or CA path (--capath)...") and procd then
-# respawns it every five seconds forever, so tun0 never appears and the router
-# silently stays on Direct Output with nothing but that one error in the log.
-# A server that hands out the legacy static key but no client certificate set
-# put the router in exactly that state (github #4377). Credentials have to
-# match the mode before the section may be turned on.
+# OpenVPN refuses to start a tls_client config that has no CA
 _openvpn_client_ready() {
 	local section="$1" ca secret
 	if [ "$(uci -q get openvpn.${section}.tls_client)" = "1" ]; then
@@ -2972,6 +3013,24 @@ _set_config_from_vps() {
 		off) mqvpn_reorder_enabled="0" ;;
 		*) mqvpn_reorder_enabled="" ;;
 	esac
+	# Same rule mqvpn.server.port above already follows: the multipath and
+	# reorder tuning is user intent, set on the MQVPN page and pushed to the
+	# server by _set_mqvpn_vps. Adopting the server's copy here overwrote what
+	# the user had just chosen -- picking "Redundant" applied to the client
+	# until the next config sync, which put the server's "minrtt" back and
+	# restarted mqvpn with it, so a WAN failure still cut real-time traffic
+	# (issue #4379). Blanking the value drops the option from both the
+	# comparison below and the uci batch that follows it.
+	mqvpn_cc="$(_mqvpn_local_wins mqvpn.multipath.cc "$mqvpn_cc")"
+	mqvpn_scheduler="$(_mqvpn_local_wins mqvpn.multipath.scheduler "$mqvpn_scheduler")"
+	mqvpn_fec_enable_raw="$(_mqvpn_local_wins mqvpn.multipath.fec_enable "$mqvpn_fec_enable_raw")"
+	mqvpn_fec_scheme="$(_mqvpn_local_wins mqvpn.multipath.fec_scheme "$mqvpn_fec_scheme")"
+	mqvpn_reinjection_control_raw="$(_mqvpn_local_wins mqvpn.multipath.reinjection_control "$mqvpn_reinjection_control_raw")"
+	mqvpn_reinjection_mode="$(_mqvpn_local_wins mqvpn.multipath.reinjection_mode "$mqvpn_reinjection_mode")"
+	mqvpn_reorder_enabled="$(_mqvpn_local_wins mqvpn.reorder.enabled "$mqvpn_reorder_enabled")"
+	mqvpn_reorder_max_wait_ms="$(_mqvpn_local_wins mqvpn.reorder.max_wait_ms "$mqvpn_reorder_max_wait_ms")"
+	mqvpn_reorder_cap_packets="$(_mqvpn_local_wins mqvpn.reorder.cap_packets "$mqvpn_reorder_cap_packets")"
+	mqvpn_reorder_rules_json="$(_mqvpn_local_wins "mqvpn.@reorder_rule[0]" "$mqvpn_reorder_rules_json")"
 	mqvpn_user="$(uci -q get openmptcprouter.${servername}.username)"
 	if [ -f /etc/init.d/mqvpn ] && [ -n "$(uci -q get mqvpn.auth)" ] && [ -n "$mqvpn_key" ] && \
 	   ( [ "$mqvpn_key" != "$(uci -q get mqvpn.auth.key)" ] || \
