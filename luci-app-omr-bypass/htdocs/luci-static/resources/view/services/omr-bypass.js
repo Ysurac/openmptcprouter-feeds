@@ -66,7 +66,16 @@ return L.view.extend({
 		}
 		o.value('hourly', _('Every hour'));
 		o.default = '2';
-		o.optional = true;
+		/* Written explicitly, never dropped for matching the default: form.js
+		 * removes an option whose value equals its default when the option is
+		 * optional (or rmempty), so every save of this page queued the removal
+		 * of a schedule the user had chosen. It happens to be harmless while
+		 * this default and 010-services' fallback are both "2" -- the whole
+		 * point of #4348/#4352 is that such an agreement is not something to
+		 * rely on, and an option that is simply absent tells the next reader
+		 * nothing about what was intended. */
+		o.optional = false;
+		o.rmempty = false;
 
 		/*
 		o = s.option(form.Flag, 'noipv6', _('Disable IPv6 AAAA DNS results for bypassed domains'));
