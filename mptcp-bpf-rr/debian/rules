@@ -15,6 +15,11 @@ else
   BPF_ARCH := $(ARCH)
 endif
 
+# llvm-strip is shipped by the "llvm" package (an llvm-defaults alias);
+# fall back to the versioned binaries when only llvm-N is installed.
+LLVM_STRIP := $(shell command -v llvm-strip 2>/dev/null || \
+	ls -1 /usr/bin/llvm-strip-* /usr/lib/llvm-*/bin/llvm-strip 2>/dev/null | sort -V | tail -n1)
+
 %:
 	dh $@
 
@@ -24,7 +29,8 @@ override_dh_auto_build:
 		-I src \
 		-c src/mptcp_bpf_rr.c \
 		-o mptcp_bpf_rr.o
-	llvm-strip -g mptcp_bpf_rr.o
+	[ -n "$(LLVM_STRIP)" ] || { echo "E: llvm-strip not found, install the llvm package" >&2; exit 1; }
+	$(LLVM_STRIP) -g mptcp_bpf_rr.o
 
 override_dh_auto_install:
 	install -D -m 0644 mptcp_bpf_rr.o \

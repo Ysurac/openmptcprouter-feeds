@@ -34,13 +34,19 @@ else
   BPF_TARGET_ARCH := $(DEB_HOST_ARCH)
 endif
 
+# llvm-strip is shipped by the "llvm" package (an llvm-defaults alias);
+# fall back to the versioned binaries when only llvm-N is installed.
+LLVM_STRIP := $(shell command -v llvm-strip 2>/dev/null || \
+	ls -1 /usr/bin/llvm-strip-* /usr/lib/llvm-*/bin/llvm-strip 2>/dev/null | sort -V | tail -n1)
+
 %:
 	dh $@
 
 override_dh_auto_build:
 	clang -O2 -g -Wall -target bpf -D__TARGET_ARCH_$(BPF_TARGET_ARCH) \
 		-I src -c src/mptcp_bpf_weight_rr.c -o src/mptcp_bpf_weight_rr.o
-	llvm-strip -g src/mptcp_bpf_weight_rr.o
+	[ -n "$(LLVM_STRIP)" ] || { echo "E: llvm-strip not found, install the llvm package" >&2; exit 1; }
+	$(LLVM_STRIP) -g src/mptcp_bpf_weight_rr.o
 	chmod 0755 debian/load-scheduler-weight-rr.sh
 
 override_dh_auto_test:
