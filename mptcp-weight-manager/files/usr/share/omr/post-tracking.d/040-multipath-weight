@@ -10,8 +10,15 @@
 
 scheduler="$(uci -q get network.globals.mptcp_scheduler)"
 
+# bpf_weight_rr reads the same endpoint_weights map as bpf_weight -- it is the
+# weighted round-robin over it -- but it was missing from this list, so with
+# that scheduler selected nothing ever pushed network.<iface>.multipath_weight
+# into the map. The Weight field on the Network page silently did nothing:
+# every endpoint stayed at whatever the map happened to hold (neutral 100 on a
+# fresh registration), and traffic split evenly regardless of what was set.
 if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && \
-	{ [ "$scheduler" = "mptcp_bpf_weight.o" ] || [ "$scheduler" = "mptcp_bpf_burstweight.o" ] || [ "$scheduler" = "bpf_weight" ] || [ "$scheduler" = "bpf_burstweight" ]; } && \
+	{ [ "$scheduler" = "mptcp_bpf_weight.o" ] || [ "$scheduler" = "mptcp_bpf_burstweight.o" ] || [ "$scheduler" = "mptcp_bpf_weight_rr.o" ] || \
+	  [ "$scheduler" = "bpf_weight" ] || [ "$scheduler" = "bpf_burstweight" ] || [ "$scheduler" = "bpf_weight_rr" ]; } && \
 	{ [ "$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath)" = "on" ] || [ "$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath)" = "master" ] || [ "$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath)" = "backup" ]; }; then
 	weight="$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath_weight)"
 	current_weight="$(/usr/sbin/mptcp-scheduler-weight.sh show "${OMR_TRACKER_DEVICE}" 2>/dev/null | sed -n 's/.*weight=\([0-9]*\).*/\1/p' | head -n1)"
