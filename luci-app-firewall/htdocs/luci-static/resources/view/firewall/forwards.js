@@ -242,7 +242,9 @@ return view.extend({
 		o.modalonly = true;
 		o.rmempty = false;
 		o.nocreate = true;
-		o.default = 'wan';
+		o.default = uci.sections('firewall', 'zone').filter(function(z) {
+			return z.name == 'vpn';
+		}).length ? 'vpn' : 'wan';
 
 		o = s.taboption('advanced', form.Value, 'ipset', _('Use ipset'));
 		uci.sections('firewall', 'ipset', function(s) {
