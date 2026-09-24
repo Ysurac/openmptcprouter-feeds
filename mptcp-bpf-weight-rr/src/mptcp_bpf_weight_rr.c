@@ -176,6 +176,28 @@ int BPF_PROG(bpf_weight_rr_get_send, struct mptcp_sock *msk)
 		if (!mptcp_subflow_active(subflow))
 			continue;
 
+		/* Only subflows that can take data right now are candidates.
+		 *
+		 * This used to be checked once, on the winner, after the SWRR
+		 * bookkeeping had already run -- and the bookkeeping is what
+		 * makes the weights mean anything. A candidate that won the
+		 * round had its current-weight debited by total_weight and was
+		 * then thrown away by the `!bpf_sk_stream_memory_free(ssk)`
+		 * test below, so it paid for a turn it never took. The heavy
+		 * endpoint is exactly the one whose buffer fills, because it
+		 * is the one carrying the traffic, so it burned its turns
+		 * fastest and the light endpoints collected the sends that
+		 * followed. Measured on a 40 MB upload with weights
+		 * 250/10/10, which should put ~96% on the first WAN: it got
+		 * 52-71%, the 10-weight WAN took 28-48%.
+		 *
+		 * Screening here instead keeps the round among subflows that
+		 * can actually send, so a turn is only spent when it is used,
+		 * and a momentarily blocked endpoint costs itself nothing.
+		 */
+		if (subflow->stale || !bpf_sk_stream_memory_free(ssk))
+			continue;
+
 		pace = subflow->avg_pacing_rate;
 		if (!pace) {
 			subflow->avg_pacing_rate = ssk->sk_pacing_rate;
