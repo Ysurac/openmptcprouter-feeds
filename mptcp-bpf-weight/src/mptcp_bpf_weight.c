@@ -105,6 +105,19 @@ int BPF_PROG(bpf_weight_get_send, struct mptcp_sock *msk)
 		if (!mptcp_subflow_active(subflow))
 			continue;
 
+		/* Only subflows that can take data right now are candidates.
+		 * This was checked once, on the winner, near the end -- so
+		 * when the highest-weight subflow was momentarily unable to
+		 * send, get_send returned -1 and the round produced nothing
+		 * at all, even though a lower-weight path was sitting idle
+		 * and ready. Screening here keeps the "prefer the heaviest"
+		 * intent while letting the next-heaviest carry the data
+		 * instead of stalling. Same fix as bpf_weight_rr, where the
+		 * late check also cost the heavy endpoint its SWRR turn.
+		 */
+		if (subflow->stale || !bpf_sk_stream_memory_free(ssk))
+			continue;
+
 		nr_active += !backup;
 		pace = subflow->avg_pacing_rate;
 		if (!pace) {
