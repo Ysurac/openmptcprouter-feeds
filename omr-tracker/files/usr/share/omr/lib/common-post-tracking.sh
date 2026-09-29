@@ -275,26 +275,31 @@ _get_multipath_config() {
 }
 
 # _omr_get_interface_device_var <var> <interface> [<suffix>]
+# The locals carry a _gidv_ prefix on purpose: the result is handed back with
+# `eval "$_var=..."`, which assigns to whichever variable of that name is in
+# scope -- a local here named like the caller's <var> (it used to be `device`)
+# shadows the caller's, so the result lands in the helper's own copy and the
+# caller silently keeps an empty value.
 _omr_get_interface_device_var() {
-	local _var="$1" interface="$2" suffix="${3:-}" device
+	local _var="$1" _gidv_if="$2" _gidv_sfx="${3:-}" _gidv_dev
 
-	_omr_ifstatus_load "${interface}${suffix}"
-	device="$_J_L3"
-	if [ -z "$device" ]; then
-		_omr_ifstatus_load "${interface}_4"
-		device="$_J_L3"
+	_omr_ifstatus_load "${_gidv_if}${_gidv_sfx}"
+	_gidv_dev="$_J_L3"
+	if [ -z "$_gidv_dev" ]; then
+		_omr_ifstatus_load "${_gidv_if}_4"
+		_gidv_dev="$_J_L3"
 	fi
-	[ -z "$device" ] && _omr_uci_get_var device "network.${interface}.ifname"
-	[ -z "$device" ] && _omr_uci_get_var device "network.${interface}.device"
+	[ -z "$_gidv_dev" ] && _omr_uci_get_var _gidv_dev "network.${_gidv_if}.ifname"
+	[ -z "$_gidv_dev" ] && _omr_uci_get_var _gidv_dev "network.${_gidv_if}.device"
 
 	# Handle special device names with '@'
-	case "$device" in
+	case "$_gidv_dev" in
 		*@*)
-			_omr_ifstatus_load "$interface"
-			device="$_J_DEV"
+			_omr_ifstatus_load "$_gidv_if"
+			_gidv_dev="$_J_DEV"
 			;;
 	esac
-	eval "$_var=\$device"
+	eval "$_var=\$_gidv_dev"
 }
 
 # Common function to get interface device with fallback chain
@@ -305,37 +310,38 @@ _get_interface_device() {
 }
 
 # _omr_get_interface_gateway_var <var> <interface> [true|false]
+# _gigv_ prefix: same eval-shadowing reason as _omr_get_interface_device_var.
 _omr_get_interface_gateway_var() {
-	local _var="$1" interface="$2" ipv6="${3:-false}" gateway
+	local _var="$1" _gigv_if="$2" _gigv_v6="${3:-false}" _gigv_gw
 
-	if [ "$ipv6" = "true" ]; then
-		_omr_uci_get_var gateway "network.${interface}.ip6gw"
-		if [ -z "$gateway" ]; then
-			_omr_ifstatus_load "$interface"
-			gateway="$_J_GW6S"
-			[ -z "$gateway" ] && gateway="$_J_GW6S64"
-			[ -z "$gateway" ] && gateway="$_J_GW6S56"
-			[ -z "$gateway" ] && gateway="$_J_GW6I"
-			[ -z "$gateway" ] && gateway="$_J_GW6"
+	if [ "$_gigv_v6" = "true" ]; then
+		_omr_uci_get_var _gigv_gw "network.${_gigv_if}.ip6gw"
+		if [ -z "$_gigv_gw" ]; then
+			_omr_ifstatus_load "$_gigv_if"
+			_gigv_gw="$_J_GW6S"
+			[ -z "$_gigv_gw" ] && _gigv_gw="$_J_GW6S64"
+			[ -z "$_gigv_gw" ] && _gigv_gw="$_J_GW6S56"
+			[ -z "$_gigv_gw" ] && _gigv_gw="$_J_GW6I"
+			[ -z "$_gigv_gw" ] && _gigv_gw="$_J_GW6"
 		fi
-		if [ -z "$gateway" ]; then
-			_omr_ifstatus_load "${interface}_6"
-			gateway="$_J_GW6I"
-			[ -z "$gateway" ] && gateway="$_J_GW6"
+		if [ -z "$_gigv_gw" ]; then
+			_omr_ifstatus_load "${_gigv_if}_6"
+			_gigv_gw="$_J_GW6I"
+			[ -z "$_gigv_gw" ] && _gigv_gw="$_J_GW6"
 		fi
 	else
-		_omr_uci_get_var gateway "network.${interface}.gateway"
-		if [ -z "$gateway" ]; then
-			_omr_ifstatus_load "$interface"
-			gateway="$_J_GW4I"
-			[ -z "$gateway" ] && gateway="$_J_GW4"
+		_omr_uci_get_var _gigv_gw "network.${_gigv_if}.gateway"
+		if [ -z "$_gigv_gw" ]; then
+			_omr_ifstatus_load "$_gigv_if"
+			_gigv_gw="$_J_GW4I"
+			[ -z "$_gigv_gw" ] && _gigv_gw="$_J_GW4"
 		fi
-		if [ -z "$gateway" ]; then
-			_omr_ifstatus_load "${interface}_4"
-			gateway="$_J_GW4I"
+		if [ -z "$_gigv_gw" ]; then
+			_omr_ifstatus_load "${_gigv_if}_4"
+			_gigv_gw="$_J_GW4I"
 		fi
 	fi
-	eval "$_var=\$gateway"
+	eval "$_var=\$_gigv_gw"
 }
 
 # Common function to get interface gateway with fallback chain
