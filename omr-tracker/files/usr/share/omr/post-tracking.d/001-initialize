@@ -23,12 +23,30 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$OMR_TR
 		/etc/init.d/omr-tracker restart >/dev/null 2>&1
 		exit 0
 	fi
-	metric="$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)"
-	if [ -z "$metric" ] || { [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -z "$(ip route show table $metric | grep $OMR_TRACKER_DEVICE)" ]; } || { [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -z "$(ip -6 route show table 6${metric} | grep $OMR_TRACKER_DEVICE)" ]; }; then
+	_routes_missing() {
+		metric="$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)"
+		[ -z "$metric" ] || { [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -z "$(ip route show table $metric | grep $OMR_TRACKER_DEVICE)" ]; } || { [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -z "$(ip -6 route show table 6${metric} | grep $OMR_TRACKER_DEVICE)" ]; }
+	}
+	# No carrier: the kernel flushed the device's routes on link-down and
+	# none can be put back until the link returns -- omr-tracker restores them
+	# itself on the carrier's return (_on_carrier_return). Repairing here used
+	# to reload MPTCP and restart *every* tracker on each post-tracking run of
+	# the outage, bouncing the healthy WANs' trackers along with it.
+	_carrier=""
+	read -r _carrier 2>/dev/null < "${OMR_SYS_CLASS_NET_DIR:-/sys/class/net}/${OMR_TRACKER_DEVICE}/carrier"
+	if [ "$_carrier" = "1" ] && _routes_missing; then
 		_log "Routes not correctly set for $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE table $metric) with IPs $OMR_TRACKER_DEVICE_IP $OMR_TRACKER_DEVICE_IP6"
 		/etc/init.d/mptcp reload "$OMR_TRACKER_DEVICE" >/dev/null 2>&1
-		_log "Restart OMR-Tracker"
-		/etc/init.d/omr-tracker restart >/dev/null 2>&1
+		if _routes_missing; then
+			# Only this interface's tracker, and detached: this script runs
+			# inside that tracker, which cannot act on the SIGTERM while it
+			# waits for us -- restarting it in the foreground stalled until
+			# procd's SIGKILL, 5s later.
+			_log "Restart OMR-Tracker for $OMR_TRACKER_INTERFACE"
+			( /etc/init.d/omr-tracker restart "$OMR_TRACKER_INTERFACE" >/dev/null 2>&1 </dev/null & )
+		else
+			_log "Routes restored for $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE)"
+		fi
 		exit 0
 	fi
 fi

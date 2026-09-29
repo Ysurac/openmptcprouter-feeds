@@ -153,6 +153,61 @@ _device_ip6_var() {
 	eval "$_var=\$_ip6"
 }
 
+# netifd keeps a static (force_link) interface up across a carrier loss and
+# sends no hotplug event when the link returns, while the kernel has flushed
+# the device's routes from the interface table on link-down. Nothing put them
+# back until 001-initialize noticed, after a full test phase that fails every
+# probe without routes (~35s) plus the failure backoff and the post-tracking
+# down interval -- so the tests only started counting towards tries_up long
+# after the link was back (issue #4047, bench case 12e).
+# The tracker now restores the routes the moment the carrier returns. That is
+# a repair, not a test: the configured timing is untouched -- the backoff is
+# still slept in full (failure_interval), the interface still needs tries_up
+# consecutive successes, and post-tracking keeps its post_interval_down pace.
+# The routes are simply there when the next scheduled test runs.
+# _carrier_returned is true once, on the first call that sees the carrier up
+# again after one that saw it down (or the device gone). A carrier that never
+# dropped (upstream outage) never makes it true.
+_carrier_returned() {
+	local _c=
+	read -r _c 2>/dev/null < "/sys/class/net/${OMR_TRACKER_DEVICE}/carrier"
+	if [ "$_c" != "1" ]; then
+		_omr_link_lost=1
+		return 1
+	fi
+	[ -n "$_omr_link_lost" ] || return 1
+	_omr_link_lost=
+	return 0
+}
+
+# The same repair 001-initialize does ("Routes not correctly set"), run only
+# when the interface table really lost the device's routes, and on the same
+# interfaces: the tunnels are not WANs, they have no table of their own and
+# must never go through an mptcp reload.
+_on_carrier_return() {
+	local _metric
+	case "$OMR_TRACKER_INTERFACE" in
+		omrvpn|omr6in4|"") return 0 ;;
+	esac
+	_metric="$(uci -q get network.${OMR_TRACKER_INTERFACE}.metric)"
+	[ -n "$_metric" ] || return 0
+	[ -z "$(ip route show table "$_metric" dev "$OMR_TRACKER_DEVICE" 2>/dev/null)" ] || return 0
+	logger -t "omr-tracker" "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) link is back, restoring its routes"
+	/etc/init.d/mptcp reload "$OMR_TRACKER_DEVICE" >/dev/null 2>&1
+}
+
+# The failure backoff (OMR_TRACKER_FAILURE_INTERVAL), slept in full but in
+# one-second steps, so a carrier returning during it gets its routes back
+# right away rather than at the next cycle (see above).
+_failure_sleep() {
+	local _left="$1"
+	while [ "$_left" -gt 0 ] 2>/dev/null; do
+		_carrier_returned && _on_carrier_return
+		sleep 1
+		_left=$((_left - 1))
+	done
+}
+
 _post_tracking() {
 	for tracker_bin in /usr/share/omr/post-tracking.d/*; do
 		[ -x "$tracker_bin" ] && (
@@ -429,6 +484,8 @@ OMR_TRACKER_UP_STREAK=0
 
 # main loop
 while true; do
+	# the carrier may also come back while the previous cycle was probing
+	_carrier_returned && _on_carrier_return
 	# setup tracker variables
 	OMR_TRACKER_DEVICE_IP=
 	OMR_TRACKER_DEVICE_IP6=
@@ -1011,7 +1068,7 @@ while true; do
 			# by the failure backoff.
 			sleep "${OMR_TRACKER_INTERVAL:-2}"
 		else
-			[ -n "$OMR_TRACKER_FAILURE_INTERVAL" ] && sleep "$OMR_TRACKER_FAILURE_INTERVAL"
+			[ -n "$OMR_TRACKER_FAILURE_INTERVAL" ] && _failure_sleep "$OMR_TRACKER_FAILURE_INTERVAL"
 		fi
 	else
 		OMR_TRACKER_EVER_OK=1
