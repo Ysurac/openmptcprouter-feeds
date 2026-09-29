@@ -202,6 +202,17 @@ _quota_config_json() {
 		"$(_json_str "$scope")" "$(_json_str "$live_counters")"
 }
 
+# _begindate_in_future <YYYY-MM-DD>: true when the begindate window has not
+# opened yet. The live kernel delta is traffic from *today*, i.e. before such
+# a window, so it must not be added: a 1 KiB quota starting in 2099 read 2 KiB
+# and cut the WAN (bench case 89). Keep in sync with the daemon. An empty or malformed date is "not future".
+_begindate_in_future() {
+	local d
+	d="$(printf '%s' "$1" | tr -d '-')"
+	case "$d" in ''|*[!0-9]*) return 1 ;; esac
+	[ "$d" -gt "$(date +%Y%m%d)" ]
+}
+
 _quota_status_json() {
 	local iface="$1"
 	local type=$(_section_type "$iface")
@@ -234,7 +245,9 @@ _quota_status_json() {
 		tx_bytes=$(printf '%s' "$usage" | awk '{print $2}')
 		iface_rx=$(( rx_bytes / 1024 ))
 		iface_tx=$(( tx_bytes / 1024 ))
-		delta=$(_live_delta "$state_id" "$real_iface" "$iface_rx" "$iface_tx")
+		delta="0 0"
+		_begindate_in_future "$begindate" || \
+			delta=$(_live_delta "$state_id" "$real_iface" "$iface_rx" "$iface_tx")
 		rx_kib=$(( rx_kib + iface_rx + ${delta%% *} ))
 		tx_kib=$(( tx_kib + iface_tx + ${delta##* } ))
 	done

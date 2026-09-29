@@ -317,6 +317,17 @@ _vnstat_register() {
 	"$_VNSTAT_INIT" reload >/dev/null 2>&1
 }
 
+# _begindate_in_future <YYYY-MM-DD>: true when the begindate window has not
+# opened yet. The live kernel delta is traffic from *today*, i.e. before such
+# a window, so it must not be added: a 1 KiB quota starting in 2099 read 2 KiB
+# and cut the WAN (bench case 89). An empty or malformed date is "not future".
+_begindate_in_future() {
+	local d
+	d="$(printf '%s' "$1" | tr -d '-')"
+	case "$d" in ''|*[!0-9]*) return 1 ;; esac
+	[ "$d" -gt "$(date +%Y%m%d)" ]
+}
+
 # _interface_usage <iface>: "<rx KiB> <tx KiB> <complete>" for one metered
 # interface -- its vnstat sample with the live kernel delta added on top. The
 # delta is only trusted when the vnstat sample itself is complete: without a
@@ -329,9 +340,11 @@ _interface_usage() {
 	rx="${usage%% *}"; rest="${usage#* }"
 	tx="${rest%% *}"; complete="${rest##* }"
 	if [ "$complete" = "1" ]; then
-		delta="$(_live_delta "$dev" "$rx" "$tx")"
-		rx=$(( rx + ${delta%% *} ))
-		tx=$(( tx + ${delta##* } ))
+		if ! _begindate_in_future "$OMR_QUOTA_BEGINDATE"; then
+			delta="$(_live_delta "$dev" "$rx" "$tx")"
+			rx=$(( rx + ${delta%% *} ))
+			tx=$(( tx + ${delta##* } ))
+		fi
 	else
 		# no usable sample: vnstat may simply not know this device
 		_vnstat_register "$dev"
