@@ -98,6 +98,11 @@ global_multipath_settings() {
 			echo "net.mptcp.enabled=${multipath_status}" >> /etc/sysctl.d/zzz_openmptcprouter.conf
 		fi
 		ip mptcp limits set add_addr_accepted $mptcp_add_addr_accepted subflows $mptcp_subflows >/dev/null 2>&1
+		# The subflow limit decides how many socket buffers one MPTCP connection
+		# can hold open at once, and they all draw on the same net.ipv4.tcp_mem
+		# pool, so re-run the sizing now that the limit is known. Cheap and
+		# idempotent: it only rewrites its sysctl.d file when values change.
+		[ -x /bin/omr-net-mem ] && /bin/omr-net-mem --quiet >/dev/null 2>&1
 		#[ -z "$mptcp_debug" ] || sysctl -qew net.mptcp.mptcp_debug="$mptcp_debug"
 		[ -z "$mptcp_add_addr_timeout" ] || sysctl -qew net.mptcp.add_addr_timeout="$mptcp_add_addr_timeout"
 		[ -z "$mptcp_checksum" ] || sysctl -qew net.mptcp.checksum_enabled="$mptcp_checksum"

@@ -1,0 +1,332 @@
+#!/bin/sh
+#
+# Copyright (C) 2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+# omr-reserved-ports - keep the kernel's automatic port assignment away from
+# the ports this router's own services listen on.
+#
+# WHY THIS EXISTS
+#
+# Every outgoing connection the router makes itself (the proxy's connections
+# to the VPS, DNS, NTP, the trackers' probes, MPTCP subflows...) and every
+# bind(0) gets a local port picked by the kernel from
+# net.ipv4.ip_local_port_range. If that pick lands on a port a local service
+# is about to bind - because it is restarting, or starting late - the service
+# fails with EADDRINUSE, and nothing in the logs points at the real cause.
+#
+# /etc/sysctl.d/openmptcprouter.conf keeps that range wide (1024-65000) for
+# the most source ports, which means it covers the ports the router's own
+# services listen on: the proxy's local ports (1100, 1101, 1111), unbound
+# (5353), smartdns (5355), the VXLAN tunnel, ttyd (7681), the mqvpn control API
+# (9091), node-exporter (9101), usteerd (16720)... and whatever a user
+# configures - a WireGuard listen_port, an OpenVPN server. This script reads
+# them from UCI and lists them in net.ipv4.ip_local_reserved_ports; it is the
+# only thing keeping automatic assignment off them.
+#
+# Per Documentation/networking/ip-sysctl.rst, reserved ports are only skipped
+# by *automatic* assignment (connect(), bind() to port 0); an explicit bind()
+# to a reserved port still works. So reserving a port can never break the
+# service that owns it, and reserving a port outside the range is harmless.
+#
+# Writing the sysctl replaces the whole list, so this is the single owner of
+# it: add your own ports with
+#
+#   uci add_list openmptcprouter.settings.reserved_ports='51821'
+#   uci add_list openmptcprouter.settings.reserved_ports='40000-40010'
+#
+# rather than with a sysctl.d file of your own.
+#
+# USAGE
+#
+#   omr-reserved-ports        compute, apply and persist (default)
+#   omr-reserved-ports -s     show the ports and where each one comes from
+#   omr-reserved-ports -n     dry run: report, change nothing
+#   omr-reserved-ports --no-persist   apply without writing /etc/sysctl.d
+#   omr-reserved-ports -q     quiet
+#   omr-reserved-ports --configs      list the UCI configs this reads
+
+set -u
+
+PERSIST_FILE="/etc/sysctl.d/zz-omr-reserved-ports.conf"
+
+# Touched after every successful sync. /etc/init.d/omr-reserved-ports re-runs
+# this on config.change events, but reload_config's event is occasionally lost
+# (seen on the bench: a stock ttyd missed the same port change), so the
+# omr-schedule part 040-reserved-ports re-syncs when this is over 10 minutes
+# old. On tmpfs, so the periodic pass never writes to flash.
+STAMP_FILE="/tmp/omr-reserved-ports.stamp"
+
+# Every UCI config read below. /etc/init.d/omr-reserved-ports registers a
+# reload trigger for each one, so keep this in step with the _scan calls.
+CONFIGS="shadowsocks-libev shadowsocks-rust v2ray xray mqvpn prometheus-node-exporter-ucode ttyd uhttpd dropbear unbound smartdns network openvpn udp2raw usteer mlvpn ubond openmptcprouter"
+
+# Refuse to reserve more than this share of the ephemeral range: past that,
+# the router starts running out of source ports for its own connections.
+MAX_RESERVED_PCT=50
+
+ACTION="apply"
+QUIET=0
+PERSIST=1
+
+usage() {
+	sed -n '/^# USAGE/,/^$/p' "$0" | sed -e 's/^# \{0,1\}//' -e '$d'
+	exit "${1:-0}"
+}
+
+_say() { [ "$QUIET" -eq 1 ] || echo "$@"; }
+_warn() { echo "omr-reserved-ports: $*" >&2; }
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-s|--show)	ACTION="show" ;;
+		-n|--dry-run)	ACTION="dryrun" ;;
+		-a|--apply)	ACTION="apply" ;;
+		--no-persist)	PERSIST=0 ;;
+		-q|--quiet)	QUIET=1 ;;
+		--configs)	echo "$CONFIGS"; exit 0 ;;
+		-h|--help)	usage 0 ;;
+		*)		_warn "unknown option '$1'"; usage 1 ;;
+	esac
+	shift
+done
+
+WORK=$(mktemp -d /tmp/omr-reserved-ports.XXXXXX) || exit 1
+trap 'rm -rf "$WORK"' EXIT INT TERM
+FOUND="$WORK/found"		# "<port or range>\t<where it came from>"
+: > "$FOUND"
+
+#
+# _scan <config> <rule> [args]
+#
+# Reads "uci show <config>" and prints "<value>\t<config.section.option>" for
+# the options a rule selects. uci show emits each "cfg.section=type" line before
+# that section's options, which is what lets the typed rules work in one pass.
+#
+#   opt <regex>                 any option whose name matches, in any section
+#   typed <type> <opt> [dflt]   <opt> in sections of <type>; dflt when unset
+#   openvpn                     what an OpenVPN instance actually binds
+#   proto <proto> <opt> <dflt>  <opt> in sections whose "proto" is <proto>
+#
+_scan() {
+	local cfg="$1" rule="$2"
+	shift 2
+	uci -q show "$cfg" 2>/dev/null | awk -v cfg="$cfg" -v rule="$rule" \
+		-v a1="${1:-}" -v a2="${2:-}" -v a3="${3:-}" '
+	function emit(v, src,   n, i, t, parts) {
+		gsub(/\047/, "", v)
+		n = split(v, parts, /[ ,]+/)
+		for (i = 1; i <= n; i++) {
+			t = parts[i]
+			if (t == "") continue
+			# "addr:port" and "[v6]:port" (uhttpd listen_http/https)
+			if (t ~ /:[0-9]+$/) sub(/.*:/, "", t)
+			if (t ~ /^[0-9]+$/ || t ~ /^[0-9]+-[0-9]+$/)
+				printf "%s\t%s\n", t, src
+		}
+	}
+	{
+		eq = index($0, "=")
+		if (!eq) next
+		key = substr($0, 1, eq - 1)
+		val = substr($0, eq + 1)
+		n = split(key, k, ".")
+		if (n == 2) {
+			sec = k[2]; type[sec] = val; order[++nsec] = sec
+			next
+		}
+		if (n != 3) next
+		sec = k[2]; opt = k[3]
+		opts[sec, opt] = val
+		if (rule == "opt" && opt ~ a1)
+			emit(val, cfg "." sec "." opt)
+		else if (rule == "typed" && type[sec] == a1 && opt == a2)
+			emit(val, cfg "." sec "." opt)
+	}
+	END {
+		for (i = 1; i <= nsec; i++) {
+			sec = order[i]
+			if (rule == "typed" && a3 != "" && type[sec] == a1 && !((sec, a2) in opts))
+				emit(a3, cfg "." sec "." a2 " (default)")
+			if (rule == "proto" && opts[sec, "proto"] == "\047" a1 "\047") {
+				if ((sec, a2) in opts)
+					emit(opts[sec, a2], cfg "." sec "." a2)
+				else if (a3 != "")
+					emit(a3, cfg "." sec "." a2 " (default)")
+			}
+			if (rule == "openvpn" && type[sec] == "openvpn") {
+				# lport wins; otherwise a client binds its "port" locally
+				# unless nobind is set (a server always binds it).
+				if ((sec, "lport") in opts)
+					emit(opts[sec, "lport"], cfg "." sec ".lport")
+				else if ((sec, "port") in opts && opts[sec, "nobind"] != "\0471\047")
+					emit(opts[sec, "port"], cfg "." sec ".port")
+			}
+		}
+	}' >> "$FOUND"
+}
+
+# Proxy local ports (ss-redir, ss-local, ss-tunnel, the tracker sockets)
+_scan shadowsocks-libev opt '^local_port'
+_scan shadowsocks-rust opt '^local_port'
+# v2ray/xray: only inbounds listen; outbounds' "port" is the VPS's
+_scan v2ray typed inbound port
+_scan xray typed inbound port
+# Control and monitoring
+_scan mqvpn opt '^control_port$'
+_scan prometheus-node-exporter-ucode opt '^listen_port$'
+_scan ttyd typed ttyd port 7681
+_scan uhttpd typed uhttpd listen_http
+_scan uhttpd typed uhttpd listen_https
+_scan dropbear typed dropbear Port
+# DNS
+_scan unbound opt '^listen_port$'
+_scan smartdns typed smartdns port
+# Tunnels that listen on the router
+_scan network opt '^listen_port$'	# WireGuard
+# VXLAN (OMR's omrvxlan tunnel over the VPN). netifd leaves the port out when
+# it is unset, and the kernel then listens on its udp_port module default,
+# 8472 (drivers/net/vxlan/vxlan_core.c) - not the IANA 4789.
+_scan network proto vxlan port 8472
+_scan network proto vxlan6 port 8472
+_scan openvpn openvpn
+_scan udp2raw opt '^listen_port$'
+
+# usteerd talks to the other APs on a compile-time port (APMGR_PORT in usteer's
+# source); it cannot be moved, only protected.
+if [ -n "$(uci -q show usteer 2>/dev/null)" ]; then
+	printf '16720\tusteer (APMGR_PORT, fixed)\n' >> "$FOUND"
+fi
+
+# mlvpn/ubond bind one port per WAN from firstport+1 upwards
+for cfg in mlvpn ubond; do
+	first=$(uci -q get "$cfg.general.firstport" 2>/dev/null)
+	case "$first" in
+		''|*[!0-9]*) ;;
+		*) printf '%s-%s\t%s.general.firstport (+1..+16)\n' \
+			"$(( first + 1 ))" "$(( first + 16 ))" "$cfg" >> "$FOUND" ;;
+	esac
+done
+
+# Anything the user asked for
+for p in $(uci -q get openmptcprouter.settings.reserved_ports 2>/dev/null | tr ',' ' '); do
+	printf '%s\topenmptcprouter.settings.reserved_ports\n' "$p" >> "$FOUND"
+done
+
+#
+# Normalise: expand, keep what automatic assignment could ever pick
+# (ip_unprivileged_port_start..65535), dedupe, and fold back into ranges.
+#
+
+PRIV=$(sysctl -n net.ipv4.ip_unprivileged_port_start 2>/dev/null)
+case "$PRIV" in ''|*[!0-9]*) PRIV=1024 ;; esac
+
+RANGE=$(sysctl -n net.ipv4.ip_local_port_range 2>/dev/null | tr -s ' \t' ' ')
+RANGE_LO=${RANGE%% *}
+RANGE_HI=${RANGE##* }
+case "$RANGE_LO$RANGE_HI" in ''|*[!0-9]*) RANGE_LO=32768; RANGE_HI=60999 ;; esac
+
+awk -F '\t' -v lo="$PRIV" '
+	{
+		v = $1
+		if (v ~ /-/) { split(v, r, "-"); a = r[1] + 0; b = r[2] + 0 }
+		else { a = v + 0; b = a }
+		if (a > b) { t = a; a = b; b = t }
+		if (a < lo) a = lo
+		if (b > 65535) b = 65535
+		for (p = a; p <= b; p++) print p
+	}' "$FOUND" | sort -n -u > "$WORK/ports"
+
+LIST=$(awk '
+	NR == 1 { s = $1; e = $1; next }
+	$1 == e + 1 { e = $1; next }
+	{ out = out sep (s == e ? s : s "-" e); sep = ","; s = $1; e = $1 }
+	END { if (NR) print out sep (s == e ? s : s "-" e) }' "$WORK/ports")
+
+IN_RANGE=$(awk -v lo="$RANGE_LO" -v hi="$RANGE_HI" '$1 >= lo && $1 <= hi' "$WORK/ports" | wc -l)
+RANGE_SIZE=$(( RANGE_HI - RANGE_LO + 1 ))
+
+#
+# Report
+#
+
+_report() {
+	_say "ephemeral range   : ${RANGE_LO}-${RANGE_HI} (${RANGE_SIZE} ports)"
+	_say "reserved (current): $(sysctl -n net.ipv4.ip_local_reserved_ports 2>/dev/null)"
+	_say "reserved (new)    : ${LIST:-<none>}"
+	_say "                    ${IN_RANGE} of them inside the ephemeral range"
+	if [ "$QUIET" -eq 0 ] && [ -s "$FOUND" ]; then
+		_say ""
+		_say "sources:"
+		# Each line starts with the port, so a plain numeric sort orders it
+		# (busybox sort mishandles -t TAB -k1,1n and falls back to text order).
+		sort -n "$FOUND" | awk -F '\t' -v lo="$RANGE_LO" -v hi="$RANGE_HI" -v priv="$PRIV" '
+			{
+				split($1, r, "-"); a = r[1] + 0; b = (r[2] == "" ? a : r[2] + 0)
+				note = ""
+				if (b < priv) note = "  (privileged, never auto-assigned)"
+				else if (a <= hi && b >= lo) note = "  <- inside the ephemeral range"
+				printf "  %-12s %s%s\n", $1, $2, note
+			}'
+	fi
+}
+
+_report
+
+if [ "$RANGE_SIZE" -gt 0 ] && [ "$(( IN_RANGE * 100 / RANGE_SIZE ))" -gt "$MAX_RESERVED_PCT" ]; then
+	_warn "refusing: ${IN_RANGE} of ${RANGE_SIZE} ephemeral ports would be reserved (> ${MAX_RESERVED_PCT}%);"
+	_warn "the router would run out of source ports for its own connections"
+	exit 1
+fi
+
+[ "$ACTION" = "show" ] && exit 0
+[ "$ACTION" = "dryrun" ] && { _say ""; _say "(dry run, nothing changed)"; exit 0; }
+
+#
+# Apply. Writing replaces the whole list.
+#
+
+_say ""
+CURRENT=$(sysctl -n net.ipv4.ip_local_reserved_ports 2>/dev/null)
+if [ "$CURRENT" = "$LIST" ]; then
+	_say "net.ipv4.ip_local_reserved_ports already up to date"
+elif echo "$LIST" > /proc/sys/net/ipv4/ip_local_reserved_ports 2>/dev/null; then
+	_say "applied net.ipv4.ip_local_reserved_ports = ${LIST:-<none>}"
+else
+	_warn "failed to set net.ipv4.ip_local_reserved_ports"
+	exit 1
+fi
+touch "$STAMP_FILE" 2>/dev/null
+
+#
+# Persist, so the list is in place from /etc/init.d/sysctl onwards, before any
+# service starts. Only a value the kernel just accepted is written: busybox
+# "sysctl -p" stops at the first rejected value and drops the rest of the file
+# (issue #4370). An empty list removes the file rather than writing an empty
+# value.
+#
+
+[ "$PERSIST" -eq 1 ] || exit 0
+
+if [ -z "$LIST" ]; then
+	[ -f "$PERSIST_FILE" ] && rm -f "$PERSIST_FILE" && _say "removed $PERSIST_FILE"
+	exit 0
+fi
+
+NEW_CONTENT="# Generated by omr-reserved-ports - do not edit.
+# Ports this router's services listen on, kept out of automatic (ephemeral)
+# port assignment. Regenerated at boot and whenever one of the configs it reads
+# changes. Add your own with: uci add_list openmptcprouter.settings.reserved_ports=PORT
+net.ipv4.ip_local_reserved_ports = ${LIST}"
+
+if [ -f "$PERSIST_FILE" ] && [ "$(cat "$PERSIST_FILE" 2>/dev/null)" = "$NEW_CONTENT" ]; then
+	_say "$PERSIST_FILE already up to date"
+elif echo "$NEW_CONTENT" > "$PERSIST_FILE"; then
+	_say "persisted to $PERSIST_FILE"
+else
+	_warn "cannot write $PERSIST_FILE"
+	exit 1
+fi
+exit 0

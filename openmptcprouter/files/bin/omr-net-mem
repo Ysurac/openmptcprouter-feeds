@@ -1,0 +1,634 @@
+#!/bin/sh
+#
+# Copyright (C) 2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+# omr-net-mem - size the kernel's network memory limits (net.ipv4.tcp_mem,
+# net.ipv4.udp_mem, net.netfilter.nf_conntrack_max) from the RAM actually
+# present, with MPTCP's per-connection socket count taken into account.
+#
+# WHY THIS EXISTS
+#
+# /etc/sysctl.d/openmptcprouter.conf used to ship a fixed
+#
+#     net.ipv4.tcp_mem = 786432 1048576 26777216
+#     net.ipv4.udp_mem = 102400 204800 4194304
+#     net.netfilter.nf_conntrack_max = 262144
+#
+# These are page counts, so on a 1 GB router that is a pressure threshold of
+# 4 GiB and a hard ceiling of 102 GiB for TCP (16 GiB for UDP) - both far above
+# physical memory. The kernel enters "TCP memory pressure" (and starts pruning
+# receive queues / refusing to grow send buffers) when tcp_memory_allocated
+# crosses tcp_mem[1], and fails allocations above tcp_mem[2]. With thresholds
+# above RAM neither ever happens: socket memory just grows until the OOM killer
+# fires. Measured on the bench, that kills bpftune, omr-tracker and *netifd*,
+# which takes the whole network down.
+#
+# Sizing these from real RAM restores the kernel's own back-pressure: under
+# load buffers shrink and packets drop, instead of the box dying.
+#
+# nf_conntrack_max is the same mistake in a different subsystem. The kernel
+# derives it from RAM (nf_conntrack_init_start(): htable = RAM/16384, capped at
+# 65536 below 4 GB, and max = htable), which is 8192 on a 128 MB router and
+# 65536 on a 1 GB one. A fixed 262144 is 4x to 64x that, and at ~288 bytes per
+# entry (248 B object in a 256 B slab, plus the acct extension) a full table
+# needs ~75 MB - more than half the RAM of the small boards this runs on. It is
+# reached sooner than it looks, because openmptcprouter.conf also raises
+# nf_conntrack_tcp_timeout_established to 432000 s (5 days), overriding
+# OpenWrt's own 7440 s.
+#
+# WHY MPTCP MATTERS HERE
+#
+# net/mptcp/protocol.c sets, in struct proto mptcp_prot:
+#
+#     .memory_allocated = &net_aligned_data.tcp_memory_allocated,
+#     .memory_pressure  = &tcp_memory_pressure,
+#     .sysctl_mem       = sysctl_tcp_mem,
+#
+# so MPTCP does not have a budget of its own: every MPTCP-level socket (the
+# "msk") and every one of its subflows draws on the *same* tcp_mem pool.
+#
+# How much one MPTCP connection can hold was measured on the bench (kernel
+# 6.18, one connection over three 400 Mbit/s x 50 ms paths, receiving
+# application frozen with SIGSTOP so the kernel fills everything it may):
+#
+#   receive side: at most ONE tcp_rmem[2]. Every subflow advertises the
+#     connection-level window (mptcp_set_rwin() in options.c keeps a single
+#     msk->rcv_wnd_sent edge in DATA sequence space) and the sender only
+#     pushes new data inside it (mptcp_wnd_end()), so the whole connection has
+#     one window in flight. mptcp_rcv_space_adjust() does grow every subflow's
+#     rcvbuf *limit* to the msk's, but data is moved to the msk as it arrives:
+#     frozen, the msk held 98% of one tcp_rmem[2] and the subflows 0 bytes.
+#     A 4 MB tcp_rmem[2] held the whole three-path connection to ~380 Mbit/s.
+#
+#   send side: up to the SUM of the subflows' send buffers, each capped at
+#     tcp_wmem[2] (__mptcp_sync_sndbuf() sets the msk's sk_sndbuf to that
+#     sum). Each subflow only grows with its own path's congestion window
+#     (tcp_sndbuf_expand(): ~2 x cwnd), so the sum follows the connection's
+#     real rate x RTT; measured 2x tcp_wmem[2] with three capped subflows.
+#
+# Reaching 10 Gbit/s on one connection needs roughly 2 x rate x RTT of buffer
+# on the sending side and 1.5 x on the receiving one: about 125 MB at 50 ms,
+# 50 MB at 20 ms. openmptcprouter.conf's 128 MB max is that ceiling. So the
+# only cap this script applies is
+#
+#     tcp_rmem[2], tcp_wmem[2] <= tcp_mem pressure threshold / conn-share
+#
+# (conn-share 1: one socket at full stretch may reach the threshold, never
+# pass it). A router or VPS with 1 GB (pressure ~155 MB) keeps the full 128 MB
+# - 10 Gbit/s per connection up to ~50 ms RTT; a 128 MB router gets ~10 MB,
+# still ~2 Gbit/s at 20 ms, more than such hardware forwards. The cap only
+# ever lowers the value configured in /etc/sysctl.d, never raises it, and never
+# goes below the kernel's own default maximum for that RAM. Past the cap, the
+# correctly sized tcp_mem is what keeps many connections together in check:
+# the kernel enters pressure and prunes instead of running out of memory.
+#
+# USAGE
+#
+#   omr-net-mem                 size, apply and persist (default)
+#   omr-net-mem -n              dry run: report only, change nothing
+#   omr-net-mem -s              show current vs computed, change nothing
+#   omr-net-mem --no-socket-buffers  leave tcp_rmem/tcp_wmem as configured
+#   omr-net-mem --tcp-percent N   override the TCP share of RAM
+#   omr-net-mem --udp-percent N   override the UDP share of RAM
+#   omr-net-mem --ct-percent N    override the conntrack share of RAM
+#   omr-net-mem --no-conntrack    leave nf_conntrack_max/buckets alone
+#   omr-net-mem --conn-share N    one MPTCP conn may use 1/N of the TCP
+#                                 pressure threshold (default 1)
+#   omr-net-mem --ram-mb N        size for a box with N MB instead of this one
+#   omr-net-mem --subflows N      assume N additional subflows per connection
+#   omr-net-mem --rmem-mb N       assume a tcp_rmem/tcp_wmem max of N MB
+#
+# --ram-mb, --subflows and --rmem-mb only make sense together with -s/-n: they
+# answer "what would this router want with different hardware/limits" and
+# refuse to apply anything, since the numbers would not match the running
+# kernel.
+#
+# Values may also be pinned in UCI:
+#
+#   uci set openmptcprouter.settings.tcp_mem_percent='16'
+#   uci set openmptcprouter.settings.udp_mem_percent='12'
+#   uci set openmptcprouter.settings.tcp_mem_conn_share='1'
+#   uci set openmptcprouter.settings.tcp_socket_buffers='0'   (no cap)
+#   uci set openmptcprouter.settings.conntrack_percent='10'
+#
+# All arithmetic is done in pages and kB, never in bytes, so it stays inside
+# 32-bit range on arm32 busybox.
+
+set -u
+
+# SYSCTL_D/SYSCTL_CONF: tests only, point the sysctl.d scan at a fixture tree
+PERSIST_FILE="${SYSCTL_D:-/etc/sysctl.d}/zz-omr-net-mem.conf"
+
+# Kernel's own shares (net/ipv4/tcp.c tcp_init_mem(), net/ipv4/udp.c udp_init()):
+# tcp limit = RAM/16 (6.25%), udp limit = RAM/8 (12.5%); the triple is then
+# 3/4*limit, limit, 3/2*limit. We keep that ratio and only raise the base.
+KERNEL_TCP_DIV=16
+KERNEL_UDP_DIV=8
+
+# Kernel refuses to size below this (tcp_init_mem: max(limit, 128UL))
+MIN_LIMIT_PAGES=128
+
+# Bytes held by one conntrack entry: 256 B slab (248 B struct nf_conn) plus the
+# accounting extension OpenWrt enables (net.netfilter.nf_conntrack_acct=1).
+CT_ENTRY_BYTES=288
+# The kernel's own default: htable = RAM/16384, clamped to 65536 under 4 GB and
+# never below 1024; nf_conntrack_max = htable (max_factor 1).
+CT_KERNEL_DIV=16384
+# The value openmptcprouter.conf hardcoded for years; kept as the upper bound so
+# this never hands a big router less than it used to have.
+CT_LEGACY_MAX=262144
+
+ACTION="apply"
+DO_SOCKET_BUFFERS=""
+QUIET=0
+TCP_PCT=""
+UDP_PCT=""
+CONN_SHARE=""
+PERSIST=1
+FORCE_RAM_MB=""
+FORCE_SUBFLOWS=""
+FORCE_RMEM_MB=""
+CT_PCT=""
+DO_CONNTRACK=1
+
+usage() {
+	sed -n '/^# USAGE/,/^# All arithmetic/p' "$0" | sed -e 's/^# \{0,1\}//' -e '$d'
+	exit "${1:-0}"
+}
+
+_say() { [ "$QUIET" -eq 1 ] || echo "$@"; }
+_warn() { echo "omr-net-mem: $*" >&2; }
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-n|--dry-run)		ACTION="dryrun" ;;
+		-s|--show)		ACTION="show" ;;
+		-a|--apply)		ACTION="apply" ;;
+		--no-persist)		PERSIST=0 ;;
+		--socket-buffers)	DO_SOCKET_BUFFERS=1 ;;
+		--no-socket-buffers)	DO_SOCKET_BUFFERS=0 ;;
+		--tcp-percent)		TCP_PCT="${2:-}"; shift ;;
+		--udp-percent)		UDP_PCT="${2:-}"; shift ;;
+		--conn-share)		CONN_SHARE="${2:-}"; shift ;;
+		--ram-mb)		FORCE_RAM_MB="${2:-}"; shift ;;
+		--subflows)		FORCE_SUBFLOWS="${2:-}"; shift ;;
+		--rmem-mb)		FORCE_RMEM_MB="${2:-}"; shift ;;
+		--ct-percent)		CT_PCT="${2:-}"; shift ;;
+		--no-conntrack)		DO_CONNTRACK=0 ;;
+		-q|--quiet)		QUIET=1 ;;
+		-h|--help)		usage 0 ;;
+		*)			_warn "unknown option '$1'"; usage 1 ;;
+	esac
+	shift
+done
+
+#
+# Facts about this box
+#
+
+PAGE_KB=$(( $(getconf PAGESIZE 2>/dev/null || echo 4096) / 1024 ))
+[ "$PAGE_KB" -gt 0 ] 2>/dev/null || PAGE_KB=4
+
+if [ -n "$FORCE_RAM_MB" ] || [ -n "$FORCE_SUBFLOWS" ] || [ -n "$FORCE_RMEM_MB" ]; then
+	case "$ACTION" in
+		show|dryrun) ;;
+		*) _warn "--ram-mb/--subflows/--rmem-mb describe other hardware; use with -s or -n"; exit 1 ;;
+	esac
+fi
+
+if [ -n "$FORCE_RAM_MB" ]; then
+	case "$FORCE_RAM_MB" in
+		''|*[!0-9]*) _warn "--ram-mb must be a positive integer"; exit 1 ;;
+	esac
+	[ "$FORCE_RAM_MB" -gt 0 ] || { _warn "--ram-mb must be > 0"; exit 1; }
+	RAM_KB=$(( FORCE_RAM_MB * 1024 ))
+else
+	RAM_KB=$(awk '/^MemTotal:/ { print $2; exit }' /proc/meminfo 2>/dev/null)
+fi
+[ -n "${RAM_KB:-}" ] && [ "$RAM_KB" -gt 0 ] 2>/dev/null || {
+	_warn "cannot read MemTotal from /proc/meminfo"
+	exit 1
+}
+RAM_PAGES=$(( RAM_KB / PAGE_KB ))
+RAM_MB=$(( RAM_KB / 1024 ))
+
+# pages -> MB, for reporting only
+_mb() { echo $(( $1 * PAGE_KB / 1024 )); }
+
+# uci_get <option> -- empty when uci or the option is missing
+_uci_get() {
+	[ -x /sbin/uci ] || [ -x /bin/uci ] || return 0
+	uci -q get "openmptcprouter.settings.$1" 2>/dev/null
+}
+
+#
+# MPTCP: how many socket buffers can one connection hold open at once?
+#
+# "ip mptcp limits" reports the number of *additional* subflows allowed per
+# connection, so the total socket count is 1 (msk) + 1 (initial subflow) +
+# subflows_max. When MPTCP is off there is just the one plain TCP socket.
+#
+
+MPTCP_ENABLED=$(sysctl -n net.mptcp.enabled 2>/dev/null || echo 0)
+SUBFLOWS_MAX=""
+if [ -n "$FORCE_SUBFLOWS" ]; then
+	case "$FORCE_SUBFLOWS" in
+		''|*[!0-9]*) _warn "--subflows must be a non-negative integer"; exit 1 ;;
+	esac
+	MPTCP_ENABLED=1
+	SUBFLOWS_MAX="$FORCE_SUBFLOWS"
+	BUFS_PER_CONN=$(( SUBFLOWS_MAX + 2 ))
+elif [ "$MPTCP_ENABLED" = "1" ]; then
+	# UCI first: that is what /etc/init.d/mptcp applies with "ip mptcp limits
+	# set", and it only runs at START=50. Reading the live limit at START=12
+	# would see the kernel's default of 2, size for it, and have the mptcp
+	# init's re-run size again for the real value - two flash writes a boot.
+	# config_get's default in that init is 3.
+	if [ -x /sbin/uci ] || [ -x /bin/uci ]; then
+		SUBFLOWS_MAX=$(uci -q get network.globals.mptcp_subflows 2>/dev/null)
+		[ -n "$SUBFLOWS_MAX" ] || SUBFLOWS_MAX=3
+	else
+		SUBFLOWS_MAX=$(ip mptcp limits show 2>/dev/null | \
+			sed -n 's/.*subflows \([0-9][0-9]*\).*/\1/p' | head -1)
+	fi
+	case "$SUBFLOWS_MAX" in ''|*[!0-9]*) SUBFLOWS_MAX=2 ;; esac
+	BUFS_PER_CONN=$(( SUBFLOWS_MAX + 2 ))
+else
+	SUBFLOWS_MAX=0
+	BUFS_PER_CONN=1
+fi
+
+#
+# Shares of RAM
+#
+# The kernel picks 6.25% for TCP because it sizes for a general-purpose host
+# with a large userspace. A router is a dedicated appliance whose userspace is
+# small and bounded, so it can hand more to the network stack - but the ceiling
+# must stay well inside RAM, which is exactly what the old fixed values did not
+# do. UDP keeps the kernel's own 12.5%: OpenMPTCProuter tunnels over UDP
+# (glorytun-udp, mqvpn, openvpn-udp) and that share is already RAM-proportional.
+#
+
+if [ -z "$TCP_PCT" ]; then
+	TCP_PCT=$(_uci_get tcp_mem_percent)
+fi
+if [ -z "$TCP_PCT" ]; then
+	# Thresholds are deliberately below the nominal sizes: MemTotal is always
+	# short of the marketing figure (firmware reservations, the kernel image
+	# itself), e.g. a 1 GB board reports ~973 MB. Picking 1024 here would drop
+	# every 1 GB router into the 256 MB tier.
+	if [ "$RAM_MB" -ge 768 ]; then		# 1 GB and up
+		TCP_PCT=16
+	elif [ "$RAM_MB" -ge 192 ]; then	# 256 MB and up
+		TCP_PCT=12
+	else					# 128 MB and below
+		TCP_PCT=8
+	fi
+fi
+if [ -z "$UDP_PCT" ]; then
+	UDP_PCT=$(_uci_get udp_mem_percent)
+fi
+[ -n "$UDP_PCT" ] || UDP_PCT=12
+
+if [ -z "$CONN_SHARE" ]; then
+	CONN_SHARE=$(_uci_get tcp_mem_conn_share)
+fi
+[ -n "$CONN_SHARE" ] || CONN_SHARE=1
+
+if [ -z "$DO_SOCKET_BUFFERS" ]; then
+	case "$(_uci_get tcp_socket_buffers)" in
+		0|no|off|false) DO_SOCKET_BUFFERS=0 ;;
+		*) DO_SOCKET_BUFFERS=1 ;;
+	esac
+fi
+
+if [ -z "$CT_PCT" ]; then
+	CT_PCT=$(_uci_get conntrack_percent)
+fi
+[ -n "$CT_PCT" ] || CT_PCT=5
+
+for v in "$TCP_PCT" "$UDP_PCT" "$CONN_SHARE" "$CT_PCT"; do
+	case "$v" in
+		''|*[!0-9]*) _warn "percent/share values must be positive integers (got '$v')"; exit 1 ;;
+	esac
+	[ "$v" -gt 0 ] || { _warn "percent/share values must be > 0"; exit 1; }
+done
+[ "$TCP_PCT" -le 60 ] || { _warn "--tcp-percent $TCP_PCT is above the 60% safety limit"; exit 1; }
+[ "$UDP_PCT" -le 60 ] || { _warn "--udp-percent $UDP_PCT is above the 60% safety limit"; exit 1; }
+[ "$CT_PCT" -le 60 ] || { _warn "--ct-percent $CT_PCT is above the 60% safety limit"; exit 1; }
+
+#
+# The triples. Same 3/4 : 1 : 3/2 shape the kernel uses, so that the distance
+# between "stop growing" and "start dropping" keeps its usual proportions.
+#
+
+TCP_LIMIT=$(( RAM_PAGES * TCP_PCT / 100 ))
+UDP_LIMIT=$(( RAM_PAGES * UDP_PCT / 100 ))
+
+# Never end up below what the kernel would have chosen on its own.
+KTCP=$(( RAM_PAGES / KERNEL_TCP_DIV ))
+KUDP=$(( RAM_PAGES / KERNEL_UDP_DIV ))
+[ "$TCP_LIMIT" -ge "$KTCP" ] || TCP_LIMIT=$KTCP
+[ "$UDP_LIMIT" -ge "$KUDP" ] || UDP_LIMIT=$KUDP
+[ "$TCP_LIMIT" -ge "$MIN_LIMIT_PAGES" ] || TCP_LIMIT=$MIN_LIMIT_PAGES
+[ "$UDP_LIMIT" -ge "$MIN_LIMIT_PAGES" ] || UDP_LIMIT=$MIN_LIMIT_PAGES
+
+TCP_LOW=$(( TCP_LIMIT * 3 / 4 ))
+TCP_PRESSURE=$TCP_LIMIT
+TCP_MAX=$(( TCP_LIMIT * 3 / 2 ))
+
+UDP_LOW=$(( UDP_LIMIT * 3 / 4 ))
+UDP_PRESSURE=$UDP_LIMIT
+UDP_MAX=$(( UDP_LIMIT * 3 / 2 ))
+
+# Combined hard ceiling must stay clear of RAM, or the brake is useless again.
+COMBINED_MAX=$(( TCP_MAX + UDP_MAX ))
+if [ "$COMBINED_MAX" -ge "$(( RAM_PAGES * 3 / 4 ))" ]; then
+	_warn "computed ceilings ($(_mb $COMBINED_MAX) MB) exceed 75% of RAM; lower --tcp-percent/--udp-percent"
+	exit 1
+fi
+
+TCP_MEM="$TCP_LOW $TCP_PRESSURE $TCP_MAX"
+UDP_MEM="$UDP_LOW $UDP_PRESSURE $UDP_MAX"
+
+#
+# Conntrack. Unlike tcp_mem there is no pressure stage: at nf_conntrack_max the
+# kernel simply refuses new flows, so the number has to be one the box can
+# actually hold in slab.
+#
+
+CT_SUPPORTED=0
+[ -e /proc/sys/net/netfilter/nf_conntrack_max ] && CT_SUPPORTED=1
+
+# Kernel default: RAM/16384, clamped to 65536 below 4 GB, never below 1024.
+CT_KERNEL=$(( RAM_KB * 1024 / CT_KERNEL_DIV ))
+[ "$CT_KERNEL" -gt 65536 ] && CT_KERNEL=65536
+[ "$CT_KERNEL" -lt 1024 ] && CT_KERNEL=1024
+
+# What CT_PCT of RAM can actually hold, in entries.
+CT_MAX=$(( RAM_KB * CT_PCT / 100 * 1024 / CT_ENTRY_BYTES ))
+# Never below what the kernel would have chosen unprompted...
+[ "$CT_MAX" -ge "$CT_KERNEL" ] || CT_MAX=$CT_KERNEL
+# ...and never above the 262144 this package shipped for years. Only the
+# direction that was unaffordable needs changing: a board with enough RAM to
+# hold the old table keeps exactly the behaviour it had.
+[ "$CT_MAX" -le "$CT_LEGACY_MAX" ] || CT_MAX=$CT_LEGACY_MAX
+# The kernel keeps buckets == max so the average hash chain stays at 2 (each
+# flow is inserted twice, original and reply). The table is allocated eagerly,
+# but at 8 bytes per bucket that is ~3% of the entry budget.
+CT_BUCKETS=$CT_MAX
+
+CUR_CT_MAX=$(sysctl -n net.netfilter.nf_conntrack_max 2>/dev/null)
+CUR_CT_BUCKETS=$(sysctl -n net.netfilter.nf_conntrack_buckets 2>/dev/null)
+CT_MB=$(( CT_MAX * CT_ENTRY_BYTES / 1024 / 1024 ))
+
+#
+# Per-connection headroom, MPTCP-aware
+#
+
+CUR_TCP_MEM=$(sysctl -n net.ipv4.tcp_mem 2>/dev/null | tr -s ' \t' ' ')
+CUR_UDP_MEM=$(sysctl -n net.ipv4.udp_mem 2>/dev/null | tr -s ' \t' ' ')
+CUR_RMEM=$(sysctl -n net.ipv4.tcp_rmem 2>/dev/null | tr -s ' \t' ' ')
+CUR_WMEM=$(sysctl -n net.ipv4.tcp_wmem 2>/dev/null | tr -s ' \t' ' ')
+
+# _conf_value <key>: the value the sysctl.d files configure for <key>, i.e. the
+# last definition in the order /etc/init.d/sysctl applies them, leaving out
+# our own generated file. The cap works from this rather than from the live
+# value: after one run the live value is our own cap, and computing from it
+# would find nothing to lower, drop the lines from the persisted file, and let
+# the next boot put 128 MB back - and it could never raise the value again if
+# the subflow count went down.
+_conf_value() {
+	local f v="" nv
+	for f in "${SYSCTL_D:-/etc/sysctl.d}"/*.conf "${SYSCTL_CONF:-/etc/sysctl.conf}"; do
+		[ -f "$f" ] || continue
+		[ "$f" = "$PERSIST_FILE" ] && continue
+		nv=$(sed -e 's/#.*//' "$f" | awk -F= -v k="$1" '
+			{ key = $1; gsub(/[ \t]/, "", key) }
+			key == k { val = $2; gsub(/^[ \t]+|[ \t]+$/, "", val); gsub(/[ \t]+/, " ", val); last = val }
+			END { if (last != "") print last }')
+		[ -n "$nv" ] && v=$nv
+	done
+	echo "$v"
+}
+
+BASE_RMEM=$(_conf_value net.ipv4.tcp_rmem)
+BASE_WMEM=$(_conf_value net.ipv4.tcp_wmem)
+[ -n "$(echo "$BASE_RMEM" | tr -d ' ')" ] || BASE_RMEM="$CUR_RMEM"
+[ -n "$(echo "$BASE_WMEM" | tr -d ' ')" ] || BASE_WMEM="$CUR_WMEM"
+
+if [ -n "$FORCE_RMEM_MB" ]; then
+	case "$FORCE_RMEM_MB" in
+		''|*[!0-9]*) _warn "--rmem-mb must be a positive integer"; exit 1 ;;
+	esac
+	[ "$FORCE_RMEM_MB" -gt 0 ] || { _warn "--rmem-mb must be > 0"; exit 1; }
+	BASE_RMEM="4096 1048576 $(( FORCE_RMEM_MB * 1048576 ))"
+	BASE_WMEM="$BASE_RMEM"
+fi
+
+set -- $BASE_RMEM; B_RMIN=${1:-4096}; B_RDEF=${2:-131072}; B_RMAX=${3:-6291456}
+set -- $BASE_WMEM; B_WMIN=${1:-4096}; B_WDEF=${2:-16384};  B_WMAX=${3:-4194304}
+
+# The cap: one socket at its maximum may use at most 1/CONN_SHARE of the
+# pressure threshold. Not divided by the subflow count: a connection has one
+# receive window whatever its subflows (see the header), and its send side
+# grows with its real rate. Divided in pages first so it stays inside 32-bit
+# arithmetic; limited to 2 GB - 1, the largest value the sysctl takes.
+CAP_BYTES=$(( TCP_PRESSURE / CONN_SHARE * PAGE_KB ))
+[ "$CAP_BYTES" -le 2097151 ] || CAP_BYTES=2097151
+CAP_BYTES=$(( CAP_BYTES * 1024 ))
+
+# Never below the kernel's own default maximum for this RAM (tcp_init():
+# rmem max(128K, min(32M, RAM/128)), wmem max(64K, min(4M, RAM/128))).
+RAM_128=$(( RAM_KB * 8 ))
+K_RMAX=$RAM_128; [ "$K_RMAX" -gt 33554432 ] && K_RMAX=33554432; [ "$K_RMAX" -lt 131072 ] && K_RMAX=131072
+K_WMAX=$RAM_128; [ "$K_WMAX" -gt 4194304 ] && K_WMAX=4194304;   [ "$K_WMAX" -lt 65536 ] && K_WMAX=65536
+
+# _capped <configured max> <kernel floor> -> the max to use
+_capped() {
+	local m=$CAP_BYTES
+	[ "$m" -ge "$2" ] || m=$2
+	[ "$m" -le "$1" ] || m=$1
+	echo "$m"
+}
+
+if [ "$DO_SOCKET_BUFFERS" -eq 1 ]; then
+	N_RMAX=$(_capped "$B_RMAX" "$K_RMAX")
+	N_WMAX=$(_capped "$B_WMAX" "$K_WMAX")
+else
+	N_RMAX=$B_RMAX
+	N_WMAX=$B_WMAX
+fi
+# default <= max, always
+N_RDEF=$B_RDEF; [ "$N_RDEF" -le "$N_RMAX" ] || N_RDEF=$N_RMAX
+N_WDEF=$B_WDEF; [ "$N_WDEF" -le "$N_WMAX" ] || N_WDEF=$N_WMAX
+NEW_RMEM="$B_RMIN $N_RDEF $N_RMAX"
+NEW_WMEM="$B_WMIN $N_WDEF $N_WMAX"
+
+_bmb() { echo $(( ($1 + 524288) / 1048576 )); }
+
+# _gbps <buffer bytes> <rtt ms> -> "N.N": what one connection can carry with
+# that buffer, taking the sender's ~2 x rate x RTT need (the tighter side).
+_gbps() {
+	awk -v b="$1" -v r="$2" 'BEGIN { printf "%.1f", b * 8 / (2 * r / 1000) / 1e9 }'
+}
+# The smaller of the two maxima is what limits a connection
+LIMIT=$N_RMAX; [ "$N_WMAX" -lt "$LIMIT" ] && LIMIT=$N_WMAX
+# Send side of one connection if every one of its subflows ran its path at
+# full rate (the receive side is one tcp_rmem[2] at most)
+SUBFLOWS_TOTAL=$(( BUFS_PER_CONN > 1 ? BUFS_PER_CONN - 1 : 1 ))
+
+#
+# Report
+#
+
+_report() {
+	_say "RAM                : ${RAM_MB} MB (${RAM_PAGES} pages of ${PAGE_KB} kB)"
+	if [ "$MPTCP_ENABLED" = "1" ]; then
+		_say "MPTCP              : enabled, subflows_max=${SUBFLOWS_MAX}"
+		_say "                     -> up to $(( SUBFLOWS_MAX + 1 )) subflows per connection, one receive window"
+		_say "                        for all of them; msk and subflows share the tcp_mem pool"
+	else
+		_say "MPTCP              : disabled -> plain TCP, one socket per connection"
+	fi
+	_say ""
+	_say "                       low        pressure   max          (pages)"
+	_say "tcp_mem current    : ${CUR_TCP_MEM}"
+	_say "tcp_mem computed   : ${TCP_MEM}"
+	_say "                     $(_mb $TCP_LOW) MB / $(_mb $TCP_PRESSURE) MB / $(_mb $TCP_MAX) MB  (${TCP_PCT}% of RAM at pressure)"
+	_say "udp_mem current    : ${CUR_UDP_MEM}"
+	_say "udp_mem computed   : ${UDP_MEM}"
+	_say "                     $(_mb $UDP_LOW) MB / $(_mb $UDP_PRESSURE) MB / $(_mb $UDP_MAX) MB  (${UDP_PCT}% of RAM at pressure)"
+	if [ "$DO_CONNTRACK" -eq 1 ] && [ "$CT_SUPPORTED" -eq 1 ]; then
+		_say ""
+		_say "conntrack current  : max ${CUR_CT_MAX}, buckets ${CUR_CT_BUCKETS}"
+		_say "conntrack computed : max ${CT_MAX}, buckets ${CT_BUCKETS}"
+		_say "                     ${CT_MB} MB if full at ${CT_ENTRY_BYTES} B/entry (${CT_PCT}% of RAM);"
+		_say "                     kernel would have picked ${CT_KERNEL}"
+	elif [ "$DO_CONNTRACK" -eq 1 ]; then
+		_say ""
+		_say "conntrack          : nf_conntrack not loaded yet, skipped"
+	fi
+	_say ""
+	_say "Combined ceiling   : $(_mb $COMBINED_MAX) MB of ${RAM_MB} MB RAM"
+	_say ""
+	_say "tcp_rmem configured: ${B_RMIN} ${B_RDEF} ${B_RMAX}   (sysctl.d)"
+	_say "tcp_rmem computed  : ${NEW_RMEM}"
+	_say "tcp_wmem configured: ${B_WMIN} ${B_WDEF} ${B_WMAX}"
+	_say "tcp_wmem computed  : ${NEW_WMEM}"
+	if [ "$DO_SOCKET_BUFFERS" -eq 1 ]; then
+		if [ "$CAP_BYTES" -lt "$B_RMAX" ] || [ "$CAP_BYTES" -lt "$B_WMAX" ]; then
+			_say "                     max capped at $(_bmb $CAP_BYTES) MB = $(_mb $TCP_PRESSURE) MB pressure / ${CONN_SHARE}"
+		else
+			_say "                     enough RAM: configured max kept ($(_bmb $CAP_BYTES) MB would be allowed)"
+		fi
+	else
+		_say "                     (not capped: --no-socket-buffers / tcp_socket_buffers=0)"
+	fi
+	_say "Per connection     : ~$(_gbps $LIMIT 20) Gbit/s at 20 ms RTT, ~$(_gbps $LIMIT 50) at 50 ms, ~$(_gbps $LIMIT 100) at 100 ms"
+	_say "                     receive side holds at most one tcp_rmem max ($(_bmb $N_RMAX) MB);"
+	_say "                     send side up to ${SUBFLOWS_TOTAL} subflows x $(_bmb $N_WMAX) MB, only if every path runs flat out"
+}
+
+_report
+
+[ "$ACTION" = "show" ] && exit 0
+[ "$ACTION" = "dryrun" ] && { _say ""; _say "(dry run, nothing changed)"; exit 0; }
+
+#
+# Apply
+#
+
+RC=0
+_apply() {
+	# key, value
+	if ! sysctl -qw "$1=$2" 2>/dev/null; then
+		_warn "failed to set $1"
+		RC=1
+		return 1
+	fi
+	return 0
+}
+
+_say ""
+_apply net.ipv4.tcp_mem "$TCP_MEM" && _say "applied net.ipv4.tcp_mem = $TCP_MEM"
+_apply net.ipv4.udp_mem "$UDP_MEM" && _say "applied net.ipv4.udp_mem = $UDP_MEM"
+
+CT_APPLIED=0
+if [ "$DO_CONNTRACK" -eq 1 ] && [ "$CT_SUPPORTED" -eq 1 ]; then
+	# Buckets first: raising max above the table size only lengthens hash
+	# chains, and resizing the table rehashes every live entry.
+	#
+	# The kernel rounds the table size up to its own allocation granularity
+	# (asking for 177272 gives 177664 back), so an exact comparison would
+	# never match and every run - including every mptcp reload, which calls
+	# us - would rehash the live table for nothing. Accept anything within
+	# 5% of the target instead.
+	CT_BUCKET_SLOP=$(( CT_BUCKETS / 20 ))
+	if [ -z "$CUR_CT_BUCKETS" ] ||
+	   [ "$CUR_CT_BUCKETS" -lt "$(( CT_BUCKETS - CT_BUCKET_SLOP ))" ] ||
+	   [ "$CUR_CT_BUCKETS" -gt "$(( CT_BUCKETS + CT_BUCKET_SLOP ))" ]; then
+		_apply net.netfilter.nf_conntrack_buckets "$CT_BUCKETS" && \
+			_say "applied net.netfilter.nf_conntrack_buckets = $CT_BUCKETS"
+	fi
+	if _apply net.netfilter.nf_conntrack_max "$CT_MAX"; then
+		_say "applied net.netfilter.nf_conntrack_max = $CT_MAX"
+		CT_APPLIED=1
+	fi
+fi
+
+# Applied whether capped or not: with the cap disabled this puts the
+# configured value back after an earlier capped run.
+if [ "$CUR_RMEM" != "$NEW_RMEM" ]; then
+	_apply net.ipv4.tcp_rmem "$NEW_RMEM" && _say "applied net.ipv4.tcp_rmem = $NEW_RMEM"
+fi
+if [ "$CUR_WMEM" != "$NEW_WMEM" ]; then
+	_apply net.ipv4.tcp_wmem "$NEW_WMEM" && _say "applied net.ipv4.tcp_wmem = $NEW_WMEM"
+fi
+
+#
+# Persist
+#
+# Written to a file that sorts after openmptcprouter.conf, so it wins at boot
+# (/etc/init.d/sysctl walks /etc/sysctl.d/*.conf in glob order). Only settings
+# the running kernel just accepted are written: busybox "sysctl -p" stops at
+# the first write error and silently discards everything below it in the same
+# file (issue #4370), so a generated file must never contain a value that
+# could be rejected.
+#
+
+if [ "$PERSIST" -eq 1 ] && [ "$RC" -eq 0 ]; then
+	NEW_CONTENT="# Generated by omr-net-mem - do not edit.
+# Sized from ${RAM_MB} MB of RAM; MPTCP subflows_max=${SUBFLOWS_MAX}
+# (up to $(( SUBFLOWS_MAX + 1 )) subflows per connection share the tcp_mem pool).
+# Re-run 'omr-net-mem' after changing RAM or network.globals.mptcp_subflows.
+net.ipv4.tcp_mem = ${TCP_MEM}
+net.ipv4.udp_mem = ${UDP_MEM}"
+	# nf_conntrack may not be loaded when /etc/init.d/sysctl runs; busybox
+	# sysctl skips a key that does not exist and carries on, so writing these
+	# is safe either way, and /etc/init.d/mptcp re-runs us once it is up.
+	[ "$CT_APPLIED" -eq 1 ] && NEW_CONTENT="${NEW_CONTENT}
+net.netfilter.nf_conntrack_buckets = ${CT_BUCKETS}
+net.netfilter.nf_conntrack_max = ${CT_MAX}"
+	# Always written when capping, so the file is identical from run to run
+	# and nothing is rewritten on flash unless a value really changes.
+	[ "$DO_SOCKET_BUFFERS" -eq 1 ] && NEW_CONTENT="${NEW_CONTENT}
+net.ipv4.tcp_rmem = ${NEW_RMEM}
+net.ipv4.tcp_wmem = ${NEW_WMEM}"
+
+	# Only touch flash when the content actually changes.
+	if [ ! -f "$PERSIST_FILE" ] || [ "$(cat "$PERSIST_FILE" 2>/dev/null)" != "$NEW_CONTENT" ]; then
+		echo "$NEW_CONTENT" > "$PERSIST_FILE" || {
+			_warn "cannot write $PERSIST_FILE"
+			RC=1
+		}
+		[ "$RC" -eq 0 ] && _say "persisted to $PERSIST_FILE"
+	else
+		_say "$PERSIST_FILE already up to date"
+	fi
+fi
+
+exit "$RC"

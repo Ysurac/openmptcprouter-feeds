@@ -1,0 +1,46 @@
+#!/bin/sh /etc/rc.common
+#
+# Copyright (C) 2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# Keep net.ipv4.ip_local_reserved_ports in step with the ports the router's
+# services are configured to listen on (see /bin/omr-reserved-ports).
+#
+# START=12 runs right after OpenWrt's /etc/init.d/sysctl (START=11) and before
+# any of the services whose ports are being protected.
+#
+# The run itself is a one-shot procd instance on purpose: procd drops a service
+# that registers no instance at all, and its reload triggers go with it. With
+# the (exited) instance on record the triggers stay, so a port changed in LuCI
+# is reserved as soon as the config is applied rather than at the next boot.
+# reload_service runs the script directly: re-submitting the same instance
+# definition would be a no-op for procd.
+#
+# The config.change event behind those triggers is occasionally lost, so
+# /usr/share/omr/schedule.d/040-reserved-ports re-syncs every 10 minutes as a
+# fallback.
+
+START=12
+USE_PROCD=1
+
+BIN=/bin/omr-reserved-ports
+
+start_service() {
+	[ -x "$BIN" ] || return 0
+	procd_open_instance
+	procd_set_param command "$BIN" --quiet
+	procd_close_instance
+}
+
+reload_service() {
+	[ -x "$BIN" ] || return 0
+	"$BIN" --quiet || logger -t omr-reserved-ports "update failed"
+}
+
+service_triggers() {
+	local cfg
+	[ -x "$BIN" ] || return 0
+	# The script owns the list of configs it reads
+	for cfg in $("$BIN" --configs); do
+		procd_add_reload_trigger "$cfg"
+	done
+}

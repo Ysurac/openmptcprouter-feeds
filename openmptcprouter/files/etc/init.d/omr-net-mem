@@ -1,0 +1,38 @@
+#!/bin/sh /etc/rc.common
+#
+# Copyright (C) 2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# Size net.ipv4.tcp_mem / net.ipv4.udp_mem from the RAM actually present.
+#
+# START=12 puts this right after OpenWrt's own /etc/init.d/sysctl (START=11),
+# which is what walks /etc/sysctl.d/*.conf. On a first boot there is no
+# generated zz-omr-net-mem.conf yet, so without this the router would spend its
+# whole first boot on whatever openmptcprouter.conf left behind; from the second
+# boot on, sysctl already applies the generated file and this run only re-checks
+# that it still matches the hardware.
+#
+# The MPTCP subflow limit is not set until /etc/init.d/mptcp (START=50) runs, so
+# that init calls omr-net-mem again once "ip mptcp limits set" has been applied.
+# Only the per-connection report and the optional --socket-buffers clamp depend
+# on the subflow count; tcp_mem itself is sized from RAM alone.
+
+START=12
+
+BIN=/bin/omr-net-mem
+
+boot() {
+	start "$@"
+}
+
+start() {
+	[ -x "$BIN" ] || return 0
+	"$BIN" --quiet || logger -t omr-net-mem "sizing failed"
+}
+
+stop() {
+	return 0
+}
+
+reload() {
+	start
+}
