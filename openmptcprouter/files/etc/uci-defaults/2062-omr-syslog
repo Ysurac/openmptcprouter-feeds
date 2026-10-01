@@ -16,4 +16,36 @@ if [ -x /etc/init.d/syslog-ng ] && [ -x /etc/init.d/log ]; then
 		[ -S /dev/log ] || /etc/init.d/syslog-ng restart
 	fi
 fi
+# syslog-ng's file() destination has no size limit: /var/log/messages lives
+# on tmpfs and a log flood fills it (an orphaned mqvpn wrote ~4.9M lines in
+# 3.5 min on 2026-09-04 and took DNS down with it). omr-schedule's
+# 005-logsize trims the file to system.log_size once a minute, give
+# syslog-ng a hard cap for the time in between: 4x log_size, twice the trim
+# threshold so it only fires on a flood, and at most 1/8 of the tmpfs
+# (rotations(1) keeps messages + messages.1, so 1/4 for both). 005-logsize
+# folds messages.1 back in, since logread only reads messages.
+# Only the stock one-line destination is changed, an existing logrotate() or
+# a hand-written destination is left alone.
+_omr_sngconf="${OMR_SYSLOG_CONF:-/etc/syslog-ng.conf}"
+if [ -f "$_omr_sngconf" ] && command -v syslog-ng >/dev/null 2>&1 &&
+    grep -q '^[[:space:]]*file("/var/log/messages");' "$_omr_sngconf"; then
+	_omr_log_size="$(uci -q get system.@system[0].log_size)"
+	case "$_omr_log_size" in
+		''|*[!0-9]*) _omr_log_size=128 ;;
+	esac
+	[ "$_omr_log_size" -lt 16 ] && _omr_log_size=16
+	_omr_cap="$((_omr_log_size * 1024 * 4))"
+	_omr_fs_total_kb="$(df -k /tmp 2>/dev/null | awk 'NR==2{print $2+0}')"
+	if [ "${_omr_fs_total_kb:-0}" -gt 0 ] && [ "$_omr_cap" -gt "$((_omr_fs_total_kb * 1024 / 8))" ]; then
+		_omr_cap="$((_omr_fs_total_kb * 1024 / 8))"
+	fi
+	_omr_sngtmp="${_omr_sngconf}.omr-logrotate"
+	sed 's|^\([[:space:]]*\)file("/var/log/messages");|\1file("/var/log/messages" logrotate(enable(yes) size('"$_omr_cap"') rotations(1)));|' "$_omr_sngconf" > "$_omr_sngtmp"
+	# a syslog-ng without logrotate() keeps the stock destination
+	if [ -s "$_omr_sngtmp" ] && syslog-ng --syntax-only -f "$_omr_sngtmp" >/dev/null 2>&1; then
+		mv "$_omr_sngtmp" "$_omr_sngconf"
+		pidof syslog-ng >/dev/null 2>&1 && /etc/init.d/syslog-ng reload >/dev/null 2>&1
+	fi
+	rm -f "$_omr_sngtmp"
+fi
 exit 0
