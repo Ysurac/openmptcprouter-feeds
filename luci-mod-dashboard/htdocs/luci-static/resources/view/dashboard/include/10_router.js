@@ -66,8 +66,7 @@ return baseclass.extend({
 			var container_internet_vps = E('div');
 
 			for(var idx in data['vps']) {
-				var classname = ver,
-					suppelements = '',
+				var suppelements = '',
 					visible = data['vps'][idx].visible;
 				if ('title' === idx) {
 					container_internet_vps.appendChild(
