@@ -57,7 +57,7 @@ static int parse_cb(struct nl_msg *msg, void *arg)
 {
 	struct nlmsghdr *nlh = nlmsg_hdr(msg);
 	struct genlmsghdr *gnlh = nlmsg_data(nlh);
-	struct nlattr *attrs[FAST_CLASSIFIER_A_MAX];
+	struct nlattr *attrs[FAST_CLASSIFIER_A_MAX + 1];
 
 	genlmsg_parse(nlh, 0, attrs, FAST_CLASSIFIER_A_MAX, fast_classifier_genl_policy);
 
