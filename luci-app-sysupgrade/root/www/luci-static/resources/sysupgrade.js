@@ -169,7 +169,7 @@ function upgrade_check() {
         .then(response => response.json())
         .then(response => {
             var branches = response["branches"]
-            for (i in branches) {
+            for (var i in branches) {
                 // handle snapshots in a special way - as always
                 if (current_version == "snapshot" && branches[i]["latest"] == "snapshot") {
                     candidates.unshift(branches[i])
@@ -247,7 +247,7 @@ function upgrade_request() {
 function upgrade_request_callback(response) {
     var sysupgrade_file = "";
     console.log(response)
-    for (i in response.images) {
+    for (var i in response.images) {
         if (response.images[i].type == "sysupgrade") {
             sysupgrade_file = response.images[i].name;
         }
