@@ -58,7 +58,7 @@ return view.extend({
 					E('th', { 'class': 'th', 'style': 'width:10%' }, [ _('L4') ]),
 					E('th', { 'class': 'th', 'style': 'width:18%' }, [ _('Source') ]),
 					E('th', { 'class': 'th', 'style': 'width:18%' }, [ _('Destination') ]),
-					E('th', { 'class': 'th', 'style': 'width:8%', 'style': 'text-align:right' }, [ _('Packets') ]),
+					E('th', { 'class': 'th', 'style': 'width:8%;text-align:right' }, [ _('Packets') ]),
 					E('th', { 'class': 'th', 'style': 'width:6%' }, [ _('State') ]),
 				])
 			]),
