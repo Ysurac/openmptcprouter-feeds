@@ -165,6 +165,12 @@ return L.view.extend({
 	o.depends("mptcp_scheduler", "bpf_weight");
 	o.depends("mptcp_scheduler", "bpf_weight_rr");
 	o.depends("mptcp_scheduler", "bpf_burstweight");
+	/* Every option below that depends() on another field keeps its stored
+	 * value while hidden: form.js otherwise removes it on any save, so a
+	 * save made with another scheduler or with mptcp_pm_type=0 silently
+	 * dropped e.g. mptcpd_enable / mptcp_force_multipath / this pin sync
+	 * (the #4349/#4352 option-drop family). */
+	o.retain = true;
 
 	if (parseFloat(boardinfo.kernel.substring(0,4)) < 6) {
 		o = s.option(form.Value, "mptcp_syn_retries", _("Multipath TCP SYN retries"));
@@ -211,18 +217,21 @@ return L.view.extend({
 		o.value("0", _("enable"));
 		o.value("1", _("disable"));
 		o.default = "0";
+		o.retain = true;
 
 		o = s.option(form.ListValue, "mptcp_force_multipath", _("Force Multipath configuration"));
 		o.depends("mptcp_pm_type","1");
 		o.value("1", _("enable"));
 		o.value("0", _("disable"));
 		o.default = "1";
+		o.retain = true;
 
 		o = s.option(form.ListValue, "mptcpd_enable", _("Enable MPTCPd"));
 		o.depends("mptcp_pm_type","1");
 		o.value("enable", _("enable"));
 		o.value("disable", _("disable"));
 		o.default = "disable";
+		o.retain = true;
 
 		o = s.option(form.DynamicList, "mptcpd_path_manager", _("MPTCPd path managers"));
 		o.load = function(section_id) {
@@ -234,6 +243,7 @@ return L.view.extend({
 			}, this));
 		};
 		o.depends("mptcp_pm_type","1");
+		o.retain = true;
 
 		o = s.option(form.DynamicList, "mptcpd_plugins", _("MPTCPd plugins"));
 		o.load = function(section_id) {
@@ -245,6 +255,7 @@ return L.view.extend({
 			}, this));
 		};
 		o.depends("mptcp_pm_type","1");
+		o.retain = true;
 
 		o = s.option(form.DynamicList, "mptcpd_addr_flags", _("MPTCPd Address annoucement flags"));
 		o.value("subflow","subflow");
@@ -252,12 +263,14 @@ return L.view.extend({
 		o.value("backup","backup");
 		o.value("fullmesh","fullmesh");
 		o.depends("mptcp_pm_type","1");
+		o.retain = true;
 
 		o = s.option(form.DynamicList, "mptcpd_notify_flags", _("MPTCPd Address notification flags"));
 		o.value("existing","existing");
 		o.value("skip_link_local","skip_link_local");
 		o.value("skip_loopback","skip_loopback");
 		o.depends("mptcp_pm_type","1");
+		o.retain = true;
 
 		o = s.option(form.Value, "mptcp_subflows", _("Max subflows"),_("specifies the maximum number of additional subflows allowed for each MPTCP connection"));
 		o.datatype = "uinteger";
