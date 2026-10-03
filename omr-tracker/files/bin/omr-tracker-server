@@ -139,13 +139,20 @@ _disable_current() {
 	omr_state_set openmptcprouter "${serv}" current 0
 }
 
+# Set a proxy/VPN option and flag it in $changes, only if the value differs:
+# the commit and restart at the end of a check are for this tracker's edits
+_set_option() {
+	[ "$(uci -q get "$1")" = "$2" ] && return
+	uci -q set "$1=$2" && changes="1"
+}
+
 _disable_redir() {
 	local redir="$1"
 	local serverdisable="$2"
 	local shadowsocks="$3"
 	config_get serverss "$redir" server
 	if [ "$serverss" = "$serverdisable" ]; then
-		uci -q set "${shadowsocks}"."${redir}".disabled=1
+		_set_option "${shadowsocks}.${redir}.disabled" 1
 	fi
 }
 
@@ -154,7 +161,7 @@ _enable_redir() {
 	local shadowsocks="$2"
 	config_get serverss "$redir" server
 	if [ "$serverss" = "sss${count}" ]; then
-		uci -q set "${shadowsocks}"."${redir}".disabled=0
+		_set_option "${shadowsocks}.${redir}.disabled" 0
 	fi
 }
 
@@ -356,9 +363,9 @@ _check_master() {
 				if [ "${_srv_prev_up[$state_key]}" != "1" ] || [ "$changes" = "1" ]; then
 					_proxy=$(uci -q get openmptcprouter.settings.proxy)
 					_vpn=$(uci -q get openmptcprouter.settings.vpn)
-					[ "$_proxy" = "shadowsocks-rust" ] && uci -q set shadowsocks-rust.sss${count}.disabled=0
-					[ "$_proxy" = "shadowsocks" ]      && uci -q set shadowsocks-libev.sss${count}.disabled=0
-					[ "$_vpn"   = "openvpn" ]          && uci -q set openvpn.omr.enabled=1
+					[ "$_proxy" = "shadowsocks-rust" ] && _set_option shadowsocks-rust.sss${count}.disabled 0
+					[ "$_proxy" = "shadowsocks" ]      && _set_option shadowsocks-libev.sss${count}.disabled 0
+					[ "$_vpn"   = "openvpn" ]          && _set_option openvpn.omr.enabled 1
 					_enable_ss_redirs
 					[ -n "$ip" ] && [ -n "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
 						uci -q del_list openmptcprouter.${name}.ip_down="$ip"
@@ -391,12 +398,15 @@ _check_master() {
 		config_list_foreach "$1" ip _do_check_ip
 		[ "$oneserverup" = "0" ] && omr_state_set openmptcprouter ${name} current '0'
 		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
-		# Commit only what actually changed: a no-op `uci commit` still forks
-		# and rewrites nothing but costs file locking and IO every cycle
-		[ -n "$(uci -q changes shadowsocks-libev)" ] && { changes="1"; uci -q commit shadowsocks-libev; }
-		[ -n "$(uci -q changes shadowsocks-rust)" ]  && { changes="1"; uci -q commit shadowsocks-rust; }
-		[ -n "$(uci -q changes openvpn)" ]           && { changes="1"; uci -q commit openvpn; }
-		[ "$changes" = "1" ] && _restart_proxy_services
+		# Commit and restart only after an edit of this tracker: other scripts
+		# can have edits pending in the shared /tmp/.uci (omr-schedule's
+		# interface lists, for one), and those are no server change
+		[ "$changes" = "1" ] && {
+			uci -q commit shadowsocks-libev
+			uci -q commit shadowsocks-rust
+			uci -q commit openvpn
+			_restart_proxy_services
+		}
 		return
 	}
 }
@@ -446,8 +456,8 @@ _check_backup() {
 				# transition or a config fix needs the redir/ip_down/alert work
 				if [ "${_srv_prev_up[$state_key]}" != "1" ] || [ "$changes" = "1" ]; then
 					_proxy=$(uci -q get openmptcprouter.settings.proxy)
-					[ "$_proxy" = "shadowsocks-rust" ] && uci -q set shadowsocks-rust.sss${count}.disabled=0
-					[ "$_proxy" = "shadowsocks" ]      && uci -q set shadowsocks-libev.sss${count}.disabled=0
+					[ "$_proxy" = "shadowsocks-rust" ] && _set_option shadowsocks-rust.sss${count}.disabled 0
+					[ "$_proxy" = "shadowsocks" ]      && _set_option shadowsocks-libev.sss${count}.disabled 0
 					_enable_ss_redirs
 					[ -n "$ip" ] && [ -n "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
 						uci -q del_list openmptcprouter.${name}.ip_down="$ip"
@@ -483,11 +493,13 @@ _check_backup() {
 		config_list_foreach "$1" ip _do_check_ip
 		[ "$oneserverup" = "0" ] && omr_state_set openmptcprouter ${name} current '0'
 		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
-		# Commit only what actually changed (see _check_master)
-		[ -n "$(uci -q changes shadowsocks-libev)" ] && { changes="1"; uci -q commit shadowsocks-libev; }
-		[ -n "$(uci -q changes shadowsocks-rust)" ]  && { changes="1"; uci -q commit shadowsocks-rust; }
-		[ -n "$(uci -q changes openvpn)" ]           && { changes="1"; uci -q commit openvpn; }
-		[ "$changes" = "1" ] && _restart_proxy_services
+		# Only after an edit of this tracker (see _check_master)
+		[ "$changes" = "1" ] && {
+			uci -q commit shadowsocks-libev
+			uci -q commit shadowsocks-rust
+			uci -q commit openvpn
+			_restart_proxy_services
+		}
 		[ "$server_ping" = true ] && return
 	}
 }
