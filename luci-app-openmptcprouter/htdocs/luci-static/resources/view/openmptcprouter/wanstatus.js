@@ -62,6 +62,14 @@ return view.extend({
 		return str.slice(0, -num) + new Array(num + 1).join(replace);
 	},
 
+	anonymizeHost: function(host) {
+		/* An IP keeps its start like other masked IPs; a hostname is masked
+		 * completely, as its start is what identifies it (#1289) */
+		if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || host.indexOf(':') !== -1)
+			return this.replaceLastNChars(host, 'x', 6);
+		return this.replaceLastNChars(host, 'x', host.length);
+	},
+
 	formatBytes: function(bytes) {
 		bytes = Number(bytes) || 0;
 		if (bytes < 1024) return bytes + ' B';
@@ -140,12 +148,14 @@ return view.extend({
 		var ipaddr = wan.ipaddr || '';
 		var ip6addr = wan.ip6addr || '';
 		var wanip6 = wan.wanip6 || '';
+		var phonenumber = wan.phonenumber || '';
 		if (anonymize) {
 			if (wanip && !this.testPrivateIP(wanip)) wanip = this.replaceLastNChars(wanip, 'x', 6);
 			if (gateway && !this.testPrivateIP(gateway)) gateway = this.replaceLastNChars(gateway, 'x', 6);
 			if (ipaddr && !this.testPrivateIP(ipaddr)) ipaddr = this.replaceLastNChars(ipaddr, 'x', 6);
 			if (ip6addr) ip6addr = this.replaceLastNChars(ip6addr, 'x', 6);
 			if (wanip6) wanip6 = this.replaceLastNChars(wanip6, 'x', 6);
+			if (phonenumber) phonenumber = this.replaceLastNChars(phonenumber, 'x', 6);
 		}
 
 		var details = '';
@@ -159,7 +169,7 @@ return view.extend({
 		details += _('multipath:') + ' ' + this.esc(wan.multipath || 'off') + '<br />';
 		if (wan.operator) details += _('operator:') + ' <strong>' + this.esc(wan.operator) + '</strong><br />';
 		if (wan.whois && wan.whois !== 'unknown') details += _('ASN:') + ' ' + this.esc(wan.whois) + '<br />';
-		if (wan.phonenumber) details += _('number:') + ' <strong>' + this.esc(wan.phonenumber) + '</strong><br />';
+		if (phonenumber) details += _('number:') + ' <strong>' + this.esc(phonenumber) + '</strong><br />';
 		if (wan.donglestate) details += _('state:') + ' <strong>' + this.esc(wan.donglestate) + '</strong><br />';
 
 		var badge = '';
@@ -255,9 +265,10 @@ return view.extend({
 
 		var serverAddr = omr.service_addr || '';
 		var vpsHostname = omr.vps_hostname || _('Server');
-		if (anonymize && serverAddr) serverAddr = this.replaceLastNChars(serverAddr, 'x', 6);
-		if (anonymize && vpsHostname && !this.testPrivateIP(vpsHostname) && /^\d+\.\d+\.\d+\.\d+$/.test(vpsHostname))
-			vpsHostname = this.replaceLastNChars(vpsHostname, 'x', 6);
+		if (anonymize && serverAddr) serverAddr = this.anonymizeHost(serverAddr);
+		/* 'Server' is what the API returns when the VPS name is unknown */
+		if (anonymize && omr.vps_hostname && omr.vps_hostname !== 'Server' && !this.testPrivateIP(vpsHostname))
+			vpsHostname = this.anonymizeHost(vpsHostname);
 		var serverTitle = String.format('%s (%s)', this.esc(vpsHostname), this.esc(serverAddr || '-'));
 		var serverStatus = '';
 		if (!omr.service_addr) serverStatus += _('No server defined') + '<br />';
