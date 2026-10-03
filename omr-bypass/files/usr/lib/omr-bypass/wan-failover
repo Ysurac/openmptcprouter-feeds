@@ -1,0 +1,503 @@
+#!/bin/sh
+# Copyright (C) 2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# Ordered output WAN lists with failover, for omr-bypass.
+#
+# 1. Bypass rules (domains, ips, ports, macs, lan_ip, asns, dpis, categories)
+#    whose "interface" is a list: the init script turns each distinct list
+#    into a WAN group,
+#
+#   config wangroup 'grp_<hash>'      # generated, do not edit
+#       option id  '9001'             # bypass mark 0x4539<id> / 0x6539<id>
+#       list   wan 'wan2'             # first usable entry wins; "default" is
+#       list   wan 'default'          # the MPTCP master, "none" blocks
+#
+#    and this script keeps "fwmark 0x4539<id> lookup <table of the WAN in
+#    use>" (priority 1, next to the per-WAN bypass rules) pointing at the
+#    first usable entry, or "unreachable" when there is none, exactly as a
+#    single WAN that is down behaves. The rules' sets and fw4 marks never
+#    change on a failover.
+#
+# 2. Source interface policies: everything that enters the router on a given
+#    LAN-side interface leaves through one chosen WAN, with its own ordered
+#    failover list, instead of the aggregated (VPS) path.
+#
+#   config src_intf
+#       option enabled  '1'
+#       list   source   'guest'        # network interface(s) traffic comes in on
+#       list   wan      'wan2'         # preferred WAN first, then failover order
+#       list   wan      'wan3'
+#       option fallback 'default'      # all WANs down: default (normal OMR path) | block
+#       option ipv6     'default'      # default (normal OMR path) | policy | block
+#
+# It reuses the per-WAN bypass marks the init script sets up
+# (0x4539<metric> -> table <metric>, 0x6539<metric> -> table 6<metric>), so
+# the proxies' "meta mark ... accept" exemptions and the reply-path chain
+# work unchanged. Only the mark a source device gets is decided here: one
+# nft chain, rebuilt in a single transaction whenever the chosen WAN of a
+# policy changes (tracker status change, ifup/ifdown, config reload).
+#
+#   wan-failover apply [--force]   recompute and apply (no-op when unchanged)
+#   wan-failover firewall          fw4 include: fw4 rebuilt the table, re-apply
+#   wan-failover event <wan> <OK|ERROR>   omr-tracker status change
+#   wan-failover hotplug <iface>   netifd ifup/ifdown/ifupdate
+#   wan-failover stop              remove the chains, sets and group ip rules
+#   wan-failover status            print "<section> <active>" per policy and group
+
+. /lib/functions.sh
+
+STATE_DIR="/var/run/omr-bypass-failover"
+NFT_FILE="$STATE_DIR/rules.nft"
+STATUS_FILE="$STATE_DIR/status"
+GROUPS_FILE="$STATE_DIR/groups"
+CHAIN="omr_bypass_srcif"
+GRP_CHAIN="omr_bypass_grp"
+SKIP4="omr_srcif_skip4"
+SKIP6="omr_srcif_skip6"
+
+_log() {
+	logger -t "omr-bypass" "$*"
+}
+
+_have_fw4() {
+	[ -x /usr/sbin/nft ] && nft list table inet fw4 >/dev/null 2>&1
+}
+
+_running() {
+	[ "$(uci -q get firewall.omr_bypass.enabled)" = "1" ]
+}
+
+_has_policies() {
+	uci -q show omr-bypass 2>/dev/null | grep -qE '=(src_intf|wangroup)$'
+}
+
+_l3_device() {
+	local dev
+	dev=$(ifstatus "$1" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+	case "$dev" in
+		""|*@*) dev=$(ifstatus "$1" 2>/dev/null | jsonfilter -q -e '@["device"]') ;;
+	esac
+	case "$dev" in */*|*@*) dev="" ;; esac
+	printf '%s' "$dev"
+}
+
+# A WAN is usable when netifd has it up with a device, the mptcp init gave it
+# its routing table (metric), and omr-tracker does not report it in error.
+# The tracker's own last transition (event) wins over the uci state, which
+# is only written on some paths.
+_wan_usable() {
+	local wan="$1" up track
+	up=$(ifstatus "$wan" 2>/dev/null | jsonfilter -q -e '@["up"]')
+	[ "$up" = "true" ] || return 1
+	[ -n "$(_l3_device "$wan")" ] || return 1
+	_wan_metric=$(uci -q get "network.${wan}.metric")
+	case "$_wan_metric" in ""|*[!0-9]*) return 1 ;; esac
+	[ "$_wan_metric" -le 9999 ] || return 1
+	if [ -f "$STATE_DIR/track.$wan" ]; then
+		track=$(cat "$STATE_DIR/track.$wan" 2>/dev/null)
+		[ "$track" = "ERROR" ] && return 1
+	elif [ "$(uci -q get "openmptcprouter.${wan}.state")" = "down" ]; then
+		return 1
+	fi
+	return 0
+}
+
+# Destinations reached through a LAN-side device must keep being routed
+# locally: the per-WAN tables only hold that WAN's routes, so marking traffic
+# from one LAN to another would send it out to the Internet.
+_local_devices=""
+_collect_local_devices() {
+	local zone_networks
+	_zone_networks() {
+		local name network
+		config_get name "$1" name
+		case "$(echo "$name" | tr 'A-Z' 'a-z')" in
+			wan*|vpn*) return ;;
+		esac
+		config_get network "$1" network
+		zone_networks="$zone_networks $network"
+	}
+	zone_networks=""
+	config_load firewall
+	config_foreach _zone_networks zone
+	local net dev
+	for net in $zone_networks; do
+		dev=$(_l3_device "$net")
+		[ -n "$dev" ] || continue
+		case " $_local_devices " in *" $dev "*) continue ;; esac
+		_local_devices="$_local_devices $dev"
+	done
+}
+
+_skip_prefixes() {
+	local family="$1" dev
+	for dev in $_local_devices $_source_devices; do
+		ip "-$family" route show table all dev "$dev" 2>/dev/null | awk '
+			$1 ~ /^(default|local|broadcast|multicast|anycast|unreachable|blackhole|prohibit|throw|nat|unicast)$/ { next }
+			{ print $1 }'
+	done | sort -u
+}
+
+_policy_idx=0
+_policies=""
+_source_devices=""
+_rules4=""
+_rules6=""
+_status=""
+
+_policy() {
+	local sec="$1" enabled sources wans fallback ipv6
+	config_get enabled "$sec" enabled "1"
+	config_get sources "$sec" source
+	config_get wans "$sec" wan
+	config_get fallback "$sec" fallback "default"
+	config_get ipv6 "$sec" ipv6 "default"
+	[ "$_disable_ipv6" = "1" ] && [ "$ipv6" = "policy" ] && ipv6="default"
+
+	if [ "$enabled" != "1" ] || [ -z "$sources" ]; then
+		_status="${_status}${sec} disabled
+"
+		return
+	fi
+	[ "$_policy_idx" -gt 255 ] && return
+	local pp
+	pp=$(printf '%02x' "$_policy_idx")
+	_policy_idx=$((_policy_idx + 1))
+
+	local devs="" net dev
+	for net in $sources; do
+		dev=$(_l3_device "$net")
+		[ -n "$dev" ] || continue
+		devs="$devs $dev"
+		case " $_source_devices " in *" $dev "*) ;; *) _source_devices="$_source_devices $dev" ;; esac
+	done
+	if [ -z "$devs" ]; then
+		_status="${_status}${sec} nosource
+"
+		return
+	fi
+
+	local active="" metric="" wan
+	for wan in $wans; do
+		if _wan_usable "$wan"; then
+			active="$wan"
+			metric="$_wan_metric"
+			break
+		fi
+	done
+	[ -z "$active" ] && active="fallback:${fallback}"
+	_status="${_status}${sec} ${active}
+"
+
+	local ctmark mark4="" mark6=""
+	if [ -n "$metric" ]; then
+		ctmark="0x55${pp}$(printf '%04d' "$metric")"
+		mark4="0x4539${metric}"
+		mark6="0x6539${metric}"
+	else
+		ctmark="0x55${pp}0000"
+	fi
+	_policies="${_policies}${sec} ${ctmark}
+"
+
+	local devset
+	devset=$(echo $devs | sed 's/\([^ ]*\)/"\1"/g; s/ /, /g')
+	if [ -n "$mark4" ]; then
+		_rules4="${_rules4}		iifname { $devset } meta nfproto ipv4 ct mark set $ctmark meta mark set $mark4 accept comment \"omr_srcif_${sec}_4\"
+"
+	elif [ "$fallback" = "block" ]; then
+		_rules4="${_rules4}		iifname { $devset } meta nfproto ipv4 counter drop comment \"omr_srcif_${sec}_4_block\"
+"
+	else
+		_rules4="${_rules4}		iifname { $devset } meta nfproto ipv4 ct mark set $ctmark accept comment \"omr_srcif_${sec}_4_default\"
+"
+	fi
+	case "$ipv6" in
+		policy)
+			if [ -n "$mark6" ]; then
+				_rules6="${_rules6}		iifname { $devset } meta nfproto ipv6 ct mark set $ctmark meta mark set $mark6 accept comment \"omr_srcif_${sec}_6\"
+"
+			elif [ "$fallback" = "block" ]; then
+				_rules6="${_rules6}		iifname { $devset } meta nfproto ipv6 counter drop comment \"omr_srcif_${sec}_6_block\"
+"
+			fi
+			;;
+		block)
+			_rules6="${_rules6}		iifname { $devset } meta nfproto ipv6 counter drop comment \"omr_srcif_${sec}_6_block\"
+"
+			;;
+	esac
+}
+
+# --- WAN groups -------------------------------------------------------------
+
+_groups_status=""
+_groups_rules=""
+_groups_marks=""
+
+_group() {
+	local sec="$1" id wans w active="" t4="" t6=""
+	config_get id "$sec" id
+	config_get wans "$sec" wan
+	case "$id" in ""|*[!0-9]*) return ;; esac
+	for w in $wans; do
+		case "$w" in
+			default) active="default"; t4="991337"; t6="6991337"; break ;;
+			none) break ;;
+		esac
+		if _wan_usable "$w"; then
+			active="$w"; t4="$_wan_metric"; t6="6$_wan_metric"
+			break
+		fi
+	done
+	# "<key> <active> <list>": the list (comma separated) is how LuCI
+	# finds the group of a rule
+	_groups_status="${_groups_status}${sec} ${active:-none} $(echo $wans | tr ' ' ',')
+"
+	_groups_rules="${_groups_rules}${sec} ${id} ${t4:-unreachable} ${t6:-unreachable}
+"
+	_groups_marks="${_groups_marks:+$_groups_marks, }0x4539${id}, 0x6539${id}"
+}
+
+# ip rule for one group mark, replaced only when it is not already exactly
+# the wanted one: this runs on every apply, so a rule something else
+# deleted (the mptcp init drops rules by table) comes back by itself.
+_group_ip_rule() {
+	local fam="$1" mark="$2" table="$3" want cur
+	if [ "$table" = "unreachable" ]; then
+		want="unreachable"
+	else
+		want="lookup $table"
+	fi
+	cur=$(ip "$fam" rule list pref 1 fwmark "$mark" 2>/dev/null)
+	if [ "$(echo "$cur" | grep -c .)" = "1" ] && echo "$cur" | grep -q " ${want}\$"; then
+		return 0
+	fi
+	while ip "$fam" rule del pref 1 fwmark "$mark" 2>/dev/null; do :; done
+	if [ "$table" = "unreachable" ]; then
+		ip "$fam" rule add pref 1 fwmark "$mark" unreachable
+	else
+		ip "$fam" rule add pref 1 fwmark "$mark" lookup "$table"
+	fi
+}
+
+_groups_apply() {
+	local sec id t4 t6 old new
+	echo "$_groups_rules" | while read -r sec id t4 t6; do
+		[ -n "$sec" ] || continue
+		_group_ip_rule -4 "0x4539${id}" "$t4"
+		_group_ip_rule -6 "0x6539${id}" "$t6"
+		old=$(awk -v s="$sec" '$1 == s { print $2 }' "$GROUPS_FILE" 2>/dev/null)
+		new=$(echo "$_groups_status" | awk -v s="$sec" '$1 == s { print $2 }')
+		[ "$old" = "$new" ] && continue
+		# Connections keep the NAT binding of the WAN they were opened on
+		[ -n "$old" ] && _flush_conntrack "0x4539${id}" "0x6539${id}"
+		_log "Output WAN list $(uci -q get "omr-bypass.${sec}.wan" | tr ' ' ','): traffic now exits via $new${old:+ (was $old)}"
+	done
+	printf '%s' "$_groups_status" > "$GROUPS_FILE"
+}
+
+# ip rules of groups that no longer exist
+_groups_cleanup() {
+	local fam mark id keep
+	keep=" $(echo "$_groups_rules" | awk '{ print $2 }' | xargs) "
+	for fam in -4 -6; do
+		for mark in $(ip "$fam" rule list pref 1 2>/dev/null | sed -n 's/.*fwmark \(0x[46]5399[0-8][0-9][0-9]\) .*/\1/p' | sort -u); do
+			id="${mark#0x?539}"
+			case "$keep" in *" $id "*) continue ;; esac
+			while ip "$fam" rule del pref 1 fwmark "$mark" 2>/dev/null; do :; done
+		done
+	done
+}
+
+# --- nft ----------------------------------------------------------------------
+
+_write_nft() {
+	local out="$1" p
+	cat > "$out" <<-EOF
+		table inet fw4 {
+			set $SKIP4 { type ipv4_addr; flags interval; auto-merge; }
+			set $SKIP6 { type ipv6_addr; flags interval; auto-merge; }
+			chain $CHAIN {
+				type filter hook prerouting priority mangle - 1; policy accept;
+			}
+			chain $GRP_CHAIN {
+				type filter hook prerouting priority mangle + 1; policy accept;
+			}
+		}
+		flush chain inet fw4 $CHAIN
+		flush chain inet fw4 $GRP_CHAIN
+		flush set inet fw4 $SKIP4
+		flush set inet fw4 $SKIP6
+	EOF
+	# A group's connections carry its mark in their ct mark, so a failover
+	# can drop exactly them. Runs after fw4's mangle_prerouting has set the
+	# marks and before the reply-path chain (mangle + 5); group ids are not
+	# WAN device marks, so the reply chain never restores them.
+	[ -n "$_groups_marks" ] && cat >> "$out" <<-EOF
+		table inet fw4 {
+			chain $GRP_CHAIN {
+				ct direction original meta mark { $_groups_marks } ct mark set meta mark
+			}
+		}
+	EOF
+	[ -z "$_source_devices" ] && return
+	p=$(_skip_prefixes 4 | tr '\n' ',' | sed 's/,$//; s/,/, /g')
+	[ -n "$p" ] && echo "add element inet fw4 $SKIP4 { $p }" >> "$out"
+	p=$(_skip_prefixes 6 | tr '\n' ',' | sed 's/,$//; s/,/, /g')
+	[ -n "$p" ] && echo "add element inet fw4 $SKIP6 { $p }" >> "$out"
+	local devset
+	devset=$(echo $_source_devices | sed 's/\([^ ]*\)/"\1"/g; s/ /, /g')
+	# Runs right before fw4's mangle_prerouting (and the proxies' tproxy
+	# chains at the same priority), so a destination bypass rule still wins
+	# over the source policy and the proxies see the mark. Reply packets of
+	# connections opened from outside (port forwards) are left alone.
+	cat >> "$out" <<-EOF
+		table inet fw4 {
+			chain $CHAIN {
+				iifname != { $devset } return
+				ct direction reply return
+				meta mark != 0x0 return
+				fib daddr type { local, broadcast, multicast } return
+				ip daddr @$SKIP4 return
+				ip6 daddr @$SKIP6 return
+	EOF
+	printf '%s%s' "$_rules4" "$_rules6" >> "$out"
+	cat >> "$out" <<-'EOF'
+			}
+		}
+	EOF
+}
+
+_remove() {
+	_have_fw4 || return 0
+	nft -f - >/dev/null 2>&1 <<-EOF
+		table inet fw4 {
+			set $SKIP4 { type ipv4_addr; flags interval; auto-merge; }
+			set $SKIP6 { type ipv6_addr; flags interval; auto-merge; }
+			chain $CHAIN {
+				type filter hook prerouting priority mangle - 1; policy accept;
+			}
+			chain $GRP_CHAIN {
+				type filter hook prerouting priority mangle + 1; policy accept;
+			}
+		}
+		flush chain inet fw4 $CHAIN
+		delete chain inet fw4 $CHAIN
+		flush chain inet fw4 $GRP_CHAIN
+		delete chain inet fw4 $GRP_CHAIN
+		delete set inet fw4 $SKIP4
+		delete set inet fw4 $SKIP6
+	EOF
+}
+
+# Connections keep the NAT binding of the WAN they were opened on: once the
+# policy points elsewhere their packets would leave with the old source
+# address. Drop them so clients reconnect through the new WAN right away.
+_flush_conntrack() {
+	local ctmark4="$1" ctmark6="${2:-$1}"
+	command -v conntrack >/dev/null 2>&1 || return 0
+	conntrack -D -f ipv4 -m "$ctmark4" >/dev/null 2>&1
+	conntrack -D -f ipv6 -m "$ctmark6" >/dev/null 2>&1
+}
+
+_apply() {
+	local force="$1"
+	mkdir -p "$STATE_DIR"
+	_have_fw4 || return 0
+	if ! _running || ! _has_policies; then
+		if [ -f "$NFT_FILE" ]; then
+			_remove
+			_log "Output WAN lists and source interface policies removed"
+		fi
+		_groups_cleanup
+		rm -f "$NFT_FILE" "$STATUS_FILE" "$GROUPS_FILE" "$STATE_DIR/policies"
+		return 0
+	fi
+
+	_disable_ipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
+	config_load omr-bypass
+	config_foreach _policy src_intf
+	config_foreach _group wangroup
+	_collect_local_devices
+	_groups_cleanup
+	_groups_apply
+
+	local tmp="$NFT_FILE.new"
+	_write_nft "$tmp"
+	if [ -z "$force" ] && [ -f "$NFT_FILE" ] && \
+	   [ "$(md5sum < "$tmp")" = "$(md5sum < "$NFT_FILE")" ]; then
+		rm -f "$tmp"
+		printf '%s' "$_status" > "$STATUS_FILE"
+		return 0
+	fi
+	if ! nft -f "$tmp" >/dev/null 2>"$STATE_DIR/error"; then
+		_log "Output WAN lists / source interface policies not applied: $(head -n 3 "$STATE_DIR/error" | tr '\n' ' ')"
+		rm -f "$tmp"
+		return 1
+	fi
+	mv -f "$tmp" "$NFT_FILE"
+
+	# Report and clean up only the policies whose WAN actually changed.
+	local sec ctmark old oldactive active
+	echo "$_policies" | while read -r sec ctmark; do
+		[ -n "$sec" ] || continue
+		old=$(awk -v s="$sec" '$1 == s { print $2 }' "$STATE_DIR/policies" 2>/dev/null)
+		[ -n "$old" ] && [ "$old" != "$ctmark" ] && _flush_conntrack "$old"
+		oldactive=$(awk -v s="$sec" '$1 == s { print $2 }' "$STATUS_FILE" 2>/dev/null)
+		active=$(echo "$_status" | awk -v s="$sec" '$1 == s { print $2 }')
+		[ "$oldactive" != "$active" ] && \
+			_log "Source interface policy $(uci -q get "omr-bypass.${sec}.note" || echo "$sec"): traffic now exits via $active${oldactive:+ (was $oldactive)}"
+	done
+	printf '%s' "$_policies" > "$STATE_DIR/policies"
+	printf '%s' "$_status" > "$STATUS_FILE"
+	return 0
+}
+
+_locked() {
+	mkdir -p "$STATE_DIR"
+	exec 9>"$STATE_DIR/lock"
+	flock -w 30 9 2>/dev/null
+	"$@"
+	local ret=$?
+	flock -u 9 2>/dev/null
+	return $ret
+}
+
+case "$1" in
+	apply)
+		_locked _apply "$([ "$2" = "--force" ] && echo 1)"
+		;;
+	firewall)
+		# fw4 just rebuilt table inet fw4: the chain is gone whatever the
+		# state file says.
+		_locked _apply 1
+		;;
+	event)
+		[ -n "$2" ] || exit 0
+		mkdir -p "$STATE_DIR"
+		echo "$3" > "$STATE_DIR/track.$2"
+		_has_policies || exit 0
+		uci -q show omr-bypass 2>/dev/null | grep -E "^omr-bypass\.[^.]+\.wan=" | grep -qE "'$2'" || exit 0
+		_locked _apply
+		;;
+	hotplug)
+		_has_policies || exit 0
+		uci -q show omr-bypass 2>/dev/null | grep -E "^omr-bypass\.[^.]+\.(wan|source)=" | grep -qE "'$2'" || exit 0
+		_locked _apply
+		;;
+	stop)
+		_locked _remove
+		_groups_rules=""
+		_locked _groups_cleanup
+		rm -f "$NFT_FILE" "$STATUS_FILE" "$GROUPS_FILE" "$STATE_DIR/policies"
+		;;
+	status)
+		cat "$STATUS_FILE" "$GROUPS_FILE" 2>/dev/null
+		;;
+	*)
+		echo "Usage: $0 apply [--force]|firewall|event <wan> <OK|ERROR>|hotplug <iface>|stop|status" >&2
+		exit 1
+		;;
+esac
+exit 0

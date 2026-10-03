@@ -32,8 +32,8 @@ it to the right rule.
 
 Above the rule tables, a small **Global settings** box, then 9
 independent rule tables, each matching traffic a different way. All of
-the rule tables share a common tail of options — **Output interface**,
-**Failback**, **DSCP marking**, **Note** — described once below, then only
+the rule tables share a common tail of options — **Output interfaces**,
+**DSCP marking**, **Note** — described once below, then only
 each section's distinguishing fields are called out.
 
 ### Global settings
@@ -54,10 +54,28 @@ hour**, for domains that change IP more often than once a day.
 |---|---|
 | **Enabled** | Toggle the rule on/off without deleting it. |
 | **VPN on server** *(where present)* | Route matched traffic over the VPN configured on the VPS instead of a local WAN interface. |
-| **Output interface** | Which WAN sends this traffic: `Default` (MPTCP master), a specific WAN, **No routing change (DSCP marking only)** to just tag traffic without rerouting it, or **None** to block it outright. |
-| **Failback** | Alternate interface to use if the chosen output interface is down. |
+| **Output interfaces** | Which WAN sends this traffic, as an ordered list (see below). Entries: `Default` (MPTCP master), a specific WAN, or **None** to block it outright. Leave the list empty for no routing change (DSCP marking only). |
 | **DSCP marking** | Optional DSCP class to stamp on matched traffic (CS0–CS7, AF11–AF43, EF, LE) — usable on its own, without changing the route. |
 | **Note** | Free-text reminder of why the rule exists. |
+
+**Output interfaces, in order.** The first interface of the list that is
+up is used. When OMR-Tracker reports it down, the next one takes over.
+Once it is reported up again (after the tracker's "tries up" count),
+traffic goes back to it. The grid shows the list and, for a list of more
+than one entry, the one in use right now: `wan2 → wan3 → Default (now:
+wan3)`.
+
+* When no listed interface is up, the traffic is **blocked**, which is what
+  a single interface that is down always did. Put **Default** last to fall
+  back on the MPTCP master instead.
+* **None** ends the list: listed first, the rule blocks the traffic. Listed
+  after WANs, it makes the "blocked when all are down" explicit.
+* A rule with a single interface behaves exactly as before.
+* When a rule switches interface, the connections it had opened through
+  the previous one are dropped so clients reconnect right away. Each switch
+  is logged (`logread | grep "Output WAN list"`).
+* The former **Failback** field is gone: an existing failback interface was
+  moved to the end of the rule's list on upgrade.
 
 ### Domains
 
@@ -104,6 +122,39 @@ destination.
 
 Same idea as MAC-Address but matched by the client's LAN-side IP/subnet
 instead — useful for a whole VLAN or IP range rather than one device.
+
+### Source interface policies
+
+Sends *everything* that enters the router on a local interface (a guest
+network, a VLAN, a second LAN port...) out through one chosen WAN,
+directly, with its own failover order. Unlike the rules above, it has a
+list of WANs instead of a single **Output interface**:
+
+* **Source interface** — the local interface(s) the policy applies to.
+* **Output WANs** — an ordered list. The first WAN that is up is used.
+  When OMR-Tracker reports it down, the next one takes over. Once the
+  preferred WAN is reported up again (after the tracker's own "tries up"
+  count), traffic goes back to it.
+* **When all WANs are down** — *Default OpenMPTCProuter path* lets the
+  traffic use the normal aggregated path through the server. *Block
+  traffic* drops it instead, so the interface never uses anything but the
+  listed WANs.
+* **IPv6** — *Default* leaves IPv6 on the normal path. *Same WAN as IPv4*
+  routes it through the selected WAN too. Only use that when the WAN
+  itself gives this interface routable IPv6 addresses: addresses from the
+  server's prefix cannot leave through a WAN. *Block IPv6* drops it.
+* **Current output** — the WAN the policy uses right now, or the fallback
+  in use.
+
+Traffic to the router itself and to the other local networks is not
+affected. A destination rule (domain, IP, port, ASN, protocol) still
+wins over the policy, so you can still send one service elsewhere. When
+the policy switches WANs, connections opened through the previous one
+are dropped so clients reconnect through the new one right away. Every
+switch is logged (`logread | grep "Source interface policy"`).
+
+The source interface's firewall zone must be allowed to forward to the
+`wan` zone, as for any other direct bypass.
 
 ### ASN
 

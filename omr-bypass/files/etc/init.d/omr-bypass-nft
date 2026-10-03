@@ -28,7 +28,8 @@ _BYPASS_MAX_DOMAINS_PER_DNSIPSET=200
 # length) plus any extra DSCP set names appended to the same ipset entry.
 _BYPASS_MAX_DNSIPSET_LINE_BYTES=700
 
-# Still used by ndpi
+# Only for the kernel nDPI netfilter match (/proc/net/xt_ndpi), which has no
+# nftables expression: its rules go through iptables(-nft) compat.
 if [ -e /usr/sbin/iptables-nft ]; then
 	IPTABLES="/usr/sbin/iptables-nft"
 	IPTABLESRESTORE="/usr/sbin/iptables-nft-restore"
@@ -161,6 +162,93 @@ _map_intf_device() {
 	local dev
 	dev=$(uci -q get "omr-bypass.ifmap_${raw}.device" 2>/dev/null)
 	printf '%s' "${dev:-$raw}"
+}
+
+# Output WAN lists (issue: "Output interface" as an ordered failover list)
+#
+# A rule's "interface" may be a list: the first usable WAN is used, the
+# next ones are its failover order, "default" means the MPTCP master. The
+# old single "failback" option is appended to the list. A rule with one
+# value keeps working exactly as before. A rule with several gets a WAN
+# group: a pseudo-interface "grp_<hash of the list>" with its own bypass
+# mark 0x4539<id> (id 9001-9899, kept in omr-bypass.<key>.id). The skeleton
+# below builds its sets/fw4 rules/proxy exemptions like for any WAN, and
+# /usr/lib/omr-bypass/wan-failover keeps "fwmark 0x4539<id> lookup <table
+# of the first usable WAN>" up to date, so a failover never touches fw4 or
+# dnsmasq.
+_rule_intf_list() {
+	local sec="$1" raw fb v out=""
+	config_get raw "$sec" interface
+	config_get fb "$sec" failback
+	for v in $raw $fb; do
+		case "$v" in all) v="default" ;; esac
+		case " $out " in *" $v "*) continue ;; esac
+		out="${out:+$out }$v"
+	done
+	# "none" (block) and an empty value (DSCP only) do not combine with a
+	# list: the first value decides, as it always did.
+	case "$out" in
+		none*) out="none" ;;
+	esac
+	case "$raw" in "") out="" ;; esac
+	printf '%s' "$out"
+}
+
+_wan_group_key() {
+	printf 'grp_%s' "$(printf '%s' "$1" | md5sum | cut -c1-8)"
+}
+
+# _get_rule_intf <var> <section>: what config_get <var> <section> interface
+# used to give, with a list replaced by its WAN group key.
+_get_rule_intf() {
+	local _l
+	_l=$(_rule_intf_list "$2")
+	case "$_l" in
+		*" "*) _l=$(_wan_group_key "$_l") ;;
+	esac
+	eval "$1=\"\$_l\""
+}
+
+_wan_groups=""
+_wan_groups_collect() {
+	local l key
+	l=$(_rule_intf_list "$1")
+	case "$l" in *" "*) ;; *) return ;; esac
+	key=$(_wan_group_key "$l")
+	case " $_wan_groups " in *" $key "*) return ;; esac
+	_wan_groups="$_wan_groups $key"
+	uci -q set "omr-bypass.${key}=wangroup"
+	uci -q delete "omr-bypass.${key}.wan"
+	for v in $l; do
+		uci -q add_list "omr-bypass.${key}.wan=$v"
+	done
+}
+
+# Collect every list in use, keep the ids of known groups, hand out free
+# ids to new ones and drop the groups nothing uses any more.
+_wan_groups_setup() {
+	local t key id used=""
+	_wan_groups=""
+	config_load omr-bypass
+	for t in domains ips macs lan_ip dest_port src_port asns dpis categories; do
+		config_foreach _wan_groups_collect "$t"
+	done
+	for key in $(uci -q -X show omr-bypass 2>/dev/null | sed -n 's/^omr-bypass\.\([^.=]*\)=wangroup$/\1/p'); do
+		case " $_wan_groups " in
+			*" $key "*) used="$used $(uci -q get "omr-bypass.${key}.id")" ;;
+			*) uci -q delete "omr-bypass.${key}" ;;
+		esac
+	done
+	for key in $_wan_groups; do
+		[ -n "$(uci -q get "omr-bypass.${key}.id")" ] && continue
+		id=9001
+		while [ "$id" -le 9899 ]; do
+			case " $used " in *" $id "*) id=$((id + 1)) ;; *) break ;; esac
+		done
+		[ "$id" -le 9899 ] || { logger -t "omr-bypass" "Too many output WAN lists, $key ignored"; uci -q delete "omr-bypass.${key}"; continue; }
+		uci -q set "omr-bypass.${key}.id=$id"
+		used="$used $id"
+	done
 }
 
 _sanitize_intf_key() {
@@ -413,7 +501,7 @@ _bypass_domains() {
 	local enabled
 	local dscp
 	config_get domain $1 name
-	config_get intf $1 interface
+	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get noipv6 $1 noipv6 "1"
 	config_get family $1 family "ipv4ipv6"
@@ -632,7 +720,7 @@ _bypass_mac() {
 	local enabled
 	local dscp
 	config_get mac $1 mac
-	config_get intf $1 interface
+	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
@@ -673,7 +761,7 @@ _bypass_lan_ip() {
 	local enabled
 	local dscp
 	config_get ip $1 ip
-	config_get intf $1 interface
+	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
@@ -722,7 +810,7 @@ _bypass_dest_port() {
 	local dscp
 	config_get dport $1 dport
 	config_get proto $1 proto
-	config_get intf $1 interface
+	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
@@ -782,7 +870,7 @@ _bypass_src_port() {
 	local dscp
 	config_get sport $1 sport
 	config_get proto $1 proto
-	config_get intf $1 interface
+	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
@@ -839,7 +927,7 @@ _bypass_proto() {
 	local intf
 	local enabled
 	config_get proto $1 proto
-	config_get intf $1 interface
+	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get ndpi $1 ndpi
 	config_get noipv6 $1 noipv6
@@ -1096,7 +1184,7 @@ _bypass_proto_without_ndpi() {
 	local intf
 	local enabled
 	config_get proto $1 proto
-	config_get intf $1 interface
+	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get ndpi $1 ndpi "0"
 	config_get noipv6 $1 noipv6 "1"
@@ -1117,7 +1205,7 @@ _bypass_proto_without_ndpi() {
 _bypass_category() {
 	local category intf enabled vpn tcpudp ndpi noipv6 family intfid
 	config_get category $1 category
-	config_get intf $1 interface
+	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get vpn $1 vpn
 	config_get tcpudp $1 tcpudp "all"
@@ -1298,8 +1386,11 @@ _intf_rule_xray_rules() {
 }
 
 _intf_rule() {
-	local intf
+	local intf _grp_id=""
 	[ "$1" = "all" ] && intf="all"
+	case "$1" in
+		grp_*) _grp_id=$(uci -q get "omr-bypass.$1.id"); [ -n "$_grp_id" ] || return; intf="$1" ;;
+	esac
 	[ "$intf" = "omrvpn" ] && return
 	[ -z "$intf" ] && intf=$(ifstatus "$1" | jsonfilter -q -e '@["l3_device"]')
 	case "$intf" in *@*) intf=$(ifstatus "$1" | jsonfilter -q -e '@["device"]') ;; esac
@@ -1312,7 +1403,11 @@ _intf_rule() {
 	[ -z "$intf" ] && intf=$(uci -q get omr-bypass.ifmap_$1.device)
 	[ -z "$intf" ] && return
 	#count=$((count+1))
-	[ "$intf" != "all" ] && config_get count $1 metric
+	if [ -n "$_grp_id" ]; then
+		count="$_grp_id"
+	elif [ "$intf" != "all" ]; then
+		config_get count $1 metric
+	fi
 	[ "$intf" = "all" ] && count=""
 	local mode
 	#config_get mode $1 multipath "off"
@@ -1466,7 +1561,10 @@ _intf_rule() {
 				EOF
 			done
 		done
-		if [ "$intf" = "all" ]; then
+		if [ -n "$_grp_id" ]; then
+			# its ip rules follow the WAN in use: wan-failover owns them
+			:
+		elif [ "$intf" = "all" ]; then
 			cat >> "$_net_uci_batch" <<-EOF
 				delete network.${intf}_fw_rule=rule
 				set network.${intf}_fw_rule=rule
@@ -1490,7 +1588,7 @@ _intf_rule() {
 				set network.${intf}_fw_rule6=rule6
 				set network.${intf}_fw_rule6.priority=1
 				set network.${intf}_fw_rule6.mark=0x6539${count}
-				set network.${intf}_fw_rule6.lookup=${count}
+				set network.${intf}_fw_rule6.lookup=6${count}
 			EOF
 		fi
 		cat >> "$_dhcp_uci_batch" <<-EOF
@@ -1526,7 +1624,7 @@ _intf_rule() {
 		_intf_rule_xray_rules
 	fi
 
-	if [ "$intf" != "all" ]; then
+	if [ "$intf" != "all" ] && [ -z "$_grp_id" ]; then
 		uci -q set omr-bypass.$intf=interface
 		uci -q set omr-bypass.$intf.id=$count
 		uci -q set omr-bypass.ifmap_$1=ifmap
@@ -1626,7 +1724,7 @@ _bypass_ip_set() {
 	local enabled
 	local dscp
 	config_get ip $1 ip
-	config_get interface $1 interface
+	_get_rule_intf interface $1
 	config_get enabled $1 enabled
 	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
@@ -1645,7 +1743,7 @@ _bypass_asn() {
 	local enabled
 	local dscp
 	config_get asn $1 asn
-	config_get interface $1 interface
+	_get_rule_intf interface $1
 	config_get enabled $1 enabled
 	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
@@ -1797,7 +1895,7 @@ _bypass_ndpid_collect_proto() {
 _bypass_proto_collect_ndpid() {
 	local proto intf enabled intfid tcpudp ndpi
 	config_get proto $1 proto
-	config_get intf $1 interface
+	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get tcpudp $1 tcpudp "all"
 	config_get ndpi $1 ndpi "1"
@@ -1823,7 +1921,7 @@ _bypass_proto_collect_ndpid() {
 _bypass_category_collect_ndpid() {
 	local category intf enabled vpn intfid tcpudp ndpi proto
 	config_get category $1 category
-	config_get intf $1 interface
+	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get vpn $1 vpn
 	config_get tcpudp $1 tcpudp "all"
@@ -1879,7 +1977,7 @@ _stop_ndpid_consumer() {
 _ndpid_rule_wanted() {
 	local proto intf enabled ndpi
 	config_get proto $1 proto
-	config_get intf $1 interface
+	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get ndpi $1 ndpi "1"
 	[ "$enabled" = "0" ] && return
@@ -1896,7 +1994,7 @@ _ndpid_rule_wanted() {
 _ndpid_category_rule_wanted() {
 	local category intf enabled ndpi
 	config_get category $1 category
-	config_get intf $1 interface
+	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get ndpi $1 ndpi "0"
 	[ "$enabled" = "0" ] && return
@@ -2050,10 +2148,19 @@ start_service() {
 		set firewall.omr_bypass_reply.type='script'
 		set firewall.omr_bypass_reply.path='$_REPLY_INCLUDE'
 		set firewall.omr_bypass_reply.fw4_compatible='1'
+		set firewall.omr_bypass_srcif=include
+		set firewall.omr_bypass_srcif.enabled='1'
+		set firewall.omr_bypass_srcif.type='script'
+		set firewall.omr_bypass_srcif.path='/usr/lib/omr-bypass/firewall.wan-failover'
+		set firewall.omr_bypass_srcif.fw4_compatible='1'
 	EOF
 	#echo "intf_rule"
+	_wan_groups_setup
 	config_load network
 	config_foreach _intf_rule interface
+	for _grp in $_wan_groups; do
+		_intf_rule "$_grp"
+	done
 	_intf_rule all
 	_intf_rule srv_vpn1
 	_intf_rule_none
@@ -2226,6 +2333,9 @@ start_service() {
 	uci -q commit firewall
 	sort < /usr/share/omr-bypass/omr-bypass-proto.lst > /usr/share/omr-bypass/omr-bypass-proto.lst.new
 	mv /usr/share/omr-bypass/omr-bypass-proto.lst.new /usr/share/omr-bypass/omr-bypass-proto.lst
+	# Output WAN lists and source interface policies: need the per-WAN
+	# marks and ip rules generated above, and re-check which WAN each uses.
+	/usr/lib/omr-bypass/wan-failover apply
 	logger -t "omr-bypass" "OMR-ByPass is running"
 
 	procd_open_instance
@@ -2244,6 +2354,8 @@ stop_service() {
 	# disable all rules
 	uci -q set firewall.omr_bypass.enabled='0'
 	uci -q set firewall.omr_bypass_reply.enabled='0'
+	uci -q set firewall.omr_bypass_srcif.enabled='0'
+	/usr/lib/omr-bypass/wan-failover stop
 	_dhcp_delete_batch=""
 	config_load dhcp
 	config_foreach _delete_dhcp_ipset ipset

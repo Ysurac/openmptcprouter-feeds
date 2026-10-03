@@ -5,7 +5,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI Support for nDPId DPI Flows
-LUCI_DEPENDS:=+ndpid +omr-bypass
+LUCI_DEPENDS:=+ndpid +omr-bypass-nft
 
 PKG_LICENSE:=GPLv3
 

@@ -28,7 +28,9 @@ return L.view.extend({
 			L.resolveDefault(fs.read_direct('/proc/net/xt_ndpi/host_proto'), ''),
 			fs.read_direct('/usr/share/omr-bypass/omr-bypass-proto.json'),
 			L.resolveDefault(fs.stat('/usr/sbin/ndpisrvd'), null),
-			uci.load('network')
+			uci.load('network'),
+			L.resolveDefault(fs.read_direct('/var/run/omr-bypass-failover/status'), ''),
+			L.resolveDefault(fs.read_direct('/var/run/omr-bypass-failover/groups'), '')
 		]);
 	},
 
@@ -50,6 +52,62 @@ return L.view.extend({
 			if (!name)
 				return null;
 			return protoMap[name] || protoMap[String(name).toLowerCase()] || null;
+		}
+
+		var groupStatus = {};
+		String(testhosts[8] || '').split('\n').forEach(function(line) {
+			var f = line.trim().split(/\s+/);
+			if (f.length >= 3)
+				groupStatus[f[2]] = f[1];
+		});
+
+		/* Output interface as an ordered list: the first usable entry is
+		 * used, the next ones are its failover order (OMR-Tracker decides
+		 * what is up). An empty list means no routing change (DSCP only).
+		 * New rows start with "default", set when the row is created rather
+		 * than through o.default: a default-valued option is dropped on
+		 * save, and an absent interface means "DSCP only" to the backend. */
+		function addOutputInterfaces(s, vpn) {
+			var o = s.option(form.DynamicList, 'interface', _('Output interfaces'),
+				_('Ordered list: the first interface that is up is used, the next ones take over when it goes down, and the first one is used again once it is back. "Default" is the MPTCP master interface; when no listed interface is up, traffic is blocked unless "Default" is in the list. Leave empty for no routing change (DSCP marking only).'));
+			o.value('default', _('Default (MPTCP master interface)'));
+			o.value('none', _('None (block traffic)'));
+			ifaces.forEach(function(name) { o.value(name); });
+			o.textvalue = function(section_id) {
+				var v = L.toArray(this.cfgvalue(section_id)).map(function(x) { return x === 'all' ? 'default' : x; });
+				var fb = uci.get('omr-bypass', section_id, 'failback');
+				if (fb && v.length && v[0] !== 'none' && v.indexOf(fb) < 0)
+					v.push(fb === 'all' ? 'default' : fb);
+				if (!v.length)
+					return _('No routing change');
+				var text = v.join(' → ');
+				var active = v.length > 1 ? groupStatus[v.join(',')] : null;
+				if (active)
+					text += ' (' + _('now: %s').format(active) + ')';
+				return text;
+			};
+			if (vpn)
+				o.depends('vpn', '0');
+
+			var handleAdd = s.handleAdd;
+			s.handleAdd = function(ev, name) {
+				var data = this.map.data,
+				    config = this.uciconfig || this.map.config,
+				    type = this.sectiontype,
+				    add = data.add;
+				data.add = function(c, t) {
+					var sid = add.apply(this, arguments);
+					if (c === config && t === type)
+						this.set(c, sid, 'interface', [ 'default' ]);
+					return sid;
+				};
+				try {
+					return handleAdd.apply(this, arguments);
+				} finally {
+					data.add = add;
+				}
+			};
+			return o;
 		}
 
 		m = new form.Map('omr-bypass', _('OMR-Bypass'),_('OpenMPTCProuter IP must be used as DNS.'));
@@ -100,21 +158,7 @@ return L.view.extend({
 		o = s.option(form.Flag, 'vpn', _('VPN on server'),_('Bypass using VPN configured on server.'));
 		o.modalonly = true
 
-		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.value('default', _('Default (MPTCP master interface)'));
-		o.value('', _('No routing change (DSCP marking only)'));
-		o.value('none', _('None (block traffic)'));
-		ifaces.forEach(function(name) { o.value(name); });
-		o.depends('vpn', '0');
-
-		o = s.option(form.ListValue, 'failback', _('Failback'),
-			_('Failback interface when the selected interface is down.'));
-		o.value('', _('None (no failback)'));
-		o.value('default', _('Default MPTCP interface'));
-		ifaces.forEach(function(name) { o.value(name); });
-		o.rmempty = true;
-		o.modalonly = true;
-		o.depends('vpn', '0');
+		addOutputInterfaces(s, true);
 
 		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
 			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
@@ -196,21 +240,7 @@ return L.view.extend({
 		o.value('udp');
 		o.modalonly = true
 
-		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.value('default', _('Default (MPTCP master interface)'));
-		o.value('', _('No routing change (DSCP marking only)'));
-		o.value('none', _('None (block traffic)'));
-		ifaces.forEach(function(name) { o.value(name); });
-		o.depends('vpn', '0');
-
-		o = s.option(form.ListValue, 'failback', _('Failback'),
-			_('Failback interface when the selected interface is down.'));
-		o.value('', _('None (no failback)'));
-		o.value('default', _('Default MPTCP interface'));
-		ifaces.forEach(function(name) { o.value(name); });
-		o.rmempty = true;
-		o.modalonly = true;
-		o.depends('vpn', '0');
+		addOutputInterfaces(s, true);
 
 		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
 			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
@@ -266,19 +296,7 @@ return L.view.extend({
 		o.value('udp');
 		o.value('icmp');
 
-		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.value('default', _('Default (MPTCP master interface)'));
-		o.value('', _('No routing change (DSCP marking only)'));
-		o.value('none', _('None (block traffic)'));
-		ifaces.forEach(function(name) { o.value(name); });
-
-		o = s.option(form.ListValue, 'failback', _('Failback'),
-			_('Failback interface when the selected interface is down.'));
-		o.value('', _('None (no failback)'));
-		o.value('default', _('Default MPTCP interface'));
-		ifaces.forEach(function(name) { o.value(name); });
-		o.rmempty = true;
-		o.modalonly = true;
+		addOutputInterfaces(s, false);
 
 		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
 			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
@@ -334,19 +352,7 @@ return L.view.extend({
 		o.value('udp');
 		o.value('icmp');
 
-		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.value('default', _('Default (MPTCP master interface)'));
-		o.value('', _('No routing change (DSCP marking only)'));
-		o.value('none', _('None (block traffic)'));
-		ifaces.forEach(function(name) { o.value(name); });
-
-		o = s.option(form.ListValue, 'failback', _('Failback'),
-			_('Failback interface when the selected interface is down.'));
-		o.value('', _('None (no failback)'));
-		o.value('default', _('Default MPTCP interface'));
-		ifaces.forEach(function(name) { o.value(name); });
-		o.rmempty = true;
-		o.modalonly = true;
+		addOutputInterfaces(s, false);
 
 		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
 			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
@@ -399,19 +405,7 @@ return L.view.extend({
 			o.value(mac, hint ? '%s (%s)'.format(mac, hint) : mac);
 		});
 
-		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.value('default', _('Default (MPTCP master interface)'));
-		o.value('', _('No routing change (DSCP marking only)'));
-		o.value('none', _('None (block traffic)'));
-		ifaces.forEach(function(name) { o.value(name); });
-
-		o = s.option(form.ListValue, 'failback', _('Failback'),
-			_('Failback interface when the selected interface is down.'));
-		o.value('', _('None (no failback)'));
-		o.value('default', _('Default MPTCP interface'));
-		ifaces.forEach(function(name) { o.value(name); });
-		o.rmempty = true;
-		o.modalonly = true;
+		addOutputInterfaces(s, false);
 
 		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
 			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
@@ -466,19 +460,7 @@ return L.view.extend({
 			}
 		});
 
-		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.value('default', _('Default (MPTCP master interface)'));
-		o.value('', _('No routing change (DSCP marking only)'));
-		o.value('none', _('None (block traffic)'));
-		ifaces.forEach(function(name) { o.value(name); });
-
-		o = s.option(form.ListValue, 'failback', _('Failback'),
-			_('Failback interface when the selected interface is down.'));
-		o.value('', _('None (no failback)'));
-		o.value('default', _('Default MPTCP interface'));
-		ifaces.forEach(function(name) { o.value(name); });
-		o.rmempty = true;
-		o.modalonly = true;
+		addOutputInterfaces(s, false);
 
 		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
 			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
@@ -512,6 +494,72 @@ return L.view.extend({
 			_('Optional comment to help identify the purpose of this rule.'));
 		o.rmempty = true;
 
+		var srcifStatus = {};
+		String(testhosts[7] || '').split('\n').forEach(function(line) {
+			var f = line.trim().split(/\s+/);
+			if (f.length >= 2)
+				srcifStatus[f[0]] = f[1];
+		});
+
+		s = m.section(form.GridSection, 'src_intf', _('Source interface policies'),
+			_('Send everything that enters the router on a local interface out through a chosen WAN, directly, instead of the aggregated connection. The first WAN of the list that is up is used; when it goes down (as detected by OMR-Tracker) the next one takes over, and the preferred one is used again once it is back. Rules above that match a destination (domain, IP, port...) still take precedence.'));
+		s.addremove = true;
+		s.anonymous = true;
+		s.nodescriptions = true;
+
+		o = s.option(form.Flag, 'enabled', _('Enabled'),
+			_('Enable or disable this policy without deleting it.'));
+		o.default = o.enabled;
+
+		o = s.option(form.MultiValue, 'source', _('Source interface'),
+			_('Local interface(s) whose traffic this policy applies to.'));
+		ifaces.forEach(function(name) { o.value(name); });
+		o.rmempty = false;
+
+		o = s.option(form.DynamicList, 'wan', _('Output WANs'),
+			_('Ordered list: the first WAN that is up is used, the following ones are the failover order.'));
+		ifaces.forEach(function(name) { o.value(name); });
+		o.rmempty = false;
+
+		o = s.option(form.ListValue, 'fallback', _('When all WANs are down'),
+			_('Default: traffic follows the normal OpenMPTCProuter path (aggregation through the server). Block: traffic from this interface is dropped.'));
+		o.value('default', _('Default OpenMPTCProuter path'));
+		o.value('block', _('Block traffic'));
+		o.default = 'default';
+		o.optional = false;
+		o.rmempty = false;
+
+		o = s.option(form.ListValue, 'ipv6', _('IPv6'),
+			_('Policy routes IPv6 through the same WAN too: only use it when that WAN gives the interface routable IPv6 addresses. Default leaves IPv6 on the normal OpenMPTCProuter path.'));
+		o.value('default', _('Default OpenMPTCProuter path'));
+		o.value('policy', _('Same WAN as IPv4'));
+		o.value('block', _('Block IPv6'));
+		o.default = 'default';
+		o.optional = false;
+		o.rmempty = false;
+		o.modalonly = true;
+
+		o = s.option(form.DummyValue, '_active', _('Current output'));
+		o.modalonly = false;
+		o.textvalue = function(section_id) {
+			var st = srcifStatus[section_id];
+			if (!st)
+				return _('Not applied yet');
+			if (st === 'disabled')
+				return _('Disabled');
+			if (st === 'nosource')
+				return _('Source interface not up');
+			if (st === 'fallback:default')
+				return _('All WANs down: default path');
+			if (st === 'fallback:block')
+				return _('All WANs down: blocked');
+			return st;
+		};
+
+		o = s.option(form.Value, 'note', _('Note'),
+			_('Optional comment to help identify the purpose of this policy.'));
+		o.rmempty = true;
+
 		s = m.section(form.GridSection, 'asns', _('ASN'),
 			_('Create rules that match destinations announced by a specific autonomous system number.'));
 		s.addremove = true;
@@ -529,21 +577,7 @@ return L.view.extend({
 		o = s.option(form.Flag, 'vpn', _('VPN on server'),_('Bypass using VPN configured on server.'));
 		o.modalonly = true
 
-		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used.'));
-		o.value('default', _('Default (MPTCP master interface)'));
-		o.value('', _('No routing change (DSCP marking only)'));
-		o.value('none', _('None (block traffic)'));
-		ifaces.forEach(function(name) { o.value(name); });
-		o.depends('vpn', '0');
-
-		o = s.option(form.ListValue, 'failback', _('Failback'),
-			_('Failback interface when the selected interface is down.'));
-		o.value('', _('None (no failback)'));
-		o.value('default', _('Default MPTCP interface'));
-		ifaces.forEach(function(name) { o.value(name); });
-		o.rmempty = true;
-		o.modalonly = true;
-		o.depends('vpn', '0');
+		addOutputInterfaces(s, true);
 
 		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
 			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
@@ -699,21 +733,7 @@ return L.view.extend({
 		o = s.option(form.Flag, 'vpn', _('VPN on server'),_('Bypass using VPN configured on server.'));
 		o.modalonly = true
 
-		o = s.option(form.ListValue, 'interface', _('Output interface'),_('When none selected, MPTCP master interface is used (or an other interface if master is down).'));
-		o.value('default', _('Default (MPTCP master interface)'));
-		o.value('', _('No routing change (DSCP marking only)'));
-		o.value('none', _('None (block traffic)'));
-		ifaces.forEach(function(name) { o.value(name); });
-		o.depends('vpn', '0');
-
-		o = s.option(form.ListValue, 'failback', _('Failback'),
-			_('Failback interface when the selected interface is down.'));
-		o.value('', _('None (no failback)'));
-		o.value('default', _('Default MPTCP interface'));
-		ifaces.forEach(function(name) { o.value(name); });
-		o.rmempty = true;
-		o.modalonly = true;
-		o.depends('vpn', '0');
+		addOutputInterfaces(s, true);
 
 		o = s.option(form.ListValue, 'dscp', _('DSCP marking'),
 			_('Optional DSCP value to mark matched traffic. Can be set without an output interface.'));
@@ -795,21 +815,7 @@ return L.view.extend({
 		o = s.option(form.Flag, 'vpn', _('VPN on server'), _('Bypass using VPN configured on server.'));
 		o.modalonly = true;
 
-		o = s.option(form.ListValue, 'interface', _('Output interface'), _('When none selected, MPTCP master interface is used.'));
-		o.value('default', _('Default (MPTCP master interface)'));
-		o.value('', _('No routing change (DSCP marking only)'));
-		o.value('none', _('None (block traffic)'));
-		ifaces.forEach(function(name) { o.value(name); });
-		o.depends('vpn', '0');
-
-		o = s.option(form.ListValue, 'failback', _('Failback'),
-			_('Failback interface when the selected interface is down.'));
-		o.value('', _('None (no failback)'));
-		o.value('default', _('Default MPTCP interface'));
-		ifaces.forEach(function(name) { o.value(name); });
-		o.rmempty = true;
-		o.modalonly = true;
-		o.depends('vpn', '0');
+		addOutputInterfaces(s, true);
 
 		o = s.option(form.ListValue, 'tcpudp', _('Protocol'),
 			_('Restrict the matched traffic to a specific transport protocol.'));

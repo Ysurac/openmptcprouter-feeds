@@ -1,0 +1,36 @@
+#!/bin/sh
+# "Failback" was a single extra interface per bypass rule, only ever read by
+# the (removed) iptables backend. Output interfaces are now ordered lists:
+# fold it in as the list's last entry.
+
+_migrate() {
+	local sec="$1" intf fb
+	config_get fb "$sec" failback
+	[ -n "$fb" ] || return 0
+	config_get intf "$sec" interface
+	case "$intf" in
+		""|none) ;;
+		*)
+			[ "$fb" = "all" ] && fb="default"
+			case " $intf " in
+				*" $fb "*) ;;
+				*)
+					# turn a plain option into a list, then append
+					uci -q delete "omr-bypass.${sec}.interface"
+					for v in $intf $fb; do
+						uci -q add_list "omr-bypass.${sec}.interface=$v"
+					done
+					;;
+			esac
+			;;
+	esac
+	uci -q delete "omr-bypass.${sec}.failback"
+}
+
+. /lib/functions.sh
+config_load omr-bypass
+for t in domains ips macs lan_ip dest_port src_port asns dpis categories; do
+	config_foreach _migrate "$t"
+done
+uci -q commit omr-bypass
+exit 0

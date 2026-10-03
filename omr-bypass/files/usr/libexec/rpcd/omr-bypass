@@ -4,10 +4,28 @@
 #
 # Usage:
 #   ubus call omr-bypass set_interface '{"section":"cfg01","interface":"wan1","force":true}'
+#   ubus call omr-bypass set_interface '{"section":"cfg01","interface":["wan2","wan3","default"]}'
 #   ubus call omr-bypass get_interface '{"section":"cfg01"}'
 #   ubus call omr-bypass list_sections {}
+#
+# Output interfaces are ordered lists (failover order, see
+# /usr/lib/omr-bypass/wan-failover); "interface" in the replies is the first
+# entry, "interfaces" the whole list and "output" the one in use.
+#
+# Source interface policies (src_intf sections):
+#   ubus call omr-bypass list_policies {}
+#   ubus call omr-bypass get_policy '{"section":"guest"}'
+#   ubus call omr-bypass set_policy '{"section":"guest","source":["guest"],"wan":["wan2","wan3"],"fallback":"block"}'
+#   ubus call omr-bypass delete_policy '{"section":"guest"}'
 
-VALID_SECTION_TYPES="domains ips macs dest_port src_port dpis asns lan_ip"
+VALID_SECTION_TYPES="domains ips macs dest_port src_port dpis categories asns lan_ip"
+
+. /usr/share/libubox/jshn.sh
+
+SRCIF_POLICY="/usr/lib/omr-bypass/wan-failover"
+SRCIF_STATUS="/var/run/omr-bypass-failover/status"
+SRCIF_TRACK="/var/run/omr-bypass-failover/track"
+GROUPS_STATUS="/var/run/omr-bypass-failover/groups"
 
 # Callers pass the network.interface UCI *section* name (e.g. "wan1", see the
 # ubus usage example above) -- the same value the LuCI bypass form stores.
@@ -63,19 +81,172 @@ _json_str() {
 	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
+_error() {
+	json_init
+	json_add_string error "$1"
+	json_dump
+	exit 1
+}
+
+# Values of a key that may be given as a JSON array or as a single string,
+# one per line. Call with the input already json_load'ed.
+_json_list_get() {
+	local key="$1" type k v
+	json_get_type type "$key"
+	case "$type" in
+		array)
+			json_select "$key"
+			json_get_keys k
+			for k in $k; do
+				json_get_var v "$k"
+				echo "$v"
+			done
+			json_select ..
+			;;
+		string)
+			json_get_var v "$key"
+			echo "$v" | tr ', ' '\n\n' | grep .
+			;;
+	esac
+}
+
+_json_add_list() {
+	local name="$1" v
+	shift
+	json_add_array "$name"
+	for v in "$@"; do json_add_string "" "$v"; done
+	json_close_array
+}
+
+# Same resolution as omr-bypass-nft's _rule_intf_list/_wan_group_key: a
+# rule's ordered output list (legacy failback appended), and the key of
+# its sets/marks, a WAN group "grp_<hash>" for a list.
+_rule_intf_list() {
+	local sec="$1" raw fb v out=""
+	raw=$(uci -q get "omr-bypass.${sec}.interface")
+	fb=$(uci -q get "omr-bypass.${sec}.failback")
+	for v in $raw $fb; do
+		case "$v" in all) v="default" ;; esac
+		case " $out " in *" $v "*) continue ;; esac
+		out="${out:+$out }$v"
+	done
+	case "$out" in none*) out="none" ;; esac
+	[ -z "$raw" ] && out=""
+	printf '%s' "$out"
+}
+
+_rule_intf_key() {
+	local l
+	l=$(_rule_intf_list "$1")
+	case "$l" in
+		*" "*) printf 'grp_%s' "$(printf '%s' "$l" | md5sum | cut -c1-8)" ;;
+		default) printf 'all' ;;
+		*) printf '%s' "$l" ;;
+	esac
+}
+
+# Where the rule's traffic goes right now: the WAN group's entry in use
+# (from wan-failover), or the single interface.
+_rule_output() {
+	local key
+	[ "$(uci -q get "omr-bypass.$1.vpn")" = "1" ] && { printf 'srv_vpn1'; return; }
+	key=$(_rule_intf_key "$1")
+	case "$key" in
+		grp_*) awk -v s="$key" '$1 == s { print $2 }' "$GROUPS_STATUS" 2>/dev/null ;;
+		*) printf '%s' "$(_rule_intf_list "$1")" ;;
+	esac
+}
+
+_valid_network() {
+	case "$1" in ""|*[!A-Za-z0-9_-]*) return 1 ;; esac
+	[ "$(uci -q get "network.$1")" = "interface" ]
+}
+
+# What a WAN looks like to the policies: the same facts wan-failover
+# decides on (netifd up, tracker's last transition, uci state as fallback).
+_srcif_wan_state() {
+	local wan="$1" up track
+	up=$(ifstatus "$wan" 2>/dev/null | jsonfilter -q -e '@["up"]')
+	if [ "$up" != "true" ]; then
+		echo "ifdown"
+		return
+	fi
+	track=$(cat "${SRCIF_TRACK}.${wan}" 2>/dev/null)
+	if [ -n "$track" ]; then
+		[ "$track" = "ERROR" ] && echo "down" || echo "up"
+	elif [ "$(uci -q get "openmptcprouter.${wan}.state")" = "down" ]; then
+		echo "down"
+	else
+		echo "up"
+	fi
+}
+
+# Adds one policy object (named $2, or anonymous inside an array) to the
+# json being built.
+_srcif_add_policy() {
+	local sec="$1" name="$2" v active
+	json_add_object "$name"
+	json_add_string section "$sec"
+	v=$(uci -q get "omr-bypass.${sec}.enabled")
+	json_add_boolean enabled "$([ "${v:-1}" = "1" ] && echo 1 || echo 0)"
+	json_add_array source
+	for v in $(uci -q get "omr-bypass.${sec}.source"); do json_add_string "" "$v"; done
+	json_close_array
+	json_add_array wan
+	for v in $(uci -q get "omr-bypass.${sec}.wan"); do json_add_string "" "$v"; done
+	json_close_array
+	v=$(uci -q get "omr-bypass.${sec}.fallback")
+	json_add_string fallback "${v:-default}"
+	v=$(uci -q get "omr-bypass.${sec}.ipv6")
+	json_add_string ipv6 "${v:-default}"
+	json_add_string note "$(uci -q get "omr-bypass.${sec}.note")"
+	# "wan2", "fallback:default", "fallback:block", "disabled", "nosource",
+	# or "" when the policy has not been applied (omr-bypass stopped)
+	active=$(awk -v s="$sec" '$1 == s { print $2 }' "$SRCIF_STATUS" 2>/dev/null)
+	json_add_string active "$active"
+	json_add_object wan_state
+	for v in $(uci -q get "omr-bypass.${sec}.wan"); do
+		json_add_string "$v" "$(_srcif_wan_state "$v")"
+	done
+	json_close_object
+	json_close_object
+}
+
+_srcif_section_ok() {
+	case "$1" in ""|*[!A-Za-z0-9_]*) return 1 ;; esac
+	return 0
+}
+
 case "$1" in
 	list)
 		echo '{
   "set_interface": {
     "section":   "str",
     "interface": "str",
+    "interfaces": [],
     "force":     false,
     "reload":    false
   },
   "get_interface": {
     "section": "str"
   },
-  "list_sections": {}
+  "list_sections": {},
+  "list_policies": {},
+  "get_policy": {
+    "section": "str"
+  },
+  "set_policy": {
+    "section":  "str",
+    "enabled":  true,
+    "source":   [],
+    "wan":      [],
+    "fallback": "str",
+    "ipv6":     "str",
+    "note":     "str"
+  },
+  "delete_policy": {
+    "section": "str"
+  }
 }'
 		# force=true: skip active-interface check, RST connections on the
 		# previous interface via conntrack deletion, then reload rules.
@@ -84,96 +255,246 @@ case "$1" in
 	call)
 		case "$2" in
 			set_interface)
-				input=$(cat)
-				section=$(echo "$input"   | jsonfilter -q -e '@.section')
-				interface=$(echo "$input" | jsonfilter -q -e '@.interface')
-				force=$(echo "$input"     | jsonfilter -q -e '@.force')
-				reload=$(echo "$input"    | jsonfilter -q -e '@.reload')
-
-				if [ -z "$section" ]; then
-					echo '{"error":"missing section parameter"}'
-					exit 1
-				fi
-
-				section_type=$(uci -q get "omr-bypass.${section}" 2>/dev/null)
-				if [ -z "$section_type" ]; then
-					echo "{\"error\":\"section '$(_json_str "$section")' not found in omr-bypass config\"}"
-					exit 1
-				fi
-
-				[ -z "$interface" ] && interface="all"
-				safe_intf=$(echo "$interface" | sed 's/[^a-zA-Z0-9_-]//g')
-				if [ "$safe_intf" != "$interface" ]; then
-					echo '{"error":"invalid interface name"}'
-					exit 1
-				fi
-
-				if [ "$force" != "true" ] && [ "$interface" != "all" ] && [ "$interface" != "srv_vpn1" ]; then
-					if ! _intf_ipset_exists "$interface"; then
-						echo "{\"error\":\"interface '$(_json_str "$interface")' is not active; use force:true to override\"}"
-						exit 1
-					fi
-				fi
-
-				# Remember the old interface so we can RST its active connections
-				old_interface=$(uci -q get "omr-bypass.${section}.interface" 2>/dev/null)
-				[ -z "$old_interface" ] && old_interface="all"
-
-				if [ "$interface" = "all" ]; then
-					uci -q delete "omr-bypass.${section}.interface"
+				# "interface" is the rule's output interface list (ordered,
+				# failover order): an array, or a string with one or more names.
+				# "interfaces" is accepted as an alias. It replaces the whole
+				# list, the legacy "failback" included.
+				json_load "$(cat)"
+				json_get_var section section
+				json_get_var force force
+				json_get_var reload reload
+				case "$force" in 1|true) force=1 ;; *) force="" ;; esac
+				case "$reload" in 1|true) reload=1 ;; *) reload="" ;; esac
+				json_get_type itype interface
+				if [ -n "$itype" ]; then
+					interfaces=$(_json_list_get interface)
 				else
-					uci -q set "omr-bypass.${section}.interface=${interface}"
+					interfaces=$(_json_list_get interfaces)
 				fi
+				interfaces=$(echo $interfaces)
+
+				[ -n "$section" ] || _error "missing section parameter"
+				section_type=$(uci -q get "omr-bypass.${section}" 2>/dev/null)
+				[ -n "$section_type" ] || _error "section '${section}' not found in omr-bypass config"
+				# A src_intf policy has a WAN list of its own, see set_policy
+				case " $VALID_SECTION_TYPES " in
+					*" $section_type "*) ;;
+					*) _error "section '${section}' is a '${section_type}' section, not a bypass rule" ;;
+				esac
+
+				[ -z "$interfaces" ] && interfaces="all"
+				for v in $interfaces; do
+					case "$v" in *[!a-zA-Z0-9_-]*) _error "invalid interface name" ;; esac
+				done
+				case "$interfaces" in
+					*" "*)
+						case " $interfaces " in *" all "*|*" srv_vpn1 "*) _error "'all' and 'srv_vpn1' cannot be part of a list" ;; esac
+						;;
+				esac
+
+				# Unless forced, at least one listed interface has to be live
+				if [ "$force" != "1" ] && [ "$interfaces" != "all" ] && [ "$interfaces" != "srv_vpn1" ]; then
+					live=""
+					for v in $interfaces; do
+						case "$v" in default|none) live=1; break ;; esac
+						_intf_ipset_exists "$v" && { live=1; break; }
+					done
+					[ -n "$live" ] || _error "interface '$(echo "$interfaces" | tr ' ' ',')' is not active; use force:true to override"
+				fi
+
+				# Remember the old output so we can RST its active connections
+				old_interfaces=$(_rule_intf_list "$section")
+				[ -z "$old_interfaces" ] && old_interfaces="all"
+				old_key=$(_rule_intf_key "$section")
+				[ -z "$old_key" ] && old_key="all"
+
+				uci -q delete "omr-bypass.${section}.interface"
+				uci -q delete "omr-bypass.${section}.failback"
+				case "$interfaces" in
+					all) ;;
+					*" "*) for v in $interfaces; do uci -q add_list "omr-bypass.${section}.interface=$v"; done ;;
+					*) uci -q set "omr-bypass.${section}.interface=${interfaces}" ;;
+				esac
 				uci -q commit omr-bypass
 
-				if [ "$force" = "true" ]; then
-					_rst_old_intf_connections "$old_interface"
+				if [ "$force" = "1" ]; then
+					_rst_old_intf_connections "$old_key"
 					/etc/init.d/omr-bypass reload_rules >/dev/null 2>&1 &
-				elif [ "$reload" = "true" ]; then
+				elif [ "$reload" = "1" ]; then
 					/etc/init.d/omr-bypass reload_rules >/dev/null 2>&1 &
 				fi
 
-				echo "{\"result\":\"ok\",\"section\":\"$(_json_str "$section")\",\"interface\":\"$(_json_str "$interface")\",\"prev_interface\":\"$(_json_str "$old_interface")\"}"
+				json_init
+				json_add_string result ok
+				json_add_string section "$section"
+				json_add_string interface "${interfaces%% *}"
+				_json_add_list interfaces $interfaces
+				json_add_string prev_interface "${old_interfaces%% *}"
+				_json_add_list prev_interfaces $old_interfaces
+				json_dump
 				;;
 
 			get_interface)
-				input=$(cat)
-				section=$(echo "$input" | jsonfilter -q -e '@.section')
-
-				if [ -z "$section" ]; then
-					echo '{"error":"missing section parameter"}'
-					exit 1
-				fi
-
+				json_load "$(cat)"
+				json_get_var section section
+				[ -n "$section" ] || _error "missing section parameter"
 				section_type=$(uci -q get "omr-bypass.${section}" 2>/dev/null)
-				if [ -z "$section_type" ]; then
-					echo "{\"error\":\"section '$(_json_str "$section")' not found in omr-bypass config\"}"
-					exit 1
-				fi
+				[ -n "$section_type" ] || _error "section '${section}' not found in omr-bypass config"
 
-				interface=$(uci -q get "omr-bypass.${section}.interface" 2>/dev/null)
-				[ -z "$interface" ] && interface="all"
+				interfaces=$(_rule_intf_list "$section")
+				[ -z "$interfaces" ] && interfaces="all"
+				key=$(_rule_intf_key "$section")
+				[ -z "$key" ] && key="all"
 
-				active="false"
-				_intf_ipset_exists "$interface" && active="true"
-
-				echo "{\"section\":\"$(_json_str "$section")\",\"type\":\"$(_json_str "$section_type")\",\"interface\":\"$(_json_str "$interface")\",\"active\":${active}}"
+				json_init
+				json_add_string section "$section"
+				json_add_string type "$section_type"
+				json_add_string interface "${interfaces%% *}"
+				_json_add_list interfaces $interfaces
+				json_add_boolean active "$(_intf_ipset_exists "$key" && echo 1 || echo 0)"
+				json_add_string output "$(_rule_output "$section")"
+				json_dump
 				;;
 
 			list_sections)
-				entries=""
+				json_init
+				json_add_array sections
 				for type in $VALID_SECTION_TYPES; do
-					for key in $(uci -q show omr-bypass 2>/dev/null | grep "=${type}$" | cut -d= -f1); do
-						sec=$(echo "$key" | sed 's/omr-bypass\.//')
-						intf=$(uci -q get "omr-bypass.${sec}.interface" 2>/dev/null)
-						[ -z "$intf" ] && intf="all"
-						name=$(uci -q get "omr-bypass.${sec}.name" 2>/dev/null)
-						entry="{\"section\":\"$(_json_str "$sec")\",\"type\":\"$(_json_str "$type")\",\"interface\":\"$(_json_str "$intf")\",\"name\":\"$(_json_str "$name")\"}"
-						[ -n "$entries" ] && entries="${entries},"
-						entries="${entries}${entry}"
+					for key in $(uci -q -X show omr-bypass 2>/dev/null | grep "=${type}$" | cut -d= -f1); do
+						sec="${key#omr-bypass.}"
+						interfaces=$(_rule_intf_list "$sec")
+						[ -z "$interfaces" ] && interfaces="all"
+						json_add_object ""
+						json_add_string section "$sec"
+						json_add_string type "$type"
+						json_add_string interface "${interfaces%% *}"
+						_json_add_list interfaces $interfaces
+						json_add_string output "$(_rule_output "$sec")"
+						json_add_string name "$(uci -q get "omr-bypass.${sec}.name" 2>/dev/null)"
+						json_close_object
 					done
 				done
-				echo "{\"sections\":[${entries}]}"
+				json_close_array
+				json_dump
+				;;
+
+			list_policies)
+				json_init
+				json_add_array policies
+				# -X: real names, the ones wan-failover and its status file use
+				for key in $(uci -q -X show omr-bypass 2>/dev/null | grep "=src_intf$" | cut -d= -f1); do
+					_srcif_add_policy "${key#omr-bypass.}" ""
+				done
+				json_close_array
+				json_dump
+				;;
+
+			get_policy)
+				json_load "$(cat)"
+				json_get_var section section
+				_srcif_section_ok "$section" || _error "missing or invalid section parameter"
+				[ "$(uci -q get "omr-bypass.${section}")" = "src_intf" ] || _error "policy '${section}' not found"
+				json_init
+				_srcif_add_policy "$section" policy
+				json_dump
+				;;
+
+			set_policy)
+				# Creates the policy when "section" is absent or does not exist
+				# yet; otherwise only the keys given are changed. Applied right
+				# away: wan-failover rebuilds its one nft chain, no fw4 or
+				# dnsmasq restart is involved.
+				json_load "$(cat)"
+				json_get_var section section
+				json_get_var enabled enabled
+				json_get_var fallback fallback
+				json_get_var ipv6 ipv6
+				json_get_var note note
+				json_get_type has_note note
+				json_get_type has_source source
+				json_get_type has_wan wan
+				sources=$(_json_list_get source)
+				wans=$(_json_list_get wan)
+
+				if [ -n "$section" ]; then
+					_srcif_section_ok "$section" || _error "invalid section name (letters, digits and _ only)"
+					type=$(uci -q get "omr-bypass.${section}")
+					[ -n "$type" ] && [ "$type" != "src_intf" ] && _error "section '${section}' is a '${type}' section, not a policy"
+				fi
+				[ -n "$type" ] || {
+					[ -n "$sources" ] || _error "a new policy needs at least one source interface"
+					[ -n "$wans" ] || _error "a new policy needs at least one WAN"
+				}
+				[ -n "$has_source" ] && [ -z "$sources" ] && _error "source cannot be empty"
+				[ -n "$has_wan" ] && [ -z "$wans" ] && _error "wan cannot be empty"
+				for v in $sources; do
+					_valid_network "$v" || _error "source '${v}' is not a network interface"
+				done
+				for v in $wans; do
+					_valid_network "$v" || _error "wan '${v}' is not a network interface"
+					case " $(echo $sources) " in *" $v "*) _error "'${v}' cannot be both a source and a WAN" ;; esac
+				done
+				case "$fallback" in ""|default|block) ;; *) _error "fallback must be 'default' or 'block'" ;; esac
+				case "$ipv6" in ""|default|policy|block) ;; *) _error "ipv6 must be 'default', 'policy' or 'block'" ;; esac
+				case "$enabled" in ""|0|1|true|false) ;; *) _error "enabled must be a boolean" ;; esac
+
+				if [ -z "$type" ]; then
+					# Named, never "uci add": an anonymous section is renamed
+					# on commit, so the id handed back would already be stale.
+					if [ -z "$section" ]; then
+						base="srcif_$(echo "$sources" | head -n1 | sed 's/[^A-Za-z0-9_]/_/g')"
+						section="$base"
+						n=2
+						while [ -n "$(uci -q get "omr-bypass.${section}")" ]; do
+							section="${base}_${n}"
+							n=$((n + 1))
+						done
+					fi
+					uci -q set "omr-bypass.${section}=src_intf"
+					uci -q set "omr-bypass.${section}.enabled=1"
+				fi
+				case "$enabled" in
+					1|true) uci -q set "omr-bypass.${section}.enabled=1" ;;
+					0|false) uci -q set "omr-bypass.${section}.enabled=0" ;;
+				esac
+				if [ -n "$sources" ]; then
+					uci -q delete "omr-bypass.${section}.source"
+					for v in $sources; do uci -q add_list "omr-bypass.${section}.source=$v"; done
+				fi
+				if [ -n "$wans" ]; then
+					uci -q delete "omr-bypass.${section}.wan"
+					for v in $wans; do uci -q add_list "omr-bypass.${section}.wan=$v"; done
+				fi
+				[ -n "$fallback" ] && uci -q set "omr-bypass.${section}.fallback=$fallback"
+				[ -n "$ipv6" ] && uci -q set "omr-bypass.${section}.ipv6=$ipv6"
+				if [ -n "$has_note" ]; then
+					if [ -n "$note" ]; then
+						uci -q set "omr-bypass.${section}.note=$note"
+					else
+						uci -q delete "omr-bypass.${section}.note"
+					fi
+				fi
+				uci -q commit omr-bypass
+				[ -x "$SRCIF_POLICY" ] && "$SRCIF_POLICY" apply >/dev/null 2>&1
+
+				json_init
+				json_add_string result ok
+				_srcif_add_policy "$section" policy
+				json_dump
+				;;
+
+			delete_policy)
+				json_load "$(cat)"
+				json_get_var section section
+				_srcif_section_ok "$section" || _error "missing or invalid section parameter"
+				[ "$(uci -q get "omr-bypass.${section}")" = "src_intf" ] || _error "policy '${section}' not found"
+				uci -q delete "omr-bypass.${section}"
+				uci -q commit omr-bypass
+				[ -x "$SRCIF_POLICY" ] && "$SRCIF_POLICY" apply >/dev/null 2>&1
+				json_init
+				json_add_string result ok
+				json_add_string section "$section"
+				json_dump
 				;;
 
 			*)
