@@ -10,8 +10,10 @@
 # Snapshot the config dump once instead of re-running `uci show
 # openmptcprouter` for every substring test below (each dump forks uci and
 # reserializes the whole config). Refreshed after the get_config commits,
-# whose result the later tests must see.
-_omr_snapshot="$(uci -q show openmptcprouter)"
+# whose result the later tests must see. Read through the /var/state view:
+# token_error, admin_error and set_firewall, tested below, are runtime
+# state (see omr-state.sh), which a plain "uci show" doesn't include.
+_omr_snapshot="$(uci -q -P /var/state show openmptcprouter)"
 _omr_has() {
 	case "$_omr_snapshot" in
 		*"$1"*) return 0;;
@@ -239,7 +241,7 @@ if [ -n "$(printf '%s\n' "$_omr_snapshot" | awk -F= '/password/ { gsub("\047",""
 	fi
 
 	# The set_get_config/token blocks above may have just committed new flags
-	_omr_snapshot="$(uci -q show openmptcprouter)"
+	_omr_snapshot="$(uci -q -P /var/state show openmptcprouter)"
 	if [ "$(pgrep -f openmptcprouter-vps)" = "" ] && _omr_has "token_error='1'"; then
 		/etc/init.d/openmptcprouter-vps token >/dev/null 2>&1 &
 		sleep 5
