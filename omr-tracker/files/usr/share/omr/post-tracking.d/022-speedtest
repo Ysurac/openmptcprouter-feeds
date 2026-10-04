@@ -10,14 +10,18 @@
 . "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
 
 { [ "$OMR_TRACKER_STATUS" = "ERROR" ] || [ -z "$OMR_TRACKER_INTERFACE" ]; } && exit 0
-interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
+# Off unless enabled on the interface: test that first. The interface state
+# (ifstatus, i.e. a shell, two ubus and a jsonfilter) and the pgrep below
+# used to run on every cycle of every WAN to find out there was nothing to do.
+[ "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed)" = "1" ] || exit 0
+interface_up=$(ubus call network.interface."$OMR_TRACKER_INTERFACE" status 2>/dev/null | jsonfilter -q -e '@["up"]')
 [ "$interface_up" != "true" ] && exit 0
 
 # testspeed_lc marks the automatic speedtest as done for this interface. It
 # stays in the persistent config, unlike the runtime values in /var/state:
 # kept there, it was gone after each reboot and the 6 tests ran again on
 # every boot on each interface with testspeed enabled.
-if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(pgrep -f omr-test-speed-server)" = "" ] && [ "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed)" = "1" ] && [ -z "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed_lc)" ]; then
+if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(pgrep -f omr-test-speed-server)" = "" ] && [ -z "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed_lc)" ]; then
 	speedtest_bin="/bin/omr-test-speed-server"
 	[ -x "$speedtest_bin" ] || speedtest_bin="omr-test-speed-server"
 	launch_speedtest() {
