@@ -874,6 +874,7 @@ while true; do
 							fi
 							[ -n "$_host6_resolved" ] && OMR_TRACKER_HOST6="$_host6_resolved"
 							if [ -n "$OMR_TRACKER_HOST6" ]; then
+								_probe_route6=""
 								if [ "$OMR_TRACKER_INTERFACE_PROTO" = "3g" ] || [ "$OMR_TRACKER_INTERFACE_PROTO" = "qmi" ] || [ "$OMR_TRACKER_INTERFACE_PROTO" = "ncm" ]; then
 									# Check if route is not used
 									while ! ip -6 route add $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6 > /dev/null 2>&1
@@ -883,6 +884,7 @@ while true; do
 										ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP6" > /dev/null 2>&1
 										_restart
 									done
+									_probe_route6=1
 								fi
 								if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
 									_ping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE" "$host_localip"
@@ -894,7 +896,11 @@ while true; do
 									_dns "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP6" "$host_localip"
 									statusb=$?
 								fi
-								ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP6" > /dev/null 2>&1
+								# Only the route added above for the probe: for IPv6 the kernel
+								# ignores "src" when deleting, so this used to remove any
+								# main-table route to the host via the same gateway and device,
+								# whatever the interface's protocol
+								[ -n "$_probe_route6" ] && ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP6" > /dev/null 2>&1
 								if [ "$statusb" -eq 0 ]; then
 									OMR_TRACKER_STATUS_MSG=""
 									OMR_TRACKER_STATUS="OK"
