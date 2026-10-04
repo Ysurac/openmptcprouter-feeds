@@ -23,9 +23,17 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$OMR_TR
 		/etc/init.d/omr-tracker restart >/dev/null 2>&1
 		exit 0
 	fi
+	# The device's name anywhere in the table, as grep did, without the
+	# grep and its subshell: this runs on every post-tracking cycle
+	_table_has_device() {
+		case "$1" in
+			*"$OMR_TRACKER_DEVICE"*) return 0 ;;
+		esac
+		return 1
+	}
 	_routes_missing() {
 		metric="$(uci -q get network.$OMR_TRACKER_INTERFACE.metric)"
-		[ -z "$metric" ] || { [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -z "$(ip route show table $metric | grep $OMR_TRACKER_DEVICE)" ]; } || { [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -z "$(ip -6 route show table 6${metric} | grep $OMR_TRACKER_DEVICE)" ]; }
+		[ -z "$metric" ] || { [ -n "$OMR_TRACKER_DEVICE_IP" ] && ! _table_has_device "$(ip route show table $metric)"; } || { [ -n "$OMR_TRACKER_DEVICE_IP6" ] && ! _table_has_device "$(ip -6 route show table 6${metric})"; }
 	}
 	# No carrier: the kernel flushed the device's routes on link-down and
 	# none can be put back until the link returns -- omr-tracker restores them
@@ -51,7 +59,9 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$OMR_TR
 	fi
 fi
 
-if ([ -n "$(grep z8102ax /etc/board.json)" ] || [ -n "$(grep z8802 /etc/board.json)" ] || [ -n "$(grep z8803 /etc/board.json)" ]) && [ "$(uci -q get network.modem1.proto)" = "modemmanager" ]; then
+# One grep -q per board family rather than a subshell per board name: the
+# board never changes, and these ran on every post-tracking cycle
+if grep -q -E 'z8102ax|z8802|z8803' /etc/board.json && [ "$(uci -q get network.modem1.proto)" = "modemmanager" ]; then
 	if [ -e /sys/devices/platform/soc/11200000.usb/usb1/1-1/1-1.1 ]; then
 		uci -q batch <<-EOF
 		set network.modem1.device='/sys/devices/platform/soc/11200000.usb/usb1/1-1/1-1.1'
@@ -65,7 +75,7 @@ if ([ -n "$(grep z8102ax /etc/board.json)" ] || [ -n "$(grep z8802 /etc/board.js
 	fi
 	[ -n "$(uci -q changes network)" ] && uci -q commit network
 fi
-if [ -n "$(grep z8109ax /etc/board.json)" ] && [ "$(uci -q get network.modem1.proto)" = "modemmanager" ]; then
+if grep -q z8109ax /etc/board.json && [ "$(uci -q get network.modem1.proto)" = "modemmanager" ]; then
 	if [ -e /sys/devices/platform/soc/11200000.usb/usb1/1-1/1-1.1 ]; then
 		uci -q batch <<-EOF
 		set network.modem1.device='/sys/devices/platform/soc/11200000.usb/usb1/1-1/1-1.1'
@@ -90,7 +100,8 @@ fi
 _unbound_lc=$(omr_state_get openmptcprouter.settings.unbound_lc)
 [ -z "$_unbound_lc" ] && _unbound_lc=$(uci -q get openmptcprouter.settings.unbound_lc)
 _unbound_now=$(date +%s)
-if [ -n "$(uci -q show unbound)" ] && { [ -z "$_unbound_lc" ] || [ $((_unbound_now - _unbound_lc)) -gt 60 ]; }; then
+# The timestamp first: the unbound config is only looked at once a minute
+if { [ -z "$_unbound_lc" ] || [ $((_unbound_now - _unbound_lc)) -gt 60 ]; } && [ -n "$(uci -q show unbound)" ]; then
 	omr_state_migrate openmptcprouter settings unbound_lc
 	omr_state_set openmptcprouter settings unbound_lc "$_unbound_now"
 	if [ -n "$(ip -6 r show scope global)" ]; then
