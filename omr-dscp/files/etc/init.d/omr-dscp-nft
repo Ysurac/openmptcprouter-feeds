@@ -259,7 +259,15 @@ _add_fwmark_chain() {
 	done
 }
 
+# Old dnsmasq "ipset" strings (omr_dscp-<class>, omr_dst_bypass_<intf>) become
+# anonymous ipset sections when OpenWrt migrates them: only those are
+# leftovers. Named ipset sections are omr-bypass's, and the other sections
+# with a name option are the user's (static leases, hostnames...).
 _remove_old_ipset_dnsmasq() {
+	case "$1" in
+		cfg[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+		*) return ;;
+	esac
 	[ -n "$(uci -q get dhcp.${1}.name | grep omr)" ] && uci -q delete dhcp.$1
 }
 _remove_ipset_dnsmasq() {
@@ -284,8 +292,8 @@ _setup_tunnel() {
 _cleanup() {
 	uci -q del dhcp.@dnsmasq[0].ipset
 	config_load dhcp
-	config_foreach _remove_ipset_dnsmasq
-	config_foreach _remove_old_ipset_dnsmasq
+	config_foreach _remove_ipset_dnsmasq ipset
+	config_foreach _remove_old_ipset_dnsmasq ipset
 	config_load firewall
 	config_foreach _remove_rules
 	uci -q commit dhcp
