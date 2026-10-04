@@ -365,9 +365,19 @@ if [ -f /etc/init.d/dnsmasq ] && [ "$_keepalived_backup" != "1" ]; then
 		/etc/init.d/dnsmasq restart >/dev/null 2>&1
 		sleep 5
 	elif [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ] && [ -n "$(dig +timeout=4 +tries=2 openmptcprouter.com 2>&1 | grep -i 'connection refused')" ]; then
-		_log "Can't resolve via dnsmasq, restart it..."
-		/etc/init.d/dnsmasq restart >/dev/null 2>&1
-		sleep 5
+		# Also refused while dnsmasq is being restarted (pgrep -f then finds
+		# its init script): let that finish, then check again
+		_wait=0
+		while [ -n "$(pgrep -f /etc/init.d/dnsmasq)" ] && [ "$_wait" -lt 30 ]; do
+			sleep 1
+			_wait=$((_wait + 1))
+		done
+		sleep 2
+		if [ -n "$(dig +timeout=4 +tries=2 openmptcprouter.com 2>&1 | grep -i 'connection refused')" ]; then
+			_log "Can't resolve via dnsmasq, restart it..."
+			/etc/init.d/dnsmasq restart >/dev/null 2>&1
+			sleep 5
+		fi
 	fi
 fi
 
