@@ -225,6 +225,18 @@ _omr_resolve_var() {
 	eval "$_var=\$_val"
 }
 
+# awk program printing "<gateway> <device>" of the first route that has a
+# gateway in "ip route get"/"ip route show" output, wherever the fields
+# are: "ip -6 route get" puts "from ::" before "via".
+_omr_awk_via_dev='{
+	gw = ""; dev = ""
+	for (i = 1; i < NF; i++) {
+		if ($i == "via") gw = $(i + 1)
+		else if ($i == "dev") dev = $(i + 1)
+	}
+	if (gw != "") { print gw, dev; exit }
+}'
+
 # Read with a plain uci get, not through the cache: several scripts source
 # this library only to log something (002-error's early exits, 001-initialize)
 # and must not pay for building the config map just to learn whether debug
