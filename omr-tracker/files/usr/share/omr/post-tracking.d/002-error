@@ -383,7 +383,13 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 		if [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
 			del_default_route
 			config_load network
-			config_foreach set_route interface $OMR_TRACKER_INTERFACE
+			# In balancing mode the WAN trackers keep the metric 1 route
+			# balanced over the WANs that are up: replacing it by a route
+			# through the first of them sent all the traffic through that WAN
+			# until a WAN tracker rebuilt it. Only set table 991337 then.
+			setdefault="yes"
+			[ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ -n "$(ip route show default metric 1)" ] && setdefault="no"
+			config_foreach set_route interface $OMR_TRACKER_INTERFACE "$setdefault"
 			config_foreach set_route6 interface $OMR_TRACKER_INTERFACE
 		else
 			_log "Default gateway disabled, no default gateway set"
