@@ -1906,11 +1906,10 @@ _set_lan_ip() {
 	fi
 }
 
-# The elements of one of omr-bypass-nft's fw4 sets, quoted and
-# comma-separated as the ipset branches below give them. From nft's text
-# output: the set is an interval set, so an element can be an address, a
-# prefix or a range (the JSON output has a different form for each), and it
-# may carry a timeout.
+# The elements of one of omr-bypass's fw4 sets, quoted and comma-separated.
+# From nft's text output: the set is an interval set, so an element can be
+# an address, a prefix or a range (the JSON output has a different form for
+# each), and it may carry a timeout.
 _bypass_set_elements() {
 	nft list set inet fw4 "$1" 2>/dev/null | awk '
 		/elements = \{/ { e = 1; sub(/.*elements = \{/, "") }
@@ -1926,22 +1925,41 @@ _bypass_set_elements() {
 }
 
 _set_bypass_ips() {
-	local settings
-	[ -z "$servername" ] && servername=$1
-	bypassipv4s=$(ipset -q -o save list omr_dst_bypass_srv_vpn1_4 2>/dev/null | awk '/add/ NF {print "\""$3"\""}' | tr '\n' ',' | sed 's/,$//')
-	[ -z "$bypassipv4s" ] && bypassipv4s=$(_bypass_set_elements omr_dst_bypass_srv_vpn1_4)
-	bypassipv6s=$(ipset -q -o save list omr6_dst_bypass_srv_vpn1_6  2>/dev/null | awk '/add/ NF {print "\""$3"\""}' | tr '\n' ',' | sed 's/,$//')
-	[ -z "$bypassipv6s" ] && bypassipv6s=$(_bypass_set_elements omr_dst_bypass_srv_vpn1_6)
-	# "
-	if [ "$bypassipv4s" != "" ] || [ "$bypassipv6s" != "" ]; then
-		settings='{"ipv4s" : ['$bypassipv4s'],"ipv6s" : ['$bypassipv6s'],"intf" : "vpn1"}'
-		result=$(_set_json "bypass" "$settings")
+	local settings result bypass_sent
+	bypassipv4s=$(_bypass_set_elements omr_dst_bypass_srv_vpn1_4)
+	bypassipv6s=$(_bypass_set_elements omr_dst_bypass_srv_vpn1_6)
+	# An empty list is sent only to a VPS that was given one before (the last
+	# address was removed), or it would keep bypassing it. One that never had
+	# one isn't sent anything.
+	bypass_sent="$(uci -q get openmptcprouter.${servername}.bypass_sent)"
+	[ -z "$bypassipv4s$bypassipv6s" ] && [ "$bypass_sent" != "1" ] && return
+	settings='{"ipv4s" : ['$bypassipv4s'],"ipv6s" : ['$bypassipv6s'],"intf" : "vpn1"}'
+	result=$(_set_json "bypass" "$settings")
+	[ "$(_parse_result "$result")" = "done" ] || return
+	if [ -n "$bypassipv4s$bypassipv6s" ]; then
+		[ "$bypass_sent" = "1" ] && return
+		uci -q set openmptcprouter.${servername}.bypass_sent=1
+	else
+		uci -q delete openmptcprouter.${servername}.bypass_sent
 	fi
+	uci -q commit openmptcprouter
+}
+
+# Each server with its own token: _set_json logs in to $servername's VPS only
+# when $token is empty.
+_set_bypass_ips_server() {
+	servername=$1
+	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	token=""
+	_set_bypass_ips
 }
 
 set_bypass_ips() {
 	config_load openmptcprouter
-	config_foreach _set_bypass_ips server
+	config_foreach _set_bypass_ips_server server
 }
 
 _set_vpn_ip() {
