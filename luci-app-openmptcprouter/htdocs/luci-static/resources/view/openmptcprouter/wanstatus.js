@@ -62,10 +62,26 @@ return view.extend({
 		return str.slice(0, -num) + new Array(num + 1).join(replace);
 	},
 
+	anonymizeIP6: function(ip) {
+		/* Masking the last 6 characters leaves about the first 16 bits of an
+		 * IPv4 address, i.e. its provider, but the whole /64 of an IPv6 one,
+		 * which identifies the subscriber. Keep the first two groups (32
+		 * bits, a provider allocation) and mask the other digits; the colons
+		 * and a prefix length stay. */
+		var parts = ip.split('/');
+		var groups = parts[0].split(':');
+		for (var i = 2; i < groups.length; i++)
+			groups[i] = groups[i].replace(/[0-9a-f]/gi, 'x');
+		parts[0] = groups.join(':');
+		return parts.join('/');
+	},
+
 	anonymizeHost: function(host) {
 		/* An IP keeps its start like other masked IPs; a hostname is masked
 		 * completely, as its start is what identifies it (#1289) */
-		if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || host.indexOf(':') !== -1)
+		if (host.indexOf(':') !== -1)
+			return this.anonymizeIP6(host);
+		if (/^\d+\.\d+\.\d+\.\d+$/.test(host))
 			return this.replaceLastNChars(host, 'x', 6);
 		return this.replaceLastNChars(host, 'x', host.length);
 	},
@@ -153,8 +169,8 @@ return view.extend({
 			if (wanip && !this.testPrivateIP(wanip)) wanip = this.replaceLastNChars(wanip, 'x', 6);
 			if (gateway && !this.testPrivateIP(gateway)) gateway = this.replaceLastNChars(gateway, 'x', 6);
 			if (ipaddr && !this.testPrivateIP(ipaddr)) ipaddr = this.replaceLastNChars(ipaddr, 'x', 6);
-			if (ip6addr) ip6addr = this.replaceLastNChars(ip6addr, 'x', 6);
-			if (wanip6) wanip6 = this.replaceLastNChars(wanip6, 'x', 6);
+			if (ip6addr) ip6addr = this.anonymizeIP6(ip6addr);
+			if (wanip6) wanip6 = this.anonymizeIP6(wanip6);
 			if (phonenumber) phonenumber = this.replaceLastNChars(phonenumber, 'x', 6);
 		}
 
