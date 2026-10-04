@@ -574,6 +574,48 @@ _bypass_domain() {
 	fi
 }
 
+# Only OMR's own dnsmasq init ever read dhcp.@dnsmasq[0].noipv6
+# (append_noipv6). It was kept for 5.4 kernels only and later removed, and
+# OpenWrt's init ignores the option, so "Disable AAAA IPv6 DNS" did nothing
+# (issue #4342). Write the two lines that init generated per domain to a file
+# in the conf-dir of that dnsmasq instance:
+#   server=/<domain>/#    other queries still go to the usual servers
+#   address=/<domain>/::  AAAA queries are answered with "::"
+# One domain per line keeps every line far below dnsmasq's ~1024-byte limit.
+# dnsmasq reads its conf-dir only when it starts, not on reload: return 0
+# when the file changed, so that the caller restarts it.
+_noipv6_dnsmasq_conf() {
+	local cfg="" confdir conf tmp
+	_noipv6_first_dnsmasq() {
+		[ -z "$cfg" ] && cfg="$1"
+	}
+	_noipv6_dnsmasq_lines() {
+		echo "server=/$1/#"
+		echo "address=/$1/::"
+	}
+	config_load dhcp
+	config_foreach _noipv6_first_dnsmasq dnsmasq
+	[ -z "$cfg" ] && return 1
+	# Take the conf-dir from the config the dnsmasq init generated: by default
+	# it is /tmp/dnsmasq.<section>.d with OpenWrt's init, but /tmp/dnsmasq.d
+	# with OMR's own init for 6.6 and 6.12 kernels.
+	confdir="$(sed -n '/^conf-dir=/{s/^conf-dir=//;s/,.*//;p;q}' "/var/etc/dnsmasq.conf.$cfg" 2>/dev/null)"
+	[ -z "$confdir" ] && return 1
+	conf="$confdir/omr-bypass-noipv6.conf"
+	# dnsmasq skips dot files, so it never reads a half-written list
+	tmp="$confdir/.omr-bypass-noipv6.conf"
+	mkdir -p "$confdir"
+	config_list_foreach "$cfg" noipv6 _noipv6_dnsmasq_lines > "$tmp"
+	if [ ! -s "$tmp" ]; then
+		rm -f "$tmp"
+		[ -f "$conf" ] || return 1
+		rm -f "$conf"
+		return 0
+	fi
+	cmp -s "$tmp" "$conf" && { rm -f "$tmp"; return 1; }
+	mv -f "$tmp" "$conf"
+}
+
 _bypass_mac() {
 	local mac
 	local intf
@@ -2154,11 +2196,15 @@ start_service() {
 		}
 	fi
 
-	[ -z "$RELOAD" ] && { [ -n "$_dhcp_regen" ] || [ -n "$_dhcp_changed" ]; } && {
+	# a reload does not re-read the noipv6 file (see _noipv6_dnsmasq_conf)
+	_dnsmasq_restart=""
+	_noipv6_dnsmasq_conf && _dnsmasq_restart=1
+	[ -z "$RELOAD" ] && { [ -n "$_dhcp_regen" ] || [ -n "$_dhcp_changed" ]; } && _dnsmasq_restart=1
+	[ -n "$_dnsmasq_restart" ] && {
 		logger -t "omr-bypass" "Restart dnsmasq..."
 		/etc/init.d/dnsmasq restart
 	}
-	[ -n "$RELOAD" ] && [ "$add_domains" = "true" ] && {
+	[ -z "$_dnsmasq_restart" ] && [ -n "$RELOAD" ] && [ "$add_domains" = "true" ] && {
 		logger -t "omr-bypass" "Reload dnsmasq..."
 		/etc/init.d/dnsmasq reload
 	}
@@ -2192,7 +2238,12 @@ stop_service() {
 	config_load dhcp
 	config_foreach _delete_dhcp_ipset ipset
 	[ -n "$_dhcp_delete_batch" ] && printf '%s' "$_dhcp_delete_batch" | uci -q batch
+	uci -q delete dhcp.@dnsmasq[0].noipv6
 	uci -q commit dhcp
+	_noipv6_dnsmasq_conf && {
+		logger -t "omr-bypass" "Restart dnsmasq..."
+		/etc/init.d/dnsmasq restart
+	}
 	_fw_delete_batch=""
 	config_load firewall
 	config_foreach _delete_firewall_rules rule
