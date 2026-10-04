@@ -4,6 +4,7 @@
 basename="${0##*/}"
 
 . /usr/lib/unbound/iptools.sh
+. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
 
 export OMR_TRACKER_STATUS
 export OMR_TRACKER_STATUS_MSG
@@ -135,7 +136,7 @@ _get_server_name() {
 
 _disable_current() {
 	local serv=$1
-	uci -q set openmptcprouter."${serv}".current=0
+	omr_state_set openmptcprouter "${serv}" current 0
 }
 
 _disable_redir() {
@@ -330,13 +331,13 @@ _check_master() {
 					uci -q batch <<-EOF >/dev/null
 						set shadowsocks-libev.sss${count}.server="$ip"
 						set shadowsocks-rust.sss${count}.server="$ip"
-						set openmptcprouter.${name}.current='1'
-						del openmptcprouter.omr.detected_ss_ipv4
-						del openmptcprouter.omr.detected_public_ipv4
-						del openmptcprouter.omr.detected_ss_ipv6
-						del openmptcprouter.omr.detected_public_ipv6
-						commit openmptcprouter
 					EOF
+					# runtime, in /var/state (see omr-state.sh)
+					omr_state_set openmptcprouter "${name}" current '1'
+					omr_state_del openmptcprouter omr detected_ss_ipv4
+					omr_state_del openmptcprouter omr detected_public_ipv4
+					omr_state_del openmptcprouter omr detected_ss_ipv6
+					omr_state_del openmptcprouter omr detected_public_ipv6
 					[ -z "$(uci -q get openvpn.omr.remote | grep "$ip")" ] && \
 						uci -q add_list openvpn.omr.remote="$ip"
 					if [ "$count" -eq "0" ]; then
@@ -361,7 +362,7 @@ _check_master() {
 					_enable_ss_redirs
 					[ -n "$ip" ] && [ -n "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
 						uci -q del_list openmptcprouter.${name}.ip_down="$ip"
-					uci -q set openmptcprouter.${name}.current='1'
+					omr_state_set openmptcprouter ${name} current '1'
 					_send_mail_alert "up" "$name" "$ip"
 				fi
 				_srv_prev_up[$state_key]="1"
@@ -388,7 +389,7 @@ _check_master() {
 		}
 		config_load openmptcprouter
 		config_list_foreach "$1" ip _do_check_ip
-		[ "$oneserverup" = "0" ] && uci -q set openmptcprouter.${name}.current='0'
+		[ "$oneserverup" = "0" ] && omr_state_set openmptcprouter ${name} current '0'
 		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 		# Commit only what actually changed: a no-op `uci commit` still forks
 		# and rewrites nothing but costs file locking and IO every cycle
@@ -426,13 +427,13 @@ _check_backup() {
 					uci -q batch <<-EOF >/dev/null
 						set shadowsocks-libev.sss${count}.server="$ip"
 						set shadowsocks-rust.sss${count}.server="$ip"
-						set openmptcprouter.${name}.current='1'
-						del openmptcprouter.omr.detected_ss_ipv4
-						del openmptcprouter.omr.detected_public_ipv4
-						del openmptcprouter.omr.detected_ss_ipv6
-						del openmptcprouter.omr.detected_public_ipv6
-						commit openmptcprouter
 					EOF
+					# runtime, in /var/state (see omr-state.sh)
+					omr_state_set openmptcprouter "${name}" current '1'
+					omr_state_del openmptcprouter omr detected_ss_ipv4
+					omr_state_del openmptcprouter omr detected_public_ipv4
+					omr_state_del openmptcprouter omr detected_ss_ipv6
+					omr_state_del openmptcprouter omr detected_public_ipv6
 					if [ "$count" -eq "0" ]; then
 						config_load openmptcprouter
 						config_foreach _disable_current server
@@ -450,7 +451,7 @@ _check_backup() {
 					_enable_ss_redirs
 					[ -n "$ip" ] && [ -n "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
 						uci -q del_list openmptcprouter.${name}.ip_down="$ip"
-					uci -q set openmptcprouter.${name}.current='1'
+					omr_state_set openmptcprouter ${name} current '1'
 					_send_mail_alert "up" "$name" "$ip"
 				fi
 				_srv_prev_up[$state_key]="1"
@@ -466,7 +467,7 @@ _check_backup() {
 						[ -z "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
 						uci -q add_list openmptcprouter.${name}.ip_down="$ip" && \
 						logger -t "OMR-Tracker-Server" "Backup server ${name} down ($ip)"
-					uci -q set openmptcprouter.${name}.current='0'
+					omr_state_set openmptcprouter ${name} current '0'
 					uci -q commit openmptcprouter
 					_disable_ss_redirs_by_ip "$ip"
 					_send_mail_alert "down" "$name" "$ip"
@@ -480,7 +481,7 @@ _check_backup() {
 		}
 		config_load openmptcprouter
 		config_list_foreach "$1" ip _do_check_ip
-		[ "$oneserverup" = "0" ] && uci -q set openmptcprouter.${name}.current='0'
+		[ "$oneserverup" = "0" ] && omr_state_set openmptcprouter ${name} current '0'
 		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 		# Commit only what actually changed (see _check_master)
 		[ -n "$(uci -q changes shadowsocks-libev)" ] && { changes="1"; uci -q commit shadowsocks-libev; }
@@ -533,9 +534,8 @@ while true; do
 		srv_state="down"
 	fi
 	if [ "$srv_state" != "$_omr_server_state" ]; then
-		uci -q set openmptcprouter.omr=router
-		uci -q set openmptcprouter.omr.server="$srv_state"
-		uci -q commit openmptcprouter
+		[ "$(uci -q get openmptcprouter.omr)" = "router" ] || { uci -q set openmptcprouter.omr=router; uci -q commit openmptcprouter; }
+		omr_state_set openmptcprouter omr server "$srv_state"
 		_omr_server_state="$srv_state"
 	fi
 	sleep "${interval}"

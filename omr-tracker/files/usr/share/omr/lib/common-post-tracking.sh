@@ -59,7 +59,10 @@ _omr_uci_cache_load() {
 	[ -n "$_OMR_UCI_CACHE_LOADED" ] && return 0
 	_OMR_UCI_CACHE_LOADED=1
 	_OMR_UCI_MAP_OK=""
-	_OMR_UCI_CACHE="${_omr_nl}$(command uci -q show openmptcprouter 2>/dev/null; command uci -q show network 2>/dev/null)${_omr_nl}"
+	# openmptcprouter through the /var/state view: the runtime options
+	# (state, lc, publicip, omr.*, ... see omr-state.sh) live there, and
+	# every config option reads back unchanged through it.
+	_OMR_UCI_CACHE="${_omr_nl}$(command uci -q -P "${OMR_STATE_DIR:-/var/state}" show openmptcprouter 2>/dev/null; command uci -q show network 2>/dev/null)${_omr_nl}"
 	[ -n "$BASH_VERSION" ] || return 0
 	local _lit
 	# NOTE: the key filter uses index() rather than a bracket expression:
@@ -120,7 +123,10 @@ _omr_uci_get_var() {
 			fi
 			;;
 	esac
-	_val="$(command uci -q get "$_key" 2>/dev/null)" || { eval "$_var=\$_def"; return 1; }
+	case "$_key" in
+		openmptcprouter.*) _val="$(command uci -q -P "${OMR_STATE_DIR:-/var/state}" get "$_key" 2>/dev/null)" || { eval "$_var=\$_def"; return 1; } ;;
+		*) _val="$(command uci -q get "$_key" 2>/dev/null)" || { eval "$_var=\$_def"; return 1; } ;;
+	esac
 	eval "$_var=\$_val"
 	return 0
 }

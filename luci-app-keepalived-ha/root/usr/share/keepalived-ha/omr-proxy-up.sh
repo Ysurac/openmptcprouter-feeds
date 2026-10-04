@@ -24,7 +24,7 @@ case "$proxy" in
 		;;
 	v2ray | xray)
 		pidof "$proxy" >/dev/null 2>&1 || exit 1
-		[ "$(uci -q get "openmptcprouter.omr.$proxy")" = "down" ] && exit 1
+		[ "$(uci -q -P /var/state get "openmptcprouter.omr.$proxy")" = "down" ] && exit 1
 		exit 0
 		;;
 	*)
@@ -34,7 +34,7 @@ case "$proxy" in
 esac
 
 # shadowsocks variants: healthy while any tracked server is up
-states=$(uci -q show openmptcprouter.omr 2>/dev/null |
+states=$(uci -q -P /var/state show openmptcprouter.omr 2>/dev/null |
 	sed -n "s/^openmptcprouter\.omr\.ss_[a-zA-Z0-9_]*='\(.*\)'$/\1/p")
 [ -z "$states" ] && exit 0
 for s in $states; do

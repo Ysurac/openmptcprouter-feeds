@@ -251,7 +251,7 @@ if [ -n "$(printf '%s\n' "$_omr_snapshot" | awk -F= '/password/ { gsub("\047",""
 	#if [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && ([ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ] || (([ -e /usr/sbin/iptables-nft-save ] && [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ]) || [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ])); then
 	if [ "$(pgrep -f set_vps_firewall)" = "" ] && _omr_has "server" && _omr_has "password" && [ "$(pgrep -f openmptcprouter-vps)" = "" ] && ! _omr_has "admin_error='1'" && _omr_has "set_firewall='1'"; then
 		check_server_fw() {
-			[ "$(uci -q get openmptcprouter.$1.set_firewall)" = "1" ] && {
+			[ "$(uci -q -P /var/state get openmptcprouter.$1.set_firewall)" = "1" ] && {
 				_log "Set firewall on server $1"
 				/etc/init.d/openmptcprouter-vps set_vps_firewall $1 >/dev/null 2>&1
 			}
@@ -304,7 +304,7 @@ if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" =
 fi
 
 if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" = "1" ] && [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ]; then
-	_dns_hijacked_flag="$(uci -q get openmptcprouter.settings.dns_hijacked)"
+	_dns_hijacked_flag="$(uci -q -P /var/state get openmptcprouter.settings.dns_hijacked)"
 	# Nothing to do if dnsmasq isn't on unbound AND we're not already flagged hijacked
 	# (some other/manual config, not ours to touch). Cheap uci reads, so check these
 	# before bothering with the pricier WAN-status loop below.
@@ -317,7 +317,7 @@ if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" =
 				on|master|backup) ;;
 				*) return ;;
 			esac
-			[ "$(uci -q get openmptcprouter.$1.state)" = "up" ] && _omr_wan_up=1
+			[ "$(uci -q -P /var/state get openmptcprouter.$1.state)" = "up" ] && _omr_wan_up=1
 		}
 		config_load network
 		config_foreach _omr_wan_up_check interface
@@ -334,16 +334,14 @@ if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" =
 					_log "DNS port 53 hijacked by ISP, bypass unbound and use 1.1.1.1..."
 					uci -q del_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
 					uci -q add_list dhcp.@dnsmasq[0].server='1.1.1.1'
-					uci -q set openmptcprouter.settings.dns_hijacked=1
-					uci -q commit openmptcprouter
+					uci -q -P /var/state revert openmptcprouter.settings.dns_hijacked; uci -q -P /var/state set openmptcprouter.settings.dns_hijacked=1
 					uci -q commit dhcp
 					/etc/init.d/dnsmasq restart >/dev/null 2>&1
 				elif [ "$ROOT_CHECK_RC" -eq 0 ] && [ -z "$ROOT_CHECK" ] && [ "$_dns_hijacked_flag" = "1" ]; then
 					_log "DNS port 53 hijack resolved, restoring unbound..."
 					uci -q del_list dhcp.@dnsmasq[0].server='1.1.1.1'
 					uci -q add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
-					uci -q del openmptcprouter.settings.dns_hijacked
-					uci -q commit openmptcprouter
+					uci -q -P /var/state revert openmptcprouter.settings.dns_hijacked
 					uci -q commit dhcp
 					/etc/init.d/dnsmasq restart >/dev/null 2>&1
 				fi
@@ -677,9 +675,9 @@ if [ -f /etc/init.d/omr-bypass ] && [ -z "$(pgrep -f '/etc/init.d/omr-bypass ')"
 	sleep 5
 fi
 
-if [ -f /etc/backup/installed_packages.txt ] && [ -n "$(grep overlay /etc/backup/installed_packages.txt)" ] && ([ "$(uci -q get openmptcprouter.settings.sysupgrade_lc)" = "" ] || [ $(($(date +"%s") + $((30 + RANDOM % 31)) - $(uci -q get openmptcprouter.settings.sysupgrade_lc))) -gt 3600 ]) && [ $(($(date +"%s") - $(stat -c "%Y" /etc/backup/installed_packages.txt))) -gt 86400 ]; then
+if [ -f /etc/backup/installed_packages.txt ] && [ -n "$(grep overlay /etc/backup/installed_packages.txt)" ] && ([ "$(uci -q -P /var/state get openmptcprouter.settings.sysupgrade_lc)" = "" ] || [ $(($(date +"%s") + $((30 + RANDOM % 31)) - $(uci -q -P /var/state get openmptcprouter.settings.sysupgrade_lc))) -gt 3600 ]) && [ $(($(date +"%s") - $(stat -c "%Y" /etc/backup/installed_packages.txt))) -gt 86400 ]; then
 	_log "Reinstall packages..."
-	uci -q set openmptcprouter.settings.sysupgrade_lc=$(date +"%s")
+	uci -q -P /var/state revert openmptcprouter.settings.sysupgrade_lc; uci -q -P /var/state set openmptcprouter.settings.sysupgrade_lc=$(date +"%s")
 	/etc/init.d/sysupgrade restart >/dev/null 2>&1
 	sleep 10
 fi
@@ -693,21 +691,37 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFAC
 	fi
 fi
 
-if [ "$(uci -q get openmptcprouter.latest_versions.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get openmptcprouter.latest_versions.lc))) -gt 3600 ]; then
+if [ "$(uci -q -P /var/state get openmptcprouter.latest_versions.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q -P /var/state get openmptcprouter.latest_versions.lc))) -gt 3600 ]; then
 	distribution="$(ubus call system board | jsonfilter -q -e '@.release.distribution' | tr -d '\n')"
 	version="$(ubus call system board | jsonfilter -q -e '@.release.version' | tr -d '\n')"
 	latestversions="$(curl -4 -s -m 3 -A "${distribution}/${version}" https://www.openmptcprouter.com/version/version.json)"
 	[ -n "$latestversions" ] && {
-		uci -q set openmptcprouter.latest_versions=latest_versions
+		# The versions stay in the config (they are worth keeping over a
+		# reboot) but are only written when they change: this runs hourly,
+		# and an unconditional set + commit rewrote the file on flash every
+		# time. The check timestamp is runtime, in /var/state.
 		if [ "${distribution}" = "openmptcprouter" ]; then
-			uci -q set openmptcprouter.latest_versions.omr=$(echo $latestversions | jsonfilter -q -e '@.omr')-$(ubus call system board | jsonfilter -e '@.kernel' | cut -d'.' -f1,2)
-			uci -q set openmptcprouter.latest_versions.vps=$(echo $latestversions | jsonfilter -q -e '@.vps')
+			_lv_omr="$(echo $latestversions | jsonfilter -q -e '@.omr')-$(ubus call system board | jsonfilter -e '@.kernel' | cut -d'.' -f1,2)"
+			_lv_vps="$(echo $latestversions | jsonfilter -q -e '@.vps')"
 		else
-			uci -q del openmptcprouter.latest_versions.omr
-			uci -q del openmptcprouter.latest_versions.vps
+			_lv_omr=""
+			_lv_vps=""
 		fi
-		uci -q set openmptcprouter.latest_versions.lc=$(date +"%s")
-		uci -q commit openmptcprouter
+		if [ "$(uci -q get openmptcprouter.latest_versions.omr)" != "$_lv_omr" ] || [ "$(uci -q get openmptcprouter.latest_versions.vps)" != "$_lv_vps" ]; then
+			uci -q set openmptcprouter.latest_versions=latest_versions
+			if [ -n "$_lv_omr" ]; then
+				uci -q set openmptcprouter.latest_versions.omr="$_lv_omr"
+			else
+				uci -q del openmptcprouter.latest_versions.omr
+			fi
+			if [ -n "$_lv_vps" ]; then
+				uci -q set openmptcprouter.latest_versions.vps="$_lv_vps"
+			else
+				uci -q del openmptcprouter.latest_versions.vps
+			fi
+			uci -q commit openmptcprouter
+		fi
+		uci -q -P /var/state revert openmptcprouter.latest_versions.lc; uci -q -P /var/state set openmptcprouter.latest_versions.lc=$(date +"%s")
 	}
 	fw4check="$(fw4 check 2>&1)"
 	[ -n "$(echo $fw4check | grep Error)" ] && [ -n "$(echo $fw4check | grep bypass)" ] && {

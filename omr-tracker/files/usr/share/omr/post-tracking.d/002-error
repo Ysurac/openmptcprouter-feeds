@@ -35,9 +35,8 @@ if _omr_quota_cut_active "$OMR_TRACKER_INTERFACE"; then
 	quota_cut="true"
 fi
 
-if [ "$OMR_TRACKER_STATUS" = "ERROR" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.state)" != "down" ]; then
-	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='down'
-	uci -q commit openmptcprouter
+if [ "$OMR_TRACKER_STATUS" = "ERROR" ] && [ "$(omr_state_get openmptcprouter.$OMR_TRACKER_INTERFACE.state)" != "down" ]; then
+	omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE state 'down'
 fi
 
 # An interface in error will never be used in MPTCP
@@ -80,7 +79,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 					#mbimcli -p -d /dev/$mm_primary_port --ms-device-reset >/dev/null 2>&1
 				fi
 			elif [ "$mm_state" = "enabled" ] || [ "$mm_state" = "connected" ]; then
-				restart_intf_count="$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.restart_intf)"
+				restart_intf_count="$(omr_state_get openmptcprouter.$OMR_TRACKER_INTERFACE.restart_intf)"
 				[ -z "$restart_intf_count" ] && restart_intf_count=0
 				restart_intf_count=$((restart_intf_count + 1))
 
@@ -132,8 +131,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 					sleep $(uci -q get network.$OMR_TRACKER_INTERFACE.delay || echo '120')
 				fi
 
-				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.restart_intf=$restart_intf_count
-				uci -q commit openmptcprouter
+				omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE restart_intf $restart_intf_count
 			elif [ "$mm_state" = "disabled" ] && [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.force_link)" = "1" ]; then
 			# [ -n "$(echo $modeminfo | grep 'modem.3gpp.registration-state ' | grep home)" ]; then
 				_log "Interface $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) disabled, set it up"
@@ -228,7 +226,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 			_log "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) switched off because $OMR_TRACKER_STATUS_MSG"
 		fi
 		if [ -n "$OMR_TRACKER_INTERFACE" ]; then
-			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='down'
+			omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE state 'down'
 			env -i ACTION="disconnecting" INTERFACE="$OMR_TRACKER_INTERFACE" DEVICE="$OMR_TRACKER_DEVICE" /sbin/hotplug-call iface
 		fi
 		# disable_multipath_off only keeps multipath on when the interface is
@@ -380,7 +378,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 			_log "$OMR_TRACKER_INTERFACE down because $OMR_TRACKER_STATUS_MSG"
 		fi
 		if [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
-			uci -q set openmptcprouter.omr.vpn='down'
+			omr_state_set openmptcprouter omr vpn 'down'
 		fi
 		if [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
 			del_default_route
@@ -391,7 +389,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 			_log "Default gateway disabled, no default gateway set"
 			purge_wan_default_routes
 		fi
-		if [ "$vpn_disabled_by_user" != "1" ] && [ "$(uci -q get openmptcprouter.settings.shadowsocksudp)" = "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(uci -q get openmptcprouter.omr.shadowsocks)" = "up" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q get shadowsocks-libev.hi1.mode)" = "tcp_and_udp" ] && [ "$(uci -q get shadowsocks-libev.sss0.obfs)" != "1" ]; then
+		if [ "$vpn_disabled_by_user" != "1" ] && [ "$(uci -q get openmptcprouter.settings.shadowsocksudp)" = "1" ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] && [ "$(omr_state_get openmptcprouter.omr.shadowsocks)" = "up" ] && [ "$(uci -q get shadowsocks-libev.ss_rules.redir_udp)" = "" ] && [ "$(uci -q get shadowsocks-libev.hi1.mode)" = "tcp_and_udp" ] && [ "$(uci -q get shadowsocks-libev.sss0.obfs)" != "1" ]; then
 			_log "Tunnel down use ShadowSocks for UDP"
 			uci -q set shadowsocks-libev.ss_rules.redir_udp='hi1'
 			if /etc/init.d/shadowsocks-libev rules_exist ; then
@@ -570,7 +568,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 
 	dns_flush
 	if [ -n "$OMR_TRACKER_INTERFACE" ]; then
-		uci -q delete openmptcprouter.$OMR_TRACKER_INTERFACE.lc
+		omr_state_del openmptcprouter $OMR_TRACKER_INTERFACE lc
 	fi
 	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 	#ubus call network reload

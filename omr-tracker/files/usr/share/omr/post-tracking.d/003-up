@@ -132,7 +132,7 @@ if _omr_if_up "$OMR_TRACKER_INTERFACE"; then interface_up="true"; else interface
 
 _omr_uci_get_var _intf_state "openmptcprouter.$OMR_TRACKER_INTERFACE.state"
 if [ "$_intf_state" != "up" ]; then
-	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='up'
+	omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE state 'up'
 #	uci -q commit openmptcprouter
 fi
 
@@ -143,7 +143,7 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 		exit 0
 	fi
 	if [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
-		uci -q set openmptcprouter.omr.vpn='up'
+		omr_state_set openmptcprouter omr vpn 'up'
 	fi
 	# Tunnel is up again, reset the Glorytun UDP outage state
 	rm -f /tmp/omr-tracker-gtudp-error-since /tmp/omr-tracker-gtudp-outage-start /tmp/omr-tracker-gtudp-holddown
@@ -205,7 +205,7 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 				[ -z "$mtu" ] && mtu=$(_omr_uci_get network.${OMR_NETWORK_INTERFACE}.mtu)
 				uci -q set openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu=$mtu
 				[ -n "$mtu" ] && [ "$(ip --json link show dev $OMR_TRACKER_DEVICE | jsonfilter -e '@[0].mtu' | tr -d '\n')" != "$mtu" ] && ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
-				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc="$_omr_now"
+				omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE lc "$_omr_now"
 			elif [ -z "$(_omr_uci_get openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu)" ] && [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
 				# IPv4 probe: an IPv6 server address here would make
 				# omr-mtu ping the wrong family and report nothing
@@ -222,10 +222,10 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 					# drivers, so only touch the link when it differs
 					[ "$(ip --json link show dev $OMR_TRACKER_DEVICE | jsonfilter -q -e '@[0].mtu' | tr -d '\n')" != "$mtu" ] && \
 						ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
-					uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc="$_omr_now"
+					omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE lc "$_omr_now"
 				}
 			else
-				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc="$_omr_now"
+				omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE lc "$_omr_now"
 			fi
 		#else
 		#	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
@@ -246,14 +246,14 @@ fi
 
 if [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(_omr_uci_get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" = "1" ]; then
 	if [ "$(_omr_uci_get openmptcprouter.$OMR_TRACKER_INTERFACE.state)" != "up" ]; then
-		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='up'
+		omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE state 'up'
 		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 	fi
 	exit 0
 fi
 # Only touch uci when there is something to remove: a blind delete costs a
 # fork on every cycle and invalidates the cached config for nothing
-_omr_uci_get_var _restart_intf "openmptcprouter.$OMR_TRACKER_INTERFACE.restart_intf" && uci -q del openmptcprouter.$OMR_TRACKER_INTERFACE.restart_intf
+_omr_uci_get_var _restart_intf "openmptcprouter.$OMR_TRACKER_INTERFACE.restart_intf" && omr_state_del openmptcprouter $OMR_TRACKER_INTERFACE restart_intf
 
 if [ "$OMR_TRACKER_PREV_STATUS" != "" ] && [ "$OMR_TRACKER_PREV_STATUS" != "$OMR_TRACKER_STATUS" ] && [ -n "$OMR_TRACKER_INTERFACE" ]; then
 	_log "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) switched up"
@@ -282,7 +282,7 @@ if [ "$OMR_TRACKER_PREV_STATUS" != "" ] && [ "$OMR_TRACKER_PREV_STATUS" != "$OMR
 	env -i ACTION="connecting" INTERFACE="$OMR_TRACKER_INTERFACE" DEVICE="$OMR_TRACKER_DEVICE" /sbin/hotplug-call iface
 fi
 if [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(_omr_uci_get openmptcprouter.$OMR_TRACKER_INTERFACE.state)" != "up" ]; then
-	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.state='up'
+	omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE state 'up'
 	dns_flush
 fi
 
@@ -411,7 +411,7 @@ if [ "$multipath_config" = "master" ]; then
 	if { [ -n "$OMR_TRACKER_INTERFACE" ] && [ -z "$_lc" ]; } || [ $((_omr_now + lc_jitter - ${_lc:-0})) -gt 3600 ] || _omr_uci_has "get_config='1'" || _omr_uci_has "admin_error='1'"; then
 		[ -z "$(pgrep -f openmptcprouter-vps)" ] && {
 			/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &
-			uci -q set openmptcprouter."$OMR_TRACKER_INTERFACE".lc="$_omr_now"
+			omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" lc "$_omr_now"
 			#uci -q commit openmptcprouter.$OMR_TRACKER_INTERFACE
 		}
 	fi
@@ -448,7 +448,7 @@ if [ "$master_setting" = "balancing" ] && { [ "$multipath_config" = "on" ] || [ 
 	if { [ -n "$OMR_TRACKER_INTERFACE" ] && [ -z "$_lc" ]; } || [ $((_omr_now + lc_jitter - ${_lc:-0})) -gt 3600 ] || _omr_uci_has "get_config='1'" || _omr_uci_has "admin_error='1'"; then
 		[ -z "$(pgrep -f openmptcprouter-vps)" ] && {
 			/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &
-			uci -q set openmptcprouter."$OMR_TRACKER_INTERFACE".lc="$_omr_now"
+			omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" lc "$_omr_now"
 		}
 	fi
 fi
@@ -519,8 +519,8 @@ if [ -n "$_mptcp_enabled" ]; then
 				_log "Reload MPTCP config for $OMR_TRACKER_DEVICE"
 				/etc/init.d/mptcp reload "$OMR_TRACKER_DEVICE"
 			fi
-			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.local_ipv4="$OMR_TRACKER_DEVICE_IP"
-			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.local_ipv6="$OMR_TRACKER_DEVICE_IP6"
+			omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE local_ipv4 "$OMR_TRACKER_DEVICE_IP"
+			omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE local_ipv6 "$OMR_TRACKER_DEVICE_IP6"
 		elif [ "$multipath_status" != "$multipath_config" ]; then
 			_log "Multipath $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) switched to $multipath_config (from $multipath_status)"
 			# Same explicit endpoint id as mptcp's init script (network.<iface>.metric):

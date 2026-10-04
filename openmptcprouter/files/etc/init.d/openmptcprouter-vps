@@ -1394,7 +1394,7 @@ _set_vxlan_service() {
 	servername=$1
 	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
 	# VXLAN rides on top of the VPN of the master/current server only
-	([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q get openmptcprouter.${servername}.current)" = "1" ]) || return
+	([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q -P /var/state get openmptcprouter.${servername}.current)" = "1" ]) || return
 	vps_config=""
 	tokenserver=$(_get_token $servername)
 	server="$(echo $tokenserver | cut -f1 -d:)"
@@ -1854,7 +1854,7 @@ _get_local_wan_ip() {
 	# publicip is the IPv4 one again since #4375, so the IPv6 address has to
 	# be asked for by name: shadowsocks' local.acl takes either family, and
 	# an IPv6 only WAN would otherwise contribute nothing at all
-	for wanip in "$(uci -q get openmptcprouter.$1.publicip)" "$(uci -q get openmptcprouter.$1.publicip6)"; do
+	for wanip in "$(uci -q -P /var/state get openmptcprouter.$1.publicip)" "$(uci -q -P /var/state get openmptcprouter.$1.publicip6)"; do
 		[ -n "$wanip" ] && {
 			[ -z "$wanips" ] && wanips=$wanip || wanips="$wanips"'\n'"$wanip"
 		}
@@ -2068,8 +2068,8 @@ _vps_firewall_redirect_port() {
 		#return
 	fi
 	xray="$v2ray"
-	([ "$(uci -q get v2ray.main.enabled)" != "1" ] || [ "$(uci -q get openmptcprouter.omr.v2ray)" = "down" ]) && v2ray="0"
-	([ "$(uci -q get xray.main.enabled)" != "1" ] || [ "$(uci -q get openmptcprouter.omr.xray)" = "down" ]) && xray="0"
+	([ "$(uci -q get v2ray.main.enabled)" != "1" ] || [ "$(uci -q -P /var/state get openmptcprouter.omr.v2ray)" = "down" ]) && v2ray="0"
+	([ "$(uci -q get xray.main.enabled)" != "1" ] || [ "$(uci -q -P /var/state get openmptcprouter.omr.xray)" = "down" ]) && xray="0"
 	[ "$proto" = "all" ] && proto="tcp udp"
 	[ "$proto" = "" ] && proto="tcp udp"
 	# Only forwards whose source zone is the VPN zone are pushed to the VPS
@@ -2375,7 +2375,8 @@ _set_vps_firewall() {
 	_login
 	[ -z "$token" ] && {
 		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "Can't get ${fwservername} token, try later"
-		uci -q batch <<-EOF >/dev/null
+		uci -q -P /var/state batch <<-EOF >/dev/null
+			revert openmptcprouter.${fwservername}.admin_error
 			set openmptcprouter.${fwservername}.admin_error=1
 		EOF
 		return
@@ -2412,9 +2413,9 @@ _set_vps_firewall() {
 		logger -t "OMR-VPS" "Remove old firewall rules"
 		_vps_firewall_close_port
 	}
-	uci -q batch <<-EOF >/dev/null
+	uci -q -P /var/state batch <<-EOF >/dev/null
+		revert openmptcprouter.${fwservername}.set_firewall
 		set openmptcprouter.${fwservername}.set_firewall=0
-		commit openmptcprouter
 	EOF
 }
 
@@ -3341,7 +3342,8 @@ _backup_send() {
 	_login
 	[ -z "$token" ] && {
 		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "Can't get ${servername} token, try later"
-		uci -q batch <<-EOF >/dev/null
+		uci -q -P /var/state batch <<-EOF >/dev/null
+			revert openmptcprouter.${servername}.admin_error
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
 		return
@@ -3385,7 +3387,8 @@ _backup_get_and_apply() {
 	_login
 	[ -z "$token" ] && {
 		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "Can't get ${servername} token, try later"
-		uci -q batch <<-EOF >/dev/null
+		uci -q -P /var/state batch <<-EOF >/dev/null
+			revert openmptcprouter.${servername}.admin_error
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
 		return
@@ -3429,7 +3432,8 @@ _backup_list() {
 	_login
 	[ -z "$token" ] && {
 		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "Can't get ${servername} token, try later"
-		uci -q batch <<-EOF >/dev/null
+		uci -q -P /var/state batch <<-EOF >/dev/null
+			revert openmptcprouter.${servername}.admin_error
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
 		return
@@ -3511,13 +3515,14 @@ _get_token() {
 			reason="$reason, custom username"
 		fi
 		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "Can't get ${servername} token, try later ($reason)"
-		uci -q batch <<-EOF >/dev/null
+		uci -q -P /var/state batch <<-EOF >/dev/null
+			revert openmptcprouter.${servername}.admin_error
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
 	else
-		uci -q batch <<-EOF >/dev/null
+		uci -q -P /var/state batch <<-EOF >/dev/null
+			revert openmptcprouter.${servername}.token_error
 			set openmptcprouter.${servername}.token_error=0
-			commit openmptcprouter
 		EOF
 	fi
 	echo "$server:$serverport:$token"
@@ -3547,8 +3552,8 @@ _config_service() {
 	# master/current because get_config is never cleared on the other servers,
 	# and a lingering one keeps omr-tracker's "get_config='1'" check true and
 	# reruns this service on every tracker cycle.
-	[ "$(uci -q get openmptcprouter.settings.forceretrieve)" = "1" ] && { [ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q get openmptcprouter.${servername}.current)" = "1" ]; } && uci -q set openmptcprouter.${servername}.get_config=1
-	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && ([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q get openmptcprouter.${servername}.current)" = "1" ]) && {
+	[ "$(uci -q get openmptcprouter.settings.forceretrieve)" = "1" ] && { [ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q -P /var/state get openmptcprouter.${servername}.current)" = "1" ]; } && uci -q set openmptcprouter.${servername}.get_config=1
+	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && ([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q -P /var/state get openmptcprouter.${servername}.current)" = "1" ]) && {
 		_set_config_from_vps
 		_get_gre_tunnel
 		_get_vps_config
@@ -3622,7 +3627,7 @@ _config_service() {
 	#_set_pihole
 	[ -n "$wanips" ] && _set_wan_ip
 	_set_vpn_ip
-	([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q get openmptcprouter.${servername}.current)" = "1" ]) && {
+	([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q -P /var/state get openmptcprouter.${servername}.current)" = "1" ]) && {
 		[ "$user_permission" != "ro" ] && _set_vxlan_vps
 		_get_vxlan
 	}
@@ -3644,9 +3649,9 @@ _config_service() {
 		logger -t "OMR-VPS" "Setting server config error, try again"
 	fi
 	#[ "$error" != 0 ] && logger -t "OMR-VPS" "Error !"
-	uci -q batch <<-EOF >/dev/null
+	uci -q -P /var/state batch <<-EOF >/dev/null
+		revert openmptcprouter.${servername}.admin_error
 		set openmptcprouter.${servername}.admin_error=$error
-		commit openmptcprouter
 	EOF
 }
 
@@ -3661,7 +3666,8 @@ _set_pihole_server() {
 	_login
 	[ -z "$token" ] && {
 		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "Can't get token, try later"
-		uci -q batch <<-EOF >/dev/null
+		uci -q -P /var/state batch <<-EOF >/dev/null
+			revert openmptcprouter.${pservername}.admin_error
 			set openmptcprouter.${pservername}.admin_error=1
 		EOF
 		return

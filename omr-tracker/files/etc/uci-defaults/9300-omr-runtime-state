@@ -1,0 +1,64 @@
+#!/bin/sh
+# Runtime options (what the router sees right now: interface state, last
+# checks, public addresses, proxy/server health...) moved from
+# /etc/config/openmptcprouter to /var/state (see
+# /usr/share/omr/lib/omr-state.sh). Drop the copies older firmwares
+# committed, so they cannot shadow the live values through the state view,
+# in one commit.
+#
+# On a live upgrade the values are carried over to /var/state so the status
+# page does not go blank until the next refresh; "state" itself is not: a
+# stale "down" is exactly what this change gets rid of, and omr-tracker sets
+# it again on its next cycle. Runs after 9260-omr-publicip6, which still
+# migrates publicip in the config.
+
+RUNTIME_OPTS="state lc mptcp_status loop restart_intf testspeed_lc local_ipv4 local_ipv6 publicip publicip6 asn asn6 operator number manufacturer current admin_error token_error set_firewall"
+SETTINGS_OPTS="apilc sysupgrade_lc dns_hijacked"
+
+# The state copies are written only once the config no longer has the
+# option: uci ignores a "set" to the value it already sees, so setting the
+# state first would record nothing and the delete would lose the value.
+changed=""
+carry="$(mktemp)"
+_move() {
+	local key="$1" keep="$2" val
+	val="$(uci -q get "$key")" || return 0
+	[ "$keep" = "1" ] && printf '%s\t%s\n' "$key" "$val" >> "$carry"
+	uci -q delete "$key"
+	changed=1
+}
+
+for sec in $(uci -q -X show openmptcprouter 2>/dev/null | sed -n 's/^openmptcprouter\.\([^.=]*\)=.*/\1/p' | sort -u); do
+	case "$sec" in
+		omr)
+			for opt in $(uci -q show openmptcprouter.omr 2>/dev/null | sed -n 's/^openmptcprouter\.omr\.\([^=]*\)=.*/\1/p'); do
+				_move "openmptcprouter.omr.$opt" 1
+			done
+			;;
+		settings)
+			for opt in $SETTINGS_OPTS; do
+				_move "openmptcprouter.settings.$opt" 1
+			done
+			;;
+		latest_versions)
+			_move "openmptcprouter.latest_versions.lc" 1
+			;;
+		*)
+			for opt in $RUNTIME_OPTS; do
+				if [ "$opt" = "state" ]; then
+					_move "openmptcprouter.$sec.$opt" 0
+				else
+					_move "openmptcprouter.$sec.$opt" 1
+				fi
+			done
+			;;
+	esac
+done
+[ -n "$changed" ] && uci -q commit openmptcprouter
+while IFS="$(printf '\t')" read -r key val; do
+	[ -n "$key" ] || continue
+	uci -q -P /var/state revert "$key"
+	uci -q -P /var/state set "$key=$val"
+done < "$carry"
+rm -f "$carry"
+exit 0

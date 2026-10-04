@@ -31,7 +31,7 @@ kaha_check_wan() {
 	config_get auto "$name" auto
 	[ "$auto" = "0" ] && return 0
 
-	if [ "$(uci -q get "openmptcprouter.$name.state")" = "down" ]; then
+	if [ "$(uci -q -P /var/state get "openmptcprouter.$name.state")" = "down" ]; then
 		WANS_DOWN=$((WANS_DOWN + 1))
 		return 0
 	fi

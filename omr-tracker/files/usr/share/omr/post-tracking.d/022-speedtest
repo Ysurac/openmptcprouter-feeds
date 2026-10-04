@@ -7,16 +7,18 @@
 #
 # This script launch a speedtest if the option is enabled on the interface
 
+. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
+
 { [ "$OMR_TRACKER_STATUS" = "ERROR" ] || [ -z "$OMR_TRACKER_INTERFACE" ]; } && exit 0
 interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
 [ "$interface_up" != "true" ] && exit 0
 
-if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(pgrep -f omr-test-speed-server)" = "" ] && [ "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed)" = "1" ] && [ -z "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed_lc)" ]; then
+if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(pgrep -f omr-test-speed-server)" = "" ] && [ "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed)" = "1" ] && [ -z "$(omr_state_get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed_lc)" ]; then
 	speedtest_bin="/bin/omr-test-speed-server"
 	[ -x "$speedtest_bin" ] || speedtest_bin="omr-test-speed-server"
 	launch_speedtest() {
 		local server=$1
-		[ "$(uci -q get openmptcprouter.${server}.current)" != "1" ] && return
+		[ "$(omr_state_get openmptcprouter.${server}.current)" != "1" ] && return
 		download_speed=$("$speedtest_bin" ${server} ${OMR_TRACKER_DEVICE} fasttest)
 		download_speed2=$("$speedtest_bin" ${server} ${OMR_TRACKER_DEVICE} fasttest)
 		download_speed3=$("$speedtest_bin" ${server} ${OMR_TRACKER_DEVICE} fasttest)
@@ -53,10 +55,9 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(pgrep
 				fi
 				_log "Calculated ${OMR_TRACKER_INTERFACE} upload speed: ${upload_speed}"
 				uci -q set network.${OMR_TRACKER_INTERFACE}.uploadspeed=${upload_speed}
-				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.testspeed_lc=$(date +"%s")
+				omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE testspeed_lc $(date +"%s")
 				uci commit network
 				uci commit sqm
-				uci commit openmptcprouter
 			fi
 		fi
 	}

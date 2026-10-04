@@ -17,6 +17,15 @@ if arg[1] ~= "list" then
 	fs    = require("nixio.fs")
 	net   = require "luci.model.network".init()
 	ucic  = require "luci.model.uci".cursor()
+	-- Runtime options (interface state/lc/publicip/asn/mptcp_status/loop,
+	-- server current/admin_error/token_error, the omr section...) live in
+	-- /var/state, see omr-tracker's omr-state.sh: read them through this
+	-- view (the config with the state on top) and write them with
+	-- set + save, never commit.
+	-- (libuci: the savedir is only where save() writes; add_delta() is what
+	-- makes reads apply the /var/state changes, like "uci -P" does)
+	ucis  = require "uci".cursor(nil, "/var/state")
+	ucis:add_delta("/var/state")
 end
 
 function file_exists(name)
@@ -383,8 +392,10 @@ function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspee
 		ucic:delete("network",intf,"gateway")
 	end
 
-	ucic:delete("openmptcprouter",intf,"lc")
 	ucic:save("openmptcprouter")
+	-- force the next status refresh of this interface (lc is runtime state)
+	ucis:delete("openmptcprouter",intf,"lc")
+	ucis:save("openmptcprouter")
 
 	if ucic:get("qos",intf) == nil then
 		ucic:set("qos",intf,"interface")
@@ -2115,6 +2126,15 @@ end
 -- Copyright 2015 OVH <OverTheBox@ovh.net>
 -- Modified by Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
 -- Under GPL3+
+-- token_error is runtime (/var/state). Only written when it changes: the
+-- status page polls this, and every state write appends to the delta file.
+function set_token_error(server)
+	if ucis:get("openmptcprouter", server, "token_error") ~= "1" then
+		ucis:set("openmptcprouter", server, "token_error", "1")
+		ucis:save("openmptcprouter")
+	end
+end
+
 function interfaces_status()
 	local ut  = require "luci.util"
 	local ntm = require "luci.model.network".init()
@@ -2223,7 +2243,7 @@ function interfaces_status()
 				mArray.openmptcprouter["wan_addr"] = ""
 			end
 			if mArray.openmptcprouter["ipv6"] == "enabled" or (mArray.openmptcprouter["service_addr_ip6"] ~= "" and mArray.openmptcprouter["service_addr_ip6"] ~= nil) then
-				mArray.openmptcprouter["wan_addr6"] = uci:get("openmptcprouter","omr","public_detected_ipv6") or ""
+				mArray.openmptcprouter["wan_addr6"] = ucis:get("openmptcprouter","omr","public_detected_ipv6") or ""
 				if mArray.openmptcprouter["wan_addr6"] == "" and status_budget_left() then
 					mArray.openmptcprouter["wan_addr6"] = ut.trim(sys.exec("curl -6 -s -m " .. timeout .. " " .. shell_quote(check_ipv6_website)))
 					if mArray.openmptcprouter["wan_addr6"] == "" and status_budget_left() then
@@ -2235,7 +2255,7 @@ function interfaces_status()
 		else
 			mArray.openmptcprouter["external_check"] = false
 		end
-		mArray.openmptcprouter["proxy_addr"] = uci:get("openmptcprouter","omr","detected_ss_ipv4") or ""
+		mArray.openmptcprouter["proxy_addr"] = ucis:get("openmptcprouter","omr","detected_ss_ipv4") or ""
 		if mArray.openmptcprouter["proxy_addr"] == "" and mArray.openmptcprouter["service_addr"] ~= "" then
 			tracker_ip = uci:get("shadowsocks-libev","tracker_sss0","local_address") 
 						 or uci:get("shadowsocks-rust","tracker_sss0","local_address") or "127.0.0.1"
@@ -2269,7 +2289,7 @@ function interfaces_status()
 		if (uci:get("openmptcprouter",s[".name"],"disabled") or "0") == "1" then return end
 		local serverips = _as_string_list(uci:get("openmptcprouter",s[".name"],"ip"))
 		local master = uci:get("openmptcprouter",s[".name"],"master") or "1"
-		local current = uci:get("openmptcprouter",s[".name"],"current") or "0"
+		local current = ucis:get("openmptcprouter",s[".name"],"current") or "0"
 		for _, value in ipairs(serverips) do
 			local serverip = ""
 			if mArray.openmptcprouter["vps_admin"] == false and status_budget_left() then
@@ -2279,9 +2299,9 @@ function interfaces_status()
 				mArray.openmptcprouter["vps_omr_version"] = uci:get("openmptcprouter", s[".name"], "omr_version") or ""
 				mArray.openmptcprouter["vps_kernel"] = uci:get("openmptcprouter",s[".name"],"kernel") or ""
 				mArray.openmptcprouter["vps_machine"] = uci:get("openmptcprouter",s[".name"],"machine") or ""
-				mArray.openmptcprouter["vps_whois"] = uci:get("openmptcprouter",s[".name"],"asn") or ""
+				mArray.openmptcprouter["vps_whois"] = ucis:get("openmptcprouter",s[".name"],"asn") or ""
 				timeout = integer_string(uci:get("openmptcprouter","settings","status_vps_timeout") or "1", "1", 1, 30)
-				if uci:get("openmptcprouter",s[".name"],"admin_error") == "1" then
+				if ucis:get("openmptcprouter",s[".name"],"admin_error") == "1" then
 					mArray.openmptcprouter["vps_admin_error"] = true
 				end
 				adminport = integer_string(uci:get("openmptcprouter",s[".name"],"port") or "65500", "65500", 1, 65535)
@@ -2316,13 +2336,12 @@ function interfaces_status()
 							mArray.openmptcprouter["vps_status"] = "UP"
 							mArray.openmptcprouter["vps_admin_error_msg"] = ""
 							mArray.openmptcprouter["vps_admin_error"] = false
-							if uci:get("openmptcprouter",s[".name"],"admin_error") == "1" then
-								uci:set("openmptcprouter",s[".name"],"admin_error","0")
-								uci:save("openmptcprouter")
-								uci:commit("openmptcprouter")
+							if ucis:get("openmptcprouter",s[".name"],"admin_error") == "1" then
+								ucis:set("openmptcprouter",s[".name"],"admin_error","0")
+								ucis:save("openmptcprouter")
 							end
 						else
-							uci:set("openmptcprouter",s[".name"],"token_error","1")
+							set_token_error(s[".name"])
 							mArray.openmptcprouter["vps_admin_error"] = true
 							uci:delete("openmptcprouter",s[".name"],"token")
 							uci:save("openmptcprouter")
@@ -2376,17 +2395,13 @@ function interfaces_status()
 					else
 						mArray.openmptcprouter["vps_admin"] = false
 						mArray.openmptcprouter["vps_admin_error_msg"] = "No result"
-						uci:set("openmptcprouter",s[".name"],"token_error","1")
+						set_token_error(s[".name"])
 						mArray.openmptcprouter["vps_admin_error"] = true
-						uci:save("openmptcprouter")
-						uci:commit("openmptcprouter")
 					end
 				else
 					mArray.openmptcprouter["vps_admin"] = false
 					mArray.openmptcprouter["vps_admin_error_msg"] = "No token yet available"
-					uci:set("openmptcprouter",s[".name"],"token_error","1")
-					uci:save("openmptcprouter")
-					uci:commit("openmptcprouter")
+					set_token_error(s[".name"])
 				end
 				if mArray.openmptcprouter["vps_admin"] == false then
 					local vpstest = ""
@@ -2583,7 +2598,7 @@ function interfaces_status()
 		local ipv6 = section["ipv6"] or "0"
 		local mac = section["macaddr"] or ""
 		local itype = section["type"] or ""
-		local state = uci:get("openmptcprouter", interface, "state") or ""
+		local state = ucis:get("openmptcprouter",interface,"state") or ""
 		local ipaddr = wip
 		local ip6addr = wip6
 		local connectivity = "OK"
@@ -2718,7 +2733,7 @@ function interfaces_status()
 					end
 				end
 			end
-			if uci:get("openmptcprouter",interface,"manufacturer") == "huawei" and ipaddr ~= "" and status_budget_left() then
+			if ucis:get("openmptcprouter",interface,"manufacturer") == "huawei" and ipaddr ~= "" and status_budget_left() then
 				local intfdata = ut.trim(exec_with_timeout(2, "omr-huawei " .. ipaddr .. " " .. gateway .. " all"))
 				if intfdata ~= "" then
 					signal      = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $1}'"))
@@ -2768,7 +2783,7 @@ function interfaces_status()
 					if (uci:get("openmptcprouter",s[".name"],"disabled") or "0") == "1" then return end
 					local serverips = _as_string_list(uci:get("openmptcprouter",s[".name"],"ip"))
 					local master = uci:get("openmptcprouter",s[".name"],"master") or "1"
-					local current = uci:get("openmptcprouter",s[".name"],"current") or "0"
+					local current = ucis:get("openmptcprouter",s[".name"],"current") or "0"
 					if master == "1" or current == "1" then
 						local vps_any_up = false
 						for _, value in ipairs(serverips) do
@@ -2813,7 +2828,7 @@ function interfaces_status()
 
 		local multipath_available = "NO CHECK"
 		if connectivity ~= "ERROR" and mArray.openmptcprouter["dns"] == true and ifname ~= "" and (gateway ~= "" or gateway6 ~= "") and (gw_ping == "UP" or gw_ping6 == "UP") and uci:get("openmptcprouter","settings","disablemultipathtest") ~= "1" then
-			local mas = uci:get("openmptcprouter",interface,"mptcp_status") or ""
+			local mas = ucis:get("openmptcprouter",interface,"mptcp_status") or ""
 			if mas == "" then multipath_available = "NO CHECK"
 			elseif mas == "MPTCP enabled" then multipath_available = "OK"
 			else multipath_available = "ERROR"
@@ -2831,36 +2846,36 @@ function interfaces_status()
 		if connectivity ~= "ERROR" then
 			if ifname ~= nil and (ifname:match("^tun.*") and interface:match("^ovpn.*")) then
 				local sub = interface:sub(5)
-				publicIP = uci:get("openmptcprouter",sub,"publicip") or ""
+				publicIP = ucis:get("openmptcprouter",sub,"publicip") or ""
 				if ifname ~= nil and ipaddr ~= "" and publicIP == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
 					publicIP = ut.trim(exec_with_timeout(2, "omr-ip-intf " .. get_device(sub)))
 				end
-				publicIP6 = uci:get("openmptcprouter",sub,"publicip6") or ""
+				publicIP6 = ucis:get("openmptcprouter",sub,"publicip6") or ""
 				if ifname ~= nil and ip6addr ~= "" and publicIP6 == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
 					publicIP6 = ut.trim(exec_with_timeout(2, "omr-ip6-intf " .. get_device(sub)))
 				end
 			elseif ifname ~= nil and interface:match("^wg.*") then
 				local sub = interface:sub(3)
-				publicIP = uci:get("openmptcprouter",sub,"publicip") or ""
+				publicIP = ucis:get("openmptcprouter",sub,"publicip") or ""
 				if ifname ~= nil and ipaddr ~= "" and publicIP == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
 					publicIP = ut.trim(exec_with_timeout(2, "omr-ip-intf " .. get_device(sub)))
 				end
-				publicIP6 = uci:get("openmptcprouter",sub,"publicip6") or ""
+				publicIP6 = ucis:get("openmptcprouter",sub,"publicip6") or ""
 				if ifname ~= nil and ip6addr ~= "" and publicIP6 == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
 					publicIP6 = ut.trim(exec_with_timeout(2, "omr-ip6-intf " .. get_device(sub)))
 				end
 			else
-				publicIP = uci:get("openmptcprouter",interface,"publicip") or ""
+				publicIP = ucis:get("openmptcprouter",interface,"publicip") or ""
 				if ifname ~= nil and ipaddr ~= "" and publicIP == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
 					publicIP = ut.trim(exec_with_timeout(2, "omr-ip-intf " .. ifname))
 				end
-				publicIP6 = uci:get("openmptcprouter",interface,"publicip6") or ""
+				publicIP6 = ucis:get("openmptcprouter",interface,"publicip6") or ""
 				if ifname ~= nil and ip6addr ~= "" and publicIP6 == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
 					publicIP6 = ut.trim(exec_with_timeout(2, "omr-ip6-intf " .. ifname))
 				end
 			end
 			if publicIP ~= "" then
-				whois = uci:get("openmptcprouter",interface,"asn") or ""
+				whois = ucis:get("openmptcprouter",interface,"asn") or ""
 				if whois == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
 					whois = ut.trim(exec_with_timeout(2, "whois " .. publicIP .. " | grep -i 'netname' | awk '{print $2}'"))
 				end
@@ -2872,7 +2887,7 @@ function interfaces_status()
 			if publicIP6 ~= "" then
 				-- asn6, not asn: both families used to share one field, so a
 				-- dual stack WAN showed its IPv6 netname for both (#4375)
-				whois6 = uci:get("openmptcprouter",interface,"asn6") or ""
+				whois6 = ucis:get("openmptcprouter",interface,"asn6") or ""
 				if whois6 == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
 					whois6 = ut.trim(exec_with_timeout(2, "whois " .. publicIP6 .. " | grep -i 'netname' | awk '{print $2}'"))
 				end
@@ -2887,7 +2902,7 @@ function interfaces_status()
 				mtu = ut.trim(sys.exec("cat /sys/class/net/" .. ifname .. "/mtu | tr -d '\n'"))
 				if mtu == "" then mtu = uci:get("openmptcprouter",interface,"mtu") or "" end
 			end
-			loop = uci:get("openmptcprouter",interface,"loop") == "1"
+			loop = ucis:get("openmptcprouter",interface,"loop") == "1"
 		end
 
 		local rx, tx = "", ""
@@ -3063,7 +3078,7 @@ function interfaces_only_status()
 		local ipv6 = section["ipv6"] or "0"
 		local mac = section["macaddr"] or ""
 		local itype = section["type"] or ""
-		local state = uci:get("openmptcprouter", interface, "state") or ""
+		local state = ucis:get("openmptcprouter",interface,"state") or ""
 		local connectivity = "OK"
 		local loop = false
 		local gw_ping = "DOWN"
@@ -3140,7 +3155,7 @@ function interfaces_only_status()
 					end
 				end
 			end
-			if uci:get("openmptcprouter",interface,"manufacturer") == "huawei" and ipaddr ~= "" then
+			if ucis:get("openmptcprouter",interface,"manufacturer") == "huawei" and ipaddr ~= "" then
 				local intfdata = ut.trim(exec_with_timeout(2, "omr-huawei " .. ipaddr .. " " .. gateway .. " all"))
 				if intfdata ~= "" then
 					signal      = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $1}'"))
@@ -3200,7 +3215,7 @@ function interfaces_only_status()
 
 		local multipath_available = "NO CHECK"
 		if connectivity ~= "ERROR" and ifname ~= "" and (gateway ~= "" or gateway6 ~= "") and (gw_ping == "UP" or gw_ping6 == "UP") then
-			local mas = uci:get("openmptcprouter",interface,"mptcp_status") or ""
+			local mas = ucis:get("openmptcprouter",interface,"mptcp_status") or ""
 			if mas == "" then multipath_available = "NO CHECK"
 			elseif mas == "MPTCP enabled" then multipath_available = "OK"
 			else multipath_available = "ERROR"
@@ -3220,7 +3235,7 @@ function interfaces_only_status()
 				mtu = ut.trim(sys.exec("cat /sys/class/net/" .. ifname .. "/mtu | tr -d '\n'"))
 				if mtu == "" then mtu = uci:get("openmptcprouter",interface,"mtu") or "" end
 			end
-			loop = uci:get("openmptcprouter",interface,"loop") == "1"
+			loop = ucis:get("openmptcprouter",interface,"loop") == "1"
 		end
 
 		local rx, tx = "", ""
