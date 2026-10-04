@@ -762,6 +762,26 @@ _set_server_all_routes_common() {
 					[ "$debug" = "true" ] && _log "Set server $server ($serverip) backup default route $serverip $current_backup nbintfb $current_nbintfb $OMR_TRACKER_DEVICE"
 					$ip_cmd route replace "$serverip" scope global metric 999 $current_backup >/dev/null 2>&1
 				fi
+			elif [ "$ipv6" = "false" ]; then
+				# No backup interface left: when the last one goes back to on
+				# or off, the backup routes (metric 999) through it, to the
+				# server and the default one, would stay, as they are only
+				# ever replaced, here and in 003-up. Remove them. IPv4 only:
+				# set_routes_intf6 leaves out every IPv6 gateway (the ":"
+				# test in _set_routes_intf_common), so for IPv6 an empty
+				# list doesn't mean that no backup interface is left.
+				local stale_routes stale_route
+				stale_routes="$($ip_cmd route show metric 999 2>/dev/null)"
+				[ -n "$stale_routes" ] && while read -r stale_route; do
+					case "$stale_route" in
+						default|"default "*|"$serverip"|"$serverip "*)
+							_log "No backup interface left, delete the backup route $stale_route"
+							$ip_cmd route del ${stale_route%% *} metric 999 >/dev/null 2>&1
+							;;
+					esac
+				done <<-EOF
+				$stale_routes
+				EOF
 			fi
 		fi
 	}
