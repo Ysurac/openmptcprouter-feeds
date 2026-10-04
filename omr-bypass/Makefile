@@ -31,7 +31,7 @@ define Package/$(PKG_NAME)/description
 OMR-ByPass
 endef
 
-define Package/$(PKG_NAME)/description
+define Package/$(PKG_NAME)-nft/description
 OMR-ByPass nft support
 endef
 
