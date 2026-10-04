@@ -49,10 +49,24 @@ export OMR_TRACKER_GATEWAY_IS_REMOTE
 
 #dscp=56   # set DSCP CS7 (56) in outgoing packets
 
+# The probes of a 3g/qmi/ncm interface go out through a host route added for
+# the probe. Its own protocol and metric make it the only route the deletes
+# can match: the kernel ignores "src" when it deletes an IPv6 route, and an
+# IPv4 delete matched any route with the same prefsrc, so they used to remove
+# a user's route or route6 to the probed host via the same gateway and device.
+# The metric also keeps the add clear of such a route; two trackers probing
+# the same host still collide on it, which is what the add loop waits for.
+OMR_TRACKER_PROBE_ROUTE="proto 199 metric 4242"
+
 # Kill child processes (post-tracking subshells) when this tracker is terminated,
 # so orphaned sleeps don't accumulate as duplicate-looking processes.
 _omr_exit() {
 	jobs -p | xargs -r kill 2>/dev/null
+	# A probe cut short by the signal never deleted its host route
+	if [ -n "$_probe_route" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
+		ip route flush dev "$OMR_TRACKER_DEVICE" $OMR_TRACKER_PROBE_ROUTE > /dev/null 2>&1
+		ip -6 route flush dev "$OMR_TRACKER_DEVICE" $OMR_TRACKER_PROBE_ROUTE > /dev/null 2>&1
+	fi
 	exit 0
 }
 trap '_omr_exit' INT TERM EXIT
@@ -105,6 +119,37 @@ _restart() {
 		OMR_TRACKER_HOSTS6="${OMR_TRACKER_HOSTS6#* } $OMR_TRACKER_HOST6"
 		_init_rto
 	}
+}
+
+# Replace OMR_TRACKER_HOST / OMR_TRACKER_HOST6 by its address, resolved again
+# when the host changes or every 5 minutes
+_resolve_host4() {
+	_resolve_now=$(date +%s)
+	if [ "$OMR_TRACKER_HOST" != "$_host4_raw" ] || [ -z "$_host4_resolved" ] || [ $((_resolve_now - _host4_resolve_time)) -gt 300 ]; then
+		_host4_raw="$OMR_TRACKER_HOST"
+		_host4_resolved=$(resolveip -4 -t 5 "$OMR_TRACKER_HOST" | head -n 1 | tr -d "\n")
+		_host4_resolve_time=$_resolve_now
+	fi
+	[ -n "$_host4_resolved" ] && OMR_TRACKER_HOST="$_host4_resolved"
+}
+
+_resolve_host6() {
+	_resolve_now=$(date +%s)
+	if [ "$OMR_TRACKER_HOST6" != "$_host6_raw" ] || [ -z "$_host6_resolved" ] || [ $((_resolve_now - _host6_resolve_time)) -gt 300 ]; then
+		_host6_raw="$OMR_TRACKER_HOST6"
+		_host6_resolved=$(resolveip -6 -t 5 "$OMR_TRACKER_HOST6" | head -n 1 | tr -d "\n")
+		_host6_resolve_time=$_resolve_now
+	fi
+	[ -n "$_host6_resolved" ] && OMR_TRACKER_HOST6="$_host6_resolved"
+}
+
+# A host that did not resolve is left as a name, which "ip route add" never
+# takes: probing it without a route beats retrying the add forever
+_is_ip() {
+	case "$1" in
+		*:*) return 0 ;;
+		""|*[!0-9.]*) return 1 ;;
+	esac
 }
 
 # Read the congestion score (0-100) omr-metrics computed for this interface
@@ -435,6 +480,10 @@ export -f _httping_server_all
 _restart
 
 OMR_TRACKER_INTERFACE_PROTO="$(uci -q get network.${OMR_TRACKER_INTERFACE}.proto)"
+case "$OMR_TRACKER_INTERFACE_PROTO" in
+	3g|qmi|ncm) _probe_route=1 ;;
+	*) _probe_route="" ;;
+esac
 OMR_TRACKER_PREV_STATUS=""
 # The modem may still be initializing: wait for netifd to report the
 # interface up instead of sleeping blindly, with the configured delay
@@ -743,22 +792,17 @@ while true; do
 							fi
 						fi
 						if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST" ]; then
-							_resolve_now=$(date +%s)
-							if [ "$OMR_TRACKER_HOST" != "$_host4_raw" ] || [ -z "$_host4_resolved" ] || [ $((_resolve_now - _host4_resolve_time)) -gt 300 ]; then
-								_host4_raw="$OMR_TRACKER_HOST"
-								_host4_resolved=$(resolveip -4 -t 5 "$OMR_TRACKER_HOST" | head -n 1 | tr -d "\n")
-								_host4_resolve_time=$_resolve_now
-							fi
-							[ -n "$_host4_resolved" ] && OMR_TRACKER_HOST="$_host4_resolved"
+							_resolve_host4
 							if [ -n "$OMR_TRACKER_HOST" ]; then
-								if [ "$OMR_TRACKER_INTERFACE_PROTO" = "3g" ] || [ "$OMR_TRACKER_INTERFACE_PROTO" = "qmi" ] || [ "$OMR_TRACKER_INTERFACE_PROTO" = "ncm" ]; then
+								if [ -n "$_probe_route" ]; then
 									# Check if route is not used
-									while ! ip route add $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP > /dev/null 2>&1
+									while _is_ip "$OMR_TRACKER_HOST" && ! ip route add $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP $OMR_TRACKER_PROBE_ROUTE > /dev/null 2>&1
 									do
 										logger -t "omr-tracker" "Can't create route to $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP. waiting..."
 										sleep 2
-										ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2>&1
+										ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" $OMR_TRACKER_PROBE_ROUTE > /dev/null 2>&1
 										_restart
+										_resolve_host4
 									done
 								fi
 								if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
@@ -771,7 +815,7 @@ while true; do
 									_dns "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE_IP" "$host_localip"
 									statusb=$?
 								fi
-								[ -n "$(ip route show ${OMR_TRACKER_HOST} via ${OMR_TRACKER_DEVICE_GATEWAY} dev ${OMR_TRACKER_DEVICE} src ${OMR_TRACKER_DEVICE_IP})" ] && ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP" > /dev/null 2>&1
+								[ -n "$_probe_route" ] && ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" $OMR_TRACKER_PROBE_ROUTE > /dev/null 2>&1
 								if [ "$statusb" -eq 0 ]; then
 									#OMR_TRACKER_STATUS_MSG=""
 									OMR_TRACKER_STATUS="OK"
@@ -866,22 +910,17 @@ while true; do
 						fi
 
 						if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST6" ]; then
-							_resolve_now=$(date +%s)
-							if [ "$OMR_TRACKER_HOST6" != "$_host6_raw" ] || [ -z "$_host6_resolved" ] || [ $((_resolve_now - _host6_resolve_time)) -gt 300 ]; then
-								_host6_raw="$OMR_TRACKER_HOST6"
-								_host6_resolved=$(resolveip -6 -t 5 "$OMR_TRACKER_HOST6" | head -n 1 | tr -d "\n")
-								_host6_resolve_time=$_resolve_now
-							fi
-							[ -n "$_host6_resolved" ] && OMR_TRACKER_HOST6="$_host6_resolved"
+							_resolve_host6
 							if [ -n "$OMR_TRACKER_HOST6" ]; then
-								if [ "$OMR_TRACKER_INTERFACE_PROTO" = "3g" ] || [ "$OMR_TRACKER_INTERFACE_PROTO" = "qmi" ] || [ "$OMR_TRACKER_INTERFACE_PROTO" = "ncm" ]; then
+								if [ -n "$_probe_route" ]; then
 									# Check if route is not used
-									while ! ip -6 route add $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6 > /dev/null 2>&1
+									while _is_ip "$OMR_TRACKER_HOST6" && ! ip -6 route add $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6 $OMR_TRACKER_PROBE_ROUTE > /dev/null 2>&1
 									do
 										logger -t "omr-tracker" "Can't create route to $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6. waiting..."
 										sleep 2
-										ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP6" > /dev/null 2>&1
+										ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" $OMR_TRACKER_PROBE_ROUTE > /dev/null 2>&1
 										_restart
+										_resolve_host6
 									done
 								fi
 								if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
@@ -894,7 +933,7 @@ while true; do
 									_dns "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE_IP6" "$host_localip"
 									statusb=$?
 								fi
-								ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" src "$OMR_TRACKER_DEVICE_IP6" > /dev/null 2>&1
+								[ -n "$_probe_route" ] && ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" $OMR_TRACKER_PROBE_ROUTE > /dev/null 2>&1
 								if [ "$statusb" -eq 0 ]; then
 									OMR_TRACKER_STATUS_MSG=""
 									OMR_TRACKER_STATUS="OK"
