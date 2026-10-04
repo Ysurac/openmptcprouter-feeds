@@ -2539,6 +2539,17 @@ start_service() {
 		rm -f /tmp/omr-bypass-entries.before
 	fi
 	[ -n "$_asn_flush_sets" ] && _omr_flush_sets="$_omr_flush_sets$_asn_flush_sets"
+	if [ -f /tmp/omr-bypass-domains.before ]; then
+		# "#" matches no line: with an empty pattern file, busybox grep
+		# would match them all, and miss that every domain was removed
+		{ echo '#'; _omr_dhcp_set_domains; } > /tmp/omr-bypass-domains.after
+		for _ob_sec in $(grep -vxF -f /tmp/omr-bypass-domains.after /tmp/omr-bypass-domains.before | cut -d' ' -f1 | sort -u); do
+			_omr_flush_sets="$_omr_flush_sets $_ob_sec"
+			# and dnsmasq must stop filling it for those domains
+			add_domains="true"
+		done
+		rm -f /tmp/omr-bypass-domains.before /tmp/omr-bypass-domains.after
+	fi
 
 	# Restore proxy nft rules parked as .down before any fw4 run (issue #4313);
 	# unconditional because a reload with no uci delta skips the block below,
@@ -2549,7 +2560,7 @@ start_service() {
 		mv -f "$_proxy_nft_down" "${_proxy_nft_down%.down}"
 		_proxy_down_restored=1
 	done
-	if [ -n "$(uci -q changes firewall)" ] || [ "$fwfilechangemd5" != "$fwfilechangemd5check" ] || [ "${_ndpid_fw_needed:-0}" = "1" ] || [ -n "$_proxy_down_restored" ]; then
+	if [ -n "$(uci -q changes firewall)" ] || [ "$fwfilechangemd5" != "$fwfilechangemd5check" ] || [ "${_ndpid_fw_needed:-0}" = "1" ] || [ -n "$_proxy_down_restored" ] || [ -n "$_omr_flush_sets" ]; then
 		uci -q commit firewall
 		[ -z "$RELOAD" ] && {
 			fw4 restart || logger -t "omr-bypass" "ERROR: fw4 restart failed"
@@ -2650,6 +2661,28 @@ restart_service() {
 	start
 }
 
+# "<set> <domain>" for each domain of omr-bypass's dnsmasq ipsets and each set
+# it fills, from a single uci call.
+_omr_dhcp_set_domains() {
+	uci -q show dhcp | awk '
+		/^dhcp\.omr_dst_bypass_[^.=]*\.(name|domain)=/ {
+			eq = index($0, "=")
+			split(substr($0, 1, eq - 1), k, ".")
+			val = substr($0, eq + 1)
+			gsub(/\047/, "", val)
+			if (k[3] == "name") names[k[2]] = val; else domains[k[2]] = val
+		}
+		END {
+			for (sec in domains) {
+				nn = split(names[sec], n, " ")
+				nd = split(domains[sec], d, " ")
+				for (i = 1; i <= nn; i++)
+					for (j = 1; j <= nd; j++)
+						print n[i], d[j]
+			}
+		}'
+}
+
 _soft_wipe_dynamic() {
 	# reload_rules used to "stop; start": stop deleted every generated
 	# section, including the hash-gate sentinels, so start always re-applied
@@ -2684,6 +2717,11 @@ _soft_wipe_dynamic() {
 	for key in $(uci -q show firewall 2>/dev/null | grep -E '^firewall\.omr6?_dst_bypass_[^.]+=rule$' | cut -d= -f1); do
 		uci -q set "${key}.enabled=0"
 	done
+	# The same goes for the addresses dnsmasq resolved for a domain: they are
+	# in the sets of its dnsmasq list, never in uci, and stayed there when the
+	# domain moved to another interface or was removed, so the old interface's
+	# mark could still win (issue #4340). Remember which sets each domain fed.
+	_omr_dhcp_set_domains > /tmp/omr-bypass-domains.before
 	for key in $(uci -q show dhcp 2>/dev/null | grep -E '^dhcp\.omr_dst_bypass_[^.]+\.domain=' | cut -d= -f1); do
 		uci -q delete "$key"
 	done
