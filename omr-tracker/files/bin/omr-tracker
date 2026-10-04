@@ -128,7 +128,7 @@ _restart() {
 # Replace OMR_TRACKER_HOST / OMR_TRACKER_HOST6 by its address, resolved again
 # when the host changes or every 5 minutes
 _resolve_host4() {
-	_resolve_now=$(date +%s)
+	printf -v _resolve_now '%(%s)T' -1
 	if [ "$OMR_TRACKER_HOST" != "$_host4_raw" ] || [ -z "$_host4_resolved" ] || [ $((_resolve_now - _host4_resolve_time)) -gt 300 ]; then
 		_host4_raw="$OMR_TRACKER_HOST"
 		_host4_resolved=$(resolveip -4 -t 5 "$OMR_TRACKER_HOST" | head -n 1 | tr -d "\n")
@@ -138,7 +138,7 @@ _resolve_host4() {
 }
 
 _resolve_host6() {
-	_resolve_now=$(date +%s)
+	printf -v _resolve_now '%(%s)T' -1
 	if [ "$OMR_TRACKER_HOST6" != "$_host6_raw" ] || [ -z "$_host6_resolved" ] || [ $((_resolve_now - _host6_resolve_time)) -gt 300 ]; then
 		_host6_raw="$OMR_TRACKER_HOST6"
 		_host6_resolved=$(resolveip -6 -t 5 "$OMR_TRACKER_HOST6" | head -n 1 | tr -d "\n")
@@ -359,8 +359,10 @@ _parse_ping_output() {
 	PING_JITTER=
 	PING_RTT_MIN=
 	PING_RTT_MAX=
+	# awk reads the output from a here-string: no printf in a pipeline, so
+	# one process per ping instead of three
 	IFS='|' read -r PING_LOSS PING_LATENCY PING_JITTER PING_RTT_MIN PING_RTT_MAX <<-EOF
-$(printf '%s\n' "$output" | awk '
+$(awk '
 /packet loss/ && !/errors/ {gsub("%", "", $6); loss=$6; have_loss=1}
 /rtt/ {
 	n=split($0, parts, "/")
@@ -374,7 +376,7 @@ END {
 	if (have_loss) {
 		printf "%s|%s|%s|%s|%s\n", loss, avg, jitter, min, max
 	}
-}')
+}' <<<"$output")
 EOF
 }
 
@@ -672,10 +674,13 @@ while true; do
 	if [ -n "$OMR_TRACKER_DEVICE" ] && [ -d "/sys/class/net/$OMR_TRACKER_DEVICE" ]; then
 		OMR_TRACKER_PREV_DEVICE="$OMR_TRACKER_DEVICE"
 		_device_state_var OMR_TRACKER_DEVICE_STATE "$OMR_TRACKER_DEVICE"
-		if ([ "$_iface_up" = "true" ] && [ "$OMR_TRACKER_DEVICE_STATE" != "DOWN" ]) || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
+		if { [ "$_iface_up" = "true" ] && [ "$OMR_TRACKER_DEVICE_STATE" != "DOWN" ]; } || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ]; then
 			# retrieve iface ip and gateway
 			if { [ "$OMR_TRACKER_FAMILY" = "ipv4" ] || [ "$OMR_TRACKER_FAMILY" = "ipv4ipv6" ]; } && [ "$OMR_TRACKER_INTERFACE_PROTO" != "dhcpv6" ]; then
-				OMR_TRACKER_DEVICE_IP=$(ip -4 -br addr ls dev "$OMR_TRACKER_DEVICE" | awk -F'[ /]+' '{print $3}')
+				# "<dev> <state> <addr>/<len> ...": the first address, read
+				# without awk, i.e. one process per cycle instead of three
+				read -r _ignore _ignore OMR_TRACKER_DEVICE_IP _ignore <<<"$(ip -4 -br addr ls dev "$OMR_TRACKER_DEVICE")"
+				OMR_TRACKER_DEVICE_IP="${OMR_TRACKER_DEVICE_IP%%/*}"
 				if [ -z "$OMR_TRACKER_DEVICE_IP" ]; then
 					OMR_TRACKER_DEVICE_IP=$(ip -4 addr show dev "$OMR_TRACKER_DEVICE" | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1)
 				fi
