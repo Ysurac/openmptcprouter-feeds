@@ -373,7 +373,11 @@ if [ -f /etc/init.d/dnsmasq ] && [ "$_keepalived_backup" != "1" ]; then
 			_wait=$((_wait + 1))
 		done
 		sleep 2
-		if [ -n "$(dig +timeout=4 +tries=2 openmptcprouter.com 2>&1 | grep -i 'connection refused')" ]; then
+		# The script that ran may have been 551-dnsmasq stopping dnsmasq
+		# because this router just became the HA backup: don't revive it
+		[ "$(cat /var/run/keepalived.omr_ha.state 2>/dev/null)" = "BACKUP" ] &&
+			pidof keepalived >/dev/null 2>&1 && _keepalived_backup=1
+		if [ "$_keepalived_backup" != "1" ] && [ -n "$(dig +timeout=4 +tries=2 openmptcprouter.com 2>&1 | grep -i 'connection refused')" ]; then
 			_log "Can't resolve via dnsmasq, restart it..."
 			/etc/init.d/dnsmasq restart >/dev/null 2>&1
 			sleep 5
