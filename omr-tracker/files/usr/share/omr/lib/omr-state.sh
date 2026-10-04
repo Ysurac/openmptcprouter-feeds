@@ -21,7 +21,7 @@
 #         local_ipv6 publicip publicip6 asn asn6 operator number manufacturer
 #         latency latency_previous mplc
 #   omr.*  (vpn, server, proxy, ss_<server>, v2ray, xray, detected_*)
-#   settings.apilc sysupgrade_lc dns_hijacked unbound_lc
+#   settings.apilc sysupgrade_lc unbound_lc
 #   <server>.current admin_error token_error set_firewall
 # They describe what the router sees right now: committing them rewrote the
 # config on flash on every tracker transition, flushed every other process's

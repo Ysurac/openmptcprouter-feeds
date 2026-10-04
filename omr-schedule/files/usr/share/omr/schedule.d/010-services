@@ -336,15 +336,21 @@ if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" =
 					_log "DNS port 53 hijacked by ISP, bypass unbound and use 1.1.1.1..."
 					uci -q del_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
 					uci -q add_list dhcp.@dnsmasq[0].server='1.1.1.1'
-					uci -q -P /var/state revert openmptcprouter.settings.dns_hijacked; uci -q -P /var/state set openmptcprouter.settings.dns_hijacked=1
+					# dns_hijacked marks the dhcp change above as ours, so it is kept
+					# in the config with it: in /var/state, it was gone after a reboot
+					# and unbound was never restored
+					uci -q set openmptcprouter.settings.dns_hijacked=1
 					uci -q commit dhcp
+					uci -q commit openmptcprouter
 					/etc/init.d/dnsmasq restart >/dev/null 2>&1
 				elif [ "$ROOT_CHECK_RC" -eq 0 ] && [ -z "$ROOT_CHECK" ] && [ "$_dns_hijacked_flag" = "1" ]; then
 					_log "DNS port 53 hijack resolved, restoring unbound..."
 					uci -q del_list dhcp.@dnsmasq[0].server='1.1.1.1'
 					uci -q add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+					uci -q delete openmptcprouter.settings.dns_hijacked
 					uci -q -P /var/state revert openmptcprouter.settings.dns_hijacked
 					uci -q commit dhcp
+					uci -q commit openmptcprouter
 					/etc/init.d/dnsmasq restart >/dev/null 2>&1
 				fi
 			fi
