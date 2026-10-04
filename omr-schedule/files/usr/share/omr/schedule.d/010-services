@@ -559,6 +559,23 @@ _intf_zone_forwards_to_wan() {
 	done
 	return 1
 }
+# _intf_in_zone <interface> <zone name>...: true if the interface is in the
+# networks of a firewall zone with one of these names
+_intf_in_zone() {
+	local intf="$1" zsection zname
+	shift
+	for zsection in $(uci -q show firewall | sed -n "s/^\(firewall\.[^.]*\)=zone\$/\1/p"); do
+		case " $(uci -q get ${zsection}.network 2>/dev/null) " in
+			*" $intf "*) ;;
+			*) continue ;;
+		esac
+		zname=$(uci -q get ${zsection}.name 2>/dev/null)
+		case " $* " in
+			*" $zname "*) return 0 ;;
+		esac
+	done
+	return 1
+}
 # _set_list <list> <value> <0|1>: remove or add the value only when needed.
 # Deleting and re-adding it each minute left a /tmp/.uci delta in which LAN was
 # missing from the dnsmasq interfaces, so a dnsmasq restart at that moment
@@ -580,8 +597,9 @@ set_lan_ips() {
 	local lan=0 wan=0 proxy=0
 	# A backup WAN is a WAN too: dnsmasq/unbound must not serve it as LAN
 	# omrvpn is the VPN tunnel, not a LAN, even when its proto is dhcp
-	# (Glorytun or SoftEther in DHCP mode, or left over from them)
-	if [ "$1" != "omrvpn" ] && [ "$multipath" != "on" ] && [ "$multipath" != "master" ] && [ "$multipath" != "backup" ] && [ -n "$device" ] && [ -z "$(echo $device | grep @)" ] && ([ "$proto" = "dhcp" ] || [ "$proto" = "static" ]); then
+	# (Glorytun or SoftEther in DHCP mode, or left over from them), and
+	# neither is any interface in the wan or vpn firewall zone
+	if [ "$1" != "omrvpn" ] && [ "$multipath" != "on" ] && [ "$multipath" != "master" ] && [ "$multipath" != "backup" ] && [ -n "$device" ] && [ -z "$(echo $device | grep @)" ] && ([ "$proto" = "dhcp" ] || [ "$proto" = "static" ]) && ! _intf_in_zone "$1" wan vpn; then
 		lan=1
 		_intf_zone_forwards_to_wan "$1" && proxy=1
 	elif [ "$multipath" = "on" ] || [ "$multipath" = "master" ] || [ "$multipath" = "backup" ]; then
