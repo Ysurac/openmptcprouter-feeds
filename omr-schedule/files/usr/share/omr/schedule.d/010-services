@@ -547,6 +547,17 @@ _intf_zone_forwards_to_wan() {
 	done
 	return 1
 }
+# _set_list <list> <value> <0|1>: remove or add the value only when needed.
+# Deleting and re-adding it each minute left a /tmp/.uci delta in which LAN was
+# missing from the dnsmasq interfaces, so a dnsmasq restart at that moment
+# listened on lo only, and dhcp/unbound/shadowsocks configs were rewritten.
+_set_list() {
+	[ -n "$2" ] || return
+	case " $(uci -q get "$1") " in
+		*" $2 "*) [ "$3" = "1" ] || uci -q del_list "$1=$2" ;;
+		*) [ "$3" = "1" ] && uci -q add_list "$1=$2" ;;
+	esac
+}
 set_lan_ips() {
 	config_get ip4table "$1" ip4table
 	config_get device "$1" device
@@ -554,23 +565,19 @@ set_lan_ips() {
 	config_get multipath "$1" multipath
 	# No restrict for interfaces with strong name
 	[ -n "$(echo $device | grep -- -)" ] && uci -q set openmptcprouter.settings.restrict_to_lan="0" && uci commit openmptcprouter
-	uci -q del_list shadowsocks-libev.ss_rules.ifnames="$device"
-	uci -q del_list shadowsocks-rust.ss_rules.ifnames="$device"
-	uci -q del_list unbound.ub_main.iface_lan="$1"
-	uci -q del_list unbound.ub_main.iface_wan="$1"
-	uci -q del_list dhcp.@dnsmasq[0].interface="$1"
-	uci -q del_list dhcp.@dnsmasq[0].notinterface="$1"
+	local lan=0 wan=0 proxy=0
 	if [ "$multipath" != "on" ] && [ "$multipath" != "master" ] && [ -n "$device" ] && [ -z "$(echo $device | grep @)" ] && ([ "$proto" = "dhcp" ] || [ "$proto" = "static" ]); then
-		if _intf_zone_forwards_to_wan "$1"; then
-			uci -q add_list shadowsocks-libev.ss_rules.ifnames="$device"
-			uci -q add_list shadowsocks-rust.ss_rules.ifnames="$device"
-		fi
-		uci -q add_list unbound.ub_main.iface_lan="$1"
-		uci -q add_list dhcp.@dnsmasq[0].interface="$1"
+		lan=1
+		_intf_zone_forwards_to_wan "$1" && proxy=1
 	elif [ "$multipath" = "on" ] || [ "$multipath" = "master" ]; then
-		uci -q add_list unbound.ub_main.iface_wan="$1"
-		uci -q add_list dhcp.@dnsmasq[0].notinterface="$1"
+		wan=1
 	fi
+	_set_list shadowsocks-libev.ss_rules.ifnames "$device" $proxy
+	_set_list shadowsocks-rust.ss_rules.ifnames "$device" $proxy
+	_set_list unbound.ub_main.iface_lan "$1" $lan
+	_set_list unbound.ub_main.iface_wan "$1" $wan
+	_set_list dhcp.@dnsmasq[0].interface "$1" $lan
+	_set_list dhcp.@dnsmasq[0].notinterface "$1" $wan
 }
 config_load network
 config_foreach restart_omrtracker interface
