@@ -1906,19 +1906,32 @@ _set_lan_ip() {
 	fi
 }
 
+# The elements of one of omr-bypass-nft's fw4 sets, quoted and
+# comma-separated as the ipset branches below give them. From nft's text
+# output: the set is an interval set, so an element can be an address, a
+# prefix or a range (the JSON output has a different form for each), and it
+# may carry a timeout.
+_bypass_set_elements() {
+	nft list set inet fw4 "$1" 2>/dev/null | awk '
+		/elements = \{/ { e = 1; sub(/.*elements = \{/, "") }
+		e {
+			done = sub(/\}.*/, "")
+			n = split($0, parts, ",")
+			for (i = 1; i <= n; i++) {
+				split(parts[i], w, " ")
+				if (w[1] != "") printf "%s\"%s\"", (c++ ? "," : ""), w[1]
+			}
+			if (done) exit
+		}'
+}
+
 _set_bypass_ips() {
 	local settings
 	[ -z "$servername" ] && servername=$1
 	bypassipv4s=$(ipset -q -o save list omr_dst_bypass_srv_vpn1_4 2>/dev/null | awk '/add/ NF {print "\""$3"\""}' | tr '\n' ',' | sed 's/,$//')
-	[ -z "$bypassipv4s" ] && {
-		bypassipv4slst=$(nft -j list set inet fw4 "omr_dst_bypass_srv_vpn1_4"  2>/dev/null)
-		[ -n "$bypassipv4slst" ] && bypassipv4s=$(echo "$bypassipv4slst" | jsonfilter -q -e @.nftables[1].set.elem[*].prefix | awk '{gsub(/"/,"",$3);gsub(/,/,"/",$3); print $3 $5}')
-	}
+	[ -z "$bypassipv4s" ] && bypassipv4s=$(_bypass_set_elements omr_dst_bypass_srv_vpn1_4)
 	bypassipv6s=$(ipset -q -o save list omr6_dst_bypass_srv_vpn1_6  2>/dev/null | awk '/add/ NF {print "\""$3"\""}' | tr '\n' ',' | sed 's/,$//')
-	[ -z "$bypassipv6s" ] && {
-		bypassipv6slst=$(nft -j list set inet fw4 "omr_dst_bypass_srv_vpn1_6"  2>/dev/null)
-		[ -n "$bypassipv6slst" ] && bypassipv6s=$(echo "$bypassipv6slst" | jsonfilter -q -e @.nftables[1].set.elem[*].prefix | awk '{gsub(/"/,"",$3);gsub(/,/,"/",$3); print $3 $5}')
-	}
+	[ -z "$bypassipv6s" ] && bypassipv6s=$(_bypass_set_elements omr_dst_bypass_srv_vpn1_6)
 	# "
 	if [ "$bypassipv4s" != "" ] || [ "$bypassipv6s" != "" ]; then
 		settings='{"ipv4s" : ['$bypassipv4s'],"ipv6s" : ['$bypassipv6s'],"intf" : "vpn1"}'
