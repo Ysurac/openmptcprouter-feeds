@@ -20,20 +20,26 @@ SETROUTE6=false
 
 . "${OMR_LIB_DIR:-/usr/share/omr/lib}/common-post-tracking.sh"
 
+# One clock read for the whole run, the lock's timestamp included
+_omr_now=$(date +%s)
+
 # Prevent overlapping 003-up runs for the same interface.
+# The name is built by the shell rather than printf|tr, and the directory
+# only created when missing: this runs on every cycle of every interface.
 lock_base_dir="${OMR_TRACKER_LOCK_DIR:-/var/run/omr-tracker}"
-lock_iface="$(printf '%s' "${OMR_TRACKER_INTERFACE:-global}" | tr -c 'A-Za-z0-9_.-' '_')"
+lock_iface="${OMR_TRACKER_INTERFACE:-global}"
+lock_iface="${lock_iface//[!A-Za-z0-9_.-]/_}"
 lock_dir="${lock_base_dir}/003-up.${lock_iface}.lock"
 # A run can't legitimately take this long: past it the pid in the lock was
 # recycled by an unrelated process and the lock is stale.
 lock_max_age=600
 
-mkdir -p "$lock_base_dir" >/dev/null 2>&1
+[ -d "$lock_base_dir" ] || mkdir -p "$lock_base_dir" >/dev/null 2>&1
 
 _acquire_003_up_lock() {
 	mkdir "$lock_dir" 2>/dev/null || return 1
 	printf '%s\n' "${BASHPID:-$$}" >"$lock_dir/pid"
-	date +%s >"$lock_dir/ts" 2>/dev/null
+	printf '%s\n' "$_omr_now" >"$lock_dir/ts" 2>/dev/null
 	return 0
 }
 
@@ -96,9 +102,6 @@ if [ -e "/sys/class/net/$OMR_TRACKER_DEVICE" ] && [ "$_globals_multipath" = "ena
 #		multipath ${multipath_status} >/dev/null 2>&1
 #	fi
 fi
-
-# One clock read for the whole run
-_omr_now=$(date +%s)
 
 default_gw=$(ip route get 1.1.1.1 2>/dev/null | awk '/via/ {print $3}')
 [ -z "$default_gw" ] && default_gw=$(ip route show default metric 0 | awk '/default/ {print $3}')
