@@ -43,7 +43,7 @@ omr_state_get() {
 # Sets one or more options in one uci run. The section must exist in the
 # persistent config or in state: create it in state when it doesn't.
 omr_state_set() {
-	local _pkg="$1" _sec="$2" _batch=""
+	local _pkg="$1" _sec="$2" _batch="" _val _quoted
 	shift 2
 	[ -n "$_pkg" ] && [ -n "$_sec" ] || return 1
 	if ! command uci -q -P "$OMR_STATE_DIR" get "${_pkg}.${_sec}" >/dev/null 2>&1; then
@@ -51,14 +51,46 @@ omr_state_set() {
 	fi
 	while [ $# -ge 2 ]; do
 		# quoted for uci batch, which would otherwise split (and drop) a
-		# value with spaces in it, e.g. an ASN or a modem operator name
+		# value with spaces in it, e.g. an ASN or a modem operator name.
+		# Each ' becomes '\'' in the shell rather than with printf|sed:
+		# this runs several times per tracker cycle, and that was three
+		# processes per value. Trailing newlines are dropped, as the command
+		# substitution around printf|sed did.
+		_val="$2"
+		while :; do
+			case "$_val" in
+				*"
+")
+					_val="${_val%?}"
+					;;
+				*)
+					break
+					;;
+			esac
+		done
+		_quoted=""
+		while :; do
+			case "$_val" in
+				*\'*)
+					_quoted="${_quoted}${_val%%\'*}'\\''"
+					_val="${_val#*\'}"
+					;;
+				*)
+					_quoted="${_quoted}${_val}"
+					break
+					;;
+			esac
+		done
 		_batch="${_batch}revert ${_pkg}.${_sec}.${1}
-set ${_pkg}.${_sec}.${1}='$(printf '%s' "$2" | sed "s/'/'\\\\''/g")'
+set ${_pkg}.${_sec}.${1}='${_quoted}'
 "
 		shift 2
 	done
 	[ -n "$_batch" ] || return 0
-	printf '%s' "$_batch" | command uci -q -P "$OMR_STATE_DIR" batch 2>/dev/null
+	# A here-document, not printf in a pipeline: one process less
+	command uci -q -P "$OMR_STATE_DIR" batch 2>/dev/null <<EOF
+$_batch
+EOF
 	# omr-tracker's cached view of the config would otherwise keep the old
 	# value for the rest of the run
 	command -v _omr_uci_cache_flush >/dev/null 2>&1 && _omr_uci_cache_flush
