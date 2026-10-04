@@ -457,6 +457,10 @@ _dscp_ensure_chain() {
 	EOF
 }
 
+# The DSCP sets are omr-bypass's own: omr-dscp creates omr_dscp_<class>_4/_6
+# sets and dnsmasq lists of its own, of another set type, and deletes them on
+# every start. Sharing the names made each package delete the other's
+# sections, and fw4 fail with "File exists" when the two set types met.
 _dscp_ensure_ipset() {
 	local dscp=$1
 	[ -z "$dscp" ] && return
@@ -464,20 +468,20 @@ _dscp_ensure_ipset() {
 	_dscp_ipset_vals="${_dscp_ipset_vals} $dscp "
 	_dscp_ensure_chain
 	uci -q batch <<-EOF
-		set firewall.omr_dscp_${dscp}_4=ipset
-		set firewall.omr_dscp_${dscp}_4.name="omr_dscp_${dscp}_4"
-		set firewall.omr_dscp_${dscp}_4.match='dest_net'
-		set firewall.omr_dscp_${dscp}_4.family='ipv4'
-		set firewall.omr_dscp_${dscp}_4.enabled='1'
-		set firewall.omr_dscp_${dscp}_6=ipset
-		set firewall.omr_dscp_${dscp}_6.name="omr_dscp_${dscp}_6"
-		set firewall.omr_dscp_${dscp}_6.match='dest_net'
-		set firewall.omr_dscp_${dscp}_6.family='ipv6'
-		set firewall.omr_dscp_${dscp}_6.enabled='1'
+		set firewall.omr_dst_bypass_dscp_${dscp}_4=ipset
+		set firewall.omr_dst_bypass_dscp_${dscp}_4.name="omr_dst_bypass_dscp_${dscp}_4"
+		set firewall.omr_dst_bypass_dscp_${dscp}_4.match='dest_net'
+		set firewall.omr_dst_bypass_dscp_${dscp}_4.family='ipv4'
+		set firewall.omr_dst_bypass_dscp_${dscp}_4.enabled='1'
+		set firewall.omr_dst_bypass_dscp_${dscp}_6=ipset
+		set firewall.omr_dst_bypass_dscp_${dscp}_6.name="omr_dst_bypass_dscp_${dscp}_6"
+		set firewall.omr_dst_bypass_dscp_${dscp}_6.match='dest_net'
+		set firewall.omr_dst_bypass_dscp_${dscp}_6.family='ipv6'
+		set firewall.omr_dst_bypass_dscp_${dscp}_6.enabled='1'
 	EOF
 	cat >> /etc/firewall.omr-bypass <<-EOF
-		nft add rule inet fw4 omr_dscp_pre ip daddr @omr_dscp_${dscp}_4 ip dscp set ${dscp} 2>/dev/null || true
-		nft add rule inet fw4 omr_dscp_pre ip6 daddr @omr_dscp_${dscp}_6 ip6 dscp set ${dscp} 2>/dev/null || true
+		nft add rule inet fw4 omr_dscp_pre ip daddr @omr_dst_bypass_dscp_${dscp}_4 ip dscp set ${dscp} 2>/dev/null || true
+		nft add rule inet fw4 omr_dscp_pre ip6 daddr @omr_dst_bypass_dscp_${dscp}_6 ip6 dscp set ${dscp} 2>/dev/null || true
 	EOF
 }
 
@@ -489,9 +493,9 @@ _dscp_ip() {
 	local valid_ip6=$( valid_subnet6 "$ip")
 	_dscp_ensure_ipset "$dscp"
 	if [ "$valid_ip4" = "ok" ]; then
-		_uci_add_list_unique "firewall.omr_dscp_${dscp}_4.entry" "$ip"
+		_uci_add_list_unique "firewall.omr_dst_bypass_dscp_${dscp}_4.entry" "$ip"
 	elif [ "$valid_ip6" = "ok" ]; then
-		_uci_add_list_unique "firewall.omr_dscp_${dscp}_6.entry" "$ip"
+		_uci_add_list_unique "firewall.omr_dst_bypass_dscp_${dscp}_6.entry" "$ip"
 	fi
 }
 
@@ -628,11 +632,9 @@ _bypass_domain() {
 			# Add DSCP nftset names to the existing intf dnsmasq ipset so dnsmasq populates them too
 			if [ -n "$dscp" ]; then
 				_dscp_ensure_ipset "$dscp"
-				uci -q get dhcp.${_dnsipset_key}.name 2>/dev/null | grep -qw "omr_dscp_${dscp}_4" || \
-					uci -q add_list dhcp.${_dnsipset_key}.name="omr_dscp_${dscp}_4"
+				_uci_add_list_unique dhcp.${_dnsipset_key}.name "omr_dst_bypass_dscp_${dscp}_4"
 				if [ "$noipv6" != "1" ]; then
-					uci -q get dhcp.${_dnsipset_key}.name 2>/dev/null | grep -qw "omr_dscp_${dscp}_6" || \
-						uci -q add_list dhcp.${_dnsipset_key}.name="omr_dscp_${dscp}_6"
+					_uci_add_list_unique dhcp.${_dnsipset_key}.name "omr_dst_bypass_dscp_${dscp}_6"
 				fi
 			fi
 			for zone in $(_get_firewall_zones); do
@@ -649,15 +651,15 @@ _bypass_domain() {
 		elif [ -n "$dscp" ]; then
 			# DSCP-only domain: create a dedicated dnsmasq ipset for the DSCP nftset
 			_dscp_ensure_ipset "$dscp"
-			local _dscp_ipset_key="omr_dscp_${dscp}"
+			local _dscp_ipset_key="omr_dst_bypass_dscp_${dscp}"
 			if ! _uci_list_has dhcp.${_dscp_ipset_key}.domain "$domain"; then
 				uci -q batch <<-EOIPSET
 					set dhcp.${_dscp_ipset_key}=ipset
 					set dhcp.${_dscp_ipset_key}.table='fw4'
 					set dhcp.${_dscp_ipset_key}.table_family='inet'
-					add_list dhcp.${_dscp_ipset_key}.name="omr_dscp_${dscp}_4"
-					add_list dhcp.${_dscp_ipset_key}.name="omr_dscp_${dscp}_6"
 				EOIPSET
+				_uci_add_list_unique dhcp.${_dscp_ipset_key}.name "omr_dst_bypass_dscp_${dscp}_4"
+				_uci_add_list_unique dhcp.${_dscp_ipset_key}.name "omr_dst_bypass_dscp_${dscp}_6"
 				uci -q add_list dhcp.${_dscp_ipset_key}.domain="$domain"
 				add_domains="true"
 			fi
@@ -1814,7 +1816,7 @@ _xray_rules_config() {
 
 _delete_dhcp_ipset() {
 	case "$1" in
-	*omr_dst_bypass*|*omr_dscp*)
+	*omr_dst_bypass*)
 		_dhcp_delete_batch="${_dhcp_delete_batch}delete dhcp.$1
 "
 		;;
@@ -1823,7 +1825,7 @@ _delete_dhcp_ipset() {
 
 _delete_firewall_rules() {
 	case "$1" in
-	*omr_dst_bypass*|*omr6_dst_bypass*|*bypass_*|*bypass6_*|*omr_dscp*)
+	*omr_dst_bypass*|*omr6_dst_bypass*|*bypass_*|*bypass6_*)
 		_fw_delete_batch="${_fw_delete_batch}delete firewall.$1
 "
 		;;
@@ -2418,13 +2420,13 @@ _soft_wipe_dynamic() {
 	# light reload re-adds the survivors.
 	_omr_entries_before="/tmp/omr-bypass-entries.before"
 	: > "$_omr_entries_before"
-	for key in $(uci -q show firewall 2>/dev/null | grep -E '^firewall\.(omr6?_dst_bypass|omr_dscp)_[^.]+\.entry=' | cut -d= -f1); do
+	for key in $(uci -q show firewall 2>/dev/null | grep -E '^firewall\.omr6?_dst_bypass_[^.]+\.entry=' | cut -d= -f1); do
 		sec="${key#firewall.}"; sec="${sec%.entry}"
 		for v in $(uci -q get "$key"); do
 			echo "$sec $v"
 		done >> "$_omr_entries_before"
 	done
-	for key in $(uci -q show firewall 2>/dev/null | grep -E '^firewall\.(omr6?_dst_bypass|omr_dscp)_[^.]+\.(entry|src_mac|src_ip|src_port|dest_port)=' | cut -d= -f1); do
+	for key in $(uci -q show firewall 2>/dev/null | grep -E '^firewall\.omr6?_dst_bypass_[^.]+\.(entry|src_mac|src_ip|src_port|dest_port)=' | cut -d= -f1); do
 		uci -q delete "$key"
 	done
 	# every generated omr_dst_bypass_* rule defaults to enabled='0' in the
