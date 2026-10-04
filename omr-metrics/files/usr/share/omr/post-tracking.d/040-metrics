@@ -253,10 +253,10 @@ _get_tc_stats() {
 	[ -z "$OMR_TRACKER_DEVICE" ] && return
 	command -v tc >/dev/null 2>&1 || return
 
-	local tc_out
-	tc_out=$(tc -s qdisc show dev "$OMR_TRACKER_DEVICE" 2>/dev/null)
-	[ -z "$tc_out" ] && return
-
+	# tc piped straight into awk rather than kept in a variable and printed
+	# into it: one process less. No output gives no line at all (the END
+	# block stops at NR == 0), so every field stays empty, as the early
+	# return on an empty output used to leave them.
 	{
 		read -r TC_QDISC_TYPE
 		read -r TC_SENT_BYTES
@@ -273,7 +273,7 @@ _get_tc_stats() {
 		read -r TC_FQ_FLOWS_PLIMIT
 		read -r TC_NEW_FLOW_COUNT
 	} <<EOF
-$(printf '%s\n' "$tc_out" | awk '
+$(tc -s qdisc show dev "$OMR_TRACKER_DEVICE" 2>/dev/null | awk '
 	BEGIN { qt=""; sb=""; sp=""; dr=""; ov=""; rq=""; bb=""; bp=""; ecn=0; dol=0; fl=""; th=""; pl=""; nf=""; sent=0; bl=0; plseen=0 }
 	/^qdisc/ && qt=="" { qt=$2 }
 	# first "Sent" line: "Sent N bytes N pkt (dropped N, overlimits N requeues N)"
@@ -309,6 +309,7 @@ $(printf '%s\n' "$tc_out" | awk '
 	# fq_codel: "maxpacket N drop_overlimit N new_flow_count N ecn_mark N"
 	/new_flow_count/ && nf=="" { for (i=1; i<=NF; i++) if ($i=="new_flow_count") { nf=$(i+1)+0; break } }
 	END {
+		if (NR == 0) exit
 		print qt; print sb; print sp; print dr; print ov; print rq; print bb; print bp
 		print ecn+0; print dol+0; print fl; print th; print pl; print nf
 	}')
@@ -327,8 +328,9 @@ _get_bbr_stats() {
 	BBR_MIN_RTT=""
 	BBR_RETRANS=""
 
-	local cc
-	cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+	local cc=""
+	# the sysctl read directly, without a sysctl process
+	read -r cc 2>/dev/null </proc/sys/net/ipv4/tcp_congestion_control
 	case "$cc" in
 		bbr*) ;;
 		*) return ;;
@@ -337,12 +339,10 @@ _get_bbr_stats() {
 	[ -z "$OMR_TRACKER_DEVICE_IP" ] && return
 	command -v ss >/dev/null 2>&1 || return
 
-	local ss_out
-	ss_out=$(ss -tin src "$OMR_TRACKER_DEVICE_IP" 2>/dev/null)
-	[ -z "$ss_out" ] && return
-
+	# ss piped straight into awk (one process less); no output gives no
+	# line, as the early return on an empty output did
 	local parsed _l
-	parsed=$(printf '%s\n' "$ss_out" | awk '
+	parsed=$(ss -tin src "$OMR_TRACKER_DEVICE_IP" 2>/dev/null | awk '
 		function tobps(s,   v) {
 			v = s + 0
 			if (index(s, "Gbps")) return int(v * 1000000000)
@@ -416,8 +416,18 @@ _get_mptcp_endpoint_flags() {
 	[ -z "$OMR_TRACKER_DEVICE_IP" ] && return
 	command -v ip >/dev/null 2>&1 || return
 
-	local ep_line
-	ep_line=$(ip mptcp endpoint show 2>/dev/null | awk -v ip="$OMR_TRACKER_DEVICE_IP" '$1==ip{print; exit}')
+	# The first endpoint whose address is this WAN's IP, found by the shell
+	# in the ip output rather than by awk in a pipeline: two processes less
+	local ep_line="" _ep _ep_addr _ep_rest
+	_ep=$(ip mptcp endpoint show 2>/dev/null)
+	while read -r _ep_addr _ep_rest; do
+		if [ "$_ep_addr" = "$OMR_TRACKER_DEVICE_IP" ]; then
+			ep_line="$_ep_addr $_ep_rest"
+			break
+		fi
+	done <<EOF
+$_ep
+EOF
 	[ -z "$ep_line" ] && return
 
 	# "id" is followed by its value: walk the words (positional parameters
