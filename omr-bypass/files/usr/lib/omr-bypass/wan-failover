@@ -54,6 +54,7 @@ CHAIN="omr_bypass_srcif"
 GRP_CHAIN="omr_bypass_grp"
 SKIP4="omr_srcif_skip4"
 SKIP6="omr_srcif_skip6"
+LOCK_WAIT=30
 
 _log() {
 	logger -t "omr-bypass" "$*"
@@ -454,10 +455,22 @@ _apply() {
 	return 0
 }
 
+# Busybox flock, the one OpenWrt ships (this package pulls no util-linux
+# flock), has no -w: "flock -w 30 9" failed on the unknown option, silenced,
+# and every run went ahead unlocked. Poll a non-blocking flock instead, once
+# a second for LOCK_WAIT seconds, then go ahead unlocked rather than never.
 _locked() {
+	local _tries=0
 	mkdir -p "$STATE_DIR"
 	exec 9>"$STATE_DIR/lock"
-	flock -w 30 9 2>/dev/null
+	until flock -n 9 2>/dev/null; do
+		_tries=$((_tries + 1))
+		if [ "$_tries" -ge "$LOCK_WAIT" ]; then
+			_log "Lock still held after ${LOCK_WAIT}s, going ahead without it"
+			break
+		fi
+		sleep 1
+	done
 	"$@"
 	local ret=$?
 	flock -u 9 2>/dev/null
