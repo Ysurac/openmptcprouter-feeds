@@ -8,16 +8,26 @@
 # ipsets (omr-dscp sets no table). omr-dscp rebuilds its sections on start
 # anyway. The old set names are also dropped from omr-bypass's per-interface
 # dnsmasq ipsets, which listed them next to their own.
+#
+# The names being shared, the section deleted may be the one omr-dscp's rule
+# uses as well (the last package to start wrote it): on a live upgrade that
+# rule then names a set that no longer exists until omr-dscp starts again,
+# so restart it when something was deleted. Not at first boot or in an image
+# build: there the firewall is not up yet and omr-dscp starts after this
+# ("running" for omr-dscp, which keeps no procd instance, means fw4 is up).
+
+OMR_DSCP_INIT="/etc/init.d/omr-dscp"
 
 _ipset_sections() {
 	uci -q show "$1" | sed -n "s/^$1\.\($2[^.=]*\)=ipset\$/\1/p"
 }
 
+deleted=""
 for sec in $(_ipset_sections firewall omr_dscp_); do
-	[ "$(uci -q get "firewall.$sec.match")" = "dest_net" ] && uci -q delete "firewall.$sec"
+	[ "$(uci -q get "firewall.$sec.match")" = "dest_net" ] && uci -q delete "firewall.$sec" && deleted=1
 done
 for sec in $(_ipset_sections dhcp omr_dscp_); do
-	[ "$(uci -q get "dhcp.$sec.table")" = "fw4" ] && uci -q delete "dhcp.$sec"
+	[ "$(uci -q get "dhcp.$sec.table")" = "fw4" ] && uci -q delete "dhcp.$sec" && deleted=1
 done
 for sec in $(_ipset_sections dhcp omr_dst_bypass_); do
 	for name in $(uci -q get "dhcp.$sec.name"); do
@@ -28,4 +38,9 @@ for sec in $(_ipset_sections dhcp omr_dst_bypass_); do
 done
 uci -q commit firewall
 uci -q commit dhcp
+if [ -n "$deleted" ] && [ -z "${IPKG_INSTROOT:-}" ] && [ -x "$OMR_DSCP_INIT" ] && \
+   "$OMR_DSCP_INIT" enabled >/dev/null 2>&1 && \
+   nft list table inet fw4 >/dev/null 2>&1; then
+	"$OMR_DSCP_INIT" restart >/dev/null 2>&1
+fi
 exit 0
