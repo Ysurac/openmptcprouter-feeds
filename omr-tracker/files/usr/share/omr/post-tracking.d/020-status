@@ -299,21 +299,34 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ -z "$_lc" ] || [ "$(omr_state_get open
 			# Unbounded here, so a slow registry stalled post-tracking
 			asn6="$(timeout $whoistimeout whois $ip6addr 2>/dev/null | grep -m 1 -i 'netname' | awk '{print $2}')"
 		fi
-		[ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE)" ] && {
-			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE=interface
-		}
+		[ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE)" ] && \
+			_cfg_set openmptcprouter.$OMR_TRACKER_INTERFACE interface
 		if [ "$(omr_state_get openmptcprouter.latest_versions.lc)" = "" ] || [ $(($(date +"%s") - $(omr_state_get openmptcprouter.latest_versions.lc))) -gt 3600 ]; then
 			latestversions="$(curl -6 -s -m 3 https://www.openmptcprouter.com/version/version.json)"
 			[ -n "$latestversions" ] && {
-				# Same value as omr-schedule's 010-services writes (with the
-				# kernel suffix), and only on a change: the two used to
-				# disagree, and each hourly check rewrote the config.
-				_lv_omr="$(echo $latestversions | jsonfilter -q -e '@.omr')-$(ubus call system board | jsonfilter -e '@.kernel' | cut -d'.' -f1,2)"
-				_lv_vps="$(echo $latestversions | jsonfilter -q -e '@.vps')"
+				# Same values as omr-schedule's 010-services writes
+				# (_omr_latest_versions_check: with the kernel suffix, and
+				# none at all on another distribution than openmptcprouter),
+				# and only on a change: the two used to disagree, and each
+				# hourly check rewrote the config.
+				_lv_omr=""
+				_lv_vps=""
+				if [ "$(ubus call system board | jsonfilter -q -e '@.release.distribution' | tr -d '\n')" = "openmptcprouter" ]; then
+					_lv_omr="$(echo $latestversions | jsonfilter -q -e '@.omr')-$(ubus call system board | jsonfilter -e '@.kernel' | cut -d'.' -f1,2)"
+					_lv_vps="$(echo $latestversions | jsonfilter -q -e '@.vps')"
+				fi
 				if [ "$(uci -q get openmptcprouter.latest_versions.omr)" != "$_lv_omr" ] || [ "$(uci -q get openmptcprouter.latest_versions.vps)" != "$_lv_vps" ]; then
-					uci -q set openmptcprouter.latest_versions=latest_versions
-					uci -q set openmptcprouter.latest_versions.omr="$_lv_omr"
-					uci -q set openmptcprouter.latest_versions.vps="$_lv_vps"
+					_cfg_set openmptcprouter.latest_versions latest_versions
+					if [ -n "$_lv_omr" ]; then
+						_cfg_set openmptcprouter.latest_versions.omr "$_lv_omr"
+					else
+						_cfg_del openmptcprouter.latest_versions.omr
+					fi
+					if [ -n "$_lv_vps" ]; then
+						_cfg_set openmptcprouter.latest_versions.vps "$_lv_vps"
+					else
+						_cfg_del openmptcprouter.latest_versions.vps
+					fi
 				fi
 				omr_state_set openmptcprouter latest_versions lc "$_now"
 			}

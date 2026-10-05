@@ -870,11 +870,28 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFAC
 	fi
 fi
 
-if [ "$(uci -q -P /var/state get openmptcprouter.latest_versions.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q -P /var/state get openmptcprouter.latest_versions.lc))) -gt 3600 ]; then
+# Hourly: the latest OMR and VPS versions (shown by LuCI) and a firewall check
+_omr_latest_versions_check() {
+	local _now _lc
+	_now="$(date +%s)"
+	_lc="$(uci -q -P /var/state get openmptcprouter.latest_versions.lc)"
+	[ -n "$_lc" ] && [ $((_now - _lc)) -le 3600 ] && return 0
+	# The hourly timestamp is an option of this section, and uci sets no
+	# option on a missing section: it was only created when a version
+	# changed, never on a distribution other than openmptcprouter (no
+	# version kept), so that check ran every minute there. Created once, in
+	# the config: the 1930/1970 uci-defaults also take a missing section for
+	# a first install, and ran again after each sysupgrade.
+	if [ -z "$(uci -q get openmptcprouter.latest_versions)" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set openmptcprouter.latest_versions=latest_versions
+			commit openmptcprouter
+		EOF
+	fi
 	distribution="$(ubus call system board | jsonfilter -q -e '@.release.distribution' | tr -d '\n')"
 	version="$(ubus call system board | jsonfilter -q -e '@.release.version' | tr -d '\n')"
 	latestversions="$(curl -4 -s -m 3 -A "${distribution}/${version}" https://www.openmptcprouter.com/version/version.json)"
-	[ -n "$latestversions" ] && {
+	if [ -n "$latestversions" ]; then
 		# The versions stay in the config (they are worth keeping over a
 		# reboot) but are only written when they change: this runs hourly,
 		# and an unconditional set + commit rewrote the file on flash every
@@ -900,14 +917,19 @@ if [ "$(uci -q -P /var/state get openmptcprouter.latest_versions.lc)" = "" ] || 
 			fi
 			uci -q commit openmptcprouter
 		fi
-		uci -q -P /var/state revert openmptcprouter.latest_versions.lc; uci -q -P /var/state set openmptcprouter.latest_versions.lc=$(date +"%s")
-	}
+	else
+		# no answer (no WAN up yet, site down): try again in 10 minutes, not
+		# on every run
+		_now=$((_now - 3000))
+	fi
+	uci -q -P /var/state revert openmptcprouter.latest_versions.lc; uci -q -P /var/state set openmptcprouter.latest_versions.lc=$_now
 	fw4check="$(fw4 check 2>&1)"
 	[ -n "$(echo $fw4check | grep Error)" ] && [ -n "$(echo $fw4check | grep bypass)" ] && {
 		_log "Restart OMR-ByPass due to firewall error"
 		/etc/init.d/omr-bypass restart >/dev/null 2>&1
 	}
-fi
+}
+_omr_latest_versions_check
 
 # OMR-ByPass domain IP refresh (reload_rules) used to piggyback on the
 # above once-an-hour version-check gate, so it always ran hourly with no
