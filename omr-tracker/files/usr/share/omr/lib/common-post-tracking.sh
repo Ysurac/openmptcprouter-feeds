@@ -237,6 +237,51 @@ _omr_awk_via_dev='{
 	if (gw != "") { print gw, dev; exit }
 }'
 
+# _omr_route_has_dev <ip route output> <device>: does a route or nexthop of
+# the output go through <device>? Whole "dev <name>" tokens only: a plain
+# substring test took wwan0 for wan and eth10 for eth1.
+_omr_route_has_dev() {
+	[ -n "$2" ] || return 1
+	case " $1 " in
+		*[[:space:]]dev[[:space:]]"$2"[[:space:]]*) return 0 ;;
+	esac
+	return 1
+}
+
+# The balanced default routes (metric 1 and 999) are rebuilt by the tracker
+# of whichever interface changes state, from the state of all the others.
+# Two interfaces failing within a few seconds each computed the nexthops
+# before the other one's "down" was visible, and the last to install put the
+# other dead interface back. _omr_balancing_lock serializes the rebuilds:
+# take it, then read the state (the config cache is dropped so the other
+# trackers' updates are seen) and install. Busybox flock has no timeout, so
+# it is polled: past 30s the rebuild goes ahead unlocked rather than never.
+# The lock is held on fd 8 until _omr_balancing_unlock or the end of the
+# post-tracking subshell.
+_omr_balancing_lock() {
+	local _dir="${OMR_TRACKER_LOCK_DIR:-/var/run/omr-tracker}" _tries=0
+	mkdir -p "$_dir" >/dev/null 2>&1
+	# a failed exec redirection ends a POSIX shell: check first
+	[ -w "$_dir" ] || return 1
+	exec 8>"$_dir/balancing.lock" || return 1
+	if command -v flock >/dev/null 2>&1; then
+		until flock -n 8 2>/dev/null; do
+			_tries=$((_tries + 1))
+			if [ "$_tries" -ge 30 ]; then
+				_log "Balancing route lock still held after 30s, rebuild without it"
+				break
+			fi
+			sleep 1
+		done
+	fi
+	command -v _omr_uci_cache_flush >/dev/null 2>&1 && _omr_uci_cache_flush
+	return 0
+}
+
+_omr_balancing_unlock() {
+	exec 8>&-
+}
+
 # Read with a plain uci get, not through the cache: several scripts source
 # this library only to log something (002-error's early exits, 001-initialize)
 # and must not pay for building the config map just to learn whether debug

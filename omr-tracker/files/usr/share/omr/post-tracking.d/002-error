@@ -282,24 +282,31 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 			[ -z "$VPN_BASE_INTF" ] && VPN_BASE_INTF="omr"
 			/etc/init.d/openvpn restart "$VPN_BASE_INTF" >/dev/null 2>&1
 		fi
+		# In balancing mode none of the branches below handle a non-master
+		# interface failure: the balancing default route is rebuilt without
+		# the down interface, else a dead nexthop stays in the route. Whether
+		# the interface is in that route is read before del_server_route
+		# touches the default routes.
+		balancing_rebuild="no"
+		if [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && [ -n "$OMR_TRACKER_DEVICE" ] && _omr_route_has_dev "$(ip route show default metric 1 2>/dev/null)" "$OMR_TRACKER_DEVICE"; then
+			balancing_rebuild="yes"
+		fi
 		config_load openmptcprouter
 		config_foreach del_server_route server
 		config_foreach del_server_route6 server
 		#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" != "mlvpn" ]; then
 
 		if [ -n "$OMR_TRACKER_INTERFACE" ]; then
-			# In balancing mode none of the branches below handle a non-master
-			# interface failure: the balancing default route is rebuilt without
-			# the down interface, else a dead nexthop stays in the route. The
-			# rebuild is computed first: "ip route get" can pick the down
+			# The rebuild is computed first: "ip route get" can pick the down
 			# interface's nexthop of the balanced route, and set_route must then
 			# not replace the metric 1 route by one through the first interface
-			# still up when the rebuild has a route to put there.
+			# still up when the rebuild has a route to put there. It is computed
+			# and installed under the balancing lock, from the state the other
+			# trackers have set by then (see _omr_balancing_lock).
+			_omr_balancing_lock
 			routesbalancing=""
 			routesbalancingbackup=""
-			balancing_rebuild="no"
-			if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$(ip route show default metric 1 | grep -w "$OMR_TRACKER_DEVICE")" ]; then
-				balancing_rebuild="yes"
+			if [ "$balancing_rebuild" = "yes" ]; then
 				nbintf=0
 				nbintfb=0
 				ipv6=false
@@ -340,6 +347,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 					ip route replace default scope global metric 999 $routesbalancingbackup >/dev/null 2>&1
 				fi
 			fi
+			_omr_balancing_unlock
 		fi
 		[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server routes (current: $(ip r) )"
 		config_load openmptcprouter
