@@ -3392,18 +3392,20 @@ _backup_send() {
 		EOF
 		return
 	}
-	sysupgrade -k -b /tmp/backup.tar.gz
-	backup_data="$(cat /tmp/backup.tar.gz | base64 | tr -d '\n')"
-	backup_sha256sum="$(sha256sum /tmp/backup.tar.gz | awk '{print $1}')"
+	# The archive holds /etc/shadow and every key: private, and gone once sent
+	local backup_file backupjson
+	backup_file="$(mktemp /tmp/omr-backup.XXXXXX)" || return
+	backupjson="$(mktemp /tmp/omr-backupjson.XXXXXX)" || { rm -f "$backup_file"; return; }
+	sysupgrade -k -b "$backup_file"
+	backup_data="$(base64 "$backup_file" | tr -d '\n')"
+	backup_sha256sum="$(sha256sum "$backup_file" | awk '{print $1}')"
 	[ -n "$backup_data" ] && {
 		logger -t "OMR-VPS" "Send backup file to server $servername"
-		local backupjson
-		backupjson='{"data": "'$backup_data'","sha256sum": "'$backup_sha256sum'"}'
-		echo "$backupjson" > /tmp/backupjson
-		result=$(_set_json "backuppost" "@/tmp/backupjson")
-		rm -f /tmp/backupjson
+		echo '{"data": "'$backup_data'","sha256sum": "'$backup_sha256sum'"}' > "$backupjson"
+		result=$(_set_json "backuppost" "@$backupjson")
 		uci -q set openmptcprouter.$servername.lastbackup=$(date +%s)
 	}
+	rm -f "$backup_file" "$backupjson"
 }
 
 backup_send() {
@@ -3445,11 +3447,30 @@ _backup_get_and_apply() {
 	fi
 	[ -z "$vps_backup" ] && return
 	backup_data="$(echo "$vps_backup" | jsonfilter -q -e '@.data')"
-	backup_sha256sum="$(echo "$vps_backup" | jsonfilter -q -e '@.sha256sum')"
-	[ -n "$backup_data" ] && {
-		echo $backup_data | base64 -d > /tmp/backup.tar.gz
-		sysupgrade -r /tmp/backup.tar.gz
-	}
+	backup_sha256sum="$(echo "$vps_backup" | jsonfilter -q -e '@.sha256sum' | tr 'A-F' 'a-f')"
+	[ -n "$backup_data" ] || return
+	local backup_file
+	backup_file="$(mktemp /tmp/omr-backup.XXXXXX)" || return
+	echo $backup_data | base64 -d > "$backup_file" 2>/dev/null
+	# sysupgrade -r unpacks over / whatever it is handed: a truncated or
+	# damaged download must never get there
+	if [ -n "$backup_sha256sum" ]; then
+		if [ "$(sha256sum "$backup_file" | awk '{print $1}')" != "$backup_sha256sum" ]; then
+			logger -t "OMR-VPS" -p daemon.warn "Backup from server $servername doesn't match its sha256sum, not restored"
+			rm -f "$backup_file"
+			return 1
+		fi
+	else
+		# Servers older than the checksum in backupget: check the archive
+		logger -t "OMR-VPS" "Server $servername sent no backup sha256sum, checking the archive only"
+	fi
+	if ! tar -tzf "$backup_file" >/dev/null 2>&1; then
+		logger -t "OMR-VPS" -p daemon.warn "Backup from server $servername is not a valid archive, not restored"
+		rm -f "$backup_file"
+		return 1
+	fi
+	sysupgrade -r "$backup_file"
+	rm -f "$backup_file"
 }
 
 backup_get() {
