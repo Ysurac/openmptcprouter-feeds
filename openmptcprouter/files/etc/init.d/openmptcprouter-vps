@@ -612,6 +612,22 @@ _set_xray_server_vps() {
 	fi
 }
 
+# The uuid of this router's XRay reverse client (VPS->LAN port forwards):
+# the VPS gives each user one of its own, and replaces the one shared by
+# every user of a multi-user VPS, so a changed reverse_key must be taken at
+# any sync, not only when _set_config_from_vps runs.
+_get_xray_reverse_key() {
+	local reverse_key
+	[ -n "$(uci -q get xray.omrout)" ] || return
+	reverse_key="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.reverse_key')"
+	[ -n "$reverse_key" ] || return
+	[ "$reverse_key" = "$(uci -q get xray.omrout.s_vless_reverse_user_id)" ] && return
+	logger -t "OMR-VPS" "New XRay reverse key from the server"
+	uci -q set xray.omrout.s_vless_reverse_user_id="$reverse_key"
+	uci -q commit xray
+	[ "$(uci -q get xray.main.enabled)" = "1" ] && /etc/init.d/xray restart >/dev/null 2>&1
+}
+
 _get_vps_config() {
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
@@ -2921,7 +2937,7 @@ _set_config_from_vps() {
 	xray_transport="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.transport')"
 	#v2ray_port="$(echo "$vps_config" | jsonfilter -q -e '@.v2ray.config.port')"
 	xray_port="65248"
-	if [ -n "$(uci -q get xray.omr)" ] && ( ([ -n "$xray_key" ] && [ "$xray_key" != "$(uci -q get xray.omrout.s_vmess_user_id)" ]) || ([ -n "$xray_port" ] && [ "$xray_port" != "$(uci -q get xray.omrout.s_vmess.port)" ]) || ([ -n "$xray_transport" ] && [ "$xray_transport" != "$(uci -q get xray.omrout.ss_network)" ]) || ([ -n "$xray_vless_reality_key" ] && [ "$xray_vless_reality_key" != "$(uci -q get xray.omrout.s_vless_reality_public_key)" ])); then
+	if [ -n "$(uci -q get xray.omr)" ] && ( ([ -n "$xray_key" ] && [ "$xray_key" != "$(uci -q get xray.omrout.s_vmess_user_id)" ]) || ([ -n "$xray_port" ] && [ "$xray_port" != "$(uci -q get xray.omrout.s_vmess.port)" ]) || ([ -n "$xray_transport" ] && [ "$xray_transport" != "$(uci -q get xray.omrout.ss_network)" ]) || ([ -n "$xray_vless_reality_key" ] && [ "$xray_vless_reality_key" != "$(uci -q get xray.omrout.s_vless_reality_public_key)" ]) || ([ -n "$xray_reverse_key" ] && [ "$xray_reverse_key" != "$(uci -q get xray.omrout.s_vless_reverse_user_id)" ])); then
 		uci -q batch <<-EOF >/dev/null
 			set xray.omrout.s_shadowsocks_port="$((xray_port+4))"
 			set xray.omrout.s_shadowsocks_password="$xray_sskey"
@@ -3762,6 +3778,7 @@ _config_service() {
 	([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q -P /var/state get openmptcprouter.${servername}.current)" = "1" ]) && {
 		[ "$user_permission" != "ro" ] && _set_vxlan_vps
 		_get_vxlan
+		_get_xray_reverse_key
 	}
 	config_load network
 	lanips=""
