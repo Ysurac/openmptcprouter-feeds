@@ -288,6 +288,26 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 		#if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" != "mlvpn" ]; then
 
 		if [ -n "$OMR_TRACKER_INTERFACE" ]; then
+			# In balancing mode none of the branches below handle a non-master
+			# interface failure: the balancing default route is rebuilt without
+			# the down interface, else a dead nexthop stays in the route. The
+			# rebuild is computed first: "ip route get" can pick the down
+			# interface's nexthop of the balanced route, and set_route must then
+			# not replace the metric 1 route by one through the first interface
+			# still up when the rebuild has a route to put there.
+			routesbalancing=""
+			routesbalancingbackup=""
+			balancing_rebuild="no"
+			if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$(ip route show default metric 1 | grep -w "$OMR_TRACKER_DEVICE")" ]; then
+				balancing_rebuild="yes"
+				nbintf=0
+				nbintfb=0
+				ipv6=false
+				config_load network
+				config_foreach set_route_balancing interface
+			fi
+			setdefault="yes"
+			[ -n "$routesbalancing" ] && setdefault="no"
 			default_gw=$(ip route get 1.1.1.1 | grep via | awk '{print $3}')
 			# "<gateway> <device>" of the IPv6 default route (see 003-up). It
 			# is empty without IPv6, as is the gateway of an interface without
@@ -296,7 +316,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 			if { [ "$default_gw" = "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ "$default_gw" = "" ] || { [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ] && [ "$default_gw6" = "$OMR_TRACKER_DEVICE_GATEWAY6 $OMR_TRACKER_DEVICE" ]; }; } && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ]; then
 				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Default gw: $default_gw - Set routes (current: $(ip r) )"
 				config_load network
-				config_foreach set_route interface $OMR_TRACKER_INTERFACE
+				config_foreach set_route interface $OMR_TRACKER_INTERFACE "$setdefault"
 				config_foreach set_route6 interface $OMR_TRACKER_INTERFACE
 				[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "New routes $(ip r)"
 			elif [ "$(uci -q get network.$OMR_TRACKER_INTERFACE.multipath)" = "master" ]; then
@@ -310,17 +330,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 				config_foreach set_route interface $OMR_TRACKER_INTERFACE "no"
 				config_foreach set_route6 interface $OMR_TRACKER_INTERFACE "no"
 			fi
-			# In balancing mode none of the branches above handle a non-master
-			# interface failure: rebuild the balancing default route without
-			# the down interface, else a dead nexthop stays in the route
-			if [ "$(uci -q get openmptcprouter.settings.master)" = "balancing" ] && [ "$(uci -q get openmptcprouter.settings.defaultgw)" != "0" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$(ip route show default metric 1 | grep -w "$OMR_TRACKER_DEVICE")" ]; then
-				routesbalancing=""
-				routesbalancingbackup=""
-				nbintf=0
-				nbintfb=0
-				ipv6=false
-				config_load network
-				config_foreach set_route_balancing interface
+			if [ "$balancing_rebuild" = "yes" ]; then
 				if [ -n "$routesbalancing" ]; then
 					_log "$OMR_TRACKER_INTERFACE down, set ip route replace default scope global metric 1 $routesbalancing"
 					ip route replace default scope global metric 1 $routesbalancing >/dev/null 2>&1
