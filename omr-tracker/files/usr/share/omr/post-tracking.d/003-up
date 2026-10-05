@@ -102,11 +102,14 @@ _omr_now=$(date +%s)
 default_gw=$(ip route get 1.1.1.1 2>/dev/null | awk '/via/ {print $3}')
 [ -z "$default_gw" ] && default_gw=$(ip route show default metric 0 | awk '/default/ {print $3}')
 # Only compared against the interface's IPv6 gateway below: skip the two
-# lookups when the interface has none
+# lookups when the interface has none. "ip -6 route get" prints
+# "<dst> from :: via <gateway> dev <device> ...", so the gateway isn't the
+# third field; it is kept with its device, as an IPv6 gateway is a
+# link-local address that the router of another WAN can have too.
 default_gw6=""
 if [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
-	default_gw6=$(ip -6 route get 2606:4700:4700::1111 2>/dev/null | awk '/via/ {print $3}')
-	[ -z "$default_gw6" ] && default_gw6=$(ip -6 route show default metric 0 | awk '/default/ {print $3}')
+	default_gw6=$(ip -6 route get 2606:4700:4700::1111 2>/dev/null | awk "$_omr_awk_via_dev")
+	[ -z "$default_gw6" ] && default_gw6=$(ip -6 route show default metric 0 | awk "$_omr_awk_via_dev")
 fi
 #current_interface_gw=$(uci -q get "network.$OMR_TRACKER_INTERFACE.gateway")
 
@@ -340,7 +343,7 @@ if [ "$multipath_config" = "master" ]; then
 			fi
 			ip route flush cache >/dev/null 2>&1
 		fi
-		if { [ "$default_gw6" != "$OMR_TRACKER_DEVICE_GATEWAY6" ] || [ "$default_gw6" = "" ]; } && [ "$OMR_TRACKER_DEVICE_GATEWAY6" != "" ]; then
+		if { [ "$default_gw6" != "$OMR_TRACKER_DEVICE_GATEWAY6 $OMR_TRACKER_DEVICE" ] || [ "$default_gw6" = "" ]; } && [ "$OMR_TRACKER_DEVICE_GATEWAY6" != "" ]; then
 			if [ -n "$omrvpn_intf" ] && [ "$(ip route show default | awk '/default/ {print $5}' | grep $omrvpn_intf)" = "" ] && [ "$defaultgw_setting" != "0" ]; then
 				_log "Master up : Replace default route by $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE"
 				ip -6 route replace default scope global nexthop via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE >/dev/null 2>&1
