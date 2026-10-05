@@ -20,6 +20,21 @@ _external_check=$(uci -q get openmptcprouter.settings.external_check)
 _tracebox=$(uci -q get openmptcprouter.settings.tracebox)
 _lc=$(omr_state_get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)
 
+# Persistent openmptcprouter edits of this script (interface section, MTU,
+# latest versions) go through _cfg_set, which flags them: the commits below
+# are for those only. Committing whenever "uci changes" listed anything took
+# other processes' pending changes along, the runtime values being in
+# /var/state.
+_cfg_changed=""
+_cfg_set() {
+	[ "$(uci -q get "$1")" = "$2" ] && return 0
+	uci -q set "$1=$2" && _cfg_changed=1
+}
+_cfg_del() {
+	uci -q get "$1" >/dev/null 2>&1 || return 0
+	uci -q delete "$1" && _cfg_changed=1
+}
+
 # IPv4 and IPv6 share the device, so they share its MTU. Each family used to
 # write the link on its own: on a dual stack WAN the two results fought over
 # it and every disagreement cost a carrier reset (issue #4374). Collect both
@@ -90,7 +105,7 @@ _probe_mtu6() {
 _set_device_mtu() {
 	local _mtu="$1" _cur
 	{ [ -z "$_mtu" ] || [ -z "$OMR_TRACKER_DEVICE" ] || [ -z "$OMR_TRACKER_INTERFACE" ]; } && return 0
-	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu="$_mtu"
+	_cfg_set openmptcprouter.$OMR_TRACKER_INTERFACE.mtu "$_mtu"
 	_cur=$(ip --json link show dev "$OMR_TRACKER_DEVICE" 2>/dev/null | jsonfilter -q -e '@[0].mtu' | tr -d '\n')
 	[ "$_cur" = "$_mtu" ] && return 0
 	_log "Set MTU of $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) to $_mtu (was ${_cur:-unknown})"
@@ -186,9 +201,8 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ -z "$_lc" ] || [ "$(omr_state_get open
 			asn="$(timeout $whoistimeout whois $ipaddr 2>/dev/null | grep -m 1 -i 'netname' | awk '{print $2}')"
 			#}
 		fi
-		[ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE)" ] && {
-			uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE=interface
-		}
+		[ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE)" ] && \
+			_cfg_set openmptcprouter.$OMR_TRACKER_INTERFACE interface
 		#if local _lvlc; _lvlc=$(uci -q get openmptcprouter.latest_versions.lc); [ -z "$_lvlc" ] || [ $((_now - _lvlc)) -gt 3600 ]; then
 		#	latestversions="$(curl -4 -s -m 3 https://www.openmptcprouter.com/version/version.json)"
 		#	[ -n "$latestversions" ] && {
@@ -379,10 +393,10 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ -z "$_lc" ] || [ "$(omr_state_get open
 	if [ -z "$_lc_after" ] || [ $((_now - _lc_after)) -gt 3600 ]; then
 		omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE lc $((_now - 3400))
 		[ "$_debug" = "true" ] && _log "Get status and settings for $OMR_TRACKER_INTERFACE... Failed"
-		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
+		[ -n "$_cfg_changed" ] && uci -q commit openmptcprouter
 	else
 		[ "$_debug" = "true" ] && _log "Get status and settings for $OMR_TRACKER_INTERFACE... Done"
-		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
+		[ -n "$_cfg_changed" ] && uci -q commit openmptcprouter
 		if [ "$(pgrep -f openmptcprouter-vps)" = "" ] && { [ -z "$(omr_state_get openmptcprouter.settings.apilc)" ] || [ $((_now - $(omr_state_get openmptcprouter.settings.apilc))) -gt 3600 ]; }; then
 			[ "$_debug" = "true" ] && _log "Check API configuration..."
 			/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &

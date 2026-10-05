@@ -128,6 +128,16 @@ _omr_default_m1_has_device() {
 	return 1
 }
 
+# Set in the persistent config only when the value differs, and remember
+# it: the commits below are for this script's own edits, not for whatever
+# other processes have pending in the shared /tmp/.uci (the runtime values
+# go to /var/state through omr_state_set and never need a commit)
+_omr_cfg_changed=""
+_omr_cfg_set() {
+	[ "$(command uci -q get "$1")" = "$2" ] && return 0
+	uci -q set "$1=$2" && _omr_cfg_changed=1
+}
+
 # debug is set by common-post-tracking.sh
 
 initcwrwnd=""
@@ -197,7 +207,7 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 				serverip=""
 			fi
 		fi
-		uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE="interface"
+		_omr_cfg_set openmptcprouter.$OMR_TRACKER_INTERFACE "interface"
 		# Measured latency is volatile state, not configuration (see omr-state.sh)
 		omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" latency "$OMR_TRACKER_LATENCY"
 		#if [ "$(uci -q get glorytun.vpn.enable)" != "1" ] || [ "$(uci -q get glorytun-udp.vpn.enable)" != "1" ]; then
@@ -206,7 +216,7 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 			if [ -n "$OMR_NETWORK_DEVICE" ] && [ -n "$(_omr_uci_get network.$OMR_NETWORK_DEVICE.mtu)" ] && [ -n "$OMR_TRACKER_INTERFACE" ]; then
 				mtu=$(_omr_uci_get network.${OMR_NETWORK_DEVICE}.mtu)
 				[ -z "$mtu" ] && mtu=$(_omr_uci_get network.${OMR_NETWORK_INTERFACE}.mtu)
-				uci -q set openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu=$mtu
+				_omr_cfg_set openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu "$mtu"
 				[ -n "$mtu" ] && [ "$(ip --json link show dev $OMR_TRACKER_DEVICE | jsonfilter -e '@[0].mtu' | tr -d '\n')" != "$mtu" ] && ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
 				omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE lc "$_omr_now"
 			elif [ -z "$(_omr_uci_get openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu)" ] && [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
@@ -220,7 +230,7 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 				mtu=$(omr-mtu $OMR_TRACKER_DEVICE_IP $_mtu_target)
 				case "$mtu" in ''|*[!0-9]*) mtu="" ;; esac
 				[ -n "$mtu" ] && {
-					uci -q set openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu=$mtu
+					_omr_cfg_set openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu "$mtu"
 					# Changing the MTU resets the carrier on several NIC
 					# drivers, so only touch the link when it differs
 					[ "$(ip --json link show dev $OMR_TRACKER_DEVICE | jsonfilter -q -e '@[0].mtu' | tr -d '\n')" != "$mtu" ] && \
@@ -234,7 +244,7 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 		#	uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.lc=$(date +"%s")
 		#fi
 	fi
-	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
+	[ -n "$_omr_cfg_changed" ] && uci -q commit openmptcprouter
 	nbserver=0
 	piholeenabled=0
 	if [ "$(_omr_uci_get openmptcprouter.settings.pihole_auto_conf)" != "0" ]; then
@@ -250,7 +260,6 @@ fi
 if [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(_omr_uci_get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" = "1" ]; then
 	if [ "$(_omr_uci_get openmptcprouter.$OMR_TRACKER_INTERFACE.state)" != "up" ]; then
 		omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE state 'up'
-		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 	fi
 	exit 0
 fi
@@ -310,7 +319,7 @@ if [ -n "$OMR_TRACKER_INTERFACE" ]; then
 			on/master|master/on) ;;
 			*)
 				_log "Multipath mode of $OMR_TRACKER_INTERFACE is $multipath_config but configured as $_multipath_setting, resync"
-				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.multipath="$_multipath_setting"
+				_omr_cfg_set openmptcprouter.$OMR_TRACKER_INTERFACE.multipath "$_multipath_setting"
 				multipath_config="$_multipath_setting"
 			;;
 		esac
@@ -542,7 +551,7 @@ if [ -n "$_mptcp_enabled" ]; then
 		fi
 	}
 fi
-[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
+[ -n "$_omr_cfg_changed" ] && uci -q commit openmptcprouter
 
 #[ -n "$OMR_TRACKER_DEVICE" ] && OMR_TRACKER_PREV_DEVICE="$OMR_TRACKER_DEVICE"
 

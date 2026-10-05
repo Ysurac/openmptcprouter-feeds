@@ -318,6 +318,7 @@ _check_master() {
 	local count=0
 	local countips=0
 	local changes="0"
+	local cfg_changes="0"
 	# The API check connects to the resolved address: name the server
 	# section for omr_vps_curl, which otherwise only finds it (and its
 	# api_pin) when the address is spelled the same in the ip list, i.e.
@@ -374,7 +375,7 @@ _check_master() {
 					[ "$_vpn"   = "openvpn" ]          && _set_option openvpn.omr.enabled 1
 					_enable_ss_redirs
 					[ -n "$ip" ] && [ -n "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
-						uci -q del_list openmptcprouter.${name}.ip_down="$ip"
+						uci -q del_list openmptcprouter.${name}.ip_down="$ip" && cfg_changes="1"
 					omr_state_set openmptcprouter ${name} current '1'
 					_send_mail_alert "up" "$name" "$ip"
 				fi
@@ -390,6 +391,7 @@ _check_master() {
 					[ -n "$ip" ] && \
 						[ -z "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
 						uci -q add_list openmptcprouter.${name}.ip_down="$ip" && \
+						cfg_changes="1" && \
 						logger -t "OMR-Tracker-Server" "Master server ${name} down ($ip)"
 					_disable_ss_redirs_by_ip "$ip"
 					_send_mail_alert "down" "$name" "$ip"
@@ -403,7 +405,10 @@ _check_master() {
 		config_load openmptcprouter
 		config_list_foreach "$1" ip _do_check_ip
 		[ "$oneserverup" = "0" ] && omr_state_set openmptcprouter ${name} current '0'
-		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
+		# ip_down is the only persistent openmptcprouter option written here
+		# (current and the global state are in /var/state): commit it, not
+		# whatever other processes have pending in the shared /tmp/.uci
+		[ "$cfg_changes" = "1" ] && uci -q commit openmptcprouter
 		# Commit and restart only after an edit of this tracker: other scripts
 		# can have edits pending in the shared /tmp/.uci (omr-schedule's
 		# interface lists, for one), and those are no server change
@@ -422,6 +427,7 @@ _check_backup() {
 	local count=0
 	local countips=0
 	local changes="0"
+	local cfg_changes="0"
 	# See _check_master
 	local OMR_VPS_SERVER="$name"
 	config_get backup "$1" backup
@@ -468,7 +474,7 @@ _check_backup() {
 					[ "$_proxy" = "shadowsocks" ]      && _set_option shadowsocks-libev.sss${count}.disabled 0
 					_enable_ss_redirs
 					[ -n "$ip" ] && [ -n "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
-						uci -q del_list openmptcprouter.${name}.ip_down="$ip"
+						uci -q del_list openmptcprouter.${name}.ip_down="$ip" && cfg_changes="1"
 					omr_state_set openmptcprouter ${name} current '1'
 					_send_mail_alert "up" "$name" "$ip"
 				fi
@@ -484,9 +490,9 @@ _check_backup() {
 					[ -n "$ip" ] && \
 						[ -z "$(uci -q get openmptcprouter.${name}.ip_down | grep -w "$ip")" ] && \
 						uci -q add_list openmptcprouter.${name}.ip_down="$ip" && \
+						cfg_changes="1" && \
 						logger -t "OMR-Tracker-Server" "Backup server ${name} down ($ip)"
 					omr_state_set openmptcprouter ${name} current '0'
-					uci -q commit openmptcprouter
 					_disable_ss_redirs_by_ip "$ip"
 					_send_mail_alert "down" "$name" "$ip"
 				fi
@@ -500,7 +506,10 @@ _check_backup() {
 		config_load openmptcprouter
 		config_list_foreach "$1" ip _do_check_ip
 		[ "$oneserverup" = "0" ] && omr_state_set openmptcprouter ${name} current '0'
-		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
+		# ip_down is the only persistent openmptcprouter option written here
+		# (current and the global state are in /var/state): commit it, not
+		# whatever other processes have pending in the shared /tmp/.uci
+		[ "$cfg_changes" = "1" ] && uci -q commit openmptcprouter
 		# Only after an edit of this tracker (see _check_master)
 		[ "$changes" = "1" ] && {
 			uci -q commit shadowsocks-libev

@@ -13,6 +13,8 @@ interface_up=$(ubus call network.interface."$OMR_TRACKER_INTERFACE" status 2>/de
 
 . "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
 
+_cfg_changed=""
+
 [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_LATENCY" ] && {
 	# latency/latency_previous change on every cycle: they are volatile state
 	# kept in the uci state directory (tmpfs), not committed to flash. The
@@ -38,6 +40,9 @@ interface_up=$(ubus call network.interface."$OMR_TRACKER_INTERFACE" status 2>/de
 		fi
 		if [ -n "$masterintf" ] && { [ "$masterlatency" != "" ] || [ "$(omr_state_get openmptcprouter.$masterintf.state)" = "down" ]; }; then
 			if { { [ "$_master_setting" = "change" ] || [ "$_master_setting" = "" ]; } && [ "$OMR_TRACKER_LATENCY" -lt $(awk "BEGIN {printf \"%i\",${masterlatency}/1.5}") ]; } || { [ "$_master_setting" = "dynamic" ] && [ "$OMR_TRACKER_LATENCY" -lt "$((masterlatency/2))" ] && [ -n "$_prev_latency" ] && [ "$_prev_latency" -lt "$((masterlatency/2))" ]; }; then
+				# This script's own persistent edits: commit these, not
+				# whatever other processes have pending in /tmp/.uci
+				_cfg_changed=1
 				uci -q set network.$masterintf.multipath='on'
 				uci -q set openmptcprouter.$masterintf.multipath='on'
 				uci -q set network.$OMR_TRACKER_INTERFACE.multipath='master'
@@ -48,14 +53,13 @@ interface_up=$(ubus call network.interface."$OMR_TRACKER_INTERFACE" status 2>/de
 				if [ "$_master_setting" = "" ]; then
 					uci -q set openmptcprouter.settings.master="change"
 				fi
-				if [ "$_master_setting" != "dynamic" ]; then
-					[ -n "$(uci -q changes network)" ] && uci -q commit network
-					[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
-				fi
+				# In dynamic mode the network side is left uncommitted, as
+				# before: only the openmptcprouter commit below applies
+				[ "$_master_setting" != "dynamic" ] && uci -q commit network
 				_log "Change master interface from $masterintf ($masterlatency ms) to $OMR_TRACKER_INTERFACE ($OMR_TRACKER_LATENCY ms)"
 			fi
 		fi
-		[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
+		[ -n "$_cfg_changed" ] && uci -q commit openmptcprouter
 	fi
 }
 
