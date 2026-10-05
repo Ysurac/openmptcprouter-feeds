@@ -519,8 +519,16 @@ fi
 # error -32000: Object not found". A pid test can't see that state, so probe
 # the object rpcd registers last instead. rpcd is legitimately object-less for
 # the moment its plugins need at startup, hence the miss must be confirmed by a
-# second pass before the restart.
+# second pass before acting.
 _rpcd_no_objects="/tmp/.omr-rpcd-no-objects"
+# _descendants <pid>: every process below <pid>
+_descendants() {
+	local _child
+	for _child in $(pgrep -P "$1" 2>/dev/null); do
+		echo "$_child"
+		_descendants "$_child"
+	done
+}
 if [ -f /etc/init.d/rpcd ]; then
 	if [ -z "$(pgrep -x rpcd)" ]; then
 		_log "Can't find rpcd, restart it..."
@@ -535,17 +543,24 @@ if [ -f /etc/init.d/rpcd ]; then
 		if [ -n "$_ubus_objects" ] && ! echo "$_ubus_objects" | grep -qx luci; then
 			if [ -f "$_rpcd_no_objects" ]; then
 				# rpcd waits for `<plugin> list` without any timeout, so the
-				# child still around names whatever it is stuck on: log it,
-				# the restart makes that evidence disappear
+				# child still around names whatever it is stuck on: log it
+				# before it goes away
 				_stuck="$(ps ww 2>/dev/null | sed -n 's|.*/usr/libexec/rpcd/\([^ ]*\) list.*|\1|p' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
-				if [ -n "$_stuck" ]; then
-					_log "rpcd is running but registers no ubus object (stuck on the list of: $_stuck), restart it..."
+				# Before it serves anything, rpcd only has children while
+				# it waits for a `list`. A restart would run that same list
+				# again and get stuck again, so end the list instead: rpcd
+				# notices that its child is gone, skips that plugin and
+				# finishes its startup.
+				_stuck_pids="$(_descendants "$(pgrep -x rpcd | head -n 1)")"
+				if [ -n "$_stuck_pids" ]; then
+					_log "rpcd is running but registers no ubus object (stuck on the list of: ${_stuck:-unknown}), ending that list..."
+					kill -9 $_stuck_pids 2>/dev/null
 				else
 					_log "rpcd is running but registers no ubus object, restart it..."
+					/etc/init.d/rpcd restart >/dev/null 2>&1
+					sleep 5
 				fi
-				/etc/init.d/rpcd restart >/dev/null 2>&1
 				rm -f "$_rpcd_no_objects"
-				sleep 5
 			else
 				touch "$_rpcd_no_objects"
 			fi
