@@ -52,7 +52,7 @@ var callOMRWizardAdd = rpc.declare({
 	expect: { '': {} }
 });
 
-function callOMRWizardAddCompat(payload) {
+function wizardAddOnce(payload) {
 	return callOMRWizardAdd(
 		payload.interfaces,
 		payload.servers,
@@ -88,61 +88,22 @@ function callOMRWizardAddCompat(payload) {
 		payload.vxlan_mode,
 		payload.vxlan_bridge_if,
 		payload.master
-	).catch(function(err) {
+	);
+}
+
+/* "Object not found" means the openmptcprouter object is not on ubusd,
+ * which is the case while rpcd restarts and walks its exec plugins. Retry
+ * once when it is back, then report the real error. */
+function callOMRWizardAddCompat(payload) {
+	return wizardAddOnce(payload).catch(function(err) {
 		var msg = (err && (err.message || err.toString())) || '';
 		if (msg.indexOf('Object not found') === -1)
 			throw err;
 
-		/* Fallback for session ACL/object lookup edge-cases: invoke ubus through file.exec */
-		return callFileExec('/bin/ubus', [
-			'call',
-			'openmptcprouter',
-			'wizardadd',
-			JSON.stringify({
-				interfaces: payload.interfaces,
-				servers: payload.servers,
-				delete_intfs: payload.delete_intfs,
-				delete_servers: payload.delete_servers,
-				add_interface: payload.add_interface,
-				add_interface_ifname: payload.add_interface_ifname,
-				add_server_name: payload.add_server_name,
-				disableipv6: payload.disableipv6,
-				ula: payload.ula,
-				default_vpn: payload.default_vpn,
-				default_proxy: payload.default_proxy,
-				encryption: payload.encryption,
-				shadowsocks_key: payload.shadowsocks_key,
-				shadowsocks2022_key: payload.shadowsocks2022_key,
-				glorytun_key: payload.glorytun_key,
-				dsvpn_key: payload.dsvpn_key,
-				mqvpn_key: payload.mqvpn_key,
-				mqvpn_scheduler: payload.mqvpn_scheduler,
-				mqvpn_port: payload.mqvpn_port,
-				mlvpn_password: payload.mlvpn_password,
-				softethervpn_password: payload.softethervpn_password,
-				ubond_password: payload.ubond_password,
-				v2ray_user: payload.v2ray_user,
-				xray_user: payload.xray_user,
-				xray_transport: payload.xray_transport,
-				v2rayudp: payload.v2rayudp,
-				forceretrieve: payload.forceretrieve,
-				mptcpovervpn_vpn: payload.mptcpovervpn_vpn,
-				country: payload.country,
-				dns64: payload.dns64,
-				vxlan: payload.vxlan,
-				vxlan_mode: payload.vxlan_mode,
-				vxlan_bridge_if: payload.vxlan_bridge_if,
-				master: payload.master
-			})
-		]).then(function(res) {
-			var out = (res && res.stdout) ? res.stdout.trim() : '';
-			if (!out)
-				return { status: 'ok' };
-			try {
-				return JSON.parse(out);
-			} catch (e) {
-				return { status: 'ok' };
-			}
+		return new Promise(function(resolve) {
+			window.setTimeout(resolve, 1500);
+		}).then(function() {
+			return wizardAddOnce(payload);
 		});
 	});
 }
