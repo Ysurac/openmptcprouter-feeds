@@ -22,7 +22,7 @@ A single long form, one UCI section per group:
 | Section | Fields |
 |---|---|
 | **General** | **Enabled** — master switch for the whole tunnel. |
-| **Server** | **Server address** / **Server port** — the VPS endpoint. **Server name (SNI)** — only needed if it differs from the address. **Insecure TLS** — skip certificate verification. |
+| **Server** | **Server address** / **Server port** — the VPS endpoint. **Server name (SNI)** — only needed if it differs from the address. **Insecure TLS** — skip certificate verification: any server then gets the auth key. **Server key pin** — the VPS's key, retrieved from its API at each sync; when set, mqvpn accepts only a server holding that key and ignores Insecure TLS. |
 | **TLS** | **Cipher suites** — optional colon-separated override list; empty uses mqvpn's defaults. |
 | **Authentication** | **User** — optional, just an identifying label shown in the server's status/logs (it's what the **Clients** table on the Metrics page groups by). **Key** — the shared auth key, masked. |
 | **Interface** | **Tunnel name** (TUN device, default `mqvpn0` — this bench uses `tun0`). **Log level**. **MTU** (1280–9000, blank = auto). **Kill switch** — block all traffic if the tunnel drops. **Reconnect** / **Reconnect interval**. **Route via server** — host-route the server IP before installing the default route (avoids routing the tunnel's own traffic through itself). **No automatic routes** — hand routing off entirely. **DNS servers** — pushed resolvers. |

@@ -48,6 +48,18 @@ return L.view.extend({
 		o.default = o.enabled;
 		o.rmempty = false;
 
+		/* Set from the VPS API by openmptcprouter-vps (GHSA-qq6x-5r9f-2w3m);
+		 * shown so it can be checked against the VPS or entered by hand. */
+		o = s.option(form.Value, 'pinned_pubkey', _('Server key pin'));
+		o.description = _('Base64 SHA-256 of the server certificate public key, retrieved from the VPS. When set, only a server holding this key is accepted and Insecure TLS is ignored');
+		o.placeholder = 'sha256//...';
+		o.rmempty = true;
+		o.validate = function(section_id, value) {
+			if (!value || /^\s*(sha256\/\/)?[A-Za-z0-9+\/]{43}=(\s*;\s*(sha256\/\/)?[A-Za-z0-9+\/]{43}=){0,3}\s*$/.test(value))
+				return true;
+			return _('Expecting a base64 SHA-256 pin (sha256// optional), at most 4 separated by ;');
+		};
+
 		s = m.section(form.NamedSection, 'tls', 'tls', _('TLS'));
 		s.addremove = false;
 

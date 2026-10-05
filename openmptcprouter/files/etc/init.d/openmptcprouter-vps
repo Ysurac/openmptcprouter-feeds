@@ -334,6 +334,19 @@ _mqvpn_local_wins() {
 	echo "$2"
 }
 
+# Echo the pin of the server's mqvpn certificate key from VPS config $1, or
+# nothing when it sends none (omr-admin before 0.18+20261005) or a malformed
+# one. Stored in mqvpn.server.pinned_pubkey, it makes mqvpn (0.16.3) accept
+# only a server holding that key instead of any server, which Insecure did and
+# which handed the auth key to whoever answered (GHSA-qq6x-5r9f-2w3m). It comes
+# over the pinned API connection that carries the auth key itself.
+_mqvpn_vps_pin() {
+	local pin
+	pin="$(echo "$1" | jsonfilter -q -e '@.mqvpn.pinned_pubkey')"
+	pin="${pin#sha256//}"
+	_omr_vps_pin_valid "$pin" && echo "$pin"
+}
+
 _set_mqvpn_vps() {
 	local enabled port key scheduler cc fec_enable fec_scheme reinjection_control reinjection_mode
 	local current_port current_scheduler current_cc current_fec_enable current_fec_scheme
@@ -2664,7 +2677,7 @@ _set_openvpn_enabled() {
 
 
 _set_config_from_vps() {
-	local shadowsocks_disabled vpn glorytun_state redirect shorewall_redirect mlvpn_key openvpn_key dsvpn_key mqvpn_key mqvpn_port mqvpn_user mqvpn_cc mqvpn_scheduler mqvpn_fec_enable_raw mqvpn_fec_enable mqvpn_fec_scheme mqvpn_reinjection_control_raw mqvpn_reinjection_control mqvpn_reinjection_mode mqvpn_reorder_enabled_raw mqvpn_reorder_enabled mqvpn_reorder_max_wait_ms mqvpn_reorder_cap_packets mqvpn_reorder_rules_json mqvpn_rule_idx mqvpn_rule_proto mqvpn_rule_port mqvpn_rule_profile proxy_before
+	local shadowsocks_disabled vpn glorytun_state redirect shorewall_redirect mlvpn_key openvpn_key dsvpn_key mqvpn_key mqvpn_port mqvpn_user mqvpn_cc mqvpn_scheduler mqvpn_fec_enable_raw mqvpn_fec_enable mqvpn_fec_scheme mqvpn_reinjection_control_raw mqvpn_reinjection_control mqvpn_reinjection_mode mqvpn_reorder_enabled_raw mqvpn_reorder_enabled mqvpn_reorder_max_wait_ms mqvpn_reorder_cap_packets mqvpn_reorder_rules_json mqvpn_pinned_pubkey mqvpn_rule_idx mqvpn_rule_proto mqvpn_rule_port mqvpn_rule_profile proxy_before
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 
@@ -3199,6 +3212,7 @@ _set_config_from_vps() {
 	mqvpn_reorder_max_wait_ms="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reorder.max_wait_ms')"
 	mqvpn_reorder_cap_packets="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reorder.cap_packets')"
 	mqvpn_reorder_rules_json="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reorder_rules')"
+	mqvpn_pinned_pubkey="$(_mqvpn_vps_pin "$vps_config")"
 	[ "$mqvpn_fec_enable_raw" = "true" ] && mqvpn_fec_enable="1" || mqvpn_fec_enable="0"
 	[ "$mqvpn_reinjection_control_raw" = "true" ] && mqvpn_reinjection_control="1" || mqvpn_reinjection_control="0"
 	case "$mqvpn_reorder_enabled_raw" in
@@ -3231,6 +3245,7 @@ _set_config_from_vps() {
 	     [ "$(uci -q get mqvpn.server.ip)" != "$vpsip" ] || \
 	     [ "$(uci -q get mqvpn.server.port)" != "$mqvpn_port" ] || \
 	     [ "$(uci -q get mqvpn.server.insecure)" != "1" ] || \
+	     [ "$(uci -q get mqvpn.server.pinned_pubkey)" != "$mqvpn_pinned_pubkey" ] || \
 	     ( [ -n "$mqvpn_cc" ] && [ "$mqvpn_cc" != "$(uci -q get mqvpn.multipath.cc)" ] ) || \
 	     ( [ -n "$mqvpn_scheduler" ] && [ "$mqvpn_scheduler" != "$(uci -q get mqvpn.multipath.scheduler)" ] ) || \
 	     ( [ -n "$mqvpn_fec_enable_raw" ] && [ "$mqvpn_fec_enable" != "$(uci -q get mqvpn.multipath.fec_enable)" ] ) || \
@@ -3251,6 +3266,8 @@ _set_config_from_vps() {
 			set mqvpn.server.ip="$vpsip"
 			set mqvpn.server.port="$mqvpn_port"
 			set mqvpn.server.insecure=1
+			$([ -n "$mqvpn_pinned_pubkey" ] && echo "set mqvpn.server.pinned_pubkey=$mqvpn_pinned_pubkey")
+			$([ -z "$mqvpn_pinned_pubkey" ] && [ -n "$(uci -q get mqvpn.server.pinned_pubkey)" ] && echo "delete mqvpn.server.pinned_pubkey")
 			$([ -n "$mqvpn_cc" ] && echo "set mqvpn.multipath.cc=$mqvpn_cc")
 			$([ -n "$mqvpn_scheduler" ] && echo "set mqvpn.multipath.scheduler=$mqvpn_scheduler")
 			$([ -n "$mqvpn_fec_enable_raw" ] && echo "set mqvpn.multipath.fec_enable=$mqvpn_fec_enable")
