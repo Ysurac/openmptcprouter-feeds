@@ -415,7 +415,7 @@ _get_interface_gateway() {
 }
 
 _set_route_common() {
-	local multipath_config_route interface_gw interface_if defaultgw
+	local multipath_config_route interface_gw interface_if defaultgw _setroute_done
 	INTERFACE=$1
 	PREVINTERFACE=$2
 	SETDEFAULT="${3:-yes}"
@@ -440,7 +440,15 @@ _set_route_common() {
 	if _omr_if_up "$INTERFACE"; then interface_up="true"; else interface_up="false"; fi
 	_omr_get_interface_device_var interface_if "$INTERFACE"
 	_omr_uci_get_var interface_current_config "openmptcprouter.$INTERFACE.state" "up"
-	if [ "$multipath_config_route" != "off" ] && [ "$SETROUTE" != true ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$interface_current_config" = "up" ] && [ "$interface_up" = "true" ]; then
+	# One "done" flag per family: with a single one, set_route setting the
+	# IPv4 routes made the set_route6 sweep that follows a no-op, and table
+	# 6991337 kept the failed interface's IPv6 gateway
+	if [ "$ipv6" = "true" ]; then
+		_setroute_done="$SETROUTE6"
+	else
+		_setroute_done="$SETROUTE"
+	fi
+	if [ "$multipath_config_route" != "off" ] && [ "$_setroute_done" != true ] && [ "$INTERFACE" != "$PREVINTERFACE" ] && [ "$interface_current_config" = "up" ] && [ "$interface_up" = "true" ]; then
 		_omr_get_interface_gateway_var interface_gw "$INTERFACE" "$ipv6"
 
 		if [ "$interface_gw" != "" ] && [ "$interface_if" != "" ]; then
@@ -450,7 +458,13 @@ _set_route_common() {
 			if [ "$SETDEFAULT" = "yes" ] && [ "$defaultgw" != "0" ]; then
 				$ip_cmd route replace default scope global metric 1 via $interface_gw dev $interface_if $initcwrwnd >/dev/null 2>&1
 			fi
-			$ip_cmd route replace default via $interface_gw dev $interface_if table "$table_id" $initcwrwnd >/dev/null 2>&1 && SETROUTE=true
+			if $ip_cmd route replace default via $interface_gw dev $interface_if table "$table_id" $initcwrwnd >/dev/null 2>&1; then
+				if [ "$ipv6" = "true" ]; then
+					SETROUTE6=true
+				else
+					SETROUTE=true
+				fi
+			fi
 		fi
 	fi
 }
