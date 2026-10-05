@@ -22,8 +22,20 @@
 # in a minute: uci-defaults 2062-omr-syslog gives syslog-ng a logrotate()
 # hard cap for the time in between. When a flood trips it, the rotated
 # messages.1 is folded back into messages on the next tick, since logread
-# only reads messages. The path can be overridden for the unit tests.
+# only reads messages.
+#
+# The cap is 4x log_size and at most 1/8 of the tmpfs, the kept window a
+# quarter of the cap: the trim threshold (twice the window) then always comes
+# before the cap, so syslog-ng only rotates on a real flood. 2062 only set
+# the cap once, from the log_size of that boot, while the window here followed
+# the current log_size: with log_size raised 4x since (or over 1/8 of the
+# tmpfs, where both ended up at 1/8), the kept window was over the cap,
+# syslog-ng rotated on every write and each tick logged a "log flood". The cap
+# is now put back in line here whenever log_size or the tmpfs size changed.
+# The paths can be overridden for the unit tests.
 _omr_msglog="${OMR_LOGSIZE_MSGLOG:-/var/log/messages}"
+_omr_sngconf="${OMR_SYSLOG_CONF:-/etc/syslog-ng.conf}"
+_omr_capfail="${OMR_LOGSIZE_RUNDIR:-/var/run}/omr-logsize-cap.failed"
 
 # Keep the newest $_omr_keep bytes of the given files (concatenated, oldest
 # first) in $_omr_msglog. One line more than the target is taken so the
@@ -42,24 +54,57 @@ _omr_logsize_rewrite() {
 	return 1
 }
 
+# Give the /var/log/messages destination of syslog-ng.conf the logrotate()
+# size $_omr_cap: the stock one-line destination gets one, the one written by
+# 2062 or here gets the new size, an other logrotate() or a hand-written
+# destination is left alone (same rule as 2062-omr-syslog).
+_omr_logsize_sync_cap() {
+	local _cur _tmp
+	[ -f "$_omr_sngconf" ] && command -v syslog-ng >/dev/null 2>&1 || return 0
+	_cur="$(sed -n 's|^[[:space:]]*file("/var/log/messages" logrotate(enable(yes) size(\([0-9]*\)) rotations(1)));.*|\1|p' "$_omr_sngconf" | head -n 1)"
+	if [ -n "$_cur" ]; then
+		[ "$_cur" = "$_omr_cap" ] && return 0
+	elif ! grep -q '^[[:space:]]*file("/var/log/messages");' "$_omr_sngconf"; then
+		return 0
+	fi
+	# a syslog-ng that refused this cap is not asked again every minute
+	[ "$(cat "$_omr_capfail" 2>/dev/null)" = "$_omr_cap" ] && return 0
+	_tmp="${_omr_sngconf}.omr-logrotate"
+	sed -e 's|^\([[:space:]]*\)file("/var/log/messages");|\1file("/var/log/messages" logrotate(enable(yes) size('"$_omr_cap"') rotations(1)));|' \
+	    -e 's|^\([[:space:]]*\)file("/var/log/messages" logrotate(enable(yes) size([0-9]*) rotations(1)));|\1file("/var/log/messages" logrotate(enable(yes) size('"$_omr_cap"') rotations(1)));|' \
+	    "$_omr_sngconf" > "$_tmp"
+	if [ -s "$_tmp" ] && syslog-ng --syntax-only -f "$_tmp" >/dev/null 2>&1; then
+		mv "$_tmp" "$_omr_sngconf"
+		rm -f "$_omr_capfail"
+		_log "syslog-ng caps $_omr_msglog at $((_omr_cap / 1024)) kB now (4x system.log_size, at most 1/8 of the tmpfs)${_cur:+, was $((_cur / 1024)) kB}"
+		/etc/init.d/syslog-ng reload >/dev/null 2>&1
+	else
+		rm -f "$_tmp"
+		echo "$_omr_cap" > "$_omr_capfail"
+	fi
+}
+
 if { [ -f "$_omr_msglog" ] || [ -f "${_omr_msglog}.1" ]; } && pidof syslog-ng >/dev/null 2>&1; then
 	_omr_log_size="$(uci -q get system.@system[0].log_size)"
 	case "$_omr_log_size" in
 		''|*[!0-9]*) _omr_log_size=128 ;;
 	esac
 	[ "$_omr_log_size" -lt 16 ] && _omr_log_size=16
-	# tmpfs is sized from RAM (tens of MB on small boards): never let the kept
-	# window exceed 1/8 of the filesystem whatever log_size says.
+	# The syslog-ng cap, in bytes: 4x log_size, and since tmpfs is sized from
+	# RAM (tens of MB on small boards), at most 1/8 of the filesystem
+	# (rotations(1) keeps messages + messages.1, so 1/4 for both).
+	_omr_cap="$((_omr_log_size * 1024 * 4))"
 	_omr_fs_total_kb="$(df -k "${_omr_msglog%/*}" 2>/dev/null | awk 'NR==2{print $2+0}')"
-	if [ "${_omr_fs_total_kb:-0}" -gt 0 ] && [ "$_omr_log_size" -gt "$((_omr_fs_total_kb / 8))" ]; then
-		_omr_log_size="$((_omr_fs_total_kb / 8))"
+	if [ "${_omr_fs_total_kb:-0}" -gt 0 ] && [ "$_omr_cap" -gt "$((_omr_fs_total_kb * 1024 / 8))" ]; then
+		_omr_cap="$((_omr_fs_total_kb * 1024 / 8))"
 	fi
-	_omr_keep="$((_omr_log_size * 1024))"
+	# log_size, or less when the tmpfs limits the cap
+	_omr_keep="$((_omr_cap / 4))"
 
 	# syslog-ng rotated during a flood: fold messages.1 back in
 	if [ -f "${_omr_msglog}.1" ]; then
 		if _omr_logsize_rewrite "${_omr_msglog}.1" "$_omr_msglog"; then
-			_log "syslog-ng rotated $_omr_msglog (log flood), kept the newest ${_omr_log_size} kB; busiest source in the kept window: ${_omr_top:-unknown}"
+			_log "syslog-ng rotated $_omr_msglog (log flood), kept the newest $((_omr_keep / 1024)) kB; busiest source in the kept window: ${_omr_top:-unknown}"
 		fi
 		rm -f "${_omr_msglog}.1"
 	fi
@@ -67,7 +112,10 @@ if { [ -f "$_omr_msglog" ] || [ -f "${_omr_msglog}.1" ]; } && pidof syslog-ng >/
 	_omr_size="$(ls -ln "$_omr_msglog" 2>/dev/null | awk '{print $5+0}')"
 	if [ "${_omr_size:-0}" -gt "$((_omr_keep * 2))" ]; then
 		if _omr_logsize_rewrite "$_omr_msglog"; then
-			_log "Trimmed $_omr_msglog from $((_omr_size / 1024)) kB to the newest ${_omr_log_size} kB (system.log_size); busiest source in the kept window: ${_omr_top:-unknown}"
+			_log "Trimmed $_omr_msglog from $((_omr_size / 1024)) kB to the newest $((_omr_keep / 1024)) kB (system.log_size); busiest source in the kept window: ${_omr_top:-unknown}"
 		fi
 	fi
+
+	# after the trim: a lower cap then finds the file already under it
+	_omr_logsize_sync_cap
 fi

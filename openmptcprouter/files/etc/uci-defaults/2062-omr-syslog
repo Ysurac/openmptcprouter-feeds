@@ -23,12 +23,15 @@ fi
 # syslog-ng a hard cap for the time in between: 4x log_size, twice the trim
 # threshold so it only fires on a flood, and at most 1/8 of the tmpfs
 # (rotations(1) keeps messages + messages.1, so 1/4 for both). 005-logsize
-# folds messages.1 back in, since logread only reads messages.
-# Only the stock one-line destination is changed, an existing logrotate() or
-# a hand-written destination is left alone.
+# folds messages.1 back in, since logread only reads messages, keeps a
+# quarter of this cap, and puts the cap back in line with log_size when that
+# changes: both compute it the same way.
+# Only the stock one-line destination, or the one written here before, is
+# changed: an other logrotate() or a hand-written destination is left alone.
 _omr_sngconf="${OMR_SYSLOG_CONF:-/etc/syslog-ng.conf}"
+_omr_cur="$(sed -n 's|^[[:space:]]*file("/var/log/messages" logrotate(enable(yes) size(\([0-9]*\)) rotations(1)));.*|\1|p' "$_omr_sngconf" 2>/dev/null | head -n 1)"
 if [ -f "$_omr_sngconf" ] && command -v syslog-ng >/dev/null 2>&1 &&
-    grep -q '^[[:space:]]*file("/var/log/messages");' "$_omr_sngconf"; then
+    { [ -n "$_omr_cur" ] || grep -q '^[[:space:]]*file("/var/log/messages");' "$_omr_sngconf"; }; then
 	_omr_log_size="$(uci -q get system.@system[0].log_size)"
 	case "$_omr_log_size" in
 		''|*[!0-9]*) _omr_log_size=128 ;;
@@ -40,9 +43,12 @@ if [ -f "$_omr_sngconf" ] && command -v syslog-ng >/dev/null 2>&1 &&
 		_omr_cap="$((_omr_fs_total_kb * 1024 / 8))"
 	fi
 	_omr_sngtmp="${_omr_sngconf}.omr-logrotate"
-	sed 's|^\([[:space:]]*\)file("/var/log/messages");|\1file("/var/log/messages" logrotate(enable(yes) size('"$_omr_cap"') rotations(1)));|' "$_omr_sngconf" > "$_omr_sngtmp"
+	sed -e 's|^\([[:space:]]*\)file("/var/log/messages");|\1file("/var/log/messages" logrotate(enable(yes) size('"$_omr_cap"') rotations(1)));|' \
+	    -e 's|^\([[:space:]]*\)file("/var/log/messages" logrotate(enable(yes) size([0-9]*) rotations(1)));|\1file("/var/log/messages" logrotate(enable(yes) size('"$_omr_cap"') rotations(1)));|' \
+	    "$_omr_sngconf" > "$_omr_sngtmp"
 	# a syslog-ng without logrotate() keeps the stock destination
-	if [ -s "$_omr_sngtmp" ] && syslog-ng --syntax-only -f "$_omr_sngtmp" >/dev/null 2>&1; then
+	if [ "$_omr_cur" != "$_omr_cap" ] && [ -s "$_omr_sngtmp" ] &&
+	    syslog-ng --syntax-only -f "$_omr_sngtmp" >/dev/null 2>&1; then
 		mv "$_omr_sngtmp" "$_omr_sngconf"
 		pidof syslog-ng >/dev/null 2>&1 && /etc/init.d/syslog-ng reload >/dev/null 2>&1
 	fi
