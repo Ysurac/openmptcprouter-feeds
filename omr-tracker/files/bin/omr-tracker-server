@@ -5,6 +5,7 @@ basename="${0##*/}"
 
 . /usr/lib/unbound/iptools.sh
 . "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
+. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-vps-curl.sh"
 
 export OMR_TRACKER_STATUS
 export OMR_TRACKER_STATUS_MSG
@@ -95,7 +96,7 @@ _check_server() {
 		url="https://${host}:${port}/"
 	fi
 	while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
-		ret=$(curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k "$url")
+		ret=$(omr_vps_curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k "$url")
 		[ -n "$ret" ] && server_ping=true
 		k=$((k+1))
 		[ "$server_ping" = false ] && sleep "${intervaltries}"
@@ -114,9 +115,9 @@ _check_server_intf() {
 		k=0
 		while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
 			if [ "$valid_ip6" = "ok" ]; then
-				ret=$(curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k "$url")
+				ret=$(omr_vps_curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k "$url")
 			else
-				ret=$(curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k --interface "$intf" "$url")
+				ret=$(omr_vps_curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k --interface "$intf" "$url")
 			fi
 			[ -n "$ret" ] && server_ping=true
 			k=$((k+1))
@@ -317,6 +318,11 @@ _check_master() {
 	local count=0
 	local countips=0
 	local changes="0"
+	# The API check connects to the resolved address: name the server
+	# section for omr_vps_curl, which otherwise only finds it (and its
+	# api_pin) when the address is spelled the same in the ip list, i.e.
+	# never for a VPS configured by hostname
+	local OMR_VPS_SERVER="$name"
 	config_get master "$1" master
 	config_get ip "$1" ip
 	config_get port "$1" port "65500"
@@ -416,6 +422,8 @@ _check_backup() {
 	local count=0
 	local countips=0
 	local changes="0"
+	# See _check_master
+	local OMR_VPS_SERVER="$name"
 	config_get backup "$1" backup
 	config_get ip "$1" ip
 	config_get port "$1" port
