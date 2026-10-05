@@ -948,6 +948,50 @@ purge_wan_default_routes() {
 	ip -6 route del default metric 999 >/dev/null 2>&1
 }
 
+# _omr_del_wan_default_routes <ipv6: true|false> <device> [<gateway>]
+# Delete the single-path default routes through <device> (and <gateway>),
+# each by its own metric. A delete without a metric matches the first route
+# in metric order, and for an IPv4 multipath route the kernel only compares
+# the first nexthop: when the failed interface was the first nexthop of the
+# metric 1 balanced route, the whole balanced route was deleted instead of
+# this interface's route, and 002-error then rebuilt nothing. IPv4 multipath
+# routes are left to the balancing rebuild. IPv6 keeps each nexthop of a
+# multipath route as a route of its own, so a delete with the gateway and
+# the metric drops this interface's nexthop alone, as it always did.
+_omr_del_wan_default_routes() {
+	local _v6="$1" _dev="$2" _gw="$3" _ip_cmd="ip" _routes _m
+	[ -n "$_dev" ] || return 0
+	[ "$_v6" = "true" ] && _ip_cmd="ip -6"
+	_routes="$($_ip_cmd route show default 2>/dev/null)"
+	[ -n "$_routes" ] || return 0
+	for _m in $(printf '%s\n' "$_routes" | awk -v dev="$_dev" -v gw="$_gw" -v v6="$_v6" '
+		function fields(from) {
+			via = ""; d = ""
+			for (i = from; i < NF; i++) {
+				if ($i == "via") via = $(i + 1)
+				else if ($i == "dev") d = $(i + 1)
+				else if ($i == "metric" && from == 2) m = $(i + 1)
+			}
+		}
+		/^default/ {
+			m = 0
+			fields(2)
+			if (d == dev && (gw == "" || via == gw)) print m
+			next
+		}
+		$1 == "nexthop" && v6 == "true" && gw != "" {
+			fields(1)
+			if (d == dev && via == gw) print m
+		}'); do
+		if [ -n "$_gw" ]; then
+			$_ip_cmd route del default via "$_gw" dev "$_dev" metric "$_m" >/dev/null 2>&1
+		else
+			$_ip_cmd route del default dev "$_dev" metric "$_m" >/dev/null 2>&1
+		fi
+	done
+	return 0
+}
+
 _del_server_route_common() {
 	local server="$1"
 	local ipv6="${2:-false}"
@@ -992,12 +1036,8 @@ _del_server_route_common() {
 		fi
 	}
 	config_list_foreach "$server" ip remove_route
-	# Remove default route
-	if [ -n "$gateway_var" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
-		[ -n "$($ip_cmd route show default via "$gateway_var" dev "$OMR_TRACKER_DEVICE" 2>/dev/null)" ] && $ip_cmd route del default via "$gateway_var" dev "$OMR_TRACKER_DEVICE" >/dev/null 2>&1
-	elif [ -n "$OMR_TRACKER_DEVICE" ]; then
-		[ -n "$($ip_cmd route show default dev "$OMR_TRACKER_DEVICE" 2>/dev/null)" ] && $ip_cmd route del default dev "$OMR_TRACKER_DEVICE" >/dev/null 2>&1
-	fi
+	# Remove this interface's own default routes
+	_omr_del_wan_default_routes "$ipv6" "$OMR_TRACKER_DEVICE" "$gateway_var"
 }
 
 del_server_route() {
