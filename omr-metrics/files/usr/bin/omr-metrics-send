@@ -7,6 +7,9 @@
 # Runs in a tight poll loop; interval is controlled by OMR_METRICS_INTERVAL
 # (seconds, default 30) which is set by the init.d script.
 
+. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-vps-curl.sh"
+# omr_metrics_curl: the same, and the custom metrics server pinned too
+. "${OMR_METRICS_LIB_DIR:-/usr/share/omr/lib}/omr-metrics-curl.sh"
 METRICS_DIR="${OMR_METRICS_DIR:-/tmp/metrics}"
 STATE_DIR="${OMR_METRICS_STATE_DIR:-/tmp/omr-metrics-send}"
 INTERVAL="${OMR_METRICS_INTERVAL:-30}"
@@ -128,13 +131,13 @@ _login() {
 	_login_allowed "$key" || return 1
 
 	if _is_ip6 "$server"; then
-		resp=$(curl -6 --max-time 10 -s -k -w '%{http_code}' \
+		resp=$(omr_metrics_curl -6 --max-time 10 -s -k -w '%{http_code}' \
 			-H "accept: application/json" \
 			-H "Content-Type: application/x-www-form-urlencoded" \
 			-X POST -d "username=${SRV_USERNAME}&password=${SRV_PASSWORD}" \
 			"https://[${server}]:${serverport}/token" 2>/dev/null)
 	else
-		resp=$(curl --max-time 10 -s -k -w '%{http_code}' \
+		resp=$(omr_metrics_curl --max-time 10 -s -k -w '%{http_code}' \
 			-H "accept: application/json" \
 			-H "Content-Type: application/x-www-form-urlencoded" \
 			-X POST -d "username=${SRV_USERNAME}&password=${SRV_PASSWORD}" \
@@ -203,7 +206,7 @@ _post_metrics() {
 		url="https://${server}:${serverport}/metrics"
 	fi
 
-	http_code=$(curl --max-time 10 -s -k \
+	http_code=$(omr_metrics_curl --max-time 10 -s -k \
 		-o /dev/null -w "%{http_code}" \
 		-H "accept: application/json" \
 		-H "Authorization: Bearer ${SRV_TOKEN}" \
@@ -213,7 +216,7 @@ _post_metrics() {
 	if [ "$http_code" = "401" ]; then
 		SRV_TOKEN=""
 		_login "$servername" "$server" "$serverport" || return 1
-		http_code=$(curl --max-time 10 -s -k \
+		http_code=$(omr_metrics_curl --max-time 10 -s -k \
 			-o /dev/null -w "%{http_code}" \
 			-H "accept: application/json" \
 			-H "Authorization: Bearer ${SRV_TOKEN}" \

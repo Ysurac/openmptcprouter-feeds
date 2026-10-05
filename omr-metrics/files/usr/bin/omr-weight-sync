@@ -6,6 +6,9 @@
 # the BPF sync.
 # Polls every MPTCP_WEIGHT_INTERVAL seconds (default: 5).
 
+. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-vps-curl.sh"
+# omr_metrics_curl: the same, and the custom metrics server pinned too
+. "${OMR_METRICS_LIB_DIR:-/usr/share/omr/lib}/omr-metrics-curl.sh"
 POLL_INTERVAL="${MPTCP_WEIGHT_INTERVAL:-5}"
 WEIGHT_SCRIPT="/usr/sbin/mptcp-scheduler-weight.sh"
 MAP_PATH="/sys/fs/bpf/endpoint_weights"
@@ -44,13 +47,13 @@ _login() {
 	fi
 
 	if _is_ip6 "$server"; then
-		auth=$(curl -6 --max-time 10 -s -k \
+		auth=$(omr_metrics_curl -6 --max-time 10 -s -k \
 			-H "accept: application/json" \
 			-H "Content-Type: application/x-www-form-urlencoded" \
 			-X POST -d "username=${username}&password=${password}" \
 			"https://[${server}]:${serverport}/token" 2>/dev/null)
 	else
-		auth=$(curl --max-time 10 -s -k \
+		auth=$(omr_metrics_curl --max-time 10 -s -k \
 			-H "accept: application/json" \
 			-H "Content-Type: application/x-www-form-urlencoded" \
 			-X POST -d "username=${username}&password=${password}" \
@@ -95,7 +98,7 @@ _get_decision() {
 
 	tmpfile=$(mktemp /tmp/omr-decision.XXXXXX) || return 1
 
-	http_code=$(curl --max-time 10 -s -k \
+	http_code=$(omr_metrics_curl --max-time 10 -s -k \
 		-o "$tmpfile" -w "%{http_code}" \
 		-H "accept: application/json" \
 		-H "Authorization: Bearer ${token}" \
@@ -103,7 +106,7 @@ _get_decision() {
 
 	if [ "$http_code" = "401" ]; then
 		token=$(_login "$uci_token_key" "$server" "$serverport" "$username" "$password")
-		[ -n "$token" ] && http_code=$(curl --max-time 10 -s -k \
+		[ -n "$token" ] && http_code=$(omr_metrics_curl --max-time 10 -s -k \
 			-o "$tmpfile" -w "%{http_code}" \
 			-H "accept: application/json" \
 			-H "Authorization: Bearer ${token}" \

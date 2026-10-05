@@ -101,6 +101,34 @@ return view.extend({
 		o.rmempty = true;
 		o.retain = true;
 
+		/* omr-metrics-curl.sh only sends the credentials over a connection
+		 * whose certificate carries this public key. Same check as
+		 * omr-vps-curl.sh's _omr_vps_pin_valid: a pin it refuses stops every
+		 * call to the server. */
+		o = s.option(form.Value, 'custom_server_pin', _('Server API certificate pin'),
+			_('SHA-256 of the public key of the custom server API certificate. Left empty, the key seen at the first connection is trusted from then on. Empty it after reinstalling the server.'));
+		o.placeholder = _('Learned at the first connection');
+		o.depends('use_custom_server', '1');
+		o.rmempty = true;
+		o.retain = true;
+		o.validate = function(sid, val) {
+			var pin = (val || '').trim();
+			if (pin === '')
+				return true;
+			pin = pin.replace(/^sha256\/\//, '');
+			if (/^[A-Za-z0-9+\/]{43}=$/.test(pin) && pin !== '47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=')
+				return true;
+			return _('Expecting a base64 SHA-256 (44 characters ending with "="), optionally prefixed by sha256//');
+		};
+		/* A pin typed in is the user's, for whatever server is set: forget
+		 * which server a learned one came from, or it would be dropped as
+		 * another server's. */
+		o.write = function(sid, val) {
+			if (val !== (uci.get('omr-metrics', sid, 'custom_server_pin') || ''))
+				uci.unset('omr-metrics', sid, 'custom_server_pin_host');
+			return form.Value.prototype.write.apply(this, [sid, val]);
+		};
+
 		return m.render();
 	}
 });
