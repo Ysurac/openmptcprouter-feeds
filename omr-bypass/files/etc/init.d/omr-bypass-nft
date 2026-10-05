@@ -926,6 +926,48 @@ _bypass_src_port() {
 	fi
 }
 
+# The dpis/category loops (and the nDPId collect) run before _omr_hash_gate:
+# they add sections to the generated batches the gate hashes. But they also
+# wrote straight into omr_dst_bypass_* sections (domain lists, resolved IPs,
+# DSCP sets), and whenever the gate regenerated (first run, after a stop,
+# any change to the generated sections) its delete batch removed those again,
+# until the next reload_rules. While _omr_defer_file is set, _omr_defer
+# queues such a call instead, and _omr_run_deferred replays the queue once
+# the gate is done. Arguments are joined with "|": domains, IPs, interface
+# keys and DSCP classes never contain one.
+_omr_defer_file=""
+_omr_defer() {
+	if [ -z "$_omr_defer_file" ]; then
+		"$@"
+		return
+	fi
+	{ printf '%s|' "$@"; echo; } >> "$_omr_defer_file"
+}
+
+_omr_run_deferred() {
+	local _defer_q="$_omr_defer_file" _defer_l _defer_ifs="$IFS"
+	_omr_defer_file=""
+	[ -n "$_defer_q" ] && [ -s "$_defer_q" ] || { rm -f "$_defer_q"; return 0; }
+	# not "while read < file": a command run from the loop could eat its
+	# input; the queue is read once and split here, without globbing
+	set -f
+	IFS='
+'
+	for _defer_l in $(cat "$_defer_q"); do
+		IFS='|'
+		set -- $_defer_l
+		IFS="$_defer_ifs"
+		set +f
+		"$@"
+		set -f
+		IFS='
+'
+	done
+	IFS="$_defer_ifs"
+	set +f
+	rm -f "$_defer_q"
+}
+
 _bypass_proto() {
 	local proto
 	local intf
@@ -1017,11 +1059,11 @@ _bypass_proto() {
 						| grep $domain                `# grep, only keep wanted domain` \
 						| awk '{for (i=1;i<=NF;i++) if (!a[$i]++) printf("%s%s",$i,FS)}{printf("\n")}')" # deduplicate
 					for validdomain in $domainlist; do
-						_bypass_domain $validdomain $intf $family $noipv6
+						_omr_defer _bypass_domain "$validdomain" "$intf" "$family" "$noipv6"
 					done
 					;;
 				*)
-					_bypass_domain $domain $intf $family $noipv6
+					_omr_defer _bypass_domain "$domain" "$intf" "$family" "$noipv6"
 					;;
 				esac
 			fi
@@ -1047,12 +1089,12 @@ _bypass_proto_core() {
 				valid_ip4=$(valid_subnet4 $ip)
 				valid_ip6=$(valid_subnet6 $ip)
 				if [ "$valid_ip4" = "ok" ]; then
-					_uci_add_list_unique firewall.omr_dst_bypass_none_4.entry "$ip"
+					_omr_defer _uci_add_list_unique firewall.omr_dst_bypass_none_4.entry "$ip"
 					for zone in $(_get_firewall_zones); do
 						echo "set firewall.omr_dst_bypass_none_dstip_4_${zone}.enabled='1'" >> "$_fw_uci_batch"
 					done
 				elif [ "$valid_ip6" = "ok" ] && [ "$disableipv6" = "0" ]; then
-					_uci_add_list_unique firewall.omr_dst_bypass_none_6.entry "$ip"
+					_omr_defer _uci_add_list_unique firewall.omr_dst_bypass_none_6.entry "$ip"
 					for zone in $(_get_firewall_zones); do
 						echo "set firewall.omr_dst_bypass_none_dstip_6_${zone}.enabled='1'" >> "$_fw_uci_batch"
 					done
@@ -1062,7 +1104,7 @@ _bypass_proto_core() {
 		local domains
 		domains=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select host from hostproto where proto='"$proto"';" ".exit")
 		for domain in $domains; do
-			[ -n "$domain" ] && _bypass_domain "${domain#.}" "none" "$family" "$noipv6" "${tcpudp}"
+			[ -n "$domain" ] && _omr_defer _bypass_domain "${domain#.}" "none" "$family" "$noipv6" "${tcpudp}"
 		done
 		return
 	fi
@@ -1122,7 +1164,7 @@ _bypass_proto_core() {
 							_nft4="" _nft4n=0
 						fi
 					else
-						_uci_add_list_unique firewall.omr_dst_bypass_${intf}_4.entry "$ip"
+						_omr_defer _uci_add_list_unique firewall.omr_dst_bypass_${intf}_4.entry "$ip"
 					fi
 				elif [ "$valid_ip6" = "ok" ]; then
 					if [ "$vpn" != "1" ]; then
@@ -1133,7 +1175,7 @@ _bypass_proto_core() {
 							_nft6="" _nft6n=0
 						fi
 					else
-						_uci_add_list_unique firewall.omr_dst_bypass_${intf}_6.entry "$ip"
+						_omr_defer _uci_add_list_unique firewall.omr_dst_bypass_${intf}_6.entry "$ip"
 					fi
 				fi
 			done
@@ -1171,11 +1213,11 @@ _bypass_proto_core() {
 						| grep $domain \
 						| awk '{for (i=1;i<=NF;i++) if (!a[$i]++) printf("%s%s",$i,FS)}{printf("\n")}')"
 					for validdomain in $domainlist; do
-						_bypass_domain $validdomain $intf $family $noipv6 ${tcpudp}
+						_omr_defer _bypass_domain "$validdomain" "$intf" "$family" "$noipv6" "${tcpudp}"
 					done
 					;;
 				*)
-					_bypass_domain $domain $intf $family $noipv6 ${tcpudp}
+					_omr_defer _bypass_domain "$domain" "$intf" "$family" "$noipv6" "${tcpudp}"
 					;;
 				esac
 			fi
@@ -2196,6 +2238,9 @@ start_service() {
 #		EOF
 #	fi
 	config_load omr-bypass
+	# their direct uci writes wait for the hash gate, see _omr_defer
+	_omr_defer_file="/tmp/omr-bypass-deferred"
+	: > "$_omr_defer_file"
 	[ -d /proc/net/xt_ndpi/proto ] && config_foreach _bypass_proto dpis
 	config_foreach _bypass_proto_without_ndpi dpis
 	config_foreach _bypass_category categories
@@ -2230,6 +2275,9 @@ start_service() {
 	_omr_hash_gate dhcp "$_dhcp_uci_batch" "$(uci -q get dhcp.omr_dst_bypass_all)" "$_dhcp_delete_batch" && _dhcp_regen=1
 	_omr_hash_gate net "$_net_uci_batch" "$(uci -q get network.all_fw_rule)" "$_net_delete_batch"
 	rm -f "$_fw_uci_batch" "$_dhcp_uci_batch" "$_net_uci_batch"
+	# domain lists, IPs and DSCP sets of the dpis/category rules, on top of
+	# whatever the gate just regenerated
+	_omr_run_deferred
 
 	#echo "bypass server"
 	if [ "$(uci -q get openmptcprouter.settings.bypass_servers)" = "1" ]; then
