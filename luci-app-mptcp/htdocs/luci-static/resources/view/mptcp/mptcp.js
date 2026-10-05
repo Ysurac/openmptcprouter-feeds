@@ -21,7 +21,8 @@ return L.view.extend({
     load: function() {
 	return Promise.all([
 	    L.resolveDefault(callSystemBoard(), {}),
-	    L.resolveDefault(fs.read('/proc/sys/net/mptcp/available_path_managers'), '')
+	    L.resolveDefault(fs.read('/proc/sys/net/mptcp/available_path_managers'), ''),
+	    L.resolveDefault(fs.read('/proc/sys/net/mptcp/scheduler'), '')
 	]);
     },
 
@@ -36,6 +37,11 @@ return L.view.extend({
 	var availablePathManagers = String(res[1] || '').trim().split(/\s+/).filter(function(name) {
 		return name.length > 0;
 	});
+	// The scheduler the kernel actually runs. The mptcp init falls back to
+	// 'default' when the selected one can't be set (a BPF object that fails
+	// to register, a name this kernel doesn't know), and the list below would
+	// otherwise keep showing the selected one.
+	var activeScheduler = String(res[2] || '').trim();
 
 	function normalizeSchedulerValue(value) {
 		if (value == null)
@@ -156,6 +162,18 @@ return L.view.extend({
 
 	scheduler.onchange = function(ev, section_id, value) {
 		return m.checkDepends();
+	};
+
+	scheduler.renderWidget = function(section_id, option_index, cfgvalue) {
+		var widget = form.ListValue.prototype.renderWidget.apply(this, [section_id, option_index, cfgvalue]);
+		var selected = normalizeSchedulerValue(cfgvalue);
+
+		if (activeScheduler && selected && selected != activeScheduler)
+			L.dom.append(widget, E('div', { 'class': 'cbi-value-description' }, [
+				E('strong', {}, _('The kernel uses the %s scheduler: %s could not be enabled, see the system log.').format(activeScheduler, selected))
+			]));
+
+		return widget;
 	};
 
 	o = s.option(form.Flag, "mptcp_dscp_weight_vps_sync", _("Mirror DSCP/weight pins to gateway"),
