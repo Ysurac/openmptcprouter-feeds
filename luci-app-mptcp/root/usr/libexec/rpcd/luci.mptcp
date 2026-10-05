@@ -22,6 +22,11 @@ local function get_device(interface)
 	return ""
 end
 
+-- %q is a Lua literal, not shell quoting: $(...) and backticks survive it
+local function shell_quote(value)
+	return "'" .. tostring(value or ""):gsub("'", "'\"'\"'") .. "'"
+end
+
 local function exec_output(cmd)
 	local lines = {}
 	local f = io.popen(cmd)
@@ -40,7 +45,7 @@ end
 -- non-zero: when the circular buffer is partially filled the last valid row still gets
 -- a trailing comma.  Strip it before wrapping with "[...]" to produce valid JSON.
 local function bwc_rows(dev)
-	local f = io.popen(string.format("luci-bwc -i %q 2>/dev/null", dev))
+	local f = io.popen("luci-bwc -i " .. shell_quote(dev) .. " 2>/dev/null")
 	if not f then return {} end
 	local output = f:read("*all")
 	f:close()
@@ -856,9 +861,9 @@ local methods = {
 			end
 			local cmd
 			if interface == "" then
-				cmd = "tracebox -s /usr/share/tracebox/omr-mptcp-trace.lua " .. server
+				cmd = "tracebox -s /usr/share/tracebox/omr-mptcp-trace.lua " .. shell_quote(server)
 			else
-				cmd = "tracebox -s /usr/share/tracebox/omr-mptcp-trace.lua -i " .. interface .. " " .. server
+				cmd = "tracebox -s /usr/share/tracebox/omr-mptcp-trace.lua -i " .. shell_quote(interface) .. " " .. shell_quote(server)
 			end
 			return { output = exec_output(cmd) }
 		end
