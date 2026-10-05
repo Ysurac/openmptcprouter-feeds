@@ -700,26 +700,68 @@ _set_list() {
 		*) [ "$3" = "1" ] && uci -q add_list "$1=$2" ;;
 	esac
 }
+# The device netifd brought a network up on: a Wi-Fi-only network (guest...)
+# has no device option, the wifi-iface names the network instead
+_lan_l3_device() {
+	ifstatus "$1" 2>/dev/null | jsonfilter -q -e '@.l3_device' | tr -d '\n'
+}
+# ss_rules.ifnames lists devices, but the proxy is decided per interface, and
+# several interfaces can share a device (lan static + lan6 dhcpv6 on br-lan):
+# set per interface, the last one won and the lists flipped every minute. The
+# devices are collected first (_lan_ss_device <device> <0|1>), and a device is
+# listed when any interface on it is proxied (_lan_ss_apply).
+_lan_ss_device() {
+	case "$1" in
+		''|*@*) return ;;
+	esac
+	case " $_lan_ss_devs " in
+		*" $1 "*) ;;
+		*) _lan_ss_devs="$_lan_ss_devs $1" ;;
+	esac
+	[ "$2" = "1" ] || return
+	case " $_lan_ss_proxy " in
+		*" $1 "*) ;;
+		*) _lan_ss_proxy="$_lan_ss_proxy $1" ;;
+	esac
+}
+_lan_ss_apply() {
+	local _dev _proxy
+	for _dev in $_lan_ss_devs; do
+		_proxy=0
+		case " $_lan_ss_proxy " in
+			*" $_dev "*) _proxy=1 ;;
+		esac
+		_set_list shadowsocks-libev.ss_rules.ifnames "$_dev" $_proxy
+		_set_list shadowsocks-rust.ss_rules.ifnames "$_dev" $_proxy
+	done
+}
 set_lan_ips() {
 	config_get ip4table "$1" ip4table
 	config_get device "$1" device
 	config_get proto "$1" proto
 	config_get multipath "$1" multipath
-	# No restrict for interfaces with strong name
-	[ -n "$(echo $device | grep -- -)" ] && uci -q set openmptcprouter.settings.restrict_to_lan="0" && uci commit openmptcprouter
-	local lan=0 wan=0 proxy=0
+	# the device option's name in configs from before OpenWrt 21.02
+	config_get ifname "$1" ifname
+	# A device name with a dash (br-lan, lan-1...) used to turn
+	# restrict_to_lan off for good, for every interface: the proxy rules then
+	# matched any ingress interface, the WANs included. nft takes these names
+	# in the ss_rules iifname set like any other, so they are listed instead.
+	local lan=0 wan=0 proxy=0 l3dev="$device"
 	# A backup WAN is a WAN too: dnsmasq/unbound must not serve it as LAN
 	# omrvpn is the VPN tunnel, not a LAN, even when its proto is dhcp
 	# (Glorytun or SoftEther in DHCP mode, or left over from them), and
-	# neither is any interface in the wan or vpn firewall zone
-	if [ "$1" != "omrvpn" ] && [ "$multipath" != "on" ] && [ "$multipath" != "master" ] && [ "$multipath" != "backup" ] && [ -n "$device" ] && [ -z "$(echo $device | grep @)" ] && ([ "$proto" = "dhcp" ] || [ "$proto" = "static" ]) && ! _intf_in_zone "$1" wan vpn; then
+	# neither is any interface in the wan or vpn firewall zone. An alias
+	# (@lan) is served through the interface it is an alias of.
+	# dnsmasq and unbound take the interface name: a network without a device
+	# option is a LAN all the same, only the proxy needs its device.
+	if [ "$1" != "omrvpn" ] && [ "$multipath" != "on" ] && [ "$multipath" != "master" ] && [ "$multipath" != "backup" ] && [ -z "$(echo $device $ifname | grep @)" ] && ([ "$proto" = "dhcp" ] || [ "$proto" = "static" ]) && ! _intf_in_zone "$1" wan vpn; then
 		lan=1
+		[ -z "$l3dev" ] && l3dev="$(_lan_l3_device "$1")"
 		_intf_zone_forwards_to_wan "$1" && proxy=1
 	elif [ "$multipath" = "on" ] || [ "$multipath" = "master" ] || [ "$multipath" = "backup" ]; then
 		wan=1
 	fi
-	_set_list shadowsocks-libev.ss_rules.ifnames "$device" $proxy
-	_set_list shadowsocks-rust.ss_rules.ifnames "$device" $proxy
+	_lan_ss_device "$l3dev" $proxy
 	_set_list unbound.ub_main.iface_lan "$1" $lan
 	_set_list unbound.ub_main.iface_wan "$1" $wan
 	_set_list dhcp.@dnsmasq[0].interface "$1" $lan
@@ -737,7 +779,11 @@ _srv_count=$(echo $_srv_daemons | wc -w)
 		[ "$_srv_pid" != "$_srv_keep" ] && kill "$_srv_pid" 2>/dev/null
 	done
 }
-[ "$(uci -q get openmptcprouter.settings.restrict_to_lan)" = "1" ] && config_foreach set_lan_ips interface
+if [ "$(uci -q get openmptcprouter.settings.restrict_to_lan)" = "1" ]; then
+	_lan_ss_devs="" _lan_ss_proxy=""
+	config_foreach set_lan_ips interface
+	_lan_ss_apply
+fi
 [ "$(uci -q get openmptcprouter.settings.restrict_to_lan)" = "0" ] && ([ -n "$(uci -q get shadowsocks-libev.ss_rules.ifnames)" ] || [ -n "$(uci -q get shadowsocks-rust.ss_rules.ifnames)" ]) && {
 	uci -q batch <<-EOF
 		delete shadowsocks-libev.ss_rules.ifnames
