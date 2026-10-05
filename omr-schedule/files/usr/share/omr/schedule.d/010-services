@@ -46,6 +46,134 @@ _prog_name() {
 	printf '%s\n' "${_p:-$2}"
 }
 
+# openmptcprouter-vps keeps its errors per server in /var/state (admin_error,
+# token_error, set_firewall). They used to be tested as substrings of the whole
+# dump: one server in error held back the firewall push of every other server
+# and restarted openmptcprouter-vps each minute, logging in to every VPS each
+# time (a VPS fail2ban then bans the router). A disabled server is never
+# visited by openmptcprouter-vps, so a flag left on it was never cleared and
+# that went on until a reboot. _vps_scan_server looks at one server and sorts
+# it into:
+#   _vps_active       servers openmptcprouter-vps really talks to
+#   _vps_admin_err    ...of them, the ones whose last exchange failed
+#   _vps_token_err    ...the ones LuCI could not get a token from
+#   _vps_fw           ...the ones with a firewall push pending, admin_error aside
+#   _vps_get_config   1 if one of them asks for its config
+#   _vps_has_get_config 1 if one of them has the get_config option at all
+_vps_scan_server() {
+	local _s="$1" _v _o
+	config_get _v "$_s" disabled
+	if [ "$_v" = "1" ]; then
+		for _v in admin_error token_error set_firewall; do
+			_omr_has "openmptcprouter.${_s}.${_v}=" && uci -q -P /var/state revert "openmptcprouter.${_s}.${_v}"
+		done
+		return
+	fi
+	# the same servers openmptcprouter-vps' _get_token logs in to
+	for _o in username password port ip; do
+		config_get _v "$_s" "$_o"
+		[ -n "$_v" ] || return
+	done
+	_vps_active="$_vps_active $_s"
+	_omr_has "openmptcprouter.${_s}.get_config=" && _vps_has_get_config=1
+	_omr_has "openmptcprouter.${_s}.get_config='1'" && _vps_get_config=1
+	_omr_has "openmptcprouter.${_s}.token_error='1'" && _vps_token_err="$_vps_token_err $_s"
+	if _omr_has "openmptcprouter.${_s}.admin_error='1'"; then
+		_vps_admin_err="$_vps_admin_err $_s"
+	elif _omr_has "openmptcprouter.${_s}.set_firewall='1'"; then
+		_vps_fw="$_vps_fw $_s"
+	fi
+}
+
+# Back-off for a retry that keeps failing (an unreachable VPS, a wrong
+# password): the first try is immediate, then 1, 2, 4... up to 30 min apart.
+# openmptcprouter.settings.vps_<what>_lc/_delay in /var/state hold the last
+# try and the current delay; _vps_retry_reset drops them once it worked.
+_vps_retry_due() {
+	local _lc _delay
+	_lc="$(uci -q -P /var/state get openmptcprouter.settings.vps_${1}_lc)"
+	[ -n "$_lc" ] || return 0
+	_delay="$(uci -q -P /var/state get openmptcprouter.settings.vps_${1}_delay)"
+	# a few seconds of slack: the schedule runs every ~60s, not every 60s
+	[ $(($(date +%s) - _lc)) -ge $((${_delay:-60} - 5)) ]
+}
+_vps_retry_next() {
+	local _delay
+	_delay="$(uci -q -P /var/state get openmptcprouter.settings.vps_${1}_delay)"
+	if [ -z "$(uci -q -P /var/state get openmptcprouter.settings.vps_${1}_lc)" ]; then
+		_delay=60
+	else
+		_delay=$((${_delay:-60} * 2))
+		[ "$_delay" -gt 1800 ] && _delay=1800
+	fi
+	uci -q -P /var/state batch <<-EOF >/dev/null
+		revert openmptcprouter.settings.vps_${1}_lc
+		set openmptcprouter.settings.vps_${1}_lc=$(date +%s)
+		revert openmptcprouter.settings.vps_${1}_delay
+		set openmptcprouter.settings.vps_${1}_delay=${_delay}
+	EOF
+}
+_vps_retry_reset() {
+	_omr_has "openmptcprouter.settings.vps_${1}_lc=" || return 0
+	uci -q -P /var/state batch <<-EOF >/dev/null
+		revert openmptcprouter.settings.vps_${1}_lc
+		revert openmptcprouter.settings.vps_${1}_delay
+	EOF
+}
+
+# Token retry, openmptcprouter-vps restart and firewall push, from the flags
+# of the enabled servers only
+_vps_watchdog() {
+	_vps_active="" _vps_admin_err="" _vps_token_err="" _vps_fw=""
+	_vps_get_config=0 _vps_has_get_config=0
+	config_load openmptcprouter
+	config_foreach _vps_scan_server server
+	[ -n "$_vps_active" ] || return 0
+
+	if [ -n "$_vps_token_err" ]; then
+		if [ "$(pgrep -f openmptcprouter-vps)" = "" ] && _vps_retry_due token; then
+			_log "No token for server(s)${_vps_token_err}, ask for one..."
+			_vps_retry_next token
+			/etc/init.d/openmptcprouter-vps token >/dev/null 2>&1 &
+			sleep 5
+		fi
+	else
+		_vps_retry_reset token
+	fi
+	if [ "$_vps_has_get_config" = "0" ] || [ "$_vps_get_config" = "1" ] || [ -n "$_vps_admin_err" ]; then
+		if [ "$(pgrep -f openmptcprouter-vps)" = "" ] && _vps_retry_due restart; then
+			[ -n "$_vps_admin_err" ] && _log "Error with server(s)${_vps_admin_err}, restart openmptcprouter-vps..."
+			_vps_retry_next restart
+			/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &
+			sleep 5
+		fi
+	else
+		_vps_retry_reset restart
+	fi
+	#if [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && ([ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ] || (([ -e /usr/sbin/iptables-nft-save ] && [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ]) || [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ])); then
+	# A server in error is left out until openmptcprouter-vps got through to it
+	if [ -n "$_vps_fw" ] && [ "$(pgrep -f set_vps_firewall)" = "" ] && [ "$(pgrep -f openmptcprouter-vps)" = "" ]; then
+		local _s
+		for _s in $_vps_fw; do
+			_log "Set firewall on server $_s"
+			/etc/init.d/openmptcprouter-vps set_vps_firewall $_s >/dev/null 2>&1
+		done
+
+	#	run_fw_include() {
+	#		[ -n "$1" ] && [ "$(uci -q get firewall.$1.reload)" = "0" ] && sh $(uci -q get firewall.$1.path) >/dev/null 2>&1
+	#	}
+	#	config_load firewall
+	#	config_foreach run_fw_include include
+
+		#/etc/init.d/shadowsocks-libev rules_up >/dev/null 2>&1
+		#/etc/init.d/v2ray rules_up >/dev/null 2>&1
+		#/etc/init.d/omr-bypass reload_rules >/dev/null 2>&1
+		#sh /etc/firewall.gre-tunnel >/dev/null 2>&1
+		/bin/blocklanfw >/dev/null 2>&1
+		sleep 5
+	fi
+}
+
 if [ -n "$(printf '%s\n' "$_omr_snapshot" | awk -F= '/password/ { gsub("\047","",$2);print $2 }')" ]; then
 	# If a service is down, force restart it
 	omr_schedule_vpn_setting="$(uci -q get openmptcprouter.settings.vpn)"
@@ -242,39 +370,7 @@ if [ -n "$(printf '%s\n' "$_omr_snapshot" | awk -F= '/password/ { gsub("\047",""
 
 	# The set_get_config/token blocks above may have just committed new flags
 	_omr_snapshot="$(uci -q -P /var/state show openmptcprouter)"
-	if [ "$(pgrep -f openmptcprouter-vps)" = "" ] && _omr_has "token_error='1'"; then
-		/etc/init.d/openmptcprouter-vps token >/dev/null 2>&1 &
-		sleep 5
-	fi
-	if [ "$(pgrep -f openmptcprouter-vps)" = "" ] && (! _omr_has "get_config" || _omr_has "get_config='1'" || _omr_has "admin_error='1'"); then
-		/etc/init.d/openmptcprouter-vps restart >/dev/null 2>&1 &
-		sleep 5
-	fi
-	#if [ "$(uci -q show openmptcprouter | grep server)" != "" ] && [ "$(uci -q show openmptcprouter | grep password)" != "" ] && [ "$(pgrep -f openmptcprouter-vps)" = "" ] && [ "$(uci -q show openmptcprouter | grep admin_error=\'1\')" = "" ] && ([ "$(uci -q show openmptcprouter | grep set_firewall=\'1\')" != "" ] || (([ -e /usr/sbin/iptables-nft-save ] && [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ]) || [ -z "$(iptables-save 2>/dev/null | grep omr_dst_bypass_${OMR_TRACKER_DEVICE})" ])); then
-	if [ "$(pgrep -f set_vps_firewall)" = "" ] && _omr_has "server" && _omr_has "password" && [ "$(pgrep -f openmptcprouter-vps)" = "" ] && ! _omr_has "admin_error='1'" && _omr_has "set_firewall='1'"; then
-		check_server_fw() {
-			[ "$(uci -q -P /var/state get openmptcprouter.$1.set_firewall)" = "1" ] && {
-				_log "Set firewall on server $1"
-				/etc/init.d/openmptcprouter-vps set_vps_firewall $1 >/dev/null 2>&1
-			}
-		}
-		config_load openmptcprouter
-		config_foreach check_server_fw server
-
-
-	#	run_fw_include() {
-	#		[ -n "$1" ] && [ "$(uci -q get firewall.$1.reload)" = "0" ] && sh $(uci -q get firewall.$1.path) >/dev/null 2>&1
-	#	}
-	#	config_load firewall
-	#	config_foreach run_fw_include include
-
-		#/etc/init.d/shadowsocks-libev rules_up >/dev/null 2>&1
-		#/etc/init.d/v2ray rules_up >/dev/null 2>&1
-		#/etc/init.d/omr-bypass reload_rules >/dev/null 2>&1
-		#sh /etc/firewall.gre-tunnel >/dev/null 2>&1
-		/bin/blocklanfw >/dev/null 2>&1
-		sleep 5
-	fi
+	_vps_watchdog
 
 	# VXLAN is toggled purely via UCI (openmptcprouter.settings.vxlan) but only
 	# takes effect once openmptcprouter-vps pushes/pulls it against the VPS, so
