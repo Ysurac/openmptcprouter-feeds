@@ -8,6 +8,7 @@ basename="${0##*/}"
 . "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-vps-curl.sh"
 
 export OMR_TRACKER_STATUS
+export OMR_TRACKER_PREV_STATUS
 export OMR_TRACKER_STATUS_MSG
 export OMR_TRACKER_LATENCY
 export OMR_TRACKER_LOSS
@@ -556,16 +557,21 @@ while true; do
 		config_foreach _check_backup server
 	}
 	# Global server state for consumers (LuCI, scripts): "up" while at least
-	# one master or backup server answers, "down" otherwise
+	# one master or backup server answers, "down" otherwise. The
+	# server-post-tracking.d hooks get the same, as their status.
 	if [ "$oneserverup" = "1" ]; then
 		srv_state="up"
+		OMR_TRACKER_STATUS="OK"
 	else
 		srv_state="down"
+		OMR_TRACKER_STATUS="ERROR"
 	fi
 	if [ "$srv_state" != "$_omr_server_state" ]; then
 		[ "$(uci -q get openmptcprouter.omr)" = "router" ] || { uci -q set openmptcprouter.omr=router; uci -q commit openmptcprouter; }
 		omr_state_set openmptcprouter omr server "$srv_state"
 		_omr_server_state="$srv_state"
 	fi
+	_post_tracking
+	OMR_TRACKER_PREV_STATUS="$OMR_TRACKER_STATUS"
 	sleep "${interval}"
 done
