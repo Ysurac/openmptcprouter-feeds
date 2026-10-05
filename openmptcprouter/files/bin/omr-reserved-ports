@@ -210,9 +210,31 @@ for cfg in mlvpn ubond; do
 	esac
 done
 
-# Anything the user asked for
+# A port or a "lo-hi" range, both within 1..65535 and lo <= hi
+_valid_port_or_range() {
+	local lo="${1%-*}" hi="${1#*-}"
+	case "$1" in
+		*-*-*|-*|*-) return 1 ;;
+	esac
+	case "$lo" in ''|*[!0-9]*) return 1 ;; esac
+	case "$hi" in ''|*[!0-9]*) return 1 ;; esac
+	[ "${#lo}" -le 5 ] && [ "${#hi}" -le 5 ] &&
+		[ "$lo" -ge 1 ] && [ "$hi" -le 65535 ] && [ "$lo" -le "$hi" ]
+}
+
+# Anything the user asked for. Checked here as emit() checks what the scans
+# find: a half-open "40000-" or "-40000" was read as 0-40000, reserved
+# 1024-40000, tripped the guard below and nothing at all was applied, the
+# re-sync failing again every 10 minutes. A bad entry is skipped (and logged,
+# stderr goes nowhere from the init script and the scheduler), the rest kept.
 for p in $(uci -q get openmptcprouter.settings.reserved_ports 2>/dev/null | tr ',' ' '); do
-	printf '%s\topenmptcprouter.settings.reserved_ports\n' "$p" >> "$FOUND"
+	if _valid_port_or_range "$p"; then
+		printf '%s\topenmptcprouter.settings.reserved_ports\n' "$p" >> "$FOUND"
+	else
+		_warn "ignoring openmptcprouter.settings.reserved_ports entry '$p': not a port or a lo-hi range within 1-65535"
+		[ "$ACTION" = "apply" ] && logger -t omr-reserved-ports \
+			"ignoring openmptcprouter.settings.reserved_ports entry '$p': not a port or a lo-hi range within 1-65535"
+	fi
 done
 
 #
