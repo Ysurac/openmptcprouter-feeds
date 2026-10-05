@@ -1,0 +1,31 @@
+#!/bin/sh
+# omr-bypass used to name its DSCP sets and DSCP-only dnsmasq ipsets like
+# omr-dscp's (omr_dscp_<value>_4/_6, omr_dscp_<value>), and it now names them
+# omr_dst_bypass_dscp_*. It no longer deletes omr_dscp_* sections, so remove
+# the ones an earlier version left. omr-dscp's own sections have the same
+# names: tell them apart by what only omr-bypass set, match='dest_net' on the
+# firewall sets (omr-dscp's are dest_ip) and table='fw4' on the dnsmasq
+# ipsets (omr-dscp sets no table). omr-dscp rebuilds its sections on start
+# anyway. The old set names are also dropped from omr-bypass's per-interface
+# dnsmasq ipsets, which listed them next to their own.
+
+_ipset_sections() {
+	uci -q show "$1" | sed -n "s/^$1\.\($2[^.=]*\)=ipset\$/\1/p"
+}
+
+for sec in $(_ipset_sections firewall omr_dscp_); do
+	[ "$(uci -q get "firewall.$sec.match")" = "dest_net" ] && uci -q delete "firewall.$sec"
+done
+for sec in $(_ipset_sections dhcp omr_dscp_); do
+	[ "$(uci -q get "dhcp.$sec.table")" = "fw4" ] && uci -q delete "dhcp.$sec"
+done
+for sec in $(_ipset_sections dhcp omr_dst_bypass_); do
+	for name in $(uci -q get "dhcp.$sec.name"); do
+		case "$name" in
+			omr_dscp_*) uci -q del_list "dhcp.$sec.name=$name" ;;
+		esac
+	done
+done
+uci -q commit firewall
+uci -q commit dhcp
+exit 0
