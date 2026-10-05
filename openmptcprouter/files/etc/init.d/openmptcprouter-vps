@@ -441,9 +441,14 @@ _set_wireguard_vps() {
 	fi
 }
 
+# get_openvpn_key <server>: rc.common passes the server as $1 (it read $2, always
+# empty, so no key was ever fetched and _login logged an empty server name)
 get_openvpn_key() {
-	servername=$2
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	servername=$1
+	[ -z "$servername" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	_get_config_stored_token
 	[ -z "$vps_config" ] && return
 	openvpn_client_key="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.client_key')"
 	[ -n "$openvpn_client_key" ] && {
@@ -1998,8 +2003,67 @@ _set_vpn_ip() {
 	fi
 }
 
-set_vpn_ip() {
+# GET /config from ${servername} with its stored token, for the entry points
+# called in bursts: a POST /token per call is a login storm, and each login
+# rewrites the token in uci. _login, skipped then, is what sets server and
+# serverport, so try the token on each address in turn; when none answers
+# (all unreachable) or there is no token, fall back to a real login.
+#
+# Both have to leave server on the address that answered: _set_json, which
+# follows, has the token and so skips _login, and POSTs to $server. The login
+# used to run inside $(_get_json ...): it found a working address in the
+# subshell, only the token came back (through uci), and the POST went to the
+# first, dead, address. It timed out, and every omrvpn hotplug and 30s wizard
+# poll did it all again, with a fresh POST /token each time.
+_get_config_stored_token() {
+	local stored
+	token="$(uci -q get openmptcprouter.${servername}.token)"
+	serverport="$(uci -q get openmptcprouter.${servername}.port)"
+	server=""
+	vps_config=""
+	stored="$token"
+	_get_config_on_server() {
+		[ -n "$vps_config" ] && return
+		# A refused token was renewed in the subshell (a POST /token):
+		# that address answered, don't do it once more per address
+		[ "$(uci -q get openmptcprouter.${servername}.token)" = "$stored" ] || return
+		server="$1"
+		vps_config=$(_get_json "config")
+	}
+	if [ -n "$token" ]; then
+		config_load openmptcprouter
+		config_list_foreach "${servername}" ip _get_config_on_server
+	fi
+	# _get_json ran in a subshell: a login it did (refused token) only
+	# reached uci, and the next _set_json would log in again
+	token="$(uci -q get openmptcprouter.${servername}.token)"
+	if [ -z "$vps_config" ] && [ "$token" = "$stored" ]; then
+		# Here, not in a subshell: _login leaves server on the address
+		# that answered
+		token=""
+		_login
+		[ -z "$token" ] || vps_config=$(_get_json "config")
+	fi
+}
+
+# rc.common hands an EXTRA_COMMAND only what follows its name, so nothing set
+# servername here: _login looked up openmptcprouter..username, logged "No
+# credentials for server  yet" and gave up, and the VPN IPs the omrvpn hotplug
+# and the wizard's 30s poll push never reached the VPS. Do it per server, as
+# _config_service does.
+_set_vpn_ip_server() {
+	servername=$1
+	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	_get_config_stored_token
 	_set_vpn_ip
+}
+
+set_vpn_ip() {
+	config_load openmptcprouter
+	config_foreach _set_vpn_ip_server server
 }
 
 
@@ -2464,7 +2528,9 @@ _set_vps_firewall() {
 }
 
 set_vps_firewall() {
-	local server_opt=$2
+	# rc.common passes the server as $1: reading $2 refreshed every server
+	# each time a single one was asked for
+	local server_opt=$1
 	if [ -n "$server_opt" ]; then
 		_set_vps_firewall $server_opt
 	else
