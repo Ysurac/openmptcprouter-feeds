@@ -49,6 +49,51 @@ local function uci_get_list(config, section, option)
 	return {}
 end
 
+-- SHA-256 of zero bytes: what a broken openssl pipeline would hash, refused
+-- by omr-vps-curl.sh's _omr_vps_pin_valid like any other non-pin
+local API_PIN_EMPTY_SHA256 = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+
+-- The VPS API certificate pin (omr-vps-curl.sh) as stored: the base64 SHA-256
+-- without curl's sha256// prefix, "" when blank, nil when not a pin. The check
+-- is _omr_vps_pin_valid's: a pin stored here that the helper refuses stops
+-- every call to the server API.
+local function normalize_api_pin(value)
+	if type(value) ~= "string" then return nil end
+	local trimmed = value:gsub("^%s+", ""):gsub("%s+$", "")
+	if trimmed == "" then return "" end
+	local pin = trimmed:gsub("^sha256//", "")
+	if #pin == 44 and pin:match("^[A-Za-z0-9+/]+=$") and pin ~= API_PIN_EMPTY_SHA256 then
+		return pin
+	end
+	return nil
+end
+
+-- A pin belongs to whichever VPS the section pointed at when it was learned:
+-- forget it when the section moves to another server, so the new one is
+-- learned on first contact instead of being refused as an impostor.
+local function forget_api_pin(server)
+	if type(server) ~= "string" or not server:match("^[%w_]+$") then return end
+	if (ucic:get("openmptcprouter", server, "api_pin") or "") ~= "" then
+		ucic:delete("openmptcprouter", server, "api_pin")
+	end
+	os.remove("/tmp/omr-vps-pin/" .. server .. ".mismatch")
+end
+
+-- True when the section keeps none of its addresses or gets another key: the
+-- user moved it to a different (or a reinstalled) VPS.
+local function server_identity_changed(server, new_ips, new_key)
+	local old_ips = uci_get_list("openmptcprouter", server, "ip")
+	local old_key = ucic:get("openmptcprouter", server, "password") or ""
+	if tostring(new_key or "") ~= old_key then return true end
+	if #old_ips == 0 then return false end
+	for _, new_ip in ipairs(new_ips) do
+		for _, old_ip in ipairs(old_ips) do
+			if new_ip == old_ip then return false end
+		end
+	end
+	return true
+end
+
 local function uci_add_list(config, section, option, value)
 	if type(value) ~= "string" or value == "" then return false end
 	local values = uci_get_list(config, section, option)
@@ -688,6 +733,9 @@ function server_settings(server,server_ip,openmptcprouter_vps_key,openmptcproute
 	else
 		openmptcprouter_vps_username = tostring(openmptcprouter_vps_username)
 	end
+	if server_identity_changed(server, {server_ip}, openmptcprouter_vps_key) then
+		forget_api_pin(server)
+	end
 	ucic:set("openmptcprouter",server,"server")
 	ucic:set("openmptcprouter",server,"username",openmptcprouter_vps_username)
 	ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key)
@@ -1036,12 +1084,25 @@ function wizard_add(args)
 	-- 'del network.wan1.proto' left behind by an earlier page visit would
 	-- otherwise be silently merged into the commits below and could brick
 	-- the router (#4316). The wizard payload carries the full desired state.
+	local servers = _parse_json_table(args.servers)
+	-- An empty pin is the user clearing it; one that is no pin is refused
+	-- before anything changes. It used to normalize to "" too, so a typo (or
+	-- a direct ubus call) silently deleted a good pin, and the next
+	-- certificate seen was trusted.
+	for _, srv in ipairs(servers) do
+		if type(srv) == "table" and srv.api_pin ~= nil
+		   and normalize_api_pin(_as_string(srv.api_pin, "")) == nil then
+			return { status = "error",
+				error = "Invalid API certificate pin for server " .. _sanitize_name(srv.name) ..
+					": expecting a base64 SHA-256 (44 characters ending with \"=\"), optionally prefixed by sha256//" }
+		end
+	end
+
 	for _, cfg in ipairs(wizard_uci_configs) do
 		pcall(function() ucic:revert(cfg) end)
 	end
 
 	local interfaces = _parse_json_table(args.interfaces)
-	local servers = _parse_json_table(args.servers)
 	local delete_intfs = _parse_json_table(args.delete_intfs)
 	local delete_servers = _parse_json_table(args.delete_servers)
 	local master = _sanitize_name(args.master)
@@ -1405,6 +1466,18 @@ function wizard_add(args)
 		if type(srv) == "table" then
 			local sid = _sanitize_name(srv.name)
 			if sid ~= "" then
+				-- A pin typed in (or emptied) by the user wins; otherwise
+				-- the learned one stays until the server itself changes.
+				local new_pin = normalize_api_pin(_as_string(srv.api_pin, ""))
+				if srv.api_pin ~= nil and new_pin ~= nil
+				   and new_pin ~= (ucic:get("openmptcprouter", sid, "api_pin") or "") then
+					forget_api_pin(sid)
+					if new_pin ~= "" then
+						ucic:set("openmptcprouter", sid, "api_pin", new_pin)
+					end
+				elseif server_identity_changed(sid, _unique_string_list(srv.ips), _as_string(srv.password, "")) then
+					forget_api_pin(sid)
+				end
 				ucic:set("openmptcprouter", sid, "server")
 				_set_or_delete("openmptcprouter", sid, "username", _as_string(srv.username, "openmptcprouter"))
 				_set_or_delete("openmptcprouter", sid, "password", _as_string(srv.password, ""))
@@ -1897,7 +1970,7 @@ function update_vps()
 		local adminport = integer_string(section["port"] or "65500", "65500", 1, 65535)
 		local token = section["token"] or ""
 		if token ~= "" and serverip ~= "" then
-			sys.exec("curl -4 --max-time 20 -s -k -H " .. curl_auth_header(token) .. " " .. shell_quote("https://" .. serverip .. ":" .. adminport .. "/update"))
+			sys.exec("OMR_VPS_SERVER=" .. shell_quote(section[".name"]) .. " /bin/omr-vps-curl -4 --max-time 20 -s -k -H " .. curl_auth_header(token) .. " " .. shell_quote("https://" .. serverip .. ":" .. adminport .. "/update"))
 		end
 	end)
 	sys.exec("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
@@ -2309,9 +2382,9 @@ function interfaces_status()
 				if token ~= "" then
 					local vpsinfo_json = ""
 					if mArray.openmptcprouter["service_addr_ip"] ~= "" then
-						vpsinfo_json = sys.exec("curl --max-time " .. timeout .. " -s -k -H " .. curl_auth_header(token) .. " " .. shell_quote("https://" .. serverip .. ":" .. adminport .. "/status"))
+						vpsinfo_json = sys.exec("OMR_VPS_SERVER=" .. shell_quote(s[".name"]) .. " /bin/omr-vps-curl --max-time " .. timeout .. " -s -k -H " .. curl_auth_header(token) .. " " .. shell_quote("https://" .. serverip .. ":" .. adminport .. "/status"))
 					elseif mArray.openmptcprouter["service_addr_ip6"] ~= "" then
-						vpsinfo_json = sys.exec("curl --max-time " .. timeout .. " -s -k -H " .. curl_auth_header(token) .. " " .. shell_quote("https://[" .. serverip .. "]:" .. adminport .. "/status"))
+						vpsinfo_json = sys.exec("OMR_VPS_SERVER=" .. shell_quote(s[".name"]) .. " /bin/omr-vps-curl --max-time " .. timeout .. " -s -k -H " .. curl_auth_header(token) .. " " .. shell_quote("https://[" .. serverip .. "]:" .. adminport .. "/status"))
 					end
 					if vpsinfo_json ~= "" and vpsinfo_json ~= nil then
 						local status, vpsinfo = pcall(function()
@@ -2406,12 +2479,15 @@ function interfaces_status()
 				if mArray.openmptcprouter["vps_admin"] == false then
 					local vpstest = ""
 					if mArray.openmptcprouter["service_addr_ip"] ~= "" then
-						vpstest = sys.exec("curl --max-time " .. timeout .. " -s -k " .. shell_quote("https://" .. serverip .. ":" .. adminport .. "/"))
+						vpstest = sys.exec("OMR_VPS_SERVER=" .. shell_quote(s[".name"]) .. " /bin/omr-vps-curl --max-time " .. timeout .. " -s -k " .. shell_quote("https://" .. serverip .. ":" .. adminport .. "/"))
 					elseif mArray.openmptcprouter["service_addr_ip6"] ~= "" then
-						vpstest = sys.exec("curl --max-time " .. timeout .. " -s -k " .. shell_quote("https://[" .. serverip .. "]:" .. adminport .. "/"))
+						vpstest = sys.exec("OMR_VPS_SERVER=" .. shell_quote(s[".name"]) .. " /bin/omr-vps-curl --max-time " .. timeout .. " -s -k " .. shell_quote("https://[" .. serverip .. "]:" .. adminport .. "/"))
 					end
 					if vpstest == "" then
 						mArray.openmptcprouter["vps_admin_error_msg"] = mArray.openmptcprouter["vps_admin_error_msg"] .. " - No API script answer"
+					end
+					if file_exists("/tmp/omr-vps-pin/" .. s[".name"] .. ".mismatch") then
+						mArray.openmptcprouter["vps_admin_error_msg"] = mArray.openmptcprouter["vps_admin_error_msg"] .. " - API certificate doesn't match the pinned public key"
 					end
 				end
 			end

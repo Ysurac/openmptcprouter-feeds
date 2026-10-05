@@ -1,5 +1,6 @@
 #!/bin/sh
 . /lib/functions.sh
+. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-vps-curl.sh"
 
 intf=$1
 timeout="$(uci -q get openmptcprouter.settings.status_vps_timeout)"
@@ -13,18 +14,13 @@ get_mptcp_from_server() {
 	get_mptcp() {
 		[ -n "$support" ] && return
 		serverip=$1
+		# Only called on the out-of-tree MPTCP (v0) kernel, where curl's
+		# connection is MPTCP as it is (see below): no mptcpize branch here,
+		# the ones for the upstream kernel could never run
 		if [ "$(echo $serverip | grep :)" ]; then
-			if [ -f /proc/sys/net/mptcp/enabled ]; then
-				support="$(mptcpize run curl -s -k -6 -m ${timeout} --interface $intf https://[$serverip]:$serverport/mptcpsupport)"
-			else
-				support="$(curl -s -k -6 -m ${timeout} --interface $intf https://[$serverip]:$serverport/mptcpsupport)"
-			fi
+			support="$(omr_vps_curl -s -k -6 -m ${timeout} --interface $intf https://[$serverip]:$serverport/mptcpsupport)"
 		else
-			if [ -f /proc/sys/net/mptcp/enabled ]; then
-				support="$(mptcpize run curl -s -k -4 -m ${timeout} --interface $intf https://$serverip:$serverport/mptcpsupport)"
-			else
-				support="$(curl -s -k -4 -m ${timeout} --interface $intf https://$serverip:$serverport/mptcpsupport)"
-			fi
+			support="$(omr_vps_curl -s -k -4 -m ${timeout} --interface $intf https://$serverip:$serverport/mptcpsupport)"
 		fi
 		[ -n "$support" ] && {
 			support=$(echo $support | jsonfilter -e '@.mptcp')
@@ -113,6 +109,8 @@ get_mptcpv1_from_website6() {
 support=""
 if [ ! -f /proc/sys/net/mptcp/enabled ]; then
 	# For now API can't give MPTCP status as MPTCP is not correctly enabled on it
+	# with the upstream kernel (/proc/sys/net/mptcp/enabled): check.mptcp.dev
+	# answers then
 	config_load openmptcprouter
 	config_foreach get_mptcp_from_server server
 fi

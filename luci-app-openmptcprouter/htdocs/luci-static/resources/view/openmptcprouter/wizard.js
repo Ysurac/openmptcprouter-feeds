@@ -16,6 +16,19 @@ var callFileStat = rpc.declare({
 	object: 'file', method: 'stat',
 	params: ['path'], expect: { '': {} }
 });
+/* The check of omr-vps-curl.sh's _omr_vps_pin_valid (and of the rpcd
+ * normalize_api_pin): a pin the helper refuses stops every call to the
+ * server API. Empty clears the pin. The SHA-256 of empty input is what a
+ * broken openssl pipeline prints, so it is no pin either. */
+var API_PIN_EMPTY_SHA256 = '47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=';
+function validApiPin(val) {
+	var pin = (val || '').trim();
+	if (pin === '')
+		return true;
+	pin = pin.replace(/^sha256\/\//, '');
+	return /^[A-Za-z0-9+\/]{43}=$/.test(pin) && pin !== API_PIN_EMPTY_SHA256;
+}
+
 var callOMRWizardAdd = rpc.declare({
 	object: 'openmptcprouter', method: 'wizardadd',
 	params: [
@@ -279,8 +292,10 @@ return view.extend({
 				origIntfNames.push(i);
 		});
 		var origServerNames = [];
+		var origPins = {};
 		uci.sections('openmptcprouter', 'server', function(srv) {
 			origServerNames.push(srv['.name']);
+			origPins[srv['.name']] = srv.api_pin || '';
 		});
 
 		function buildWizardPayload() {
@@ -358,13 +373,21 @@ return view.extend({
 				if (!master && (uci.get('openmptcprouter', sid, 'master') === '1'))
 					master = sid;
 
-				servers.push({
+				var server = {
 					name: sid,
 					ips: ips,
 					password: password,
 					username: uci.get('openmptcprouter', sid, 'username') || 'openmptcprouter',
 					disabled: uci.get('openmptcprouter', sid, 'disabled') || '0'
-				});
+				};
+				/* Only a pin the user typed in or emptied: the router learns
+				 * one in the background, often after this page loaded, and
+				 * sending the empty load-time value made the backend forget
+				 * it. Left out, the backend keeps whatever it has. */
+				var pin = uci.get('openmptcprouter', sid, 'api_pin') || '';
+				if (pin !== (origPins[sid] || ''))
+					server.api_pin = pin;
+				servers.push(server);
 			});
 
 			if (!master && servers.length)
@@ -521,6 +544,19 @@ return view.extend({
 				delete editedServerKeys[sid];
 
 			setForceRetrieve(this.map);
+		};
+
+		/* The router only talks to a server API whose certificate carries
+		 * this public key (omr-vps-curl.sh). The backend empties it when the
+		 * server IP or key changes, so it is learned again from the new
+		 * server. */
+		o = s.option(form.Value, 'api_pin', _('Server API certificate pin'));
+		o.rmempty = true;
+		o.placeholder = _('Learned at the first connection');
+		o.description = _('SHA-256 of the public key of the server API certificate, as displayed at the end of the server installation. Left empty, the key seen at the first connection is trusted from then on. Empty it after reinstalling the server.');
+		o.validate = function(sid, val) {
+			return validApiPin(val) ? true :
+				_('Expecting a base64 SHA-256 (44 characters ending with "="), optionally prefixed by sha256//');
 		};
 
 		o = s.option(form.Flag, 'master', _('Set server as master'));
@@ -1200,6 +1236,10 @@ return view.extend({
 					return callOMRWizardAddCompat(buildWizardPayload());
 				})
 				.then(function(res) {
+					/* A refused call (an API pin that is no pin) changed
+					 * nothing: say why instead of "Saved" */
+					if (res && res.error)
+						throw new Error(res.error);
 					var status = (res && res.status) ? res.status : 'ok';
 					if (status !== 'ok' && status !== 'reload')
 						throw new Error(_('API returned unexpected status: %s').format(status));

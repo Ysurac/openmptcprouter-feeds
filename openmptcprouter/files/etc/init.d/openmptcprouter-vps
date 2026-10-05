@@ -9,6 +9,8 @@ USE_PROCD=1
 EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key set_gre_tunnel set_vxlan token set_bypass_ips set_vpn_ip set_mptcp_dscp_vps set_mptcp_weight_vps set_dscp_classify_vps"
 
 . /usr/lib/unbound/iptools.sh
+# omr_vps_curl: curl with the VPS API certificate public key pinned
+. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-vps-curl.sh"
 
 if [ -e /usr/sbin/iptables-nft ]; then
 	IPTABLES="/usr/sbin/iptables-nft"
@@ -56,9 +58,9 @@ _login() {
 			#resolve="$(resolveip -t 5 $server)"
 			valid_ip6=$(valid_subnet6 $server)
 			if [ "$valid_ip6" = "ok" ]; then
-				auth=`curl -6 --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "username=${username}&password=${password}" https://[$server]:$serverport/token`
+				auth=`omr_vps_curl -6 --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "username=${username}&password=${password}" https://[$server]:$serverport/token`
 			else
-				auth=`curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "username=${username}&password=${password}" https://$server:$serverport/token`
+				auth=`omr_vps_curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "username=${username}&password=${password}" https://$server:$serverport/token`
 			fi
 			# An answer that carries no access_token is the server rejecting
 			# us, not a broken path: retrying it once per interface only adds
@@ -66,9 +68,9 @@ _login() {
 			if [ -z "$auth" ]; then
 				for intf in $(multipath 2>/dev/null | awk '/default/ { print $1 }'); do
 					if [ "$valid_ip6" = "ok" ]; then
-						auth=`curl -6 --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "username=${username}&password=${password}" https://[$server]:$serverport/token`
+						auth=`omr_vps_curl -6 --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "username=${username}&password=${password}" https://[$server]:$serverport/token`
 					else
-						auth=`curl --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "username=${username}&password=${password}" https://$server:$serverport/token`
+						auth=`omr_vps_curl --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "username=${username}&password=${password}" https://$server:$serverport/token`
 					fi
 					[ -n "$auth" ] && break
 				done
@@ -134,16 +136,16 @@ _get_json() {
 		#resolve="$(resolveip -t 5 $server)"
 		valid_ip6=$(valid_subnet6 $server)
 		if [ "$valid_ip6" = "ok" ]; then
-			result=`curl -6 --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://[$server]:$serverport/$route`
+			result=`omr_vps_curl -6 --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://[$server]:$serverport/$route`
 		else
-			result=`curl --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://$server:$serverport/$route`
+			result=`omr_vps_curl --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://$server:$serverport/$route`
 		fi
 		if [ -z "$result" ]; then
 			for intf in $(multipath 2>/dev/null | awk '/default/ { print $1 }'); do
 				if [ "$valid_ip6" = "ok" ]; then
-					result=`curl -6 --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Authorization: Bearer $token" https://[$server]:$serverport/$route`
+					result=`omr_vps_curl -6 --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Authorization: Bearer $token" https://[$server]:$serverport/$route`
 				else
-					result=`curl --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Authorization: Bearer $token" https://$server:$serverport/$route`
+					result=`omr_vps_curl --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Authorization: Bearer $token" https://$server:$serverport/$route`
 				fi
 				[ -n "$result" ] && break
 			done
@@ -152,9 +154,9 @@ _get_json() {
 			token=''
 			_login
 			if [ "$valid_ip6" = "ok" ]; then
-				result=`curl -6 --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://[$server]:$serverport/$route`
+				result=`omr_vps_curl -6 --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://[$server]:$serverport/$route`
 			else
-				result=`curl --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://$server:$serverport/$route`
+				result=`omr_vps_curl --max-time 10 -s -k -H "accept: application/json" -H "Authorization: Bearer $token" https://$server:$serverport/$route`
 			fi
 			[ "$(echo $result | grep 'Could not validate credentials')" ] && result=''
 		fi
@@ -174,16 +176,16 @@ _set_json() {
 		#resolve="$(resolveip -t 5 $server)"
 		valid_ip6=$(valid_subnet6 $server)
 		if [ "$valid_ip6" = "ok" ]; then
-			result=`curl -6 --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://[$server]:$serverport/$route`
+			result=`omr_vps_curl -6 --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://[$server]:$serverport/$route`
 		else
-			result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
+			result=`omr_vps_curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
 		fi
 		if [ -z "$result" ]; then
 			for intf in $(multipath 2>/dev/null | awk '/default/ { print $1 }'); do
 				if [ "$valid_ip6" = "ok" ]; then
-					result=`curl -6 --max-time 10 -s -k --interface $intf -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://[$server]:$serverport/$route`
+					result=`omr_vps_curl -6 --max-time 10 -s -k --interface $intf -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://[$server]:$serverport/$route`
 				else
-					result=`curl --max-time 10 -s -k --interface $intf -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
+					result=`omr_vps_curl --max-time 10 -s -k --interface $intf -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
 				fi
 				[ -n "$result" ] && break
 			done
@@ -192,9 +194,9 @@ _set_json() {
 			token=''
 			_login
 			if [ "$valid_ip6" = "ok" ]; then
-				result=`curl -6 --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://[$server]:$serverport/$route`
+				result=`omr_vps_curl -6 --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://[$server]:$serverport/$route`
 			else
-				result=`curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
+				result=`omr_vps_curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
 			fi
 			[ "$(echo $result | grep 'Could not validate credentials')" ] && result=''
 		fi
@@ -3528,13 +3530,13 @@ _get_token() {
 			resolve="$(resolveip -t 5 $server)"
 			valid_ip6=$(valid_subnet6 $server)
 			if [ "$resolve" != "$server" ] || [ "$valid_ip6" != "ok" ]; then
-				if [ "$(curl -s -k -m 3 https://${server}:${port}/)" = "" ]; then
+				if [ "$(omr_vps_curl -s -k -m 3 https://${server}:${port}/)" = "" ]; then
 					reason="$reason, no server API answer on $1"
 				else
 					reason="$reason, server API answer on $1"
 				fi
 			else
-				if [ "$(curl -s -k -m 3 https://[${server}]:${port}/)" = "" ]; then
+				if [ "$(omr_vps_curl -s -k -m 3 https://[${server}]:${port}/)" = "" ]; then
 					reason="$reason, no server API answer on $1"
 				else
 					reason="$reason, server API answer on $1"
@@ -3542,6 +3544,7 @@ _get_token() {
 			fi
 		}
 		config_list_foreach "${servername}" ip api_test
+		[ -e "${OMR_VPS_PIN_STATE}/${servername}.mismatch" ] && reason="$reason, server API certificate doesn't match the pinned public key"
 		if [ "$(uci -q get openmptcprouter.${servername}.username)" != "openmptcprouter" ]; then
 			reason="$reason, custom username"
 		fi
