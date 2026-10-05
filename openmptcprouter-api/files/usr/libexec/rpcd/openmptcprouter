@@ -173,13 +173,19 @@ local function clear_server_vpn_proxy(ips)
 	local proxy_fields = {"s_vmess_address", "s_vless_address", "s_socks_address", "s_trojan_address", "s_vless_reality_address", "s_shadowsocks_address"}
 	for _, ip in ipairs(ips) do
 		if type(ip) == "string" and ip ~= "" then
-			if ucic:get("shadowsocks-libev", "sss0", "server") == ip then
-				ucic:delete("shadowsocks-libev", "sss0", "server")
-				changed["shadowsocks-libev"] = true
-			end
-			if ucic:get("shadowsocks-rust", "sss0", "server") == ip then
-				ucic:delete("shadowsocks-rust", "sss0", "server")
-				changed["shadowsocks-rust"] = true
+			-- sss0 and the other server sections, sss1 (the IPv6 slot)
+			-- included. One of those left enabled with no address would
+			-- keep getting its share of ss_rules' connections.
+			for _, ss in ipairs({"shadowsocks-libev", "shadowsocks-rust"}) do
+				ucic:foreach(ss, "server", function(sec)
+					if sec.server == ip then
+						ucic:delete(ss, sec[".name"], "server")
+						if sec[".name"] ~= "sss0" then
+							ucic:set(ss, sec[".name"], "disabled", "1")
+						end
+						changed[ss] = true
+					end
+				end)
 			end
 			for _, field in ipairs(proxy_fields) do
 				if ucic:get("v2ray", "omrout", field) == ip then
@@ -1509,6 +1515,17 @@ function wizard_add(args)
 				if _to_flag(srv.disabled) == "1" then
 					clear_server_vpn_proxy(iplist)
 				end
+				-- Addresses taken off this server leave the VPN and proxy
+				-- settings too: server_settings() below rewrites the master's
+				-- sss0, VPN and proxy addresses, but not sss1 when the master
+				-- has no IPv6 address any more
+				local kept = {}
+				for _, ip in ipairs(iplist) do kept[ip] = true end
+				local removed = {}
+				for _, ip in ipairs(uci_get_list("openmptcprouter", sid, "ip")) do
+					if not kept[ip] then removed[#removed + 1] = ip end
+				end
+				clear_server_vpn_proxy(removed)
 				if #iplist > 0 then
 					ucic:set("openmptcprouter", sid, "ip", iplist)
 					if sid == master and _to_flag(srv.disabled) ~= "1" then
