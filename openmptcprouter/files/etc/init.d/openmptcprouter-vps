@@ -3788,6 +3788,14 @@ _config_service() {
 	# and a lingering one keeps omr-tracker's "get_config='1'" check true and
 	# reruns this service on every tracker cycle.
 	[ "$(uci -q get openmptcprouter.settings.forceretrieve)" = "1" ] && { [ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q -P /var/state get openmptcprouter.${servername}.current)" = "1" ]; } && uci -q set openmptcprouter.${servername}.get_config=1
+	# Every config has the server's kernel. An error answer (a 500, or
+	# FastAPI's {"detail": ...}) has none, and applying it would empty the
+	# VPN addresses and keys and clear get_config: check it first, and leave
+	# get_config set so the next run tries again.
+	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
+	[ -z "$vps_config" ] && return
+	kernel="$(echo "$vps_config" | jsonfilter -q -e '@.vps.kernel')"
+	[ -z "$kernel" ] && return
 	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && ([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q -P /var/state get openmptcprouter.${servername}.current)" = "1" ]) && {
 		_set_config_from_vps
 		_get_gre_tunnel
@@ -3825,10 +3833,6 @@ _config_service() {
 		}
 	fi
 
-	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
-	[ -z "$vps_config" ] && return
-	kernel="$(echo "$vps_config" | jsonfilter -q -e '@.vps.kernel')"
-	[ -z "$kernel" ] && return
 	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
 
 	if [ "$user_permission" != "ro" ]; then
