@@ -109,6 +109,7 @@ define Build/Compile
 	cmake -S "$(BSSL_DIR)" -B "$(BSSL_BUILD)" \
 		$(CMAKE_CROSS) \
 		-DBUILD_SHARED_LIBS=0 \
+		-DCMAKE_BUILD_TYPE=MinSizeRel \
 		-DCMAKE_C_FLAGS="$(TARGET_CFLAGS) -fPIC" \
 		-DCMAKE_CXX_FLAGS="$(TARGET_CXXFLAGS) -fPIC"
 	+$(MAKE) -C "$(BSSL_BUILD)" ssl crypto
