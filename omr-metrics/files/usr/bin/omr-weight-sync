@@ -10,6 +10,12 @@ POLL_INTERVAL="${MPTCP_WEIGHT_INTERVAL:-5}"
 WEIGHT_SCRIPT="/usr/sbin/mptcp-scheduler-weight.sh"
 MAP_PATH="/sys/fs/bpf/endpoint_weights"
 
+# _login logged through it, but it was never defined: "_log: not found" on
+# stderr and nothing in syslog
+_log() {
+	logger -t "omr-weight-sync" "$@"
+}
+
 _is_ip6() {
 	case "$1" in *:*) return 0 ;; esac
 	return 1
@@ -177,8 +183,10 @@ _fetch_decision_weights() {
 		serverport=$(uci -q get "openmptcprouter.${servername}.port" 2>/dev/null)
 		[ -z "$serverport" ] && serverport="65500"
 
-		server_ips=$(uci -q show "openmptcprouter.${servername}" 2>/dev/null | \
-			sed -n "s/^openmptcprouter\.[^.]*\.ip='\(.*\)'$/\1/p")
+		# uci get prints a list space-separated. uci show quotes each value
+		# (ip='a' 'b'), and the sed that cut the outer quotes kept the inner
+		# ones: with several addresses, every one of them was mangled
+		server_ips=$(uci -q get "openmptcprouter.${servername}.ip" 2>/dev/null)
 
 		for server in $server_ips; do
 			[ -z "$server" ] && continue
