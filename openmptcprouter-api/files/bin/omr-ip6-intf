@@ -1,19 +1,46 @@
 #!/bin/sh
 . /lib/functions.sh
+. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-vps-curl.sh"
 
 intf=$1
 
 timeout=$(uci -q get openmptcprouter.settings.status_getip_timeout)
 [ -z "$timeout" ] && timeout="1"
 
+# The answer comes from plain http and ends up in shell commands, uci state
+# and the VPS API: accept an IPv6 address only (hex digits, colons, an
+# optional dotted IPv4 tail)
+valid_ip6() {
+	case "$1" in
+		*:*) ;;
+		*) return 1 ;;
+	esac
+	[ "${#1}" -le 45 ] && expr "$1" : '[0-9A-Fa-f:.]*$' >/dev/null
+}
+
+# serverip was never set (omr-ip-intf does it) and an IPv6 literal had no
+# brackets: every lookup asked https://:port/clienthost, so the VPS was never
+# asked and the public IPv6 always came from the plain http website.
 get_ip_from_server() {
 	[ -n "$ip" ] && return
+	serversection=$1
 	serverport=$(uci -q get openmptcprouter.$1.port)
 	get_ip() {
 		[ -n "$ip" ] && return
-		getip="$(curl -s -k -6 -m ${timeout} --interface $intf https://$serverip:$serverport/clienthost)"
+		serverip=$1
+		serverip="${serverip#\[}"
+		serverip="${serverip%\]}"
+		# An IPv6 literal goes in brackets in a URL, its zone id (link-local)
+		# percent-encoded
+		case "$serverip" in
+			*:*%*) urlhost="[${serverip%%\%*}%25${serverip#*%}]" ;;
+			*:*) urlhost="[${serverip}]" ;;
+			*) urlhost="$serverip" ;;
+		esac
+		# Pinned with this server's key, however its address is spelled
+		getip="$(OMR_VPS_SERVER="$serversection" omr_vps_curl -s -k -6 -m ${timeout} --interface $intf "https://${urlhost}:${serverport}/clienthost" 2>/dev/null)"
 		[ -n "$getip" ] && getip=$(echo $getip | jsonfilter -e '@.client_host')
-		if [ -n "$(echo "$getip" | grep :)" ]; then
+		if valid_ip6 "$getip"; then
 			ip=$getip
 			return
 		fi
@@ -46,7 +73,7 @@ get_ip_from_website() {
 			nft delete element inet fw4 omr_dst_bypass_all_6 { $_hostip } >/dev/null 2>&1
 		done
 	fi
-	if [ -n "$(echo "$getip" | grep :)" ]; then
+	if valid_ip6 "$getip"; then
 		ip=$getip
 	fi
 }

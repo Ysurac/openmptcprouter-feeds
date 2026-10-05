@@ -136,9 +136,12 @@ local function integer_string(value, default, min, max)
 	return tostring(n)
 end
 
+-- cmd goes to sh -c single-quoted: %q made a double-quoted string, so the
+-- outer shell still expanded $(...) and backticks, even inside arguments
+-- the caller had shell_quote()d
 local function exec_with_timeout(seconds, cmd)
 	if timeout_cmd then
-		return sys.exec(timeout_cmd .. " " .. tostring(seconds) .. " sh -c " .. string.format("%q", cmd))
+		return sys.exec(timeout_cmd .. " " .. tostring(seconds) .. " sh -c '" .. cmd:gsub("'", "'\"'\"'") .. "'")
 	end
 	return sys.exec(cmd)
 end
@@ -987,6 +990,13 @@ local function valid_ipv4(ip)
 	return a <= 255 and b <= 255 and c <= 255 and d <= 255
 		and not (a == 0 and b == 0 and c == 0 and d == 0)
 		and a ~= 127
+end
+
+-- Public IPv6 addresses come from plain http (check_ipv6_website) and end
+-- up in shell commands: only hex digits, colons and a dotted IPv4 tail
+local function valid_ipv6(ip)
+	if type(ip) ~= "string" or ip == "" or #ip > 45 then return false end
+	return ip:find(":", 1, true) ~= nil and ip:match("^[%x:%.]+$") ~= nil
 end
 
 -- A wizard-entered server address containing a colon is IPv6: the "ip"
@@ -1874,23 +1884,31 @@ function redirectports(server,redirect_ports)
 end
 
 function tcpkeepalivetime(tcp_keepalive_time)
+	-- Reaches sys.exec: numbers only
+	tcp_keepalive_time = integer_string(tcp_keepalive_time, 7200, 1, 32767)
 	sys.exec("sysctl -w net.ipv4.tcp_keepalive_time=%s" % tcp_keepalive_time)
 	sys.exec("sed -i 's:^net.ipv4.tcp_keepalive_time=[0-9]*:net.ipv4.tcp_keepalive_time=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_keepalive_time)
 end
 
 function tcpfintimeout(tcp_fin_timeout)
+	-- Reaches sys.exec: numbers only
+	tcp_fin_timeout = integer_string(tcp_fin_timeout, 60, 1, 65535)
 	sys.exec("sysctl -w net.ipv4.tcp_fin_timeout=%s" % tcp_fin_timeout)
 	sys.exec("sed -i 's:^net.ipv4.tcp_fin_timeout=[0-9]*:net.ipv4.tcp_fin_timeout=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_fin_timeout)
 end
 
 function tcpsynretries(tcp_syn_retries)
+	-- Reaches sys.exec: numbers only
+	tcp_syn_retries = integer_string(tcp_syn_retries, 3, 1, 127)
 	sys.exec("sysctl -w net.ipv4.tcp_syn_retries=%s" % tcp_syn_retries)
 	sys.exec("sed -i 's:^net.ipv4.tcp_syn_retries=[0-9]*:net.ipv4.tcp_syn_retries=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_syn_retries)
 end
 
 function tcpfastopen(tcp_fastopen)
+	-- Reaches sys.exec: numbers only
+	tcp_fastopen = integer_string(tcp_fastopen, 1, 0, 4095)
 	sys.exec("sysctl -w net.ipv4.tcp_fastopen=%s" % tcp_fastopen)
-	sys.exec("sed -i 's:^net.ipv4.tcp_fastopen=[0-3]*:net.ipv4.tcp_fastopen=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_fastopen)
+	sys.exec("sed -i 's:^net.ipv4.tcp_fastopen=[0-9]*:net.ipv4.tcp_fastopen=%s:' /etc/sysctl.d/zzz_openmptcprouter.conf" % tcp_fastopen)
 end
 
 function disableipv6(disable_ipv6)
@@ -1907,6 +1925,8 @@ function externalcheck(externalcheck)
 end
 
 function savevnstat(savevnstat)
+	-- Also a ubus method of its own: the value reaches sys.exec
+	savevnstat = _to_flag(savevnstat)
 	sys.exec("uci -q set vnstat.@vnstat[0].backup=%s" % savevnstat)
 	sys.exec("uci -q commit vnstat")
 end
@@ -2810,7 +2830,7 @@ function interfaces_status()
 				end
 			end
 			if ucis:get("openmptcprouter",interface,"manufacturer") == "huawei" and ipaddr ~= "" and status_budget_left() then
-				local intfdata = ut.trim(exec_with_timeout(2, "omr-huawei " .. ipaddr .. " " .. gateway .. " all"))
+				local intfdata = ut.trim(exec_with_timeout(2, "omr-huawei " .. shell_quote(ipaddr) .. " " .. shell_quote(gateway) .. " all"))
 				if intfdata ~= "" then
 					signal      = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $1}'"))
 					operator    = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $2}'"))
@@ -2830,7 +2850,7 @@ function interfaces_status()
 
 		if ifname ~= "" and (proto == "qmi" or proto == "3g" or proto == "modemmanager") and status_budget_left() then
 			if proto == "qmi" then
-				local intfdata = ut.trim(exec_with_timeout(2, "omr-qmi " .. (section['device'] or "") .. " all"))
+				local intfdata = ut.trim(exec_with_timeout(2, "omr-qmi " .. shell_quote(section['device'] or "") .. " all"))
 				if intfdata ~= "" then
 					signal      = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $1}'"))
 					operator    = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $2}'"))
@@ -2841,7 +2861,7 @@ function interfaces_status()
 			elseif proto == "3g" then
 				signal = exec_with_timeout(2, "omr-3g " .. shell_quote(section['device'] or "") .. " | tr -d '\n'")
 			elseif proto == "modemmanager" then
-				local intfdata = ut.trim(exec_with_timeout(2, "omr-modemmanager " .. (section['device'] or "") .. " all"))
+				local intfdata = ut.trim(exec_with_timeout(2, "omr-modemmanager " .. shell_quote(section['device'] or "") .. " all"))
 				if intfdata ~= "" then
 					signal      = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $1}'"))
 					operator    = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $2}'"))
@@ -2924,36 +2944,40 @@ function interfaces_status()
 				local sub = interface:sub(5)
 				publicIP = ucis:get("openmptcprouter",sub,"publicip") or ""
 				if ifname ~= nil and ipaddr ~= "" and publicIP == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
-					publicIP = ut.trim(exec_with_timeout(2, "omr-ip-intf " .. get_device(sub)))
+					publicIP = ut.trim(exec_with_timeout(2, "omr-ip-intf " .. shell_quote(get_device(sub))))
 				end
 				publicIP6 = ucis:get("openmptcprouter",sub,"publicip6") or ""
 				if ifname ~= nil and ip6addr ~= "" and publicIP6 == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
-					publicIP6 = ut.trim(exec_with_timeout(2, "omr-ip6-intf " .. get_device(sub)))
+					publicIP6 = ut.trim(exec_with_timeout(2, "omr-ip6-intf " .. shell_quote(get_device(sub))))
 				end
 			elseif ifname ~= nil and interface:match("^wg.*") then
 				local sub = interface:sub(3)
 				publicIP = ucis:get("openmptcprouter",sub,"publicip") or ""
 				if ifname ~= nil and ipaddr ~= "" and publicIP == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
-					publicIP = ut.trim(exec_with_timeout(2, "omr-ip-intf " .. get_device(sub)))
+					publicIP = ut.trim(exec_with_timeout(2, "omr-ip-intf " .. shell_quote(get_device(sub))))
 				end
 				publicIP6 = ucis:get("openmptcprouter",sub,"publicip6") or ""
 				if ifname ~= nil and ip6addr ~= "" and publicIP6 == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
-					publicIP6 = ut.trim(exec_with_timeout(2, "omr-ip6-intf " .. get_device(sub)))
+					publicIP6 = ut.trim(exec_with_timeout(2, "omr-ip6-intf " .. shell_quote(get_device(sub))))
 				end
 			else
 				publicIP = ucis:get("openmptcprouter",interface,"publicip") or ""
 				if ifname ~= nil and ipaddr ~= "" and publicIP == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
-					publicIP = ut.trim(exec_with_timeout(2, "omr-ip-intf " .. ifname))
+					publicIP = ut.trim(exec_with_timeout(2, "omr-ip-intf " .. shell_quote(ifname)))
 				end
 				publicIP6 = ucis:get("openmptcprouter",interface,"publicip6") or ""
 				if ifname ~= nil and ip6addr ~= "" and publicIP6 == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
-					publicIP6 = ut.trim(exec_with_timeout(2, "omr-ip6-intf " .. ifname))
+					publicIP6 = ut.trim(exec_with_timeout(2, "omr-ip6-intf " .. shell_quote(ifname)))
 				end
 			end
+			-- Both come from plain http or from the tracker's state: drop
+			-- anything that is not an address before it reaches whois
+			if not valid_ipv4(publicIP) then publicIP = "" end
+			if not valid_ipv6(publicIP6) then publicIP6 = "" end
 			if publicIP ~= "" then
 				whois = ucis:get("openmptcprouter",interface,"asn") or ""
 				if whois == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
-					whois = ut.trim(exec_with_timeout(2, "whois " .. publicIP .. " | grep -i 'netname' | awk '{print $2}'"))
+					whois = ut.trim(exec_with_timeout(2, "whois " .. shell_quote(publicIP) .. " | grep -i 'netname' | awk '{print $2}'"))
 				end
 				if publicIP == mArray.openmptcprouter["wan_addr"] then
 					mArray.openmptcprouter["direct_output"] = true
@@ -2965,7 +2989,7 @@ function interfaces_status()
 				-- dual stack WAN showed its IPv6 netname for both (#4375)
 				whois6 = ucis:get("openmptcprouter",interface,"asn6") or ""
 				if whois6 == "" and mArray.openmptcprouter["external_check"] ~= false and mArray.openmptcprouter["dns"] and status_budget_left() then
-					whois6 = ut.trim(exec_with_timeout(2, "whois " .. publicIP6 .. " | grep -i 'netname' | awk '{print $2}'"))
+					whois6 = ut.trim(exec_with_timeout(2, "whois " .. shell_quote(publicIP6) .. " | grep -i 'netname' | awk '{print $2}'"))
 				end
 				if publicIP6 == mArray.openmptcprouter["wan_addr6"] then
 					mArray.openmptcprouter["direct_output"] = true
@@ -3232,7 +3256,7 @@ function interfaces_only_status()
 				end
 			end
 			if ucis:get("openmptcprouter",interface,"manufacturer") == "huawei" and ipaddr ~= "" then
-				local intfdata = ut.trim(exec_with_timeout(2, "omr-huawei " .. ipaddr .. " " .. gateway .. " all"))
+				local intfdata = ut.trim(exec_with_timeout(2, "omr-huawei " .. shell_quote(ipaddr) .. " " .. shell_quote(gateway) .. " all"))
 				if intfdata ~= "" then
 					signal      = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $1}'"))
 					operator    = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $2}'"))
@@ -3252,7 +3276,7 @@ function interfaces_only_status()
 
 		if ifname ~= "" then
 			if proto == "qmi" then
-				local intfdata = ut.trim(exec_with_timeout(2, "omr-qmi " .. (section['device'] or "") .. " all"))
+				local intfdata = ut.trim(exec_with_timeout(2, "omr-qmi " .. shell_quote(section['device'] or "") .. " all"))
 				if intfdata ~= "" then
 					signal      = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $1}'"))
 					operator    = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $2}'"))
@@ -3263,7 +3287,7 @@ function interfaces_only_status()
 			elseif proto == "3g" then
 				signal = exec_with_timeout(2, "omr-3g " .. shell_quote(section['device'] or "") .. " | tr -d '\n'")
 			elseif proto == "modemmanager" then
-				local intfdata = ut.trim(exec_with_timeout(2, "omr-modemmanager " .. (section['device'] or "") .. " all"))
+				local intfdata = ut.trim(exec_with_timeout(2, "omr-modemmanager " .. shell_quote(section['device'] or "") .. " all"))
 				if intfdata ~= "" then
 					signal      = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $1}'"))
 					operator    = ut.trim(sys.exec("echo " .. shell_quote(intfdata) .. " | awk -F';' '{print $2}'"))
