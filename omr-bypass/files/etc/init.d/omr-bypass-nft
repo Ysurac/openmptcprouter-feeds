@@ -1433,14 +1433,15 @@ _intf_rules_all_rules() {
 		${_pnft} insert rule inet fw4 ${proxyproto}_local_out ip6 daddr @bypass6_${service} accept >/dev/null 2>&1 || true
 		${_pnft} insert rule inet fw4 ${proxyproto}_local_out meta mark 0x6539${count} accept >/dev/null 2>&1 || true
 	EOF
+	# The proxies' own chains are declared by their rules files, with the
+	# type their mode needs (filter/mangle for tproxy and the UDP redirect):
+	# a NAT copy created here while those rules are not loaded survives fw4
+	# reloads and makes the next reload that loads them fail. Inserting into
+	# a missing chain just does nothing, like every line of this include.
 	if [ "$proxyproto" = "noproxy" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
 			nft add chain inet fw4 noproxy_local_out "{ type nat hook output priority filter - 1; policy accept; }" >/dev/null 2>&1 || true
 			nft add chain inet fw4 noproxy_pre_tcp "{ type nat hook prerouting priority filter - 1; policy accept; }" >/dev/null 2>&1 || true
-		EOF
-	elif [ "$(uci -q get v2ray.main.enabled)" = "1" ] || [ "$(uci -q get xray.main.enabled)" = "1" ]; then
-		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft add chain inet fw4 ${proxyproto}_pre_tcp "{ type nat hook prerouting priority filter + 1; policy accept; }" >/dev/null 2>&1 || true
 		EOF
 	fi
 	if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
@@ -1458,10 +1459,6 @@ _intf_rules_all_rules() {
 	if [ "$proxyproto" = "noproxy" ]; then
 		cat >> /etc/firewall.omr-bypass <<-EOF
 			nft add chain inet fw4 noproxy_pre_udp "{ type nat hook prerouting priority filter + 1; policy accept; }" >/dev/null 2>&1 || true
-		EOF
-	elif ([ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ "$(uci -q get v2ray.main_transparent_proxy.redirect_udp)" = "0" ]) || ([ "$(uci -q get xray.main.enabled)" = "1" ] && [ "$(uci -q get xray.main_transparent_proxy.redirect_udp)" = "0" ]); then
-		cat >> /etc/firewall.omr-bypass <<-EOF
-			nft add chain inet fw4 ${proxyproto}_pre_udp "{ type nat hook prerouting priority filter + 1; policy accept; }" >/dev/null 2>&1 || true
 		EOF
 	fi
 	if [ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ]; then
