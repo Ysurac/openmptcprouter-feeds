@@ -13,6 +13,8 @@
 # (e.g. luci.mptcp's set_interface_settings rpcd call), so this just keeps
 # mqvpn in sync with whatever weight was last pushed through that API.
 
+. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
+
 if [ "$(uci -q get mqvpn.settings.enable)" != "1" ]; then
 	exit 0
 fi
@@ -45,17 +47,22 @@ fi
 weight="$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath_weight")"
 [ -z "$weight" ] && exit 0
 
-# network.<iface>.weight mirrors the weight last applied to this path.
-# It's cleared by 005-mqvpn-path whenever the path is removed, so a
-# freshly re-added path always gets its weight re-applied here even if
-# multipath_weight itself never changed.
-current_weight="$(uci -q get "network.$OMR_TRACKER_INTERFACE.weight")"
+# openmptcprouter.<iface>.mqvpn_weight is the weight last applied to this
+# path, as "<mqvpn pid>:<weight>". mqvpn keeps per-path weights in RAM
+# only, so the cache is runtime state too: /var/state is empty after a
+# reboot, a restarted mqvpn has another pid, and 005-mqvpn-path clears it
+# whenever the path is removed. Either way the weight is applied again,
+# even if multipath_weight itself never changed. (It used to be
+# network.<iface>.weight, committed to flash: it outlived the mqvpn that
+# had the weight, and that option is the balancing weight of the route.)
+mqvpn_pid="$(pidof mqvpn 2>/dev/null)"
+mqvpn_pid="${mqvpn_pid%% *}"
+current_weight="$(omr_state_get "openmptcprouter.$OMR_TRACKER_INTERFACE.mqvpn_weight")"
 
-if [ "$weight" != "$current_weight" ]; then
+if [ "${mqvpn_pid}:${weight}" != "$current_weight" ]; then
 	_log "mqvpn: set weight $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $weight"
 	if mqvpn-path weight "$OMR_TRACKER_DEVICE" "$weight" >/dev/null 2>&1; then
-		uci -q set "network.$OMR_TRACKER_INTERFACE.weight=$weight"
-		[ -n "$(uci -q changes network)" ] && uci -q commit network
+		omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" mqvpn_weight "${mqvpn_pid}:${weight}"
 	else
 		_log "mqvpn: failed to set weight $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $weight"
 	fi

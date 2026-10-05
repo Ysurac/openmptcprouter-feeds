@@ -7,6 +7,8 @@
 #
 # This script manages mqvpn paths when an interface goes up or down
 
+. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
+
 if [ "$(uci -q get mqvpn.settings.enable)" != "1" ]; then
 	exit 0
 fi
@@ -39,10 +41,10 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
 		mqvpn-path remove "$OMR_TRACKER_DEVICE" >/dev/null
 		# Force 006-mqvpn-weight and 007-mqvpn-dscp to re-apply the weight
 		# and the DSCP mask next time this path comes back up, since mqvpn
-		# drops any per-path state on remove.
-		uci -q del "network.$OMR_TRACKER_INTERFACE.weight"
-		uci -q del "network.$OMR_TRACKER_INTERFACE.mqvpn_dscp_mask"
-		[ -n "$(uci -q changes network)" ] && uci -q commit network
+		# drops any per-path state on remove. Their caches are runtime
+		# state (/var/state), nothing to commit.
+		omr_state_del openmptcprouter "$OMR_TRACKER_INTERFACE" mqvpn_weight
+		omr_state_del openmptcprouter "$OMR_TRACKER_INTERFACE" mqvpn_dscp_mask
 	fi
 	exit 0
 fi

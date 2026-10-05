@@ -19,7 +19,7 @@
 # Runtime options kept here rather than in /etc/config/openmptcprouter:
 #   <wan>.state lc mptcp_status loop restart_intf local_ipv4 local_ipv6
 #         publicip publicip6 asn asn6 operator number manufacturer latency
-#         latency_previous mplc
+#         latency_previous mplc mqvpn_weight mqvpn_dscp_mask
 #   omr.*  (vpn, server, proxy, ss_<server>, v2ray, xray, detected_*)
 #   settings.apilc sysupgrade_lc unbound_lc
 #   <server>.current admin_error token_error set_firewall

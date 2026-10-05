@@ -23,6 +23,8 @@
 # this hook chooses -- if that ever changes, revisit before assuming
 # download_interface can be wired up here too.
 
+. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
+
 if [ "$(uci -q get mqvpn.settings.enable)" != "1" ]; then
 	exit 0
 fi
@@ -92,17 +94,21 @@ for section in $(uci -q show network 2>/dev/null | sed -n "s/^network\.\([^.=]*\
 	mask=$((mask | (1 << val)))
 done
 
-# network.<iface>.mqvpn_dscp_mask mirrors the mask last applied to this
-# path -- same "re-apply on re-add even if unchanged" reasoning as
-# 006-mqvpn-weight's network.<iface>.weight cache.
-current_mask="$(uci -q get "network.$OMR_TRACKER_INTERFACE.mqvpn_dscp_mask")"
-[ -z "$current_mask" ] && current_mask=0
+# openmptcprouter.<iface>.mqvpn_dscp_mask is the mask last applied to this
+# path, as "<mqvpn pid>:<mask>", in /var/state -- same reasoning as
+# 006-mqvpn-weight's mqvpn_weight cache: mqvpn holds the mask in RAM only,
+# so a reboot, an mqvpn restart (new pid) or a path removal (005 clears
+# it) must make the mask be pushed again. Without a cache the path has
+# mqvpn's default mask, 0, so a 0 mask needs no push.
+mqvpn_pid="$(pidof mqvpn 2>/dev/null)"
+mqvpn_pid="${mqvpn_pid%% *}"
+current_mask="$(omr_state_get "openmptcprouter.$OMR_TRACKER_INTERFACE.mqvpn_dscp_mask")"
+[ -z "$current_mask" ] && current_mask="${mqvpn_pid}:0"
 
-if [ "$mask" != "$current_mask" ]; then
+if [ "${mqvpn_pid}:${mask}" != "$current_mask" ]; then
 	_log "mqvpn: set DSCP mask $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $mask"
 	if mqvpn-path dscp "$OMR_TRACKER_DEVICE" "$mask" >/dev/null 2>&1; then
-		uci -q set "network.$OMR_TRACKER_INTERFACE.mqvpn_dscp_mask=$mask"
-		[ -n "$(uci -q changes network)" ] && uci -q commit network
+		omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" mqvpn_dscp_mask "${mqvpn_pid}:${mask}"
 	else
 		_log "mqvpn: failed to set DSCP mask $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $mask"
 	fi

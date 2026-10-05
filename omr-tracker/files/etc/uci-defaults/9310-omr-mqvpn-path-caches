@@ -1,0 +1,20 @@
+#!/bin/sh
+# 007-mqvpn-dscp kept the DSCP mask it last pushed to each mqvpn path in
+# network.<iface>.mqvpn_dscp_mask, committed to the config. mqvpn holds the
+# mask in RAM only, so after a reboot or an mqvpn restart the paths were back
+# at mask 0 while the cache still matched, and nothing was pushed again. The
+# cache is now runtime state (openmptcprouter.<iface>.mqvpn_dscp_mask in
+# /var/state, see /usr/share/omr/lib/omr-state.sh): drop the old copies, in
+# one commit.
+#
+# 006-mqvpn-weight's old cache, network.<iface>.weight, is left alone: that
+# option is also the interface's balancing weight (LuCI, mptcp-weight-manager,
+# omr-weight-sync), so it can't be told apart from a value the user wants.
+
+changed=""
+for key in $(uci -q show network 2>/dev/null | sed -n 's/^\(network\.[^.=]*\.mqvpn_dscp_mask\)=.*/\1/p'); do
+	uci -q delete "$key"
+	changed=1
+done
+[ -n "$changed" ] && uci -q commit network
+exit 0
