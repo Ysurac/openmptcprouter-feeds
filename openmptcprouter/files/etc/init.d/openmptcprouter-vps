@@ -128,6 +128,15 @@ _api_log_refusal() {
 	return 0
 }
 
+# VPS answers end up in uci batch here-docs (set x=$value): a value that
+# jsonfilter decodes to a newline would start a uci command of its own, so the
+# VPS could set any option on the router. No field is multi-line (keys and
+# certificates come base64), so drop the \n and \r escapes; escaped
+# backslashes are kept as they are.
+_json_one_line() {
+	sed -e 's/\\\\/@@OMRBS@@/g' -e 's/\\[nr]//g' -e 's/\\u000[aAdD]//g' -e 's/@@OMRBS@@/\\\\/g'
+}
+
 _get_json() {
 	local route result
 	route=$1
@@ -161,7 +170,8 @@ _get_json() {
 			[ "$(echo $result | grep 'Could not validate credentials')" ] && result=''
 		fi
 		_api_log_refusal "$route" "$result"
-		echo $result
+		# Quoted: unquoted, a * or ? in the answer was expanded to file names
+		echo "$result" | _json_one_line
 	} || {
 		echo ''
 	}
@@ -201,7 +211,8 @@ _set_json() {
 			[ "$(echo $result | grep 'Could not validate credentials')" ] && result=''
 		fi
 		_api_log_refusal "$route" "$result"
-		echo $result
+		# Quoted: unquoted, a * or ? in the answer was expanded to file names
+		echo "$result" | _json_one_line
 	} || {
 		echo ''
 	}
