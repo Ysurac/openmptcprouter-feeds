@@ -1784,15 +1784,35 @@ set_mptcp_weight_vps() {
 # differs (bare string vs {"prefix":...} object) depending on whether an
 # entry was inserted as a single IP or a CIDR, which would need two
 # different jsonfilter paths to cover reliably.
+#
+# omr-bypass's DSCP rules fill sets of their own since they stopped sharing
+# omr-dscp's names (omr_dst_bypass_dscp_<class>_4 / _6): they are read too,
+# merged with omr-dscp's and deduplicated, or the VPS never learned about
+# them. Either set may be missing. The elements of a long set are spread over
+# several lines, and one may carry a timeout; a range (adjacent addresses
+# merged in an interval set) is no CIDR, and the VPS refuses the whole list
+# for a single one, so it is left out.
 _get_dscp_class_members() {
-	local class="$1" fam="$2" legacy_name
+	local class="$1" fam="$2" legacy_name nset
 
 	[ "$fam" = "6" ] && legacy_name="omr_dscp6-${class}" || legacy_name="omr_dscp-${class}"
 
-	ipset -q -o save list "$legacy_name" 2>/dev/null | awk '/^add/ {print $3}'
-	nft list set inet fw4 "omr_dscp_${class}_${fam}" 2>/dev/null \
-		| sed -n 's/.*elements = { *\(.*[^ ]\) *}.*/\1/p' \
-		| tr ',' '\n' | sed 's/^ *//;s/ *$//' | grep -v '^$'
+	{
+		ipset -q -o save list "$legacy_name" 2>/dev/null | awk '/^add/ {print $3}'
+		for nset in "omr_dscp_${class}_${fam}" "omr_dst_bypass_dscp_${class}_${fam}"; do
+			nft list set inet fw4 "$nset" 2>/dev/null
+		done | awk '
+			/elements = \{/ { e = 1; sub(/.*elements = \{/, "") }
+			e {
+				done = sub(/\}.*/, "")
+				n = split($0, parts, ",")
+				for (i = 1; i <= n; i++) {
+					split(parts[i], w, " ")
+					if (w[1] != "" && w[1] !~ /-/) print w[1]
+				}
+				if (done) e = 0
+			}'
+	} | awk '!seen[$0]++'
 }
 
 _get_dscp_classify_entries() {
