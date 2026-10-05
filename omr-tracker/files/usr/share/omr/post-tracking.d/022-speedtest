@@ -13,7 +13,11 @@
 interface_up=$(ifstatus "$OMR_TRACKER_INTERFACE" 2>/dev/null | jsonfilter -q -e '@["up"]')
 [ "$interface_up" != "true" ] && exit 0
 
-if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(pgrep -f omr-test-speed-server)" = "" ] && [ "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed)" = "1" ] && [ -z "$(omr_state_get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed_lc)" ]; then
+# testspeed_lc marks the automatic speedtest as done for this interface. It
+# stays in the persistent config, unlike the runtime values in /var/state:
+# kept there, it was gone after each reboot and the 6 tests ran again on
+# every boot on each interface with testspeed enabled.
+if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(pgrep -f omr-test-speed-server)" = "" ] && [ "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed)" = "1" ] && [ -z "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed_lc)" ]; then
 	speedtest_bin="/bin/omr-test-speed-server"
 	[ -x "$speedtest_bin" ] || speedtest_bin="omr-test-speed-server"
 	launch_speedtest() {
@@ -55,7 +59,8 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(pgrep
 				fi
 				_log "Calculated ${OMR_TRACKER_INTERFACE} upload speed: ${upload_speed}"
 				uci -q set network.${OMR_TRACKER_INTERFACE}.uploadspeed=${upload_speed}
-				omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE testspeed_lc $(date +"%s")
+				uci -q set openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed_lc=$(date +"%s")
+				uci -q commit openmptcprouter
 				uci commit network
 				uci commit sqm
 			fi

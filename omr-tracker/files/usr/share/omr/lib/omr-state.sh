@@ -17,9 +17,9 @@
 # existing state entry to keep the state file bounded.
 #
 # Runtime options kept here rather than in /etc/config/openmptcprouter:
-#   <wan>.state lc mptcp_status loop restart_intf testspeed_lc local_ipv4
-#         local_ipv6 publicip publicip6 asn asn6 operator number manufacturer
-#         latency latency_previous mplc
+#   <wan>.state lc mptcp_status loop restart_intf local_ipv4 local_ipv6
+#         publicip publicip6 asn asn6 operator number manufacturer latency
+#         latency_previous mplc
 #   omr.*  (vpn, server, proxy, ss_<server>, v2ray, xray, detected_*)
 #   settings.apilc sysupgrade_lc unbound_lc
 #   <server>.current admin_error token_error set_firewall
@@ -29,6 +29,8 @@
 # Read them with "uci -P /var/state get" (omr_state_get): that view is the
 # persistent config with the state on top. Plain "uci get" does not see them,
 # and "uci changes"/"uci commit" never pick them up.
+# <wan>.testspeed_lc is not one of them: it marks the automatic speedtest
+# (022-speedtest) as done and must survive a reboot.
 
 OMR_STATE_DIR="${OMR_STATE_DIR:-/var/state}"
 
