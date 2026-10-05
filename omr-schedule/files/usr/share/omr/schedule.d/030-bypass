@@ -24,13 +24,58 @@ if [ "$(uci -q get omr-bypass.global.lc)" = "" ] || [ $(($(date +"%s") - $(uci -
 	vpnipv6md5=$(echo "${bypassipv6s}" | md5sum | awk '{print $1}' | tr -d "\n")
 	if [ "$vpnipv4md5" != "$(uci -q get omr-bypass.global.vpn_ipv4_md5)" ] || [ "$vpnipv6md5" != "$(uci -q get omr-bypass.global.vpn_ipv6_md5)" ]; then
 		_log "Set bypass ip on servers"
+		# set_bypass_ips says nothing of how it went: the checksums used to be
+		# stored anyway, so a list a VPS never got (API down) was never sent
+		# again. Its per-server bypass_sent tells: set once a VPS took a
+		# list, removed once it took an empty one. A server that had one
+		# already keeps bypass_sent=1 whatever happens, so it is dropped first
+		# (staged only, openmptcprouter-vps commits it with its own change)
+		# and only a VPS that took the new list sets it again.
+		_bypass_servers="" _bypass_had_sent=" "
+		for _bypass_srv in $(uci -q show openmptcprouter | sed -n "s/^openmptcprouter\.\([^.=]*\)=server$/\1/p"); do
+			# the servers openmptcprouter-vps sends the list to
+			[ "$(uci -q get openmptcprouter.${_bypass_srv}.disabled)" = "1" ] && continue
+			[ -z "$(uci -q get openmptcprouter.${_bypass_srv}.username)" ] && continue
+			[ -z "$(uci -q get openmptcprouter.${_bypass_srv}.password)" ] && continue
+			[ -z "$(uci -q get openmptcprouter.${_bypass_srv}.port)" ] && continue
+			_bypass_servers="$_bypass_servers $_bypass_srv"
+			if [ -n "$bypassipv4s$bypassipv6s" ] && [ "$(uci -q get openmptcprouter.${_bypass_srv}.bypass_sent)" = "1" ]; then
+				_bypass_had_sent="${_bypass_had_sent}${_bypass_srv} "
+				uci -q delete openmptcprouter.${_bypass_srv}.bypass_sent
+			fi
+		done
 		/etc/init.d/openmptcprouter-vps set_bypass_ips
-		uci -q batch <<-EOF >/dev/null
-			set omr-bypass.global=global
-			set omr-bypass.global.vpn_ipv4_md5=${vpnipv4md5}
-			set omr-bypass.global.vpn_ipv6_md5=${vpnipv6md5}
-			commit omr-bypass
-		EOF
+		_bypass_failed=""
+		for _bypass_srv in $_bypass_servers; do
+			if [ -n "$bypassipv4s$bypassipv6s" ]; then
+				[ "$(uci -q get openmptcprouter.${_bypass_srv}.bypass_sent)" = "1" ] && continue
+				# not sent: give back the bypass_sent dropped above, a later
+				# empty list must still reach this VPS. Another server's
+				# success may have committed the drop already.
+				case "$_bypass_had_sent" in
+					*" $_bypass_srv "*)
+						uci -q revert openmptcprouter.${_bypass_srv}.bypass_sent
+						if [ "$(uci -q get openmptcprouter.${_bypass_srv}.bypass_sent)" != "1" ]; then
+							uci -q set openmptcprouter.${_bypass_srv}.bypass_sent=1
+							uci -q commit openmptcprouter
+						fi
+						;;
+				esac
+			else
+				[ "$(uci -q get openmptcprouter.${_bypass_srv}.bypass_sent)" != "1" ] && continue
+			fi
+			_bypass_failed="$_bypass_failed $_bypass_srv"
+		done
+		if [ -z "$_bypass_failed" ]; then
+			uci -q batch <<-EOF >/dev/null
+				set omr-bypass.global=global
+				set omr-bypass.global.vpn_ipv4_md5=${vpnipv4md5}
+				set omr-bypass.global.vpn_ipv6_md5=${vpnipv6md5}
+				commit omr-bypass
+			EOF
+		else
+			_log "Bypass ip not set on server(s)${_bypass_failed}, try again later"
+		fi
 	fi
 	uci -q set omr-bypass.global.lc=$(date +"%s")
 	uci -q commit omr-bypass
