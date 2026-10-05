@@ -598,6 +598,19 @@ _daemon_pids() {
 	echo $daemons
 }
 
+# The tracker daemons of interface $1: "omr-tracker <interface>" has to be a
+# whole word of the command line, as pgrep -f "omr-tracker wan1" also matches
+# the trackers of wan10 to wan19
+_tracker_pids() {
+	local pid daemons=""
+	for pid in $(_daemon_pids "omr-tracker $1"); do
+		case " $(tr '\0' ' ' 2>/dev/null < "/proc/$pid/cmdline") " in
+			*" /bin/omr-tracker $1 "*) daemons="$daemons $pid" ;;
+		esac
+	done
+	echo $daemons
+}
+
 _oldest_pid() {
 	local pid start oldest="" oldest_start=""
 	for pid in "$@"; do
@@ -617,7 +630,7 @@ restart_omrtracker() {
 	{ [ -z "$multipath" ] || [ "$multipath" = "off" ]; } && return
 	[ "$ifenabled" = "0" ] && return
 	local daemons daemon_count keep pid
-	daemons=$(_daemon_pids "omr-tracker $1")
+	daemons=$(_tracker_pids "$1")
 	daemon_count=$(echo $daemons | wc -w)
 	[ "$daemon_count" -gt 1 ] && {
 		# keep the instance procd supervises (fall back to the oldest),
