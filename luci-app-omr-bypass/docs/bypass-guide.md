@@ -85,7 +85,9 @@ Matches by destination domain name. Adds **Restrict to address family**
 (IPv4/IPv6/both) and **protocol** (all/tcp/udp) beyond the common set, plus
 **Disable AAAA IPv6 DNS** to make the router ignore IPv6 answers for this
 domain and force IPv4-only resolution — useful when a service's IPv6 path
-is worse than its IPv4 one.
+is worse than its IPv4 one. It only applies to a rule with an output
+interface: a DSCP-only rule (no interface) changes no route, so its
+domains keep their IPv6 answers.
 
 ### IPs and Networks
 

@@ -19,14 +19,17 @@ EXTRA_COMMANDS="reload_rules bypass_asn"
 # appears in this tree's own DSCP domain lists) lands EXACTLY at 1024 bytes,
 # i.e. right on top of the crash threshold with zero margin, not under it.
 # _BYPASS_MAX_DOMAINS_PER_DNSIPSET is kept only as a generous sanity backstop
-# against unbounded uci list growth; _dnsipset_should_split() below tracks
-# actual accumulated domain-name bytes per slot and is what actually decides
-# when to spill into a new omr_dst_bypass_<intf>_d<N> section.
+# against unbounded uci list growth; _dnsipset_add() below tracks the actual
+# size of each slot's line and is what actually decides when to spill into a
+# new omr_dst_bypass_<family>_d<N> section.
 _BYPASS_MAX_DOMAINS_PER_DNSIPSET=200
-# Safety margin under the ~1024-byte line buffer: leaves headroom for the
-# "/4#inet#fw4#<set4>,6#inet#fw4#<set6>" tag (grows with interface-name
-# length) plus any extra DSCP set names appended to the same ipset entry.
-_BYPASS_MAX_DNSIPSET_LINE_BYTES=700
+# Budget for the whole generated line, under the ~1024-byte buffer: "nftset="
+# (7 bytes), "/<domain>" per domain, and ",4#inet#fw4#<set>" per set name
+# (the first one starts with "/"), i.e. 12 bytes plus the name. The set
+# names used to be left out of the count, with a 700-byte domain budget as
+# the margin for them; DSCP set names (~38 bytes each) were then added on
+# top of a full slot and pushed the line past 1024 bytes.
+_BYPASS_MAX_DNSIPSET_LINE_BYTES=900
 
 # Only for the kernel nDPI netfilter match (/proc/net/xt_ndpi), which has no
 # nftables expression: its rules go through iptables(-nft) compat.
@@ -499,6 +502,89 @@ _dscp_ip() {
 	fi
 }
 
+# _dnsipset_open <family> <section> <set name>...: make <section> a dnsmasq
+# ipset that names exactly these sets, and load the size of its nftset= line
+# into the family's counters. A plain start keeps the domains an earlier run
+# wrote (a reload has wiped them), so they are counted too; names that are
+# not the expected ones (DSCP names an older version added to an interface's
+# list) are dropped. The domains found are remembered in the family's list
+# of domains seen this run.
+_dnsipset_open() {
+	local fam="$1" key="$2" cur n bytes=7 cnt=0 seen
+	shift 2
+	cur=$(uci -q get "dhcp.${key}.name")
+	if [ "$cur" != "$*" ]; then
+		{
+			echo "set dhcp.${key}=ipset"
+			echo "set dhcp.${key}.table='fw4'"
+			echo "set dhcp.${key}.table_family='inet'"
+			[ -n "$cur" ] && echo "delete dhcp.${key}.name"
+			for n in "$@"; do
+				echo "add_list dhcp.${key}.name=\"$n\""
+			done
+		} | uci -q batch
+	fi
+	for n in "$@"; do
+		bytes=$((bytes + ${#n} + 12))
+	done
+	eval "seen=\${_dnsipset_seen_${fam}:-}"
+	for n in $(uci -q get "dhcp.${key}.domain"); do
+		bytes=$((bytes + ${#n} + 1))
+		cnt=$((cnt + 1))
+		seen="$seen $n"
+	done
+	eval "_dnsipset_cnt_${fam}=$cnt"
+	eval "_dnsipset_bytes_${fam}=$bytes"
+	eval "_dnsipset_seen_${fam}=\$seen"
+}
+
+# _dnsipset_add <family> <domain> <set name>...: add <domain> to the dnsmasq
+# ipset of <family>. dnsmasq writes one nftset= line per ipset entry and its
+# config parser has a ~1024-byte line buffer (issue #3242), so the domains of
+# a family are spread over omr_dst_bypass_<family>, omr_dst_bypass_<family>_d1,
+# _d2, ...: a slot is closed BEFORE a domain would push its line past
+# _BYPASS_MAX_DNSIPSET_LINE_BYTES, set names included. Returns 0 when the
+# domain was added, 1 when the family already had it (in any slot this run
+# added to or opened).
+_dnsipset_add() {
+	local fam="$1" domain="$2" slot key cnt bytes add seen
+	shift 2
+	eval "slot=\${_dnsipset_slot_${fam}:-}"
+	if [ -z "$slot" ]; then
+		slot=0
+		eval "_dnsipset_slot_${fam}=0"
+		eval "_dnsipset_seen_${fam}="
+		_dnsipset_open "$fam" "omr_dst_bypass_${fam}" "$@"
+	fi
+	if [ "$slot" = "0" ]; then
+		key="omr_dst_bypass_${fam}"
+	else
+		key="omr_dst_bypass_${fam}_d${slot}"
+	fi
+	eval "seen=\${_dnsipset_seen_${fam}:-}"
+	case "$seen " in *" $domain "*) return 1 ;; esac
+	add=$((${#domain} + 1))
+	while :; do
+		eval "cnt=\${_dnsipset_cnt_${fam}:-0}"
+		eval "bytes=\${_dnsipset_bytes_${fam}:-0}"
+		# an empty slot always takes the domain: the loop has to end
+		[ "$cnt" -eq 0 ] && break
+		[ "$cnt" -lt "$_BYPASS_MAX_DOMAINS_PER_DNSIPSET" ] && \
+			[ "$((bytes + add))" -le "$_BYPASS_MAX_DNSIPSET_LINE_BYTES" ] && break
+		slot=$((slot + 1))
+		key="omr_dst_bypass_${fam}_d${slot}"
+		eval "_dnsipset_slot_${fam}=${slot}"
+		_dnsipset_open "$fam" "$key" "$@"
+		eval "seen=\${_dnsipset_seen_${fam}:-}"
+		case "$seen " in *" $domain "*) return 1 ;; esac
+	done
+	uci -q add_list "dhcp.${key}.domain=$domain"
+	eval "_dnsipset_cnt_${fam}=$((cnt + 1))"
+	eval "_dnsipset_bytes_${fam}=$((bytes + add))"
+	eval "_dnsipset_seen_${fam}=\"\$seen \$domain\""
+	return 0
+}
+
 _bypass_domains() {
 	local domain
 	local intf
@@ -587,58 +673,25 @@ _bypass_domain() {
 				done
 			fi
 		fi
-		# Determine which UCI ipset section to use for this intf.
-		# Domains are spread across omr_dst_bypass_${intf}, omr_dst_bypass_${intf}_d1,
-		# _d2, ... so each generates a short enough nftset= line in dnsmasq.conf.
+		# One dnsmasq ipset family per destination: the interface alone,
+		# the interface and a DSCP class, or a DSCP class alone (no
+		# routing change). Every domain of an ipset entry populates every
+		# set it names, so a domain without a DSCP class must not share an
+		# entry with the DSCP set names of another rule. _dnsipset_add
+		# spreads each family over omr_dst_bypass_<family>, _d1, _d2, ...
 		if [ -n "$intf" ]; then
-			local _dnsipset_slot _dnsipset_cnt _dnsipset_bytes _dnsipset_key _dnsipset_add_bytes
-			eval "_dnsipset_slot=\${_dnsipset_slot_${intf}:-0}"
-			eval "_dnsipset_cnt=\${_dnsipset_cnt_${intf}:-0}"
-			eval "_dnsipset_bytes=\${_dnsipset_bytes_${intf}:-0}"
-			if [ "$_dnsipset_slot" = "0" ]; then
-				_dnsipset_key="omr_dst_bypass_${intf}"
-			else
-				_dnsipset_key="omr_dst_bypass_${intf}_d${_dnsipset_slot}"
-			fi
-			if ! _uci_list_has dhcp.${_dnsipset_key}.domain "$domain"; then
-				# Each domain costs len(domain)+1 in the generated nftset= line
-				# (a leading "/" separator per entry) -- split into a new slot
-				# BEFORE this domain would push the line past the safety
-				# margin, not after (issue #3242's byte-buffer overrun, not a
-				# domain-count problem -- see the comment on
-				# _BYPASS_MAX_DNSIPSET_LINE_BYTES above).
-				_dnsipset_add_bytes=$((${#domain} + 1))
-				if [ "$_dnsipset_cnt" -ge "$_BYPASS_MAX_DOMAINS_PER_DNSIPSET" ] || \
-				   [ "$((_dnsipset_bytes + _dnsipset_add_bytes))" -gt "$_BYPASS_MAX_DNSIPSET_LINE_BYTES" ]; then
-					_dnsipset_slot=$((_dnsipset_slot + 1))
-					_dnsipset_key="omr_dst_bypass_${intf}_d${_dnsipset_slot}"
-					eval "_dnsipset_slot_${intf}=${_dnsipset_slot}"
-					eval "_dnsipset_cnt_${intf}=0"
-					eval "_dnsipset_bytes_${intf}=0"
-					_dnsipset_cnt=0
-					_dnsipset_bytes=0
-					uci -q batch <<-EOIPSET
-						set dhcp.${_dnsipset_key}=ipset
-						set dhcp.${_dnsipset_key}.table='fw4'
-						set dhcp.${_dnsipset_key}.table_family='inet'
-						add_list dhcp.${_dnsipset_key}.name="omr_dst_bypass_${intf}_4"
-						add_list dhcp.${_dnsipset_key}.name="omr_dst_bypass_${intf}_6"
-					EOIPSET
-				fi
-				uci -q add_list dhcp.${_dnsipset_key}.domain="$domain"
-				eval "_dnsipset_cnt_${intf}=$((_dnsipset_cnt + 1))"
-				eval "_dnsipset_bytes_${intf}=$((_dnsipset_bytes + _dnsipset_add_bytes))"
-				uci -q set firewall.omr_dst_bypass_${intf}_4.enabled='1'
-				add_domains="true"
-			fi
-			# Add DSCP nftset names to the existing intf dnsmasq ipset so dnsmasq populates them too
 			if [ -n "$dscp" ]; then
 				_dscp_ensure_ipset "$dscp"
-				_uci_add_list_unique dhcp.${_dnsipset_key}.name "omr_dst_bypass_dscp_${dscp}_4"
-				if [ "$noipv6" != "1" ]; then
-					_uci_add_list_unique dhcp.${_dnsipset_key}.name "omr_dst_bypass_dscp_${dscp}_6"
-				fi
-			fi
+				_dnsipset_add "${intf}_dscp_${dscp}" "$domain" \
+					"omr_dst_bypass_${intf}_4" "omr_dst_bypass_${intf}_6" \
+					"omr_dst_bypass_dscp_${dscp}_4" "omr_dst_bypass_dscp_${dscp}_6"
+			else
+				_dnsipset_add "${intf}" "$domain" \
+					"omr_dst_bypass_${intf}_4" "omr_dst_bypass_${intf}_6"
+			fi && {
+				uci -q set firewall.omr_dst_bypass_${intf}_4.enabled='1'
+				add_domains="true"
+			}
 			for zone in $(_get_firewall_zones); do
 				uci -q set firewall.omr_dst_bypass_${intf}_dstip_4_${zone}.enabled='1'
 				uci -q set firewall.omr_dst_bypass_${intf}_dstip_4_accept_${zone}.enabled='1'
@@ -650,27 +703,22 @@ _bypass_domain() {
 					uci -q set firewall.omr_dst_bypass_${intf}_dstip_6_accept_${zone}.enabled='1'
 				done
 			fi
-		elif [ -n "$dscp" ]; then
-			# DSCP-only domain: create a dedicated dnsmasq ipset for the DSCP nftset
-			_dscp_ensure_ipset "$dscp"
-			local _dscp_ipset_key="omr_dst_bypass_dscp_${dscp}"
-			if ! _uci_list_has dhcp.${_dscp_ipset_key}.domain "$domain"; then
-				uci -q batch <<-EOIPSET
-					set dhcp.${_dscp_ipset_key}=ipset
-					set dhcp.${_dscp_ipset_key}.table='fw4'
-					set dhcp.${_dscp_ipset_key}.table_family='inet'
-				EOIPSET
-				_uci_add_list_unique dhcp.${_dscp_ipset_key}.name "omr_dst_bypass_dscp_${dscp}_4"
-				_uci_add_list_unique dhcp.${_dscp_ipset_key}.name "omr_dst_bypass_dscp_${dscp}_6"
-				uci -q add_list dhcp.${_dscp_ipset_key}.domain="$domain"
-				add_domains="true"
+			# noipv6 list entries are plain domains (no slashes), unlike the
+			# ipset list above -- matching for "/$domain/" here never hits, so
+			# this used to add the same domain again on every occurrence
+			# within one run.
+			# Only here: noipv6 defaults to "1", and a DSCP-only domain (no
+			# routing change) must keep its AAAA answers -- dnsmasq answered
+			# them with "::", which took IPv6 away from those domains.
+			if [ "$noipv6" = "1" ] && ! _uci_list_has dhcp.@dnsmasq[0].noipv6 "$domain"; then
+				uci -q add_list dhcp.@dnsmasq[0].noipv6="$domain"
 			fi
-		fi
-		# noipv6 list entries are plain domains (no slashes), unlike the ipset
-		# list above -- matching for "/$domain/" here never hits, so this used
-		# to add the same domain again on every occurrence within one run.
-		if [ "$noipv6" = "1" ] && ! _uci_list_has dhcp.@dnsmasq[0].noipv6 "$domain"; then
-			uci -q add_list dhcp.@dnsmasq[0].noipv6="$domain"
+		elif [ -n "$dscp" ]; then
+			# DSCP-only domain: a dnsmasq ipset of its own for the DSCP sets
+			_dscp_ensure_ipset "$dscp"
+			_dnsipset_add "dscp_${dscp}" "$domain" \
+				"omr_dst_bypass_dscp_${dscp}_4" "omr_dst_bypass_dscp_${dscp}_6" \
+				&& add_domains="true"
 		fi
 		#logger -t "omr-bypass" "Get IPs of $domain... Done"
 	fi
