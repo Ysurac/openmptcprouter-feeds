@@ -1891,7 +1891,7 @@ _bypass_proto_ndpid_list=""
 # (categories): registers one proto for nDPId watching and, for interface=all,
 # ensures the nftables sets/rules used to receive detected IPs exist.
 _bypass_ndpid_collect_proto() {
-	local proto="$1" intf="$2" intfid="$3" tcpudp="$4"
+	local proto="$1" intf="$2" intfid="$3" tcpudp="$4" dscp="$5"
 
 	# Ensure nftables sets and rules exist for this protocol (even if DB is empty)
 	if [ "$intf" = "all" ]; then
@@ -1935,27 +1935,34 @@ _bypass_ndpid_collect_proto() {
 		done
 		_intf_rules_all_rules "${proto}" "${intfid}" "${tcpudp}"
 	fi
-	_bypass_proto_ndpid_list="${_bypass_proto_ndpid_list} ${proto}:${intf}:${intfid}"
+	# ndpid-consumer reads proto:intf:intfid:dscp; the dscp field was never
+	# written, so detected flows were never DSCP-marked. Its set has to
+	# exist even when no domain or IP of the rule created it.
+	[ -n "$dscp" ] && _omr_defer _dscp_ensure_ipset "$dscp"
+	_bypass_proto_ndpid_list="${_bypass_proto_ndpid_list} ${proto}:${intf}:${intfid}:${dscp}"
 }
 
 _bypass_proto_collect_ndpid() {
-	local proto intf enabled intfid tcpudp ndpi
+	local proto intf enabled intfid tcpudp ndpi dscp
 	config_get proto $1 proto
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get tcpudp $1 tcpudp "all"
 	config_get ndpi $1 ndpi "1"
+	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
 	[ "$ndpi" = "0" ] && return
 	[ -z "$proto" ] && return
 	intf=$(_map_intf_device "$intf")
 	intf=$(_sanitize_intf_key "$intf")
-	[ -z "$intf" ] && return
+	# no interface: DSCP marking only, if the rule has a class
+	[ -z "$intf" ] && [ -z "$dscp" ] && return
 	[ "$intf" = "none" ] && return
 	[ "$intf" = "default" ] && intf="all"
-	intfid=$(uci -q get omr-bypass.$intf.id)
+	intfid=""
+	[ -n "$intf" ] && intfid=$(uci -q get omr-bypass.$intf.id)
 	[ "$intf" = "all" ] && intfid=""
-	_bypass_ndpid_collect_proto "$proto" "$intf" "$intfid" "$tcpudp"
+	_bypass_ndpid_collect_proto "$proto" "$intf" "$intfid" "$tcpudp" "$dscp"
 }
 
 # Categories (a set of protos grouped in omr-bypass-proto.json) were never
@@ -1965,28 +1972,30 @@ _bypass_proto_collect_ndpid() {
 # the category into its member protos here, same as _bypass_proto_collect_ndpid
 # does for a single dpis proto.
 _bypass_category_collect_ndpid() {
-	local category intf enabled vpn intfid tcpudp ndpi proto
+	local category intf enabled vpn intfid tcpudp ndpi proto dscp
 	config_get category $1 category
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get vpn $1 vpn
 	config_get tcpudp $1 tcpudp "all"
 	config_get ndpi $1 ndpi "0"
+	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
 	[ "$ndpi" = "0" ] && return
 	[ -z "$category" ] && return
 	[ "$vpn" = "1" ] && intf="srv_vpn1"
 	intf=$(_map_intf_device "$intf")
 	intf=$(_sanitize_intf_key "$intf")
-	[ -z "$intf" ] && return
+	[ -z "$intf" ] && [ -z "$dscp" ] && return
 	[ "$intf" = "none" ] && return
 	[ "$intf" = "default" ] && intf="all"
-	intfid=$(uci -q get omr-bypass.$intf.id)
+	intfid=""
+	[ -n "$intf" ] && intfid=$(uci -q get omr-bypass.$intf.id)
 	[ "$intf" = "all" ] && intfid=""
 
 	for proto in $(grep -F "\"category\":\"${category}\"" /usr/share/omr-bypass/omr-bypass-proto.json 2>/dev/null | awk -F'"' '{print $4}'); do
 		[ -n "$proto" ] || continue
-		_bypass_ndpid_collect_proto "$proto" "$intf" "$intfid" "$tcpudp"
+		_bypass_ndpid_collect_proto "$proto" "$intf" "$intfid" "$tcpudp" "$dscp"
 	done
 }
 
@@ -2021,32 +2030,36 @@ _stop_ndpid_consumer() {
 # Set _ndpid_wanted=1 when at least one enabled proto bypass rule relies on
 # nDPId detection (same conditions as _bypass_proto_collect_ndpid)
 _ndpid_rule_wanted() {
-	local proto intf enabled ndpi
+	local proto intf enabled ndpi dscp
 	config_get proto $1 proto
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get ndpi $1 ndpi "1"
+	config_get dscp $1 dscp
 	[ "$enabled" = "0" ] && return
 	[ "$ndpi" = "0" ] && return
 	[ -z "$proto" ] && return
-	[ -z "$intf" ] && return
+	[ -z "$intf" ] && [ -z "$dscp" ] && return
 	[ "$intf" = "none" ] && return
 	_ndpid_wanted=1
 }
 
 # Same check as _ndpid_rule_wanted, for categories sections (a category rule
 # has no single "proto" — any enabled, ndpi=1 category with a routing
-# interface is enough to require the consumer).
+# interface or a DSCP class is enough to require the consumer).
 _ndpid_category_rule_wanted() {
-	local category intf enabled ndpi
+	local category intf enabled ndpi dscp vpn
 	config_get category $1 category
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get ndpi $1 ndpi "0"
+	config_get dscp $1 dscp
+	config_get vpn $1 vpn
 	[ "$enabled" = "0" ] && return
 	[ "$ndpi" = "0" ] && return
 	[ -z "$category" ] && return
-	[ -z "$intf" ] && return
+	[ "$vpn" = "1" ] && intf="srv_vpn1"
+	[ -z "$intf" ] && [ -z "$dscp" ] && return
 	[ "$intf" = "none" ] && return
 	_ndpid_wanted=1
 }
