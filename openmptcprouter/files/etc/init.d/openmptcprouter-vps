@@ -1499,6 +1499,14 @@ set_vxlan() {
 }
 
 
+# dnsmasq's server list holds <entry> as a whole word
+_dnsmasq_has_server() {
+	case " $(uci -q get dhcp.@dnsmasq[0].server) " in
+		*" $1 "*) return 0 ;;
+	esac
+	return 1
+}
+
 _get_pihole() {
 	[ "$(uci -q get openmptcprouter.settings.pihole_auto_conf)" = "0" ] && return
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
@@ -1518,75 +1526,34 @@ _get_pihole() {
 		EOF
 	fi
 
-	if [ "$vpn" = "glorytun_tcp" ]; then
-		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.host_ip')"
-		if [ "$pihole" = "true" ] && [ -z "$(uci -q get dhcp.@dnsmasq[0].server | grep $host_ip)" ]; then
-			uci -q del_list dhcp.@dnsmasq[0].server="$(uci -q get dhcp.@dnsmasq[0].server | tr ' ' '\n' | grep '#53' | grep '10.2')"
-			uci -q batch <<-EOF >/dev/null
-				del_list dhcp.@dnsmasq[0].server="127.0.0.1#5353"
-				add_list dhcp.@dnsmasq[0].server="$host_ip#53"
-				set dhcp.@dnsmasq[0].rebind_protection='0'
-				commit dhcp
-			EOF
-			logger -t "OMR-VPS" "Restart dnsmasq..."
-			/etc/init.d/dnsmasq restart >/dev/null 2>&1
-		fi
-	fi
-	if [ "$vpn" = "glorytun_udp" ]; then
-		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp.host_ip')"
-		if [ "$pihole" = "true" ] && [ -z "$(uci -q get dhcp.@dnsmasq[0].server | grep $host_ip)" ]; then
-			uci -q del_list dhcp.@dnsmasq[0].server="$(uci -q get dhcp.@dnsmasq[0].server | tr ' ' '\n' | grep '#53' | grep '10.2')"
-			uci -q batch <<-EOF >/dev/null
-				del_list dhcp.@dnsmasq[0].server="127.0.0.1#5353"
-				add_list dhcp.@dnsmasq[0].server="$host_ip#53"
-				set dhcp.@dnsmasq[0].rebind_protection='0'
-				commit dhcp
-			EOF
-			logger -t "OMR-VPS" "Restart dnsmasq..."
-			/etc/init.d/dnsmasq restart >/dev/null 2>&1
-		fi
-	fi
-	if [ "$vpn" = "openvpn" ]; then
-		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.host_ip')"
-		if [ "$pihole" = "true" ] && [ -z "$(uci -q get dhcp.@dnsmasq[0].server | grep $host_ip)" ]; then
-			uci -q del_list dhcp.@dnsmasq[0].server="$(uci -q get dhcp.@dnsmasq[0].server | tr ' ' '\n' | grep '#53' | grep '10.2')"
-			uci -q batch <<-EOF >/dev/null
-				del_list dhcp.@dnsmasq[0].server="127.0.0.1#5353"
-				add_list dhcp.@dnsmasq[0].server="$host_ip#53"
-				set dhcp.@dnsmasq[0].rebind_protection='0'
-				commit dhcp
-			EOF
-			logger -t "OMR-VPS" "Restart dnsmasq..."
-			/etc/init.d/dnsmasq restart >/dev/null 2>&1
-		fi
-	fi
-	if [ "$vpn" = "mlvpn" ]; then
-		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.mlvpn.host_ip')"
-		if [ "$pihole" = "true" ] && [ -z "$(uci -q get dhcp.@dnsmasq[0].server | grep $host_ip)" ]; then
-			uci -q del_list dhcp.@dnsmasq[0].server="$(uci -q get dhcp.@dnsmasq[0].server | tr ' ' '\n' | grep '#53' | grep '10.2')"
-			uci -q batch <<-EOF >/dev/null
-				del_list dhcp.@dnsmasq[0].server="127.0.0.1#5353"
-				add_list dhcp.@dnsmasq[0].server="$host_ip#53"
-				set dhcp.@dnsmasq[0].rebind_protection='0'
-				commit dhcp
-			EOF
-			logger -t "OMR-VPS" "Restart dnsmasq..."
-			/etc/init.d/dnsmasq restart >/dev/null 2>&1
-		fi
-	fi
-	if [ "$vpn" = "dsvpn" ]; then
-		host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.dsvpn.host_ip')"
-		if [ "$pihole" = "true" ] && [ -z "$(uci -q get dhcp.@dnsmasq[0].server | grep $host_ip)" ]; then
-			uci -q del_list dhcp.@dnsmasq[0].server="$(uci -q get dhcp.@dnsmasq[0].server | tr ' ' '\n' | grep '#53' | grep '10.2')"
-			uci -q batch <<-EOF >/dev/null
-				del_list dhcp.@dnsmasq[0].server="127.0.0.1#5353"
-				add_list dhcp.@dnsmasq[0].server="$host_ip#53"
-				set dhcp.@dnsmasq[0].rebind_protection='0'
-				commit dhcp
-			EOF
-			logger -t "OMR-VPS" "Restart dnsmasq..."
-			/etc/init.d/dnsmasq restart >/dev/null 2>&1
-		fi
+	# The VPS address of the VPN, where its Pi-hole answers. The list is the
+	# one of _set_pihole_server and omr-tracker's 003-up.
+	case "$vpn" in
+		glorytun_tcp) host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.tcp.host_ip')" ;;
+		glorytun_udp) host_ip="$(echo "$vps_config" | jsonfilter -q -e '@.glorytun.udp.host_ip')" ;;
+		openvpn|mlvpn|dsvpn|mqvpn) host_ip="$(echo "$vps_config" | jsonfilter -q -e "@.${vpn}.host_ip")" ;;
+		*) return ;;
+	esac
+	# An empty answer made grep match everything and put "#53" in dnsmasq
+	case "$host_ip" in
+		''|*[!0-9.]*) return ;;
+	esac
+	if [ "$pihole" = "true" ] && ! _dnsmasq_has_server "${host_ip}#53"; then
+		# The Pi-hole of a VPN used before: only OMR's tunnel addresses, a
+		# user's own 10.2x server stays
+		for _s in $(uci -q get dhcp.@dnsmasq[0].server); do
+			case "$_s" in
+				10.255.*#53) uci -q del_list dhcp.@dnsmasq[0].server="$_s" ;;
+			esac
+		done
+		uci -q batch <<-EOF >/dev/null
+			del_list dhcp.@dnsmasq[0].server="127.0.0.1#5353"
+			add_list dhcp.@dnsmasq[0].server="$host_ip#53"
+			set dhcp.@dnsmasq[0].rebind_protection='0'
+			commit dhcp
+		EOF
+		logger -t "OMR-VPS" "Restart dnsmasq..."
+		/etc/init.d/dnsmasq restart >/dev/null 2>&1
 	fi
 }
 
@@ -3898,7 +3865,7 @@ _set_pihole_server() {
 	# one dnsmasq never leaves 127.0.0.1#5353, and 003-up asked again on
 	# every tracker cycle: a login and a GET /config each time.
 	case "$(uci -q get openmptcprouter.settings.vpn)" in
-		glorytun_tcp|glorytun_udp|openvpn|mlvpn|dsvpn) ;;
+		glorytun_tcp|glorytun_udp|openvpn|mlvpn|dsvpn|mqvpn) ;;
 		*) return ;;
 	esac
 	token=""
