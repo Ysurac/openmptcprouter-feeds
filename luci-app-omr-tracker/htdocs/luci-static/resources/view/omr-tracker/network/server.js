@@ -36,7 +36,11 @@ return view.extend({
 
 		o = s.option(form.Flag, 'enabled', _('Enabled'),
 			_('Enable server monitoring and automatic fallback to a backup server when checks fail.'));
-		o.default = false;
+		// omr-tracker runs a section without the option (enabled:bool:1):
+		// show it ticked, and write the 0, since an unticked box equal to
+		// the default was removed and the tracker kept running
+		o.default = o.enabled;
+		o.rmempty = false;
 
 		o = s.option(form.ListValue, 'initial_state', _('Initial state'),
 			_('Expect interface state on up event'));
