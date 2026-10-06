@@ -127,6 +127,10 @@ local function uci_del_list(config, section, option, value)
 	return changed
 end
 
+local function _nonempty_string(v)
+	return type(v) == "string" and v ~= ""
+end
+
 local function integer_string(value, default, min, max)
 	local n = tonumber(value)
 	if not n then return tostring(default) end
@@ -3541,7 +3545,12 @@ local methods = {
 	},
 	defaultvpn = {
 		args = { vpn = "glorytun_tcp" },
-		call = function(args) default_vpn(args.vpn) end
+		call = function(args)
+			-- default_vpn stops every VPN first: without a name it ended
+			-- there, every VPN stopped, then failed on nil
+			if not _nonempty_string(args.vpn) then return { error = "Invalid arguments" } end
+			default_vpn(args.vpn)
+		end
 	},
 	setserver = {
 		args = { server = "vps", server_ip = "", openmptcprouter_vps_key = "" },
@@ -3575,11 +3584,18 @@ local methods = {
 	},
 	setvpn = {
 		args = { vpn = "openvpn" },
-		call = function(args) default_vpn(args.vpn) end
+		call = function(args)
+			if not _nonempty_string(args.vpn) then return { error = "Invalid arguments" } end
+			default_vpn(args.vpn)
+		end
 	},
 	setproxy = {
 		args = { proxy = "shadowsocks-rust" },
-		call = function(args) default_proxy(args.proxy) end
+		call = function(args)
+			-- default_proxy stops omr-tracker and the current proxy first
+			if not _nonempty_string(args.proxy) then return { error = "Invalid arguments" } end
+			default_proxy(args.proxy)
+		end
 	},
 	startvpn = {
 		args = { vpn = "" },
