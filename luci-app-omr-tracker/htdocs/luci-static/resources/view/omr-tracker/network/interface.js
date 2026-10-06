@@ -461,6 +461,14 @@ return view.extend({
 		o.modalonly = true;
 		*/
 
+		// "Show advanced settings" opens unticked every time: an option it
+		// hides is inactive on save, and LuCI removes an inactive option
+		// unless it is retained, so every modal save wiped the tuned values
+		s.children.forEach(function(opt) {
+			if ((opt.deps || []).some(function(d) { return d._show_adv != null; }))
+				opt.retain = true;
+		});
+
 		return m.render();
 	}
 })
