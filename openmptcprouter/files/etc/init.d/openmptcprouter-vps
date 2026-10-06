@@ -1447,9 +1447,7 @@ _set_vxlan_service() {
 	([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q -P /var/state get openmptcprouter.${servername}.current)" = "1" ]) || return
 	vps_config=""
 	tokenserver=$(_get_token $servername)
-	server="$(echo $tokenserver | cut -f1 -d:)"
-	serverport="$(echo $tokenserver | cut -f2 -d:)"
-	token="$(echo $tokenserver | cut -f3 -d:)"
+	_split_tokenserver "$tokenserver"
 	[ -z "$token" ] && return
 	vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
@@ -3716,14 +3714,23 @@ _get_token() {
 	echo "$server:$serverport:$token"
 }
 
+# _get_token answers "<server>:<port>:<token>". An IPv6 server has colons
+# of its own: cut -d: made server "2001", the port "db8" and the token
+# empty, so nothing was synced with a VPS reached over IPv6. The port and
+# the token have none, so read it from the right.
+_split_tokenserver() {
+	token="${1##*:}"
+	set -- "${1%:*}"
+	serverport="${1##*:}"
+	server="${1%:*}"
+}
+
 _config_service() {
 	servername=$1
 	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
 	vps_config=""
 	tokenserver=$(_get_token $servername)
-	server="$(echo $tokenserver | cut -f1 -d:)"
-	serverport="$(echo $tokenserver | cut -f2 -d:)"
-        token="$(echo $tokenserver | cut -f3 -d:)"
+	_split_tokenserver "$tokenserver"
 	[ -z "$token" ] && return
 	error=0
 	if [ -n "$serial" ]; then
