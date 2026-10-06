@@ -1,7 +1,10 @@
 #!/bin/sh
 
+# Secrets (passwords, keys, tokens, VLESS/VMess ids, PINs) lose their whole
+# value: masking their last 6 characters left most of a key in what users
+# paste in public bug reports. Addresses keep their first part, for debugging.
 uci show | \
-    sed -e "/password=/s/......$/xxxxxx'/" \
+    sed -e "/^[^=]*\.[^.=]*\(password\|key\|secret\|psk\|pincode\|token\|user_id\|passphrase\)[^.=]*=/s/=.*/='xxxxxx'/" \
 	-e "/detected_public_ipv4=/s/......$/xxxxxx'/" \
 	-e "/detected_ss_ipv4=/s/......$/xxxxxx'/" \
 	-e "/detected_public_ipv6=/s/......$/xxxxxx'/" \
@@ -11,12 +14,9 @@ uci show | \
 	-e "/\.host=/s/......$/xxxxxx'/" \
 	-e "/\.ip=/s/......$/xxxxxx'/" \
 	-e "/\.ipv6='2/s/=....../='xxxxxx/" \
-	-e "/user_id=/s/......$/xxxxxx'/" \
 	-e "/openvpn\.omr\.remote=/s/......$/xxxxxx'/" \
 	-e "/shadowsocks-libev\.sss.*\.server=/s/......$/xxxxxx'/" \
-	-e "/shadowsocks-libev\.sss.*\.key=/s/......$/xxxxxx'/" \
 	-e "/shadowsocks-rust\.sss.*\.server=/s/......$/xxxxxx'/" \
-	-e "/shadowsocks-rust\.sss.*\.password=/s/......$/xxxxxx'/" \
 	-e "/external_ip=/s/......$/xxxxxx'/" \
 	-e "/obfs_host=/s/..........$/xxxxxx'/" \
 	-e "/vmess_address=/s/......$/xxxxxx'/" \
@@ -24,9 +24,4 @@ uci show | \
 	-e "/trojan_address=/s/......$/xxxxxx'/" \
 	-e "/socks_address=/s/......$/xxxxxx'/" \
 	-e "/vless_reality_address=/s/......$/xxxxxx'/" \
-	-e "/vpn\.key=/s/......$/xxxxxx'/" \
-	-e "/vps\.key=/s/......$/xxxxxx'/" \
-	-e "/wgkey=/s/......$/xxxxxx'/" \
-	-e "/key=/s/......$/xxxxxx'/" \
-	-e "/ula_prefix=2/s/=.........../='xxxxxxxxxxx/" \
-	-e "/token=/s/............$/xxxxxx'/"
+	-e "/ula_prefix=2/s/=.........../='xxxxxxxxxxx/"
