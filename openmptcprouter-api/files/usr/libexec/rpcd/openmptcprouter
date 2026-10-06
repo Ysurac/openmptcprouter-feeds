@@ -2410,7 +2410,11 @@ function interfaces_status()
 						local status, vpsinfo = pcall(function()
 							return json.decode(vpsinfo_json)
 						end)
-						if status and vpsinfo.vps ~= nil then
+						-- "null" or a bare value decodes fine but is no table
+						if not status or type(vpsinfo) ~= "table" then
+							status, vpsinfo = false, {}
+						end
+						if status and type(vpsinfo.vps) == "table" then
 							mArray.openmptcprouter["vps_loadavg"] = vpsinfo.vps.loadavg or ""
 							mArray.openmptcprouter["vps_uptime"] = vpsinfo.vps.uptime or ""
 							mArray.openmptcprouter["vps_mptcp"] = vpsinfo.vps.mptcp and vpsinfo.vps.mptcp.enabled or ""
@@ -2436,9 +2440,15 @@ function interfaces_status()
 						else
 							set_token_error(s[".name"])
 							mArray.openmptcprouter["vps_admin_error"] = true
-							uci:delete("openmptcprouter",s[".name"],"token")
-							uci:save("openmptcprouter")
-							uci:commit("openmptcprouter")
+							-- Only a token the VPS refused is dropped, for the next
+							-- sync to log in again: an answer cut by the 1 s
+							-- status_vps_timeout is no reason for a new login.
+							-- No commit from this polled call: it wrote the flash
+							-- and committed the other processes' pending changes.
+							if vpsinfo.detail == "Could not validate credentials" then
+								uci:delete("openmptcprouter",s[".name"],"token")
+								uci:save("openmptcprouter")
+							end
 							mArray.openmptcprouter["vps_admin"] = false
 							mArray.openmptcprouter["vps_admin_error_msg"] = "Answer error"
 						end
