@@ -1116,16 +1116,25 @@ enable_pihole() {
 }
 
 disable_pihole() {
-	local server=$1
-	if [ -n "$(uci -q get dhcp.@dnsmasq[0].server | grep '#53' | grep '10.255.25')" ]; then
+	local server=$1 _s _found=""
+	# The VPS Pi-hole is reached at the tunnel address of the VPN: 10.255.25x
+	# for most, 10.255.220.1 for MQVPN, which "10.255.25" missed, so DNS
+	# kept asking a dead tunnel. Removed one by one: del_list takes one value.
+	for _s in $(uci -q get dhcp.@dnsmasq[0].server); do
+		case "$_s" in
+			10.255.*#53) _found="$_found $_s" ;;
+		esac
+	done
+	if [ -n "$_found" ]; then
 		_log "Disable Pi-Hole..."
-		uci -q del_list dhcp.@dnsmasq[0].server="$(uci -q get dhcp.@dnsmasq[0].server | tr ' ' '\n' | grep '#53' | grep '10.255.25')"
+		for _s in $_found; do
+			uci -q del_list dhcp.@dnsmasq[0].server="$_s"
+		done
 		if [ -z "$(uci -q get dhcp.@dnsmasq[0].server | grep '127.0.0.1#5353')" ]; then
-			uci -q batch <<-EOF >/dev/null
-				add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
-				commit dhcp
-			EOF
+			uci -q add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
 		fi
+		# the removals too, not only when 127.0.0.1#5353 was added
+		uci -q commit dhcp
 		/etc/init.d/dnsmasq restart >/dev/null 2>&1
 	fi
 }
