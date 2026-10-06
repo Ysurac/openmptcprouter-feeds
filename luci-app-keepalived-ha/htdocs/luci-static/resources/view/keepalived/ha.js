@@ -88,8 +88,8 @@ function vrrpState(dump) {
 
 function statusRow(label, value) {
 	return E('tr', { 'class': 'tr' }, [
-		E('td', { 'class': 'td left', 'width': '33%' }, label),
-		E('td', { 'class': 'td left' }, value)
+		E('td', { 'class': 'td left', 'width': '33%' }, [ label ]),
+		E('td', { 'class': 'td left' }, [ value ])
 	]);
 }
 
@@ -132,7 +132,7 @@ return view.extend({
 
 		if (st.pubkey)
 			rows.push(statusRow(_('Sync public key'),
-				E('code', { 'style': 'word-break:break-all' }, st.pubkey)));
+				E('code', { 'style': 'word-break:break-all' }, [ st.pubkey ])));
 
 		return E('table', { 'class': 'table' }, rows);
 	},
@@ -185,17 +185,17 @@ return view.extend({
 					this.deployLog(E('em', {}, _('No password given, trying the peers with an empty password…')));
 
 				return peers.reduce((chain, ip) => chain.then(() => {
-					this.deployLog(E('span', {}, _('Configuring %s…').format(ip)));
+					this.deployLog(E('span', {}, [ _('Configuring %s…').format(ip) ]));
 
 					return callPushPeer(ip, user, pass).then((r) => {
 						if (r.ok)
-							this.deployLog(E('span', {}, '✓ ' + _('%s configured').format(ip)));
+							this.deployLog(E('span', {}, [ '✓ ' + _('%s configured').format(ip) ]));
 						else
 							this.deployLog(E('span', { 'style': 'color:red' },
-								'✗ ' + _('%s failed: %s').format(ip, r.error || '?')));
+								[ '✗ ' + _('%s failed: %s').format(ip, r.error || '?') ]));
 					}).catch((err) => {
 						this.deployLog(E('span', { 'style': 'color:red' },
-							'✗ ' + _('%s failed: %s').format(ip, err.message)));
+							[ '✗ ' + _('%s failed: %s').format(ip, err.message) ]));
 					});
 				}), Promise.resolve());
 			})
@@ -205,7 +205,7 @@ return view.extend({
 				return this.pollStatus();
 			})
 			.catch((err) => {
-				this.deployLog(E('span', { 'style': 'color:red' }, '✗ ' + err.message));
+				this.deployLog(E('span', { 'style': 'color:red' }, [ '✗ ' + err.message ]));
 			});
 	},
 
@@ -228,13 +228,13 @@ return view.extend({
 			return peers.reduce((chain, ip) => chain.then(() => {
 				return callCheckPeer(ip, user, pass).then((r) => {
 					if (r.ok)
-						this.deployLog(E('span', {}, '✓ ' + _('%s reachable, app installed, current role: %s').format(ip, r.remote_role || '?')));
+						this.deployLog(E('span', {}, [ '✓ ' + _('%s reachable, app installed, current role: %s').format(ip, r.remote_role || '?') ]));
 					else
 						this.deployLog(E('span', { 'style': 'color:red' },
-							'✗ ' + _('%s: %s').format(ip, r.error || '?')));
+							[ '✗ ' + _('%s: %s').format(ip, r.error || '?') ]));
 				}).catch((err) => {
 					this.deployLog(E('span', { 'style': 'color:red' },
-						'✗ ' + _('%s: %s').format(ip, err.message)));
+						[ '✗ ' + _('%s: %s').format(ip, err.message) ]));
 				});
 			}), Promise.resolve());
 		});
@@ -243,9 +243,9 @@ return view.extend({
 	handleGenkey(ev) {
 		return callGenkey().then((res) => {
 			if (res.ok)
-				ui.addNotification(null, E('p', {}, _('Sync key generated: %s').format(res.pubkey)), 'info');
+				ui.addNotification(null, E('p', {}, [ _('Sync key generated: %s').format(res.pubkey) ]), 'info');
 			else
-				ui.addNotification(null, E('p', {}, _('Key generation failed: %s').format(res.error || '?')), 'error');
+				ui.addNotification(null, E('p', {}, [ _('Key generation failed: %s').format(res.error || '?') ]), 'error');
 
 			return this.pollStatus();
 		});

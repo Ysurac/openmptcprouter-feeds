@@ -110,7 +110,7 @@ do_push_peer() {
 }
 
 do_check_peer() {
-	local ip username password out tmpf
+	local ip username password out tmpf role
 
 	json_load "$1"
 	json_get_var ip ip
@@ -126,10 +126,17 @@ do_check_peer() {
 	tmpf=$(mktemp /tmp/kaha_check.XXXXXX)
 	if kaha_check_peer "$ip" "${username:-root}" "$password" >"$tmpf"; then
 		out=$(cat "$tmpf")
+		# whatever answers on the peer address writes this: only pass on a
+		# role the app knows
+		role=$(echo "$out" | jsonfilter -q -e '@.role')
+		case "$role" in
+			primary|backup|unknown) ;;
+			*) role='unknown' ;;
+		esac
 		json_init
 		json_add_boolean ok 1
 		json_add_string ip "$ip"
-		json_add_string remote_role "$(echo "$out" | jsonfilter -q -e '@.role')"
+		json_add_string remote_role "$role"
 		json_add_boolean remote_configured "$([ "$(echo "$out" | jsonfilter -q -e '@.configured')" = "true" ] && echo 1 || echo 0)"
 		json_dump
 	else
