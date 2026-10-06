@@ -131,8 +131,9 @@ function splitDeviceAndVlan(device) {
 
 function uniqueValues(list) {
 	var seen = {};
-	return L.toArray(list).filter(function(v) {
-		var s = String(v == null ? '' : v).trim();
+	return L.toArray(list).map(function(v) {
+		return String(v == null ? '' : v).trim();
+	}).filter(function(s) {
 		if (!s || seen[s])
 			return false;
 		seen[s] = true;
