@@ -38,6 +38,42 @@ _parse_result() {
 	echo $result
 }
 
+# Failed logins are logged once, then at most every 10 minutes per server
+# with the count held back, and once more when the server answers again.
+# While the VPS API restarts, each caller that wanted a token logged a line of
+# its own: the Pi-hole sync alone asks on every tracker cycle. The old guard
+# (the last 3 log lines all saying "vps token") never matched most messages.
+# A failure more than an hour after the last one starts a new count.
+_token_failed() { # <server> <message>
+	local marker="/tmp/.omr-vps-tokenfail-$1" now first last count seen
+	now="$(date +%s)"
+	[ -f "$marker" ] && read -r first last count seen < "$marker"
+	if [ -z "$seen" ] || [ "$((now - seen))" -ge 3600 ]; then
+		first=$now last=0 count=0
+	fi
+	count=$((count + 1))
+	if [ "$((now - last))" -ge 600 ]; then
+		if [ "$count" -gt 1 ]; then
+			logger -t "OMR-VPS" "$2 (failing for $((now - first))s, $((count - 1)) more failed logins)"
+		else
+			logger -t "OMR-VPS" "$2"
+		fi
+		last=$now
+	fi
+	echo "$first $last $count $now" > "$marker"
+}
+
+_token_ok() { # <server>
+	local marker="/tmp/.omr-vps-tokenfail-$1" now first last count seen
+	[ -f "$marker" ] || return 0
+	read -r first last count seen < "$marker"
+	rm -f "$marker"
+	now="$(date +%s)"
+	[ -n "$seen" ] && [ "$((now - seen))" -lt 3600 ] && \
+		logger -t "OMR-VPS" "Server $1 API answers again, after ${count} failed logins in $((now - first))s"
+	return 0
+}
+
 _login() {
 	local username password auth
 	#server="$(uci -q get openmptcprouter.${servername}.ip)"
@@ -83,6 +119,7 @@ _login() {
 		config_load openmptcprouter
 		config_list_foreach ${servername} ip login_on_server
 	fi
+	[ -n "$token" ] && _token_ok "$servername"
 }
 
 _ping_server() {
@@ -2532,7 +2569,7 @@ _set_vps_firewall() {
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
-		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "Can't get ${fwservername} token, try later"
+		_token_failed "$fwservername" "Can't get ${fwservername} token, try later"
 		uci -q -P /var/state batch <<-EOF >/dev/null
 			revert openmptcprouter.${fwservername}.admin_error
 			set openmptcprouter.${fwservername}.admin_error=1
@@ -3505,7 +3542,7 @@ _backup_send() {
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
-		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "Can't get ${servername} token, try later"
+		_token_failed "$servername" "Can't get ${servername} token, try later"
 		uci -q -P /var/state batch <<-EOF >/dev/null
 			revert openmptcprouter.${servername}.admin_error
 			set openmptcprouter.${servername}.admin_error=1
@@ -3552,7 +3589,7 @@ _backup_get_and_apply() {
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
-		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "Can't get ${servername} token, try later"
+		_token_failed "$servername" "Can't get ${servername} token, try later"
 		uci -q -P /var/state batch <<-EOF >/dev/null
 			revert openmptcprouter.${servername}.admin_error
 			set openmptcprouter.${servername}.admin_error=1
@@ -3616,7 +3653,7 @@ _backup_list() {
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
-		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "Can't get ${servername} token, try later"
+		_token_failed "$servername" "Can't get ${servername} token, try later"
 		uci -q -P /var/state batch <<-EOF >/dev/null
 			revert openmptcprouter.${servername}.admin_error
 			set openmptcprouter.${servername}.admin_error=1
@@ -3700,7 +3737,7 @@ _get_token() {
 		if [ "$(uci -q get openmptcprouter.${servername}.username)" != "openmptcprouter" ]; then
 			reason="$reason, custom username"
 		fi
-		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "Can't get ${servername} token, try later ($reason)"
+		_token_failed "$servername" "Can't get ${servername} token, try later ($reason)"
 		uci -q -P /var/state batch <<-EOF >/dev/null
 			revert openmptcprouter.${servername}.admin_error
 			set openmptcprouter.${servername}.admin_error=1
@@ -3861,7 +3898,7 @@ _set_pihole_server() {
 	vps_config=""
 	_login
 	[ -z "$token" ] && {
-		[ "$(logread | tail -n 3 | grep -c 'vps token')" -lt 3 ] && logger -t "OMR-VPS" "Can't get token, try later"
+		_token_failed "$pservername" "Can't get ${pservername} token, try later"
 		uci -q -P /var/state batch <<-EOF >/dev/null
 			revert openmptcprouter.${pservername}.admin_error
 			set openmptcprouter.${pservername}.admin_error=1
