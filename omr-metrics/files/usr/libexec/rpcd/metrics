@@ -8,6 +8,8 @@
 #   ubus call metrics get_interfaces
 #   ubus call metrics get_user_info
 #   ubus call metrics get_forecast
+#   ubus call metrics get_settings
+#   ubus call metrics set_settings '{"interval":"30","password":"..."}'
 
 . "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-vps-curl.sh"
 # omr_metrics_curl: the same, and the custom metrics server pinned too
@@ -116,6 +118,127 @@ _vps_get() {
 	rm -f "$tmpfile"
 }
 
+# The settings page goes through get_settings/set_settings instead of
+# reading and writing the omr-metrics UCI config: an ACL granting that
+# config also handed out the custom server's password and Bearer token.
+# get_settings returns every option but those two, set_settings takes a
+# new password without ever giving one back, and the token stays the
+# daemons' business.
+SETTINGS_OPTS="send_to_vps interval enable_weight_sync enable_decision_weights decision_predict decision_horizon use_custom_server server serverport username custom_server_pin"
+
+_json_str() {
+	printf '"%s"' "$(printf '%s' "$1" | tr -d '\000-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+}
+
+_get_settings() {
+	local opt val sep=""
+	printf '{'
+	for opt in $SETTINGS_OPTS; do
+		val=$(uci -q get "omr-metrics.settings.${opt}") || continue
+		printf '%s"%s":%s' "$sep" "$opt" "$(_json_str "$val")"
+		sep=","
+	done
+	[ -n "$(uci -q get omr-metrics.settings.password)" ] && val=true || val=false
+	printf '%s"password_set":%s}\n' "$sep" "$val"
+}
+
+# Whether set_settings may store value $2 for option $1 (empty values,
+# which remove the option, are not checked)
+_setting_valid() {
+	case "$1" in
+		send_to_vps|enable_weight_sync|enable_decision_weights|decision_predict|use_custom_server)
+			case "$2" in 0|1) ;; *) return 1 ;; esac
+			;;
+		interval)
+			case "$2" in *[!0-9]*) return 1 ;; esac
+			[ "${#2}" -le 9 ]
+			;;
+		decision_horizon)
+			case "$2" in *[!0-9]*) return 1 ;; esac
+			[ "${#2}" -le 5 ] && [ "$2" -ge 1 ] && [ "$2" -le 86400 ]
+			;;
+		serverport)
+			case "$2" in *[!0-9]*) return 1 ;; esac
+			[ "${#2}" -le 5 ] && [ "$2" -ge 1 ] && [ "$2" -le 65535 ]
+			;;
+		server)
+			# Goes into https://<server>:<port>/ URLs
+			case "$2" in *[!]A-Za-z0-9.:%_[-]*) return 1 ;; esac
+			;;
+		username|password)
+			case "$2" in *[[:cntrl:]]*) return 1 ;; esac
+			;;
+		custom_server_pin)
+			_omr_vps_pin_valid "${2#sha256//}"
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
+# Options missing from the request are left alone, an empty one is
+# removed. An empty or missing password keeps the stored one.
+_set_settings() {
+	local input opt val relogin="" changed=""
+	input=$(cat)
+
+	# Check everything before changing anything
+	for opt in $SETTINGS_OPTS password; do
+		val=$(printf '%s' "$input" | jsonfilter -q -e "@.${opt}") || continue
+		[ -z "$val" ] || _setting_valid "$opt" "$val" || {
+			printf '{"result":false,"error":"invalid %s"}\n' "$opt"
+			return
+		}
+	done
+
+	[ -n "$(uci -q get omr-metrics.settings)" ] || uci -q set omr-metrics.settings=settings
+	for opt in $SETTINGS_OPTS; do
+		val=$(printf '%s' "$input" | jsonfilter -q -e "@.${opt}") || continue
+		[ "$val" = "$(uci -q get "omr-metrics.settings.${opt}")" ] && continue
+		if [ -n "$val" ]; then
+			uci -q set "omr-metrics.settings.${opt}=${val}"
+		else
+			uci -q delete "omr-metrics.settings.${opt}"
+		fi
+		changed=1
+		case "$opt" in
+			server|serverport)
+				relogin=1
+				;;
+			username)
+				relogin=1
+				# No username, no custom login: forget its password too
+				[ -n "$val" ] || uci -q delete omr-metrics.settings.password
+				;;
+			custom_server_pin)
+				# A pin typed in is the user's, for whatever server is
+				# set: forget which server a learned one came from, or
+				# omr-metrics-curl.sh would drop it as another server's
+				uci -q delete omr-metrics.settings.custom_server_pin_host
+				;;
+		esac
+	done
+
+	val=$(printf '%s' "$input" | jsonfilter -q -e '@.password')
+	if [ -n "$val" ] && [ "$val" != "$(uci -q get omr-metrics.settings.password)" ]; then
+		uci -q set "omr-metrics.settings.password=${val}"
+		changed=1
+		relogin=1
+	fi
+
+	# The stored token was issued by the old server to the old login: it
+	# must not be sent to a new server, nor stand in for new credentials
+	[ -n "$relogin" ] && uci -q delete omr-metrics.settings.token
+
+	if [ -n "$changed" ]; then
+		uci -q commit omr-metrics
+		# What applying the change from LuCI did: procd reloads omr-metrics
+		ubus call service event '{"type":"config.change","data":{"package":"omr-metrics"}}' >/dev/null 2>&1
+	fi
+	echo '{"result":true}'
+}
+
 case "$1" in
 	list)
 		echo '{'
@@ -124,7 +247,15 @@ case "$1" in
 		echo '  "get_interfaces":{},'
 		echo '  "get_user_info": {},'
 		echo '  "get_forecast":  { "horizon": 0, "since": "str", "limit": 0 },'
-		echo '  "get_decision":  { "predict": false, "horizon": 0 }'
+		echo '  "get_decision":  { "predict": false, "horizon": 0 },'
+		echo '  "get_settings":  {},'
+		printf '  "set_settings":  {'
+		sep=" "
+		for opt in $SETTINGS_OPTS password; do
+			printf '%s"%s": "str"' "$sep" "$opt"
+			sep=", "
+		done
+		echo ' }'
 		echo '}'
 		;;
 	call)
@@ -196,6 +327,12 @@ case "$1" in
 				[ -n "$horizon" ] && [ "$horizon" != "0" ] && qs="${qs}horizon=${horizon}&"
 				qs="${qs%&}"
 				_vps_get "/metrics/decision" "$qs"
+				;;
+			get_settings)
+				_get_settings
+				;;
+			set_settings)
+				_set_settings
 				;;
 			*)
 				echo '{"error": "unknown method"}'

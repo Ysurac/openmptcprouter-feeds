@@ -1,17 +1,53 @@
 'use strict';
+'require dom';
 'require form';
+'require rpc';
+'require ui';
 'require view';
-'require uci';
+
+/* The page goes through the metrics rpcd backend, not the omr-metrics UCI
+ * config: the ACL no longer grants that config, which holds the custom
+ * server's password and Bearer token. get_settings leaves both out, the
+ * password is only ever sent (left empty, the stored one is kept) and the
+ * token is the daemons' business. */
+var FIELDS = [ 'send_to_vps', 'interval', 'enable_weight_sync',
+	'enable_decision_weights', 'decision_predict', 'decision_horizon',
+	'use_custom_server', 'server', 'serverport', 'username',
+	'custom_server_pin', 'password' ];
+
+var callGetSettings = rpc.declare({
+	object: 'metrics',
+	method: 'get_settings'
+});
+
+var callSetSettings = rpc.declare({
+	object: 'metrics',
+	method: 'set_settings',
+	params: FIELDS
+});
+
+var formData = { settings: {} };
 
 return view.extend({
 	load: function() {
-		return uci.load('omr-metrics');
+		return L.resolveDefault(callGetSettings(), {});
 	},
 
-	render: function() {
+	render: function(settings) {
 		var m, s, o;
 
-		m = new form.Map('omr-metrics', _('WAN Metrics — Settings'),
+		/* get_settings always says whether a password is set: without it
+		 * the settings were not read, and saving an empty form would
+		 * remove them all */
+		if (!settings || !('password_set' in settings))
+			return E('div', { 'class': 'alert-message warning' },
+				_('The metrics settings could not be read.'));
+
+		this.passwordSet = !!settings.password_set;
+		formData.settings = Object.assign({}, settings);
+		delete formData.settings.password_set;
+
+		m = new form.JSONMap(formData, _('WAN Metrics — Settings'),
 			_('Configure how per-interface metrics are collected and sent to the VPS.'));
 
 		s = m.section(form.NamedSection, 'settings', 'settings');
@@ -89,17 +125,12 @@ return view.extend({
 		o.rmempty = true;
 		o.retain = true;
 
-		o = s.option(form.Value, 'password', _('Password'));
+		o = s.option(form.Value, 'password', _('Password'),
+			_('Leave empty to keep the current password.'));
 		o.password = true;
+		o.placeholder = this.passwordSet ? _('Unchanged') : '';
 		o.depends('use_custom_server', '1');
 		o.rmempty = true;
-		o.retain = true;
-
-		o = s.option(form.Value, 'token', _('Token'),
-			_('Bearer token — filled in automatically after the first successful login.'));
-		o.depends('use_custom_server', '1');
-		o.rmempty = true;
-		o.retain = true;
 
 		/* omr-metrics-curl.sh only sends the credentials over a connection
 		 * whose certificate carries this public key. Same check as
@@ -120,15 +151,46 @@ return view.extend({
 				return true;
 			return _('Expecting a base64 SHA-256 (44 characters ending with "="), optionally prefixed by sha256//');
 		};
-		/* A pin typed in is the user's, for whatever server is set: forget
-		 * which server a learned one came from, or it would be dropped as
-		 * another server's. */
-		o.write = function(sid, val) {
-			if (val !== (uci.get('omr-metrics', sid, 'custom_server_pin') || ''))
-				uci.unset('omr-metrics', sid, 'custom_server_pin_host');
-			return form.Value.prototype.write.apply(this, [sid, val]);
-		};
 
 		return m.render();
-	}
+	},
+
+	/* Saving commits and applies at once (set_settings), there are no
+	 * staged UCI changes left to apply. */
+	handleSave: function() {
+		var map = document.querySelector('.cbi-map');
+
+		if (!map)
+			return Promise.resolve();
+
+		return dom.callClassMethod(map, 'save').then(L.bind(function() {
+			var data = formData.settings;
+
+			/* An option the form dropped (emptied) goes as '' so the
+			 * backend removes it, an empty password goes as nothing so the
+			 * stored one is kept. */
+			return callSetSettings.apply(null, FIELDS.map(function(f) {
+				if (f == 'password')
+					return data.password || undefined;
+				return (data[f] != null) ? String(data[f]) : '';
+			})).then(function(res) {
+				if (res && res.result) {
+					ui.addNotification(null, E('p', _('The settings have been saved.')), 'info');
+					return true;
+				}
+				ui.addNotification(null, E('p', [ _('The settings were not saved: %s').format(res && res.error ? res.error : _('unknown error')) ]), 'danger');
+			}).catch(function(e) {
+				ui.addNotification(null, E('p', [ _('The settings were not saved: %s').format(e.message) ]), 'danger');
+			}).then(L.bind(function(saved) {
+				/* Show what was stored, without the password just typed */
+				if (saved)
+					return L.resolveDefault(callGetSettings(), {})
+						.then(L.bind(this.render, this))
+						.then(function(node) { map.parentNode.replaceChild(node, map); });
+			}, this));
+		}, this));
+	},
+
+	handleSaveApply: null,
+	handleReset: null
 });

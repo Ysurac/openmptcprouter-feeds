@@ -37,8 +37,14 @@ that server:
 | Field | Meaning |
 |---|---|
 | **Server address** / **Server port** | Hostname/IP and port of the dedicated metrics server. |
-| **Username** / **Password** | Login credentials for that server's API. |
-| **Token** | Bearer token — you don't fill this in; it's written automatically after the first successful login and reused until it expires. |
+| **Username** / **Password** | Login credentials for that server's API. The password is never shown again once saved: leave the field empty to keep it. Emptying **Username** removes both. |
+| **Server API certificate pin** | SHA-256 of the server's API certificate public key. Left empty, the key seen at the first connection is trusted from then on. |
+
+The page doesn't show the Bearer token the router gets from that server
+at login: it is kept for the metrics daemons only, and dropped whenever
+the server address, port, username or password changes, so a token
+issued by one server is never sent to another. **Save** stores and
+applies the settings at once.
 
 ## A gap worth knowing about if you use a BPF weight scheduler
 
