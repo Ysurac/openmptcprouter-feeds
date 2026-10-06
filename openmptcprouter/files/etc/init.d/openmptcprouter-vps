@@ -93,10 +93,14 @@ _login() {
 			#auth=`curl --max-time 10 -s -k -H "Content-Type: application/json" -X POST -d '{"username":"'$username'","password":"'$password'"}' https://$server:$serverport/login`
 			#resolve="$(resolveip -t 5 $server)"
 			valid_ip6=$(valid_subnet6 $server)
+			# curl URL-encodes both fields and reads the password on stdin:
+			# pasted raw into the form body, a '&', '+', '=' or '%' in the
+			# key reached the API altered, and on the command line it
+			# showed in ps.
 			if [ "$valid_ip6" = "ok" ]; then
-				auth=`omr_vps_curl -6 --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "username=${username}&password=${password}" https://[$server]:$serverport/token`
+				auth=`printf '%s' "$password" | omr_vps_curl -6 --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST --data-urlencode "username=${username}" --data-urlencode "password@-" https://[$server]:$serverport/token`
 			else
-				auth=`omr_vps_curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "username=${username}&password=${password}" https://$server:$serverport/token`
+				auth=`printf '%s' "$password" | omr_vps_curl --max-time 10 -s -k -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST --data-urlencode "username=${username}" --data-urlencode "password@-" https://$server:$serverport/token`
 			fi
 			# An answer that carries no access_token is the server rejecting
 			# us, not a broken path: retrying it once per interface only adds
@@ -104,9 +108,9 @@ _login() {
 			if [ -z "$auth" ]; then
 				for intf in $(multipath 2>/dev/null | awk '/default/ { print $1 }'); do
 					if [ "$valid_ip6" = "ok" ]; then
-						auth=`omr_vps_curl -6 --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "username=${username}&password=${password}" https://[$server]:$serverport/token`
+						auth=`printf '%s' "$password" | omr_vps_curl -6 --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST --data-urlencode "username=${username}" --data-urlencode "password@-" https://[$server]:$serverport/token`
 					else
-						auth=`omr_vps_curl --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST -d "username=${username}&password=${password}" https://$server:$serverport/token`
+						auth=`printf '%s' "$password" | omr_vps_curl --max-time 10 -s -k --interface $intf -H "accept: application/json" -H "Content-Type: application/x-www-form-urlencoded" -X POST --data-urlencode "username=${username}" --data-urlencode "password@-" https://$server:$serverport/token`
 					fi
 					[ -n "$auth" ] && break
 				done
