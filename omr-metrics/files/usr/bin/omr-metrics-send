@@ -10,6 +10,7 @@
 . "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-vps-curl.sh"
 # omr_metrics_curl: the same, and the custom metrics server pinned too
 . "${OMR_METRICS_LIB_DIR:-/usr/share/omr/lib}/omr-metrics-curl.sh"
+. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
 METRICS_DIR="${OMR_METRICS_DIR:-/tmp/metrics}"
 STATE_DIR="${OMR_METRICS_STATE_DIR:-/tmp/omr-metrics-send}"
 INTERVAL="${OMR_METRICS_INTERVAL:-30}"
@@ -108,7 +109,19 @@ _login_ok() {
 	rm -f "${STATE_DIR}/${1}.login_backoff" 2>/dev/null
 }
 
-# Obtain a Bearer token via POST /token and save it in UCI and SRV_TOKEN.
+# Keep a token for the next cycles. The custom server's is runtime state: in
+# the omr-metrics config, the next "uci commit omr-metrics" (a LuCI save, a
+# learned certificate pin) wrote it to flash. A VPS token is shared with
+# openmptcprouter-vps, which keeps it in its config.
+_token_store() {
+	case "$1" in
+		omr-metrics.settings.token) omr_state_set omr-metrics settings token "$2" ;;
+		*) uci -q set "${1}=${2}" ;;
+	esac
+}
+
+# Obtain a Bearer token via POST /token and save it with _token_store and in
+# SRV_TOKEN.
 # $1 = server section name (for the backoff state), $2 = address, $3 = port.
 # Returns 0 when SRV_TOKEN holds a token.
 _login() {
@@ -130,17 +143,20 @@ _login() {
 
 	_login_allowed "$key" || return 1
 
+	# Both fields URL-encoded by curl, the password read on stdin: pasted
+	# raw into the form body, a password with a '&', '+', '=' or '%' reached
+	# the API altered, and on the command line it showed in ps.
 	if _is_ip6 "$server"; then
-		resp=$(omr_metrics_curl -6 --max-time 10 -s -k -w '%{http_code}' \
+		resp=$(printf '%s' "$SRV_PASSWORD" | omr_metrics_curl -6 --max-time 10 -s -k -w '%{http_code}' \
 			-H "accept: application/json" \
 			-H "Content-Type: application/x-www-form-urlencoded" \
-			-X POST -d "username=${SRV_USERNAME}&password=${SRV_PASSWORD}" \
+			-X POST --data-urlencode "username=${SRV_USERNAME}" --data-urlencode "password@-" \
 			"https://[${server}]:${serverport}/token" 2>/dev/null)
 	else
-		resp=$(omr_metrics_curl --max-time 10 -s -k -w '%{http_code}' \
+		resp=$(printf '%s' "$SRV_PASSWORD" | omr_metrics_curl --max-time 10 -s -k -w '%{http_code}' \
 			-H "accept: application/json" \
 			-H "Content-Type: application/x-www-form-urlencoded" \
-			-X POST -d "username=${SRV_USERNAME}&password=${SRV_PASSWORD}" \
+			-X POST --data-urlencode "username=${SRV_USERNAME}" --data-urlencode "password@-" \
 			"https://${server}:${serverport}/token" 2>/dev/null)
 	fi
 	# -w appends the status to the body, so the last three characters are
@@ -150,7 +166,7 @@ _login() {
 
 	SRV_TOKEN=$(printf '%s' "$body" | jsonfilter -q -e '@.access_token' 2>/dev/null)
 	if [ -n "$SRV_TOKEN" ]; then
-		uci -q set "${SRV_TOKEN_KEY}=${SRV_TOKEN}"
+		_token_store "$SRV_TOKEN_KEY" "$SRV_TOKEN"
 		_login_ok "$key"
 		return 0
 	fi
@@ -174,13 +190,15 @@ _login() {
 }
 
 # Load the credentials and any stored token for one server into SRV_*.
+# The omr-metrics ones are the custom server's, and only its: picked as soon
+# as a username was set there, they also went to the VPS once the custom
+# server was turned off (the settings page keeps them), which rejected them.
 _server_creds() {
 	local servername="$1"
 
-	# Prefer global credentials from omr-metrics config if username is set there.
-	SRV_USERNAME=$(uci -q get "omr-metrics.settings.username" 2>/dev/null)
-	if [ -n "$SRV_USERNAME" ]; then
-		SRV_TOKEN=$(uci -q get "omr-metrics.settings.token" 2>/dev/null)
+	if [ "$servername" = "omr_metrics_custom" ]; then
+		SRV_TOKEN=$(omr_state_get "omr-metrics.settings.token")
+		SRV_USERNAME=$(uci -q get "omr-metrics.settings.username" 2>/dev/null)
 		SRV_PASSWORD=$(uci -q get "omr-metrics.settings.password" 2>/dev/null)
 		SRV_TOKEN_KEY="omr-metrics.settings.token"
 	else

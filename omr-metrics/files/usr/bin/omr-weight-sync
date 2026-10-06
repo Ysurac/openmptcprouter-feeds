@@ -9,6 +9,7 @@
 . "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-vps-curl.sh"
 # omr_metrics_curl: the same, and the custom metrics server pinned too
 . "${OMR_METRICS_LIB_DIR:-/usr/share/omr/lib}/omr-metrics-curl.sh"
+. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
 POLL_INTERVAL="${MPTCP_WEIGHT_INTERVAL:-5}"
 WEIGHT_SCRIPT="/usr/sbin/mptcp-scheduler-weight.sh"
 MAP_PATH="/sys/fs/bpf/endpoint_weights"
@@ -33,7 +34,17 @@ _is_weight_scheduler() {
 	return 1
 }
 
-# Obtain a Bearer token via POST /token and save it in UCI.
+# The custom server's token is runtime state, kept out of the omr-metrics
+# config (see omr-metrics-send); a VPS token is shared with
+# openmptcprouter-vps, which keeps it in its config.
+_token_store() {
+	case "$1" in
+		omr-metrics.settings.token) omr_state_set omr-metrics settings token "$2" ;;
+		*) uci -q set "${1}=${2}" ;;
+	esac
+}
+
+# Obtain a Bearer token via POST /token and keep it with _token_store.
 # $1 = full UCI key to store the token (e.g. "omr-metrics.settings.token"
 #      or "openmptcprouter.<name>.token")
 # Prints the token on stdout; prints nothing on failure.
@@ -46,23 +57,25 @@ _login() {
 		return 1
 	fi
 
+	# URL-encoded by curl, the password read on stdin: not altered by a
+	# '&', '+', '=' or '%', and not shown in ps
 	if _is_ip6 "$server"; then
-		auth=$(omr_metrics_curl -6 --max-time 10 -s -k \
+		auth=$(printf '%s' "$password" | omr_metrics_curl -6 --max-time 10 -s -k \
 			-H "accept: application/json" \
 			-H "Content-Type: application/x-www-form-urlencoded" \
-			-X POST -d "username=${username}&password=${password}" \
+			-X POST --data-urlencode "username=${username}" --data-urlencode "password@-" \
 			"https://[${server}]:${serverport}/token" 2>/dev/null)
 	else
-		auth=$(omr_metrics_curl --max-time 10 -s -k \
+		auth=$(printf '%s' "$password" | omr_metrics_curl --max-time 10 -s -k \
 			-H "accept: application/json" \
 			-H "Content-Type: application/x-www-form-urlencoded" \
-			-X POST -d "username=${username}&password=${password}" \
+			-X POST --data-urlencode "username=${username}" --data-urlencode "password@-" \
 			"https://${server}:${serverport}/token" 2>/dev/null)
 	fi
 
 	token=$(echo "$auth" | jsonfilter -q -e '@.access_token' 2>/dev/null)
 	if [ -n "$token" ]; then
-		uci -q set "${uci_token_key}=${token}"
+		_token_store "$uci_token_key" "$token"
 	fi
 	printf '%s' "$token"
 }
@@ -74,10 +87,11 @@ _get_decision() {
 	local servername="$1" server="$2" serverport="$3" predict="$4" horizon="$5"
 	local token username password url http_code tmpfile uci_token_key
 
-	# Prefer global credentials from omr-metrics config if username is set there.
-	username=$(uci -q get "omr-metrics.settings.username" 2>/dev/null)
-	if [ -n "$username" ]; then
-		token=$(uci -q get "omr-metrics.settings.token" 2>/dev/null)
+	# The omr-metrics credentials are the custom server's only: the VPS
+	# rejected them once the custom server was turned off
+	if [ "$servername" = "omr_metrics_custom" ]; then
+		token=$(omr_state_get "omr-metrics.settings.token")
+		username=$(uci -q get "omr-metrics.settings.username" 2>/dev/null)
 		password=$(uci -q get "omr-metrics.settings.password" 2>/dev/null)
 		uci_token_key="omr-metrics.settings.token"
 	else
