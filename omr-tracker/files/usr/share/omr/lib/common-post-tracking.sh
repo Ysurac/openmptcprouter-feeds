@@ -575,11 +575,18 @@ _omr_route_fragment_var() {
 	fi
 	# "ip route" takes a weight from 1 to 256 and refuses the route with any
 	# other, which 003-up then tried again on each run: keep the option in
-	# that range, and use the default for a value that is no number
+	# that range, and use the default for a value that is no number. Without
+	# its leading zeros: ip reads 010 as octal 8, and 0050 isn't over 256
 	case "$weight" in
 		""|*[!0-9]*) weight="" ;;
-		????*) weight=256 ;;
-		*) if [ "$weight" -gt 256 ]; then weight=256; elif [ "$weight" -lt 1 ]; then weight=1; fi ;;
+		*)
+			weight="${weight#"${weight%%[!0]*}"}"
+			if [ -z "$weight" ]; then
+				weight=1
+			elif [ "${#weight}" -gt 3 ] || [ "$weight" -gt 256 ]; then
+				weight=256
+			fi
+			;;
 	esac
 	if [ -z "$weight" ]; then
 		if [ "$multipath_config_route" = "master" ]; then
