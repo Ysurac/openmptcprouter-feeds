@@ -396,6 +396,8 @@ _bypass_ip() {
 	[ -z "$type" ] && type="all"
 	[ "$type" = "default" ] && type="all"
 	[ -z "$tcpudp" ] && tcpudp="all"
+	# none and srv_vpn1 have no sets and rules per protocol
+	case "$type" in none|srv_vpn1) tcpudp="all" ;; esac
 	valid_ip4=$( valid_subnet4 $ip)
 	valid_ip6=$( valid_subnet6 $ip)
 	if [ "$tcpudp" = "all" ]; then
@@ -404,30 +406,31 @@ _bypass_ip() {
 			uci -q set firewall.omr_dst_bypass_${type}_4.enabled='1'
 			for zone in $(_get_firewall_zones); do
 				uci -q set firewall.omr_dst_bypass_${type}_dstip_4_${zone}.enabled='1'
-				uci -q set firewall.omr_dst_bypass_${type}_dstip_4_accept_${zone}.enabled='1'
+				uci -q set firewall.omr_dst_bypass_${type}_dstip_4_${zone}_accept.enabled='1'
 			done
 		elif [ "$valid_ip6" = "ok" ]; then
 			_uci_add_list_unique firewall.omr_dst_bypass_${type}_6.entry "$ip"
 			uci -q set firewall.omr_dst_bypass_${type}_6.enabled='1'
 			for zone in $(_get_firewall_zones); do
 				uci -q set firewall.omr_dst_bypass_${type}_dstip_6_${zone}.enabled='1'
-				uci -q set firewall.omr_dst_bypass_${type}_dstip_6_accept_${zone}.enabled='1'
+				uci -q set firewall.omr_dst_bypass_${type}_dstip_6_${zone}_accept.enabled='1'
 			done
 		fi
 	else
+		# the _tcp/_udp rules match the sets of that protocol
 		if [ "$valid_ip4" = "ok" ]; then
-			_uci_add_list_unique firewall.omr_dst_bypass_${type}_4.entry "$ip"
-			uci -q set firewall.omr_dst_bypass_${type}_4.enabled='1'
+			_uci_add_list_unique firewall.omr_dst_bypass_${type}_4_${tcpudp}.entry "$ip"
+			uci -q set firewall.omr_dst_bypass_${type}_4_${tcpudp}.enabled='1'
 			for zone in $(_get_firewall_zones); do
 				uci -q set firewall.omr_dst_bypass_${type}_dstip_4_${zone}_${tcpudp}.enabled='1'
-				uci -q set firewall.omr_dst_bypass_${type}_dstip_4_accept_${zone}_${tcpudp}.enabled='1'
+				uci -q set firewall.omr_dst_bypass_${type}_dstip_4_${zone}_accept.enabled='1'
 			done
 		elif [ "$valid_ip6" = "ok" ]; then
-			_uci_add_list_unique firewall.omr_dst_bypass_${type}_6.entry "$ip"
-			uci -q set firewall.omr_dst_bypass_${type}_6.enabled='1'
+			_uci_add_list_unique firewall.omr_dst_bypass_${type}_6_${tcpudp}.entry "$ip"
+			uci -q set firewall.omr_dst_bypass_${type}_6_${tcpudp}.enabled='1'
 			for zone in $(_get_firewall_zones); do
 				uci -q set firewall.omr_dst_bypass_${type}_dstip_6_${zone}_${tcpudp}.enabled='1'
-				uci -q set firewall.omr_dst_bypass_${type}_dstip_6_accept_${zone}_${tcpudp}.enabled='1'
+				uci -q set firewall.omr_dst_bypass_${type}_dstip_6_${zone}_accept.enabled='1'
 			done
 		fi
 	fi
@@ -726,7 +729,9 @@ _bypass_domains() {
 	config_get enabled $1 enabled
 	config_get noipv6 $1 noipv6 "1"
 	config_get family $1 family "ipv4ipv6"
-	config_get tcpudp $1 tcpudp "all"
+	# LuCI names this option proto for domains (tcpudp for protocols)
+	config_get tcpudp $1 tcpudp
+	[ -z "$tcpudp" ] && config_get tcpudp $1 proto "all"
 	config_get vpn $1 vpn
 	_rule_dscp dscp $1
 	[ "$vpn" = "1" ] && intf="srv_vpn1"
@@ -792,27 +797,35 @@ _bypass_domain() {
 		# entry with the DSCP set names of another rule. _dnsipset_add
 		# spreads each family over omr_dst_bypass_<family>, _d1, _d2, ...
 		if [ -n "$intf" ]; then
+			# TCP or UDP only: the sets, rules and dnsmasq list of that
+			# protocol, which _intf_rule makes next to the generic ones
+			# (none and srv_vpn1 have none)
+			local _p=""
+			case "$intf:$tcpudp" in
+				none:*|srv_vpn1:*) ;;
+				*:tcp|*:udp) _p="_${tcpudp}" ;;
+			esac
 			if [ -n "$dscp" ]; then
 				_dscp_ensure_ipset "$dscp"
-				_dnsipset_add "${intf}_dscp_${dscp}" "$domain" \
-					"omr_dst_bypass_${intf}_4" "omr_dst_bypass_${intf}_6" \
+				_dnsipset_add "${intf}${_p}_dscp_${dscp}" "$domain" \
+					"omr_dst_bypass_${intf}_4${_p}" "omr_dst_bypass_${intf}_6${_p}" \
 					"omr_dst_bypass_dscp_${dscp}_4" "omr_dst_bypass_dscp_${dscp}_6"
 			else
-				_dnsipset_add "${intf}" "$domain" \
-					"omr_dst_bypass_${intf}_4" "omr_dst_bypass_${intf}_6"
+				_dnsipset_add "${intf}${_p}" "$domain" \
+					"omr_dst_bypass_${intf}_4${_p}" "omr_dst_bypass_${intf}_6${_p}"
 			fi && {
-				uci -q set firewall.omr_dst_bypass_${intf}_4.enabled='1'
+				uci -q set firewall.omr_dst_bypass_${intf}_4${_p}.enabled='1'
 				add_domains="true"
 			}
 			for zone in $(_get_firewall_zones); do
-				uci -q set firewall.omr_dst_bypass_${intf}_dstip_4_${zone}.enabled='1'
-				uci -q set firewall.omr_dst_bypass_${intf}_dstip_4_accept_${zone}.enabled='1'
+				uci -q set firewall.omr_dst_bypass_${intf}_dstip_4_${zone}${_p}.enabled='1'
+				uci -q set firewall.omr_dst_bypass_${intf}_dstip_4_${zone}_accept.enabled='1'
 			done
 			if [ "$noipv6" != "1" ]; then
-				uci -q set firewall.omr_dst_bypass_${intf}_6.enabled='1'
+				uci -q set firewall.omr_dst_bypass_${intf}_6${_p}.enabled='1'
 				for zone in $(_get_firewall_zones); do
-					uci -q set firewall.omr_dst_bypass_${intf}_dstip_6_${zone}.enabled='1'
-					uci -q set firewall.omr_dst_bypass_${intf}_dstip_6_accept_${zone}.enabled='1'
+					uci -q set firewall.omr_dst_bypass_${intf}_dstip_6_${zone}${_p}.enabled='1'
+					uci -q set firewall.omr_dst_bypass_${intf}_dstip_6_${zone}_accept.enabled='1'
 				done
 			fi
 			# noipv6 list entries are plain domains (no slashes), unlike the
@@ -1921,8 +1934,10 @@ _bypass_ip_set() {
 	interface=$(_map_intf_device "$interface")
 	[ -z "$interface" ] && [ -z "$dscp" ] && return
 	[ "$interface" = "default" ] && interface="all"
+	local tcpudp
+	config_get tcpudp $1 proto "all"
 	for ip in $ip; do
-		[ -n "$interface" ] && _bypass_ip $ip $interface
+		[ -n "$interface" ] && _bypass_ip $ip $interface $tcpudp
 		[ -n "$dscp" ] && _dscp_ip $ip $dscp
 	done
 }
