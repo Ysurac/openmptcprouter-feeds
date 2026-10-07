@@ -126,6 +126,32 @@ _omr_default_m1_has_device() {
 	_omr_route_has_dev "$_omr_def_m1" "$1"
 }
 
+# Has device $1 the weight of its interface in the metric 1 route? A change
+# of weight alone (a master set back to on, or the master elected while the
+# configured one was disabled set back to on when it returns) leaves every
+# device in the route, so nothing rebuilt it and the old master kept its
+# weight of 100. No weight shown is a single nexthop: the kernel drops it.
+_omr_default_m1_weight_ok() {
+	local _cfg _want _line _w=""
+	_omr_get_multipath_config_var _cfg "$OMR_TRACKER_INTERFACE"
+	_omr_route_fragment_var _want "$OMR_TRACKER_INTERFACE" "$_cfg" "" "$1"
+	_want="${_want##* weight }"
+	_omr_default_m1_has_device "$1" || return 0
+	while read -r _line; do
+		case " $_line " in
+			*" dev $1 "*)
+				case "$_line" in
+					*" weight "*) _w="${_line##* weight }"; _w="${_w%% *}" ;;
+				esac
+				break
+				;;
+		esac
+	done <<EOF
+$_omr_def_m1
+EOF
+	[ -z "$_w" ] || [ "$_w" = "$_want" ]
+}
+
 # Set in the persistent config only when the value differs, and remember
 # it: the commits below are for this script's own edits, not for whatever
 # other processes have pending in the shared /tmp/.uci (the runtime values
@@ -460,8 +486,9 @@ if [ "$master_setting" = "balancing" ] && { [ "$multipath_config" = "on" ] || [ 
 	# Compare the current route against what we would install instead of
 	# grepping it for the tracked device: a backup interface is never in
 	# the metric-1 route, so the device grep replaced and logged an
-	# already correct route on every tracker cycle (issue #4358).
-	if [ -n "$omrvpn_intf" ] && [ -n "$OMR_TRACKER_DEVICE_IP" ] && { ! _omr_default_m1_has_device "$OMR_TRACKER_DEVICE" || [ "$multipath_config" = "backup" ]; } && _omr_up_balancing_diff; then
+	# already correct route on every tracker cycle (issue #4358). So is a
+	# device whose weight is no longer its interface's.
+	if [ -n "$omrvpn_intf" ] && [ -n "$OMR_TRACKER_DEVICE_IP" ] && { ! _omr_default_m1_has_device "$OMR_TRACKER_DEVICE" || [ "$multipath_config" = "backup" ] || ! _omr_default_m1_weight_ok "$OMR_TRACKER_DEVICE"; } && _omr_up_balancing_diff; then
 		_omr_balancing_lock
 		_omr_up_balancing_diff
 		[ -n "$_omr_bal_m1" ] && {
