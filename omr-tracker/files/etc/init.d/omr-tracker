@@ -614,19 +614,33 @@ reload_service() {
 	start "$@"
 }
 
-restart_service() {
+# rc.common runs restart(), not restart_service(), for "restart": named
+# restart, this replaces rc.common's
+restart() {
+	local _cg _kill_wait=0
 	if [ -n "$1" ]; then
+		# Run by the tracker itself (001-initialize), this script is in the
+		# tracker's cgroup, which procd kills once the tracker has exited:
+		# leave it, or the tracker is never started again
+		read -r _cg 2>/dev/null </proc/self/cgroup
+		case "$_cg" in
+			*"/services/omr-tracker/$1") echo "$$" 2>/dev/null >/sys/fs/cgroup/cgroup.procs ;;
+		esac
 		procd_kill "omr-tracker" "$1" 2>/dev/null
-		# wait for the instance to actually exit instead of a blind sleep
-		local _kill_wait=0
-		while _tracker_running "$1" && [ "$_kill_wait" -lt 3 ]; do
+		# Add the instance back once the tracker has exited, which procd's
+		# KILL ensures term_timeout after the TERM: added back while it
+		# stops, the procd of the 6.18 images kills it at once, with the
+		# post-tracking hook it runs (Ysurac/openmptcprouter#4389)
+		while _tracker_running "$1" && [ "$_kill_wait" -lt 35 ]; do
 			sleep 1
 			_kill_wait=$((_kill_wait + 1))
 		done
 		_cleanup_locks "$1"
 		start "$@"
 	else
+		trap '' TERM
 		stop
+		trap - TERM
 		start
 	fi
 }
