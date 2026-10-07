@@ -878,6 +878,14 @@ local function _as_string(v, default)
 	return tostring(v)
 end
 
+-- Blanks around a value typed into the wizard are never part of it: an
+-- address, a name or a key pasted with a trailing space was stored as is,
+-- and the API login with such a key fails without a word (#2405)
+local function _trim(v)
+	if type(v) ~= "string" then return v end
+	return (v:match("^%s*(.-)%s*$"))
+end
+
 local function shell_quote(value)
 	local s = _as_string(value, "")
 	return "'" .. s:gsub("'", "'\"'\"'") .. "'"
@@ -944,7 +952,7 @@ local function _unique_string_list(values)
 
 	if type(values) == "table" then
 		for _, value in ipairs(values) do
-			local item = _as_string(value, "")
+			local item = _trim(_as_string(value, ""))
 			if item ~= "" and not seen[item] then
 				seen[item] = true
 				table.insert(list, item)
@@ -1093,12 +1101,18 @@ local function set_vps_disabled(disable)
 end
 
 function wizard_add(args)
+	for k, v in pairs(args) do args[k] = _trim(v) end
 	-- Discard any uci changes staged (but never committed) by LuCI ubus
 	-- sessions: rpcd shares the /tmp/.uci savedir, so stale deltas such as
 	-- 'del network.wan1.proto' left behind by an earlier page visit would
 	-- otherwise be silently merged into the commits below and could brick
 	-- the router (#4316). The wizard payload carries the full desired state.
 	local servers = _parse_json_table(args.servers)
+	for _, srv in ipairs(servers) do
+		if type(srv) == "table" then
+			for k, v in pairs(srv) do srv[k] = _trim(v) end
+		end
+	end
 	-- An empty pin is the user clearing it; one that is no pin is refused
 	-- before anything changes. It used to normalize to "" too, so a typo (or
 	-- a direct ubus call) silently deleted a good pin, and the next
@@ -1117,6 +1131,15 @@ function wizard_add(args)
 	end
 
 	local interfaces = _parse_json_table(args.interfaces)
+	for _, itf in ipairs(interfaces) do
+		if type(itf) == "table" then
+			-- PAP/CHAP passwords are kept as typed, as on LuCI's own
+			-- interface pages
+			for k, v in pairs(itf) do
+				if k ~= "password" then itf[k] = _trim(v) end
+			end
+		end
+	end
 	local delete_intfs = _parse_json_table(args.delete_intfs)
 	local delete_servers = _parse_json_table(args.delete_servers)
 	local master = _sanitize_name(args.master)
