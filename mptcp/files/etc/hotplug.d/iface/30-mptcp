@@ -34,13 +34,23 @@ case "$MULTIPATH" in
 esac
 MULTIPATH_ID="$(uci -q get network.$MP_INTERFACE.metric)"
 
+# An update gives the endpoint the new address, unless omr-tracker has the
+# interface down: as in mptcp's init script, the endpoint then stays out of
+# MPTCP, and 003-up adds it back once the tracker sees the interface up again
+_tracker_down() {
+	[ "$(uci -q -P /var/state get openmptcprouter.$MP_INTERFACE.state)" = "down" ] || return 1
+	logger -t "mptcp" "$DEVICE tracker state is down, not adding it back to MPTCP"
+}
+
 if [ "$ACTION" = ifupdate -a -n "$IFUPDATE_ADDRESSES" ] && [ -n "$MULTIPATH" ] && [ "$MULTIPATH" != "off" ]; then
 	logger -t "mptcp" "New IP ($IFUPDATE_ADDRESSES) for $INTERFACE ($DEVICE)"
 	multipath $DEVICE off >/dev/null 2>&1 || exit 0
+	_tracker_down && exit 0
 	multipath $DEVICE $MULTIPATH_MODE $MULTIPATH_ID >/dev/null 2>&1 || exit 0
 elif [ "$ACTION" = ifupdate ] && [ -n "$MULTIPATH" ] && [ "$MULTIPATH" != "off" ]; then
 	logger -t "mptcp" "Update of $INTERFACE ($DEVICE)"
 	multipath $DEVICE off >/dev/null 2>&1 || exit 0
+	_tracker_down && exit 0
 	multipath $DEVICE $MULTIPATH_MODE $MULTIPATH_ID >/dev/null 2>&1 || exit 0
 elif [ "$ACTION" = ifup -o "$ACTION" = iflink  -o "$ACTION" = link-up ] && [ -z "$(echo $DEVICE | grep oip | grep gre)" ] && [ -n "$MULTIPATH" ] && [ "$MULTIPATH" != "off" ]; then
 	logger -t "mptcp" "Reloading mptcp config due to $ACTION of $INTERFACE ($DEVICE)"
