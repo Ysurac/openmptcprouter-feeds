@@ -509,7 +509,7 @@ function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspee
 	ucic:commit("openmptcprouter")
 end
 
-function default_vpn(default_vpn)
+function default_vpn(default_vpn, start)
 	-- Stop all VPN services before switching to avoid stale tunnels.
 	force_stop_vpn("all")
 	-- Get VPN set by default
@@ -612,8 +612,14 @@ function default_vpn(default_vpn)
 	ucic:commit("openmptcprouter")
 	ucic:save("network")
 	ucic:commit("network")
-	-- Start the newly selected VPN
-	force_start_vpn(default_vpn)
+	if start == false then
+		-- No server in use (all of them disabled): keep the choice for
+		-- when one is enabled again, but leave every VPN off
+		force_stop_vpn("all")
+	else
+		-- Start the newly selected VPN
+		force_start_vpn(default_vpn)
+	end
 end
 
 -- Never let a backend-wide enable auto-enable a *secondary* shadowsocks-rust
@@ -645,7 +651,7 @@ local function _ssrust_enable_flag(name, want_flag)
 	return want_flag
 end
 
-function default_proxy(proxy)
+function default_proxy(proxy, start)
 	-- Stop the currently active proxy before switching
 	local prev_proxy = ucic:get("openmptcprouter","settings","proxy") or ""
 	local proxy_changed = (prev_proxy ~= proxy)
@@ -658,11 +664,14 @@ function default_proxy(proxy)
 	if proxy_changed and prev_proxy ~= "" then
 		force_stop_proxy(prev_proxy)
 	end
-	-- Enable/disable proxy services based on selection
-	local is_ss_libev  = (proxy == "shadowsocks")
-	local is_ss_rust   = (proxy == "shadowsocks-rust" or proxy == "shadowsocks-go")
-	local is_v2ray     = (proxy:match("^v2ray.*") ~= nil)
-	local is_xray      = (proxy:match("^xray.*") ~= nil)
+	-- Enable/disable proxy services based on selection. With no server in
+	-- use (all of them disabled), keep the choice for when one is enabled
+	-- again, but leave every proxy off
+	local on = (start ~= false)
+	local is_ss_libev  = on and (proxy == "shadowsocks")
+	local is_ss_rust   = on and (proxy == "shadowsocks-rust" or proxy == "shadowsocks-go")
+	local is_v2ray     = on and (proxy:match("^v2ray.*") ~= nil)
+	local is_xray      = on and (proxy:match("^xray.*") ~= nil)
 
 	-- shadowsocks-libev: disabled flag on sss0
 	if ucic:get("shadowsocks-libev","sss0") ~= nil then
@@ -722,7 +731,9 @@ function default_proxy(proxy)
 	ucic:save("openmptcprouter")
 	ucic:commit("openmptcprouter")
 	-- Start the newly selected proxy
-	force_start_proxy(proxy)
+	if on then
+		force_start_proxy(proxy)
+	end
 	-- omr-tracker's per-proxy watchdogs are separate procd service instances
 	-- from the proxy daemons themselves (force_stop_proxy above only stops
 	-- e.g. xray, not omr-tracker-xray) -- without reconciling here, switching
@@ -1082,6 +1093,22 @@ local function set_proxy_disabled(disable)
 	end
 end
 
+-- Whether a wizard save leaves a server in use: one that is enabled and has
+-- an address. A server with no address is not a server: it can only be a
+-- section left over from "add a new server" that was never filled in.
+-- Counting it as enabled made set_vps_disabled() re-enable omrvpn and
+-- restart the VPN and the proxy on the very next save after the last real
+-- VPS was deleted, so removing a VPS never stuck.
+local function _servers_in_use(servers)
+	for _, srv in ipairs(servers) do
+		if type(srv) == "table" and _sanitize_name(srv.name) ~= ""
+		   and _to_flag(srv.disabled) ~= "1" and #_unique_string_list(srv.ips) > 0 then
+			return true
+		end
+	end
+	return false
+end
+
 -- Actually stop/start the VPN tunnel (and any active proxy) when every
 -- configured server is disabled/re-enabled, instead of leaving the
 -- "Disable server" wizard option as a config-cleanup no-op (#4334): tears
@@ -1143,6 +1170,11 @@ function wizard_add(args)
 	local delete_intfs = _parse_json_table(args.delete_intfs)
 	local delete_servers = _parse_json_table(args.delete_servers)
 	local master = _sanitize_name(args.master)
+	-- With no server in use, the VPN and proxy choices below are recorded
+	-- but nothing is enabled or started: set_vps_disabled() at the end only
+	-- acts when omrvpn changes state, so starting them here brought a
+	-- disabled server's proxy back on every later save
+	local any_server_enabled = _servers_in_use(servers)
 
 	for _, d in ipairs(delete_intfs) do
 		local intf = ""
@@ -1182,7 +1214,7 @@ function wizard_add(args)
 
 	local new_vpn = _as_string(args.default_vpn, "")
 	if new_vpn ~= "" and new_vpn ~= (ucic:get("openmptcprouter","settings","vpn") or "") then
-		default_vpn(new_vpn)
+		default_vpn(new_vpn, any_server_enabled)
 	end
 
 	if _as_string(args.shadowsocks_key, "") ~= "" then
@@ -1218,7 +1250,7 @@ function wizard_add(args)
 	end
 
 	if _as_string(args.default_proxy, "") ~= "" then
-		default_proxy(_as_string(args.default_proxy, "shadowsocks-rust"))
+		default_proxy(_as_string(args.default_proxy, "shadowsocks-rust"), any_server_enabled)
 	end
 	_set_or_delete("openmptcprouter", "settings", "mptcpovervpn", _as_string(args.mptcpovervpn_vpn, ""))
 	_set_or_delete("openmptcprouter", "settings", "country", _as_string(args.country, ""))
@@ -1499,7 +1531,6 @@ function wizard_add(args)
 	local master_key = ""
 	local master_username = "openmptcprouter"
 	local master_iplist = {}
-	local any_server_enabled = false
 	for _, srv in ipairs(servers) do
 		if type(srv) == "table" then
 			local sid = _sanitize_name(srv.name)
@@ -1523,13 +1554,6 @@ function wizard_add(args)
 				ucic:set("openmptcprouter", sid, "master", sid == master and "1" or "0")
 
 				local iplist = _unique_string_list(srv.ips)
-				-- A server with no address is not a server: it can only be a
-				-- section left over from "add a new server" that was never
-				-- filled in. Counting it as enabled made set_vps_disabled()
-				-- below re-enable omrvpn and restart the VPN and the proxy on
-				-- the very next save after the last real VPS was deleted, so
-				-- removing a VPS never stuck.
-				if _to_flag(srv.disabled) ~= "1" and #iplist > 0 then any_server_enabled = true end
 				if _to_flag(srv.disabled) == "1" then
 					clear_server_vpn_proxy(iplist)
 				end

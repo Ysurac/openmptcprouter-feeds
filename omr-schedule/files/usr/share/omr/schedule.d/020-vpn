@@ -30,6 +30,21 @@ if [ -z "$configured_vpn" ]; then
 	uci -q commit openmptcprouter
 fi
 
+# "Disable server" in the wizard: with no server in use (all of them
+# disabled, or none with an address) no VPN may run, whatever
+# openmptcprouter.settings.vpn names. The wizard keeps that setting for
+# when a server is enabled again.
+server_in_use=0
+_server_in_use() {
+	local ip disabled
+	config_get ip "$1" ip
+	config_get disabled "$1" disabled
+	[ -n "$ip" ] && [ "$disabled" != "1" ] && server_in_use=1
+}
+config_load openmptcprouter
+config_foreach _server_in_use server
+[ "$server_in_use" = "1" ] || configured_vpn="none"
+
 changed=0
 
 _set_vpn_state() {
