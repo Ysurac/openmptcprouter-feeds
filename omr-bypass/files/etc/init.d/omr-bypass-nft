@@ -2339,6 +2339,16 @@ start_service() {
 		sleep 1
 	done
 	trap "rmdir '$_lock' 2>/dev/null" EXIT HUP INT TERM
+	# A reload clears the per-entry state only now that it holds the lock:
+	# cleared before, by a call that then gave up waiting, it was gone for
+	# good once the running instance committed its own changes.
+	[ -n "$RELOAD" ] && {
+		# a stale consumer would keep collecting for protos that were just
+		# removed; it is started again below when ndpid protos are still
+		# configured
+		_stop_ndpid_consumer
+		_soft_wipe_dynamic
+	}
 
 	#local count
 	logger -t "omr-bypass" "Starting OMR-ByPass..."
@@ -2671,10 +2681,9 @@ reload_service() {
 	# hash-gate skips the (unchanged) skeleton, so without clearing the old
 	# per-entry state here, the stale entry stays live under its old
 	# interface's ipset/dnsmasq section until "Reload OMR-ByPass rules" is
-	# run manually or the hourly cron fires (issue #4340).
+	# run manually or the hourly cron fires (issue #4340). start_service
+	# clears it once it holds its lock.
 	RELOAD=1
-	_stop_ndpid_consumer
-	_soft_wipe_dynamic
 	#stop
 	start
 }
@@ -2726,10 +2735,8 @@ _soft_wipe_dynamic() {
 reload_rules() {
 	logger -t "omr-bypass" "Reload rules"
 	#[ "$( ipset -n list | grep omr_ )" = "" ] && return 0
+	# start_service stops the nDPId consumer and clears the per-entry state
+	# once it holds its lock
 	RELOAD=1
-	# stale consumer would keep collecting for protos that were just removed;
-	# start_service spawns a fresh one when ndpid protos are still configured
-	_stop_ndpid_consumer
-	_soft_wipe_dynamic
 	start
 }
