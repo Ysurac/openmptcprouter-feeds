@@ -30,32 +30,44 @@ config_foreach _setup_rules interface
 config_foreach _setup_routes interface
 
 _setup_fw() {
+	local src_ips_forward redir_tcp ifnames disabled lookup want have
 	config_get src_ips_forward $1 src_ips_forward
 	config_get redir_tcp $1 redir_tcp
 	config_get ifnames $1 ifnames
+	config_get disabled $1 disabled 0
 	lookup="$(uci -q get network.${redir_tcp}.lookup)"
-	uci -q batch <<-EOF >/dev/null
-		set firewall.gre_${1}=rule
-		set firewall.gre_${1}.src='lan'
-		set firewall.gre_${1}.target='MARK'
-		set firewall.gre_${1}.dest='*'
-		set firewall.gre_${1}.set_mark="0x${lookup}"
-	EOF
-	if [ -n "$src_ips_forward" ]; then
+	# Only for an enabled rule of a GRE tunnel (its redir_tcp interface has
+	# a lookup table) listing sources or interfaces, as with iptables: the
+	# others got a rule with an empty mark, set on all the LAN's traffic.
+	# Written only when it changes, so that the lists don't grow each run.
+	want=""
+	[ "$disabled" != "1" ] && [ -n "$lookup" ] && [ -n "$src_ips_forward$ifnames" ] && \
+		want="0x${lookup}|$(echo $src_ips_forward)|$(echo $ifnames)"
+	have=""
+	[ -n "$(uci -q get firewall.gre_${1})" ] && \
+		have="$(uci -q get firewall.gre_${1}.set_mark)|$(uci -q get firewall.gre_${1}.src_ip)|$(uci -q get firewall.gre_${1}.device)"
+	[ "$want" = "$have" ] && return 0
+	uci -q delete firewall.gre_${1}
+	if [ -n "$want" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set firewall.gre_${1}=rule
+			set firewall.gre_${1}.src='lan'
+			set firewall.gre_${1}.target='MARK'
+			set firewall.gre_${1}.dest='*'
+			set firewall.gre_${1}.set_mark="0x${lookup}"
+		EOF
 		for src_ip_forward in $src_ips_forward; do
 			uci -q add_list firewall.gre_${1}.src_ip="${src_ip_forward}"
 		done
+		if [ -n "$ifnames" ]; then
+			uci -q set firewall.gre_${1}.direction='in'
+			for ifname in ${ifnames}; do
+				uci -q add_list firewall.gre_${1}.device="${ifname}"
+			done
+		fi
 	fi
-	if [ -n "$ifnames" ]; then
-		uci -q set firewall.gre_${1}.direction='in'
-		for ifname in ${ifnames}; do
-			uci -q add_list firewall.gre_${1}.device="${ifname}"
-		done
-	fi
-	if [ -n "$(uci changes firewall)" ]; then
-		uci -q commit firewall
-		#/etc/init.d/firewall reload
-	fi
+	uci -q commit firewall
+	#/etc/init.d/firewall reload
 #	rule=""
 #	[ -n "$src_ips_forward" ] && rule="$rule -s $(echo "${src_ips_forward}" | sed 's/ /,/g')"
 #	[ -n "$ifnames" ] && rule="$rule -i $(echo "${ifnames}" | sed 's/ /-i /g')"
@@ -77,9 +89,10 @@ _setup_fw() {
 #		COMMIT
 #	EOF
 #fi
-if [ -n "$(uci -q get shadowsocks-libev)" ]; then
+# The config that has the rules: uci get prints nothing for a whole config
+if [ -n "$(uci -q get shadowsocks-libev.ss_rules)" ]; then
 	config_load shadowsocks-libev
-elif [ -n "$(uci -q get shadowsocks-rust)" ]; then
+elif [ -n "$(uci -q get shadowsocks-rust.ss_rules)" ]; then
 	config_load shadowsocks-rust
 fi
 config_foreach _setup_fw ss_rules
