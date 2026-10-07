@@ -573,6 +573,14 @@ _omr_route_fragment_var() {
 	if [ -z "$weight" ]; then
 		_omr_uci_get_var weight "openmptcprouter.$INTERFACE.weight"
 	fi
+	# "ip route" takes a weight from 1 to 256 and refuses the route with any
+	# other, which 003-up then tried again on each run: keep the option in
+	# that range, and use the default for a value that is no number
+	case "$weight" in
+		""|*[!0-9]*) weight="" ;;
+		????*) weight=256 ;;
+		*) if [ "$weight" -gt 256 ]; then weight=256; elif [ "$weight" -lt 1 ]; then weight=1; fi ;;
+	esac
 	if [ -z "$weight" ]; then
 		if [ "$multipath_config_route" = "master" ]; then
 			weight=100
