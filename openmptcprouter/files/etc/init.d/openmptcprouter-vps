@@ -1022,7 +1022,7 @@ _get_gre_tunnel() {
 			peeraddr="$(echo $tunnel | jsonfilter -q -e '@.remote_ip')"
 			ipaddr="$(echo $tunnel | jsonfilter -q -e '@.local_ip')"
 			publicaddr="$(echo $tunnel | jsonfilter -q -e '@.public_ip')"
-			if [ "$peeraddr" != "" ] && [ "$ipaddr" != "" ] && [ "$publicaddr" != "" ] && [ "$vpnip_local" != "" ] && ([ "$(uci -q get network.oip${i}.ipaddr)" != "$peeraddr" ] || [ "$(uci -q get network.oip${i}.gateway)" != "$ipaddr" ] || [ "$(uci -q get network.oip${i}gre.ipaddr)" != "$vpnip_local" ] || ([ -n "$(uci -q get xray)" ] && [ -z "$(uci -q get xray.oip${i}server.s_vless_user_id)" ]) || ([ -n "$(uci -q get xray.oip${i}server_tunnel.protocol)" ] && [ "$(uci -q get xray.oip${i}server_tunnel.protocol)" != "$(uci -q get xray.omrout.protocol)" ])); then
+			if [ "$peeraddr" != "" ] && [ "$ipaddr" != "" ] && [ "$publicaddr" != "" ] && [ "$vpnip_local" != "" ] && ([ "$(uci -q get network.oip${i}.ipaddr)" != "$peeraddr" ] || [ "$(uci -q get network.oip${i}.gateway)" != "$ipaddr" ] || [ "$(uci -q get network.oip${i}gre.ipaddr)" != "$vpnip_local" ] || ([ -n "$(uci -q get shadowsocks-libev.sss0)" ] && [ -n "$(echo $tunnel | jsonfilter -q -e '@.shadowsocks_port')" ] && [ -z "$(uci -q get shadowsocks-libev.oip${i}server)" ]) || ([ -n "$(uci -q get xray.omrout)" ] && [ -n "$(echo $tunnel | jsonfilter -q -e '@.xray.uuid')" ] && [ -z "$(uci -q get xray.oip${i}server_tunnel.s_vless_user_id)" ]) || ([ -n "$(uci -q get xray.oip${i}server_tunnel.protocol)" ] && [ "$(uci -q get xray.oip${i}server_tunnel.protocol)" != "$(uci -q get xray.omrout.protocol)" ])); then
 				uci -q batch <<-EOF >/dev/null
 					set network.oip${i}gre=interface
 					set network.oip${i}gre.label="GRE tunnel for $publicaddr"
@@ -1061,7 +1061,9 @@ _get_gre_tunnel() {
 					uci -q add_list firewall.zone_vpn.network="oip${i}gre"
 					uci -q add_list firewall.zone_vpn.network="oip${i}"
 				}
-				if [ -n "$(uci -q get shadowsocks-libev)" ]; then
+				# The proxy sections copy their settings from sss0 and omrout:
+				# test those, uci get prints nothing for a whole config
+				if [ -n "$(uci -q get shadowsocks-libev.sss0)" ]; then
 					ssport="$(echo $tunnel | jsonfilter -q -e '@.shadowsocks_port')"
 					if [ -n "$ssport" ]; then
 						uci -q batch <<-EOF >/dev/null
@@ -1097,7 +1099,7 @@ _get_gre_tunnel() {
 						fi
 					fi
 				fi
-				if [ -n "$(uci -q get xray)" ]; then
+				if [ -n "$(uci -q get xray.omrout)" ]; then
 					xray_user="$(echo $tunnel | jsonfilter -q -e '@.xray.uuid')"
 					uci -q batch <<-EOF >/dev/null
 						delete xray.oip${i}server
