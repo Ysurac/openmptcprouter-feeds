@@ -2055,27 +2055,44 @@ set_bypass_ips() {
 	config_foreach _set_bypass_ips_server server
 }
 
+# The tunnel's two ends as the VPS stores them: vpnip_local is the router's
+# address on omrvpn (the VPS's remoteip), vpnip_remote the VPS's own (its
+# localip). Either is empty while the tunnel is still coming up.
+_get_vpn_ips() {
+	vpnifname="$(uci -q get network.omrvpn.device)"
+	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} 2>/dev/null | head -n 1 | awk -F'[ /]+' '{print $3}')
+	[ -z "$vpnip_local" ]  && vpnip_local=$(ip -4 addr show dev "$OMR_TRACKER_DEVICE" 2>/dev/null | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1)
+	vpnip_remote=$(ip -4 r show default dev ${vpnifname} 2>/dev/null | head -n 1 | awk '{print $3}' | tr -d "\n")
+	[ -z "$vpnip_remote" ] && [ -n "$vpnifname" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} 2>/dev/null | grep -m 1 kernel | awk '{print $1}' | tr -d "\n")
+	[ -z "$vpnip_remote" ] && [ -n "$vpnifname" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} 2>/dev/null | grep -m 1 "proto static src" | awk '{print $3}' | tr -d "\n")
+	[ -z "$vpnip_remote" ] && vpnip_remote=$(ifstatus omrvpn 2>/dev/null | jsonfilter -q -e '@.route[0].nexthop')
+	[ -z "$vpnip_remote" ] && [ "$vpnifname" = "bonding-omrvpn" ] && vpnip_remote="10.255.248.1"
+}
+
+# Succeeds only once the VPS holds the tunnel's current addresses: they
+# already matched, or POST /vpnips applied them. Fails when the config
+# couldn't be fetched, the tunnel has no address or peer yet, or the POST
+# was refused or got no answer, so that the wizard's poll tries again.
 _set_vpn_ip() {
 	local settings
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
-	[ -z "$vps_config" ] && return
-	[ "$(uci -q get openmptcprouter.settings.vpn)" = "none" ] && return
-	vpnifname="$(uci -q get network.omrvpn.device)"
+	[ -z "$vps_config" ] && return 1
+	[ "$(uci -q get openmptcprouter.settings.vpn)" = "none" ] && return 0
+	_get_vpn_ips
+	[ -n "$vpnip_local" ] && [ -n "$vpnip_remote" ] || return 1
 	vpnip_local_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.remoteip')"
-	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} 2>/dev/null | head -n 1 | awk -F'[ /]+' '{print $3}')
-	[ -z "$vpnip_local" ]  && vpnip_local=$(ip -4 addr show dev "$OMR_TRACKER_DEVICE" | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1)
 	vpnip_remote_current="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.localip')"
-	vpnip_remote=$(ip -4 r show default dev ${vpnifname} | head -n 1 | awk '{print $3}' | tr -d "\n")
-	[ -z "$vpnip_remote" ] && [ -n "$vpnifname" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} 2>/dev/null | grep -m 1 kernel | awk '{print $1}' | tr -d "\n")
-	[ -z "$vpnip_remote" ] && [ -n "$vpnifname" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} 2>/dev/null | grep -m 1 "proto static src" | awk '{print $3}' | tr -d "\n")
-	[ -z "$vpnip_remote" ] && vpnip_remote=$(ifstatus omrvpn | jsonfilter -e '@.route[0].nexthop')
-	[ -z "$vpnip_remote" ] && [ "$vpnifname" = "bonding-omrvpn" ] && vpnip_remote="10.255.248.1"
 	ula="$(uci -q get network.globals.ula_prefix)"
 	ula_current="$(echo "$vps_config" | jsonfilter -q -e '@.ip6in4.ula')"
-	if [ "$vpnip_remote" != "" ] && [ "$vpnip_local" != "" ] && ([ "$vpnip_remote" != "$vpnip_remote_current" ] || [ "$vpnip_local" != "$vpnip_local_current" ] || [ "$ula" != "$ula_current" ]); then
-		settings='{"remoteip" : "'$vpnip_local'","localip" : "'$vpnip_remote'","ula" : "'$ula'"}'
-		result=$(_set_json "vpnips" "$settings")
-	fi
+	[ "$vpnip_remote" = "$vpnip_remote_current" ] && [ "$vpnip_local" = "$vpnip_local_current" ] && [ "$ula" = "$ula_current" ] && return 0
+	settings='{"remoteip" : "'$vpnip_local'","localip" : "'$vpnip_remote'","ula" : "'$ula'"}'
+	result=$(_set_json "vpnips" "$settings")
+	[ "$(_parse_result "$result")" = "done" ] && return 0
+	# The VPS answers this error when it already has all three values. The
+	# /config of an older VPS reports no ULA for any user but userid 0, so
+	# for the others the ULA always looks changed and every run POSTs: in
+	# sync all the same.
+	[ "$(echo "$result" | jsonfilter -q -e '@.reason')" = "Invalid parameters" ]
 }
 
 # GET /config from ${servername} with its stored token, for the entry points
@@ -2133,12 +2150,33 @@ _set_vpn_ip_server() {
 	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
 	_get_config_stored_token
-	_set_vpn_ip
+	_set_vpn_ip || vpn_ip_failed=1
 }
 
+# Fails until every server holds the tunnel's current addresses, so that the
+# wizard's poll stops at the first full sync and retries a run that couldn't
+# reach a server. While the tunnel has no address or peer yet, no server is
+# asked anything: the poll would fetch each one's config every 2 s for
+# nothing.
+#
+# Runs one at a time. The omrvpn hotplug starts it in the background (an
+# ifup and an ifupdate can come back to back) while the poll runs it too:
+# two runs at once raced on the stored token, and the one that read the
+# older address could POST it last. A run that waited reads the addresses
+# and the VPS config again, so it only sends what is still missing.
 set_vpn_ip() {
+	vpn_ip_failed=0
+	[ "$(uci -q get openmptcprouter.settings.vpn)" = "none" ] && return 0
+	# a failed exec redirection ends a POSIX shell: check first
+	if command -v flock >/dev/null 2>&1 && [ -d /var/lock ] && [ -w /var/lock ]; then
+		exec 9>/var/lock/omr-set-vpn-ip.lock
+		flock 9
+	fi
+	_get_vpn_ips
+	[ -n "$vpnip_local" ] && [ -n "$vpnip_remote" ] || return 1
 	config_load openmptcprouter
 	config_foreach _set_vpn_ip_server server
+	return $vpn_ip_failed
 }
 
 

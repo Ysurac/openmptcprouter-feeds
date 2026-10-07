@@ -1862,12 +1862,13 @@ function force_start_vpn(vpn)
 	-- each VPN backend's own bring-up of that interface, and a bare "does the
 	-- forward still work" check after a VPN switch found it silently didn't
 	-- for every backend tried here -- so poll set_vpn_ip directly instead of
-	-- trusting the hotplug fired. set_vpn_ip already no-ops if the tunnel
-	-- isn't up yet or nothing actually changed (see its own current-vs-cached
-	-- comparison against the VPS config), so repeating it is harmless; poll
-	-- for up to 30s to cover every backend's own negotiation time (glorytun
-	-- TCP/UDP link setup, OpenVPN TLS handshake, mqvpn's own handshake, ...).
-	sys.exec("sh -c 'i=0; while [ $i -lt 15 ]; do sleep 2; /etc/init.d/openmptcprouter-vps set_vpn_ip >/dev/null 2>&1; i=$((i+1)); done >/dev/null 2>/dev/null &'")
+	-- trusting the hotplug fired. set_vpn_ip only POSTs what the VPS doesn't
+	-- have yet, so repeating it is harmless; poll for up to 30s to cover
+	-- every backend's own negotiation time (glorytun TCP/UDP link setup,
+	-- OpenVPN TLS handshake, mqvpn's own handshake, ...). It fails until
+	-- every server holds the tunnel's addresses (no address or peer yet, a
+	-- server that didn't answer), so the poll ends at the first full sync.
+	sys.exec("sh -c 'i=0; while [ $i -lt 15 ]; do sleep 2; /etc/init.d/openmptcprouter-vps set_vpn_ip >/dev/null 2>&1 && break; i=$((i+1)); done >/dev/null 2>/dev/null &'")
 end
 
 function force_stop_vpn(vpn)
