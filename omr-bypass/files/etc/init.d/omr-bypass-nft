@@ -1345,15 +1345,25 @@ _bypass_proto_core() {
 	local domains
 	domains=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select host from hostproto where proto='"$proto"';" ".exit")
 	if [ -n "$domains" ]; then
-		# Only fetch TLD list for wildcard expansion on fresh start (not reload)
-		[ -z "$RELOAD" ] && _fetch_tlds
 		for domain in $domains; do
 			if [ -n "$domain" ]; then
 				domain="${domain#.}"
 				case "$domain" in *.)
-					# Wildcard TLD expansion: skip on reload_rules (too slow, dnsmasq keeps prior config)
-					[ -n "$RELOAD" ] && continue
-					domainlist="$(_expand_wildcard_domain "$domain")"
+					# Wildcard TLD expansion (one dig per TLD) is too slow for
+					# every reload, so a reload reuses what the last start found.
+					# It can't skip them: _soft_wipe_dynamic has emptied the
+					# dnsmasq lists, so they would be gone until the next start.
+					local _wildcard_cache="/tmp/omr-bypass-wildcards/${domain}"
+					if [ -n "$RELOAD" ] && [ -s "$_wildcard_cache" ]; then
+						domainlist="$(cat "$_wildcard_cache")"
+					else
+						_fetch_tlds
+						domainlist="$(_expand_wildcard_domain "$domain")"
+						if [ -n "$domainlist" ]; then
+							mkdir -p /tmp/omr-bypass-wildcards
+							echo "$domainlist" > "$_wildcard_cache"
+						fi
+					fi
 					for validdomain in $domainlist; do
 						_omr_defer _bypass_domain "$validdomain" "$intf" "$family" "$noipv6" "${tcpudp}"
 					done
