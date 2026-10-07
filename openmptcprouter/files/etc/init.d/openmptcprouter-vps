@@ -291,6 +291,17 @@ _set_glorytun_vps() {
 	fi
 }
 
+# Only the server the config is pulled from (master, or current) ever clears
+# get_config, in _get_vps_config: raised on a backup server it stayed 1, and
+# omr-tracker's 003-up restarted this service on every tracker cycle
+_is_config_server() {
+	[ "$(uci -q get openmptcprouter.$1.master)" = "1" ] || [ "$(uci -q -P /var/state get openmptcprouter.$1.current)" = "1" ]
+}
+
+_want_config() {
+	_is_config_server "$servername" && uci -q set openmptcprouter.${servername}.get_config="1"
+}
+
 _set_openvpn_vps() {
 	local enabled port key
 	enabled="$(uci -q get openvpn.omr.enabled)"
@@ -305,7 +316,7 @@ _set_openvpn_vps() {
 	current_port="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.port')"
 	current_cipher="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.cipher')"
 	if [ "$current_key" != "$key" ]; then
-		uci -q set openmptcprouter.${servername}.get_config="1"
+		_want_config
 	fi
 	if [ "$current_port" != "$port" ] || [ "$current_cipher" != "$cipher" ]; then
 		local settings
@@ -330,7 +341,7 @@ _set_softethervpn_vps() {
 	current_cipher="$(echo "$vps_config" | jsonfilter -q -e '@.softethervpn.cipher')"
 	current_password="$(echo "$vps_config" | jsonfilter -q -e '@.softethervpn.password')"
 	if [ "$current_password" != "$password" ]; then
-		uci -q set openmptcprouter.${servername}.get_config="1"
+		_want_config
 	fi
 	#if [ "$current_port" != "$port" ] || [ "$current_cipher" != "$cipher" ]; then
 	if [ "$current_cipher" != "$cipher" ]; then
@@ -463,7 +474,7 @@ _set_mqvpn_vps() {
 		local settings result
 		settings='{"key": "'$key'", "port": '$port', "scheduler": "'$scheduler'", "cc": "'$cc'", "fec_enable": '$fec_enable', "fec_scheme": "'$fec_scheme'", "reinjection_control": '$reinjection_control', "reinjection_mode": "'$reinjection_mode'"}'
 		result=$(_set_json "mqvpn" "$settings")
-		[ -n "$result" ] && uci -q set openmptcprouter.${servername}.get_config="1"
+		[ -n "$result" ] && _want_config
 		[ -n "$result" ] && [ "$current_port" != "$port" ] && /etc/init.d/mqvpn restart >/dev/null 2>&1
 		echo $result
 	else
@@ -3749,6 +3760,9 @@ _split_tokenserver() {
 
 _config_service() {
 	servername=$1
+	# left by older versions
+	! _is_config_server "$servername" && [ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && \
+		uci -q set openmptcprouter.${servername}.get_config=0
 	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
 	vps_config=""
 	tokenserver=$(_get_token $servername)
@@ -3839,7 +3853,7 @@ _config_service() {
 		[ -z "$(_set_vpn_vps)" ] && error=1
 		[ -z "$(_set_proxy_vps)" ] && error=1
 	fi
-	([ -n "$(uci -q get shadowsocks-libev.sss0)" ] || [ -n "$(uci -q get shadowsocks-rust.sss0)" ]) && [ "$(uci -q get shadowsocks-libev.sss0.key)" = "" ] && [ "$(uci -q get shadowsocks-rust.sss0.password)" = "" ] && uci -q set openmptcprouter.${servername}.get_config=1
+	([ -n "$(uci -q get shadowsocks-libev.sss0)" ] || [ -n "$(uci -q get shadowsocks-rust.sss0)" ]) && [ "$(uci -q get shadowsocks-libev.sss0.key)" = "" ] && [ "$(uci -q get shadowsocks-rust.sss0.password)" = "" ] && _want_config
 	
 	#_set_pihole
 	[ -n "$wanips" ] && _set_wan_ip
