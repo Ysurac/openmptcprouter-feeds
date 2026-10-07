@@ -7,7 +7,8 @@
 # Released under GPL 3 or later
 
 if [ -d "/proc/sys/net/mptcp" ]; then
-        if ([ -f /proc/sys/net/mptcp/mptcp_enabled ] && [ `cat /proc/sys/net/mptcp/mptcp_enabled` = 0 ]) || ([ -f /proc/sys/net/mptcp/enabled ] && [ `cat /proc/sys/net/mptcp/enabled` = 0 ]); then
+        # read, not `cat` in two subshells: this runs on every call
+        if { [ -f /proc/sys/net/mptcp/mptcp_enabled ] && read -r mptcp_enabled < /proc/sys/net/mptcp/mptcp_enabled && [ "$mptcp_enabled" = 0 ]; } || { [ -f /proc/sys/net/mptcp/enabled ] && read -r mptcp_enabled < /proc/sys/net/mptcp/enabled && [ "$mptcp_enabled" = 0 ]; }; then
                 echo "MPTCP is disabled!"
                 exit 1
         fi
@@ -188,9 +189,32 @@ else
 		}
 	fi
 	if [ -n "$endpoint" ]; then
-        ID=$(echo "${endpoint}" | sort | grep -F "dev $DEVICE " | awk '{print $3}')
-        IFF=$(echo "${endpoint}" | sort | grep -F -m 1 "dev $DEVICE " | awk '{print $4; exit}')
-        IFF2=$(echo "${endpoint}" | sort | grep -F -m 1 "dev $DEVICE " | awk '{print $5; exit}')
+		# The ids of the device's endpoints, and the flags of its first
+		# endpoint in sorted order. A sort|grep|awk pipeline for each of the
+		# three cost 15 processes per call, and a status query runs for every
+		# device ("multipath" alone lists them all): one pass over the list
+		# gives the same values without any when the device has one endpoint.
+		ep_count=0
+		while IFS= read -r ep_line; do
+			case "$ep_line" in
+				*"dev $DEVICE "*)
+					ep_first="$ep_line"
+					ep_count=$((ep_count + 1))
+					;;
+			esac
+		done <<EOF
+$endpoint
+EOF
+		if [ "$ep_count" -gt 1 ]; then
+			ID=$(echo "${endpoint}" | sort | grep -F "dev $DEVICE " | awk '{print $3}')
+			ep_first=$(echo "${endpoint}" | sort | grep -F -m 1 "dev $DEVICE ")
+		fi
+		if [ "$ep_count" -gt 0 ]; then
+			read -r ep_addr ep_idkw ep_id IFF IFF2 ep_rest <<EOF
+$ep_first
+EOF
+			[ "$ep_count" -gt 1 ] || ID="$ep_id"
+		fi
 	fi
 	if [ -n "$TYPE" ]; then
 		#IP=$(ip a show $DEVICE | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}[0-9]*).*/\2/p')
