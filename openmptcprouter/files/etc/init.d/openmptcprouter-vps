@@ -3518,6 +3518,7 @@ _backup_send() {
 			revert openmptcprouter.${servername}.admin_error
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
+		backup_failed=1
 		return
 	}
 	# The archive holds /etc/shadow and every key: private, and gone once sent
@@ -3531,14 +3532,18 @@ _backup_send() {
 		logger -t "OMR-VPS" "Send backup file to server $servername"
 		echo '{"data": "'$backup_data'","sha256sum": "'$backup_sha256sum'"}' > "$backupjson"
 		result=$(_set_json "backuppost" "@$backupjson")
-		uci -q set openmptcprouter.$servername.lastbackup=$(date +%s)
+		_backup_state_set "$servername" lastbackup "$(date +%s)"
+		backup_sent=1
 	}
 	rm -f "$backup_file" "$backupjson"
 }
 
 backup_send() {
+	backup_failed=""
+	backup_sent=""
 	config_load openmptcprouter
 	config_foreach _backup_send server
+	[ -n "$backup_sent" ] && [ -z "$backup_failed" ]
 }
 
 
@@ -3547,8 +3552,10 @@ _backup_get() {
 	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
-	[ -z "$lastbackup" ] || [ "$lastbackup" -lt "$(uci -q get openmptcprouter.$servername.lastbackup)" ] && {
-		lastbackup="$(uci -q get openmptcprouter.$servername.lastbackup)"
+	local srvlastbackup="$(uci -q -P /var/state get openmptcprouter.$servername.lastbackup)"
+	[ -n "$srvlastbackup" ] || return
+	[ -z "$lastbackup" ] || [ "$lastbackup" -lt "$srvlastbackup" ] && {
+		lastbackup="$srvlastbackup"
 		serverbackup="$servername"
 	}
 }
@@ -3565,7 +3572,7 @@ _backup_get_and_apply() {
 			revert openmptcprouter.${servername}.admin_error
 			set openmptcprouter.${servername}.admin_error=1
 		EOF
-		return
+		return 1
 	}
 	if [ -n "$backupfile" ]; then
 		echo "get $backupfile"
@@ -3573,7 +3580,7 @@ _backup_get_and_apply() {
 	else
 		vps_backup=$(_get_json "backupget")
 	fi
-	[ -z "$vps_backup" ] && return
+	[ -z "$vps_backup" ] && return 1
 	backup_data="$(echo "$vps_backup" | jsonfilter -q -e '@.data')"
 	backup_sha256sum="$(echo "$vps_backup" | jsonfilter -q -e '@.sha256sum' | tr 'A-F' 'a-f')"
 	[ -n "$backup_data" ] || return
@@ -3614,9 +3621,16 @@ backup_get() {
 	fi
 }
 
+# The backup list is what the VPS holds right now, asked again each time the
+# Backup page opens: kept in /var/state, not committed to flash
+_backup_state_set() {
+	uci -q -P /var/state revert "openmptcprouter.$1.$2"
+	uci -q -P /var/state set "openmptcprouter.$1.$2=$3"
+}
+
+# _backup_list [<server>]: _config_service runs it for the server it syncs
 _backup_list() {
-	bservername=$1
-	[ -z "$servername" ] && servername=$bservername
+	[ -n "$1" ] && servername=$1
 	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
@@ -3635,13 +3649,14 @@ _backup_list() {
 	[ -z "$vps_backup" ] && return
 	backup_lastmodif="$(echo "$vps_backup" | jsonfilter -q -e '@.modif')"
 	[ -n "$backup_lastmodif" ] && {
-		uci -q set openmptcprouter.$servername.lastbackup=$backup_lastmodif
-		backup_all="$(echo "$vps_backup" | jsonfilter -q -e '@.sorted[*]')"
-		uci -q del openmptcprouter.$servername.allbackup
-		echo "$vps_backup" | jsonfilter -q -e '@.sorted[*]' | while read backup; do
+		_backup_state_set "$servername" lastbackup "$backup_lastmodif"
+		uci -q -P /var/state revert "openmptcprouter.$servername.allbackup"
+		# hides a list an older version committed to the config
+		uci -q -P /var/state delete "openmptcprouter.$servername.allbackup"
+		echo "$vps_backup" | jsonfilter -q -e '@.sorted[*]' | while read -r backup; do
 			name=$(echo "$backup" | jsonfilter -q -e '@[0]' | tr -d '\n')
 			modiftime=$(echo "$backup" | jsonfilter -q -e '@[1]' | tr -d '\n')
-			uci -q add_list openmptcprouter.$servername.allbackup="${name}|${modiftime}"
+			uci -q -P /var/state add_list "openmptcprouter.$servername.allbackup=${name}|${modiftime}"
 		done
 	}
 }
@@ -3651,7 +3666,6 @@ _backup_list() {
 backup_list() {
 	config_load openmptcprouter
 	config_foreach _backup_list server
-	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
 }
 
 

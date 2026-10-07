@@ -2000,6 +2000,62 @@ function update_vps()
 	sys.exec("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
 end
 
+-- Exit status of a command run through sys.exec, which only gives stdout
+local function exec_status(cmd)
+	return tonumber((sys.exec(cmd .. " >/dev/null 2>&1; echo $?") or ""):match("%d+")) or 1
+end
+
+local function _backup_server(name)
+	return type(name) == "string" and name:match("^[%w_]+$") ~= nil
+		and ucic:get("openmptcprouter", name) == "server"
+end
+
+function backup_list()
+	sys.exec("/etc/init.d/openmptcprouter-vps backup_list >/dev/null 2>/dev/null")
+	-- The list was just written to /var/state by another process: read it
+	-- through a cursor that has not loaded the package yet
+	local state = require "uci".cursor(nil, "/var/state")
+	state:add_delta("/var/state")
+	local result = {}
+	ucic:foreach("openmptcprouter", "server", function(section)
+		local name = section[".name"]
+		local entry = { backups = {} }
+		entry.lastbackup = tonumber(_as_string(state:get("openmptcprouter", name, "lastbackup"), ""))
+		local lasttime
+		for _, backup in ipairs(_as_string_list(state:get("openmptcprouter", name, "allbackup"))) do
+			local file, modif = backup:match("^(.+)|(%d+)$")
+			-- The VPS keeps several copies of the same archive: show it once
+			if file and modif ~= lasttime then
+				lasttime = modif
+				entry.backups[#entry.backups + 1] = { file = file, time = tonumber(modif) }
+			end
+		end
+		result[name] = entry
+	end)
+	return result
+end
+
+function backup_get(server, backupfile)
+	server = _as_string(server, "")
+	backupfile = _as_string(backupfile, "")
+	if server == "" and backupfile == "" then
+		-- No backup picked: the latest one of all servers
+		return { result = exec_status("/etc/init.d/openmptcprouter-vps backup_get") == 0 }
+	end
+	if not _backup_server(server) then
+		return { result = false, error = "Unknown server" }
+	end
+	-- The name goes into the backupget URL as is
+	if not backupfile:match("^[%w][%w._-]*$") then
+		return { result = false, error = "Invalid backup name" }
+	end
+	return { result = exec_status("/etc/init.d/openmptcprouter-vps backup_get " .. shell_quote(server) .. " " .. shell_quote(backupfile)) == 0 }
+end
+
+function backup_send()
+	return { result = exec_status("/etc/init.d/openmptcprouter-vps backup_send") == 0 }
+end
+
 function get_mptcp_config(interface)
 	local multipath = ucic:get("network",interface,"multipath") or ""
 	if multipath == "" then
@@ -3456,6 +3512,16 @@ local methods = {
 	},
 	restartall = {
 		call = function() restart_all() end
+	},
+	backuplist = {
+		call = function() return backup_list() end
+	},
+	backupget = {
+		args = { server = "", backupfile = "" },
+		call = function(args) return backup_get(args.server, args.backupfile) end
+	},
+	backupsend = {
+		call = function() return backup_send() end
 	},
 	redirectports = {
 		args = { server = "", redirect_ports = 0 },

@@ -83,11 +83,15 @@ return view.extend({
 
 				uci.revert('openmptcprouter');
 				return Promise.all(promises);
-			}).then(function() {
+			}).then(function(res) {
+				res.forEach(function(r) {
+					if (!r || r.result !== true)
+						throw new Error((r && r.error) || _('the server sent no valid backup'));
+				});
 				ui.addNotification(null, _('Backup restored successfully.'), 'info');
 			}).catch(function(err) {
 				uci.revert('openmptcprouter');
-				ui.addNotification(null, _('Failed to restore backup: ') + String(err), 'error');
+				ui.addNotification(null, _('Failed to restore backup: ') + ((err && err.message) || String(err)), 'error');
 			});
 		};
 
@@ -95,10 +99,12 @@ return view.extend({
 		o.inputtitle = _('Send backup');
 		o.inputstyle = 'action important';
 		o.onclick = function() {
-			return callBackupSend().then(function() {
+			return callBackupSend().then(function(r) {
+				if (!r || r.result !== true)
+					throw new Error(_('no server took it'));
 				ui.addNotification(null, _('Backup sent successfully.'), 'info');
 			}).catch(function(err) {
-				ui.addNotification(null, _('Failed to send backup: ') + String(err), 'error');
+				ui.addNotification(null, _('Failed to send backup: ') + ((err && err.message) || String(err)), 'error');
 			});
 		};
 
