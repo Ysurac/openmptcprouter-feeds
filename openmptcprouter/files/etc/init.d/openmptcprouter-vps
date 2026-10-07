@@ -229,17 +229,20 @@ _set_json() {
 	[ -n "$token" ] && {
 		#resolve="$(resolveip -t 5 $server)"
 		valid_ip6=$(valid_subnet6 $server)
+		# The body goes on stdin (printf is an ash builtin): as a -d
+		# argument, a body over 128 KB (the bypass list of a large ASN)
+		# made the exec of curl fail with E2BIG, every time
 		if [ "$valid_ip6" = "ok" ]; then
-			result=`omr_vps_curl -6 --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://[$server]:$serverport/$route`
+			result=`printf '%s' "$settings" | omr_vps_curl -6 --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST --data-binary @- https://[$server]:$serverport/$route`
 		else
-			result=`omr_vps_curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
+			result=`printf '%s' "$settings" | omr_vps_curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST --data-binary @- https://$server:$serverport/$route`
 		fi
 		if [ -z "$result" ]; then
 			for intf in $(multipath 2>/dev/null | awk '/default/ { print $1 }'); do
 				if [ "$valid_ip6" = "ok" ]; then
-					result=`omr_vps_curl -6 --max-time 10 -s -k --interface $intf -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://[$server]:$serverport/$route`
+					result=`printf '%s' "$settings" | omr_vps_curl -6 --max-time 10 -s -k --interface $intf -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST --data-binary @- https://[$server]:$serverport/$route`
 				else
-					result=`omr_vps_curl --max-time 10 -s -k --interface $intf -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
+					result=`printf '%s' "$settings" | omr_vps_curl --max-time 10 -s -k --interface $intf -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST --data-binary @- https://$server:$serverport/$route`
 				fi
 				[ -n "$result" ] && break
 			done
@@ -248,9 +251,9 @@ _set_json() {
 			token=''
 			_login
 			if [ "$valid_ip6" = "ok" ]; then
-				result=`omr_vps_curl -6 --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://[$server]:$serverport/$route`
+				result=`printf '%s' "$settings" | omr_vps_curl -6 --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST --data-binary @- https://[$server]:$serverport/$route`
 			else
-				result=`omr_vps_curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST -d "$settings" https://$server:$serverport/$route`
+				result=`printf '%s' "$settings" | omr_vps_curl --max-time 10 -s -k -H "Authorization: Bearer $token" -H "Content-Type: application/json" -X POST --data-binary @- https://$server:$serverport/$route`
 			fi
 			[ "$(echo $result | grep 'Could not validate credentials')" ] && result=''
 		fi
