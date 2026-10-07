@@ -253,17 +253,23 @@ _failure_sleep() {
 	done
 }
 
+# Each hook runs in the command substitution that collects its output (with
+# the default TERM and INT handling, as traps are reset there), and the
+# commands it printed run in a subshell of their own, only when there are
+# any. Both used to run inside one more subshell: two forks per hook and per
+# run instead of one, with about 17 hooks.
 _post_tracking() {
+	local EVAL_OUTPUT
+	_log() {
+		logger -t "post-tracking-${tracker_bin##*/}" "$*"
+	}
 	for tracker_bin in /usr/share/omr/post-tracking.d/*; do
-		[ -x "$tracker_bin" ] && (
+		[ -x "$tracker_bin" ] || continue
+		EVAL_OUTPUT=$(. "$tracker_bin" 2>&1)
+		[ -n "$EVAL_OUTPUT" ] || continue
+		(
 			trap 'exit 0' TERM INT
-			_log() {
-				logger -t "post-tracking-${tracker_bin##*/}" "$*"
-			}
-			EVAL_OUTPUT=$(. "$tracker_bin" 2>&1)
-			if [ -n "$EVAL_OUTPUT" ]; then
-				eval "$EVAL_OUTPUT" >/dev/null 2>&1
-			fi
+			eval "$EVAL_OUTPUT" >/dev/null 2>&1
 		)
 	done
 }
