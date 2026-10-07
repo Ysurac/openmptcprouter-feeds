@@ -55,6 +55,37 @@ _err() {
 	_log "err" "$@"
 }
 
+# _tls_vps_pin <hex|chain> <address> <port> [<server name>]
+# The VPS proxy certificate only has a CN, no SAN, which Go refuses to check
+# by name: OMR connects with the certificate pinned instead. The pin used to
+# be whatever answered when the proxy started, so anyone on the path then
+# chose it. Only pin a certificate the CA the VPS API sent (over the pinned
+# API connection) issued as a server certificate; validity dates are left out,
+# the clock may not be set yet at boot and a pin does not check them either.
+# hex: xray's pinnedPeerCertSha256, chain: v2ray's
+# pinnedPeerCertificateChainSha256 (base64, the VPS sends no chain)
+_tls_vps_pin() {
+	local format="$1" addr="$2" port="$3" sni="$4" ca="/etc/luci-uploads/ca.crt" peer
+	[ -s "$ca" ] && [ -n "$addr" ] && [ -n "$port" ] || return 1
+	command -v openssl >/dev/null 2>&1 || return 1
+	case "$addr" in
+		*:*) addr="[$addr]" ;;
+	esac
+	peer="$(mktemp /tmp/$NAME-peer.XXXXXX)" || return 1
+	echo "Q" | timeout 10 openssl s_client -connect "${addr}:${port}" \
+		${sni:+-servername "$sni"} 2>/dev/null \
+		| openssl x509 -out "$peer" 2>/dev/null
+	if [ -s "$peer" ] && openssl verify -no_check_time -purpose sslserver \
+		-CAfile "$ca" "$peer" >/dev/null 2>&1 ; then
+		if [ "$format" = "chain" ] ; then
+			openssl x509 -in "$peer" -outform DER | openssl dgst -sha256 -binary | base64
+		else
+			openssl x509 -in "$peer" -outform DER | openssl dgst -sha256 | awk '{print $NF}'
+		fi
+	fi
+	rm -f "$peer"
+}
+
 # _nft_set_populate <set> <type> <addr-list-on-stdin>
 # Idempotently (re)creates a native nft set in table "inet fw4" and loads
 # addresses/CIDRs read from stdin into it -- the nft-native replacement for
@@ -1807,18 +1838,10 @@ add_outbound_setting() {
 					socks)  _pin_addr="$s_socks_address"  ; _pin_port="$s_socks_port" ;;
 				esac
 				if [ -n "$_pin_addr" ] && [ -n "$_pin_port" ] ; then
-					_pinned_sha256=$(echo "Q" | openssl s_client \
-						-connect "${_pin_addr}:${_pin_port}" \
-						${ss_tls_server_name:+-servername "$ss_tls_server_name"} \
-						2>/dev/null \
-						| openssl x509 -outform DER 2>/dev/null \
-						| openssl dgst -sha256 2>/dev/null \
-						| awk '{print $2}')
+					_pinned_sha256="$(_tls_vps_pin hex "$_pin_addr" "$_pin_port" "$ss_tls_server_name")"
 					[ "${#_pinned_sha256}" -ne 64 ] && _pinned_sha256=""
-					# openssl dgst on an empty stream (cert fetch failed) still
-					# yields a 64-char hash — the SHA-256 of "" — which would pin
-					# an unusable value; treat it as a failed fetch instead
-					[ "$_pinned_sha256" = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ] && _pinned_sha256=""
+					[ -z "$_pinned_sha256" ] && \
+						_err "$section: ${_pin_addr}:${_pin_port} certificate not verified by /etc/luci-uploads/ca.crt, not pinned (set ss_tls_pinned_sha256 for another server)"
 				fi
 			fi
 
@@ -2277,15 +2300,8 @@ add_reverse_bridge_outbound() {
 	json_add_object "tlsSettings"
 	reverse_pin="$(uci -q get xray.omrout.ss_tls_pinned_sha256)"
 	if [ -z "$reverse_pin" ] ; then
-		reverse_pin=$(echo "Q" | openssl s_client \
-			-connect "${reverse_addr}:${reverse_port}" \
-			2>/dev/null \
-			| openssl x509 -outform DER 2>/dev/null \
-			| openssl dgst -sha256 2>/dev/null \
-			| awk '{print $2}')
+		reverse_pin="$(_tls_vps_pin hex "$reverse_addr" "$reverse_port")"
 		[ "${#reverse_pin}" -ne 64 ] && reverse_pin=""
-		# SHA-256 of an empty stream = failed cert fetch, not a usable pin
-		[ "$reverse_pin" = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ] && reverse_pin=""
 	fi
 	if [ -n "$reverse_pin" ] ; then
 		json_add_string "pinnedPeerCertSha256" "$reverse_pin"

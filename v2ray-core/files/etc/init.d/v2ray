@@ -55,6 +55,37 @@ _err() {
 	_log "err" "$@"
 }
 
+# _tls_vps_pin <hex|chain> <address> <port> [<server name>]
+# The VPS proxy certificate only has a CN, no SAN, which Go refuses to check
+# by name: OMR connects with the certificate pinned instead. The pin used to
+# be whatever answered when the proxy started, so anyone on the path then
+# chose it. Only pin a certificate the CA the VPS API sent (over the pinned
+# API connection) issued as a server certificate; validity dates are left out,
+# the clock may not be set yet at boot and a pin does not check them either.
+# hex: xray's pinnedPeerCertSha256, chain: v2ray's
+# pinnedPeerCertificateChainSha256 (base64, the VPS sends no chain)
+_tls_vps_pin() {
+	local format="$1" addr="$2" port="$3" sni="$4" ca="/etc/luci-uploads/ca.crt" peer
+	[ -s "$ca" ] && [ -n "$addr" ] && [ -n "$port" ] || return 1
+	command -v openssl >/dev/null 2>&1 || return 1
+	case "$addr" in
+		*:*) addr="[$addr]" ;;
+	esac
+	peer="$(mktemp /tmp/$NAME-peer.XXXXXX)" || return 1
+	echo "Q" | timeout 10 openssl s_client -connect "${addr}:${port}" \
+		${sni:+-servername "$sni"} 2>/dev/null \
+		| openssl x509 -out "$peer" 2>/dev/null
+	if [ -s "$peer" ] && openssl verify -no_check_time -purpose sslserver \
+		-CAfile "$ca" "$peer" >/dev/null 2>&1 ; then
+		if [ "$format" = "chain" ] ; then
+			openssl x509 -in "$peer" -outform DER | openssl dgst -sha256 -binary | base64
+		else
+			openssl x509 -in "$peer" -outform DER | openssl dgst -sha256 | awk '{print $NF}'
+		fi
+	fi
+	rm -f "$peer"
+}
+
 # _nft_set_populate <set> <type> <addr-list-on-stdin>
 # Idempotently (re)creates a native nft set in table "inet fw4" and loads
 # addresses/CIDRs read from stdin into it -- the nft-native replacement for
@@ -1701,9 +1732,33 @@ add_outbound_setting() {
 			json_close_array
 		fi
 
-		json_add_boolean "allowInsecure" "$ss_tls_allow_insecure"
+		# allowInsecure is how OMR reaches its VPS (a CN only certificate):
+		# with nothing pinned, any certificate would do
+		local _allow_insecure="$ss_tls_allow_insecure" _pinned_chain="" _pin_addr="" _pin_port=""
+		if [ "$section" = "omrout" ] && [ "$_allow_insecure" = "1" ] ; then
+			case "$protocol" in
+				vless)  _pin_addr="$s_vless_address"  ; _pin_port="$s_vless_port" ;;
+				vmess)  _pin_addr="$s_vmess_address"  ; _pin_port="$s_vmess_port" ;;
+				trojan) _pin_addr="$s_trojan_address" ; _pin_port="$s_trojan_port" ;;
+				socks)  _pin_addr="$s_socks_address"  ; _pin_port="$s_socks_port" ;;
+			esac
+			_pinned_chain="$(_tls_vps_pin chain "$_pin_addr" "$_pin_port" "$ss_tls_server_name")"
+			[ "${#_pinned_chain}" -ne 44 ] && _pinned_chain=""
+			if [ -z "$_pinned_chain" ] ; then
+				_err "$section: ${_pin_addr}:${_pin_port} certificate not verified by /etc/luci-uploads/ca.crt, allowInsecure ignored"
+				_allow_insecure=0
+			fi
+		fi
+
+		json_add_boolean "allowInsecure" "$_allow_insecure"
 		json_add_boolean "allowInsecureCiphers" "$ss_tls_allow_insecure_ciphers"
 		json_add_boolean "disableSystemRoot" "$ss_tls_disable_system_root"
+
+		if [ -n "$_pinned_chain" ] ; then
+			json_add_array "pinnedPeerCertificateChainSha256"
+			json_add_string "" "$_pinned_chain"
+			json_close_array
+		fi
 
 		json_add_array "certificates"
 		if [ -n "$ss_tls_cert_file" ] ; then
