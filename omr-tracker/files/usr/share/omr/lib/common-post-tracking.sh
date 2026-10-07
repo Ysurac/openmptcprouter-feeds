@@ -586,8 +586,10 @@ _set_routes_intf_common() {
 
 	# Cheapest checks first: everything below is ANDed, so the order of the
 	# tests doesn't change the outcome, only how much is looked up for
-	# interfaces that are down or excluded.
-	_omr_if_up "$INTERFACE" || return
+	# interfaces that are down or excluded. The config values come from the
+	# cache; whether the interface is up costs a ubus call and a jsonfilter,
+	# so it is only asked of the multipath interfaces, not of every LAN,
+	# loopback or other interface with multipath off.
 	_omr_uci_get_var interface_current_config "openmptcprouter.$INTERFACE.state" "up"
 	[ "$interface_current_config" = "up" ] || return
 	_omr_uci_get_var interface_vpn "openmptcprouter.$INTERFACE.vpn" "0"
@@ -595,6 +597,7 @@ _set_routes_intf_common() {
 	{ [ "$interface_vpn" = "0" ] || [ "$_allmptcpovervpn" = "0" ]; } || return
 	_omr_get_multipath_config_var multipath_config_route "$INTERFACE"
 	[ "$multipath_config_route" != "off" ] || return
+	_omr_if_up "$INTERFACE" || return
 	_omr_get_interface_device_var interface_if "$INTERFACE"
 	[ -n "$interface_if" ] || return
 
@@ -659,7 +662,7 @@ _set_route_balancing_common() {
 	[ "$INTERFACE" = "omrvpn" ] && return
 	[ "$INTERFACE" = "omr6in4" ] && return
 
-	_omr_if_up "$INTERFACE" || return
+	# Same order as _set_routes_intf_common, for the same reason
 	_omr_uci_get_var interface_current_config "openmptcprouter.$INTERFACE.state" "up"
 	[ "$interface_current_config" = "up" ] || return
 	_omr_uci_get_var interface_vpn "openmptcprouter.$INTERFACE.vpn" "0"
@@ -667,6 +670,7 @@ _set_route_balancing_common() {
 	{ [ "$interface_vpn" = "0" ] || [ "$_allmptcpovervpn" = "0" ]; } || return
 	_omr_get_multipath_config_var multipath_config_route "$INTERFACE"
 	[ "$multipath_config_route" != "off" ] || return
+	_omr_if_up "$INTERFACE" || return
 	_omr_get_interface_device_var interface_if "$INTERFACE"
 	[ -n "$interface_if" ] || return
 
