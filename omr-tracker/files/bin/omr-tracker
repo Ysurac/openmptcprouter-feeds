@@ -802,10 +802,20 @@ while true; do
 						if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST" ]; then
 							_resolve_host4
 							if [ -n "$OMR_TRACKER_HOST" ]; then
+								_probe_failed=""
 								if [ -n "$_probe_route" ]; then
 									# Check if route is not used
+									_probe_tries=0
 									while _is_ip "$OMR_TRACKER_HOST" && ! ip route add $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP $OMR_TRACKER_PROBE_ROUTE > /dev/null 2>&1
 									do
+										# The address and the gateway are only looked up again
+										# on the next cycle: when the modem got new ones the add
+										# could never work, and the tracker waited here forever
+										_probe_tries=$((_probe_tries + 1))
+										if [ "$_probe_tries" -ge 3 ]; then
+											_probe_failed=1
+											break
+										fi
 										logger -t "omr-tracker" "Can't create route to $OMR_TRACKER_HOST via $OMR_TRACKER_DEVICE_GATEWAY dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP. waiting..."
 										sleep 2
 										ip route del "$OMR_TRACKER_HOST" via "$OMR_TRACKER_DEVICE_GATEWAY" dev "$OMR_TRACKER_DEVICE" $OMR_TRACKER_PROBE_ROUTE > /dev/null 2>&1
@@ -813,7 +823,9 @@ while true; do
 										_resolve_host4
 									done
 								fi
-								if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
+								if [ -n "$_probe_failed" ]; then
+									statusb=1
+								elif [ "$OMR_TRACKER_TYPE" = "ping" ]; then
 									_ping "$OMR_TRACKER_HOST" "$OMR_TRACKER_DEVICE" "$host_localip"
 									statusb=$?
 								elif [ "$OMR_TRACKER_TYPE" = "httping" ]; then
@@ -920,10 +932,20 @@ while true; do
 						if [ "$serverip_ping" = false ] && [ -n "$OMR_TRACKER_HOST6" ]; then
 							_resolve_host6
 							if [ -n "$OMR_TRACKER_HOST6" ]; then
+								_probe_failed=""
 								if [ -n "$_probe_route" ]; then
 									# Check if route is not used
+									_probe_tries=0
 									while _is_ip "$OMR_TRACKER_HOST6" && ! ip -6 route add $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6 $OMR_TRACKER_PROBE_ROUTE > /dev/null 2>&1
 									do
+										# The address and the gateway are only looked up again
+										# on the next cycle: when the modem got new ones the add
+										# could never work, and the tracker waited here forever
+										_probe_tries=$((_probe_tries + 1))
+										if [ "$_probe_tries" -ge 3 ]; then
+											_probe_failed=1
+											break
+										fi
 										logger -t "omr-tracker" "Can't create route to $OMR_TRACKER_HOST6 via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE src $OMR_TRACKER_DEVICE_IP6. waiting..."
 										sleep 2
 										ip -6 route del "$OMR_TRACKER_HOST6" via "$OMR_TRACKER_DEVICE_GATEWAY6" dev "$OMR_TRACKER_DEVICE" $OMR_TRACKER_PROBE_ROUTE > /dev/null 2>&1
@@ -931,7 +953,9 @@ while true; do
 										_resolve_host6
 									done
 								fi
-								if [ "$OMR_TRACKER_TYPE" = "ping" ]; then
+								if [ -n "$_probe_failed" ]; then
+									statusb=1
+								elif [ "$OMR_TRACKER_TYPE" = "ping" ]; then
 									_ping "$OMR_TRACKER_HOST6" "$OMR_TRACKER_DEVICE" "$host_localip"
 									statusb=$?
 								elif [ "$OMR_TRACKER_TYPE" = "httping" ]; then
