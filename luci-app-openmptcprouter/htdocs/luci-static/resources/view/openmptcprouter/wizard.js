@@ -52,6 +52,18 @@ var callOMRWizardAdd = rpc.declare({
 	expect: { '': {} }
 });
 
+/* The backend stores chacha20-ietf-poly1305 as "chacha20" (as the Lua wizard
+ * did): read back as is, that matched no choice, the dropdown showed the
+ * first one and a save sent "chacha20", which the backend took for "other". */
+function encryptionChoice(value) {
+	if (value === 'chacha20')
+		return 'chacha20-ietf-poly1305';
+	if (value === 'none' || value === 'aes-256-gcm' || value === 'chacha20-ietf-poly1305')
+		return value;
+	/* aes-256-cfb, other...: shown as "other", sent back unchanged */
+	return 'other';
+}
+
 function wizardAddOnce(payload) {
 	return callOMRWizardAdd(
 		payload.interfaces,
@@ -373,7 +385,9 @@ return view.extend({
 				ula: uci.get('network', 'globals', 'ula_prefix') || '',
 				default_vpn: uci.get('openmptcprouter', 'settings', 'vpn') || 'mqvpn',
 				default_proxy: uci.get('openmptcprouter', 'settings', 'proxy') || '',
-				encryption: uci.get('openmptcprouter', 'settings', 'encryption') || (has.aes ? 'aes-256-gcm' : 'chacha20-ietf-poly1305'),
+				encryption: (function(enc) {
+					return enc === 'chacha20' ? 'chacha20-ietf-poly1305' : enc;
+				})(uci.get('openmptcprouter', 'settings', 'encryption') || (has.aes ? 'aes-256-gcm' : 'chacha20-ietf-poly1305')),
 				shadowsocks_key: uci.get('shadowsocks-libev', 'sss0', 'key') || '',
 				shadowsocks2022_key: uci.get('shadowsocks-rust', 'sss0', 'password') || '',
 				glorytun_key: uci.get('glorytun', 'vpn', 'key') || '',
@@ -557,6 +571,10 @@ return view.extend({
 		o.value('chacha20-ietf-poly1305', 'chacha20');
 		o.value('other', _('other'));
 		o.default = has.aes ? 'aes-256-gcm' : 'chacha20-ietf-poly1305';
+		o.cfgvalue = function(section_id) {
+			var v = uci.get('openmptcprouter', section_id, 'encryption');
+			return v ? encryptionChoice(v) : v;
+		};
 		o.description = (has.aes
 			? _('AES instruction set detected.')
 			: _('No AES instruction set, you should use chacha20.')) +
