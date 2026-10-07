@@ -237,6 +237,14 @@ _omr_awk_via_dev='{
 	if (gw != "") { print gw, dev; exit }
 }'
 
+# _omr_detach <command> [args]: run a command in the background, out of the
+# tracker's cgroup. procd kills what is left in the cgroup of an instance
+# when the instance is removed (procd f4d512d), as on each restart of a
+# tracker: a VPS sync started from a hook was killed half-way.
+_omr_detach() {
+	sh -c 'echo $$ >/sys/fs/cgroup/cgroup.procs; exec "$@"' sh "$@" >/dev/null 2>&1 &
+}
+
 # _omr_route_has_dev <ip route output> <device>: does a route or nexthop of
 # the output go through <device>? Whole "dev <name>" tokens only: a plain
 # substring test took wwan0 for wan and eth10 for eth1.
