@@ -1923,15 +1923,45 @@ _intf_rule_none() {
 	EOF
 }
 
+# "VPN on server" (vpn=1): the VPS sends these destinations out of its own VPN,
+# both for the traffic it gets through the tunnel and for its proxy's, from the
+# list openmptcprouter-vps set_bypass_ips reads in these two sets. The router
+# only fills the sets: no mark, rule or route, the traffic still goes to the VPS.
+_intf_rule_srv_vpn1() {
+	cat >> "$_fw_uci_batch" <<-EOF
+		set firewall.omr_dst_bypass_srv_vpn1_4=ipset
+		set firewall.omr_dst_bypass_srv_vpn1_4.name="omr_dst_bypass_srv_vpn1_4"
+		set firewall.omr_dst_bypass_srv_vpn1_4.match='dest_net'
+		set firewall.omr_dst_bypass_srv_vpn1_4.family='ipv4'
+		set firewall.omr_dst_bypass_srv_vpn1_4.enabled='1'
+		set firewall.omr_dst_bypass_srv_vpn1_6=ipset
+		set firewall.omr_dst_bypass_srv_vpn1_6.name="omr_dst_bypass_srv_vpn1_6"
+		set firewall.omr_dst_bypass_srv_vpn1_6.match='dest_net'
+		set firewall.omr_dst_bypass_srv_vpn1_6.family='ipv6'
+		set firewall.omr_dst_bypass_srv_vpn1_6.enabled='1'
+	EOF
+	cat >> "$_dhcp_uci_batch" <<-EOF
+		delete dhcp.omr_dst_bypass_srv_vpn1
+		set dhcp.omr_dst_bypass_srv_vpn1=ipset
+		set dhcp.omr_dst_bypass_srv_vpn1.table='fw4'
+		set dhcp.omr_dst_bypass_srv_vpn1.table_family='inet'
+		add_list dhcp.omr_dst_bypass_srv_vpn1.name="omr_dst_bypass_srv_vpn1_4"
+		add_list dhcp.omr_dst_bypass_srv_vpn1.name="omr_dst_bypass_srv_vpn1_6"
+	EOF
+}
+
 _bypass_ip_set() {
 	local ip
 	local interface
 	local enabled
 	local dscp
+	local vpn
 	config_get ip $1 ip
 	_get_rule_intf interface $1
 	config_get enabled $1 enabled
 	_rule_dscp dscp $1
+	config_get vpn $1 vpn
+	[ "$vpn" = "1" ] && interface="srv_vpn1"
 	[ "$enabled" = "0" ] && return
 	interface=$(_map_intf_device "$interface")
 	[ -z "$interface" ] && [ -z "$dscp" ] && return
@@ -1949,10 +1979,13 @@ _bypass_asn() {
 	local interface
 	local enabled
 	local dscp
+	local vpn
 	config_get asn $1 asn
 	_get_rule_intf interface $1
 	config_get enabled $1 enabled
 	_rule_dscp dscp $1
+	config_get vpn $1 vpn
+	[ "$vpn" = "1" ] && interface="srv_vpn1"
 	[ "$enabled" = "0" ] && return
 	interface=$(_map_intf_device "$interface")
 	[ -z "$interface" ] && [ -z "$dscp" ] && return
@@ -2423,7 +2456,7 @@ start_service() {
 		_intf_rule "$_grp"
 	done
 	_intf_rule all
-	_intf_rule srv_vpn1
+	_intf_rule_srv_vpn1
 	_intf_rule_none
 	# Needs every mark _intf_rule handed out, so it closes the chain here
 	# rather than inside the loop.
