@@ -778,20 +778,36 @@ _bypass_domain() {
 	if [ -n "$domain" ]; then
 		domain=$(echo $domain | sed 's:^\.::')
 		#logger -t "omr-bypass" "Get IPs of $domain..."
-		if [ -z "$RELOAD" ]; then
+		# A start resolves the domain and keeps its addresses as entries.
+		# A reload doesn't resolve it again (a dig per domain is slow with
+		# the protocol lists), but _soft_wipe_dynamic removed the entries:
+		# without them, the set loses these addresses (flushed by this
+		# reload, emptied by any fw4 restart), and dnsmasq only puts them
+		# back when it resolves the domain upstream, not from its cache.
+		# So a reload reuses what the last run found, and resolves the
+		# domains no run has resolved yet: at boot, the first run can be a
+		# reload (a proxy start's), and the boot start then gives up on
+		# the lock.
+		local _dig_cache="/tmp/omr-bypass-dig/${domain}"
+		if [ -z "$RELOAD" ] || [ ! -s "$_dig_cache" ]; then
 			resolve=$(dig a +timeout=1 +tries=1 +nocmd +noall +answer $domain | grep -v CNAME | awk '{print $5}')
-			for ip in $resolve; do
-				[ -n "$intf" ] && _bypass_ip $ip $intf $tcpudp
-				[ -n "$dscp" ] && _dscp_ip $ip $dscp
-			done
 			if [ "$disableipv6" = "0" ]; then
-				resolve=$(dig aaaa +timeout=1 +tries=1 +nocmd +noall +answer $domain | grep AAAA | awk '{print $5}')
-				for ip in $resolve; do
-					[ -n "$intf" ] && _bypass_ip $ip $intf $tcpudp
-					[ -n "$dscp" ] && _dscp_ip $ip $dscp
-				done
+				resolve="$resolve $(dig aaaa +timeout=1 +tries=1 +nocmd +noall +answer $domain | grep AAAA | awk '{print $5}')"
 			fi
+			mkdir -p /tmp/omr-bypass-dig
+			if [ -n "$(echo $resolve)" ]; then
+				echo $resolve > "$_dig_cache"
+			else
+				rm -f "$_dig_cache"
+			fi
+		else
+			resolve=$(cat "$_dig_cache")
 		fi
+		for ip in $resolve; do
+			case "$ip" in *:*) [ "$disableipv6" = "0" ] || continue ;; esac
+			[ -n "$intf" ] && _bypass_ip $ip $intf $tcpudp
+			[ -n "$dscp" ] && _dscp_ip $ip $dscp
+		done
 		# One dnsmasq ipset family per destination: the interface alone,
 		# the interface and a DSCP class, or a DSCP class alone (no
 		# routing change). Every domain of an ipset entry populates every
