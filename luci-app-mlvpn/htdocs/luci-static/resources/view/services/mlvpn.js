@@ -33,6 +33,8 @@ return L.view.extend({
 
 		o = s.taboption('general', form.Flag, 'enable', _('Enabled'));
 		o.default = o.enabled;
+		// a missing enable reads as 0 in the init script: never drop it
+		o.rmempty = false;
 
 		o = s.taboption('general',form.Value, 'label', _('Label'));
 		o.rmempty = true;

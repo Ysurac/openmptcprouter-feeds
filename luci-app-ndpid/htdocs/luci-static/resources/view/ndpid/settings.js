@@ -47,10 +47,12 @@ return view.extend({
 			  'The interface is still opened in promiscuous mode by libpcap, but foreign ' +
 			  'frames are discarded before DPI. Combined with any manual BPF filter above.'));
 		o.default = '1';
+		o.rmempty = false;
 
 		o = s.taboption('general', form.Flag, 'decode_tunnel', _('Decode tunnels'),
 			_('Decapsulate GRE Layer 4 tunnel protocols'));
 		o.default = '0';
+		o.rmempty = false;
 
 		o = s.taboption('general', form.Value, 'alias', _('Instance alias'),
 			_('Human-readable name for this nDPId instance'));
@@ -65,10 +67,12 @@ return view.extend({
 		o = s.taboption('general', form.Flag, 'internal', _('Internal flows only'),
 			_('Process only internally-initiated (src→dst) connections'));
 		o.default = '0';
+		o.rmempty = false;
 
 		o = s.taboption('general', form.Flag, 'external', _('External flows only'),
 			_('Process only externally-initiated (dst→src) connections'));
 		o.default = '0';
+		o.rmempty = false;
 
 		o = s.taboption('general', form.Flag, 'compression', _('Flow compression'),
 			_('Enable zLib compression of long-lasting flow memory'));
@@ -78,14 +82,17 @@ return view.extend({
 		o = s.taboption('general', form.Flag, 'analysis', _('Analysis events'),
 			_('Generate per-flow statistical events for machine learning (requires more memory)'));
 		o.default = '0';
+		o.rmempty = false;
 
 		o = s.taboption('general', form.Flag, 'poll', _('Force poll()'),
 			_('Use poll() even on systems that support epoll()'));
 		o.default = '0';
+		o.rmempty = false;
 
 		o = s.taboption('general', form.Flag, 'pfring', _('Use PF_RING'),
 			_('Use PF_RING packet capture instead of libpcap'));
 		o.default = '0';
+		o.rmempty = false;
 
 		// Data Files tab
 		o = s.taboption('files', form.Value, 'riskdomains', _('Risky domains list'),
@@ -261,12 +268,14 @@ return view.extend({
 		o.enabled  = '1';
 		o.disabled = '0';
 		o.default  = '1';
+		o.rmempty  = false;
 
 		o = s.option(form.Flag, 'dpi_compute_entropy', _('Compute entropy'),
 			_('Compute per-flow entropy values'));
 		o.enabled  = '1';
 		o.disabled = '0';
 		o.default  = '1';
+		o.rmempty  = false;
 
 		o = s.option(form.ListValue, 'fpc', _('Flow proto confidence (FPC)'),
 			_('Report confidence level of protocol classification'));
@@ -283,6 +292,7 @@ return view.extend({
 		o.enabled  = '1';
 		o.disabled = '0';
 		o.default  = '1';
+		o.rmempty  = false;
 
 		o = s.option(form.Value, 'log_level', _('Log level'),
 			_('libnDPI log verbosity (0 = off, higher = more verbose)'));
@@ -348,6 +358,7 @@ return view.extend({
 		o = s.option(form.Flag, 'enabled', _('Enable compatibility layer'),
 			_('Write Netifyd-compatible status and flow JSON files'));
 		o.default = '0';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'status_file', _('Status file'),
 			_('Path for Netifyd-compatible status JSON'));
@@ -370,6 +381,7 @@ return view.extend({
 		o = s.option(form.Flag, 'enabled', _('Enable flow actions'),
 			_('Populate ipsets based on detected application categories'));
 		o.default = '0';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'bittorrent_ipset', _('BitTorrent ipset name'));
 		o.default = 'secubox-bittorrent';

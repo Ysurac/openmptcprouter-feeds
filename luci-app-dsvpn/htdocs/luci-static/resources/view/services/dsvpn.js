@@ -30,6 +30,8 @@ return L.view.extend({
 
 		o = s.option(form.Flag, 'enable', _('Enabled'));
 		o.default = o.enabled;
+		// a missing enable reads as 0 in the init script: never drop it
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'label', _('Label'));
 		o.rmempty = true;
