@@ -269,6 +269,16 @@ _valid_port_spec() {
 	return 0
 }
 
+# _nft_ports <ports>: a port, a range or a list, as nft takes it. The DSCP
+# port rules were written "ip tcp dport 443", which nft refuses ("ip" then a
+# protocol): no port DSCP rule was ever installed.
+_nft_ports() {
+	case "$1" in
+		*[,\ ]*) printf '{ %s }' "$(printf '%s' "$1" | tr ' ' ',' | sed -e 's/,,*/,/g' -e 's/^,//' -e 's/,$//' -e 's/,/, /g')" ;;
+		*) printf '%s' "$1" ;;
+	esac
+}
+
 _valid_mac() {
 	printf '%s' "$1" | grep -q -x -E '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}'
 }
@@ -971,10 +981,10 @@ _bypass_dest_port() {
 		[ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ] && _nft_proto="${_nft_proto}udp "
 		for _p in $_nft_proto; do
 			cat >> /etc/firewall.omr-bypass <<-EOF
-				nft add rule inet fw4 omr_dscp_pre ip ${_p} dport $dport ip dscp set $dscp 2>/dev/null || true
+				nft add rule inet fw4 omr_dscp_pre meta nfproto ipv4 ${_p} dport $(_nft_ports "$dport") ip dscp set $dscp 2>/dev/null || true
 			EOF
 			[ "$disableipv6" = "0" ] && cat >> /etc/firewall.omr-bypass <<-EOF
-				nft add rule inet fw4 omr_dscp_pre ip6 ${_p} dport $dport ip6 dscp set $dscp 2>/dev/null || true
+				nft add rule inet fw4 omr_dscp_pre meta nfproto ipv6 ${_p} dport $(_nft_ports "$dport") ip6 dscp set $dscp 2>/dev/null || true
 			EOF
 		done
 	fi
@@ -1035,10 +1045,10 @@ _bypass_src_port() {
 		[ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ] && _nft_proto="${_nft_proto}udp "
 		for _p in $_nft_proto; do
 			cat >> /etc/firewall.omr-bypass <<-EOF
-				nft add rule inet fw4 omr_dscp_pre ip ${_p} sport $sport ip dscp set $dscp 2>/dev/null || true
+				nft add rule inet fw4 omr_dscp_pre meta nfproto ipv4 ${_p} sport $(_nft_ports "$sport") ip dscp set $dscp 2>/dev/null || true
 			EOF
 			[ "$disableipv6" = "0" ] && cat >> /etc/firewall.omr-bypass <<-EOF
-				nft add rule inet fw4 omr_dscp_pre ip6 ${_p} sport $sport ip6 dscp set $dscp 2>/dev/null || true
+				nft add rule inet fw4 omr_dscp_pre meta nfproto ipv6 ${_p} sport $(_nft_ports "$sport") ip6 dscp set $dscp 2>/dev/null || true
 			EOF
 		done
 	fi
