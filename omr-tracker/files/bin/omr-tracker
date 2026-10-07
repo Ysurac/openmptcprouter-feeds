@@ -58,10 +58,14 @@ export OMR_TRACKER_GATEWAY_IS_REMOTE
 # the same host still collide on it, which is what the add loop waits for.
 OMR_TRACKER_PROBE_ROUTE="proto 199 metric 4242"
 
-# Kill child processes (post-tracking subshells) when this tracker is terminated,
-# so orphaned sleeps don't accumulate as duplicate-looking processes.
+# On TERM from procd (stop or restart), kill the probe in progress (see
+# _probe) and clean up. A post-tracking hook in progress is let finish: bash
+# runs the trap once the command it runs in the foreground is done, and the
+# init script gives the tracker the time for it (term_timeout), so a hook
+# never keeps running next to the tracker started after this one.
 _omr_exit() {
 	jobs -p | xargs -r kill 2>/dev/null
+	rm -f "$_probe_out"
 	# A probe cut short by the signal never deleted its host route
 	if [ -n "$_probe_route" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
 		ip route flush dev "$OMR_TRACKER_DEVICE" $OMR_TRACKER_PROBE_ROUTE > /dev/null 2>&1
@@ -391,6 +395,16 @@ _apply_httping_metrics() {
 	OMR_TRACKER_LOSS="$HTTPING_LOSS"
 }
 
+# A probe runs in the background and is waited for, with its output in $ret:
+# bash runs a trap only once the command it runs in the foreground is done,
+# so on TERM the tracker went on with the ping up to its deadline (20 s for
+# omrvpn), while "wait" returns at once and _omr_exit kills the probe.
+_probe_out="/tmp/omr-tracker-${OMR_TRACKER_INTERFACE}.probe"
+_probe() {
+	"$@" >"$_probe_out" 2>&1 &
+	wait $!
+	IFS= read -r -d '' ret <"$_probe_out"
+}
 
 _ping() {
 	local host="$1"
@@ -398,23 +412,21 @@ _ping() {
 	local device="$2"
 	local localip="$3"
 	if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ "$OMR_TRACKER_NO_BIND" = "1" ] || [ "$OMR_TRACKER_INTERFACE_PROTO" = "3g" ] || [ "$OMR_TRACKER_INTERFACE_PROTO" = "qmi" ] || [ "$OMR_TRACKER_INTERFACE_PROTO" = "ncm" ]; }; then
-		ret=$(ping -I "${device}" \
+		_probe ping -I "${device}" \
 			-w "$OMR_TRACKER_TIMEOUT" \
 			-c "$OMR_TRACKER_COUNT" \
 			-s "$OMR_TRACKER_SIZE" \
 			-t "$OMR_TRACKER_MAX_TTL" \
 			-Q 184 \
-			"${host}" 2>&1
-		)
+			"${host}"
 	else
-		ret=$(ping -B -I "${device}" \
+		_probe ping -B -I "${device}" \
 			-w "$OMR_TRACKER_TIMEOUT" \
 			-c "$OMR_TRACKER_COUNT" \
 			-s "$OMR_TRACKER_SIZE" \
 			-t "$OMR_TRACKER_MAX_TTL" \
 			-Q 184 \
-			"${host}" 2>&1
-		)
+			"${host}"
 		case "$ret" in
 			*"Address not available"*) OMR_TRACKER_NO_BIND=1 ;;
 		esac
@@ -434,11 +446,10 @@ _httping() {
 	local https=$4
 	local flag=""
 	[ "$https" = "true" ] && flag="-l"
-	ret=$(httping $flag "${host}" \
+	_probe httping $flag "${host}" \
 		-y "${deviceip}" \
 		-t "$OMR_TRACKER_TIMEOUT" \
-		-c "$OMR_TRACKER_COUNT" 2>&1
-	)
+		-c "$OMR_TRACKER_COUNT"
 	case "$ret" in
 		*"Address not available"*) OMR_TRACKER_NO_BIND=1 ;;
 	esac
