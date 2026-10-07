@@ -45,12 +45,20 @@ return view.extend({
 
 	/* The same colours as the status page (stringToColour() in
 	 * openmptcprouter/wanstatus.js), so that a WAN has one colour on both
-	 * pages; "total" is this page's own line. */
+	 * pages; "total" is this page's own line. They are written in hex
+	 * because the WAN card's badge appends an alpha byte to them, which
+	 * turns a colour name into an invalid value. */
 	_ifaceColor: function(name) {
 		var fixed = {
-			total: 'OrangeRed',
-			wan1: 'BlueViolet', wan2: 'DeepSkyBlue', wan3: 'LightGreen', wan4: 'PowderBlue',
-			wan5: 'PaleGreen', wan6: 'YellowGreen', wan7: 'SeaGreen', wan8: 'SteelBlue'
+			total: '#ff4500',   /* OrangeRed */
+			wan1: '#8a2be2',    /* BlueViolet */
+			wan2: '#00bfff',    /* DeepSkyBlue */
+			wan3: '#90ee90',    /* LightGreen */
+			wan4: '#b0e0e6',    /* PowderBlue */
+			wan5: '#98fb98',    /* PaleGreen */
+			wan6: '#9acd32',    /* YellowGreen */
+			wan7: '#2e8b57',    /* SeaGreen */
+			wan8: '#4682b4'     /* SteelBlue */
 		};
 		if (fixed[name]) return fixed[name];
 		var h = 0;
