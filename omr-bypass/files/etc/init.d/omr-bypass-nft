@@ -279,6 +279,55 @@ _nft_ports() {
 	esac
 }
 
+# ASN prefixes, one file per set, which fw4 reads with the set's "loadfile":
+# a large AS announces thousands of prefixes, and as uci list entries each
+# config_load of the firewall config turned every one of them into a shell
+# variable, which made a start take minutes.
+_BYPASS_ASN_DIR="/tmp/omr-bypass-asn"
+
+# _asn_set_add <set section> <prefix>...
+_asn_set_add() {
+	local sec="$1" file="$_BYPASS_ASN_DIR/$1"
+	shift
+	printf '%s\n' "$@" >> "$file"
+	[ "$(uci -q get "firewall.${sec}.loadfile")" = "$file" ] || uci -q set "firewall.${sec}.loadfile=$file"
+}
+
+_asn_files_md5() {
+	cat "$_BYPASS_ASN_DIR"/* 2>/dev/null | md5sum
+}
+
+# Rebuild the ASN files: a set that lost prefixes is flushed before fw4's
+# light reload (which never removes elements), and a set no ASN rule uses
+# any more stops reading its file.
+_bypass_asns() {
+	local f sec key
+	rm -rf "${_BYPASS_ASN_DIR}.before"
+	[ -d "$_BYPASS_ASN_DIR" ] && mv "$_BYPASS_ASN_DIR" "${_BYPASS_ASN_DIR}.before"
+	mkdir -p "$_BYPASS_ASN_DIR"
+	config_load omr-bypass
+	config_foreach _bypass_asn asns
+	for f in "$_BYPASS_ASN_DIR"/*; do
+		[ -f "$f" ] && sort -u -o "$f" "$f"
+	done
+	_asn_flush_sets=""
+	for f in "${_BYPASS_ASN_DIR}.before"/*; do
+		[ -f "$f" ] || continue
+		sec="${f##*/}"
+		# BusyBox has no comm: a line of the old file the new one lacks
+		if [ ! -f "$_BYPASS_ASN_DIR/$sec" ] || \
+			awk 'NR == FNR { n[$0] = 1; next } !($0 in n) { lost = 1; exit } END { exit !lost }' \
+				"$_BYPASS_ASN_DIR/$sec" "$f"; then
+			_asn_flush_sets="$_asn_flush_sets $sec"
+		fi
+	done
+	rm -rf "${_BYPASS_ASN_DIR}.before"
+	for key in $(uci -q show firewall 2>/dev/null | grep -E '^firewall\.omr6?_dst_bypass_[^.]+\.loadfile=' | cut -d= -f1); do
+		sec="${key#firewall.}"; sec="${sec%.loadfile}"
+		[ -s "$_BYPASS_ASN_DIR/$sec" ] || uci -q delete "$key"
+	done
+}
+
 _valid_mac() {
 	printf '%s' "$1" | grep -q -x -E '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}'
 }
@@ -1904,15 +1953,37 @@ _bypass_asn() {
 	# no ASN rule ever matched anything. Unverified TLS (-k) let anyone on
 	# the path choose the prefixes.
 	asnips=$(curl --max-time 4 -s "https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS${asn}" | jsonfilter -q -e '@.data.prefixes[*].prefix')
+	# A large AS announces thousands of prefixes, and adding them one by one
+	# (two uci runs and a scan of the whole list each) took minutes: the
+	# first prefix of each family sets the sets and rules up, all of them go
+	# to the set's file.
+	local ip v4="" v6=""
 	for ip in $asnips; do
-		[ -n "$interface" ] && _bypass_ip $ip $interface
-		[ -n "$dscp" ] && _dscp_ip $ip $dscp
+		case "$ip" in
+			*:*) case "$ip" in *[!0-9A-Fa-f:/]*) ;; *) v6="$v6 $ip" ;; esac ;;
+			*) case "$ip" in *[!0-9./]*) ;; *) v4="$v4 $ip" ;; esac ;;
+		esac
+	done
+	local fam list
+	for fam in 4 6; do
+		[ "$fam" = "4" ] && list="$v4" || list="$v6"
+		set -- $list
+		[ $# -gt 0 ] || continue
+		if [ -n "$interface" ]; then
+			_bypass_ip "$1" "$interface"
+			_asn_set_add "omr_dst_bypass_${interface}_${fam}" "$@"
+		fi
+		if [ -n "$dscp" ]; then
+			_dscp_ip "$1" "$dscp"
+			_asn_set_add "omr_dst_bypass_dscp_${dscp}_${fam}" "$@"
+		fi
 	done
 }
 
+# The nightly cron: the prefixes are fetched again by a rules reload. This
+# only queued uci changes nothing ever committed.
 bypass_asn() {
-	config_load omr-bypass
-	config_foreach _bypass_asn asns
+	reload_rules
 }
 
 _bypass_omr_server() {
@@ -2294,6 +2365,7 @@ start_service() {
 	fwfilechangemd5=""
 	[ -f /etc/firewall.omr-bypass ] && fwfilechangemd5="$(md5sum /etc/firewall.omr-bypass)"
 	[ -f "$_REPLY_NFT" ] && fwfilechangemd5="${fwfilechangemd5} $(md5sum "$_REPLY_NFT")"
+	fwfilechangemd5="${fwfilechangemd5} $(_asn_files_md5)"
 	rm -f /etc/firewall.omr-bypass "$_REPLY_INCLUDE" "$_REPLY_NFT"
 	#cat > /etc/firewall.omr-bypass <<-EOF
 	##!/bin/sh
@@ -2424,7 +2496,7 @@ start_service() {
 	#echo "bypass domains"
 	config_foreach _bypass_domains domains
 	#echo "bypass asn"
-	config_foreach _bypass_asn asns
+	_bypass_asns
 
 	[ -n "$(uci -q changes network)" ] && {
 		uci -q commit network
@@ -2436,6 +2508,7 @@ start_service() {
 	fwfilechangemd5check=""
 	[ -f /etc/firewall.omr-bypass ] && fwfilechangemd5check="$(md5sum /etc/firewall.omr-bypass)"
 	[ -f "$_REPLY_NFT" ] && fwfilechangemd5check="${fwfilechangemd5check} $(md5sum "$_REPLY_NFT")"
+	fwfilechangemd5check="${fwfilechangemd5check} $(_asn_files_md5)"
 	# Force the heavier fw4/dnsmasq restart path only when the generated
 	# bypass content actually changed (new/removed nft elements). This
 	# comparison used to be inverted ("=" instead of "!="), so it forced a
@@ -2465,6 +2538,7 @@ start_service() {
 		done
 		rm -f /tmp/omr-bypass-entries.before
 	fi
+	[ -n "$_asn_flush_sets" ] && _omr_flush_sets="$_omr_flush_sets$_asn_flush_sets"
 
 	# Restore proxy nft rules parked as .down before any fw4 run (issue #4313);
 	# unconditional because a reload with no uci delta skips the block below,
