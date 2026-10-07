@@ -34,7 +34,7 @@ endef
 TARGET_CFLAGS += -DGT_RUNDIR=\"\\\"/tmp\"\\\"
 
 define Package/$(PKG_NAME)/conffiles
-/etc/config/glorytun
+/etc/config/glorytun-udp
 endef
 
 define Build/Prepare
