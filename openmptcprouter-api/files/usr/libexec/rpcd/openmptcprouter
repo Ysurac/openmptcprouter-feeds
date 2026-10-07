@@ -1630,6 +1630,17 @@ function wizard_add(args)
 	end
 
 	set_vps_disabled(not any_server_enabled)
+	-- omr-schedule turns every VPN off while no server is in use. The save
+	-- that adds the first server and keeps the VPN chosen before goes
+	-- through neither default_vpn() nor set_vps_disabled() (omrvpn was
+	-- never disabled), so the VPN waited for the scheduler's next pass.
+	-- restart_all_async() below starts it.
+	if any_server_enabled then
+		local vpn = ucic:get("openmptcprouter","settings","vpn") or ""
+		if vpn ~= "" and vpn ~= "none" then
+			set_vpn_enabled(vpn, true)
+		end
+	end
 
 	for _, cfg in ipairs(wizard_uci_configs) do
 		ucic:save(cfg)
@@ -1777,7 +1788,7 @@ function settings_add(args)
 	return { status = "reload" }
 end
 
-local function set_vpn_enabled(vpn, enabled)
+function set_vpn_enabled(vpn, enabled)
 	local value = enabled and "1" or "0"
 	local configs = {}
 
