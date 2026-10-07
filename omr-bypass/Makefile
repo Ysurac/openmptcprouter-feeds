@@ -20,7 +20,7 @@ include $(INCLUDE_DIR)/package.mk
 define Package/$(PKG_NAME)-nft
 SECTION:=net
 CATEGORY:=Network
-DEPENDS:=+curl +dnsmasq-full +sqlite3-cli +firewall4 @!LINUX_5_4
+DEPENDS:=+curl +ca-bundle +dnsmasq-full +sqlite3-cli +firewall4 @!LINUX_5_4
 PROVIDES:=$(PKG_NAME)
 TITLE:=OMR-ByPass
 endef

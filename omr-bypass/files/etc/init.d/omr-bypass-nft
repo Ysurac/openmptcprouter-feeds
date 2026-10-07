@@ -66,7 +66,28 @@ _omr_tlds_tried=""
 _fetch_tlds() {
 	[ -n "$_omr_tlds_tried" ] && return
 	_omr_tlds_tried=1
-	tlds=$(curl --max-time 4 -s -k https://data.iana.org/TLD/tlds-alpha-by-domain.txt)
+	tlds=$(curl --max-time 4 -s https://data.iana.org/TLD/tlds-alpha-by-domain.txt)
+}
+
+# _expand_wildcard_domain <name.>: the <name.><tld> that resolve, for the
+# country codes and the generic TLDs of up to three letters (and .info), on
+# one line. The three copies this replaces kept words 12 to 50 of the IANA
+# list (past its "# Version" line, AAA to about ACCOUNTANT: never .com or a
+# country) or counted the header's words as TLDs.
+_expand_wildcard_domain() {
+	local domain="$1" tld domainlist=""
+	for tld in $(printf '%s\n' "$tlds" | sed '/^#/d' | grep -i -x -E '[a-z]{2,3}|info'); do
+		domainlist="${domainlist} ${domain}${tld}"
+	done
+	[ -n "$domainlist" ] || return 0
+	echo $domainlist  `# Get the list of valid domains, pass it to awk` \
+		| awk '{print tolower($0)}'   `# awk lowercases the whole string and passes it to ` \
+		| xargs -n8 -P12              `# xargs sends 8 arguments at a time to` \
+			dig a +timeout=1 +tries=1 +retry=1 +nocmd +noall +answer `# dig, which passes results (if any) to` \
+		| awk '{print $1}'            `# awk, which outputs queried domain to` \
+		| sed -e 's/.$//'             `# sed, which trims off the trailing dot (google.com. -> google.com)` \
+		| grep -i -F -- "$domain"     `# grep, only keep wanted domain` \
+		| awk '{for (i=1;i<=NF;i++) if (!a[$i]++) printf("%s%s",$i,FS)}{printf("\n")}' # deduplicate
 }
 
 _get_firewall_zones() {
@@ -184,6 +205,14 @@ _rule_intf_list() {
 	config_get raw "$sec" interface
 	config_get fb "$sec" failback
 	for v in $raw $fb; do
+		# goes into eval'd variable names, uci batch lines and nft rules:
+		# only what a uci section name can be
+		case "$v" in
+			""|*[!A-Za-z0-9_]*)
+				logger -t "omr-bypass" "Rule $sec: invalid interface '$v' ignored"
+				continue
+				;;
+		esac
 		case "$v" in all) v="default" ;; esac
 		case " $out " in *" $v "*) continue ;; esac
 		out="${out:+$out }$v"
@@ -199,6 +228,49 @@ _rule_intf_list() {
 
 _wan_group_key() {
 	printf 'grp_%s' "$(printf '%s' "$1" | md5sum | cut -c1-8)"
+}
+
+# _rule_dscp <var> <section>: the section's DSCP class, or empty when it is
+# not one of the names the LuCI page offers (or a 0-63 number). The value goes
+# into eval'd variable names, uci batch lines and nft rules.
+_rule_dscp() {
+	local __rdscp
+	config_get __rdscp "$2" dscp
+	case "$__rdscp" in
+		""|cs[0-7]|af[1-4][1-3]|ef|le|[0-9]|[1-5][0-9]|6[0-3]) ;;
+		*)
+			logger -t "omr-bypass" "Rule $2: invalid DSCP class '$__rdscp' ignored"
+			__rdscp=""
+			;;
+	esac
+	eval "$1=\"\$__rdscp\""
+}
+
+# _rule_proto <var> <section>: the nDPI protocol name of a rule. It goes into
+# an sqlite query and into /etc/firewall.omr-bypass, which fw4 runs as a
+# shell script.
+_rule_proto() {
+	local __rproto
+	config_get __rproto "$2" proto
+	case "$__rproto" in
+		*[!A-Za-z0-9_.-]*)
+			logger -t "omr-bypass" "Rule $2: invalid protocol '$__rproto' ignored"
+			__rproto=""
+			;;
+	esac
+	eval "$1=\"\$__rproto\""
+}
+
+# Port rules and MAC addresses are written into /etc/firewall.omr-bypass too
+_valid_port_spec() {
+	case "$1" in
+		""|*[!0-9:,\ -]*) return 1 ;;
+	esac
+	return 0
+}
+
+_valid_mac() {
+	printf '%s' "$1" | grep -q -x -E '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}'
 }
 
 # _get_rule_intf <var> <section>: what config_get <var> <section> interface
@@ -597,7 +669,7 @@ _bypass_domains() {
 	config_get family $1 family "ipv4ipv6"
 	config_get tcpudp $1 tcpudp "all"
 	config_get vpn $1 vpn
-	config_get dscp $1 dscp
+	_rule_dscp dscp $1
 	[ "$vpn" = "1" ] && intf="srv_vpn1"
 	[ -z "$intf" ] && [ -z "$dscp" ] && return
 	[ "$intf" = "default" ] && intf="all"
@@ -614,26 +686,7 @@ _bypass_domains() {
 		# the single quotes made this the literal text "$domain" (quotes
 		# included): a wildcard rule expanded to nothing at all
 		domain="$(echo "$domain" | sed 's:*::')"
-		domainlist=""
-		# construct list of domains to query
-		i=0
-		for tld in $tlds; do
-			i=$((i+1))
-			# trim off header
-			if [ "$i" -lt "12" ] || [ "$i" -gt "50" ]; then
-				continue
-			fi 
-			# add to command
-			domainlist="${domainlist} ${domain}${tld}"
-		done
-		domainlist="$(echo $domainlist  `# Get the list of valid domains, pass it to awk` \
-			| awk '{print tolower($0)}'   `# awk lowercases the whole string and passes it to ` \
-			| xargs -n8 -P12              `# xargs sends 8 arguments at a time to` \
-			dig a +timeout=1 +tries=1 +retry=1 +nocmd +noall +answer `# dig, which passes results (if any) to` \
-			| awk '{print $1}'            `# awk, which outputs queried domain to` \
-			| sed -e 's/.$//'             `# sed, which trims off the trailing dot (google.com. -> google.com)` \
-			| grep $domain                `# grep, only keep wanted domain` \
-			| awk '{for (i=1;i<=NF;i++) if (!a[$i]++) printf("%s%s",$i,FS)}{printf("\n")}')" # deduplicate
+		domainlist="$(_expand_wildcard_domain "$domain")"
 		for validdomain in $domainlist; do
 			_bypass_domain "$validdomain" "$intf" "$family" "$noipv6" "$tcpudp" "$dscp"
 		done
@@ -774,7 +827,7 @@ _bypass_mac() {
 	config_get mac $1 mac
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
-	config_get dscp $1 dscp
+	_rule_dscp dscp $1
 	[ "$enabled" = "0" ] && return
 	intf=$(_map_intf_device "$intf")
 	intf=$(_sanitize_intf_key "$intf")
@@ -782,6 +835,15 @@ _bypass_mac() {
 	local intfid="$(uci -q get omr-bypass.$intf.id)"
 
 	[ "$intf" = "default" ] && intf="all"
+	local mac_addr valid_macs=""
+	for mac_addr in $mac; do
+		if _valid_mac "$mac_addr"; then
+			valid_macs="${valid_macs:+$valid_macs }$mac_addr"
+		else
+			logger -t "omr-bypass" "Rule $1: invalid MAC address '$mac_addr' ignored"
+		fi
+	done
+	mac="$valid_macs"
 	[ -z "$mac" ] && return
 	if [ "$disableipv6" = "0" ]; then
 		protocol="4 6"
@@ -815,7 +877,7 @@ _bypass_lan_ip() {
 	config_get ip $1 ip
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
-	config_get dscp $1 dscp
+	_rule_dscp dscp $1
 	[ "$enabled" = "0" ] && return
 	intf=$(_map_intf_device "$intf")
 	intf=$(_sanitize_intf_key "$intf")
@@ -864,7 +926,7 @@ _bypass_dest_port() {
 	config_get proto $1 proto
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
-	config_get dscp $1 dscp
+	_rule_dscp dscp $1
 	[ "$enabled" = "0" ] && return
 	intf=$(_map_intf_device "$intf")
 	intf=$(_sanitize_intf_key "$intf")
@@ -874,6 +936,10 @@ _bypass_dest_port() {
 
 	[ "$intf" = "default" ] && intf="all"
 	[ -z "$dport" ] && return
+	_valid_port_spec "$dport" || {
+		logger -t "omr-bypass" "Rule $1: invalid port '$dport' ignored"
+		return
+	}
 	dport=$(echo "$dport" | sed 's/:/-/')
 	[ -z "$proto" ] && return
 	if [ "$disableipv6" = "0" ]; then
@@ -924,7 +990,7 @@ _bypass_src_port() {
 	config_get proto $1 proto
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
-	config_get dscp $1 dscp
+	_rule_dscp dscp $1
 	[ "$enabled" = "0" ] && return
 	intf=$(_map_intf_device "$intf")
 	intf=$(_sanitize_intf_key "$intf")
@@ -934,6 +1000,10 @@ _bypass_src_port() {
 
 	[ "$intf" = "default" ] && intf="all"
 	[ -z "$sport" ] && return
+	_valid_port_spec "$sport" || {
+		logger -t "omr-bypass" "Rule $1: invalid port '$sport' ignored"
+		return
+	}
 	sport=$(echo "$sport" | sed 's/:/-/')
 	[ -z "$proto" ] && return
 	if [ "$disableipv6" = "0" ]; then
@@ -1020,7 +1090,7 @@ _bypass_proto() {
 	local proto
 	local intf
 	local enabled
-	config_get proto $1 proto
+	_rule_proto proto $1
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get ndpi $1 ndpi
@@ -1086,26 +1156,7 @@ _bypass_proto() {
 			if [ -n "$domain" ]; then
 				domain="${domain#.}"
 				case "$domain" in *.)
-					domainlist=""
-					# construct list of domains to query
-					i=0
-					for tld in $tlds; do
-						i=$((i+1))
-						# trim off header
-						if [ "$i" -lt "12" ] || [ "$i" -gt "50" ]; then
-							continue
-						fi
-						# add to command
-						domainlist="${domainlist} ${domain}${tld}"
-					done
-					domainlist="$(echo $domainlist  `# Get the list of valid domains, pass it to awk` \
-						| awk '{print tolower($0)}'   `# awk lowercases the whole string and passes it to ` \
-						| xargs -n8 -P12              `# xargs sends 8 arguments at a time to` \
-							dig a +timeout=1 +tries=1 +retry=1 +nocmd +noall +answer `# dig, which passes results (if any) to` \
-						| awk '{print $1}'            `# awk, which outputs queried domain to` \
-						| sed -e 's/.$//'             `# sed, which trims off the trailing dot (google.com. -> google.com)` \
-						| grep $domain                `# grep, only keep wanted domain` \
-						| awk '{for (i=1;i<=NF;i++) if (!a[$i]++) printf("%s%s",$i,FS)}{printf("\n")}')" # deduplicate
+					domainlist="$(_expand_wildcard_domain "$domain")"
 					for validdomain in $domainlist; do
 						_omr_defer _bypass_domain "$validdomain" "$intf" "$family" "$noipv6"
 					done
@@ -1243,23 +1294,7 @@ _bypass_proto_core() {
 				case "$domain" in *.)
 					# Wildcard TLD expansion: skip on reload_rules (too slow, dnsmasq keeps prior config)
 					[ -n "$RELOAD" ] && continue
-					domainlist=""
-					i=0
-					for tld in $tlds; do
-						i=$((i+1))
-						if [ "$i" -lt "2" ] || [ "${#tld}" -gt "3" ]; then
-							continue
-						fi
-						domainlist="${domainlist} ${domain}${tld}"
-					done
-					domainlist="$(echo $domainlist \
-						| awk '{print tolower($0)}' \
-						| xargs -n8 -P12 \
-							dig a +timeout=1 +tries=1 +retry=1 +nocmd +noall +answer \
-						| awk '{print $1}' \
-						| sed 's/.$//' \
-						| grep $domain \
-						| awk '{for (i=1;i<=NF;i++) if (!a[$i]++) printf("%s%s",$i,FS)}{printf("\n")}')"
+					domainlist="$(_expand_wildcard_domain "$domain")"
 					for validdomain in $domainlist; do
 						_omr_defer _bypass_domain "$validdomain" "$intf" "$family" "$noipv6" "${tcpudp}"
 					done
@@ -1277,7 +1312,7 @@ _bypass_proto_without_ndpi() {
 	local proto
 	local intf
 	local enabled
-	config_get proto $1 proto
+	_rule_proto proto $1
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get ndpi $1 ndpi "0"
@@ -1820,7 +1855,7 @@ _bypass_ip_set() {
 	config_get ip $1 ip
 	_get_rule_intf interface $1
 	config_get enabled $1 enabled
-	config_get dscp $1 dscp
+	_rule_dscp dscp $1
 	[ "$enabled" = "0" ] && return
 	interface=$(_map_intf_device "$interface")
 	[ -z "$interface" ] && [ -z "$dscp" ] && return
@@ -1839,13 +1874,24 @@ _bypass_asn() {
 	config_get asn $1 asn
 	_get_rule_intf interface $1
 	config_get enabled $1 enabled
-	config_get dscp $1 dscp
+	_rule_dscp dscp $1
 	[ "$enabled" = "0" ] && return
 	interface=$(_map_intf_device "$interface")
 	[ -z "$interface" ] && [ -z "$dscp" ] && return
 	[ "$interface" = "default" ] && interface="all"
+	# "AS13335" or "13335", and nothing else into the URL
+	asn="${asn#[Aa][Ss]}"
+	case "$asn" in
+		""|*[!0-9]*)
+			logger -t "omr-bypass" "Rule $1: invalid ASN '$asn' ignored"
+			return
+			;;
+	esac
 	local asnips
-	asnips=$(curl --max-time 4 -s -k https://stat.ripe.net/data/announced-prefixes/data.json?resource=${asn} | jsonfilter -q -e \'@.data.prefixes.*.prefix\')
+	# the escaped quotes were part of the filter, which jsonfilter refused:
+	# no ASN rule ever matched anything. Unverified TLS (-k) let anyone on
+	# the path choose the prefixes.
+	asnips=$(curl --max-time 4 -s "https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS${asn}" | jsonfilter -q -e '@.data.prefixes[*].prefix')
 	for ip in $asnips; do
 		[ -n "$interface" ] && _bypass_ip $ip $interface
 		[ -n "$dscp" ] && _dscp_ip $ip $dscp
@@ -1992,12 +2038,12 @@ _bypass_ndpid_collect_proto() {
 
 _bypass_proto_collect_ndpid() {
 	local proto intf enabled intfid tcpudp ndpi dscp
-	config_get proto $1 proto
+	_rule_proto proto $1
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get tcpudp $1 tcpudp "all"
 	config_get ndpi $1 ndpi "1"
-	config_get dscp $1 dscp
+	_rule_dscp dscp $1
 	[ "$enabled" = "0" ] && return
 	[ "$ndpi" = "0" ] && return
 	[ -z "$proto" ] && return
@@ -2027,7 +2073,7 @@ _bypass_category_collect_ndpid() {
 	config_get vpn $1 vpn
 	config_get tcpudp $1 tcpudp "all"
 	config_get ndpi $1 ndpi "0"
-	config_get dscp $1 dscp
+	_rule_dscp dscp $1
 	[ "$enabled" = "0" ] && return
 	[ "$ndpi" = "0" ] && return
 	[ -z "$category" ] && return
@@ -2081,11 +2127,11 @@ _stop_ndpid_consumer() {
 # nDPId detection (same conditions as _bypass_proto_collect_ndpid)
 _ndpid_rule_wanted() {
 	local proto intf enabled ndpi dscp
-	config_get proto $1 proto
+	_rule_proto proto $1
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get ndpi $1 ndpi "1"
-	config_get dscp $1 dscp
+	_rule_dscp dscp $1
 	[ "$enabled" = "0" ] && return
 	[ "$ndpi" = "0" ] && return
 	[ -z "$proto" ] && return
@@ -2103,7 +2149,7 @@ _ndpid_category_rule_wanted() {
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get ndpi $1 ndpi "0"
-	config_get dscp $1 dscp
+	_rule_dscp dscp $1
 	config_get vpn $1 vpn
 	[ "$enabled" = "0" ] && return
 	[ "$ndpi" = "0" ] && return
