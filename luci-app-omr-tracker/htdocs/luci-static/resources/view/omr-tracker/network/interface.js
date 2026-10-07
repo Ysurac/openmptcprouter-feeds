@@ -57,13 +57,38 @@ return view.extend({
 			return h;
 		}
 
+		// omr-tracker gives an interface section without the option the value
+		// of the defaults section, and the tracker's own default when that has
+		// none either (_validate_section in the init script). Show the value
+		// the tracker runs with, and write only a change: a box left as it was
+		// keeps the interface following the defaults section, and an unticked
+		// box is written as 0 rather than removed, which would bring the
+		// defaults' value back.
+		function inheritFlag(o, fallback) {
+			var inherited = function(section_id) {
+				var v = null;
+				if (uci.get('omr-tracker', section_id, '.type') == 'interface')
+					v = uci.get('omr-tracker', 'defaults', o.option);
+				return (v != null) ? v : fallback;
+			};
+			o.default = fallback;
+			o.cfgvalue = function(section_id) {
+				var v = uci.get('omr-tracker', section_id, this.option);
+				return (v != null) ? v : inherited(section_id);
+			};
+			o.parse = function(section_id) {
+				if (!this.isActive(section_id))
+					return form.Flag.prototype.parse.apply(this, arguments);
+				var fval = this.formvalue(section_id);
+				if (fval == this.cfgvalue(section_id))
+					return Promise.resolve();
+				return Promise.resolve(this.write(section_id, fval));
+			};
+		}
+
 		o = s.option(form.Flag, 'enabled', _('Enabled'),
 			_('Enable monitoring and automatic state changes for this interface.'));
-		// omr-tracker runs a section without the option (enabled:bool:1):
-		// show it ticked, and write the 0, since an unticked box equal to
-		// the default was removed and the tracker kept running
-		o.default = o.enabled;
-		o.rmempty = false;
+		inheritFlag(o, '1');
 
 		o = s.option(form.Flag, '_show_adv', _('Show advanced settings'));
 		o.description = _('Reveal additional tracking parameters below: custom hosts, quality checks and interface state thresholds.');
@@ -242,13 +267,13 @@ return view.extend({
 
 		o = s.option(form.Flag, 'server_http_test', _('Server http test'),
 			_('Check if connection work with http by sending a request to server API'));
-		o.rmempty = false;
+		inheritFlag(o, '0');
 		o.depends('_show_adv', '1');
 		o.modalonly = true;
 
 		o = s.option(form.Flag, 'server_test', _('Server test'),
 			_('Check if connection work by sending a ping or http request to server over all interfaces, failed if only current interface is not able to.'));
-		o.rmempty = false;
+		inheritFlag(o, '0');
 		o.depends('_show_adv', '1');
 		o.modalonly = true;
 
@@ -291,7 +316,7 @@ return view.extend({
 		o = s.option(form.Flag, 'check_quality', _('Check link quality'),
 			_('Mark the interface down when latency, packet loss or congestion crosses the thresholds below.'));
 		o.depends({ type: 'ping', _show_adv: '1' });
-		o.default = false;
+		inheritFlag(o, '0');
 		o.modalonly = true;
 
 		o = s.option(form.Value, 'failure_latency', _('Failure latency [ms]'),
