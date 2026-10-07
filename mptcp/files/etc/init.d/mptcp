@@ -8,6 +8,7 @@ USE_PROCD=1
 
 . /usr/lib/unbound/iptools.sh
 . /lib/functions/network.sh
+. /usr/lib/mptcp/init_helpers.sh
 
 restart_scheduler_dependent_services() {
 	local proxy vpn
@@ -799,11 +800,13 @@ start_service() {
 		config_foreach add_route6 route6
 		[ -z "$intf" ] && set_multipath
 	
-		# If no master is defined, one interface is defined as master
+		# If the master interface is disabled, another one is set as master.
+		# Not when no interface is set as master: the interfaces then share
+		# the balancing routes evenly, instead of 100 to 1 for a master.
 		if [ "$master" = "" ] && [ -z "$intf" ]; then
 			intfmaster="$mptcpmintf"
-			[ "$intfmaster" != "" ] && [ -z "$(uci -q show network | grep \"multipath='master'\")" ] && {
-				logger -t "MPTCP" "No master multipath defined, setting it to $intfmaster"
+			[ "$intfmaster" != "" ] && mptcp_has_master_multipath && {
+				logger -t "MPTCP" "Master multipath interface disabled, setting it to $intfmaster"
 				uci -q set network.${intfmaster}.multipath="master"
 				uci -q set openmptcprouter.${intfmaster}.multipath="master"
 			}
