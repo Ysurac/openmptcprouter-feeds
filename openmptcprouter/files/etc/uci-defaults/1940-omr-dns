@@ -73,11 +73,20 @@ if [ "$(uci -q get dhcp.@dnsmasq[0].dnsforwardmax)" = "" ]; then
 		commit dhcp
 	EOF
 fi
-if [ "$(uci -q get dhcp.lan.dhcp_options)" = "" ]; then
-	uci -q batch <<-EOF >/dev/null
-		uci add_list dhcp.lan.dhcp_option='252,"\n"'
-		commit dhcp
-	EOF
+# DHCP option 252 (WPAD) with an empty URL: clients don't go looking for a
+# proxy auto-config. It checked "dhcp_options", which doesn't exist, and the
+# batch line started with "uci", which batch rejects: the option was never
+# set. Leave a 252 option the user set alone.
+if [ -n "$(uci -q get dhcp.lan)" ]; then
+	case " $(uci -q get dhcp.lan.dhcp_option) " in
+		*" 252,"*) ;;
+		*)
+			uci -q batch <<-EOF >/dev/null
+				add_list dhcp.lan.dhcp_option='252,"\n"'
+				commit dhcp
+			EOF
+			;;
+	esac
 fi
 
 if [ -n "$(uci -q get dhcp.@dnsmasq[0].server | grep 127.0.0.1)" ] && [ -z "$(uci -q get dhcp.@dnsmasq[0].server | grep 127.0.0.1#5353)" ]; then
