@@ -78,7 +78,7 @@ if [ "$(uci -q get openmptcprouter.settings.version)" = "" ]; then
 	fi
 fi
 
-if [ "$(uci -q get sqm.omrvpn)" = "" ] || [ -z "$(uci -q get sqm.omrvpn.delay_thr_ms)" ]; then
+if [ "$(uci -q get sqm.omrvpn)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set sqm.omrvpn=queue
 		set sqm.omrvpn.qdisc="cake"
@@ -97,6 +97,17 @@ if [ "$(uci -q get sqm.omrvpn)" = "" ] || [ -z "$(uci -q get sqm.omrvpn.delay_th
 		set sqm.omrvpn.reflector_ping_interval_s='0.5'
 		set sqm.omrvpn.enable_sleep_function='0'
 		set sqm.omrvpn.autorate='0'
+		commit sqm
+	EOF
+elif [ -z "$(uci -q get sqm.omrvpn.delay_thr_ms)" ]; then
+	# A queue from before sqm-autorate, or one whose page dropped the default
+	# delay: add what is missing. The whole queue was recreated, disabled
+	# and with no bandwidth, on every upgrade.
+	uci -q batch <<-EOF >/dev/null
+		set sqm.omrvpn.delay_thr_ms='300.0'
+		$([ -z "$(uci -q get sqm.omrvpn.reflector_ping_interval_s)" ] && echo "set sqm.omrvpn.reflector_ping_interval_s='0.5'")
+		$([ -z "$(uci -q get sqm.omrvpn.enable_sleep_function)" ] && echo "set sqm.omrvpn.enable_sleep_function='0'")
+		$([ -z "$(uci -q get sqm.omrvpn.autorate)" ] && echo "set sqm.omrvpn.autorate='0'")
 		commit sqm
 	EOF
 fi
