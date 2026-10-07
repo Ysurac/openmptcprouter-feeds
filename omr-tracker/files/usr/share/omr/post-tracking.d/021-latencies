@@ -31,7 +31,15 @@ _cfg_changed=""
 	#[ -z "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.latency_max)" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency_max="$OMR_TRACKER_LATENCY"
 	#[ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.latency_max)" -lt "$OMR_TRACKER_LATENCY" ] && uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.latency_max="$OMR_TRACKER_LATENCY"
 	_master_setting="$(uci -q get openmptcprouter.settings.master)"
-	if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath)" = "on" ] && { [ "$_master_setting" = "dynamic" ] || { { [ "$_master_setting" = "change" ] || [ "$_master_setting" = "" ]; } && [ "$(uci -q get openmptcprouter.settings.master_lcintf | grep $OMR_TRACKER_INTERFACE)" = "" ]; }; }; then
+	# Was this interface elected already? A whole word of the list: grep
+	# answered yes for wan1 once wan10 was in it
+	_master_elected() {
+		case " $(uci -q get openmptcprouter.settings.master_lcintf) " in
+			*" $OMR_TRACKER_INTERFACE "*) return 0 ;;
+		esac
+		return 1
+	}
+	if [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.multipath)" = "on" ] && { [ "$_master_setting" = "dynamic" ] || { { [ "$_master_setting" = "change" ] || [ "$_master_setting" = "" ]; } && ! _master_elected; }; }; then
 		masterintf="$(uci -q show openmptcprouter | grep -m 1 multipath=\'master\' | cut -d'.' -f2)"
 		[ -z "$masterintf" ] && masterintf="$(uci -q show network | grep -m 1 multipath=\'master\' | cut -d'.' -f2)"
 		masterlatency="$(omr_state_get openmptcprouter.$masterintf.latency | tr -d '\n')"
@@ -47,9 +55,7 @@ _cfg_changed=""
 				uci -q set openmptcprouter.$masterintf.multipath='on'
 				uci -q set network.$OMR_TRACKER_INTERFACE.multipath='master'
 				uci -q set openmptcprouter.$OMR_TRACKER_INTERFACE.multipath='master'
-				if [ "$(uci -q get openmptcprouter.settings.master_lcintf | grep $OMR_TRACKER_INTERFACE)" = "" ]; then
-					uci -q add_list openmptcprouter.settings.master_lcintf="$OMR_TRACKER_INTERFACE"
-				fi
+				_master_elected || uci -q add_list openmptcprouter.settings.master_lcintf="$OMR_TRACKER_INTERFACE"
 				if [ "$_master_setting" = "" ]; then
 					uci -q set openmptcprouter.settings.master="change"
 				fi
