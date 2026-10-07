@@ -342,6 +342,37 @@ if [ -z "$(uci -q get firewall.user)" ]; then
 		commit firewall
 	EOF
 fi
+
+# Rules saved from LuCI between luci-base 974b5864e0 and luci-app-firewall
+# 08b7aed8 (v0.64, v0.64.1) lost their default action: a traffic rule left
+# on "accept" has no target, which fw4 renders without a verdict, and a NAT
+# rule left on "SNAT" has none either, so fw4 skips it (its own default,
+# MASQUERADE, takes no rewrite address). LuCI shows them with those
+# defaults, so write them. A rule with an option that LuCI only sets for
+# another action (set_mark, set_xmark, set_dscp, set_helper), or never sets
+# (log), is left alone.
+. /lib/functions.sh
+_omr_fw_default_target() {
+	local section="$1" type="$2" target opt val
+	config_get target "$section" target
+	[ -n "$target" ] && return
+	if [ "$type" = "rule" ]; then
+		for opt in set_mark set_xmark set_dscp set_helper log; do
+			config_get val "$section" "$opt"
+			[ -n "$val" ] && return
+		done
+		uci -q set "firewall.${section}.target=ACCEPT"
+	else
+		config_get val "$section" snat_ip
+		[ -z "$val" ] && config_get val "$section" snat_port
+		[ -n "$val" ] && uci -q set "firewall.${section}.target=SNAT"
+	fi
+}
+config_load firewall
+config_foreach _omr_fw_default_target rule rule
+config_foreach _omr_fw_default_target nat nat
+[ -n "$(uci -q changes firewall)" ] && uci -q commit firewall
+
 rm -f /tmp/luci-indexcache
 
 exit 0
