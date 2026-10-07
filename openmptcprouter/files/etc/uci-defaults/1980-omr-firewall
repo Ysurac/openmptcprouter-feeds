@@ -120,6 +120,25 @@ if [ "$(uci -q show firewall | grep Allow-VPN-ICMP)" = "" ]; then
 		commit firewall
 	EOF
 fi
+# FTP to the VPS's address, forwarded to the LAN: fw4 assigns no helper
+# automatically in a zone that masquerades, as zone_vpn does, so passive FTP
+# fails without this rule (openmptcprouter#4365). With it, the router
+# rewrites the server's PASV reply to its tunnel address, which the VPS's own
+# helper rewrites to the VPS's. Only where nf_conntrack_ftp is loaded: fw4
+# would otherwise reference a helper it doesn't declare, and nft would reject
+# the whole ruleset.
+if [ "$(uci -q get firewall.ftphelpervpn)" = "" ] && [ -d /sys/module/nf_conntrack_ftp ]; then
+	uci -q batch <<-EOF >/dev/null
+		set firewall.ftphelpervpn=rule
+		set firewall.ftphelpervpn.name='FTP-Helper-VPN'
+		set firewall.ftphelpervpn.src='vpn'
+		set firewall.ftphelpervpn.proto='tcp'
+		set firewall.ftphelpervpn.dest_port='21'
+		set firewall.ftphelpervpn.target='HELPER'
+		set firewall.ftphelpervpn.set_helper='ftp'
+		commit firewall
+	EOF
+fi
 if [ "$(uci -q show firewall | grep Allow-Lan-to-Wan)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
 		add firewall rule
