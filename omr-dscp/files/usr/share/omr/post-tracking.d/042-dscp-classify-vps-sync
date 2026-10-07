@@ -25,6 +25,33 @@
 # regardless of which (see omr-dscp/Makefile's install rules).
 [ -x /etc/init.d/omr-dscp ] || exit 0
 
+# Only start it when it has something to do: a server with credentials whose
+# last sync (/tmp/.dscp_classify_vps_ts-<server>) is older than the
+# throttle. Those are the checks set_dscp_classify_vps starts with, but
+# getting there through rc.common and the init script took about 20
+# processes on every cycle of every tracker; here they cost the config_load
+# and a date.
+_dscp_classify_due=""
+_dscp_classify_check() {
+	local disabled username password port last=""
+	[ -n "$_dscp_classify_due" ] && return
+	config_get disabled "$1" disabled
+	config_get username "$1" username
+	config_get password "$1" password
+	config_get port "$1" port
+	if [ "$disabled" = "1" ] || [ -z "$username" ] || [ -z "$password" ] || [ -z "$port" ]; then
+		return
+	fi
+	[ -f "/tmp/.dscp_classify_vps_ts-$1" ] && read -r last < "/tmp/.dscp_classify_vps_ts-$1"
+	if [ -z "$last" ] || [ $((_dscp_classify_now - last)) -ge "${DSCP_CLASSIFY_MIN_INTERVAL:-300}" ]; then
+		_dscp_classify_due=1
+	fi
+}
+_dscp_classify_now=$(date +%s)
+config_load openmptcprouter
+config_foreach _dscp_classify_check server
+[ -n "$_dscp_classify_due" ] || exit 0
+
 ( /etc/init.d/openmptcprouter-vps set_dscp_classify_vps >/dev/null 2>&1 & )
 
 exit 0
