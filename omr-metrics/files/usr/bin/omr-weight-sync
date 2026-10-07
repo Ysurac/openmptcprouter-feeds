@@ -134,6 +134,47 @@ _get_decision() {
 	[ "$http_code" = "200" ]
 }
 
+# _differs <current> <new>: the new weight is far enough from the current one
+# to be written. The model's weights move by a unit or two from one answer to
+# the next, and each write commits the network config to flash.
+_differs() {
+	local cur="$1" new="$2" d
+	case "$cur" in
+		''|*[!0-9]*) return 0 ;;
+	esac
+	d=$((new - cur))
+	[ "$d" -lt 0 ] && d=$((-d))
+	[ "$d" -ge 2 ] && [ "$((d * 20))" -ge "$cur" ]
+}
+
+# _apply_decision <response> <interfaces>: write the weights of a
+# /metrics/decision answer, {"weights": {"<interface>": 1-255, ...}, ...},
+# into network.<interface>.multipath_weight and .weight. They were read at
+# the top level ("@['wan1']"), where the answer has none: no model weight was
+# ever applied.
+_apply_decision() {
+	local response="$1" iface_list="$2" _changed=0 _iface _weight _cur
+	for _iface in $iface_list; do
+		_weight=$(jsonfilter -s "$response" -e "@.weights['${_iface}']" 2>/dev/null)
+		case "$_weight" in
+			''|*[!0-9]*) continue ;;
+		esac
+		[ "$_weight" -lt 1 ] && continue
+
+		_cur=$(uci -q get "network.${_iface}.multipath_weight" 2>/dev/null)
+		if _differs "$_cur" "$_weight"; then
+			uci -q set "network.${_iface}.multipath_weight=$_weight"
+			_changed=1
+		fi
+		_cur=$(uci -q get "network.${_iface}.weight" 2>/dev/null)
+		if _differs "$_cur" "$_weight"; then
+			uci -q set "network.${_iface}.weight=$_weight"
+			_changed=1
+		fi
+	done
+	[ "$_changed" -eq 1 ] && uci -q commit network 2>/dev/null || true
+}
+
 # Fetch model-assigned weights from the first responding VPS and write them
 # into UCI multipath_weight / weight.  Returns 0 when at least one weight was
 # received; falls through to UCI-only weights otherwise.
@@ -168,27 +209,7 @@ _fetch_decision_weights() {
 	if [ -n "$custom_server" ]; then
 		local response
 		response=$(_get_decision "omr_metrics_custom" "$custom_server" "$custom_serverport" "$_predict" "$_horizon") || return 1
-		local _changed=0 _iface _weight _cur
-		for _iface in $iface_list; do
-			_weight=$(jsonfilter -s "$response" -e "@['${_iface}']" 2>/dev/null)
-			[ -z "$_weight" ] && continue
-			case "$_weight" in
-				''|*[!0-9]*) continue ;;
-			esac
-			[ "$_weight" -lt 1 ] && continue
-
-			_cur=$(uci -q get "network.${_iface}.multipath_weight" 2>/dev/null)
-			if [ "$_cur" != "$_weight" ]; then
-				uci -q set "network.${_iface}.multipath_weight=$_weight"
-				_changed=1
-			fi
-			_cur=$(uci -q get "network.${_iface}.weight" 2>/dev/null)
-			if [ "$_cur" != "$_weight" ]; then
-				uci -q set "network.${_iface}.weight=$_weight"
-				_changed=1
-			fi
-		done
-		[ "$_changed" -eq 1 ] && uci -q commit network 2>/dev/null || true
+		_apply_decision "$response" "$iface_list"
 		return 0
 	fi
 
@@ -211,29 +232,7 @@ _fetch_decision_weights() {
 			local response
 			response=$(_get_decision "$servername" "$server" "$serverport" "$_predict" "$_horizon") || continue
 
-			# Response expected: {"iface": weight, ...}
-			local _changed=0 _iface _weight _cur
-			for _iface in $iface_list; do
-				_weight=$(jsonfilter -s "$response" -e "@['${_iface}']" 2>/dev/null)
-				[ -z "$_weight" ] && continue
-				case "$_weight" in
-					''|*[!0-9]*) continue ;;
-				esac
-				[ "$_weight" -lt 1 ] && continue
-
-				_cur=$(uci -q get "network.${_iface}.multipath_weight" 2>/dev/null)
-				if [ "$_cur" != "$_weight" ]; then
-					uci -q set "network.${_iface}.multipath_weight=$_weight"
-					_changed=1
-				fi
-				_cur=$(uci -q get "network.${_iface}.weight" 2>/dev/null)
-				if [ "$_cur" != "$_weight" ]; then
-					uci -q set "network.${_iface}.weight=$_weight"
-					_changed=1
-				fi
-			done
-
-			[ "$_changed" -eq 1 ] && uci -q commit network 2>/dev/null || true
+			_apply_decision "$response" "$iface_list"
 			return 0
 		done
 	done
