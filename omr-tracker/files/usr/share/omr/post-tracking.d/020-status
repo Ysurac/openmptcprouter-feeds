@@ -13,10 +13,9 @@ interface_up=$(ubus call network.interface."$OMR_TRACKER_INTERFACE" status 2>/de
 
 . "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
 
-# Cache frequently reused values
-_now=$(date +"%s")
-_debug=$(uci -q get openmptcprouter.settings.debug)
-_external_check=$(uci -q get openmptcprouter.settings.external_check)
+# Cache frequently reused values (debug and external_check are only needed
+# by the hourly refresh below: they are read there, not on every cycle)
+printf -v _now '%(%s)T' -1
 _tracebox=$(uci -q get openmptcprouter.settings.tracebox)
 _lc=$(omr_state_get openmptcprouter.$OMR_TRACKER_INTERFACE.lc)
 
@@ -154,6 +153,8 @@ _publicip_migrate() {
 
 # Save wan settings for status page
 if [ -n "$OMR_TRACKER_INTERFACE" ] && { [ -z "$_lc" ] || [ "$(omr_state_get openmptcprouter.$OMR_TRACKER_INTERFACE.state)" = "down" ] || [ $((_now + $((30 + RANDOM % 10)) - _lc)) -gt 3600 ]; }; then
+	_debug=$(uci -q get openmptcprouter.settings.debug)
+	_external_check=$(uci -q get openmptcprouter.settings.external_check)
 	[ "$_debug" = "true" ] && _log "Get status and settings for $OMR_TRACKER_INTERFACE..."
 	_publicip_migrate
 	ipaddr=""
