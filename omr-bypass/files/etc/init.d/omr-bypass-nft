@@ -1356,30 +1356,14 @@ _bypass_proto_core() {
 			[ -n "$_nft6" ] && printf 'nft add element inet fw4 bypass6_%s { %s } 2>/dev/null || true\n' "$proto" "$_nft6" >> /etc/firewall.omr-bypass
 		fi
 	fi
-	# Use dnsmasq ipset to bypass domains of the proto
+	# Use dnsmasq ipset to bypass domains of the proto. The database holds
+	# plain domains: nDPI's any-TLD patterns ("youtube.") are expanded when
+	# it is built, so a reload adds back the same domains as a start.
 	local domains
 	domains=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select host from hostproto where proto='"$proto"';" ".exit")
-	if [ -n "$domains" ]; then
-		# Only fetch TLD list for wildcard expansion on fresh start (not reload)
-		[ -z "$RELOAD" ] && _fetch_tlds
-		for domain in $domains; do
-			if [ -n "$domain" ]; then
-				domain="${domain#.}"
-				case "$domain" in *.)
-					# Wildcard TLD expansion: skip on reload_rules (too slow, dnsmasq keeps prior config)
-					[ -n "$RELOAD" ] && continue
-					domainlist="$(_expand_wildcard_domain "$domain")"
-					for validdomain in $domainlist; do
-						_omr_defer _bypass_domain "$validdomain" "$intf" "$family" "$noipv6" "${tcpudp}"
-					done
-					;;
-				*)
-					_omr_defer _bypass_domain "$domain" "$intf" "$family" "$noipv6" "${tcpudp}"
-					;;
-				esac
-			fi
-		done
-	fi
+	for domain in $domains; do
+		[ -n "$domain" ] && _omr_defer _bypass_domain "${domain#.}" "$intf" "$family" "$noipv6" "${tcpudp}"
+	done
 }
 
 _bypass_proto_without_ndpi() {
