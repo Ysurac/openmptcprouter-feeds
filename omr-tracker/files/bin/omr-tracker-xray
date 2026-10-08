@@ -216,7 +216,14 @@ while true; do
 				script_alert_down="$(uci -q get omr-tracker.proxy.script_alert_down)"
 				[ -n "$script_alert_down" ] && eval $script_alert_down
 				sleep $wait_test
-			elif _xray_rules_missing; then
+			elif [ ! -f /etc/nftables.d/90-proxy-x2ray-rules.nft.down ] && [ -z "$(pgrep -f '/etc/[a-z.]*/[KS0-9]*xray ')" ]; then
+				# Rules neither loaded nor parked, and no xray start or
+				# restart running (it clears them first): xray never set
+				# them up, a restart writes them. Parked rules are down on
+				# purpose, by this tracker during an outage or by the xray
+				# start until the proxy answers (wait_proxy): a restart can't
+				# make the server answer, and each one reloads and restarts
+				# fw4, which empties the sets dnsmasq fills for omr-bypass.
 				_log "xray SOCKS5 unreachable and rules missing, restarting xray"
 				/etc/init.d/xray restart &
 				last=0
