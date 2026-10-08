@@ -1,50 +1,78 @@
 #!/bin/sh
 # vim: set noexpandtab tabstop=4 shiftwidth=4 softtabstop=4 :
+#
+# Watches the GRE tunnels of the public IPs of the VPS (oip<i>, see
+# openmptcprouter-vps _get_gre_tunnel). Once none of them has answered for
+# OMR_TRACKER_TRIES checks in a row, they are brought up again and their
+# config is asked to the VPS again. That last part was done after every
+# failed check before, an API login and config download each
+# OMR_TRACKER_INTERVAL for as long as the VPN was down: now at most once per
+# backoff period, doubled up to an hour while they stay down.
 
-name=$0
 basename="$(basename $0)"
 
 _log() {
 	logger -p daemon.info -t "${basename}" "$@"
 }
 
-_ping_server() {
-	local host=$1
-	ret=$(ping \
-	    -w "$OMR_TRACKER_TIMEOUT" \
-	    -c 1 \
-	    -q \
-	    "${host}" 2>/dev/null
-	) && echo "$ret" | grep -sq " 0% packet loss" && {
-		server_ping=true
-	}
-}
+. /lib/functions.sh
+. /lib/functions/network.sh
 
 _ping_tunnel() {
-	local name=$1
-	config_get gateway $1 gateway
-	config_get ifname $1 device
-	[ -z "$ifname" ] && config_get ifname $1 ifname
-	config_get disabled $1 disabled
-	[ "$(echo $ifname | grep oip)" != "" ] && [ -n "$gateway" ] && [ "$disabled" != "1" ] && {
-		_ping_server $gateway
-	}
+	local intf="$1" gateway disabled device
+	case "$intf" in
+		oip[0-9]|oip[0-9][0-9]) ;;
+		*) return ;;
+	esac
+	config_get disabled "$intf" disabled
+	[ "$disabled" = "1" ] && return
+	config_get gateway "$intf" gateway
+	[ -n "$gateway" ] || return
+	tunnels=$((tunnels + 1))
+	[ "$server_ping" = true ] && return
+	network_get_device device "$intf"
+	[ -n "$device" ] || return
+	# Bound to the tunnel: its /30 is in the vpn table (ip4table), the main
+	# table sent the ping somewhere else
+	ping -I "$device" -w "$timeout" -c 1 -q "$gateway" >/dev/null 2>&1 && server_ping=true
 }
 
-. /lib/functions.sh
+_ifup_tunnel() {
+	case "$1" in
+		oip[0-9]|oip[0-9][0-9]) ;;
+		*) return ;;
+	esac
+	[ "$(uci -q get network.$1.disabled)" = "1" ] && return
+	ifup "${1}gre" >/dev/null 2>&1
+	ifup "$1" >/dev/null 2>&1
+}
 
 timeout=${OMR_TRACKER_TIMEOUT:-5}
 interval=${OMR_TRACKER_INTERVAL:-10}
-intervaltries=${OMR_TRACKER_INTERVAL_TRIES:-2}
 retry=${OMR_TRACKER_TRIES:-4}
-waittest=${OMR_TRACKER_WAIT_TEST:-0}
+failures=0
+backoff=60
+next_sync=0
 
 while true; do
 	server_ping=false
+	tunnels=0
+	network_flush_cache
 	config_load network
 	config_foreach _ping_tunnel interface
-	if [ "$server_ping" = false ]; then
-		/etc/init.d/openmptcprouter-vps set_gre_tunnel 2>&1 >/dev/null
+	if [ "$tunnels" -eq 0 ] || [ "$server_ping" = true ]; then
+		failures=0
+		backoff=60
+	else
+		failures=$((failures + 1))
+		now=$(cut -d. -f1 /proc/uptime)
+		if [ "$failures" -ge "$retry" ] && [ "$now" -ge "$next_sync" ]; then
+			_log "No GRE tunnel of the server public IPs answers, set them up again"
+			config_foreach _ifup_tunnel interface
+			/etc/init.d/openmptcprouter-vps set_gre_tunnel >/dev/null 2>&1
+			next_sync=$((now + backoff))
+			[ "$backoff" -lt 3600 ] && backoff=$((backoff * 2))
+		fi
 	fi
 	sleep "${interval}"
 done

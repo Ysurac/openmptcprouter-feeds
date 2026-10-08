@@ -60,25 +60,11 @@ let set_suffix = {
 	"dst_forward_rrst_": {},
 };
 
-let set_oip_suffix = {
-	"src_forward_oip": {
-		str: o_src_forward,
-	},
-};
-
 function set_name(suf, af) {
 	if (af == 4) {
 		return "xr_rules_"+suf;
 	} else {
 		return "xr_rules6_"+suf;
-	}
-}
-
-function set_oip_name(suf, af) {
-	if (af == 4) {
-		return "ss_rules_"+suf+"_"+o_oip_rules_name;
-	} else {
-		return "ss_rules6_"+suf+"_"+o_oip_rules_name;
 	}
 }
 
@@ -114,56 +100,28 @@ function set_elements(suf, af) {
 	return res;
 }
 
-function set_oip_elements(suf, af) {
-	let obj = set_oip_suffix[suf];
-	let res = [];
-	let addr;
-
-	let str = obj["str"];
-	if (str) {
-		set_elements_parse(res, str, af);
-	}
-
-	let file = obj["file"];
-	if (file) {
-		let fd = fs.open(file);
-		if (fd) {
-			str = fd.read("all");
-			set_elements_parse(res, str, af);
-		}
-	}
-
-	return res;
-}
 %}
-{% if (o_oip_rules_name == ""): %}
-{%	for (let suf in set_suffix): for (let af in [4, 6]): %}
+{% for (let suf in set_suffix): for (let af in [4, 6]): %}
 set {{ set_name(suf, af) }} {
 	type ipv{{af}}_addr;
 	flags interval;
 	auto-merge;
 {%	let elems = set_elements(suf, af); if (length(elems)): %}
 	elements = {
-{%			for (let i = 0; i < length(elems); i++): %}
+{%		for (let i = 0; i < length(elems); i++): %}
 		{{ elems[i] }}{% if (i < length(elems) - 1): %},{% endif %}{% print("\n") %}
-{%			endfor %}
+{%		endfor %}
 	}
-{%		endif %}
+{%	endif %}
 }
-{%	endfor; endfor %}
-{% else %}
-{% 	for (let suf in set_oip_suffix): for (let af in [4, 6]): %}
-set {{ set_oip_name(suf, af) }} {
-    type ipv{{af}}_addr;
-    flags interval;
-    auto-merge;
-{%		let elems = set_oip_elements(suf, af); if (length(elems)): %}
-    elements = {
-{%			for (let i = 0; i < length(elems); i++): %}
-	{{ elems[i] }}{% if (i < length(elems) - 1): %},{% endif %}{% print("\n") %}
-{%			 endfor %}
-    }
-{%		endif %}
+{% endfor; endfor %}
+{% for (let r in o_extra_rules): %}
+{%   if (r.src): %}
+set xr_rules_src_forward_oip_{{ r.name }} {
+	type ipv4_addr;
+	flags interval;
+	auto-merge;
+	elements = { {{ join(", ", split(r.src, " ")) }} }
 }
-{%	endfor; endfor %}
-{% endif %}
+{%   endif %}
+{% endfor %}

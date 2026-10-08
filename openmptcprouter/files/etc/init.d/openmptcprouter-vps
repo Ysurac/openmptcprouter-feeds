@@ -1012,201 +1012,292 @@ _get_vps_config() {
 	fi
 }
 
+# "uci get <package>" prints nothing even when the package is installed:
+# tested that way, the shadowsocks and xray parts of the GRE tunnels never ran
+_gre_uci_pkg() {
+	[ -n "$(uci -q show "$1" 2>/dev/null | head -n 1)" ]
+}
+
+# _gre_ss_sections <package> <i> <public address> <server port> <method> <secret option> <secret> <redir template>
+# The server, ss-redir and rules sections of a public IP. The two switches
+# (server and rules "disabled") are only set when the sections are created,
+# a user's choice is kept on every later sync.
+_gre_ss_sections() {
+	local pkg=$1 i=$2 publicaddr=$3 port=$4 method=$5 secretopt=$6 secret=$7 redir=$8
+	local new_server new_rule
+	[ -n "$(uci -q get "${pkg}.oip${i}server")" ] || new_server=1
+	[ -n "$(uci -q get "${pkg}.oip${i}_rule")" ] || new_rule=1
+	uci -q batch <<-EOF >/dev/null
+		set ${pkg}.oip${i}server=server
+		set ${pkg}.oip${i}server.label="Server with public IP $publicaddr"
+		set ${pkg}.oip${i}server.server="$(uci -q get "${pkg}.sss0.server")"
+		set ${pkg}.oip${i}server.server_port="$port"
+		set ${pkg}.oip${i}server.method="$method"
+		set ${pkg}.oip${i}server.${secretopt}="$secret"
+		set ${pkg}.oip${i}=ss_redir
+		set ${pkg}.oip${i}.label="ss-redir for public IP $publicaddr"
+		set ${pkg}.oip${i}.server="oip${i}server"
+		set ${pkg}.oip${i}.local_port="230$i"
+		set ${pkg}.oip${i}.local_address="$(uci -q get "${pkg}.${redir}.local_address")"
+		set ${pkg}.oip${i}.mode='tcp_and_udp'
+		set ${pkg}.oip${i}.reuse_port='1'
+		set ${pkg}.oip${i}.mptcp='1'
+		set ${pkg}.oip${i}.ipv6_first='1'
+		set ${pkg}.oip${i}.timeout="$(uci -q get "${pkg}.${redir}.timeout")"
+		set ${pkg}.oip${i}.fast_open="$(uci -q get "${pkg}.${redir}.fast_open")"
+		set ${pkg}.oip${i}.no_delay="$(uci -q get "${pkg}.${redir}.no_delay")"
+		set ${pkg}.oip${i}_rule=ss_rules
+		set ${pkg}.oip${i}_rule.label="Rules for public IP $publicaddr"
+		set ${pkg}.oip${i}_rule.server="oip${i}server"
+		set ${pkg}.oip${i}_rule.redir_tcp="oip${i}"
+	EOF
+	[ -n "$new_server" ] && uci -q set "${pkg}.oip${i}server.disabled=1"
+	[ -n "$new_rule" ] && uci -q set "${pkg}.oip${i}_rule.disabled=1"
+}
+
+# _gre_proxy_sections <xray|v2ray> <i> <tunnel json>
+# The outbound to the VPS user of a public IP, and the inbound that the
+# public IP's rules redirect to. The outbound is the main one (omrout:
+# protocol, transport, TLS pin, Reality key...) with the user of the public IP.
+# The v2ray inbound has a port of its own (1820+i): both can be installed.
+_gre_proxy_sections() {
+	local pkg=$1 i=$2 tunnel=$3 puser ss2022 email line opt port
+	puser="$(echo "$tunnel" | jsonfilter -q -e "@.${pkg}.uuid")"
+	ss2022="$(echo "$tunnel" | jsonfilter -q -e "@.${pkg}.ss2022")"
+	email="$(echo "$tunnel" | jsonfilter -q -e "@.${pkg}.email")"
+	if [ "$pkg" = "xray" ]; then
+		port="180${i}"
+	else
+		port="$((1820 + i))"
+	fi
+	uci -q batch <<-EOF >/dev/null
+		delete ${pkg}.oip${i}server
+		delete ${pkg}.oip${i}server_tunnel
+		delete ${pkg}.oip${i}_redir
+		delete ${pkg}.oip${i}_routing
+		delete ${pkg}.oip${i}_transparent_proxy
+		del_list ${pkg}.main.outbounds="oip${i}server_tunnel"
+		del_list ${pkg}.main.inbounds="oip${i}_redir"
+		del_list ${pkg}.main_routing.rules="oip${i}_routing"
+	EOF
+	[ -n "$puser" ] || return
+	uci -q set "${pkg}.oip${i}server_tunnel=outbound"
+	uci -q show "${pkg}.omrout" | while IFS= read -r line; do
+		opt="${line#${pkg}.omrout.}"
+		[ "$opt" != "$line" ] || continue
+		opt="${opt%%=*}"
+		case "$opt" in
+			tag|s_vless_reverse_*) continue ;;
+		esac
+		uci -q set "${pkg}.oip${i}server_tunnel.${opt}=$(uci -q get "${pkg}.omrout.${opt}")"
+	done
+	uci -q batch <<-EOF >/dev/null
+		set ${pkg}.oip${i}server_tunnel.tag='oip${i}server_tunnel'
+		set ${pkg}.oip${i}server_tunnel.s_socks_user_id="${puser}"
+		set ${pkg}.oip${i}server_tunnel.s_trojan_user_id="${puser}"
+		set ${pkg}.oip${i}server_tunnel.s_vmess_user_id="${puser}"
+		set ${pkg}.oip${i}server_tunnel.s_vless_user_id="${puser}"
+		add_list ${pkg}.main.outbounds="oip${i}server_tunnel"
+		set ${pkg}.oip${i}_redir=inbound
+		set ${pkg}.oip${i}_redir.tag='oip${i}_redir'
+		set ${pkg}.oip${i}_redir.listen='0.0.0.0'
+		set ${pkg}.oip${i}_redir.port='${port}'
+		set ${pkg}.oip${i}_redir.protocol='dokodemo-door'
+		set ${pkg}.oip${i}_redir.s_dokodemo_door_network='tcp'
+		add_list ${pkg}.oip${i}_redir.s_dokodemo_door_network='udp'
+		set ${pkg}.oip${i}_redir.ss_sockopt_tproxy='redirect'
+		set ${pkg}.oip${i}_redir.ss_sockopt_tcp_fast_open='1'
+		set ${pkg}.oip${i}_redir.ss_sockopt_mptcp='1'
+		set ${pkg}.oip${i}_redir.s_dokodemo_door_follow_redirect='1'
+		add_list ${pkg}.main.inbounds="oip${i}_redir"
+		set ${pkg}.oip${i}_routing=routing_rule
+		set ${pkg}.oip${i}_routing.tag="oip${i}_routing"
+		set ${pkg}.oip${i}_routing.type='field'
+		set ${pkg}.oip${i}_routing.inbound_tag="oip${i}_redir"
+		set ${pkg}.oip${i}_routing.outbound_tag="oip${i}server_tunnel"
+		add_list ${pkg}.main_routing.rules="oip${i}_routing"
+		set ${pkg}.oip${i}_transparent_proxy=transparent_proxy
+		set ${pkg}.oip${i}_transparent_proxy.proxy_mode='default'
+		set ${pkg}.oip${i}_transparent_proxy.redirect_udp='1'
+		set ${pkg}.oip${i}_transparent_proxy.redirect_port='${port}'
+	EOF
+	[ "$pkg" = "xray" ] && uci -q set "xray.oip${i}server_tunnel.s_vless_reality_user_id=${puser}"
+	[ -n "$ss2022" ] && uci -q set "${pkg}.oip${i}server_tunnel.s_shadowsocks_password=$(uci -q get ${pkg}.omrout.s_shadowsocks_password | cut -d':' -f 1):$ss2022"
+	[ -n "$email" ] && uci -q set "${pkg}.oip${i}server_tunnel.s_socks_email=$email"
+}
+
+# _gre_proxy_opts <xray|v2ray> <section>
+# The options of an outbound but its user (tag, user ids, Shadowsocks
+# password, SOCKS login, reverse tunnel), sorted
+_gre_proxy_opts() {
+	uci -q show "$1.$2" | sed -n "s/^$1\.$2\.//p" \
+		| grep -v -E '^(tag|s_[a-z_]*user_id|s_shadowsocks_password|s_socks_email|s_vless_reverse_[a-z_]*)=' | sort
+}
+
+# Rewritten as one list: the zone's network can be a plain option
+_gre_zone_vpn_add() {
+	local intf all
+	all="$(uci -q get firewall.zone_vpn.network)"
+	case " $all " in
+		*" $1 "*) return ;;
+	esac
+	uci -q delete firewall.zone_vpn.network
+	for intf in $all $1; do
+		uci -q add_list firewall.zone_vpn.network="$intf"
+	done
+}
+
+# True when the sections of public IP <i> differ from what the VPS sent
+# (peeraddr, ipaddr, publicaddr, ssport, ssrust_password of _get_gre_tunnel)
+_gre_tunnel_outdated() {
+	local i=$1 tunnel=$2 pkg
+	[ "$(uci -q get network.oip${i}.ipaddr)" != "$peeraddr" ] && return 0
+	[ "$(uci -q get network.oip${i}.gateway)" != "$ipaddr" ] && return 0
+	[ "$(uci -q get network.oip${i}gre.ipaddr)" != "$vpnip_local" ] && return 0
+	[ "$(uci -q get network.oip${i}gre.peeraddr)" != "$publicaddr" ] && return 0
+	[ "$(uci -q get network.oip${i}_route.gateway)" != "$ipaddr" ] && return 0
+	# The main server's address and key change with the VPS
+	if _gre_uci_pkg shadowsocks-libev && [ -n "$ssport" ]; then
+		[ "$(uci -q get shadowsocks-libev.oip${i}server.server_port)" != "$ssport" ] && return 0
+		[ "$(uci -q get shadowsocks-libev.oip${i}server.server)" != "$(uci -q get shadowsocks-libev.sss0.server)" ] && return 0
+		[ "$(uci -q get shadowsocks-libev.oip${i}server.key)" != "$(uci -q get shadowsocks-libev.sss0.key)" ] && return 0
+	fi
+	if _gre_uci_pkg shadowsocks-rust && [ -n "$ssrust_password" ]; then
+		[ "$(uci -q get shadowsocks-rust.oip${i}server.password)" != "$ssrust_password" ] && return 0
+		[ "$(uci -q get shadowsocks-rust.oip${i}server.server)" != "$(uci -q get shadowsocks-rust.sss0.server)" ] && return 0
+	fi
+	# The outbound is a copy of the main one: any change of it (protocol,
+	# address, TLS pin, Reality key...) has to reach the copy
+	for pkg in xray v2ray; do
+		_gre_uci_pkg "$pkg" || continue
+		[ "$(uci -q get $pkg.oip${i}server_tunnel.s_vless_user_id)" != "$(echo "$tunnel" | jsonfilter -q -e "@.${pkg}.uuid")" ] && return 0
+		[ "$(_gre_proxy_opts $pkg omrout)" != "$(_gre_proxy_opts $pkg "oip${i}server_tunnel")" ] && return 0
+	done
+	return 1
+}
+
 _get_gre_tunnel() {
-	[ -z "$servername" ] && servername=$1
+	local gre_tunnel_state vpnip_local tunnels tunnel i peeraddr ipaddr publicaddr ssport
+	local ssrust_psk ssrust_method ssrust_password ss2022 changed pkg
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 	gre_tunnel_state="$(echo "$vps_config" | jsonfilter -q -e '@.gre_tunnel.enabled')"
 	vpnip_local="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.remoteip')"
-	vpnip_remote="$(echo "$vps_config" | jsonfilter -q -e '@.vpn.localip')"
-	if [ "$gre_tunnel_state" = "true" ]; then
-		i=0
-		echo "$vps_config" | jsonfilter -q -e '@.gre_tunnel.config[*]' |
-		while IFS= read -r tunnel; do
-			peeraddr="$(echo $tunnel | jsonfilter -q -e '@.remote_ip')"
-			ipaddr="$(echo $tunnel | jsonfilter -q -e '@.local_ip')"
-			publicaddr="$(echo $tunnel | jsonfilter -q -e '@.public_ip')"
-			if [ "$peeraddr" != "" ] && [ "$ipaddr" != "" ] && [ "$publicaddr" != "" ] && [ "$vpnip_local" != "" ] && ([ "$(uci -q get network.oip${i}.ipaddr)" != "$peeraddr" ] || [ "$(uci -q get network.oip${i}.gateway)" != "$ipaddr" ] || [ "$(uci -q get network.oip${i}gre.ipaddr)" != "$vpnip_local" ] || ([ -n "$(uci -q get xray)" ] && [ -z "$(uci -q get xray.oip${i}server.s_vless_user_id)" ]) || ([ -n "$(uci -q get xray.oip${i}server_tunnel.protocol)" ] && [ "$(uci -q get xray.oip${i}server_tunnel.protocol)" != "$(uci -q get xray.omrout.protocol)" ])); then
-				uci -q batch <<-EOF >/dev/null
-					set network.oip${i}gre=interface
-					set network.oip${i}gre.label="GRE tunnel for $publicaddr"
-					set network.oip${i}gre.proto=gre
-					set network.oip${i}gre.nohostroute='1'
-					set network.oip${i}gre.ipv6='0'
-					set network.oip${i}gre.defaultroute='0'
-					set network.oip${i}gre.multipath='off'
-					set network.oip${i}gre.peerdns='0'
-					set network.oip${i}gre.ttl='255'
-					set network.oip${i}gre.ip4table='vpn'
-					set network.oip${i}gre.peeraddr="$publicaddr"
-					set network.oip${i}gre.ipaddr="$vpnip_local"
-					set network.oip${i}gre.tunlink='omrvpn'
-					set network.oip${i}=interface
-					set network.oip${i}.label="Tunnel for $publicaddr"
-					set network.oip${i}.proto=static
-					set network.oip${i}.nohostroute='1'
-					set network.oip${i}.device="@oip${i}gre"
-					set network.oip${i}.ipv6='0'
-					set network.oip${i}.defaultroute='0'
-					set network.oip${i}.multipath='off'
-					set network.oip${i}.peerdns='0'
-					set network.oip${i}.ip4table='vpn'
-					set network.oip${i}.gateway="$ipaddr"
-					set network.oip${i}.ipaddr="$peeraddr"
-					set network.oip${i}.netmask="255.255.255.252"
-					set network.oip${i}.lookup="667${i}"
-				EOF
-				allintf=$(uci -q get firewall.zone_vpn.network)
-				uci -q del firewall.zone_vpn.network
-				for intf in $allintf; do
-					uci -q add_list firewall.zone_vpn.network=$intf
-				done
-				[ -z "$(uci -q get firewall.zone_vpn.network | grep oip${i}gre)" ] && {
-					uci -q add_list firewall.zone_vpn.network="oip${i}gre"
-					uci -q add_list firewall.zone_vpn.network="oip${i}"
-				}
-				if [ -n "$(uci -q get shadowsocks-libev)" ]; then
-					ssport="$(echo $tunnel | jsonfilter -q -e '@.shadowsocks_port')"
-					if [ -n "$ssport" ]; then
-						uci -q batch <<-EOF >/dev/null
-							set shadowsocks-libev.oip${i}server=server
-							set shadowsocks-libev.oip${i}server.label="Server with public IP $publicaddr"
-							set shadowsocks-libev.oip${i}server.server_port="$ssport"
-							set shadowsocks-libev.oip${i}server.server="$(uci -q get shadowsocks-libev.sss0.server)"
-							set shadowsocks-libev.oip${i}server.method="$(uci -q get shadowsocks-libev.sss0.method)"
-							set shadowsocks-libev.oip${i}server.key="$(uci -q get shadowsocks-libev.sss0.key)"
-							set shadowsocks-libev.oip${i}=ss_redir
-							set shadowsocks-libev.oip${i}.label="ss-redir for public IP $publicaddr"
-							set shadowsocks-libev.oip${i}.server="oip${i}server"
-							set shadowsocks-libev.oip${i}.local_port="230$i"
-							set shadowsocks-libev.oip${i}.local_address="$(uci -q get shadowsocks-libev.hi.local_address)"
-							set shadowsocks-libev.oip${i}.mode='tcp_and_udp'
-							set shadowsocks-libev.oip${i}.reuse_port='1'
-							set shadowsocks-libev.oip${i}.mptcp='1'
-							set shadowsocks-libev.oip${i}.ipv6_first='1'
-							set shadowsocks-libev.oip${i}.timeout="$(uci -q get shadowsocks-libev.hi.timeout)"
-							set shadowsocks-libev.oip${i}.fast_open="$(uci -q get shadowsocks-libev.hi.fast_open)"
-							set shadowsocks-libev.oip${i}.no_delay="$(uci -q get shadowsocks-libev.hi.no_delay)"
-							set shadowsocks-libev.oip${i}_rule=ss_rules
-							set shadowsocks-libev.oip${i}_rule.label="Rules for public IP $publicaddr"
-							set shadowsocks-libev.oip${i}_rule.server="oip${i}server"
-							set shadowsocks-libev.oip${i}_rule.disabled='1'
-							set shadowsocks-libev.oip${i}_rule.src_default='bypass'
-							set shadowsocks-libev.oip${i}_rule.dst_default='bypass'
-							set shadowsocks-libev.oip${i}_rule.local_default='bypass'
-							set shadowsocks-libev.oip${i}_rule.redir_tcp="oip${i}"
-						EOF
-						if [ "$(uci -q get shadowsocks-libev.oip${i}server.disabled)" = "" ]; then
-							uci -q set shadowsocks-libev.oip${i}server.disabled="1"
-						fi
-					fi
-				fi
-				if [ -n "$(uci -q get xray)" ]; then
-					xray_user="$(echo $tunnel | jsonfilter -q -e '@.xray.uuid')"
-					uci -q batch <<-EOF >/dev/null
-						delete xray.oip${i}server
-						delete xray.oip${i}server_tunnel
-						delete xray.oip${i}_redir
-						delete xray.oip${i}_routing
-						delete xray.oip${i}_transparent_proxy
-						del_list xray.main.outbounds="oip${i}server_tunnel"
-						del_list xray.main_routing.rules="oip${i}_routing"
-					EOF
-					if [ -n "$xray_user" ]; then
-						xray_ss2022="$(echo $tunnel | jsonfilter -q -e '@.xray.ss2022')"
-						xray_reality_user="$(echo $tunnel | jsonfilter -q -e '@.xray.vless_reality')"
-						xray_reality_key="$(echo $tunnel | jsonfilter -q -e '@.xray.vless_reality_key')"
-						echo "xray; $xray_reality_user - key: $xray_reality_key"
-						uci -q batch <<-EOF >/dev/null
-							delete xray.oip${i}server
-							set xray.oip${i}server_tunnel=outbound
-							set xray.oip${i}server_tunnel.tag='oip${i}server_tunnel'
-							set xray.oip${i}server_tunnel.protocol="$(uci -q get xray.omrout.protocol)"
-							set xray.oip${i}server_tunnel.s_vmess_port='65250'
-							set xray.oip${i}server_tunnel.s_vmess_user_security='aes-128-gcm'
-							set xray.oip${i}server_tunnel.s_vmess_user_alter_id='0'
-							set xray.oip${i}server_tunnel.s_vless_port='65248'
-							set xray.oip${i}server_tunnel.s_vless_user_security='aes-128-gcm'
-							set xray.oip${i}server_tunnel.s_vless_user_encryption='none'
-							set xray.oip${i}server_tunnel.s_vless_user_alter_id='0'
-							set xray.oip${i}server_tunnel.s_trojan_port='65249'
-							set xray.oip${i}server_tunnel.s_trojan_user_security='aes-128-gcm'
-							set xray.oip${i}server_tunnel.s_trojan_user_encryption='none'
-							set xray.oip${i}server_tunnel.s_trojan_user_alter_id='0'
-							set xray.oip${i}server_tunnel.s_socks_port='65251'
-							set xray.oip${i}server_tunnel.s_socks_user_security='aes-128-gcm'
-							set xray.oip${i}server_tunnel.s_socks_user_encryption='none'
-							set xray.oip${i}server_tunnel.s_socks_user_alter_id='0'
-							set xray.oip${i}server_tunnel.ss_network='tcp'
-							set xray.oip${i}server_tunnel.ss_security='tls'
-							set xray.oip${i}server_tunnel.ss_tls_allow_insecure='1'
-							set xray.oip${i}server_tunnel.ss_tls_disable_system_root='1'
-							set xray.oip${i}server_tunnel.ss_tls_cert_usage='verify'
-							set xray.oip${i}server_tunnel.ss_tls_cert_file='/etc/luci-uploads/client.crt'
-							set xray.oip${i}server_tunnel.ss_tls_key_file='/etc/luci-uploads/client.key'
-							set xray.oip${i}server_tunnel.s_shadowsocks_port='65252'
-							set xray.oip${i}server_tunnel.mux_concurrency='8'
-							set xray.oip${i}server_tunnel.ss_sockopt_mptcp='1'
-							set xray.oip${i}server_tunnel.s_vless_reality_port='443'
-							set xray.oip${i}server_tunnel.s_vless_reality_flow='xtls-rprx-vision'
-							set xray.oip${i}server_tunnel.s_vless_reality_user_security='aes-128-gcm'
-							set xray.oip${i}server_tunnel.s_vless_reality_user_encryption='none'
-							set xray.oip${i}server_tunnel.s_vless_reality_user_alter_id='0'
-							set xray.oip${i}server_tunnel.s_shadowsocks_email='openmptcprouter'
-							set xray.oip${i}server_tunnel.s_vmess_address="$(uci -q get xray.omrout.s_vless_address)"
-							set xray.oip${i}server_tunnel.s_vless_address="$(uci -q get xray.omrout.s_vless_address)"
-							set xray.oip${i}server_tunnel.s_vless_reality_address="$(uci -q get xray.omrout.s_vless_address)"
-							set xray.oip${i}server_tunnel.s_trojan_address="$(uci -q get xray.omrout.s_vless_address)"
-							set xray.oip${i}server_tunnel.s_socks_address="$(uci -q get xray.omrout.s_vless_address)"
-							set xray.oip${i}server_tunnel.s_shadowsocks_address="$(uci -q get xray.omrout.s_vless_address)"
-							set xray.oip${i}server_tunnel.s_shadowsocks_method='2022-blake3-aes-256-gcm'
-							set xray.oip${i}server_tunnel.s_shadowsocks_password="$(uci -q get xray.omrout.s_shadowsocks_password | cut -d':' -f 1):$xray_ss2022"
-							set xray.oip${i}server_tunnel.s_socks_user_id="${xray_user}"
-							set xray.oip${i}server_tunnel.s_trojan_user_id="${xray_user}"
-							set xray.oip${i}server_tunnel.s_vmess_user_id="${xray_user}"
-							set xray.oip${i}server_tunnel.s_vless_user_id="${xray_user}"
-							set xray.oip${i}server_tunnel.s_vless_reality_user_id="${xray_reality_user}"
-							set xray.oip${i}server_tunnel.s_vless_reality_public_key="${xray_reality_key}"
-							add_list xray.main.outbounds="oip${i}server_tunnel"
-							set xray.oip${i}_redir=inbound
-							set xray.oip${i}_redir.tag='oip${i}_redir'
-							set xray.oip${i}_redir.listen='0.0.0.0'
-							set xray.oip${i}_redir.port='180${i}'
-							set xray.oip${i}_redir.protocol='dokodemo-door'
-							set xray.oip${i}_redir.s_dokodemo_door_network='tcp'
-							add_list xray.oip${i}_redir.s_dokodemo_door_network='udp'
-							set xray.oip${i}_redir.ss_sockopt_tproxy='redirect'
-							set xray.oip${i}_redir.ss_sockopt_tcp_fast_open='1'
-							set xray.oip${i}_redir.ss_sockopt_mptcp='1'
-							set xray.oip${i}_redir.s_dokodemo_door_follow_redirect='1'
-							set xray.oip${i}_routing=routing_rule
-							set xray.oip${i}_routing.tag="oip${i}_routing"
-							set xray.oip${i}_routing.type='field'
-							set xray.oip${i}_routing.inbound_tag="oip${i}_redir"
-							set xray.oip${i}_routing.outbound_tag="oip${i}server_tunnel"
-							add_list xray.main_routing.rules="oip${i}_routing"
-							set xray.oip${i}_transparent_proxy=transparent_proxy
-							set xray.oip${i}_transparent_proxy.proxy_mode='default'
-							set xray.oip${i}_transparent_proxy.redirect_udp='1'
-							set xray.oip${i}_transparent_proxy.redirect_port="180${i}"
-						EOF
-					fi
-				fi
+	[ "$gre_tunnel_state" = "true" ] || return 0
+	tunnels="$(echo "$vps_config" | jsonfilter -q -e '@.gre_tunnel.config[*]')"
+	[ -n "$tunnels" ] || return 0
+	# shadowsocks-rust reaches a public IP through the VPS's xray
+	# Shadowsocks 2022 inbound, as the xray user of that IP: the server key
+	# of that inbound, then the user's
+	ssrust_psk="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.sskey' | cut -d':' -f1)"
+	ssrust_method="$(echo "$vps_config" | jsonfilter -q -e '@.xray.config.ss_method')"
+	i=0
+	# Not a pipe: the loop runs in this shell, so what it changed is
+	# still known after it
+	while IFS= read -r tunnel; do
+		peeraddr="$(echo "$tunnel" | jsonfilter -q -e '@.remote_ip')"
+		ipaddr="$(echo "$tunnel" | jsonfilter -q -e '@.local_ip')"
+		publicaddr="$(echo "$tunnel" | jsonfilter -q -e '@.public_ip')"
+		ssport="$(echo "$tunnel" | jsonfilter -q -e '@.shadowsocks_port')"
+		ss2022="$(echo "$tunnel" | jsonfilter -q -e '@.xray.ss2022')"
+		ssrust_password=""
+		[ -n "$ssrust_psk" ] && [ -n "$ss2022" ] && ssrust_password="${ssrust_psk}:${ss2022}"
+		if [ -n "$peeraddr" ] && [ -n "$ipaddr" ] && [ -n "$publicaddr" ] && [ -n "$vpnip_local" ] \
+			&& _gre_tunnel_outdated "$i" "$tunnel"; then
+			changed=1
+			uci -q batch <<-EOF >/dev/null
+				set network.oip${i}gre=interface
+				set network.oip${i}gre.label="GRE tunnel for $publicaddr"
+				set network.oip${i}gre.proto=gre
+				set network.oip${i}gre.nohostroute='1'
+				set network.oip${i}gre.ipv6='0'
+				set network.oip${i}gre.defaultroute='0'
+				set network.oip${i}gre.multipath='off'
+				set network.oip${i}gre.peerdns='0'
+				set network.oip${i}gre.ttl='255'
+				set network.oip${i}gre.ip4table='vpn'
+				set network.oip${i}gre.peeraddr="$publicaddr"
+				set network.oip${i}gre.ipaddr="$vpnip_local"
+				set network.oip${i}gre.tunlink='omrvpn'
+				set network.oip${i}=interface
+				set network.oip${i}.label="Tunnel for $publicaddr"
+				set network.oip${i}.proto=static
+				set network.oip${i}.nohostroute='1'
+				set network.oip${i}.device="@oip${i}gre"
+				set network.oip${i}.ipv6='0'
+				set network.oip${i}.defaultroute='0'
+				set network.oip${i}.multipath='off'
+				set network.oip${i}.peerdns='0'
+				set network.oip${i}.ip4table='vpn'
+				set network.oip${i}.gateway="$ipaddr"
+				set network.oip${i}.ipaddr="$peeraddr"
+				set network.oip${i}.netmask="255.255.255.252"
+				set network.oip${i}.lookup="667${i}"
+				set network.oip${i}_route=route
+				set network.oip${i}_route.interface="oip${i}"
+				set network.oip${i}_route.target='0.0.0.0/0'
+				set network.oip${i}_route.gateway="$ipaddr"
+				set network.oip${i}_route.table="667${i}"
+				set network.oip${i}_mark=rule
+				set network.oip${i}_mark.mark="0x667${i}"
+				set network.oip${i}_mark.lookup="667${i}"
+				set network.oip${i}_mark.priority='2'
+			EOF
+			_gre_zone_vpn_add "oip${i}gre"
+			_gre_zone_vpn_add "oip${i}"
+			if _gre_uci_pkg shadowsocks-libev && [ -n "$ssport" ]; then
+				_gre_ss_sections shadowsocks-libev "$i" "$publicaddr" "$ssport" \
+					"$(uci -q get shadowsocks-libev.sss0.method)" key "$(uci -q get shadowsocks-libev.sss0.key)" hi
 			fi
-			i=$((i+1))
-		done
-		uci -q batch <<-EOF >/dev/null
-			commit network
-			commit firewall
-			commit shadowsocks-libev
-			commit xray
-		EOF
-	fi
+			if _gre_uci_pkg shadowsocks-rust && [ -n "$ssrust_password" ]; then
+				_gre_ss_sections shadowsocks-rust "$i" "$publicaddr" 65252 \
+					"${ssrust_method:-2022-blake3-aes-256-gcm}" password "$ssrust_password" hi1
+			fi
+			_gre_uci_pkg xray && _gre_proxy_sections xray "$i" "$tunnel"
+			_gre_uci_pkg v2ray && _gre_proxy_sections v2ray "$i" "$tunnel"
+		fi
+		i=$((i+1))
+	done <<-EOF
+		$tunnels
+	EOF
+	[ -n "$changed" ] || return 0
+	logger -t "OMR-VPS" "GRE tunnels of the server public IPs updated"
+	for pkg in network firewall shadowsocks-libev shadowsocks-rust xray v2ray; do
+		[ -n "$(uci -q changes "$pkg")" ] && uci -q commit "$pkg"
+	done
+	# Committed only, the new or changed tunnels waited for an unrelated
+	# network reload
+	ubus call network reload >/dev/null 2>&1
+	"$FIREWALL_INIT" reload >/dev/null 2>&1
+	# A proxy only when a public IP of it is in use (rules enabled): the
+	# sections are created disabled
+	for pkg in shadowsocks-libev shadowsocks-rust; do
+		uci -q show "$pkg" 2>/dev/null | grep -q "^${pkg}\.oip[0-9]*_rule\.disabled='0'" && /etc/init.d/"$pkg" reload >/dev/null 2>&1
+	done
+	for pkg in xray v2ray; do
+		if [ "$(uci -q get $pkg.main.enabled)" = "1" ]; then
+			/etc/init.d/$pkg reload >/dev/null 2>&1
+		fi
+	done
+	return 0
+}
+
+# On the master (or current) server only: the GRE tunnels go through its VPN
+_set_gre_tunnel_service() {
+	local tokenserver
+	servername=$1
+	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return 0
+	([ "$(uci -q get openmptcprouter.${servername}.master)" = "1" ] || [ "$(uci -q -P /var/state get openmptcprouter.${servername}.current)" = "1" ]) || return 0
+	vps_config=""
+	tokenserver=$(_get_token $servername)
+	_split_tokenserver "$tokenserver"
+	[ -z "$token" ] && return 0
+	_get_gre_tunnel
 }
 
 set_gre_tunnel() {
 	config_load openmptcprouter
-	config_foreach _get_gre_tunnel server
+	config_foreach _set_gre_tunnel_service server
 }
 
 _set_vxlan_vps() {

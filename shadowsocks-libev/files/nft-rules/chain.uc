@@ -59,8 +59,34 @@ function redir_target(ports) {
 	return sprintf("numgen inc mod %d map { %s }", length(list), join(", ", entries));
 }
 
-let type, hook, priority, redir_port, rules_name;
-rules_name = o_oip_rules_name;
+// The ss_rules sections other than ss_rules (o_extra_rules: the public IPs
+// of the VPS, see openmptcprouter-vps _get_gre_tunnel) send their sources
+// (an IPv4 set, ingress interfaces) to their own ss-redir. Rendered here,
+// ahead of the catch-all redirect: each in a file of its own, they were
+// appended to the same chain behind it and never matched.
+function extra_rules(tun) {
+	let res = [];
+	if (tun)
+		return res;
+	for (let r in o_extra_rules) {
+		let port = (proto == "tcp") ? r.tcp : r.udp;
+		if (!port)
+			continue;
+		if (r.src)
+			push(res, { match: "ip saddr @ss_rules_src_forward_oip_" + r.name, port: port });
+		let ifnames = [];
+		for (let n in split(r.ifnames || "", /[ \t\n]/)) {
+			n = trim(n);
+			if (n) push(ifnames, n);
+		}
+		// IPv4 only, as the GRE tunnels
+		if (length(ifnames))
+			push(res, { match: "meta nfproto ipv4 iifname { " + join(", ", ifnames) + " }", port: port });
+	}
+	return res;
+}
+
+let type, hook, priority, redir_port;
 if (proto == "tcp") {
 	type = "nat";
 	hook = "prerouting";
@@ -90,7 +116,6 @@ if (proto == "tcp") {
 
 %}
 {% if (redir_port): %}
-{%	if (rules_name == ""): %}
 chain ss_rules_pre_{{ proto }} {
 	type {{ type }} hook {{ hook }} priority {{ priority }};
 	ip daddr @ss_rules_remote_servers accept;
@@ -123,7 +148,6 @@ chain ss_rules_dst_{{ proto }} {
 	ip6 daddr @ss_rules6_dst_forward goto ss_rules_forward_{{ proto }};
 	{{ get_dst_default_verdict() }};
 }
-{%	endif %}
 {%   if (proto == "tcp"): %}
 {# Filled by /bin/blocklanfw (/usr/share/omr/proxy-fw.uc) after each firewall
    load: the firewall's forward rules, which a redirected connection never
@@ -133,11 +157,10 @@ chain omr_proxy_fw_{{ proto }} {
 
 chain ss_rules_forward_{{ proto }} {
 	jump omr_proxy_fw_{{ proto }};
-{%	if (rules_name != ""): %}
-	meta l4proto tcp {{ o_nft_tcp_extra }} ip saddr @ss_rules_src_forward_oip_{{ rules_name }} redirect to :{{ redir_target(redir_port) }};
-{%	else %}
+{%	for (let r in extra_rules(false)): %}
+	meta l4proto tcp {{ o_nft_tcp_extra }} {{ r.match }} redirect to :{{ r.port }};
+{%	endfor %}
 	meta l4proto tcp {{ o_nft_tcp_extra }} redirect to :{{ redir_target(redir_port) }};
-{%	endif %}
 }
 {%	let local_verdict = get_local_verdict(); if (local_verdict): %}
 chain ss_rules_local_out {
@@ -161,6 +184,9 @@ chain omr_proxy_fw_{{ proto }} {
 
 chain ss_rules_forward_{{ proto }} {
 	jump omr_proxy_fw_{{ proto }};
+{%	for (let r in extra_rules(false)): %}
+	meta l4proto udp {{ o_nft_udp_extra }} {{ r.match }} meta mark set 1 tproxy ip to :{{ r.port }} accept;
+{%	endfor %}
 	meta l4proto udp {{ o_nft_udp_extra }} meta mark set 1 tproxy to :{{ redir_port }};
 }
 {%   endif %}

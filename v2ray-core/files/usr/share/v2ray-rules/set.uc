@@ -115,3 +115,13 @@ set {{ set_name(suf, af) }} {
 {%   endif %}
 }
 {% endfor; endfor %}
+{% for (let r in o_extra_rules): %}
+{%   if (r.src): %}
+set v2r_rules_src_forward_oip_{{ r.name }} {
+	type ipv4_addr;
+	flags interval;
+	auto-merge;
+	elements = { {{ join(", ", split(r.src, " ")) }} }
+}
+{%   endif %}
+{% endfor %}

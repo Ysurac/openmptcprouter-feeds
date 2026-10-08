@@ -39,6 +39,31 @@ function get_ifnames() {
 	return res;
 }
 
+// The transparent proxies other than main_transparent_proxy
+// (o_extra_rules: the public IPs of the VPS, see openmptcprouter-vps
+// _get_gre_tunnel) take the sources (an IPv4 set, ingress interfaces) of
+// the shadowsocks rules of the same public IP to their own inbound, ahead
+// of the catch-all.
+function extra_rules() {
+	let res = [];
+	for (let r in o_extra_rules) {
+		let port = (proto == "tcp") ? r.tcp : r.udp;
+		if (!port)
+			continue;
+		if (r.src)
+			push(res, { match: "ip saddr @v2r_rules_src_forward_oip_" + r.name, port: port });
+		let ifnames = [];
+		for (let n in split(r.ifnames || "", /[ \t\n]/)) {
+			n = trim(n);
+			if (n) push(ifnames, n);
+		}
+		// IPv4 only, as the GRE tunnels
+		if (length(ifnames))
+			push(res, { match: "meta nfproto ipv4 iifname { " + join(", ", ifnames) + " }", port: port });
+	}
+	return res;
+}
+
 let type, hook, priority, redir_port;
 if (o_tproxy == "1") {
 	if (proto == "tcp") {
@@ -135,6 +160,13 @@ chain omr_proxy_fw_{{ proto }} {
 
 chain v2r_rules_forward_{{ proto }} {
 	jump omr_proxy_fw_{{ proto }};
+{%	for (let r in extra_rules()): %}
+{%		if (o_tproxy == "1"): %}
+	meta l4proto tcp {{ o_nft_tcp_extra }} {{ r.match }} meta mark set 1 tproxy ip to :{{ r.port }} accept;
+{%		else %}
+	meta l4proto tcp {{ o_nft_tcp_extra }} {{ r.match }} redirect to :{{ r.port }};
+{%		endif %}
+{%	endfor %}
 {%	if (o_tproxy == "1"): %}
 	meta l4proto tcp {{ o_nft_tcp_extra }} meta mark set 1 tproxy to :{{ redir_port }};
 {%	else %}
@@ -165,6 +197,9 @@ chain omr_proxy_fw_{{ proto }} {
 
 chain v2r_rules_forward_{{ proto }} {
 	jump omr_proxy_fw_{{ proto }};
+{%	for (let r in extra_rules()): %}
+	meta l4proto udp {{ o_nft_udp_extra }} {{ r.match }} meta mark set 1 tproxy ip to :{{ r.port }} accept;
+{%	endfor %}
 	meta l4proto udp {{ o_nft_udp_extra }} meta mark set 1 tproxy to :{{ redir_port }};
 }
 {%   endif %}

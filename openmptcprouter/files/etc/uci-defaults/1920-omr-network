@@ -632,6 +632,28 @@ fi
 #	set network.lan.ipaddr='192.168.5.10'
 #	set network.lan.gateway='192.168.5.1'
 
+# The public IPs of the VPS (GRE tunnels oip<i>, see openmptcprouter-vps
+# _get_gre_tunnel): their policy routing as a netifd rule and route, set
+# again on each ifup. /etc/firewall.gre-tunnel added them on a firewall
+# reload only, and an oip<i> that went down and up lost its route until the
+# next one.
+for intf in $(uci -q show network | sed -n "s/^network\.\(oip[0-9]*\)=interface$/\1/p"); do
+	lookup="$(uci -q get network.${intf}.lookup)"
+	gateway="$(uci -q get network.${intf}.gateway)"
+	[ -n "$lookup" ] && [ -n "$gateway" ] || continue
+	uci -q batch <<-EOF
+	set network.${intf}_route=route
+	set network.${intf}_route.interface=${intf}
+	set network.${intf}_route.target='0.0.0.0/0'
+	set network.${intf}_route.gateway=${gateway}
+	set network.${intf}_route.table=${lookup}
+	set network.${intf}_mark=rule
+	set network.${intf}_mark.mark=0x${lookup}
+	set network.${intf}_mark.lookup=${lookup}
+	set network.${intf}_mark.priority=2
+	EOF
+done
+
 uci -q commit macvlan
 uci -q commit network
 uci -q commit dhcp

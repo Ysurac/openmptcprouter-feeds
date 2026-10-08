@@ -59,6 +59,33 @@ function redir_target(ports) {
 	return sprintf("numgen inc mod %d map { %s }", length(list), join(", ", entries));
 }
 
+// The ss_rules sections other than ss_rules (o_extra_rules: the public IPs
+// of the VPS, see openmptcprouter-vps _get_gre_tunnel) send their sources
+// (an IPv4 set, ingress interfaces) to their own ss-redir. Rendered here,
+// ahead of the catch-all redirect: each in a file of its own, they were
+// appended to the same chain behind it and never matched.
+function extra_rules(tun) {
+	let res = [];
+	if (tun)
+		return res;
+	for (let r in o_extra_rules) {
+		let port = (proto == "tcp") ? r.tcp : r.udp;
+		if (!port)
+			continue;
+		if (r.src)
+			push(res, { match: "ip saddr @ss_rules_src_forward_oip_" + r.name, port: port });
+		let ifnames = [];
+		for (let n in split(r.ifnames || "", /[ \t\n]/)) {
+			n = trim(n);
+			if (n) push(ifnames, n);
+		}
+		// IPv4 only, as the GRE tunnels
+		if (length(ifnames))
+			push(res, { match: "meta nfproto ipv4 iifname { " + join(", ", ifnames) + " }", port: port });
+	}
+	return res;
+}
+
 let type, hook, priority, redir_port;
 if (o_tun == "tcp_only") {
 	if (proto == "tcp") {
@@ -195,6 +222,13 @@ chain omr_proxy_fw_{{ proto }} {
 
 chain ss_rules_forward_{{ proto }} {
 	jump omr_proxy_fw_{{ proto }};
+{%	for (let r in extra_rules(o_tun == "tcp_only")): %}
+{%		if (o_tproxy == "1"): %}
+	meta l4proto tcp {{ o_nft_tcp_extra }} {{ r.match }} meta mark set 1 tproxy ip to :{{ r.port }} accept;
+{%		else %}
+	meta l4proto tcp {{ o_nft_tcp_extra }} {{ r.match }} redirect to :{{ r.port }};
+{%		endif %}
+{%	endfor %}
 {%	if (o_tun == "tcp_only"): %}
 	meta l4proto tcp {{ o_nft_tcp_extra }} meta mark set 0x00009988;
 {% 	elif (o_tproxy == "1"): %}
@@ -227,6 +261,9 @@ chain omr_proxy_fw_{{ proto }} {
 
 chain ss_rules_forward_{{ proto }} {
 	jump omr_proxy_fw_{{ proto }};
+{%	for (let r in extra_rules(o_tun == "tcp_only")): %}
+	meta l4proto udp {{ o_nft_udp_extra }} {{ r.match }} meta mark set 1 tproxy ip to :{{ r.port }} accept;
+{%	endfor %}
 	meta l4proto udp {{ o_nft_udp_extra }} meta mark set 1 tproxy to :{{ redir_port }};
 }
 {%   endif %}

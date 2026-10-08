@@ -550,11 +550,66 @@ outbound_section_validate() {
 		'mux_concurrency:uinteger:8'
 }
 
+# The public IPs of the VPS (openmptcprouter-vps _get_gre_tunnel): each has
+# a transparent proxy oip<i>_transparent_proxy, redirecting to the inbound
+# of the xray user of that IP. Which LAN sources use it is set in the
+# shadowsocks rules of the same public IP (oip<i>_rule: Src ip/net forward,
+# Ingress interfaces), shadowsocks-rust first.
+xray_extra_rule_of() {
+	local rule="${1%_transparent_proxy}_rule" pkg
+	for pkg in shadowsocks-rust shadowsocks-libev; do
+		[ -n "$(uci -q get "$pkg.$rule")" ] || continue
+		[ "$(uci -q get "$pkg.$rule.disabled")" = "1" ] && continue
+		echo "$pkg.$rule"
+		return
+	done
+}
+
+# IPv4 only, as the GRE tunnels
+xray_extra_src() {
+	uci -q get "$1.src_ips_forward" | tr ' ' '\n' \
+		| grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$' | tr '\n' ' ' | sed 's/ *$//'
+}
+
+# Rendered in the main rules, ahead of the catch-all: in a file of their
+# own they were appended behind it and never matched, and the UDP one,
+# unconditional, took over every UDP flow
+xray_extra_json() {
+	local tp rule src ifnames port udp
+	json_add_array o_extra_rules
+	for tp in $(uci -q show xray | sed -n "s/^xray\.\([^.=]*\)=transparent_proxy$/\1/p"); do
+		[ "$tp" = "main_transparent_proxy" ] && continue
+		port="$(uci -q get "xray.$tp.redirect_port")"
+		[ -n "$port" ] || continue
+		rule="$(xray_extra_rule_of "$tp")"
+		[ -n "$rule" ] || continue
+		src="$(xray_extra_src "$rule")"
+		ifnames="$(uci -q get "$rule.ifnames")"
+		[ -n "$src$ifnames" ] || continue
+		udp=""
+		[ "$(uci -q get "xray.$tp.redirect_udp")" = "1" ] && [ "$(uci -q get xray.omrout.protocol)" != "socks" ] && udp="$port"
+		json_add_object ""
+		json_add_string name "$tp"
+		json_add_string src "$src"
+		json_add_string ifnames "$ifnames"
+		json_add_string tcp "$port"
+		json_add_string udp "$udp"
+		json_close_object
+	done
+	json_close_array
+}
+
 add_xray_redirect_rules() {
 	local ext_args="$1"
 	local lan_devices="$2"
 	local lan_ipaddrs="$3"
 	local tag="$4"
+
+	# A public IP's transparent proxy is rendered with the main one
+	case "$tag" in
+		""|omr|main_transparent_proxy) ;;
+		*) return ;;
+	esac
 
 	local port="$TRANSPARENT_PROXY_PORT"
 	local addition="$TRANSPARENT_PROXY_ADDITION"
@@ -593,11 +648,7 @@ add_xray_redirect_rules() {
 	json_add_int o_redir_tcp_port "$port"
 	json_add_int o_redir_udp_port "$portudp"
 	json_add_string o_tproxy "$tproxy"
-	if [ "$tag" != "omr" ] && [ "$tag" != "main_transparent_proxy" ]; then
-		json_add_string o_oip_rules_name "$tag"
-	else
-		json_add_string o_oip_rules_name ""
-	fi
+	xray_extra_json
 	json_add_string o_ifnames "$ifnames"
 	json_add_string o_local_default "forward"
 	json_add_string o_src_bypass "$src_ips_bypass"
@@ -617,17 +668,21 @@ add_xray_redirect_rules() {
 		&& ! cmp -s "$tmp.nft" "$xrrules_nft"; then
 		echo "table inet chk {include \"$tmp.nft\";}" >"$tmp.nft.chk"
 		if nft -f "$tmp.nft.chk" -c; then
-			if [ "$tag" == "omr" ] || [ "$tag" == "" ]; then
-				mv "$tmp.nft" "$xrrules_nft"
-			else
-				mv "$tmp.nft" "$xrrules_nft.$tag.nft"
-			fi
+			mv "$tmp.nft" "$xrrules_nft"
 			fw4 -q reload
 		fi
 		rm -f "$tmp.nft.chk"
 	fi
 	rm -f "$tmp.json"
 	rm -f "$tmp.nft"
+	# The per-public-IP files of earlier releases
+	local f stale
+	for f in "$xrrules_nft".*.nft "$xrrules_nft".*.nft.down; do
+		[ -f "$f" ] || continue
+		rm -f "$f"
+		stale=1
+	done
+	[ -n "$stale" ] && fw4 -q reload
 
 	# Trailing space = the init script's own cmdline only. A bare "omr-bypass"
 	# also matches /usr/lib/omr-bypass/ndpid-flows-tracker, which runs forever.

@@ -188,6 +188,9 @@ ss_rules_cb() {
 }
 
 ss_redir_ports() {
+	case " $ss_rules_extra_redirs " in
+		*" $1 "*) return ;;
+	esac
 	port=$(uci -q get shadowsocks-rust.$1.local_port)
 	server=$(uci -q get shadowsocks-rust.$1.server)
 	disabled=$(uci -q get shadowsocks-rust.$1.disabled)
@@ -238,6 +241,57 @@ ss_collect_redir_info() {
 	if [ "$mode" = "udp_only" ] || [ "$mode" = "tcp_and_udp" ]; then
 		eval "ss_rules_redir_udp_$cfg=$port"
 	fi
+}
+
+# The ss_rules sections other than ss_rules: each sends the TCP and UDP of
+# its sources (src_ips_forward, ifnames) to its own ss-redir (redir_tcp).
+# openmptcprouter-vps creates one per public IP of the VPS (oip<i>_rule, a
+# GRE tunnel). They are rendered in the main rules, ahead of the catch-all
+# redirect: in a file of their own they were appended behind it and never
+# matched. Their ss-redir stays out of the main "all" round-robin.
+ss_rules_extra=""
+ss_rules_extra_redirs=""
+ss_rules_extra_collect() {
+	local cfg="$1" redir server src
+	[ "$cfg" = "ss_rules" ] && return
+	redir=$(uci -q get shadowsocks-rust.$cfg.redir_tcp)
+	[ -n "$redir" ] && [ "$redir" != "all" ] || return
+	ss_rules_extra_redirs="$ss_rules_extra_redirs $redir"
+	[ "$(uci -q get shadowsocks-rust.$cfg.disabled)" = "1" ] && return
+	[ "$(uci -q get shadowsocks-rust.$redir.disabled)" = "1" ] && return
+	server=$(uci -q get shadowsocks-rust.$redir.server)
+	[ -n "$server" ] || return
+	[ "$(uci -q get shadowsocks-rust.$server.disabled)" = "1" ] && return
+	[ -n "$(uci -q get shadowsocks-rust.$server.password)" ] || return
+	ss_server_configured "$server" || return
+	src="$(ss_rules_extra_src "$cfg")"
+	[ -n "$src$(uci -q get shadowsocks-rust.$cfg.ifnames)" ] || return
+	ss_rules_extra="$ss_rules_extra $cfg"
+}
+
+# The IPv4 sources of an extra rules section: the GRE tunnels carry IPv4 only
+ss_rules_extra_src() {
+	uci -q get shadowsocks-rust.$1.src_ips_forward | tr ' ' '\n' \
+		| grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$' | tr '\n' ' ' | sed 's/ *$//'
+}
+
+ss_rules_extra_json() {
+	local cfg redir port mode
+	json_add_array o_extra_rules
+	for cfg in $ss_rules_extra; do
+		redir=$(uci -q get shadowsocks-rust.$cfg.redir_tcp)
+		port=$(uci -q get shadowsocks-rust.$redir.local_port)
+		mode=$(uci -q get shadowsocks-rust.$redir.mode)
+		mode="${mode:-tcp_only}"
+		json_add_object ""
+		json_add_string name "$cfg"
+		json_add_string src "$(ss_rules_extra_src "$cfg")"
+		json_add_string ifnames "$(uci -q get shadowsocks-rust.$cfg.ifnames)"
+		json_add_string tcp "$([ "$mode" = "udp_only" ] || echo "$port")"
+		json_add_string udp "$([ "$mode" = "tcp_only" ] || echo "$port")"
+		json_close_object
+	done
+	json_close_array
 }
 
 ss_rules_nft_gen() {
@@ -310,6 +364,7 @@ ss_rules_nft_gen() {
 	json_add_string o_nft_tcp_extra "$nft_tcp_extra"
 	json_add_string o_nft_udp_extra "$nft_udp_extra"
 	json_add_string o_tun "$tun_mode"
+	ss_rules_extra_json
 	json_dump -i >"$tmp.json"
 
 	if utpl -S -F "$tmp.json" "$ssrules_uc" >"$tmp.nft" \
@@ -341,6 +396,9 @@ ss_rules() {
 		config_foreach ss_omr_servers server
 		config_load shadowsocks-rust
 	fi
+	ss_rules_extra=""
+	ss_rules_extra_redirs=""
+	config_foreach ss_rules_extra_collect ss_rules
 	if ! ss_rules_nft_gen; then
 		ss_rules_nft_reset
 	fi
