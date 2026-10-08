@@ -2067,7 +2067,11 @@ _get_vpn_ips() {
 	vpnip_local=$(ip -4 -br addr ls dev ${vpnifname} 2>/dev/null | head -n 1 | awk -F'[ /]+' '{print $3}')
 	[ -z "$vpnip_local" ]  && vpnip_local=$(ip -4 addr show dev "$OMR_TRACKER_DEVICE" 2>/dev/null | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1)
 	vpnip_remote=$(ip -4 r show default dev ${vpnifname} 2>/dev/null | head -n 1 | awk '{print $3}' | tr -d "\n")
-	[ -z "$vpnip_remote" ] && [ -n "$vpnifname" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} 2>/dev/null | grep -m 1 kernel | awk '{print $1}' | tr -d "\n")
+	# Only a point-to-point peer: openvpn's subnet topology has a kernel
+	# route to the whole tunnel network (10.255.252.0/24), which is no address
+	# and which the VPS refuses. Its default route is only added after
+	# route_delay, so until then the peer stays unknown and the caller retries.
+	[ -z "$vpnip_remote" ] && [ -n "$vpnifname" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} 2>/dev/null | awk '/ proto kernel / && $1 !~ /\// {print $1; exit}')
 	[ -z "$vpnip_remote" ] && [ -n "$vpnifname" ] && vpnip_remote=$(ip -4 r list dev ${vpnifname} 2>/dev/null | grep -m 1 "proto static src" | awk '{print $3}' | tr -d "\n")
 	[ -z "$vpnip_remote" ] && vpnip_remote=$(ifstatus omrvpn 2>/dev/null | jsonfilter -q -e '@.route[0].nexthop')
 	[ -z "$vpnip_remote" ] && [ "$vpnifname" = "bonding-omrvpn" ] && vpnip_remote="10.255.248.1"
