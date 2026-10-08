@@ -86,6 +86,67 @@ _tls_vps_pin() {
 	rm -f "$peer"
 }
 
+# _tls_pin_list <hex|base64> <pins>
+# Pins are SHA-256 digests of the server certificate, separated by commas, each
+# in hex (xray's pinnedPeerCertSha256) or in base64 (v2ray's
+# pinnedPeerCertificateChainSha256, the same digest when the server sends a
+# single certificate). Prints them in the requested form, one per line. A pin
+# the proxy cannot parse stops it from loading its configuration, so it is
+# logged and left out instead
+_tls_pin_list() {
+	local pin
+	echo "$2" | awk -v format="$1" '
+		BEGIN {
+			b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+			hex = "0123456789abcdef"
+		}
+		{
+			n = split($0, pins, /[, \t]+/)
+			for (p = 1; p <= n; p++) {
+				pin = pins[p]
+				if (pin == "")
+					continue
+				digest = ""
+				if (pin ~ /^[0-9a-fA-F]+$/ && length(pin) == 64) {
+					digest = tolower(pin)
+				} else if (pin ~ /^[A-Za-z0-9+\/]+=$/ && length(pin) == 44) {
+					bits = 0; nbits = 0
+					for (i = 1; i < 44; i++) {
+						bits = bits * 64 + index(b64, substr(pin, i, 1)) - 1; nbits += 6
+						if (nbits >= 8) {
+							nbits -= 8
+							digest = digest sprintf("%02x", int(bits / 2 ^ nbits))
+							bits = bits % (2 ^ nbits)
+						}
+					}
+				}
+				if (length(digest) != 64) {
+					print "!" pin
+					continue
+				}
+				if (format == "hex") {
+					print digest
+					continue
+				}
+				out = ""; bits = 0; nbits = 0
+				for (i = 1; i <= 64; i++) {
+					bits = bits * 16 + index(hex, substr(digest, i, 1)) - 1; nbits += 4
+					if (nbits >= 6) {
+						nbits -= 6
+						out = out substr(b64, int(bits / 2 ^ nbits) + 1, 1)
+						bits = bits % (2 ^ nbits)
+					}
+				}
+				print out substr(b64, bits * 4 + 1, 1) "="
+			}
+		}' | while read -r pin ; do
+		case "$pin" in
+			"!"*) _err "TLS pin ${pin#!} is not a hex or base64 SHA-256, ignored" ;;
+			*) echo "$pin" ;;
+		esac
+	done
+}
+
 # _nft_set_populate <set> <type> <addr-list-on-stdin>
 # Idempotently (re)creates a native nft set in table "inet fw4" and loads
 # addresses/CIDRs read from stdin into it -- the nft-native replacement for
@@ -1294,6 +1355,8 @@ add_inbound_setting() {
 			json_close_array # alpn
 		fi
 
+		ss_tls_pinned_sha256="$(_tls_pin_list hex "$ss_tls_pinned_sha256" | tr '\n' ',')"
+		ss_tls_pinned_sha256="${ss_tls_pinned_sha256%,}"
 		test -n "$ss_tls_pinned_sha256" && \
 			json_add_string "pinnedPeerCertSha256" "$ss_tls_pinned_sha256"
 
@@ -1828,7 +1891,8 @@ add_outbound_setting() {
 			fi
 
 			# If no pinned hash configured by user, compute one from the server cert
-			_pinned_sha256="$ss_tls_pinned_sha256"
+			_pinned_sha256="$(_tls_pin_list hex "$ss_tls_pinned_sha256" | tr '\n' ',')"
+			_pinned_sha256="${_pinned_sha256%,}"
 			if [ -z "$_pinned_sha256" ] ; then
 				_pin_addr="" ; _pin_port=""
 				case "$protocol" in
@@ -2298,7 +2362,8 @@ add_reverse_bridge_outbound() {
 	json_add_string "network" "tcp"
 	json_add_string "security" "tls"
 	json_add_object "tlsSettings"
-	reverse_pin="$(uci -q get xray.omrout.ss_tls_pinned_sha256)"
+	reverse_pin="$(_tls_pin_list hex "$(uci -q get xray.omrout.ss_tls_pinned_sha256)" | tr '\n' ',')"
+	reverse_pin="${reverse_pin%,}"
 	if [ -z "$reverse_pin" ] ; then
 		reverse_pin="$(_tls_vps_pin hex "$reverse_addr" "$reverse_port")"
 		[ "${#reverse_pin}" -ne 64 ] && reverse_pin=""
