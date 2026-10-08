@@ -207,6 +207,8 @@ return L.view.extend({
 		o.description = _('Enable Forward Error Correction');
 		o.default = o.disabled;
 		o.rmempty = false;
+		o.retain = true;
+		o.depends('scheduler', 'backup_fec');
 
 		o = s.option(form.ListValue, 'fec_scheme', _('FEC scheme'));
 		o.value('galois_calculation', _('Galois Calculation'));
