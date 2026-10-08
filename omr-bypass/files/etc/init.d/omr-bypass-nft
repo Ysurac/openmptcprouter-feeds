@@ -653,10 +653,27 @@ _sanitize_intf_key() {
 	printf '%s' "$1" | sed 's/[.-]/_/g; s/[^A-Za-z0-9_]/_/g'
 }
 
+# _bypass_entry <set> <ip> <rule>...: <ip> as an entry of <set>, which is
+# enabled with the rules matching it. Each uci call reads the firewall config
+# with all the changes of the run so far, and a run adds hundreds of
+# addresses: each section is enabled once per run.
+_bypass_enabled=" "
+_bypass_entry() {
+	local set="$1" ip="$2" sec
+	shift 2
+	_uci_list_has "firewall.${set}.entry" "$ip" || uci -q add_list "firewall.${set}.entry=$ip"
+	for sec in "$set" "$@"; do
+		case "$_bypass_enabled" in *" $sec "*) continue ;; esac
+		uci -q set "firewall.${sec}.enabled=1"
+		_bypass_enabled="${_bypass_enabled}$sec "
+	done
+}
+
 _bypass_ip() {
 	local ip=$1
 	local type=$2
 	local tcpudp=$3
+	local fam p="" zone rules=""
 	[ -z "$type" ] && type="all"
 	[ "$type" = "default" ] && type="all"
 	# Only tcp and udp have sets of their own: any other value would fill a
@@ -664,47 +681,19 @@ _bypass_ip() {
 	case "$tcpudp" in tcp|udp) ;; *) tcpudp="all" ;; esac
 	# none and srv_vpn1 have no sets and rules per protocol
 	case "$type" in none|srv_vpn1) tcpudp="all" ;; esac
-	valid_ip4=""
-	valid_ip6=""
-	if _valid_ip4net "$ip"; then
-		valid_ip4=$( valid_subnet4 "$ip")
-	elif _valid_ip6net "$ip"; then
-		valid_ip6=$( valid_subnet6 "$ip")
-	fi
-	if [ "$tcpudp" = "all" ]; then
-		if [ "$valid_ip4" = "ok" ]; then
-			_uci_add_list_unique firewall.omr_dst_bypass_${type}_4.entry "$ip"
-			uci -q set firewall.omr_dst_bypass_${type}_4.enabled='1'
-			for zone in $(_get_firewall_zones); do
-				uci -q set firewall.omr_dst_bypass_${type}_dstip_4_${zone}.enabled='1'
-				uci -q set firewall.omr_dst_bypass_${type}_dstip_4_${zone}_accept.enabled='1'
-			done
-		elif [ "$valid_ip6" = "ok" ]; then
-			_uci_add_list_unique firewall.omr_dst_bypass_${type}_6.entry "$ip"
-			uci -q set firewall.omr_dst_bypass_${type}_6.enabled='1'
-			for zone in $(_get_firewall_zones); do
-				uci -q set firewall.omr_dst_bypass_${type}_dstip_6_${zone}.enabled='1'
-				uci -q set firewall.omr_dst_bypass_${type}_dstip_6_${zone}_accept.enabled='1'
-			done
-		fi
+	if _valid_ip4net "$ip" && [ "$(valid_subnet4 "$ip")" = "ok" ]; then
+		fam=4
+	elif _valid_ip6net "$ip" && [ "$(valid_subnet6 "$ip")" = "ok" ]; then
+		fam=6
 	else
-		# the _tcp/_udp rules match the sets of that protocol
-		if [ "$valid_ip4" = "ok" ]; then
-			_uci_add_list_unique firewall.omr_dst_bypass_${type}_4_${tcpudp}.entry "$ip"
-			uci -q set firewall.omr_dst_bypass_${type}_4_${tcpudp}.enabled='1'
-			for zone in $(_get_firewall_zones); do
-				uci -q set firewall.omr_dst_bypass_${type}_dstip_4_${zone}_${tcpudp}.enabled='1'
-				uci -q set firewall.omr_dst_bypass_${type}_dstip_4_${zone}_accept.enabled='1'
-			done
-		elif [ "$valid_ip6" = "ok" ]; then
-			_uci_add_list_unique firewall.omr_dst_bypass_${type}_6_${tcpudp}.entry "$ip"
-			uci -q set firewall.omr_dst_bypass_${type}_6_${tcpudp}.enabled='1'
-			for zone in $(_get_firewall_zones); do
-				uci -q set firewall.omr_dst_bypass_${type}_dstip_6_${zone}_${tcpudp}.enabled='1'
-				uci -q set firewall.omr_dst_bypass_${type}_dstip_6_${zone}_accept.enabled='1'
-			done
-		fi
+		return 0
 	fi
+	# the _tcp/_udp rules match the sets of that protocol
+	[ "$tcpudp" = "all" ] || p="_${tcpudp}"
+	for zone in $(_get_firewall_zones); do
+		rules="$rules omr_dst_bypass_${type}_dstip_${fam}_${zone}${p} omr_dst_bypass_${type}_dstip_${fam}_${zone}_accept"
+	done
+	_bypass_entry "omr_dst_bypass_${type}_${fam}${p}" "$ip" $rules
 }
 
 # Reply-path routing for connections that came in from outside (issue #4369)
@@ -1076,7 +1065,9 @@ _bypass_domain() {
 	[ -z "$intf" ] && [ -z "$dscp" ] && return
 	[ "$intf" = "default" ] && intf="all"
 	[ -z "$noipv6" ] && noipv6="1"
-	[ -z "$tcpudp" ] && tcpudp="all"
+	# any other value means both, as in _bypass_ip (it is also a field of
+	# the resolve queue below)
+	case "$tcpudp" in tcp|udp) ;; *) tcpudp="all" ;; esac
 	# "IPv4 only" / "IPv6 only": the sets, rules and DNS answers of the
 	# other family are left alone. An IPv6 only rule ignores noipv6 (on by
 	# default): blocking the AAAA answers would leave it nothing to match.
@@ -1088,22 +1079,10 @@ _bypass_domain() {
 	if [ -n "$domain" ]; then
 		domain="${domain#.}"
 		#logger -t "omr-bypass" "Get IPs of $domain..."
-		if [ -z "$RELOAD" ]; then
-			if [ -n "$_v4" ]; then
-				resolve=$(dig a +timeout=1 +tries=1 +nocmd +noall +answer "$domain" | grep -v CNAME | awk '{print $5}')
-				for ip in $resolve; do
-					[ -n "$intf" ] && _bypass_ip $ip $intf $tcpudp
-					[ -n "$dscp" ] && _dscp_ip $ip $dscp
-				done
-			fi
-			if [ -n "$_v6" ] && [ "$disableipv6" = "0" ]; then
-				resolve=$(dig aaaa +timeout=1 +tries=1 +nocmd +noall +answer "$domain" | grep AAAA | awk '{print $5}')
-				for ip in $resolve; do
-					[ -n "$intf" ] && _bypass_ip $ip $intf $tcpudp
-					[ -n "$dscp" ] && _dscp_ip $ip $dscp
-				done
-			fi
-		fi
+		# resolved with the other domains once they are all known, in the
+		# families of the rule
+		_resolve_queue="${_resolve_queue}${domain} ${intf:--} ${tcpudp} ${dscp:--} ${_v4}${_v6}
+"
 		# One dnsmasq ipset family per destination: the interface alone,
 		# the interface and a DSCP class, or a DSCP class alone (no
 		# routing change). Every domain of an ipset entry populates every
@@ -1170,6 +1149,65 @@ _bypass_domain() {
 		fi
 		#logger -t "omr-bypass" "Get IPs of $domain... Done"
 	fi
+}
+
+# The addresses of the domains _bypass_domain queued, as entries of the sets
+# of each rule that named them, in the families of the rule, on start and
+# reload alike. A reload used to skip this, but it had removed the entries of
+# the last run (_soft_wipe_dynamic) and takes out of the sets what is no
+# longer an entry: a domain was out of its sets until dnsmasq resolved it
+# upstream again (dnsmasq doesn't add an address it answers from its cache,
+# and fw4 restart keeps only the uci entries). What made resolving the
+# protocol host lists slow was a dig per domain, and the queries one after the
+# other: here each dig gets 16 queries and 8 digs run at a time. dig asks the
+# local dnsmasq, so these are the answers LAN hosts get. Each dig's answers go
+# out one "<name> <address>" line at a time (with +question, the answers to
+# each query come after its name, CNAME chains included), so that the lines of
+# digs running together don't mix. With -q, a name with a leading "-" is not
+# taken for an option, which would end the dig of the names queued with it.
+_resolve_queue=""
+_bypass_resolve_queued() {
+	local _line _ifs="$IFS"
+	[ -n "$_resolve_queue" ] || return 0
+	set -f
+	IFS='
+'
+	for _line in $(
+		{
+			printf '%s' "$_resolve_queue"
+			echo "-"
+			printf '%s' "$_resolve_queue" | \
+				awk -v v6="$disableipv6" '
+					$5 ~ /4/ && !a[$1]++ { print $1, "A" }
+					v6 == "0" && $5 ~ /6/ && !aaaa[$1]++ { print $1, "AAAA" }' | \
+				xargs -n 32 -P 8 sh -c 'printf -- "-q %s %s\n" "$@" | dig +timeout=1 +tries=1 +nocmd +noall +question +answer -f - | awk "$0"' \
+					'/^;/ { q = tolower(substr($1, 2)); sub(/\.$/, "", q); next } $4 == "A" || $4 == "AAAA" { print q, $5; fflush() }'
+		} | awk '
+			!answers && $0 == "-" { answers = 1; next }
+			!answers { q[++nq] = $0; next }
+			NF == 2 && !dup[$1, $2]++ { addr[$1] = addr[$1] " " $2 }
+			END {
+				for (i = 1; i <= nq; i++) {
+					split(q[i], f, " ")
+					n = split(addr[tolower(f[1])], a, " ")
+					for (j = 1; j <= n; j++) {
+						fam = index(a[j], ":") ? "6" : "4"
+						if (index(f[5], fam) && !done[a[j], f[2], f[3], f[4]]++) print a[j], f[2], f[3], f[4]
+					}
+				}
+			}'
+	); do
+		IFS=' '
+		set -- $_line
+		IFS="$_ifs"
+		set +f
+		[ "$2" != "-" ] && _bypass_ip "$1" "$2" "$3"
+		[ "$4" != "-" ] && _dscp_ip "$1" "$4"
+		set -f
+	done
+	IFS="$_ifs"
+	set +f
+	_resolve_queue=""
 }
 
 # Only OMR's own dnsmasq init ever read dhcp.@dnsmasq[0].noipv6
@@ -2746,6 +2784,8 @@ start_service() {
 
 
 	add_domains="false"
+	_resolve_queue=""
+	_bypass_enabled=" "
 	_dscp_chain_written=""
 	_dscp_ipset_vals=""
 	_reply_chain_written=""
@@ -2914,6 +2954,7 @@ start_service() {
 	config_foreach _bypass_src_port src_port
 	#echo "bypass domains"
 	config_foreach _bypass_domains domains
+	_bypass_resolve_queued
 	#echo "bypass asn"
 	_bypass_asns
 
