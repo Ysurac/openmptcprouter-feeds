@@ -774,6 +774,7 @@ while true; do
 			fi
 
 			# execute specific tracker
+			_ipv4_status=""
 			if { [ "$OMR_TRACKER_FAMILY" = "ipv4" ] || [ "$OMR_TRACKER_FAMILY" = "ipv4ipv6" ]; } && [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
 				OMR_TRACKER_PINGED=1
 				# setup loop variable
@@ -912,15 +913,17 @@ while true; do
 					#OMR_TRACKER_TIMEOUT=$((OMR_TRACKER_TIMEOUT * 2))
 					sleep "${OMR_TRACKER_INTERVAL_TRIES:-1}"
 				done
+				_ipv4_status="$OMR_TRACKER_STATUS"
+				_ipv4_status_msg="$OMR_TRACKER_STATUS_MSG"
 			fi
 			#if [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" = "0" ] && [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
 			if [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$OMR_TRACKER_DEVICE_GATEWAY6" ]; then
 				OMR_TRACKER_PINGED=1
 				# setup loop variable
 				if [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ]; then
-					tries="$OMR_TRACKER_TRIES"
-				else
 					tries="$OMR_TRACKER_TRIES_UP"
+				else
+					tries="$OMR_TRACKER_TRIES"
 				fi
 				# loop until tries attempts have been reached
 				while [ "$tries" -gt 0 ]; do
@@ -1042,6 +1045,13 @@ while true; do
 					#OMR_TRACKER_TIMEOUT=$((OMR_TRACKER_TIMEOUT * 2))
 					sleep "${OMR_TRACKER_INTERVAL_TRIES:-1}"
 				done
+			fi
+			# The IPv6 checks set OK on their own success: an interface whose
+			# IPv4 check failed stays down, or the IPv4 routes and subflows
+			# through it stay on a dead path
+			if [ "$_ipv4_status" = "ERROR" ] && [ "$OMR_TRACKER_STATUS" = "OK" ]; then
+				OMR_TRACKER_STATUS="ERROR"
+				OMR_TRACKER_STATUS_MSG="$_ipv4_status_msg"
 			fi
 			if [ "$OMR_TRACKER_STATUS" = "ERROR" ] && { [ -z "$OMR_TRACKER_DEVICE_IP" ] || [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ] || [ -z "$OMR_TRACKER_DEVICE_IP6" ] || [ -z "$OMR_TRACKER_DEVICE_GATEWAY6" ]; }; then
 				[ -z "$OMR_TRACKER_STATUS_MSG" ] && OMR_TRACKER_STATUS_MSG="$OMR_TRACKER_INTERFACE may have ip issues"
