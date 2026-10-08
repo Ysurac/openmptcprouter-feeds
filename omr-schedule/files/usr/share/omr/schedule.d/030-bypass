@@ -1,7 +1,11 @@
 #!/bin/sh
 
 [ ! -e /etc/init.d/omr-bypass ] && exit 0
-if [ "$(uci -q get omr-bypass.global.lc)" = "" ] || [ $(($(date +"%s") - $(uci -q get omr-bypass.global.lc))) -gt 600 ]; then
+# The time of the last pass is runtime state, kept in /var/state (see
+# omr-state.sh): committed to /etc/config/omr-bypass, it rewrote the file,
+# with all the user's bypass rules, every 10 minutes.
+_bypass_lc="$(uci -q -P /var/state get omr-bypass.global.lc)"
+if [ -z "$_bypass_lc" ] || [ $(($(date +"%s") - _bypass_lc)) -gt 600 ]; then
 	# What openmptcprouter-vps set_bypass_ips sends, for the checksums
 	# below: every element of omr-bypass's fw4 set, as text (an address, a
 	# prefix or a range, without its timeout)
@@ -77,6 +81,6 @@ if [ "$(uci -q get omr-bypass.global.lc)" = "" ] || [ $(($(date +"%s") - $(uci -
 			_log "Bypass ip not set on server(s)${_bypass_failed}, try again later"
 		fi
 	fi
-	uci -q set omr-bypass.global.lc=$(date +"%s")
-	uci -q commit omr-bypass
+	uci -q -P /var/state revert omr-bypass.global.lc
+	uci -q -P /var/state set omr-bypass.global.lc=$(date +"%s")
 fi
