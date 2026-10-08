@@ -29,22 +29,34 @@ return L.view.extend({
 					E('button', {
 						class: 'btn cbi-button-action',
 						click: ui.createHandlerFn(this, function() {
+							var failed = [];
 							textarea.getValue().split('\n').forEach(function(s) {
+								s = s.trim();
+								if (!s) return;
 								var config = ss.parse_uri(s);
 								if (config) {
 									var tag = config[1];
-									if (tag && !tag.match(/^[a-zA-Z0-9_]+$/)) tag = null;
+									if (tag && (!tag.match(/^[a-zA-Z0-9_]+$/) || uci.get(conf, tag))) tag = null;
 									var sid = uci.add(conf, 'server', tag);
 									config = config[0];
 									Object.keys(config).forEach(function(k) {
 										uci.set(conf, sid, k, config[k]);
 									});
+								} else {
+									failed.push(s);
 								}
 							});
 							return uci.save()
 								.then(L.bind(this.map.load, this.map))
 								.then(L.bind(this.map.reset, this.map))
 								.then(L.ui.hideModal)
+								.then(function() {
+									if (failed.length)
+										ui.addNotification(null, [
+											E('p', _('These links could not be imported:')),
+											E('pre', failed.join('\n'))
+										], 'warning');
+								})
 								.catch(function() {});
 						})
 					}, [ _('Import') ])

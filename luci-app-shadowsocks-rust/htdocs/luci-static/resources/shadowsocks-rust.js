@@ -42,13 +42,13 @@ var modes = [
 var methods = [
 	'none',
 	// aead
-//	'aes-128-gcm',
-//	'aes-256-gcm',
-//	'chacha20-ietf-poly1305',
-//	'2022-blake3-aes-128-gcm',
+	'aes-128-gcm',
+	'aes-256-gcm',
+	'chacha20-ietf-poly1305',
+	'2022-blake3-aes-128-gcm',
 	'2022-blake3-aes-256-gcm',
-//	'2022-blake3-chacha8-poly1305',
-//	'2022-blake3-chacha20-poly1305',
+	'2022-blake3-chacha8-poly1305',
+	'2022-blake3-chacha20-poly1305',
 ];
 
 function ucival_to_bool(val) {
@@ -73,7 +73,7 @@ return L.Class.extend({
 			}
 		});
 		o.value('', '<unset>');
-		//o.value('all', 'all');
+		o.value('all', 'all');
 		o.default = '';
 	},
 	values_serverlist: function(o) {
@@ -82,7 +82,7 @@ return L.Class.extend({
 				server = sdata['server'],
 				server_port = sdata['server_port'];
 			if (server && server_port) {
-				var disabled = ucival_to_bool(sdata['.disabled']) ? ' - disabled' : '',
+				var disabled = ucival_to_bool(sdata['disabled']) ? ' - disabled' : '',
 					desc = '%s - %s:%s%s'.format(sname, server, server_port, disabled);
 				o.value(sname, desc);
 			}
@@ -138,11 +138,20 @@ return L.Class.extend({
 		methods.forEach(function(m) {
 			o.value(m);
 		});
+		o.default = '2022-blake3-aes-256-gcm';
 
 		o = optfunc(form.Value, 'password', _('Password (Base64)'));
-		o.datatype = 'base64';
 		o.password = true;
 		o.size = 12;
+		o.validate = function(section_id, value) {
+			var opt = this.map.lookupOption('method', section_id),
+				method = opt ? opt[0].formvalue(opt[1]) : uci.get('shadowsocks-rust', section_id, 'method');
+			// 2022 ciphers take a Base64 key, the older ones a plain password
+			if (value && method && method.indexOf('2022-') === 0 &&
+			    !/^[A-Za-z0-9+\/]+={0,2}$/.test(value))
+				return _('2022 ciphers need a Base64 encoded key');
+			return true;
+		};
 
 		optfunc(form.Value, 'plugin', _('Plugin')).modalonly = true;
 
@@ -233,52 +242,58 @@ return L.Class.extend({
 	*/
 	parse_uri: function(uri) {
 		var scheme = 'ss://';
-		if (uri && uri.indexOf(scheme) === 0) {
-			var atPos = uri.indexOf('@'), hashPos = uri.lastIndexOf('#'), tag;
-			if (hashPos === -1) {
-				hashPos = undefined;
-			} else {
-				tag = uri.slice(hashPos + 1);
-			}
+		if (!uri || uri.indexOf(scheme) !== 0)
+			return null;
 
-			if (atPos !== -1) { // SIP002 format https://shadowsocks.org/en/spec/SIP002-URI-Scheme.html
-				var colonPos = uri.indexOf(':', atPos + 1), slashPos = uri.indexOf('/', colonPos + 1);
-				if (colonPos === -1) return null;
-				if (slashPos === -1) slashPos = undefined;
+		var body = uri.slice(scheme.length), tag, config,
+			hashPos = body.lastIndexOf('#');
+		if (hashPos !== -1) {
+			tag = body.slice(hashPos + 1);
+			try { tag = decodeURIComponent(tag); } catch (e) {}
+			body = body.slice(0, hashPos);
+		}
 
-				var userinfo = atob(uri.slice(scheme.length, atPos)
-					.replace(/-/g, '+').replace(/_/g, '/')),
-					i = userinfo.indexOf(':');
+		try {
+			var atPos = body.lastIndexOf('@');
+			if (atPos !== -1) { // SIP002 format https://shadowsocks.org/doc/sip002.html
+				var userinfo = decodeURIComponent(body.slice(0, atPos)),
+					hostport = body.slice(atPos + 1),
+					query = '',
+					qPos = hostport.indexOf('?');
+				if (qPos !== -1) {
+					query = hostport.slice(qPos + 1);
+					hostport = hostport.slice(0, qPos);
+				}
+				hostport = hostport.replace(/\/$/, '');
+				var hp = hostport.match(/^\[([0-9a-fA-F:.]+)\]:(\d+)$/) ||
+					hostport.match(/^([^:\[\]]+):(\d+)$/);
+				if (!hp) return null;
+
+				// AEAD-2022 userinfo is percent-encoded, older ciphers
+				// base64url-encode it (and base64 never contains ':')
+				if (userinfo.indexOf(':') === -1)
+					userinfo = atob(userinfo.replace(/-/g, '+').replace(/_/g, '/'));
+				var i = userinfo.indexOf(':');
 				if (i === -1) return null;
 
-				var config = {
-					server: uri.slice(atPos + 1, colonPos),
-					server_port: uri.slice(colonPos + 1, slashPos ? slashPos : hashPos),
+				config = {
+					server: hp[1],
+					server_port: hp[2],
 					password: userinfo.slice(i + 1),
 					method: userinfo.slice(0, i)
 				};
 
-				if (slashPos) {
-					var search = uri.slice(slashPos + 1, hashPos);
-					if (search[0] === '?') search = search.slice(1);
-					search.split('&').forEach(function(s) {
-						var j = s.indexOf('=');
-						if (j !== -1) {
-							var k = s.slice(0, j), v = s.slice(j + 1);
-							if (k === 'plugin') {
-								v = decodeURIComponent(v);
-								var k = v.indexOf(';');
-								if (k !== -1) {
-									config['plugin'] = v.slice(0, k);
-									config['plugin_opts'] = v.slice(k + 1);
-								}
-							}
-						}
-					});
-				}
-				return [config, tag];
-			} else { // Legacy format https://shadowsocks.org/en/config/quick-guide.html
-				var plain = atob(uri.slice(scheme.length, hashPos)),
+				query.split('&').forEach(function(s) {
+					var j = s.indexOf('=');
+					if (j === -1 || s.slice(0, j) !== 'plugin') return;
+					var v = decodeURIComponent(s.slice(j + 1)),
+						k = v.indexOf(';');
+					config['plugin'] = (k === -1) ? v : v.slice(0, k);
+					if (k !== -1)
+						config['plugin_opts'] = v.slice(k + 1);
+				});
+			} else { // Legacy format https://shadowsocks.org/doc/configs.html#uri-and-qr-code
+				var plain = atob(body.replace(/-/g, '+').replace(/_/g, '/')),
 					firstColonPos = plain.indexOf(':'),
 					lastColonPos = plain.lastIndexOf(':'),
 					atPos = plain.lastIndexOf('@', lastColonPos);
@@ -286,15 +301,20 @@ return L.Class.extend({
 					lastColonPos === -1 ||
 					atPos === -1) return null;
 
-				var config = {
-					server: plain.slice(atPos + 1, lastColonPos),
+				config = {
+					server: plain.slice(atPos + 1, lastColonPos).replace(/^\[(.*)\]$/, '$1'),
 					server_port: plain.slice(lastColonPos + 1),
 					password: plain.slice(firstColonPos + 1, atPos),
 					method: plain.slice(0, firstColonPos)
 				};
-				return [config, tag];
 			}
+		} catch (e) {
+			// malformed base64 or percent-encoding
+			return null;
 		}
-		return null;
+		// the Method list would show anything else as 'none' and save it
+		if (methods.indexOf(config.method) === -1)
+			return null;
+		return [config, tag];
 	}
 });
