@@ -4,19 +4,19 @@
 module("luci.controller.shadowsocks-libev", package.seeall)
 
 function index()
-	entry({"admin", "services", "shadowsocks-libev"},
-		alias("admin", "services", "shadowsocks-libev", "instances"),
-		_("Shadowsocks-libev"), 59)
+	entry({"admin", "proxy", "shadowsocks-libev"},
+		alias("admin", "proxy", "shadowsocks-libev", "instances"),
+		_("Shadowsocks-libev"), 20)
 
-	entry({"admin", "services", "shadowsocks-libev", "instances"},
+	entry({"admin", "proxy", "shadowsocks-libev", "instances"},
 		view("shadowsocks-libev/instances"),
 		_("Local Instances"), 10).leaf = true
 
-	entry({"admin", "services", "shadowsocks-libev", "servers"},
+	entry({"admin", "proxy", "shadowsocks-libev", "servers"},
 		view("shadowsocks-libev/servers"),
 		_("Remote Servers"), 20).leaf = true
 
-	entry({"admin", "services", "shadowsocks-libev", "rules"},
+	entry({"admin", "proxy", "shadowsocks-libev", "rules"},
 		view("shadowsocks-libev/rules"),
 		_("Redir Rules"), 30).leaf = true
 end

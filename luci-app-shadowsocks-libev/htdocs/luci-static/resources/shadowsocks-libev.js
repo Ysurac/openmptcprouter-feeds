@@ -221,7 +221,7 @@ return L.Class.extend({
 				if (sdata['.type'] !== 'ss_server' && n === 'server') {
 					fv = E('a', {
 						class: 'label',
-						href: L.url('admin/services/shadowsocks-libev/servers') + '#edit=' + v,
+						href: L.url('admin/proxy/shadowsocks-libev/servers') + '#edit=' + v,
 						target: '_blank',
 						rel: 'noopener'
 					}, fv);
