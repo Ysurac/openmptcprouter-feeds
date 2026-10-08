@@ -3168,8 +3168,11 @@ _set_config_from_vps() {
 		# tls_client, and openvpn rejects --secret together with --tls-client,
 		# so only wire it up where it is actually the mode in use -- the
 		# certificate block below is what enables a tls_client section.
-		[ "$(uci -q get openvpn.omr.tls_client)" != "1" ] && \
+		# --remote-cert-tls is TLS-mode only, openvpn refuses it with --secret.
+		[ "$(uci -q get openvpn.omr.tls_client)" != "1" ] && {
 			config_foreach _set_openvpn_server openvpn "secret" "/etc/luci-uploads/openvpn.key"
+			config_foreach _del_openvpn_option openvpn "remote_cert_tls"
+		}
 
 		#uci -q batch <<-EOF >/dev/null
 		#	set openvpn.omr.port=$openvpn_port
@@ -3228,6 +3231,10 @@ _set_config_from_vps() {
 		[ -n "$openvpn_client_crt" ] && config_foreach _set_openvpn_server openvpn "cert" "/etc/luci-uploads/client.crt"
 		config_foreach _set_openvpn_server openvpn "ca" "/etc/luci-uploads/ca.crt"
 		config_foreach _set_openvpn_server openvpn "tls_client" "1"
+		# omradmin signs every user's client certificate with this same CA, so
+		# the CA alone would also accept another user's client cert presented
+		# by a man in the middle. Only the VPS's own cert has the serverAuth EKU.
+		config_foreach _set_openvpn_server openvpn "remote_cert_tls" "server"
 		config_foreach _set_openvpn_server openvpn "client" "1"
 		config_foreach _set_openvpn_server openvpn "allow_recursive_routing" "1"
 		# A tls_client section and a static key are mutually exclusive for
