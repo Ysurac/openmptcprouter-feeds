@@ -137,12 +137,19 @@ function ubus_call(command, argument, params, variable) {
                     }
                 }
             } else {
-                set_status("danger", "<b>Ubus call failed:</b><br />Request: " + request_json + "<br />Response: " + JSON.stringify(response))
+                set_status("danger", "<b>Ubus call failed:</b><br />Request: " + esc(request_json) + "<br />Response: " + esc(JSON.stringify(response)))
             }
             ubus_closed++;
         }
     }
     request.send(request_json);
+}
+
+// The upgrade server's answers go into set_status() as HTML: escape them
+function esc(s) {
+    return String(s).replace(/[&<>"']/g, function(c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
 }
 
 function set_status(type, message, loading, show_log) {
@@ -152,7 +159,7 @@ function set_status(type, message, loading, show_log) {
         loading_image = '<img src="/luci-static/resources/icons/loading.gif" alt="Loading" style="vertical-align:middle"> ';
     }
     if (data.buildlog_url && show_log) {
-        message += ' <p><a target="_blank" href="' + data.buildlog_url + '">Build log</a></p>'
+        message += ' <p><a target="_blank" href="' + esc(data.buildlog_url) + '">Build log</a></p>'
     }
     $("#status_box").innerHTML = loading_image + message;
     show("#status_box")
@@ -190,8 +197,8 @@ function upgrade_check() {
             }
 
             if (candidates.length > 0) {
-                var info_output = "<h3>New release <b>" + candidates[0].latest + "</b> available</h3>"
-                info_output += _('Installed version:') + " " + data.release.version
+                var info_output = "<h3>New release <b>" + esc(candidates[0].latest) + "</b> available</h3>"
+                info_output += _('Installed version:') + " " + esc(data.release.version)
 
                 // tell server the currently installed version
                 request_dict.current_version = request_dict.version;
@@ -254,7 +261,7 @@ function upgrade_request_callback(response) {
     }
     if (sysupgrade_file != "") {
         data.sysupgrade_url = data.url + '/release/' + response.bin_dir + '/' + sysupgrade_file
-        var info_output = '<h3>Firmware searched</h3><p>File: <a href="' + data.sysupgrade_url + '">' + sysupgrade_file + '</p></a>'
+        var info_output = '<h3>Firmware searched</h3><p>File: <a href="' + esc(data.sysupgrade_url) + '">' + esc(sysupgrade_file) + '</a></p>'
         set_status("success", info_output, false, true);
 
         show("#keep_container");
@@ -380,7 +387,7 @@ function server_request() {
                             if (response.buildlog) {
                                 data.buildlog_url = data.url + '/' + response.bin_dir + '/buildlog.txt';
                             }
-                            set_status("danger", response.message);
+                            set_status("danger", esc(response.message));
                         });
                     break;
             }
