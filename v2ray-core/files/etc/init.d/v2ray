@@ -2333,7 +2333,10 @@ rules_up() {
 		fw4 -q restart
 		conntrack -F 2>/dev/null || true
 	elif [ ! -f "$v2rrules_nft" ]; then
-		/etc/init.d/v2ray restart &
+		# out of the caller's cgroup and stdio: the omr-tracker-v2ray
+		# instance runs this, and procd kills what is left in its cgroup
+		# when it stops (omr-tracker restart), half-way through the restart
+		sh -c 'echo $$ >/sys/fs/cgroup/cgroup.procs 2>/dev/null; exec /etc/init.d/v2ray restart' >/dev/null 2>&1 &
 	elif ! nft list ruleset 2>/dev/null | grep -qE 'goto v2r_rules_pre_src_(tcp|udp)'; then
 		# The include file itself is present and not parked in .down (so by
 		# file-state alone the rules "should" already be live), but an
