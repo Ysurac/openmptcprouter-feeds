@@ -125,7 +125,14 @@ chain ss_rules_dst_{{ proto }} {
 }
 {%	endif %}
 {%   if (proto == "tcp"): %}
+{# Filled by /bin/blocklanfw (/usr/share/omr/proxy-fw.uc) after each firewall
+   load: the firewall's forward rules, which a redirected connection never
+   meets. What they would refuse is not redirected. -#}
+chain omr_proxy_fw_{{ proto }} {
+}
+
 chain ss_rules_forward_{{ proto }} {
+	jump omr_proxy_fw_{{ proto }};
 {%	if (rules_name != ""): %}
 	meta l4proto tcp {{ o_nft_tcp_extra }} ip saddr @ss_rules_src_forward_oip_{{ rules_name }} redirect to :{{ redir_target(redir_port) }};
 {%	else %}
@@ -146,7 +153,14 @@ chain ss_rules_local_out {
 }
 {%	endif %}
 {%   elif (proto == "udp"): %}
+{# Filled by /bin/blocklanfw (/usr/share/omr/proxy-fw.uc) after each firewall
+   load: the firewall's forward rules, which a redirected connection never
+   meets. What they would refuse is not redirected. -#}
+chain omr_proxy_fw_{{ proto }} {
+}
+
 chain ss_rules_forward_{{ proto }} {
+	jump omr_proxy_fw_{{ proto }};
 	meta l4proto udp {{ o_nft_udp_extra }} meta mark set 1 tproxy to :{{ redir_port }};
 }
 {%   endif %}

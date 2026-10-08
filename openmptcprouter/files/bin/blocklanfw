@@ -1,6 +1,24 @@
 #!/bin/sh
 
-[ -e /usr/sbin/nft ] && exit 0
+if [ -e /usr/sbin/nft ]; then
+	# The transparent proxies jump to omr_proxy_fw_<proto> before they
+	# redirect a LAN connection; fill it with the firewall's forward rules
+	# (/usr/share/omr/proxy-fw.uc), which a redirected connection never
+	# meets. Run from the firewall include: each fw4 load empties it.
+	protos=""
+	for proto in tcp udp; do
+		grep -qs "jump omr_proxy_fw_${proto};" /etc/nftables.d/*.nft && protos="$protos $proto"
+	done
+	[ -z "$protos" ] && exit 0
+	tmp="$(mktemp /tmp/omr-proxy-fw.XXXXXX)" || exit 1
+	if OMR_PROXY_FW_PROTOS="${protos# }" QUIET=1 utpl -S /usr/share/omr/proxy-fw.uc >"$tmp" 2>/dev/null; then
+		nft -f "$tmp" || logger -t "blocklanfw" "Can't load the firewall check of the transparent proxy"
+	else
+		logger -t "blocklanfw" "Can't render the firewall check of the transparent proxy"
+	fi
+	rm -f "$tmp"
+	exit 0
+fi
 
 if [ -e /usr/sbin/iptables-legacy ]; then
 	IPTABLES="/usr/sbin/iptables-legacy"
