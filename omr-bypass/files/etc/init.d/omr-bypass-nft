@@ -2574,12 +2574,26 @@ start_service() {
 	fi
 	[ -n "$_asn_flush_sets" ] && _omr_flush_sets="$_omr_flush_sets$_asn_flush_sets"
 
-	# Restore proxy nft rules parked as .down before any fw4 run (issue #4313);
-	# unconditional because a reload with no uci delta skips the block below,
-	# and a restored file still needs an fw4 pass to be loaded
+	# Restore proxy nft rules parked as .down before any fw4 run (issue #4313),
+	# even when a reload has no uci delta: a restored file still needs an fw4
+	# pass to be loaded. Leave them parked while the proxy is not running (at
+	# boot, omr-bypass starts before it) or its tracker reports it down: the
+	# redirect would send traffic to a proxy that doesn't answer, and the
+	# tracker restores the rules itself once the proxy answers again.
 	_proxy_down_restored=""
 	for _proxy_nft_down in /etc/nftables.d/90-proxy-*-rules.nft.down; do
 		[ -f "$_proxy_nft_down" ] || continue
+		case "$_proxy_nft_down" in
+			*/90-proxy-v2ray-rules.nft.down) _proxy_name="v2ray" _proxy_state="v2ray" ;;
+			*/90-proxy-x2ray-rules.nft.down) _proxy_name="xray" _proxy_state="xray" ;;
+			*/90-proxy-ssr-rules.nft.down) _proxy_name="shadowsocks-rust" _proxy_state="proxy" ;;
+			*/90-proxy-ss-rules.nft.down) _proxy_name="shadowsocks-libev" _proxy_state="proxy" ;;
+			*) _proxy_name="" ;;
+		esac
+		if [ -n "$_proxy_name" ]; then
+			[ "$(uci -q -P /var/state get openmptcprouter.omr.${_proxy_state})" = "down" ] && continue
+			/etc/init.d/${_proxy_name} running 2>/dev/null || continue
+		fi
 		mv -f "$_proxy_nft_down" "${_proxy_nft_down%.down}"
 		_proxy_down_restored=1
 	done
