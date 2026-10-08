@@ -5,7 +5,7 @@
 	 socks5                                     ss              plain
 	--------> tcp:local_address:local_port ----> ss server -------> dest
 
-`ss-redir`.  The REDIRECT and TPROXY part are to be provided by `ss-rules` script.  REDIRECT only works for tcp traffic (see also darkk/redsocks).  TPROXY is used to proxy udp messages, but it's only available in the PREROUTING chain and as such cannot proxy local out traffic.
+`ss-redir`.  The REDIRECT and TPROXY part are provided by the nftables rules the service script generates from the `ss_rules` section (templates in `/usr/share/ss-rules/`).  REDIRECT only works for tcp traffic (see also darkk/redsocks).  TPROXY is used to proxy udp messages, but it's only available in the PREROUTING chain and as such cannot proxy local out traffic.
 
 	  plain             plain                                 ss              plain
 	---------> REDIRECT ------> tcp:local_address:local_port ----> ss server -----> original dest
@@ -22,7 +22,7 @@
 
 ## uci
 
-Option names are the same as those used in json config files.  Check `validate_xxx` func definition of the [service script](files/shadowsocks-libev.init) and shadowsocks-libev's own documentation for supported options and expected value types.  A [sample config file](files/shadowsocks-libev.config) is also provided for reference.
+Option names are the same as those used in json config files.  Check `validate_xxx` func definition of the [service script](files/shadowsocks-libev.init-nft) and shadowsocks-libev's own documentation for supported options and expected value types.  A [sample config file](files/shadowsocks-libev.config) is also provided for reference.
 
 Every section have a `disabled` option to temporarily turn off the component instance or component instances referring to it.
 
@@ -35,7 +35,7 @@ We can have multiple instances of component and `server` sections.  The relation
  - It's possible to have both `ss_local` and `ss_redir` referring to the same `server` definition
  - It's possible to have multiple instances of `ss_redir` listening on the same address:port with `reuse_port` enabled referring to the same or different `server` sections
 
-`ss_rules` section is for configuring the behaviour of `ss-rules` script.  There can only exist at most one such section with the name also being `ss_rules`
+`ss_rules` section is for configuring the nftables redirect rules.  There can only exist at most one such section with the name also being `ss_rules`
 
 	redir_tcp		name of ss_redir section with mode tcp_only or tcp_and_udp
 	redir_udp		name of ss_redir section with mode udp_only or tcp_and_udp
@@ -67,9 +67,9 @@ We can have multiple instances of component and `server` sections.  The relation
 
 	local_default		[bypass], forward, checkdst
 
-Bool option `dst_forward_recentrst` requires iptables/netfilter `recent` match module (`opkg install iptables-mod-conntrack-extra`).  When enabled, `ss-rules` will setup iptables rules to forward through `ss-redir` those packets whose destination have recently sent to us multiple tcp-rst.
+String options `nft_tcp_extra` and `nft_udp_extra` are nftables expressions added to the TCP and UDP redirect rules.  Bool option `wait_proxy` (default 1) leaves applying the rules to omr-tracker once the proxy works; set it to 0 to apply them when the service starts.
 
-ss-rules uses kernel ipset mechanism for storing addresses/networks.  Those ipsets are also part of the API and can be populated by other programs, e.g. dnsmasq with builtin ipset support.  For more details please read output of `ss-rules --help`
+The rules keep addresses/networks in nftables sets of the `inet fw4` table (`ss_rules_*`).  Those sets can also be populated by other programs, e.g. dnsmasq with nftset support.
 
 Note also that `src_ips_xx` and `dst_ips_xx` actually also accepts cidr network representation.  Option names are retained in its current form for backward compatibility coniderations
 

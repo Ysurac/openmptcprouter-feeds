@@ -45,7 +45,7 @@ MY_DEPENDS := \
     luci-app-uhttpd \
     LINUX_5_4:luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
     luci-proto-openvpn \
-    shadowsocks-libev-ss-server shadowsocks-libev-ss-redir LINUX_5_4:shadowsocks-libev-ss-rules !LINUX_5_4:shadowsocks-libev-ss-rules-nft shadowsocks-libev-ss-tunnel \
+    shadowsocks-libev-ss-server shadowsocks-libev-ss-redir !LINUX_5_4:shadowsocks-libev-ss-rules-nft shadowsocks-libev-ss-tunnel \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd ip6tables \
     !TARGET_mvebu:speedtestcpp \
     iftop \
@@ -85,7 +85,7 @@ MY_DEPENDS := \
     (TARGET_x86||TARGET_x86_64):kmod-mlx4-core (TARGET_x86||TARGET_x86_64):kmod-mlx5-core \
     !(TARGET_ipq40xx||TARGET_ramips||LINUX_6_6||LINUX_6_10||LINUX_6_11||LINUX_6_12||LINUX_6_18):iptables-mod-ndpi !(TARGET_ipq40xx||TARGET_ramips||LINUX_6_6||LINUX_6_10||LINUX_6_11||LINUX_6_12||LINUX_6_18):kmod-ipt-ndpi libip4tc libip6tc \
     xray-core !LINUX_5_4:xray-config \
-    shadowsocks-rust-sslocal shadowsocks-rust-ssservice LINUX_5_4:shadowsocks-rust-config !LINUX_5_4:shadowsocks-rust-config-nft luci-app-shadowsocks-rust \
+    shadowsocks-rust-sslocal shadowsocks-rust-ssservice !LINUX_5_4:shadowsocks-rust-config-nft luci-app-shadowsocks-rust \
     luci-proto-external omr-schedule jq luci-app-ddns \
     mbim-utils (TARGET_x86||TARGET_x86_64||TARGET_rockchip_armv8):kmod-r8169 !(TARGET_ipq40xx||TARGET_x86_64):kmod-mt7601u !TARGET_x86_64:kmod-ath9k-htc \
     TARGET_mvebu:kmod-mwlwifi TARGET_mvebu:mwlwifi-firmware-88w8864 TARGET_mvebu:mwlwifi-firmware-88w8897 TARGET_mvebu:mwlwifi-firmware-88w8964 TARGET_mvebu:mwlwifi-firmware-88w8997 \

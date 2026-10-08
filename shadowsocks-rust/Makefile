@@ -47,28 +47,6 @@ define Package/shadowsocks-rust/Default
   endef
 endef
 
-define Package/shadowsocks-rust-config
-  SECTION:=net
-  CATEGORY:=Network
-  SUBMENU:=Web Servers/Proxies
-  TITLE:=shadowsocks-rust config
-  URL:=https://github.com/shadowsocks/shadowsocks-rust
-endef
-
-
-define Package/shadowsocks-rust-config/install
-	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) ./files/ssr-rules $(1)/usr/bin
-	$(INSTALL_BIN) ./files/ssr-rules6 $(1)/usr/bin
-	$(INSTALL_DIR) $(1)/etc/uci-defaults
-	$(INSTALL_DATA) ./files/firewall.ssr-rules $(1)/etc
-	$(INSTALL_BIN) ./files/ssr-rules.defaults $(1)/etc/uci-defaults
-	$(INSTALL_DIR) $(1)/etc/config
-	$(INSTALL_DATA) ./files/shadowsocks-rust.config $(1)/etc/config/shadowsocks-rust
-	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_BIN) ./files/shadowsocks-rust.init $(1)/etc/init.d/shadowsocks-rust
-endef
-
 define Package/shadowsocks-rust-config-nft
   SECTION:=net
   CATEGORY:=Network
@@ -86,8 +64,6 @@ endef
 
 
 define Package/shadowsocks-rust-config-nft/install
-	$(INSTALL_DIR) $(1)/etc/uci-defaults
-	$(INSTALL_BIN) ./files/ssr-rules.defaults $(1)/etc/uci-defaults
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_DATA) ./files/shadowsocks-rust.config $(1)/etc/config/shadowsocks-rust
 	$(INSTALL_DIR) $(1)/etc/init.d
@@ -106,7 +82,6 @@ define shadowsocks-rust/templates
 endef
 $(eval $(call shadowsocks-rust/templates))
 
-$(eval $(call BuildPackage,shadowsocks-rust-config))
 $(eval $(call BuildPackage,shadowsocks-rust-config-nft))
 $(foreach component,$(SHADOWSOCKS_COMPONENTS), \
   $(eval $(call BuildPackage,shadowsocks-rust-$(component))) \
