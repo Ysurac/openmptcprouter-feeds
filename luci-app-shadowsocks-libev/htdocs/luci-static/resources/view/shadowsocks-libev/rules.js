@@ -17,8 +17,6 @@ function src_dst_option(s /*, ... */) {
 return L.view.extend({
 	load: function() {
 		return Promise.all([
-			L.resolveDefault(fs.stat('/usr/lib/iptables/libxt_recent.so'), {}),
-			L.resolveDefault(fs.stat('/usr/bin/ss-rules'), null),
 			uci.load(conf).then(function() {
 				if (!uci.get_first(conf, 'ss_rules')) {
 					uci.set(conf, uci.add(conf, 'ss_rules', 'ss_rules'), 'disabled', '1');
@@ -75,9 +73,19 @@ return L.view.extend({
 			o.multiple = true;
 			o.noaliases = true;
 			o.noinactive = true;
-			s.taboption('general', form.Value, 'ipt_args',
-				_('Extra arguments'),
-				_('Passes additional arguments to iptables. Use with care!'));
+			s.taboption('general', form.Value, 'nft_tcp_extra',
+				_('Extra TCP match'),
+				_('nftables expression added to the TCP redirect rules. Use with care!'));
+			s.taboption('general', form.Value, 'nft_udp_extra',
+				_('Extra UDP match'),
+				_('nftables expression added to the UDP redirect rules. Use with care!'));
+			// only read from the ss_rules section
+			if (section_id === 'ss_rules') {
+				o = s.taboption('general', form.Flag, 'wait_proxy',
+					_('Wait for the proxy'),
+					_('Let omr-tracker apply the rules once the proxy works, instead of when the service starts'));
+				o.default = '1';
+			}
 
 			src_dst_option(s, 'src', form.DynamicList, 'src_ips_bypass',
 				_('Src ip/net bypass'),
@@ -113,10 +121,6 @@ return L.view.extend({
 				_('Dst default'),
 				_('Default action for packets whose dst address do not match any of the dst ip list'));
 			ss.values_actions(o);
-
-			o = s.taboption('dst', form.Flag, 'dst_forward_recentrst');
-			o.title = _('Forward recentrst');
-			o.description = _('Forward those packets whose dst have recently sent to us multiple tcp-rst');
 		};
 
 		o = s.option(form.Button, 'disabled', _('Enable/Disable'));
