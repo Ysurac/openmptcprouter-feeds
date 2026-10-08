@@ -713,9 +713,9 @@ return view.extend({
 			let hint;
 
 			if (name && ipv4 && ipv6)
-				hint = `${name} <span class="hide-xs">(${ipv4}, ${ipv6})</span>`;
+				hint = `${'%h'.format(name)} <span class="hide-xs">(${ipv4}, ${ipv6})</span>`;
 			else if (name && (ipv4 ?? ipv6))
-				hint = `${name} <span class="hide-xs">(${ipv4 || ipv6})</span>`;
+				hint = `${'%h'.format(name)} <span class="hide-xs">(${ipv4 || ipv6})</span>`;
 			else
 				hint = name || ipv4 || ipv6 || '?';
 
@@ -2253,10 +2253,11 @@ return view.extend({
 					const qm = res?.quality_max ?? 0;
 					const q = (qv > 0 && qm > 0) ? Math.floor((100 / qm) * qv) : 0;
 					const s = res.stale ? 'opacity:0.5' : '';
+					const ssid = (typeof res.ssid === 'string' && res.ssid.length > 0) ? document.createTextNode(`${res?.ssid}`) : null;
 
 					rows.push([
 						E('span', { 'style': s }, render_signal_badge(q, res?.signal, res?.noise)),
-						E('span', { 'style': s }, (typeof res.ssid === 'string' && res.ssid.length > 0) ? `${res?.ssid}` : E('em', _('hidden'))),
+						E('span', { 'style': s }, ssid ?? E('em', _('hidden'))),
 						E('span', { 'style': s }, `${res?.channel}`),
 						E('span', { 'style': s }, `${res?.mode}`),
 						E('span', { 'style': s }, `${res?.bssid}`),
