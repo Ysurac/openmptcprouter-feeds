@@ -2331,7 +2331,12 @@ rules_up() {
 	if [ -f "${v2rrules_nft}.down" ]; then
 		mv -f "${v2rrules_nft}.down" "$v2rrules_nft"
 		fw4 -q restart
-		conntrack -F 2>/dev/null || true
+		# The LAN's connections that went around the parked rules must go
+		# through the proxy again: drop those, the masqueraded ones, not
+		# the whole table. A flush also dropped the router's own (the
+		# VPN's, the proxy's to its server), and their next packet from
+		# outside was refused as a new connection.
+		conntrack -D --src-nat >/dev/null 2>&1 || true
 	elif [ ! -f "$v2rrules_nft" ]; then
 		# out of the caller's cgroup and stdio: the omr-tracker-v2ray
 		# instance runs this, and procd kills what is left in its cgroup
@@ -2351,7 +2356,7 @@ rules_up() {
 		# for exactly this reason -- mirror that check here so rules_up()
 		# actually repairs what it's asked to instead of silently no-op'ing.
 		fw4 -q reload
-		conntrack -F 2>/dev/null || true
+		conntrack -D --src-nat >/dev/null 2>&1 || true
 	fi
 }
 
