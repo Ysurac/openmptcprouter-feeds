@@ -116,7 +116,7 @@ return L.view.extend({
 		// Same option as luci-app-mptcp's main MPTCP page -- one uci value,
 		// editable from either page. The Download column below only has an
 		// effect while this is enabled (it's what gets pushed to the
-		// gateway as dscp_remote_id); showing it while sync is off would be
+		// gateway as dscp_remote_ids); showing it while sync is off would be
 		// a dead control, so its visibility is decided from this option's
 		// *persisted* value at page load, not live -- toggling the box
 		// below needs Save & Apply, then a reload of this page, before the
@@ -149,7 +149,7 @@ return L.view.extend({
 
 			if (vpsSyncEnabled) {
 				o = s.option(form.ListValue, 'download_interface', _('Download interface'),
-					_('Gateway (VPS) → router. Only takes effect for MPTCP’s bpf_dscp scheduler (pins the VPS’s own send-side choice via dscp_remote_id) and can be a different WAN than Upload.') + ' ' +
+					_('Gateway (VPS) → router. Only takes effect for MPTCP’s bpf_dscp scheduler (pins the VPS’s own send-side choice to the subflows of every address of that WAN, IPv4 and IPv6, via dscp_remote_ids) and can be a different WAN than Upload.') + ' ' +
 					_('Leave empty to just mirror this row’s Upload interface to the gateway instead -- the same "download always follows upload" behavior mqvpn already has built in natively.') + ' ' +
 					_('mqvpn has no equivalent: its downlink always mirrors whichever WAN carries the class on upload, so this field has no effect on mqvpn.'));
 				o.load = function(section_id) {
