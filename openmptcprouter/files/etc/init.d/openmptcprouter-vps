@@ -1765,6 +1765,20 @@ _set_mptcp_vps() {
 	fi
 }
 
+# The MPTCP endpoint ids of a WAN whose IPv4 id is $1 (its ip4table, the
+# metric multipath gets): IPv4 has that id, the next addresses of a
+# dual-stack WAN id+128 and id+192 (see multipath's add_endpoints), so the
+# VPS pins hold for its IPv6 subflows too. None above 255: multipath gives
+# no explicit id then, and the VPS refuses the whole list for one of them.
+_wan_remote_ids() {
+	local id="$1" extra ids="$1"
+	[ "$id" -le 255 ] 2>/dev/null || return 0
+	for extra in 128 192; do
+		[ $((id + extra)) -le 255 ] && ids="$ids $((id + extra))"
+	done
+	echo "$ids"
+}
+
 _get_dscp_vps_pin() {
 	local section="$1" dscp remote_id download_iface
 	# Reads network's anonymous `config dscp_pin` sections (added by
@@ -1849,13 +1863,17 @@ set_mptcp_dscp_vps() {
 }
 
 _get_weight_vps_pin() {
-	local iface="$1" weight remote_id
+	local iface="$1" weight remote_id id
 	weight="$(uci -q get network.${iface}.multipath_weight)"
 	[ -z "$weight" ] && return
 	remote_id="$(uci -q get network.${iface}.ip4table)"
-	[ -z "$remote_id" ] && return
-	[ -n "$weight_pins" ] && weight_pins="${weight_pins},"
-	weight_pins="${weight_pins}{\"remote_id\":${remote_id},\"weight\":${weight}}"
+	case "$remote_id" in
+		''|*[!0-9]*) return ;;
+	esac
+	for id in $(_wan_remote_ids "$remote_id"); do
+		[ -n "$weight_pins" ] && weight_pins="${weight_pins},"
+		weight_pins="${weight_pins}{\"remote_id\":${id},\"weight\":${weight}}"
+	done
 }
 
 # VPS-side counterpart of _set_mptcp_dscp_vps, same reasoning: pushes
