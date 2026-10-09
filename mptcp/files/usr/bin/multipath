@@ -47,6 +47,47 @@ $listing
 EOF
 }
 
+# Add an endpoint with the flags $@ for each global address ($IP) of $DEVICE.
+# The explicit id ($ENDPOINT_ID, the WAN's metric) goes to the first address,
+# the IPv4 one on a dual-stack WAN, the one the VPS pins a WAN by. Each
+# endpoint needs its own id: with the same one for all, the IPv6 add failed
+# ("Resource busy") and IPv6 was left out of MPTCP. The next addresses get
+# id+128 then id+192, above the WAN metrics so that they never take the id
+# of another WAN, and an address left without one is not added at all: an
+# id picked by the kernel would be one of those WAN ids.
+# When another device still holds the id of the first address, it is added
+# with an id picked by the kernel instead of failing on every tracker check,
+# and "multipath -i" tells the callers to fix it once the id is free.
+add_endpoints() {
+	local addr addr_id n=0
+	for addr in $IP; do
+		addr_id=""
+		if [ -n "$ENDPOINT_ID" ]; then
+			case "$n" in
+				0) addr_id="$ENDPOINT_ID" ;;
+				1) addr_id=$((ENDPOINT_ID + 128)) ;;
+				2) addr_id=$((ENDPOINT_ID + 192)) ;;
+				*) addr_id=256 ;;
+			esac
+			endpoint_ids "$endpoint" "$addr_id" "$DEVICE"
+			if [ -n "$id_used" ] && [ "$id_holder" != "$DEVICE" ]; then
+				logger -t "MPTCP" "Endpoint id $addr_id for $addr on $DEVICE is used by ${id_holder:-another endpoint}"
+				addr_id=256
+			fi
+			if [ "$addr_id" -gt 255 ]; then
+				if [ "$n" -gt 0 ]; then
+					logger -t "MPTCP" "No endpoint id left for $addr on $DEVICE, not added to MPTCP"
+					n=$((n + 1))
+					continue
+				fi
+				addr_id=""
+			fi
+		fi
+		ip mptcp endpoint add "$addr" dev "$DEVICE" "$@" ${addr_id:+id "$addr_id"}
+		n=$((n + 1))
+	done
+}
+
 case $1 in
    "-h")
         echo "          Multipath-TCP configuration tool"
@@ -75,6 +116,8 @@ case $1 in
         echo "(0-255) to pass to 'ip mptcp endpoint add ... id <id>' instead of letting the"
         echo "kernel auto-assign one. Needed for a stable id per WAN across reconnects, e.g."
         echo "so a peer (VPS) can pin traffic to this WAN via the subflow's remote_id."
+        echo "It goes to the first address of the device, the next ones get id+128 and"
+        echo "id+192 (IPv6 on a dual-stack WAN)."
         echo
         exit 0 ;;
    "-c")
@@ -184,8 +227,6 @@ case "$ENDPOINT_ID" in
         ''|*[!0-9]*) ENDPOINT_ID="" ;;
         *) [ "$ENDPOINT_ID" -ge 0 ] 2>/dev/null && [ "$ENDPOINT_ID" -le 255 ] 2>/dev/null || ENDPOINT_ID="" ;;
 esac
-IDOPT=""
-[ -n "$ENDPOINT_ID" ] && IDOPT="id $ENDPOINT_ID"
 #FLAG_PATH=`find /sys/devices/ -path "*/net/$DEVICE/flags"`
 
 [ -e "/sys/class/net/$DEVICE/" ] || {
@@ -281,21 +322,6 @@ EOF
         fi
 		[ -n "$endpoint" ] && RMID=$(echo "${endpoint}" | grep '::ffff' | awk '{ print $3 }')
 		[ -n "$RMID" ] && ip mptcp endpoint delete id $RMID >/dev/null 2>&1
-		# An id still held by another device's endpoint makes the add fail
-		# ("Resource busy") and leaves this device out of MPTCP, retried in
-		# vain on every tracker check: add it with an id the kernel picks,
-		# "multipath -i" tells the callers to fix it once the id is free
-		case "$TYPE" in
-			on|signal|backup)
-				[ -n "$ENDPOINT_ID" ] && [ -n "$endpoint" ] && {
-					endpoint_ids "$endpoint" "$ENDPOINT_ID" "$DEVICE"
-					if [ -n "$id_used" ] && [ "$id_holder" != "$DEVICE" ]; then
-						logger -t "MPTCP" "Endpoint id $ENDPOINT_ID for $DEVICE is used by ${id_holder:-another endpoint}, let the kernel pick one"
-						IDOPT=""
-					fi
-				}
-				;;
-		esac
 	fi
 	case $TYPE in
                 "off")
@@ -315,9 +341,7 @@ EOF
                                 ip mptcp endpoint delete id $i >/dev/null 2>&1
                             done
                         }
-                        for i in $IP; do
-                            ip mptcp endpoint add $i dev $DEVICE subflow fullmesh $IDOPT
-                        done
+                        add_endpoints subflow fullmesh
                         exit 0;;
                 "signal")
                         [ -z "$IP" ] && {
@@ -329,10 +353,8 @@ EOF
                                 ip mptcp endpoint delete id $i >/dev/null 2>&1
                             done
                         }
-                        for i in $IP; do
-                            #ip mptcp endpoint add $i dev $DEVICE signal subflow fullmesh
-                            ip mptcp endpoint add $i dev $DEVICE signal $IDOPT
-                        done
+                        #add_endpoints signal subflow fullmesh
+                        add_endpoints signal
                         exit 0;;
                 "backup")
                         [ -z "$IP" ] && {
@@ -344,9 +366,7 @@ EOF
                                 ip mptcp endpoint delete id $i >/dev/null 2>&1
                             done
                         }
-                        for i in $IP; do
-                            ip mptcp endpoint add $i dev $DEVICE subflow backup fullmesh $IDOPT
-                        done
+                        add_endpoints subflow backup fullmesh
                         exit 0;;
                 "")
                         case "$IFF" in
