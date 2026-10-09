@@ -125,7 +125,8 @@ return view.extend({
 
 		o = s.option(form.ListValue, "timeout", _("Test timeout"),
 			_('Maximum time to wait for each proxy test before it is counted as failed.'));
-		o.default = '4';
+		// the proxy trackers' own default: a value equal to it is removed
+		o.default = '5';
 		o.value('1', _('%d second').format('1'));
 		for (var i = 2; i <= 10; i++)
 			o.value(String(i), _('%d seconds').format(i));

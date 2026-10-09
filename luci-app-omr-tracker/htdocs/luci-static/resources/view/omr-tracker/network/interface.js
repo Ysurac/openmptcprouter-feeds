@@ -86,6 +86,31 @@ return view.extend({
 			};
 		}
 
+		// The same for a value, falling back to the option's default. The
+		// form's default alone was shown for an interface without the value,
+		// where the tracker runs with the defaults section's: a save then
+		// removed a value equal to it, or wrote it, and the tracker changed.
+		// An emptied field goes back to the inherited value.
+		function inheritValue(o) {
+			var fallback = o.default;
+			o.cfgvalue = function(section_id) {
+				var v = uci.get('omr-tracker', section_id, this.option);
+				if (v == null && uci.get('omr-tracker', section_id, '.type') == 'interface')
+					v = uci.get('omr-tracker', 'defaults', this.option);
+				return (v != null) ? v : fallback;
+			};
+			o.parse = function(section_id) {
+				if (!this.isActive(section_id) || !this.isValid(section_id))
+					return Object.getPrototypeOf(this).parse.apply(this, arguments);
+				var fval = this.formvalue(section_id);
+				if (fval == null || fval === '')
+					return Promise.resolve(this.remove(section_id));
+				if (fval == this.cfgvalue(section_id))
+					return Promise.resolve();
+				return Promise.resolve(this.write(section_id, fval));
+			};
+		}
+
 		o = s.option(form.Flag, 'enabled', _('Enabled'),
 			_('Enable monitoring and automatic state changes for this interface.'));
 		inheritFlag(o, '1');
@@ -492,6 +517,18 @@ return view.extend({
 		s.children.forEach(function(opt) {
 			if ((opt.deps || []).some(function(d) { return d._show_adv != null; }))
 				opt.retain = true;
+		});
+
+		// The values that _validate_section in the init script takes from
+		// the defaults section for an interface that has none
+		var inheritedValues = [ 'country', 'type', 'count', 'timeout', 'interval',
+			'family', 'latency_ip', 'latency_ip6', 'size', 'max_ttl',
+			'failure_latency', 'failure_loss', 'recovery_latency', 'recovery_loss',
+			'failure_congestion', 'recovery_congestion', 'post_interval',
+			'post_interval_down', 'failure_interval', 'tries', 'tries_up' ];
+		s.children.forEach(function(opt) {
+			if (inheritedValues.indexOf(opt.option) !== -1)
+				inheritValue(opt);
 		});
 
 		return m.render();

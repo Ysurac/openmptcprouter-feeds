@@ -102,6 +102,29 @@ return view.extend({
 				.map(function(s) { return s['.name']; });
 		};
 
+		// omr-tracker gives the server section the defaults section's value of
+		// an option it doesn't have, and the server tracker's own default when
+		// that has none either. Show the value the tracker runs with, and write
+		// only a change: the form's default alone was shown, and a save
+		// removed a value equal to it, and the tracker took another one
+		function inheritValue(o, fallback) {
+			o.default = fallback;
+			o.cfgvalue = function(section_id) {
+				var v = uci.get('omr-tracker', section_id, this.option);
+				if (v == null)
+					v = uci.get('omr-tracker', 'defaults', this.option);
+				return (v != null) ? v : fallback;
+			};
+			o.parse = function(section_id) {
+				if (!this.isActive(section_id) || !this.isValid(section_id))
+					return Object.getPrototypeOf(this).parse.apply(this, arguments);
+				var fval = this.formvalue(section_id);
+				if (fval == null || fval === '' || fval == this.cfgvalue(section_id))
+					return Promise.resolve();
+				return Promise.resolve(this.write(section_id, fval));
+			};
+		}
+
 		o = s.option(form.Flag, 'enabled', _('Enabled'),
 			_('Enable server monitoring and automatic fallback to a backup server when checks fail.'));
 		// omr-tracker runs a section without the option (enabled:bool:1):
@@ -118,7 +141,7 @@ return view.extend({
 		o.modalonly = true;
 
 		o = s.option(form.ListValue, 'type', _('Tracking method'),_('Choose whether server health is verified through the API, ping probes, or both.'));
-		o.default = 'apiping';
+		inheritValue(o, 'ping');
 		o.value('apiping',_('API & Ping'));
 		o.value('api',_('API'));
 		o.value('ping',_('Ping'));
@@ -136,14 +159,17 @@ return view.extend({
 */
 		o = s.option(form.ListValue, 'tries', _('Test count'),
 			_('Number of probes sent during each server test cycle.'));
-		o.default = '1';
+		inheritValue(o, '4');
 		o.value('1');
 		o.value('2');
 		o.value('3');
 		o.value('4');
 		o.value('5');
 		o.modalonly = true;
-
+/*
+		// The server tracker gets none of these: the init script never
+		// passed them, and its quality code (one ping, a global previous
+		// status) would not do what they say
 		o = s.option(form.Flag, 'check_quality', _('Check link quality'),
 			_('Use latency and packet loss thresholds to detect degraded server connectivity.'));
 		o.depends('type', 'ping');
@@ -200,10 +226,10 @@ return view.extend({
 		o.value('20');
 		o.value('25');
 		o.modalonly = true;
-
+*/
 		o = s.option(form.ListValue, "timeout", _("Test timeout"),
 			_('Maximum time to wait for each API or ping test before it is counted as failed.'));
-		o.default = '4';
+		inheritValue(o, '5');
 		o.value('1', _('%d second').format('1'));
 		for (var i = 2; i <= 10; i++)
 			o.value(String(i), _('%d seconds').format(i));
@@ -211,7 +237,7 @@ return view.extend({
 
 		o = s.option(form.ListValue, 'interval', _('Test interval'),
 			_('Delay between regular server health checks while the server is considered available.'));
-		o.default = '10';
+		inheritValue(o, '10');
 		o.value('1', _('%d second').format('1'));
 		o.value('3', _('%d seconds').format('3'));
 		o.value('5', _('%d seconds').format('5'));
@@ -245,6 +271,7 @@ return view.extend({
 		o.value('1800', _('%d minutes').format('30'));
 		o.value('3600', _('%d hour').format('1'));
 		o.modalonly = true;
+
 /*
 		o = s.option(form.Value, 'failure_interval', _('Failure interval'),
 			_('Ping interval during failure detection'));
