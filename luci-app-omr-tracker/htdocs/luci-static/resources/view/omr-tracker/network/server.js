@@ -272,6 +272,17 @@ return view.extend({
 		o.value('3600', _('%d hour').format('1'));
 		o.modalonly = true;
 
+		o = s.option(form.ListValue, 'backup_check_interval', _('Backup server check interval'),
+			_('While a master server is in use, how often the backup servers are checked, to show on the status page whether they answer. When disabled, they are only checked when no master server answers.'));
+		o.default = '60';
+		o.value('0', _('Disabled'));
+		o.value('30', _('%d seconds').format('30'));
+		o.value('60', _('%d minute').format('1'));
+		o.value('300', _('%d minutes').format('5'));
+		o.value('600', _('%d minutes').format('10'));
+		o.value('1800', _('%d minutes').format('30'));
+		o.value('3600', _('%d hour').format('1'));
+		o.modalonly = true;
 /*
 		o = s.option(form.Value, 'failure_interval', _('Failure interval'),
 			_('Ping interval during failure detection'));

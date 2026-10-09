@@ -297,11 +297,12 @@ _restart_proxy_services() {
 # Common check_ip body used by both _check_master and _check_backup.
 # Resolves ipd, runs the configured check type, then calls set_ip (defined
 # by the caller before config_list_foreach).
-_do_check_ip() {
-	local ipd=$1
+# Checks address $1 of a server (API port in $port) the configured way:
+# sets serverip to the resolved address and server_ping
+_probe_ip() {
 	server_ping=false
 	serverip=""
-	_resolve_ip "$ipd"
+	_resolve_ip "$1"
 	[ -z "$serverip" ] && return
 	if [ "$OMR_TRACKER_TYPE" = "api" ]; then
 		_check_server_intf "$serverip" "$port"
@@ -313,12 +314,49 @@ _do_check_ip() {
 	elif [ "$OMR_TRACKER_TYPE" = "none" ]; then
 		server_ping=true
 	fi
+}
+
+_do_check_ip() {
+	_probe_ip "$1"
+	[ -z "$serverip" ] && return
+	[ "$server_ping" = true ] && server_answered="1"
 	countips=$((countips+1))
 	server_held=false
 	set_ip
 	# A master kept waiting by the failback setting answers, but is not
 	# the server in use: the backups are still checked
 	[ "$server_ping" = true ] && [ "$server_held" = false ] && oneserverup="1"
+}
+
+# Whether server $1 answers ($2: 1 or 0), for the status page: in the
+# state, written on a change only
+_set_reachable() {
+	[ "${_srv_reachable[$1]}" = "$2" ] && return
+	omr_state_set openmptcprouter "$1" reachable "$2"
+	_srv_reachable[$1]="$2"
+}
+
+# The rounds check the backups only while no master answers. With
+# omr-tracker.server.backup_check_interval, the backups that a round did
+# not check are checked in the background, once per interface, to show on
+# the status page whether they would answer. Nothing is switched from here.
+_probe_backup() {
+	local name=$1 backup disabled ip port ipd answered=0
+	local OMR_VPS_SERVER="$name"
+	config_get backup "$1" backup
+	config_get disabled "$1" disabled
+	config_get ip "$1" ip
+	config_get port "$1" port "65500"
+	[ "$backup" = "1" ] && [ -n "$ip" ] && [ "$disabled" != "1" ] || return
+	case " $checked_servers " in
+		*" $name "*) return ;;
+	esac
+	for ipd in $ip; do
+		_probe_ip "$ipd"
+		[ "$server_ping" = true ] && { answered=1; break; }
+	done
+	[ "$(omr_state_get openmptcprouter."$name".reachable)" = "$answered" ] || \
+		omr_state_set openmptcprouter "$name" reachable "$answered"
 }
 
 _get_backup_in_use() {
@@ -463,8 +501,11 @@ _check_master() {
 				[ -n "$script_alert_down" ] && eval "$script_alert_down"
 			fi
 		}
+		server_answered="0"
 		config_load openmptcprouter
 		config_list_foreach "$1" ip _do_check_ip
+		_set_reachable "$name" "$server_answered"
+		checked_servers="$checked_servers $name"
 		[ "$oneserverup" = "0" ] && omr_state_set openmptcprouter ${name} current '0'
 		# ip_down is the only persistent openmptcprouter option written here
 		# (current and the global state are in /var/state): commit it, not
@@ -569,8 +610,11 @@ _check_backup() {
 			fi
 			countips=$((countips+1))
 		}
+		server_answered="0"
 		config_load openmptcprouter
 		config_list_foreach "$1" ip _do_check_ip
+		_set_reachable "$name" "$server_answered"
+		checked_servers="$checked_servers $name"
 		[ "$oneserverup" = "0" ] && omr_state_set openmptcprouter ${name} current '0'
 		# ip_down is the only persistent openmptcprouter option written here
 		# (current and the global state are in /var/state): commit it, not
@@ -589,8 +633,10 @@ _check_backup() {
 
 # One round: the masters, then the backups while no master is in use
 _check_servers() {
+	local name
 	failback_held="0"
 	failback_force="0"
+	checked_servers=""
 	config_load openmptcprouter
 	config_foreach _check_master server
 	[ "$oneserverup" = "0" ] && {
@@ -616,6 +662,40 @@ _check_servers() {
 		fi
 		_failback_state="$failback_held"
 	fi
+	# Without the background check, a backup that the round did not check
+	# has no known state anymore: drop the one of its last check
+	if [ "$backup_check_interval" = "0" ]; then
+		for name in "${!_srv_reachable[@]}"; do
+			case " $checked_servers " in
+				*" $name "*) ;;
+				*)
+					omr_state_del openmptcprouter "$name" reachable
+					unset "_srv_reachable[$name]"
+					;;
+			esac
+		done
+	fi
+}
+
+# Starts _probe_backup in the background every backup_check_interval
+# seconds while a master is in use, one run at a time: a backup that does
+# not answer takes up to a timeout per interface, which the rounds, and so
+# the failover, must not wait for
+_check_backups_background() {
+	local now
+	[ "$backup_check_interval" -gt 0 ] && [ "$oneserverup" = "1" ] || return
+	printf -v now '%(%s)T' -1
+	[ $((now - _bc_last)) -ge "$backup_check_interval" ] || return
+	[ -n "$_bc_pid" ] && kill -0 "$_bc_pid" 2>/dev/null && return
+	_bc_last="$now"
+	# the state it writes is not in this shell's cache
+	_srv_reachable=()
+	(
+		retry=0
+		config_load openmptcprouter
+		config_foreach _probe_backup server
+	) &
+	_bc_pid=$!
 }
 
 . /lib/functions.sh
@@ -639,6 +719,15 @@ esac
 declare -A _failback_since _failback_logged
 # Last value written to openmptcprouter.omr.failback_hold
 _failback_state=""
+# omr-tracker.server.backup_check_interval, in seconds, 0 to disable
+backup_check_interval=${OMR_TRACKER_BACKUP_CHECK_INTERVAL:-60}
+case "$backup_check_interval" in
+	''|*[!0-9]*) backup_check_interval=60 ;;
+esac
+# Per server: last "reachable" written to the state
+declare -A _srv_reachable
+_bc_last=0
+_bc_pid=""
 # `multipath` is itself a shell script whose no-arg listing forks per network
 # device, so refresh the default-route interface list at most every 30s
 # instead of on every check. Worst case a hotplugged/removed WAN is seen up
@@ -658,6 +747,7 @@ while true; do
 		_mp_intfs_ts=$_mp_now
 	fi
 	_check_servers
+	_check_backups_background
 	# Global server state for consumers (LuCI, scripts): "up" while at least
 	# one master or backup server answers, "down" otherwise. The
 	# server-post-tracking.d hooks get the same, as their status.

@@ -289,7 +289,21 @@ return view.extend({
 		var serverStatus = '';
 		if (!omr.service_addr) serverStatus += _('No server defined') + '<br />';
 		if (omr.vps_status === 'DOWN') serverStatus += _('Can\'t ping server') + '<br />';
+		// With several servers: which one this is, in the title (a badge
+		// beside the text narrowed it over the whole box), and a warning
+		// while a backup is in use. The role has a translation context:
+		// the bare "Backup" of other catalogs (package-manager...) won
+		// over this one's
+		if (omr.servers_count > 1 && omr.vps_role) {
+			serverTitle += ' <i>' + (omr.vps_role === 'backup' ? _('Backup', 'server role') : _('Master', 'server role')) + '</i>';
+			if (omr.vps_role === 'backup') {
+				serverStatus += _('Backup server in use') + '<br />';
+				if (omr.failback_hold)
+					serverStatus += _('The master server answers again: return to it from Services > OMR-Tracker Manager > Server') + '<br />';
+			}
+		}
 		var serverDetails = '';
+		if (omr.servers_count > 1 && omr.vps_name) serverDetails += _('Server:') + ' ' + this.esc(omr.vps_name) + '<br />';
 		if (omr.vps_omr_version) serverDetails += _('Version') + ' ' + this.esc(omr.vps_omr_version) + '<br />';
 		if (omr.vps_whois && omr.vps_whois !== 'unknown') serverDetails += _('ASN:') + ' ' + this.esc(omr.vps_whois) + '<br />';
 		if (omr.vps_kernel) serverDetails += _('Kernel:') + ' ' + this.esc(omr.vps_kernel) + '<br />';
@@ -298,6 +312,31 @@ return view.extend({
 		if (omr.proxy_traffic != null && omr.proxy_traffic != 0) serverDetails += _('Proxy traffic:') + ' ' + this.formatBytes(omr.proxy_traffic) + '<br />';
 		if (omr.vpn_traffic != null && omr.vpn_traffic != 0) serverDetails += _('VPN traffic:') + ' ' + this.formatBytes(omr.vpn_traffic) + '<br />';
 		if (omr.total_traffic != null && omr.total_traffic != 0) serverDetails += _('Total traffic:') + ' ' + this.formatBytes(omr.total_traffic) + '<br />';
+		// The other servers in a box of their own, each with a dot telling
+		// whether omr-tracker-server saw it answer (none while not checked)
+		var serversBox = '';
+		var otherServers = Array.isArray(omr.servers) ? omr.servers.filter(function(srv) { return !srv.in_use; }) : [];
+		if (otherServers.length) {
+			var serversDetails = '';
+			for (var si = 0; si < otherServers.length; si++) {
+				var srv = otherServers[si];
+				var srvAddr = srv.address || '';
+				if (anonymize && srvAddr) srvAddr = this.anonymizeHost(srvAddr);
+				var srvDot = '';
+				if (srv.reachable === true)
+					srvDot = '<span style="color:var(--c-ok)" title="' + _('answers') + '">&#9679;</span> ';
+				else if (srv.reachable === false)
+					srvDot = '<span style="color:var(--c-err)" title="' + _('does not answer') + '">&#9679;</span> ';
+				var srvRole = srv.role === 'backup' ? _('Backup', 'server role') : (srv.role === 'master' ? _('Master', 'server role') : '');
+				serversDetails += srvDot + [ this.esc(srv.name || ''), srvRole, this.esc(srvAddr),
+					srv.reachable == null ? _('not checked') : '' ].filter(function(v) { return v; }).join(' &middot; ') + '<br />';
+			}
+			serversBox = '<tr><td style="height:1em;"></td></tr>' +
+				'<tr><td><a href="' + L.url('admin/services/omr-tracker/server') + '" id="omr-servers">' +
+				this.getNetworkNodeTemplate('<img src="' + L.resource('server.png') + '" />', _('Available servers'),
+					'neutral', '', serversDetails) +
+				'</a></td></tr>';
+		}
 
 		var temp = '<figure class="tree"><ul>';
 		temp += '<li class="remote-from-lease"><a href="#">' +
@@ -324,11 +363,13 @@ return view.extend({
 			temp += '<tr><td><a href="' + L.url('admin/system/openmptcprouter/wizard') + '" id="omr-vps">' +
 				this.getNetworkNodeTemplate('<img src="' + L.resource('server.png') + '" />', serverTitle, serverStatus ? 'warning' : 'ok', serverStatus, serverDetails) +
 				'</a></td></tr>';
+			temp += serversBox;
 		} else {
 			temp += '<tr><td><div class="vertdash"></div></td></tr>';
 			temp += '<tr><td><a href="' + L.url('admin/system/openmptcprouter/wizard') + '" id="omr-vps">' +
 				this.getNetworkNodeTemplate('<img src="' + L.resource('server.png') + '" />', serverTitle, serverStatus ? 'warning' : 'ok', serverStatus, serverDetails) +
 				'</a></td></tr>';
+			temp += serversBox;
 		}
 		temp += '</table></td><td>';
 

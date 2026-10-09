@@ -2534,8 +2534,75 @@ function interfaces_status()
 	mArray.openmptcprouter["vps_hostname"] = "Server"
 	mArray.openmptcprouter["vps_kernel"] = ""
 	local adminport = ""
+	-- With several servers, which one is in use: the one omr-tracker-server
+	-- set current, else the master. That one is asked first: the master
+	-- came first, and on a backup that the master answers again (failback
+	-- delayed or manual) its name and version were shown with the
+	-- backup's address
+	local servers_current, servers_other = {}, {}
+	local servers_count = 0
 	ucic:foreach("openmptcprouter", "server", function(s)
 		if (uci:get("openmptcprouter",s[".name"],"disabled") or "0") == "1" then return end
+		if #_as_string_list(uci:get("openmptcprouter",s[".name"],"ip")) == 0 then return end
+		servers_count = servers_count + 1
+		if (ucis:get("openmptcprouter",s[".name"],"current") or "0") == "1" then
+			servers_current[#servers_current + 1] = s
+		else
+			servers_other[#servers_other + 1] = s
+		end
+	end)
+	local server_in_use = servers_current[1]
+	if not server_in_use then
+		for _, s in ipairs(servers_other) do
+			if (uci:get("openmptcprouter",s[".name"],"master") or "1") == "1" then
+				server_in_use = s
+				break
+			end
+		end
+	end
+	mArray.openmptcprouter["servers_count"] = servers_count
+	mArray.openmptcprouter["vps_name"] = server_in_use and server_in_use[".name"] or ""
+	mArray.openmptcprouter["vps_role"] = ""
+	if server_in_use then
+		if (uci:get("openmptcprouter",server_in_use[".name"],"backup") or "0") == "1" then
+			mArray.openmptcprouter["vps_role"] = "backup"
+		elseif (uci:get("openmptcprouter",server_in_use[".name"],"master") or "1") == "1" then
+			mArray.openmptcprouter["vps_role"] = "master"
+		end
+	end
+	mArray.openmptcprouter["failback_hold"] = ucis:get("openmptcprouter","omr","failback_hold") == "1"
+	-- Every server for the status page, in the config's order: whether it
+	-- answers is what omr-tracker-server last saw (nil when not checked)
+	local servers = {}
+	ucic:foreach("openmptcprouter", "server", function(s)
+		if (uci:get("openmptcprouter",s[".name"],"disabled") or "0") == "1" then return end
+		local ips = _as_string_list(uci:get("openmptcprouter",s[".name"],"ip"))
+		if #ips == 0 then return end
+		local role = "master"
+		if (uci:get("openmptcprouter",s[".name"],"backup") or "0") == "1" then
+			role = "backup"
+		elseif (uci:get("openmptcprouter",s[".name"],"master") or "1") ~= "1" then
+			role = ""
+		end
+		local reachable = ucis:get("openmptcprouter",s[".name"],"reachable")
+		local answers = nil
+		if reachable == "1" then
+			answers = true
+		elseif reachable == "0" then
+			answers = false
+		end
+		servers[#servers + 1] = {
+			name = s[".name"],
+			role = role,
+			address = ips[1],
+			in_use = server_in_use ~= nil and server_in_use[".name"] == s[".name"],
+			reachable = answers,
+		}
+	end)
+	mArray.openmptcprouter["servers"] = servers
+	local servers_ordered = servers_current
+	for _, s in ipairs(servers_other) do servers_ordered[#servers_ordered + 1] = s end
+	for _, s in ipairs(servers_ordered) do (function(s)
 		local serverips = _as_string_list(uci:get("openmptcprouter",s[".name"],"ip"))
 		local master = uci:get("openmptcprouter",s[".name"],"master") or "1"
 		local current = ucis:get("openmptcprouter",s[".name"],"current") or "0"
@@ -2678,7 +2745,7 @@ function interfaces_status()
 				end
 			end
 		end
-	end)
+	end)(s) end
 
 	mArray.openmptcprouter["kernel_match"] = true
 	if mArray.openmptcprouter["vps_kernel"] ~= "" then
