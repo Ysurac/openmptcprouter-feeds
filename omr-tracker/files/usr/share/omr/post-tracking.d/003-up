@@ -578,6 +578,12 @@ if [ -n "$_mptcp_enabled" ]; then
 		fi
 		_omr_uci_get_var _local_ipv4 "openmptcprouter.$OMR_TRACKER_INTERFACE.local_ipv4"
 		_omr_uci_get_var _local_ipv6 "openmptcprouter.$OMR_TRACKER_INTERFACE.local_ipv6"
+		# Same explicit endpoint id as mptcp's init script (network.<iface>.metric):
+		# without it the kernel auto-assigns a new id every time the endpoint is
+		# recreated here, so the id a WAN is known by drifts upwards on every
+		# status change and the VPS side can no longer pin traffic to a WAN by
+		# the subflow remote_id (see "multipath -h", mptcp-dscp/weight sync).
+		_omr_uci_get_var _multipath_id "network.$OMR_TRACKER_INTERFACE.metric"
 		if [ "$multipath_status" = "$multipath_config" ] && { [ "$_local_ipv4" != "$OMR_TRACKER_DEVICE_IP" ] || [ "$_local_ipv6" != "$OMR_TRACKER_DEVICE_IP6" ]; }; then
 			_log "Local IP changed for $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) reload Multipath"
 			if [ -n "$OMR_TRACKER_DEVICE" ] && [ "$_force_link" != "0" ]; then
@@ -588,16 +594,16 @@ if [ -n "$_mptcp_enabled" ]; then
 			omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE local_ipv6 "$OMR_TRACKER_DEVICE_IP6"
 		elif [ "$multipath_status" != "$multipath_config" ]; then
 			_log "Multipath $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) switched to $multipath_config (from $multipath_status)"
-			# Same explicit endpoint id as mptcp's init script (network.<iface>.metric):
-			# without it the kernel auto-assigns a new id every time the endpoint is
-			# recreated here, so the id a WAN is known by drifts upwards on every
-			# status change and the VPS side can no longer pin traffic to a WAN by
-			# the subflow remote_id (see "multipath -h", mptcp-dscp/weight sync).
-			_omr_uci_get_var _multipath_id "network.$OMR_TRACKER_INTERFACE.metric"
 			multipath "$OMR_TRACKER_DEVICE" "$multipath_config" "$_multipath_id"
 			if [ -n "$OMR_TRACKER_DEVICE" ] && [ "$_force_link" != "0" ]; then
 				/etc/init.d/mptcp reload "$OMR_TRACKER_DEVICE"
 			fi
+		elif [ -n "$OMR_TRACKER_DEVICE" ] && ! multipath -i "$OMR_TRACKER_DEVICE" "$_multipath_id"; then
+			# Right mode but not the id of this WAN, kept from before a metric
+			# change or added by hand: nothing else recreates the endpoint, and
+			# the WAN that now has this metric can't get its endpoint added
+			_log "MPTCP endpoint of $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) doesn't have id $_multipath_id, recreate it"
+			multipath "$OMR_TRACKER_DEVICE" "$multipath_config" "$_multipath_id"
 		fi
 	}
 fi

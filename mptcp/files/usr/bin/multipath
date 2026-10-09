@@ -17,6 +17,36 @@ else
         exit 1
 fi
 
+# From an "ip mptcp endpoint show" listing ($1), set id_used when an endpoint
+# has the id $2 and id_holder to its device, and dev_ids to the endpoint ids
+# of device $3. Lines are "ADDR [port P] id ID [FLAGS...] [dev DEV]".
+endpoint_ids() {
+	local listing="$1" want="$2" dev="$3" ep_line ep_id ep_dev
+	id_used=""
+	id_holder=""
+	dev_ids=""
+	while IFS= read -r ep_line; do
+		ep_id=""
+		ep_dev=""
+		set -- $ep_line
+		while [ "$#" -gt 1 ]; do
+			case "$1" in
+				id) ep_id="$2" ;;
+				dev) ep_dev="$2" ;;
+			esac
+			shift
+		done
+		[ -n "$ep_id" ] || continue
+		[ "$ep_id" = "$want" ] && {
+			id_used=1
+			id_holder="$ep_dev"
+		}
+		[ -n "$dev" ] && [ "$ep_dev" = "$dev" ] && dev_ids="$dev_ids $ep_id"
+	done <<EOF
+$listing
+EOF
+}
+
 case $1 in
    "-h")
         echo "          Multipath-TCP configuration tool"
@@ -34,6 +64,7 @@ case $1 in
         echo "show MPTCP info: -m"
         if [ -f /proc/sys/net/mptcp/enabled ]; then
 		echo "verify MPTCP interface: -v device"
+		echo "check the endpoint id of an interface: -i device id"
         fi
         echo
         echo "Flag on the device, to enable/disable MPTCP for this interface. The backup-flag"
@@ -118,6 +149,22 @@ case $1 in
 		echo "NOK"
 		exit 1
 	fi
+	;;
+   "-i")
+	# Exit 1 when the endpoint of device $2 doesn't have the explicit id $3
+	# although no other endpoint holds it, so that recreating it gives that
+	# id back. An endpoint that kept an old id is never fixed by the mode
+	# checks of the callers, and it blocks the WAN that now has this id.
+	[ -f /proc/sys/net/mptcp/enabled ] || exit 0
+	case "$3" in
+		''|*[!0-9]*) exit 0 ;;
+	esac
+	[ "$3" -le 255 ] || exit 0
+	endpoint_ids "$(ip mptcp endpoint show)" "$3" "$2"
+	if [ -z "$dev_ids" ] || [ -n "$id_used" ]; then
+		exit 0
+	fi
+	exit 1
 	;;
    "")
         for ifpath in /sys/class/net/*; do
@@ -234,6 +281,21 @@ EOF
         fi
 		[ -n "$endpoint" ] && RMID=$(echo "${endpoint}" | grep '::ffff' | awk '{ print $3 }')
 		[ -n "$RMID" ] && ip mptcp endpoint delete id $RMID >/dev/null 2>&1
+		# An id still held by another device's endpoint makes the add fail
+		# ("Resource busy") and leaves this device out of MPTCP, retried in
+		# vain on every tracker check: add it with an id the kernel picks,
+		# "multipath -i" tells the callers to fix it once the id is free
+		case "$TYPE" in
+			on|signal|backup)
+				[ -n "$ENDPOINT_ID" ] && [ -n "$endpoint" ] && {
+					endpoint_ids "$endpoint" "$ENDPOINT_ID" "$DEVICE"
+					if [ -n "$id_used" ] && [ "$id_holder" != "$DEVICE" ]; then
+						logger -t "MPTCP" "Endpoint id $ENDPOINT_ID for $DEVICE is used by ${id_holder:-another endpoint}, let the kernel pick one"
+						IDOPT=""
+					fi
+				}
+				;;
+		esac
 	fi
 	case $TYPE in
                 "off")
