@@ -1779,6 +1779,44 @@ _wan_remote_ids() {
 	echo "$ids"
 }
 
+# Sets first_subflow_wan to the WAN that opens the connections to this VPS.
+# The VPS knows the first subflow of a connection by remote id 0, not by the
+# endpoint id of its WAN, so a pin or a weight by endpoint id never matched
+# the master WAN: measured, a download pinned to it stayed spread over every
+# WAN while {0} alone put 99% of it on the master. This is the WAN the route
+# to the VPS sends a new connection by: its only nexthop, or in balancing
+# mode the one with the highest weight (the master, 100 against 1). Read
+# from the route rather than from the master option, so that it follows a
+# failover; the sync's cache makes the change one push.
+_get_first_subflow_wan() {
+	local vpsip dev
+	first_subflow_wan=""
+	vpsip="$(uci -q get openmptcprouter.${servername}.ip | awk '{print $1}')"
+	[ -n "$vpsip" ] || return 0
+	dev="$(ip -4 route show "$vpsip" 2>/dev/null | awk '
+		NR > 1 && /^[^ \t]/ { exit }
+		{
+			d = ""; w = 1
+			for (i = 1; i < NF; i++) {
+				if ($i == "dev") d = $(i + 1)
+				if ($i == "weight") w = $(i + 1)
+			}
+			if (d != "" && w + 0 > best + 0) { best = w; bd = d }
+		}
+		END { print bd }')"
+	[ -n "$dev" ] || return 0
+	. /lib/functions/network.sh
+	config_foreach _match_first_subflow_wan interface "$dev"
+}
+
+_match_first_subflow_wan() {
+	local l3dev
+	[ -n "$first_subflow_wan" ] && return
+	network_get_device l3dev "$1"
+	[ -z "$l3dev" ] && l3dev="$(uci -q get network.$1.device)"
+	[ "$l3dev" = "$2" ] && first_subflow_wan="$1"
+}
+
 _get_dscp_vps_pin() {
 	local section="$1" dscp remote_id remote_ids download_iface
 	# Reads network's anonymous `config dscp_pin` sections (added by
@@ -1805,6 +1843,7 @@ _get_dscp_vps_pin() {
 	esac
 	remote_ids="$(_wan_remote_ids "$remote_id" | tr ' ' ',')"
 	[ -z "$remote_ids" ] && return
+	[ "$download_iface" = "$first_subflow_wan" ] && remote_ids="${remote_ids},0"
 	# remote_id alone for an omradmin that only knows one id per class
 	[ -n "$dscp_pins" ] && dscp_pins="${dscp_pins},"
 	dscp_pins="${dscp_pins}{\"dscp\":\"${dscp}\",\"remote_id\":${remote_id},\"remote_ids\":[${remote_ids}]}"
@@ -1832,8 +1871,9 @@ _get_dscp_vps_pin() {
 # which is intentional: it forces one real push after every reboot,
 # matching the BPF map itself also resetting on reboot.
 _set_mptcp_dscp_vps() {
-	local dscp_pins="" desired dscp_vps_pins_cache="/tmp/.mptcp_dscp_vps_pins-${servername}"
+	local dscp_pins="" desired dscp_vps_pins_cache="/tmp/.mptcp_dscp_vps_pins-${servername}" first_subflow_wan
 	config_load network
+	_get_first_subflow_wan
 	config_foreach _get_dscp_vps_pin dscp_pin
 	desired="[${dscp_pins}]"
 	if [ "$(cat "$dscp_vps_pins_cache" 2>/dev/null)" = "$desired" ]; then
@@ -1868,14 +1908,16 @@ set_mptcp_dscp_vps() {
 }
 
 _get_weight_vps_pin() {
-	local iface="$1" weight remote_id id
+	local iface="$1" weight remote_id id ids
 	weight="$(uci -q get network.${iface}.multipath_weight)"
 	[ -z "$weight" ] && return
 	remote_id="$(uci -q get network.${iface}.ip4table)"
 	case "$remote_id" in
 		''|*[!0-9]*) return ;;
 	esac
-	for id in $(_wan_remote_ids "$remote_id"); do
+	ids="$(_wan_remote_ids "$remote_id")"
+	[ -n "$ids" ] && [ "$iface" = "$first_subflow_wan" ] && ids="$ids 0"
+	for id in $ids; do
 		[ -n "$weight_pins" ] && weight_pins="${weight_pins},"
 		weight_pins="${weight_pins}{\"remote_id\":${id},\"weight\":${weight}}"
 	done
@@ -1888,8 +1930,9 @@ _get_weight_vps_pin() {
 # can weight its send-side subflow choice for the same WANs via
 # weight_remote_id instead of defaulting to neutral 100 for everything.
 _set_mptcp_weight_vps() {
-	local weight_pins="" desired weight_vps_pins_cache="/tmp/.mptcp_weight_vps_pins-${servername}"
+	local weight_pins="" desired weight_vps_pins_cache="/tmp/.mptcp_weight_vps_pins-${servername}" first_subflow_wan
 	config_load network
+	_get_first_subflow_wan
 	config_foreach _get_weight_vps_pin interface
 	desired="[${weight_pins}]"
 	if [ "$(cat "$weight_vps_pins_cache" 2>/dev/null)" = "$desired" ]; then
