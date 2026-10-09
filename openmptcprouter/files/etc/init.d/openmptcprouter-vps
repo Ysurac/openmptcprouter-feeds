@@ -1780,7 +1780,7 @@ _wan_remote_ids() {
 }
 
 _get_dscp_vps_pin() {
-	local section="$1" dscp remote_id download_iface
+	local section="$1" dscp remote_id remote_ids download_iface
 	# Reads network's anonymous `config dscp_pin` sections (added by
 	# luci-app-mptcp's DSCP/Weight Routing page), one row per DSCP class
 	# with independent upload_interface/download_interface. Only
@@ -1800,16 +1800,21 @@ _get_dscp_vps_pin() {
 	dscp="$(uci -q get network.${section}.dscp)"
 	[ -z "$dscp" ] && return
 	remote_id="$(uci -q get network.${download_iface}.ip4table)"
-	[ -z "$remote_id" ] && return
+	case "$remote_id" in
+		''|*[!0-9]*) return ;;
+	esac
+	remote_ids="$(_wan_remote_ids "$remote_id" | tr ' ' ',')"
+	[ -z "$remote_ids" ] && return
+	# remote_id alone for an omradmin that only knows one id per class
 	[ -n "$dscp_pins" ] && dscp_pins="${dscp_pins},"
-	dscp_pins="${dscp_pins}{\"dscp\":\"${dscp}\",\"remote_id\":${remote_id}}"
+	dscp_pins="${dscp_pins}{\"dscp\":\"${dscp}\",\"remote_id\":${remote_id},\"remote_ids\":[${remote_ids}]}"
 }
 
 # Pushes network's dscp_pin rows' download_interface (router-side pick of
 # which WAN should carry each DSCP class on the way *down*, see
 # mptcp-dscp-manager) to the VPS as {dscp -> MPTCP remote endpoint id}
 # pairs, so the VPS's own bpf_dscp scheduler can pin its send-side subflow
-# choice for the same DSCP classes via dscp_remote_id -- see
+# choice for the same DSCP classes via dscp_remote_ids -- see
 # mptcp-bpf-dscp/debian/README.Debian for why that map is keyed by
 # remote_id instead of local IP on the VPS. Closes the "no automated
 # sync... copy the number over manually" gap that doc used to describe.

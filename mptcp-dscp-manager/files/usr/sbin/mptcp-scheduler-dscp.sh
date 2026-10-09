@@ -6,13 +6,17 @@
 # (mptcp-bpf-dscp): maps a DSCP class to either
 #  - the local endpoint IP of the WAN interface that should carry it
 #    (dscp_iface map, router-side: each WAN has a distinct local IP), or
-#  - the MPTCP remote endpoint id of the WAN that should carry it
-#    (dscp_remote_id map, server-side/VPS: every subflow shares the same
+#  - the MPTCP remote endpoint ids of the WAN that should carry it
+#    (dscp_remote_ids map, server-side/VPS: every subflow shares the same
 #    local IP there, but remote_id is the address id the router assigned
 #    to that WAN and stays stable across the router's WAN IP changing).
+#    One id per address of the WAN: a dual-stack WAN has its metric for
+#    IPv4 and +128/+192 for IPv6 (see the router's multipath script).
 
 MAP_PATH="/sys/fs/bpf/dscp_iface"
-MAP_PATH2="/sys/fs/bpf/dscp_remote_id"
+MAP_PATH2="/sys/fs/bpf/dscp_remote_ids"
+# Single id per class, pinned by an mptcp-bpf-dscp older than the id set
+MAP_PATH2_OLD="/sys/fs/bpf/dscp_remote_id"
 
 # Check required commands
 for cmd in bpftool ip; do
@@ -83,6 +87,58 @@ get_value_from_key() {
 		}'
 }
 
+# The dscp_remote_ids value for the ids $@: a 256-bit set, bit (id & 7) of
+# byte (id >> 3), as hex bytes for bpftool
+ids_to_set_hex() {
+	local byte bit id hex=""
+	byte=0
+	while [ "$byte" -lt 32 ]; do
+		bit=0
+		for id in "$@"; do
+			[ $((id >> 3)) -eq "$byte" ] && bit=$((bit | (1 << (id & 7))))
+		done
+		hex="$hex $(to_byte_hex "$bit")"
+		byte=$((byte + 1))
+	done
+	echo $hex
+}
+
+# The raw value bytes ("0x10"...) of the entry for key $1 (hex) in the map
+# $2, from bpftool's JSON: its plain output is laid out by the map's BTF
+# and spread over several lines.
+get_value_bytes() {
+	bpftool -j map lookup pinned "$2" key hex $1 2>/dev/null | \
+		sed -n 's/.*"value":\[\([^]]*\)\].*/\1/p' | tr -d '"' | tr ',' ' '
+}
+
+# The ids of the dscp_remote_ids entry for key $1 (hex), space separated
+get_remote_ids_from_key() {
+	local byte val bit idx=0 ids=""
+	for byte in $(get_value_bytes "$1" "$MAP_PATH2"); do
+		val=$((byte))
+		bit=0
+		while [ "$bit" -lt 8 ]; do
+			[ $(((val >> bit) & 1)) -eq 1 ] && ids="$ids $((idx * 8 + bit))"
+			bit=$((bit + 1))
+		done
+		idx=$((idx + 1))
+	done
+	echo $ids
+}
+
+# Remote ids pinned for key $1 (hex), from whichever map this
+# mptcp-bpf-dscp has
+get_remote_ids() {
+	local byte
+	if [ -e "$MAP_PATH2" ]; then
+		get_remote_ids_from_key "$1"
+	elif [ -e "$MAP_PATH2_OLD" ]; then
+		for byte in $(get_value_bytes "$1" "$MAP_PATH2_OLD"); do
+			echo $((byte))
+		done
+	fi
+}
+
 # Get BPF endpoint IP (decimal, LE-integer form) from interface name
 get_bpf_ep_ip_from_iface() {
 	iface="$1"
@@ -104,17 +160,18 @@ usage() {
 	echo "  $0 show                    # Show all configured DSCP pins"
 	echo "  $0 show <dscp>              # Show pin for one DSCP class/value"
 	echo "  $0 set <dscp> <interface>   # Pin a DSCP class to a local WAN interface (router-side)"
-	echo "  $0 set <dscp> id <N>        # Pin a DSCP class to a remote endpoint id 0-255 (server/VPS-side)"
+	echo "  $0 set <dscp> id <N>...     # Pin a DSCP class to remote endpoint ids 0-255 (server/VPS-side)"
 	echo "  $0 del <dscp>               # Remove a DSCP pin (both forms)"
 	echo "  $0 debug                    # Show live BPF trace output"
 	echo ""
 	echo "<dscp> can be a class name (cs0-cs7, af11-af43, ef, le) or a raw 0-63 value."
 	echo ""
 	echo "Use 'set <dscp> <interface>' on the router, where each WAN has its own local"
-	echo "endpoint IP. Use 'set <dscp> id <N>' on the server (VPS) side, where every"
-	echo "subflow shares the same local IP: <N> is the MPTCP endpoint id the router"
+	echo "endpoint IP. Use 'set <dscp> id <N>...' on the server (VPS) side, where every"
+	echo "subflow shares the same local IP: <N> are the MPTCP endpoint ids the router"
 	echo "assigned to that WAN (kept stable across reconnects, e.g. via 'multipath"
-	echo "<iface> on <N>' or network.<iface>.ip4table)."
+	echo "<iface> on <N>' or network.<iface>.ip4table, +128/+192 for its IPv6"
+	echo "addresses)."
 	exit 1
 }
 
@@ -132,8 +189,7 @@ show)
 				EP_IP=$(printf "%d.%d.%d.%d\n" $(( BPF_EP_IP & 255 )) $(( (BPF_EP_IP >> 8) & 255 )) $(( (BPF_EP_IP >> 16) & 255 )) $(( (BPF_EP_IP >> 24) & 255 )) )
 				echo "dscp=$name (${val}) endpoint_ip=$EP_IP"
 			fi
-			[ -e "$MAP_PATH2" ] || continue
-			BPF_REMOTE_ID=$(get_value_from_key "$KEY_HEX" "$MAP_PATH2")
+			BPF_REMOTE_ID=$(get_remote_ids "$KEY_HEX")
 			[ -n "$BPF_REMOTE_ID" ] && echo "dscp=$name (${val}) remote_id=$BPF_REMOTE_ID"
 		done
 		exit 0
@@ -142,8 +198,7 @@ show)
 		[ -z "$val" ] && { echo "Unknown DSCP class '$2'"; exit 1; }
 		KEY_HEX=$(to_byte_hex "$val")
 		BPF_EP_IP=$(get_value_from_key "$KEY_HEX" "$MAP_PATH")
-		BPF_REMOTE_ID=""
-		[ -e "$MAP_PATH2" ] && BPF_REMOTE_ID=$(get_value_from_key "$KEY_HEX" "$MAP_PATH2")
+		BPF_REMOTE_ID=$(get_remote_ids "$KEY_HEX")
 		if [ -z "$BPF_EP_IP" ] && [ -z "$BPF_REMOTE_ID" ]; then
 			echo "dscp=$2 (${val}) not pinned"
 			exit 0
@@ -160,33 +215,45 @@ show)
 	;;
 
 set)
-	if [ "$3" = "id" ] && [ "$#" -ne 4 ]; then
-		echo "Usage: $0 set <dscp> id <N>"
+	if [ "$3" = "id" ] && [ "$#" -lt 4 ]; then
+		echo "Usage: $0 set <dscp> id <N>..."
 		exit 1
 	fi
-	if [ "$#" -eq 4 ] && [ "$3" = "id" ]; then
-		# Server/VPS-side: pin by MPTCP remote endpoint id.
+	if [ "$#" -ge 4 ] && [ "$3" = "id" ]; then
+		# Server/VPS-side: pin by MPTCP remote endpoint ids.
 		val=$(dscp_to_val "$2")
 		[ -z "$val" ] && { echo "Unknown DSCP class '$2'"; exit 1; }
-		REMOTE_ID="$4"
-		case "$REMOTE_ID" in
-			''|*[!0-9]*) echo "Remote id must be a number 0-255"; exit 1 ;;
-		esac
-		{ [ "$REMOTE_ID" -ge 0 ] && [ "$REMOTE_ID" -le 255 ]; } 2>/dev/null || {
-			echo "Remote id must be a number 0-255"
-			exit 1
-		}
-		if [ ! -e "$MAP_PATH2" ]; then
+		DSCP_NAME="$2"
+		shift 3
+		for REMOTE_ID in "$@"; do
+			case "$REMOTE_ID" in
+				''|*[!0-9]*) echo "Remote id must be a number 0-255"; exit 1 ;;
+			esac
+			{ [ "$REMOTE_ID" -ge 0 ] && [ "$REMOTE_ID" -le 255 ]; } 2>/dev/null || {
+				echo "Remote id must be a number 0-255"
+				exit 1
+			}
+		done
+		KEY_HEX=$(to_byte_hex "$val")
+		if [ -e "$MAP_PATH2" ]; then
+			VALUE_HEX=$(ids_to_set_hex "$@")
+			MAP="$MAP_PATH2"
+		elif [ -e "$MAP_PATH2_OLD" ]; then
+			# An older mptcp-bpf-dscp only takes one id: the first is the
+			# WAN's IPv4 one
+			[ "$#" -gt 1 ] && echo "Warning: this mptcp-bpf-dscp pins one id only, using $1"
+			VALUE_HEX=$(to_byte_hex "$1")
+			MAP="$MAP_PATH2_OLD"
+			set -- "$1"
+		else
 			echo "Error: BPF map not found at $MAP_PATH2 (rebuild/upgrade mptcp-bpf-dscp?)"
 			exit 1
 		fi
-		KEY_HEX=$(to_byte_hex "$val")
-		VALUE_HEX=$(to_byte_hex "$REMOTE_ID")
-		if ! bpftool map update pinned "$MAP_PATH2" key hex $KEY_HEX value hex $VALUE_HEX; then
+		if ! bpftool map update pinned "$MAP" key hex $KEY_HEX value hex $VALUE_HEX; then
 			echo "Error updating map"
 			exit 1
 		fi
-		echo "DSCP pin updated: dscp=$2 (${val}) remote_id=$REMOTE_ID"
+		echo "DSCP pin updated: dscp=$DSCP_NAME (${val}) remote_id=$*"
 		exit 0
 	fi
 
@@ -240,6 +307,7 @@ del)
 	KEY_HEX=$(to_byte_hex "$val")
 	bpftool map delete pinned "$MAP_PATH" key hex $KEY_HEX >/dev/null 2>&1
 	[ -e "$MAP_PATH2" ] && bpftool map delete pinned "$MAP_PATH2" key hex $KEY_HEX >/dev/null 2>&1
+	[ -e "$MAP_PATH2_OLD" ] && bpftool map delete pinned "$MAP_PATH2_OLD" key hex $KEY_HEX >/dev/null 2>&1
 	echo "DSCP pin removed: dscp=$2 (${val})"
 	exit 0
 	;;

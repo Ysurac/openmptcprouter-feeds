@@ -14,7 +14,7 @@
  *                    Router-side: each WAN has its own distinct local
  *                    IP, set via `mptcp-scheduler-dscp.sh set <dscp>
  *                    <interface>`.
- *  - dscp_remote_id: DSCP -> MPTCP remote endpoint id (subflow's
+ *  - dscp_remote_ids: DSCP -> set of MPTCP remote endpoint ids (subflow's
  *                    remote_id). Server-side (VPS): every subflow
  *                    shares the same local IP there, so pinning by
  *                    local IP can't distinguish WANs. remote_id is the
@@ -22,7 +22,9 @@
  *                    (MP_JOIN/ADD_ADDR), stable across the router's
  *                    WAN IP changing (DHCP renewal, mobile reconnects),
  *                    set via `mptcp-scheduler-dscp.sh set <dscp> id
- *                    <N>`.
+ *                    <N>...`. A set, as a dual-stack WAN has one id
+ *                    per address (its metric for IPv4, +128/+192 for
+ *                    IPv6, see the router's multipath script).
  *
  * Why weighted instead of exclusive: an earlier version picked the
  * pinned subflow outright whenever mptcp_subflow_active() reported it
@@ -55,7 +57,7 @@ char _license[] SEC("license") = "GPL";
 /* Raised back to 8 to match bpf_weight_rr's MAX_SUBFLOWS, per explicit
  * request (2026-08-12). History: this was previously dropped to 4
  * because at 8 this function's extra branching factor (two
- * independently-nullable pin sources, dscp_iface AND dscp_remote_id,
+ * independently-nullable pin sources, dscp_iface AND dscp_remote_ids,
  * live across both loops -- see the file header comment -- versus
  * weight_rr's single sequential map-lookup-with-fallback) pushed the
  * verifier's state-space exploration over its 1,000,000 instruction
@@ -101,22 +103,34 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } dscp_iface SEC(".maps");
 
-/* DSCP (0-63) -> preferred MPTCP remote endpoint id (subflow->remote_id).
+/* DSCP (0-63) -> preferred MPTCP remote endpoint ids (subflow->remote_id).
  * Server-side (VPS) equivalent of dscp_iface: every subflow shares the
- * same local IP there, so this keys on the address id the router
- * assigned to the originating WAN instead. Populated from userspace,
- * e.g. by mptcp-scheduler-dscp.sh set <dscp> id <remote_id>.
+ * same local IP there, so this keys on the address ids the router
+ * assigned to the originating WAN instead, one per address of that WAN.
+ * Populated from userspace, e.g. by mptcp-scheduler-dscp.sh set <dscp>
+ * id <remote_id>...
+ *
+ * The ids are a 256-bit set, bit (id & 7) of byte (id >> 3), rather than
+ * a count and an array: matching a subflow is then one bounded byte
+ * read, with no loop inside the subflow loop to add to the verifier's
+ * state space (see MAX_SUBFLOWS). Renamed from dscp_remote_id, whose
+ * value was a single __u8: LIBBPF_PIN_BY_NAME would otherwise fail to
+ * reuse a map still pinned with the old value_size after an upgrade.
  */
+struct dscp_remote_ids {
+	__u8 ids[32];
+};
+
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__type(key, __u8);
-	__type(value, __u8);
+	__type(value, struct dscp_remote_ids);
 	__uint(max_entries, 64);
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
-} dscp_remote_id SEC(".maps");
+} dscp_remote_ids SEC(".maps");
 
 /* local_ip alone is NOT a safe per-subflow discriminator here: on the
- * VPS (dscp_remote_id pinning), every subflow shares the SAME local_ip
+ * VPS (dscp_remote_ids pinning), every subflow shares the SAME local_ip
  * (the VPS has one address; only remote_id differs per router WAN) --
  * confirmed live via bpf_printk-instrumented debug builds + trace_pipe
  * on the VPS (bench, 2026-08-07, see mptcp-dscp-weight-vps-sync-feature
@@ -172,9 +186,11 @@ static __always_inline __u64 div_u64(__u64 dividend, __u32 divisor)
 }
 
 static __always_inline bool remote_id_matches(struct mptcp_subflow_context *subflow,
-						__u8 desired_id)
+						const struct dscp_remote_ids *desired)
 {
-	return desired_id == subflow->remote_id;
+	__u8 id = subflow->remote_id;
+
+	return desired->ids[id >> 3] & (1 << (id & 7));
 }
 
 static __always_inline bool tcp_write_queue_empty(struct sock *sk)
@@ -212,7 +228,7 @@ int BPF_PROG(bpf_dscp_get_send, struct mptcp_sock *msk)
 	struct sock *ssk = NULL;
 	int best_idx = -1;
 	__u32 *desired_ip;
-	__u8 *desired_remote_id;
+	struct dscp_remote_ids *desired_remote_ids;
 	__u8 use_backup;
 	__u8 dscp, tos;
 	int i;
@@ -220,7 +236,7 @@ int BPF_PROG(bpf_dscp_get_send, struct mptcp_sock *msk)
 	tos = BPF_CORE_READ(msk, sk.icsk_inet.tos);
 	dscp = tos >> 2;
 	desired_ip = bpf_map_lookup_elem(&dscp_iface, &dscp);
-	desired_remote_id = bpf_map_lookup_elem(&dscp_remote_id, &dscp);
+	desired_remote_ids = bpf_map_lookup_elem(&dscp_remote_ids, &dscp);
 
 	bpf_for_each(mptcp_subflow, subflow, sk) {
 		__u8 is_backup = (subflow->backup || subflow->request_bkup) ? 1 : 0;
@@ -254,7 +270,7 @@ int BPF_PROG(bpf_dscp_get_send, struct mptcp_sock *msk)
 		 */
 		local_ip = cur->__sk_common.skc_rcv_saddr;
 		is_pin_target = (desired_ip && local_ip == *desired_ip) ||
-				(desired_remote_id && remote_id_matches(subflow, *desired_remote_id));
+				(desired_remote_ids && remote_id_matches(subflow, desired_remote_ids));
 		weight = is_pin_target ? DSCP_PIN_WEIGHT : DSCP_NEUTRAL_WEIGHT;
 
 		entries[nr_total].ssk = cur;
