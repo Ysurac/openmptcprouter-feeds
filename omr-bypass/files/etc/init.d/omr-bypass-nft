@@ -489,6 +489,10 @@ _bypass_ip() {
 # logged instead of discarded.
 _REPLY_INCLUDE="/etc/firewall.omr-bypass-reply"
 _REPLY_NFT="/etc/firewall.omr-bypass-reply.nft"
+
+# Touched by the first line of /etc/firewall.omr-bypass, i.e. by every fw4
+# pass: see the end of start_service.
+_FW4_PASS_NOTE="/var/run/omr-bypass.fw4pass"
 _reply_chain_written=""
 _reply_marks=""
 _reply_wan_marks=""
@@ -2359,6 +2363,8 @@ start_service() {
 
 	#local count
 	logger -t "omr-bypass" "Starting OMR-ByPass..."
+	# a reload resets it before its first change, in _soft_wipe_dynamic
+	[ -z "$RELOAD" ] && rm -f "$_FW4_PASS_NOTE"
 
 	# Generated uci sections are accumulated in these files and applied in a
 	# single "uci batch" per config at the end of the run: applying them one
@@ -2417,7 +2423,9 @@ start_service() {
 	[ -f /etc/firewall.omr-bypass ] && fwfilechangemd5="$(md5sum /etc/firewall.omr-bypass)"
 	[ -f "$_REPLY_NFT" ] && fwfilechangemd5="${fwfilechangemd5} $(md5sum "$_REPLY_NFT")"
 	fwfilechangemd5="${fwfilechangemd5} $(_asn_files_md5)"
-	rm -f /etc/firewall.omr-bypass "$_REPLY_INCLUDE" "$_REPLY_NFT"
+	echo ": > $_FW4_PASS_NOTE" > /etc/firewall.omr-bypass.new
+	mv -f /etc/firewall.omr-bypass.new /etc/firewall.omr-bypass
+	rm -f "$_REPLY_INCLUDE" "$_REPLY_NFT"
 	#cat > /etc/firewall.omr-bypass <<-EOF
 	##!/bin/sh
 	##nft insert rule inet fw4 ss_rules_dst_tcp ip daddr @omr_dst_bypass_all accept
@@ -2571,6 +2579,19 @@ start_service() {
 		RELOAD=""
 	fi
 
+	# fw4 passes of other services (an interface coming up, a proxy restart)
+	# run the include and render the firewall config as they find them, in
+	# the middle of this run: half written and half reset. Their
+	# firewall.omr-server include also commits the changes made so far, so
+	# "uci changes" below no longer shows them. Wait for a pass still
+	# running; if one ran during this run, what fw4 last loaded is no longer
+	# the old include, and the fw4 pass below has to run.
+	_fw4_wait=0
+	while ! flock -n /var/run/fw4.lock true 2>/dev/null && [ "$_fw4_wait" -lt 60 ]; do
+		sleep 1
+		_fw4_wait=$((_fw4_wait + 1))
+	done
+	[ -e "$_FW4_PASS_NOTE" ] && fwfilechangemd5=""
 
 	# Elements that left a set since _soft_wipe_dynamic snapshotted it: the
 	# light `fw4 reload` below cannot take elements out of a live set, so
@@ -2729,6 +2750,9 @@ restart_service() {
 }
 
 _soft_wipe_dynamic() {
+	# the first change of a reload: from here on, an fw4 pass of another
+	# service sees a half reset config (see the end of start_service)
+	rm -f "$_FW4_PASS_NOTE"
 	# reload_rules used to "stop; start": stop deleted every generated
 	# section, including the hash-gate sentinels, so start always re-applied
 	# the whole generated batch (minutes on small boards) even when nothing
