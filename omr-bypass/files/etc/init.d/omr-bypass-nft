@@ -297,11 +297,11 @@ _asn_files_md5() {
 	cat "$_BYPASS_ASN_DIR"/* 2>/dev/null | md5sum
 }
 
-# Rebuild the ASN files: a set that lost prefixes is flushed before fw4's
-# light reload (which never removes elements), and a set no ASN rule uses
-# any more stops reading its file.
+# Rebuild the ASN files: the prefixes a set lost are deleted from it before
+# fw4's light reload (which never removes elements), and a set no ASN rule
+# uses any more stops reading its file.
 _bypass_asns() {
-	local f sec key
+	local f sec key new
 	rm -rf "${_BYPASS_ASN_DIR}.before"
 	[ -d "$_BYPASS_ASN_DIR" ] && mv "$_BYPASS_ASN_DIR" "${_BYPASS_ASN_DIR}.before"
 	mkdir -p "$_BYPASS_ASN_DIR"
@@ -310,16 +310,17 @@ _bypass_asns() {
 	for f in "$_BYPASS_ASN_DIR"/*; do
 		[ -f "$f" ] && sort -u -o "$f" "$f"
 	done
-	_asn_flush_sets=""
+	_asn_stale=""
 	for f in "${_BYPASS_ASN_DIR}.before"/*; do
 		[ -f "$f" ] || continue
 		sec="${f##*/}"
-		# BusyBox has no comm: a line of the old file the new one lacks
-		if [ ! -f "$_BYPASS_ASN_DIR/$sec" ] || \
-			awk 'NR == FNR { n[$0] = 1; next } !($0 in n) { lost = 1; exit } END { exit !lost }' \
-				"$_BYPASS_ASN_DIR/$sec" "$f"; then
-			_asn_flush_sets="$_asn_flush_sets $sec"
-		fi
+		new="$_BYPASS_ASN_DIR/$sec"
+		[ -f "$new" ] || new=/dev/null
+		# BusyBox has no comm: the lines of the old file the new one lacks
+		# (FILENAME, not NR == FNR, which an empty new file would defeat)
+		_asn_stale="${_asn_stale}$(awk -v s="$sec" 'FILENAME == ARGV[1] { n[$0] = 1; next } !($0 in n) { print s, $0 }' \
+			"$new" "$f")
+"
 	done
 	rm -rf "${_BYPASS_ASN_DIR}.before"
 	for key in $(uci -q show firewall 2>/dev/null | grep -E '^firewall\.omr6?_dst_bypass_[^.]+\.loadfile=' | cut -d= -f1); do
@@ -2571,24 +2572,26 @@ start_service() {
 	fi
 
 
-	# Sets that lost members since _soft_wipe_dynamic snapshotted them: the
+	# Elements that left a set since _soft_wipe_dynamic snapshotted it: the
 	# light `fw4 reload` below cannot take elements out of a live set, so
-	# flush exactly those sets first and let the reload re-add what is still
-	# configured (one uci get + one grep per set, not per entry).
-	_omr_flush_sets=""
+	# they are deleted first (one uci get + one grep per set, not per entry).
+	# Only them: flushing the set also took out the addresses dnsmasq had
+	# added for its domains and their subdomains, which then went through
+	# the VPN or the proxy until dnsmasq resolved them upstream again.
+	_omr_stale="$_asn_stale"
 	if [ -f /tmp/omr-bypass-entries.before ]; then
 		for _ob_sec in $(cut -d' ' -f1 /tmp/omr-bypass-entries.before | sort -u); do
 			_ob_after=" $(uci -q get "firewall.${_ob_sec}.entry") "
 			for _ob_val in $(grep "^${_ob_sec} " /tmp/omr-bypass-entries.before | cut -d' ' -f2); do
 				case "$_ob_after" in
 					*" $_ob_val "*) ;;
-					*) _omr_flush_sets="$_omr_flush_sets $_ob_sec"; break ;;
+					*) _omr_stale="${_omr_stale}${_ob_sec} ${_ob_val}
+" ;;
 				esac
 			done
 		done
 		rm -f /tmp/omr-bypass-entries.before
 	fi
-	[ -n "$_asn_flush_sets" ] && _omr_flush_sets="$_omr_flush_sets$_asn_flush_sets"
 
 	# Restore proxy nft rules parked as .down before any fw4 run (issue #4313),
 	# even when a reload has no uci delta: a restored file still needs an fw4
@@ -2620,11 +2623,23 @@ start_service() {
 			sleep 1
 		}
 		[ -n "$RELOAD" ] && {
-			for _ob_sec in $_omr_flush_sets; do
+			# One nft call per set. A delete fails as a whole when one of
+			# its elements is not in the set (deleting part of a merged
+			# range works): that set is flushed as before.
+			_ob_deleted="" _ob_flushed=""
+			for _ob_sec in $(printf '%s' "$_omr_stale" | cut -d' ' -f1 | sort -u); do
 				_ob_set="$(uci -q get "firewall.${_ob_sec}.name")"
-				nft flush set inet fw4 "${_ob_set:-$_ob_sec}" >/dev/null 2>&1
+				_ob_elems="$(printf '%s' "$_omr_stale" | awk -v s="$_ob_sec" '$1 == s && NF == 2 && !seen[$2]++ { printf "%s%s", sep, $2; sep = ", " }')"
+				[ -n "$_ob_elems" ] || continue
+				if nft delete element inet fw4 "${_ob_set:-$_ob_sec}" "{ $_ob_elems }" >/dev/null 2>&1; then
+					_ob_deleted="$_ob_deleted $_ob_sec"
+				else
+					nft flush set inet fw4 "${_ob_set:-$_ob_sec}" >/dev/null 2>&1
+					_ob_flushed="$_ob_flushed $_ob_sec"
+				fi
 			done
-			[ -n "$_omr_flush_sets" ] && logger -t "omr-bypass" "Flushed stale elements from set(s):$_omr_flush_sets"
+			[ -n "$_ob_deleted" ] && logger -t "omr-bypass" "Deleted stale elements from set(s):$_ob_deleted"
+			[ -n "$_ob_flushed" ] && logger -t "omr-bypass" "Flushed stale elements from set(s):$_ob_flushed"
 			fw4 reload || logger -t "omr-bypass" "ERROR: fw4 reload failed"
 		}
 	fi
