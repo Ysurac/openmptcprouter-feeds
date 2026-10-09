@@ -1126,8 +1126,10 @@ return view.extend({
 		o = s.option(form.ListValue, 'multipath', _('Multipath TCP'));
 		o.value('on', _('Enabled'));
 		o.value('off', _('Disabled'));
-		o.value('master', _('Master'));
-		o.value('backup', _('Backup'));
+		// a translation context of their own: the bare words of other
+		// catalogs ("Backup" is "Sauvegarder" in package-manager) won
+		o.value('master', _('Master', 'multipath mode'));
+		o.value('backup', _('Backup', 'multipath mode'));
 		o.default = 'on';
 		/* rmempty must stay false: LuCI removes the uci value instead of
 		 * writing it whenever the selected formvalue equals o.default and

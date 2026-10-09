@@ -247,7 +247,7 @@ return view.extend({
 				E('th', {}, [ _('WAN') ]),
 				E('th', {}, [ _('Local') ]),
 				E('th', {}, [ _('Remote') ]),
-				E('th', {}, [ _('Backup') ]),
+				E('th', {}, [ _('Backup', 'multipath mode') ]),
 				E('th', {}, [ _('cwnd') ]),
 				E('th', {}, [ _('RTT / var (ms)') ]),
 				E('th', {}, [ _('Retrans / total') ]),

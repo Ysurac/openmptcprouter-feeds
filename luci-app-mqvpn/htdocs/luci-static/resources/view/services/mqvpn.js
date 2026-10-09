@@ -166,7 +166,7 @@ return L.view.extend({
 		o.value('minrtt',      _('Minimum RTT'));
 		o.value('wrtt',        _('Weighted RTT'));
 		o.value('wrr',         _('Weighted Round Robin'));
-		o.value('backup',      _('Backup'));
+		o.value('backup',      _('Backup', 'multipath mode'));
 		o.value('backup_fec',  _('Backup with FEC'));
 		o.value('rap',         _('RAP'));
 		o.value('redundant',   _('Redundant'));
