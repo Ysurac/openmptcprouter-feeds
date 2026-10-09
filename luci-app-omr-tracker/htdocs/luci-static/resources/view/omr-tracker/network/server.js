@@ -1,10 +1,43 @@
 'use strict';
+'require dom';
 'require form';
 'require fs';
+'require poll';
+'require rpc';
+'require ui';
 'require view';
 'require uci';
 
 var cfgtypes = ['server'];
+
+var callUciState = rpc.declare({
+	object: 'uci',
+	method: 'state',
+	params: [ 'config' ],
+	expect: { values: {} }
+});
+
+// The master that omr-tracker-server keeps waiting while a backup server
+// is in use (failback delayed or manual), and that backup
+function getFailbackHold() {
+	return L.resolveDefault(callUciState('openmptcprouter'), {}).then(function(sections) {
+		var hold = { held: false, master: null, backup: null };
+
+		if (!sections.omr || sections.omr.failback_hold != '1')
+			return hold;
+		hold.held = true;
+		for (var name in sections) {
+			var sec = sections[name];
+			if (sec['.type'] != 'server' || sec.disabled == '1')
+				continue;
+			if (sec.master == '1' && !hold.master)
+				hold.master = name;
+			if (sec.backup == '1' && sec.current == '1')
+				hold.backup = name;
+		}
+		return hold;
+	});
+}
 
 return view.extend({
 	load: function() {
@@ -13,12 +46,47 @@ return view.extend({
 			L.resolveDefault(fs.stat('/usr/bin/dig'), {}),
 //			L.resolveDefault(fs.stat('/usr/bin/nping'), {}),
 //			L.resolveDefault(fs.stat('/usr/bin/arping'), {}),
-			uci.load('network')
+			uci.load('network'),
+			getFailbackHold()
 		]);
+	},
+
+	handleFailback: function(holdNode) {
+		if (!confirm(_('Return to the master server now? The proxy and the VPNs restart, which drops the open connections.')))
+			return;
+		return fs.exec('/etc/init.d/omr-tracker', [ 'failback' ]).then(function(res) {
+			if (res.code !== 0)
+				throw new Error((res.stdout || res.stderr || '').trim() || String(res.code));
+			holdNode.style.display = 'none';
+			ui.addNotification(null, E('p', _('The router goes back to the master server at its next check.')), 'info');
+		}).catch(function(e) {
+			ui.addNotification(null, E('p', _('Unable to return to the master server: %s').format(e.message)), 'error');
+		});
+	},
+
+	renderFailbackHold: function(holdNode, hold) {
+		if (!hold.held) {
+			holdNode.style.display = 'none';
+			return;
+		}
+		dom.content(holdNode, [
+			E('p', _('The master server %s answers again, but the backup server %s is still in use.').format(hold.master || '?', hold.backup || '?')),
+			E('button', {
+				'class': 'cbi-button cbi-button-action',
+				'click': ui.createHandlerFn(this, 'handleFailback', holdNode)
+			}, _('Return to the master server now'))
+		]);
+		holdNode.style.display = '';
 	},
 
 	render: function (stats) {
 		var m, s, o;
+		var holdNode = E('div', { 'class': 'cbi-section', 'style': 'display:none' });
+
+		this.renderFailbackHold(holdNode, stats[3]);
+		poll.add(L.bind(function() {
+			return getFailbackHold().then(L.bind(this.renderFailbackHold, this, holdNode));
+		}, this), 10);
 
 		m = new form.Map('omr-tracker', _('OMR-Tracker - Server'),
 			_('Detect if server is down and use defined backup server in this case.'));
@@ -156,6 +224,27 @@ return view.extend({
 		o.value('900', _('%d minutes').format('15'));
 		o.value('1800', _('%d minutes').format('30'));
 		o.value('3600', _('%d hour').format('1'));
+
+		// omr-tracker-server and the tracker use the same defaults
+		o = s.option(form.ListValue, 'failback', _('Return to the master server'),
+			_('When to go back to the master server once it answers again while a backup server is in use. Changing server restarts the proxy and the VPNs, which drops the open connections. When the backup server stops answering, the router goes back to the master server at once. Manually: with the button shown on this page while the backup server is kept in use, or with "/etc/init.d/omr-tracker failback".'));
+		o.default = 'immediate';
+		o.value('immediate', _('Immediately'));
+		o.value('delayed', _('After a delay'));
+		o.value('manual', _('Manually'));
+
+		o = s.option(form.Value, 'failback_delay', _('Failback delay [s]'),
+			_('How long the master server must answer without interruption before the router goes back to it.'));
+		o.depends('failback', 'delayed');
+		o.retain = true;
+		o.datatype = 'uinteger';
+		o.default = '300';
+		o.value('60', _('%d minute').format('1'));
+		o.value('300', _('%d minutes').format('5'));
+		o.value('900', _('%d minutes').format('15'));
+		o.value('1800', _('%d minutes').format('30'));
+		o.value('3600', _('%d hour').format('1'));
+		o.modalonly = true;
 /*
 		o = s.option(form.Value, 'failure_interval', _('Failure interval'),
 			_('Ping interval during failure detection'));
@@ -224,6 +313,13 @@ return view.extend({
 		o.value('9');
 		o.value('10');
 */
-		return m.render();
+		return m.render().then(function(node) {
+			var descr = node.querySelector('.cbi-map-descr');
+			if (descr)
+				descr.parentNode.insertBefore(holdNode, descr.nextSibling);
+			else
+				node.insertBefore(holdNode, node.firstChild);
+			return node;
+		});
 	}
 })

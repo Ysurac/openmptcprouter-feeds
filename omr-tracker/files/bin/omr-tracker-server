@@ -313,9 +313,50 @@ _do_check_ip() {
 	elif [ "$OMR_TRACKER_TYPE" = "none" ]; then
 		server_ping=true
 	fi
-	[ "$server_ping" = true ] && oneserverup="1"
 	countips=$((countips+1))
+	server_held=false
 	set_ip
+	# A master kept waiting by the failback setting answers, but is not
+	# the server in use: the backups are still checked
+	[ "$server_ping" = true ] && [ "$server_held" = false ] && oneserverup="1"
+}
+
+_get_backup_in_use() {
+	local backup
+	config_get backup "$1" backup
+	[ "$backup" = "1" ] && [ "$(omr_state_get openmptcprouter."$1".current)" = "1" ] && backup_in_use="$1"
+}
+
+# omr-tracker.server.failback: whether to stay on the backup server in use
+# although the master answers again (state key $1). Moving back restarts
+# the proxy and the VPNs, which drops every open connection: "delayed"
+# waits until the master has answered for failback_delay seconds, "manual"
+# until "/etc/init.d/omr-tracker failback". Returns 0 to stay on the backup.
+_failback_hold() {
+	local key="$1" now
+	[ "$failback_force" = "1" ] && return 1
+	case "$failback" in
+		delayed|manual) ;;
+		*) return 1 ;;
+	esac
+	# Without a backup in use this is no failback, and the master is set at
+	# once: after a reboot (the state is gone) or a change of the config
+	backup_in_use=""
+	config_load openmptcprouter
+	config_foreach _get_backup_in_use server
+	[ -z "$backup_in_use" ] && return 1
+	if [ "$(omr_state_get openmptcprouter.omr.failback_now)" = "1" ]; then
+		omr_state_del openmptcprouter omr failback_now
+		logger -t "OMR-Tracker-Server" "Failback to the master server requested"
+		failback_force="1"
+		return 1
+	fi
+	if [ "$failback" = "delayed" ]; then
+		printf -v now '%(%s)T' -1
+		[ -z "${_failback_since[$key]}" ] && _failback_since[$key]="$now"
+		[ $((now - _failback_since[$key])) -ge "$failback_delay" ] && return 1
+	fi
+	return 0
 }
 
 _check_master() {
@@ -345,6 +386,16 @@ _check_master() {
 				if { [ -n "$(uci -q get shadowsocks-libev.sss${count})" ] && [ "$ss_libev_server" != "$ip" ]; } || \
 				   { [ -n "$(uci -q get shadowsocks-rust.sss${count})" ] && [ "$ss_rust_server" != "$ip" ]; } || \
 				   { [ -n "$(uci -q get openvpn.omr)" ] && [ -z "$(uci -q get openvpn.omr.remote | grep "$ip")" ]; }; then
+					if _failback_hold "$state_key"; then
+						server_held=true
+						failback_held="1"
+						if [ "${_failback_logged[$state_key]}" != "1" ]; then
+							logger -t "OMR-Tracker-Server" "Master server ${name} up ($ip), stay on backup server ${backup_in_use} (failback ${failback})"
+							_failback_logged[$state_key]="1"
+						fi
+						count=$((count+1))
+						return
+					fi
 					logger -t "OMR-Tracker-Server" "Master server ${name} up ($ip), set it back"
 					changes="1"
 					uci -q batch <<-EOF >/dev/null
@@ -365,6 +416,8 @@ _check_master() {
 						_apply_server_config "$ip" "$name"
 					fi
 				fi
+				_failback_since[$state_key]=""
+				_failback_logged[$state_key]=""
 				OMR_TRACKER_STATUS_MSG="Answer to ping and to API check"
 				# Steady state (already up last cycle, config untouched): the
 				# redir re-enable walk, ip_down bookkeeping and up-alert only
@@ -403,6 +456,8 @@ _check_master() {
 					_send_mail_alert "down" "$name" "$ip"
 				fi
 				_srv_prev_up[$state_key]="0"
+				_failback_since[$state_key]=""
+				_failback_logged[$state_key]=""
 				OMR_TRACKER_STATUS="ERROR"
 				script_alert_down=$(uci -q get omr-tracker.proxy.script_alert_down)
 				[ -n "$script_alert_down" ] && eval "$script_alert_down"
@@ -532,6 +587,37 @@ _check_backup() {
 	}
 }
 
+# One round: the masters, then the backups while no master is in use
+_check_servers() {
+	failback_held="0"
+	failback_force="0"
+	config_load openmptcprouter
+	config_foreach _check_master server
+	[ "$oneserverup" = "0" ] && {
+		config_load openmptcprouter
+		config_foreach _check_backup server
+	}
+	# A master kept waiting by the failback setting is taken back as soon
+	# as no backup answers anymore
+	[ "$oneserverup" = "0" ] && [ "$failback_held" = "1" ] && {
+		failback_held="0"
+		failback_force="1"
+		config_load openmptcprouter
+		config_foreach _check_master server
+	}
+	# openmptcprouter-vps leaves a master kept waiting alone: its config
+	# would move the VPNs back to it
+	if [ "$failback_held" != "$_failback_state" ]; then
+		if [ "$failback_held" = "1" ]; then
+			omr_state_set openmptcprouter omr failback_hold 1
+		else
+			omr_state_del openmptcprouter omr failback_hold
+			omr_state_del openmptcprouter omr failback_now
+		fi
+		_failback_state="$failback_held"
+	fi
+}
+
 . /lib/functions.sh
 
 timeout=${OMR_TRACKER_TIMEOUT:-5}
@@ -542,6 +628,17 @@ waittest=${OMR_TRACKER_WAIT_TEST:-0}
 # Per-"server:ip" up/down state from the previous cycle, so the check
 # functions can tell a transition apart from the steady state
 declare -A _srv_prev_up
+# omr-tracker.server.failback: immediate (default), delayed or manual
+failback=${OMR_TRACKER_FAILBACK:-immediate}
+failback_delay=${OMR_TRACKER_FAILBACK_DELAY:-300}
+case "$failback_delay" in
+	''|*[!0-9]*) failback_delay=300 ;;
+esac
+# Per master "server:ip": when it started to answer while a backup is in
+# use, and whether that was logged
+declare -A _failback_since _failback_logged
+# Last value written to openmptcprouter.omr.failback_hold
+_failback_state=""
 # `multipath` is itself a shell script whose no-arg listing forks per network
 # device, so refresh the default-route interface list at most every 30s
 # instead of on every check. Worst case a hotplugged/removed WAN is seen up
@@ -560,12 +657,7 @@ while true; do
 		mp_default_intfs="$(multipath 2>/dev/null | awk '/default/{print $1}')"
 		_mp_intfs_ts=$_mp_now
 	fi
-	config_load openmptcprouter
-	config_foreach _check_master server
-	[ "$oneserverup" = "0" ] && {
-		config_load openmptcprouter
-		config_foreach _check_backup server
-	}
+	_check_servers
 	# Global server state for consumers (LuCI, scripts): "up" while at least
 	# one master or backup server answers, "down" otherwise. The
 	# server-post-tracking.d hooks get the same, as their status.
