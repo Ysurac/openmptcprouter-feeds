@@ -163,12 +163,6 @@ This is used to bypass a protocol
 *Description:* A middlebox detection tool
 
 
-## Shortcut-FE
-*Source:* [https://github.com/coolsnowwolf/lede/tree/master/package/lean/shortcut-fe](https://github.com/coolsnowwolf/lede/tree/master/package/lean/shortcut-fe)
-
-*Description:* Shortcut is an in-Linux-kernel IP packet forwarding engine.
-
-
 ## V2Ray
 *Source:* [https://github.com/v2fly/v2ray-core](https://github.com/v2fly/v2ray-core)
 
