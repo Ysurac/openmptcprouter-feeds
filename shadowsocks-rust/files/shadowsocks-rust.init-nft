@@ -21,7 +21,27 @@ START=99
 
 EXTRA_COMMANDS="rules_up rules_down rules_exist rules_reset"
 
-. /usr/lib/unbound/iptools.sh
+# unbound-daemon is not a dependency, and a missing sourced file aborts the
+# whole script: the two tests used here, as iptools.sh has them
+if [ -f /usr/lib/unbound/iptools.sh ]; then
+	. /usr/lib/unbound/iptools.sh
+else
+	valid_subnet6() {
+		case "$1" in
+			[1-9][0-9a-f][0-9a-f][0-9a-f]":"*) echo "ok" ;;
+			f[cd][0-9a-f][0-9a-f]":"*) echo "ok" ;;
+			*) echo "not" ;;
+		esac
+	}
+	valid_subnet4() {
+		case "$1" in
+			169"."254"."*|127"."*|0"."*|255"."*) echo "not" ;;
+			25[0-4]"."[0-9]*|2[0-4][0-9]"."[0-9]*|1[0-9][0-9]"."[0-9]*) echo "ok" ;;
+			[0-9][0-9]"."[0-9]*|[0-9]"."[0-9]*) echo "ok" ;;
+			*) echo "not" ;;
+		esac
+	}
+fi
 
 ss_confdir=/var/etc/shadowsocks-rust
 ss_bindir=/usr/bin
@@ -140,7 +160,11 @@ ss_xxx() {
 ss_omr_servers() {
 	add_ip() {
 		local ip="$1"
-		[ -n "$ip" ] && [ -z "$(echo \"$ss_redir_servers\" | grep \"$ip\")" ] && ss_redir_servers="$ss_redir_servers $ip"
+		[ -n "$ip" ] || return
+		case " $ss_redir_servers " in
+			*" $ip "*) ;;
+			*) ss_redir_servers="$ss_redir_servers $ip" ;;
+		esac
 	}
 	config_list_foreach "$1" ip add_ip
 }
@@ -223,13 +247,11 @@ ss_collect_redir_info() {
 	ss_server_configured "$cfgserver" || return
 
 	srv_ip=$(uci -q get shadowsocks-rust.${cfgserver}.server)
-	if [ -n "$srv_ip" ] && [ -z "$(echo "$ss_redir_servers" | grep "$srv_ip")" ]; then
-		if [ -z "$ss_redir_servers" ]; then
-			ss_redir_servers="$srv_ip"
-		else
-			ss_redir_servers="$ss_redir_servers $srv_ip"
-		fi
-	fi
+	# a whole word: 10.0.0.1 is not already listed because 10.0.0.10 is
+	case " $ss_redir_servers " in
+		*" $srv_ip "*) ;;
+		*) [ -n "$srv_ip" ] && ss_redir_servers="${ss_redir_servers:+$ss_redir_servers }$srv_ip" ;;
+	esac
 
 	port=$(uci -q get shadowsocks-rust.$cfg.local_port)
 	mode=$(uci -q get shadowsocks-rust.$cfg.mode)
@@ -344,7 +366,9 @@ ss_rules_nft_gen() {
 		| xargs -n 1 resolveip -t 5 \
 		| sort -u)"
 
-	local tmp="/tmp/ssrrules"
+	local tmpdir tmp
+	tmpdir="$(mktemp -d /tmp/ssrrules.XXXXXX)" || return 0
+	tmp="$tmpdir/rules"
 	json_init
 	json_add_string o_remote_servers "$remote_servers"
 	json_add_string o_redir_tcp_port "$local_port_tcp"
@@ -367,17 +391,35 @@ ss_rules_nft_gen() {
 	ss_rules_extra_json
 	json_dump -i >"$tmp.json"
 
-	if utpl -S -F "$tmp.json" "$ssrules_uc" >"$tmp.nft" \
-		&& ! cmp -s "$tmp.nft" "$ssrules_nft"; then
-		echo "table inet chk {include \"$tmp.nft\";}" >"$tmp.nft.chk"
-		if nft -f "$tmp.nft.chk" -c; then
-			mv "$tmp.nft" "$ssrules_nft"
-			fw4 -q restart
+	if utpl -S -F "$tmp.json" "$ssrules_uc" >"$tmp.nft"; then
+		grep -q tproxy "$tmp.nft" || ss_tproxy_route_del
+		if ! cmp -s "$tmp.nft" "$ssrules_nft"; then
+			echo "table inet chk {include \"$tmp.nft\";}" >"$tmp.nft.chk"
+			if nft -f "$tmp.nft.chk" -c; then
+				mv "$tmp.nft" "$ssrules_nft"
+				fw4 -q restart
+			fi
 		fi
-		rm -f "$tmp.nft.chk"
 	fi
-	rm -f "$tmp.json"
-	rm -f "$tmp.nft"
+	rm -rf "$tmpdir"
+}
+
+# The template adds "fwmark 1 lookup 100" (local delivery of what tproxy
+# marks) when it renders a tproxy redirect. The other proxies' templates add
+# the same rule: kept while one of their rule files has a tproxy redirect
+ss_tproxy_route_del() {
+	local f family
+	for f in /etc/nftables.d/90-proxy-*.nft*; do
+		case "$f" in
+			"$ssrules_nft"*) continue ;;
+		esac
+		grep -qs tproxy "$f" && return 0
+	done
+	for family in -4 -6; do
+		while ip $family rule del fwmark 1 lookup 100 2>/dev/null; do :; done
+		ip $family route flush table 100 2>/dev/null
+	done
+	return 0
 }
 
 ss_rules_nft_reset() {
@@ -386,6 +428,7 @@ ss_rules_nft_reset() {
 		rm -f "${ssrules_nft}.down"
 		fw4 -q reload
 	fi
+	ss_tproxy_route_del
 }
 
 ss_rules() {
