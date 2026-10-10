@@ -18,7 +18,7 @@ EXTRA_COMMANDS="initialize"
 start_service() {
 	config_load softethervpn
 	config_get enable openmptcprouter enable
-	[ "$enable" != "1" ] && exit 0
+	[ "$enable" != "1" ] && return 0
 
 	logger -t 'softethervpn5' "Starting softether client service."
 	
@@ -53,11 +53,17 @@ start_service() {
 
 # Initialize and set SoftEther VPN settings
 initialize() {
-	# Check if SoftEther VPN is available...
-	result=1
+	# Check if SoftEther VPN is available... The hotplug runs this too, and
+	# hotplug scripts run one at a time: never wait forever
+	local tries=0
 	while ! /usr/bin/vpncmd 127.0.0.1 /CLIENT /CSV /CMD About >/dev/null; do
-	    sleep 1
-	    echo -n '.'
+		tries=$((tries + 1))
+		[ "$tries" -ge 60 ] && {
+			logger -t 'softethervpn5' "VPN client not answering, settings not applied"
+			return 1
+		}
+		sleep 1
+		echo -n '.'
 	done
 
 	# Load configuration
