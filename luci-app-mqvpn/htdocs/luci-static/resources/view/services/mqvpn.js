@@ -170,7 +170,11 @@ return L.view.extend({
 		o.value('backup_fec',  _('Backup with FEC'));
 		o.value('rap',         _('RAP'));
 		o.value('redundant',   _('Redundant'));
+		o.value('dscp',        _('DSCP'));
 		o.default = 'wlb';
+		/* Removed when it equals the default, the VPS sync would then adopt
+		 * the server's own scheduler: WLB could not be chosen back */
+		o.rmempty = false;
 		o.description = _('With "Weighted RTT" or "Weighted Round Robin", each path\'s weight is taken from its interface\'s "Weight" setting (Network page, same value used by the MPTCP weight schedulers and settable via the API) and pushed to mqvpn automatically. "Weighted RTT" favors the highest-weight path until it\'s congestion-window-limited, while "Weighted Round Robin" interleaves traffic across paths in proportion to their weight. "Redundant" broadcasts every packet on every usable path; use only for loss-critical, low-bitrate traffic.');
 
 		o = s.option(form.ListValue, 'cc', _('Congestion control'));
@@ -195,11 +199,11 @@ return L.view.extend({
 		o.rmempty = false;
 
 		o = s.option(form.ListValue, 'reinjection_mode', _('Reinjection mode'));
-		o.value('', _('Default'));
 		o.value('default', _('Default'));
 		o.value('deadline', _('Deadline'));
 		o.value('dgram', _('Datagram'));
-		o.rmempty = true;
+		o.default = 'default';
+		o.rmempty = false;
 		o.retain = true;
 		o.depends('reinjection_control', '1');
 
@@ -214,7 +218,7 @@ return L.view.extend({
 		o.value('reed_solomon',       _('Reed-Solomon'));
 		o.value('xor',                _('XOR'));
 		o.default = 'reed_solomon';
-		o.rmempty = true;
+		o.rmempty = false;
 		o.retain = true;
 		o.depends('fec_enable', '1');
 
