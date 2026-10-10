@@ -51,6 +51,7 @@ msg="$OMR_TRACKER_STATUS_MSG"
 case "$msg" in
 	*"Packet loss is"*)          reason="packet_loss" ;;
 	*"Latency is"*)               reason="high_latency" ;;
+	*"Congestion score is"*)      reason="congestion" ;;
 	*"link down"*)                 reason="link_down" ;;
 	*"gateway down"*)              reason="gateway_down" ;;
 	*"No answer from server"*)     reason="no_answer" ;;
@@ -79,6 +80,22 @@ _jval() {
 	fi
 }
 
+# Every tracker runs this hook for its own interface, and a WAN problem
+# changes several of them at once: one prune rewrote the file from a copy
+# taken before another tracker's append, or two of them shared the same .tmp
+# file, and the whole history was lost (1 round in 6 with six trackers).
+# Busybox flock has no -w: poll it, and go ahead unlocked rather than never.
+[ -w "$EVENTS_DIR" ] || exit 0
+exec 7>>"${EVENTS_FILE}.lock"
+if command -v flock >/dev/null 2>&1; then
+	_tries=0
+	until flock -n 7 2>/dev/null; do
+		_tries=$((_tries + 1))
+		[ "$_tries" -ge 10 ] && break
+		sleep 1
+	done
+fi
+
 # "ts" must stay the first key: the retention pass below extracts it with a
 # cheap awk split instead of a full JSON parse.
 printf '{"ts":%s,"interface":"%s","device":"%s","event":"%s","reason":"%s","message":"%s","latency":%s,"loss":%s}\n' \
@@ -89,25 +106,31 @@ logger -t omr-events "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) $event: ${msg
 
 # Prune by age then by size (whichever limit is hit first) in a single pass:
 # drop lines older than the cutoff, then drop from the oldest remaining line
-# until the file is back under the size cap.
+# until the file is back under the size cap. Only when a limit is hit: the
+# lines are in time order, so the first one tells whether any is too old.
 cutoff=$((now - max_age))
-awk -v cutoff="$cutoff" -v maxsize="$max_size" '
-	{
-		split($0, a, "\"ts\":")
-		split(a[2], b, ",")
-		ts = b[1] + 0
-		if (ts >= cutoff) {
-			n++
-			lines[n] = $0
-			sz = length($0) + 1
-			sizes[n] = sz
-			total += sz
+size=$(wc -c < "$EVENTS_FILE" 2>/dev/null)
+first_ts=$(head -n 1 "$EVENTS_FILE" 2>/dev/null | sed -n 's/^{"ts":\([0-9]*\),.*/\1/p')
+if [ "${size:-0}" -gt "$max_size" ] || [ "${first_ts:-0}" -lt "$cutoff" ]; then
+	awk -v cutoff="$cutoff" -v maxsize="$max_size" '
+		{
+			split($0, a, "\"ts\":")
+			split(a[2], b, ",")
+			ts = b[1] + 0
+			if (ts >= cutoff) {
+				n++
+				lines[n] = $0
+				sz = length($0) + 1
+				sizes[n] = sz
+				total += sz
+			}
 		}
-	}
-	END {
-		start = 1
-		while (total > maxsize && start <= n) { total -= sizes[start]; start++ }
-		for (i = start; i <= n; i++) print lines[i]
-	}' "$EVENTS_FILE" > "${EVENTS_FILE}.tmp" 2>/dev/null && mv "${EVENTS_FILE}.tmp" "$EVENTS_FILE" 2>/dev/null
+		END {
+			start = 1
+			while (total > maxsize && start <= n) { total -= sizes[start]; start++ }
+			for (i = start; i <= n; i++) print lines[i]
+		}' "$EVENTS_FILE" > "${EVENTS_FILE}.tmp.$$" 2>/dev/null && mv "${EVENTS_FILE}.tmp.$$" "$EVENTS_FILE" 2>/dev/null
+	rm -f "${EVENTS_FILE}.tmp.$$"
+fi
 
 exit 0
