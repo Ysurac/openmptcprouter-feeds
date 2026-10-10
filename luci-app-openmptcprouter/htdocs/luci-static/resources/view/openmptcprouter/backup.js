@@ -2,7 +2,6 @@
 'require view';
 'require form';
 'require rpc';
-'require uci';
 'require ui';
 
 var callBackupList = rpc.declare({
@@ -34,6 +33,10 @@ return view.extend({
 
 		m = new form.Map('openmptcprouter', _('Backup on server'));
 
+		/* The picked backups are read from the widgets: nothing on this page
+		 * is ever saved to uci */
+		var selects = {};
+
 		Object.keys(backupdata || {}).forEach(function(servername) {
 			var serverdata = backupdata[servername];
 
@@ -47,6 +50,7 @@ return view.extend({
 					o.value(b.file, new Date(b.time * 1000).toLocaleString());
 				});
 				o.cfgvalue = function() { return ''; };
+				selects[servername] = o;
 			} else if (serverdata.lastbackup) {
 				o = s.option(form.DummyValue, '_lastbackup', _('Last available backup on server'));
 				var dateStr = new Date(serverdata.lastbackup * 1000).toLocaleString();
@@ -64,33 +68,24 @@ return view.extend({
 		o.inputtitle = _('Restore backup');
 		o.inputstyle = 'action important';
 		o.onclick = function() {
-			return m.parse().then(function() {
-				var servers = uci.sections('openmptcprouter', 'server') || [];
-				var promises = [];
-				var anySelected = false;
+			var promises = [];
 
-				servers.forEach(function(srv) {
-					var sel = uci.get('openmptcprouter', srv['.name'], 'backup_select');
-					if (sel && sel !== '') {
-						anySelected = true;
-						promises.push(callBackupGet(srv['.name'], sel));
-					}
-				});
+			Object.keys(selects).forEach(function(name) {
+				var sel = selects[name].formvalue(name);
+				if (sel)
+					promises.push(callBackupGet(name, sel));
+			});
 
-				if (!anySelected) {
-					promises.push(callBackupGet('', ''));
-				}
+			if (!promises.length)
+				promises.push(callBackupGet('', ''));
 
-				uci.revert('openmptcprouter');
-				return Promise.all(promises);
-			}).then(function(res) {
+			return Promise.all(promises).then(function(res) {
 				res.forEach(function(r) {
 					if (!r || r.result !== true)
 						throw new Error((r && r.error) || _('the server sent no valid backup'));
 				});
 				ui.addNotification(null, _('Backup restored successfully.'), 'info');
 			}).catch(function(err) {
-				uci.revert('openmptcprouter');
 				ui.addNotification(null, _('Failed to restore backup: ') + ((err && err.message) || String(err)), 'error');
 			});
 		};

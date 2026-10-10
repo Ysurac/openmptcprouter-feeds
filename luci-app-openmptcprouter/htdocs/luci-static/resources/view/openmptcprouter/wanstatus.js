@@ -145,9 +145,12 @@ return view.extend({
 	renderWanNode: function(wan, anonymize) {
 		var statusClass = wan.status === 'ERROR' ? 'error' : (wan.status === 'WARNING' ? 'warning' : 'ok');
 		var title = this.esc(wan.label || wan.name || 'WAN');
+		/* No inline handler: the browser decodes the entities esc() puts in
+		 * an attribute before it runs it as JavaScript, so a name in a JS
+		 * string there was not escaped at all. renderStatus() colours it. */
 		var icon = String.format(
-			'<embed id="modem_%s" onload="window.omrSetColorSVG(\'modem_%s\', \'%s\')" src="%s/modem.svg" />',
-			this.esc(wan.name || 'wan'), this.esc(wan.name || 'wan'), this.esc(this.stringToColour(wan.name || 'wan')), L.resource()
+			'<embed id="modem_%s" class="omr-modem-icon" data-color="%s" src="%s/modem.svg" />',
+			this.esc(wan.name || 'wan'), this.esc(this.stringToColour(wan.name || 'wan')), L.resource()
 		);
 		var statusMessage = '';
 		if (!wan.ipaddr && !wan.ip6addr) statusMessage += _('No IP defined') + '<br />';
@@ -229,22 +232,21 @@ return view.extend({
 		this.lastData = initialData || null;
 		if (initialData) this.renderStatus(initialData);
 		this.pollData();
-		window.omrSetColorSVG = function(embedId, color) {
-			var embed = document.getElementById(embedId);
-			if (!embed) return;
-			var svg;
-			try {
-				svg = embed.getSVGDocument ? embed.getSVGDocument() : embed.contentDocument;
-			} catch (e) {
-				svg = null;
-			}
-			if (svg) {
-				var back = svg.getElementById('backgound_modem');
-				if (back) back.setAttribute('style', 'fill: ' + color + ';fill-opacity:0.6;');
-			}
-		};
 
 		return container;
+	},
+
+	setColorSVG: function(embed, color) {
+		var svg;
+		try {
+			svg = embed.getSVGDocument ? embed.getSVGDocument() : embed.contentDocument;
+		} catch (e) {
+			svg = null;
+		}
+		if (svg) {
+			var back = svg.getElementById('backgound_modem');
+			if (back) back.setAttribute('style', 'fill: ' + color + ';fill-opacity:0.6;');
+		}
 	},
 
 	renderStatus: function(data) {
@@ -385,6 +387,12 @@ return view.extend({
 		}
 		temp += '</td></tr></table></li></ul></figure>';
 		c.innerHTML = temp;
+
+		c.querySelectorAll('embed.omr-modem-icon').forEach(L.bind(function(embed) {
+			embed.addEventListener('load', L.bind(function() {
+				this.setColorSVG(embed, embed.getAttribute('data-color'));
+			}, this));
+		}, this));
 
 		requestAnimationFrame(function() {
 			var omrEl = c.querySelector('#omr .network-node');

@@ -161,8 +161,44 @@ function interface_from_device(dev)
 	return ""
 end
 
+-- addserver, removeserver and removeinterface are ubus methods taking any
+-- section name: "removeserver settings" deleted openmptcprouter.settings and
+-- "removeinterface lan" the LAN
+local function section_is(config, name, stype)
+	return type(name) == "string" and name:match("^[%w_]+$") ~= nil
+		and ucic:get(config, name) == stype
+end
+
+local protected_interfaces = { loopback = true, lan = true, omrvpn = true, omr6in4 = true }
+
+-- A WAN: a network interface that no firewall zone but "wan" lists
+local function removable_interface(name)
+	if not section_is("network", name, "interface") or protected_interfaces[name] then
+		return false
+	end
+	local other_zone = false
+	ucic:foreach("firewall", "zone", function(z)
+		if z.name ~= "wan" then
+			local nets = z.network
+			if type(nets) ~= "table" then
+				nets = {}
+				for n in tostring(z.network or ""):gmatch("%S+") do nets[#nets + 1] = n end
+			end
+			for _, n in ipairs(nets) do
+				if n == name then other_zone = true end
+			end
+		end
+	end)
+	return not other_zone
+end
+
 function add_server(add_server_name)
-	ucic:set("openmptcprouter",add_server_name:gsub("[^%w_]+","_"),"server")
+	local name = (type(add_server_name) == "string" and add_server_name or ""):gsub("[^%w_]+","_")
+	local stype = ucic:get("openmptcprouter", name)
+	if name == "" or (stype ~= nil and stype ~= "server") then
+		return { error = "Invalid server name" }
+	end
+	ucic:set("openmptcprouter",name,"server")
 	ucic:save("openmptcprouter")
 	ucic:commit("openmptcprouter")
 end
@@ -237,6 +273,9 @@ local function clear_server_vpn_proxy(ips)
 end
 
 function remove_server(serverdel)
+	if not section_is("openmptcprouter", serverdel, "server") then
+		return { error = "Unknown server" }
+	end
 	-- Collect IPs before deleting so we can clean up VPN/proxy configs
 	local raw_ip = ucic:get("openmptcprouter", serverdel, "ip")
 	local server_ips = {}
@@ -261,7 +300,7 @@ function remove_server(serverdel)
 	-- Remove server IPs from VPN and proxy configurations
 	clear_server_vpn_proxy(server_ips)
 
-	os.execute("ubus call network reload 2>&1 >/dev/null")
+	os.execute("ubus call network reload >/dev/null 2>&1")
 end
 
 function add_interface(add_interface_ifname)
@@ -356,6 +395,9 @@ function add_interface(add_interface_ifname)
 end
 
 function remove_interface(intf)
+	if not removable_interface(intf) then
+		return { error = "Not a WAN interface" }
+	end
 	-- Remove existing interface
 	local defif = ucic:get("network",intf,"device")
 	ucic:delete("network",intf)
@@ -1256,8 +1298,10 @@ function wizard_add(args)
 		ucic:set("mqvpn", "server", "port", _as_string(args.mqvpn_port, ""))
 	end
 
-	if _as_string(args.ula, "") ~= "" then
-		ucic:set("network", "globals", "ula_prefix", _as_string(args.ula, ""))
+	-- The wizard always sends the prefix, so an empty one is the field
+	-- emptied; a caller leaving it out keeps the current one
+	if args.ula ~= nil then
+		_set_or_delete("network", "globals", "ula_prefix", _as_string(args.ula, ""))
 	end
 
 	if _as_string(args.default_proxy, "") ~= "" then
@@ -1501,7 +1545,20 @@ function wizard_add(args)
 				_set_or_delete("openmptcprouter", name, "multipathvpn", _to_flag(itf.multipathvpn))
 
 				if _as_string(itf.ttl, "") ~= "" then
-					ucic:set("network", name .. "_dev", "device")
+					if ucic:get("network", name .. "_dev") == nil then
+						ucic:set("network", name .. "_dev", "device")
+						-- /etc/firewall.ttl sets the TTL on the device this
+						-- names: a section created without it did nothing.
+						-- Never a second section for a device already
+						-- configured, and never a modem's sysfs path.
+						local named = false
+						ucic:foreach("network", "device", function(d)
+							if d.name == _dev then named = true end
+						end)
+						if _dev ~= "" and not _dev:find("/", 1, true) and not named then
+							ucic:set("network", name .. "_dev", "name", _dev)
+						end
+					end
 					ucic:set("network", name .. "_dev", "ttl", _as_string(itf.ttl, ""))
 				else
 					ucic:delete("network", name .. "_dev", "ttl")
@@ -1742,11 +1799,9 @@ function settings_add(args)
 	_set_or_delete("openmptcprouter", "settings", "disableserverping", _to_flag(args.disableserverping))
 	_set_or_delete("openmptcprouter", "settings", "disablemultipathtest", _to_flag(args.disablemultipathtest))
 	_set_or_delete("openmptcprouter", "settings", "shadowsocksudp", _to_flag(args.shadowsocksudp))
-	_set_or_delete("openmptcprouter", "settings", "ndpi", _to_flag(args.ndpi))
+	_set_flag_if_given("ndpi", args.ndpi)
 	_set_or_delete("openmptcprouter", "settings", "disable_fastopen", _to_flag(args.disablefastopen))
 	_set_or_delete("openmptcprouter", "settings", "enable_nodelay", _to_flag(args.enablenodelay))
-	_set_or_delete("openmptcprouter", "settings", "sfe_enabled", _to_flag(args.sfe_enabled))
-	_set_or_delete("openmptcprouter", "settings", "sfe_bridge", _to_flag(args.sfe_bridge))
 	_set_or_delete("openmptcprouter", "settings", "sipalg", _to_flag(args.sipalg))
 	_set_flag_if_given("openvpn_lb", args.openvpnlb)
 	_set_or_delete("openmptcprouter", "settings", "vxlan", _to_flag(args.vxlan))
@@ -2081,20 +2136,6 @@ function cpuscalinggovernor(scaling_governor)
 	ucic:commit("openmptcprouter")
 end
 
-function update_vps()
-	sys.exec("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
-	ucic:foreach("openmptcprouter", "server", function(section)
-		local serverips = _as_string_list(section["ip"])
-		local serverip = serverips[1] or ""
-		local adminport = integer_string(section["port"] or "65500", "65500", 1, 65535)
-		local token = section["token"] or ""
-		if token ~= "" and serverip ~= "" then
-			sys.exec("OMR_VPS_SERVER=" .. shell_quote(section[".name"]) .. " /bin/omr-vps-curl -4 --max-time 20 -s -k -H " .. curl_auth_header(token) .. " " .. shell_quote("https://" .. serverip .. ":" .. adminport .. "/update"))
-		end
-	end)
-	sys.exec("/etc/init.d/openmptcprouter-vps restart >/dev/null 2>/dev/null")
-end
-
 -- Exit status of a command run through sys.exec, which only gives stdout
 local function exec_status(cmd)
 	return tonumber((sys.exec(cmd .. " >/dev/null 2>&1; echo $?") or ""):match("%d+")) or 1
@@ -2103,6 +2144,27 @@ end
 local function _backup_server(name)
 	return type(name) == "string" and name:match("^[%w_]+$") ~= nil
 		and ucic:get("openmptcprouter", name) == "server"
+end
+
+-- Two openmptcprouter-vps restarts and an API call of up to 20 s: far beyond
+-- LuCI's RPC timeout, so it runs in the background and the page is only told
+-- that it started. The token is read after the first restart, which logs in.
+function update_vps(server)
+	if not _backup_server(server) then
+		return { error = "Unknown server" }
+	end
+	local serverip = _as_string_list(ucic:get("openmptcprouter", server, "ip"))[1] or ""
+	if serverip == "" then
+		return { error = "No server IP" }
+	end
+	local adminport = integer_string(ucic:get("openmptcprouter", server, "port") or "65500", "65500", 1, 65535)
+	local script = "/etc/init.d/openmptcprouter-vps restart; " ..
+		"token=$(uci -q get openmptcprouter." .. server .. ".token); " ..
+		"[ -n \"$token\" ] && OMR_VPS_SERVER=" .. shell_quote(server) .. " /bin/omr-vps-curl -4 --max-time 20 -s -k -H \"Authorization: Bearer $token\" " ..
+		shell_quote("https://" .. serverip .. ":" .. adminport .. "/update") .. "; " ..
+		"/etc/init.d/openmptcprouter-vps restart"
+	sys.exec("sh -c " .. shell_quote("(" .. script .. ") >/dev/null 2>&1 </dev/null &"))
+	return { status = "started" }
 end
 
 function backup_list()
@@ -2257,7 +2319,7 @@ function get_ip(interface)
 	if ip == "" then
 		dump = ut.ubus("network.interface.%s" % interface, "status", {})
 		if dump and dump['l3_device'] then
-			ip = ut.trim(sys.exec("ip -4 -br addr ls dev %s | awk -F'[ /]+' '{print $3}'" % dump['l3_device']))
+			ip = ut.trim(sys.exec("ip -4 -br addr ls dev %s | awk -F'[ /]+' '{print $3}'" % shell_quote(dump['l3_device'])))
 		end
 	end
 	return ip
@@ -2283,7 +2345,7 @@ function get_ip6(interface)
 	if ip == "" then
 		dump = ut.ubus("network.interface.%s" % interface, "status", {})
 		if dump and dump['l3_device'] then
-			ip = ut.trim(sys.exec("ip -6 -br addr ls dev %s | awk -F'[ /]+' '{print $3}'" % dump['l3_device']))
+			ip = ut.trim(sys.exec("ip -6 -br addr ls dev %s | awk -F'[ /]+' '{print $3}'" % shell_quote(dump['l3_device'])))
 		end
 	end
 	return ip
@@ -2649,8 +2711,11 @@ function interfaces_status()
 							if vpsinfo.vps.omr_version ~= nil then
 								mArray.openmptcprouter["vps_omr_version"] = vpsinfo.vps.omr_version or ""
 							end
-							if vpsinfo.vps.time ~= "" then
-								mArray.openmptcprouter["vps_time_accurate"] = math.abs(os.time() - vpsinfo.vps.time) <= 10
+							-- a VPS answer without a time made os.time() - nil raise, and
+							-- the whole status call answered nothing
+							local vps_time = tonumber(vpsinfo.vps.time)
+							if vps_time then
+								mArray.openmptcprouter["vps_time_accurate"] = math.abs(os.time() - vps_time) <= 10
 							end
 							mArray.openmptcprouter["vps_admin"] = true
 							mArray.openmptcprouter["vps_status"] = "UP"
@@ -3232,7 +3297,7 @@ function interfaces_status()
 				end
 			end
 			if ifname ~= "" and fs.access("/sys/class/net/" .. ifname) then
-				mtu = ut.trim(sys.exec("cat /sys/class/net/" .. ifname .. "/mtu | tr -d '\n'"))
+				mtu = ut.trim(fs.readfile("/sys/class/net/" .. ifname .. "/mtu") or "")
 				if mtu == "" then mtu = uci:get("openmptcprouter",interface,"mtu") or "" end
 			end
 			loop = ucis:get("openmptcprouter",interface,"loop") == "1"
@@ -3565,7 +3630,7 @@ function interfaces_only_status()
 
 		if connectivity ~= "ERROR" then
 			if ifname ~= "" and fs.access("/sys/class/net/" .. ifname) then
-				mtu = ut.trim(sys.exec("cat /sys/class/net/" .. ifname .. "/mtu | tr -d '\n'"))
+				mtu = ut.trim(fs.readfile("/sys/class/net/" .. ifname .. "/mtu") or "")
 				if mtu == "" then mtu = uci:get("openmptcprouter",interface,"mtu") or "" end
 			end
 			loop = ucis:get("openmptcprouter",interface,"loop") == "1"
@@ -3671,7 +3736,8 @@ local methods = {
 		end
 	},
 	updateVPS = {
-		call = function() update_vps() end
+		args = { server = "" },
+		call = function(args) return update_vps(args.server) end
 	},
 	restartall = {
 		call = function() restart_all() end
@@ -3748,11 +3814,11 @@ local methods = {
 	},
 	addserver = {
 		args = { server_name = "" },
-		call = function(args) add_server(args.server_name) end
+		call = function(args) return add_server(args.server_name) end
 	},
 	removeserver = {
 		args = { server_name = "" },
-		call = function(args) remove_server(args.server_name) end
+		call = function(args) return remove_server(args.server_name) end
 	},
 	addinterface = {
 		args = { ifname = "" },
@@ -3760,7 +3826,7 @@ local methods = {
 	},
 	removeinterface = {
 		args = { intf = "" },
-		call = function(args) remove_interface(args.intf) end
+		call = function(args) return remove_interface(args.intf) end
 	},
 	enableinterface = {
 		args = { intf = "", enable = 0 },
@@ -3886,7 +3952,7 @@ local methods = {
 			shadowsocksudp = "", v2rayudp = "", ndpi = "", disablefastopen = "", enablenodelay = "",
 			obfs = "", obfs_plugin = "", obfs_type = "",
 			scaling_min_freq = "", scaling_max_freq = "", scaling_governor = "",
-			sfe_enabled = "", sfe_bridge = "", sipalg = "", vxlan = "", vxlan_mode = "", vxlan_bridge_if = ""
+			sipalg = "", vxlan = "", vxlan_mode = "", vxlan_bridge_if = ""
 		},
 		call = function(args)
 			return settings_add(args)

@@ -155,6 +155,25 @@ function uniqueValues(list) {
 
 var excludeRe = /^(lo|6in4-omr6in4|mlvpn0|ifb|sit|gre|ip6|teql|erspan|tun|bond|vxlan|omrvxlan)/;
 
+/* What proto modemmanager takes as device: each modem's sysfs path
+ * (modem.generic.device), as the Lua wizard listed them. Fixed command, so
+ * the ACL can grant it as is: rpcd matches it with fnmatch(), so it must not
+ * hold any of * ? [ */
+var MM_DEVICES_CMD = 'timeout 1 /usr/bin/mmcli -L 2>/dev/null | awk -F/ \'NF > 5 {print $6}\' | ' +
+	'while read m x; do timeout 1 /usr/bin/mmcli -m "$m" --output-keyvalue 2>/dev/null | ' +
+	'awk -F": " \'/^modem.generic.device /{print $2}\'; done';
+
+/* Adds the value each section has in uci to a ListValue's choices when it
+ * is not one of them: a ListValue shows the first choice for a value it does
+ * not have, and the next save wrote that choice over the real one */
+function addCurrentChoices(o, sids, get) {
+	sids.forEach(function(sid) {
+		var v = get(sid);
+		if (v && (o.keylist || []).indexOf(String(v)) === -1)
+			o.value(v);
+	});
+}
+
 function ensureWizardCSSLoaded() {
 	if (document.getElementById('omr-wizard-css'))
 		return;
@@ -202,7 +221,7 @@ return view.extend({
 			callFileExec('/bin/sh', ['-c', 'grep -q aes /proc/cpuinfo && echo -n 1 || echo -n 0']),
 			callFileExec('/bin/sh', ['/usr/share/openmptcprouter/list-serial.sh', 'ttyUSB']),
 			callFileExec('/bin/sh', ['/usr/share/openmptcprouter/list-serial.sh', 'cdc-wdm']),
-			callFileExec('/bin/sh', ['-c', 'timeout 1 /usr/bin/mmcli -L 2>/dev/null || true']),
+			callFileExec('/bin/sh', ['-c', MM_DEVICES_CMD]),
 		uci.load('mqvpn').catch(function(){}),
 		fileExists('/usr/sbin/mqvpn')
 		]);
@@ -223,10 +242,8 @@ return view.extend({
 		var ttyUSB = (data[32]||'').trim().split('\n').filter(Boolean);
 		var ttyCdc = (data[33]||'').trim().split('\n').filter(Boolean);
 		var ttyAll = ttyUSB.concat(ttyCdc);
-		var alltty = [];
-		(data[34]||'').split('\n').forEach(function(l) {
-			var mt = l.match(/\/(\d+)\s/);
-			if (mt) alltty.push('/sys/devices/modem' + mt[1]);
+		var alltty = uniqueValues((data[34]||'').split('\n')).filter(function(d) {
+			return d.charAt(0) === '/';
 		});
 
 		var physDevs = [];
@@ -271,6 +288,11 @@ return view.extend({
 			origServerNames.push(srv['.name']);
 			origPins[srv['.name']] = srv.api_pin || '';
 		});
+
+		/* Force TTL lives in network.<intf>_dev, which a WAN added here does
+		 * not have yet: uci.set() only sets options of existing sections, so
+		 * the value is kept here and the backend creates the section */
+		var ttlValues = {};
 
 		function buildWizardPayload() {
 			var allIntfs = {};
@@ -317,7 +339,8 @@ return view.extend({
 					qosenabled: uci.get('qos', intf, 'enabled') || '0',
 					multipath: uci.get('network', intf, 'multipath') || 'on',
 					lan: zoneLan.indexOf(intf) !== -1 ? '1' : '0',
-					ttl: uci.get('network', intf + '_dev', 'ttl') || '',
+					ttl: ttlValues.hasOwnProperty(intf) ? ttlValues[intf] :
+						(uci.get('network', intf + '_dev', 'ttl') || ''),
 					downloadspeed: uci.get('network', intf, 'downloadspeed') || '0',
 					uploadspeed: uci.get('network', intf, 'uploadspeed') || '0',
 					testspeed: uci.get('openmptcprouter', intf, 'testspeed') || '0',
@@ -625,7 +648,11 @@ return view.extend({
 		o.depends('_show_adv', '1');
 		o.cfgvalue = function() { return uci.get('network', 'globals', 'ula_prefix'); };
 		o.write = function(sid, val) { uci.set('network', 'globals', 'ula_prefix', val); };
-		o.remove = function() {};
+		/* emptied: the prefix goes; hidden with the advanced settings: kept */
+		o.remove = function(sid) {
+			if (this.isActive(sid))
+				uci.unset('network', 'globals', 'ula_prefix');
+		};
 
 		o = s.taboption('ipv6', form.Flag, 'dns64', _('Enable DNS64'));
 		o.rmempty = true;
@@ -712,7 +739,9 @@ return view.extend({
 		}
 		if (has.xray || has.v2ray) {
 			o = s.taboption('proxy', form.Flag, '_v2ray_udp', _('V2Ray/XRay UDP'));
-			o.rmempty = true;
+			/* rmempty=false: unticked is the default, which parse() hands
+			 * to remove() -- a no-op here, so the flag could not be cleared */
+			o.rmempty = false;
 			o.description = _('Use V2Ray/XRay for UDP too');
 			o.depends('_show_adv', '1');
 			o.cfgvalue = function() {
@@ -796,6 +825,8 @@ return view.extend({
 			o.value('wlb',    _('Weighted Load Balancing'));
 			o.value('minrtt', _('Minimum RTT'));
 			o.default = 'wlb';
+			/* see _v2ray_udp: going back to wlb must be written */
+			o.rmempty = false;
 			o.cfgvalue = function() { return uci.get('mqvpn', 'multipath', 'scheduler') || 'wlb'; };
 			o.write = function(sid, val) { uci.set('mqvpn', 'multipath', 'scheduler', val); };
 			o.remove = function() {};
@@ -873,10 +904,12 @@ return view.extend({
 		o.rmempty = true;
 		o.value('static', _('Static address'));
 		o.value('dhcp', _('DHCP'));
+		addCurrentChoices(o, zoneLan, function(sid) { return uci.get('network', sid, 'proto'); });
 
 		o = s.option(form.ListValue, 'device', _('Physical interface'));
 		o.rmempty = true;
 		physDevs.forEach(function(d) { o.value(d); });
+		addCurrentChoices(o, zoneLan, function(sid) { return uci.get('network', sid, 'device'); });
 
 		o = s.option(form.Value, 'ipaddr', _('IPv4 address'));
 		o.rmempty = true;
@@ -942,6 +975,7 @@ return view.extend({
 		o = s.option(form.ListValue, 'masterintf', _('MacVLAN master'));
 		o.rmempty = true;
 		physDevs.forEach(function(d) { o.value(d); });
+		addCurrentChoices(o, zoneWan, function(sid) { return uci.get('network', sid, 'masterintf'); });
 		o.depends('_type', 'macvlan');
 
 		// Protocol — type=normal|bridge
@@ -957,6 +991,27 @@ return view.extend({
 		o.default = 'static';
 		o.depends('_type', 'normal');
 		o.depends('_type', 'bridge');
+		/* A protocol this form has no fields for (mbim, 3g, wwan, l2tp,
+		 * wireguard...) used to show as the first choice, static, which the
+		 * next save wrote. As "other" it is never written: the payload
+		 * carries the uci value and the backend keeps it. */
+		o.cfgvalue = function(sid) {
+			var v = uci.get('network', sid, 'proto');
+			return (v == null || this.keylist.indexOf(v) !== -1) ? v : 'other';
+		};
+		var wanProto = o;
+
+		/* With "other", the options below are hidden but still mean
+		 * something to the real protocol (apn, pincode, username...): the
+		 * stock remove() of a hidden option deleted them */
+		function keepForOtherProto(opt) {
+			var remove = opt.remove;
+			opt.remove = function(sid) {
+				if (wanProto.formvalue(sid) === 'other')
+					return;
+				return remove.apply(this, arguments);
+			};
+		}
 
 		// Physical interface — proto=static|dhcp|dhcpv6
 		o = s.option(form.ListValue, '_intf', _('Physical interface'));
@@ -969,6 +1024,7 @@ return view.extend({
 			var d = uci.get('network', sid, 'device') || '';
 			return d.indexOf('/') !== -1 ? d : d.split('.')[0];
 		};
+		addCurrentChoices(o, zoneWan, L.bind(o.cfgvalue, o));
 		o.write = function(sid, val) {
 			var vl = this.section.formvalue(sid, '_vlan') || '';
 			uci.set('network', sid, 'device', vl ? val + '.' + vl : val);
@@ -994,18 +1050,21 @@ return view.extend({
 		o.datatype = 'ip4addr';
 		o.depends('proto', 'static');
 		o.depends('_type', 'macvlan');
+		keepForOtherProto(o);
 
 		o = s.option(form.Value, 'netmask', _('IPv4 netmask'));
 		o.datatype = 'ip4addr';
 		o.default = '255.255.255.0';
 		o.depends('proto', 'static');
 		o.depends('_type', 'macvlan');
+		keepForOtherProto(o);
 
 		o = s.option(form.Value, 'gateway', _('IPv4 gateway'));
 		o.rmempty = true;
 		o.datatype = 'ip4addr';
 		o.depends('proto', 'static');
 		o.depends('_type', 'macvlan');
+		keepForOtherProto(o);
 
 		// IPv6 — proto=static OR type=macvlan
 		o = s.option(form.Value, 'ip6addr', _('IPv6 address'));
@@ -1014,6 +1073,7 @@ return view.extend({
 		o.optional = true;
 		o.depends('proto', 'static');
 		o.depends('_type', 'macvlan');
+		keepForOtherProto(o);
 
 		o = s.option(form.Value, 'ip6gw', _('IPv6 gateway'));
 		o.rmempty = true;
@@ -1021,6 +1081,7 @@ return view.extend({
 		o.optional = true;
 		o.depends('proto', 'static');
 		o.depends('_type', 'macvlan');
+		keepForOtherProto(o);
 
 		// IPv6 — proto=dhcp; the backend manages a companion "<intf>_6"
 		// DHCPv6 interface on the same device (SLAAC needs odhcp6c, the
@@ -1046,6 +1107,9 @@ return view.extend({
 		o.depends('proto', 'ncm');
 		o.cfgvalue = function(sid) { return uci.get('network', sid, 'device'); };
 		o.write = function(sid, val) { uci.set('network', sid, 'device', val); };
+		addCurrentChoices(o, zoneWan, function(sid) {
+			return uci.get('network', sid, 'proto') === 'ncm' ? uci.get('network', sid, 'device') : null;
+		});
 
 		// Device QMI — proto=qmi
 		o = s.option(form.ListValue, '_device_qmi', _('Device'));
@@ -1054,6 +1118,9 @@ return view.extend({
 		o.depends('proto', 'qmi');
 		o.cfgvalue = function(sid) { return uci.get('network', sid, 'device'); };
 		o.write = function(sid, val) { uci.set('network', sid, 'device', val); };
+		addCurrentChoices(o, zoneWan, function(sid) {
+			return uci.get('network', sid, 'proto') === 'qmi' ? uci.get('network', sid, 'device') : null;
+		});
 
 		// Device ModemManager — proto=modemmanager
 		o = s.option(form.ListValue, '_device_mm', _('Device'));
@@ -1062,6 +1129,9 @@ return view.extend({
 		o.depends('proto', 'modemmanager');
 		o.cfgvalue = function(sid) { return uci.get('network', sid, 'device'); };
 		o.write = function(sid, val) { uci.set('network', sid, 'device', val); };
+		addCurrentChoices(o, zoneWan, function(sid) {
+			return uci.get('network', sid, 'proto') === 'modemmanager' ? uci.get('network', sid, 'device') : null;
+		});
 
 		// APN — proto=ncm|qmi|modemmanager only
 		o = s.option(form.Value, 'apn', _('APN'));
@@ -1069,6 +1139,7 @@ return view.extend({
 		o.depends('proto', 'ncm');
 		o.depends('proto', 'qmi');
 		o.depends('proto', 'modemmanager');
+		keepForOtherProto(o);
 
 		// PIN code — proto=ncm|qmi|modemmanager only
 		o = s.option(form.Value, 'pincode', _('PIN code'));
@@ -1076,6 +1147,7 @@ return view.extend({
 		o.depends('proto', 'ncm');
 		o.depends('proto', 'qmi');
 		o.depends('proto', 'modemmanager');
+		keepForOtherProto(o);
 
 		// Service type — proto=ncm only
 		o = s.option(form.ListValue, 'mode', _('Service Type'));
@@ -1088,6 +1160,7 @@ return view.extend({
 		o.value('gsm', _('GPRS only'));
 		o.value('auto', _('auto'));
 		o.depends('proto', 'ncm');
+		keepForOtherProto(o);
 
 		// Authentication — proto=qmi|pppoe only
 		o = s.option(form.ListValue, 'auth', _('Authentication Type'));
@@ -1098,6 +1171,7 @@ return view.extend({
 		o.default = 'none';
 		o.depends('proto', 'qmi');
 		o.depends('proto', 'pppoe');
+		keepForOtherProto(o);
 
 		// PAP/CHAP — proto=ncm|qmi|pppoe only
 		o = s.option(form.Value, 'username', _('PAP/CHAP username'));
@@ -1105,6 +1179,7 @@ return view.extend({
 		o.depends('proto', 'ncm');
 		o.depends('proto', 'qmi');
 		o.depends('proto', 'pppoe');
+		keepForOtherProto(o);
 
 		o = s.option(form.Value, 'password', _('PAP/CHAP password'));
 		o.rmempty = true;
@@ -1112,6 +1187,7 @@ return view.extend({
 		o.depends('proto', 'ncm');
 		o.depends('proto', 'qmi');
 		o.depends('proto', 'pppoe');
+		keepForOtherProto(o);
 
 		// Modem init timeout — proto=ncm|qmi only
 		o = s.option(form.Value, 'delay', _('Modem init timeout'));
@@ -1120,6 +1196,7 @@ return view.extend({
 		o.optional = true;
 		o.depends('proto', 'ncm');
 		o.depends('proto', 'qmi');
+		keepForOtherProto(o);
 
 		// ── Always visible WAN fields ──
 
@@ -1148,12 +1225,11 @@ return view.extend({
 		o.datatype = 'uinteger';
 		o.optional = true;
 		o.description = _('65 often solves LTE tethering detection.');
-		o.cfgvalue = function(sid) { return uci.get('network', sid + '_dev', 'ttl'); };
-		o.write = function(sid, val) {
-			if (val) uci.set('network', sid + '_dev', 'ttl', val);
-			else uci.unset('network', sid + '_dev', 'ttl');
+		o.cfgvalue = function(sid) {
+			return ttlValues.hasOwnProperty(sid) ? ttlValues[sid] : uci.get('network', sid + '_dev', 'ttl');
 		};
-		o.remove = function(sid) { uci.unset('network', sid + '_dev', 'ttl'); };
+		o.write = function(sid, val) { ttlValues[sid] = val || ''; };
+		o.remove = function(sid) { ttlValues[sid] = ''; };
 
 		o = s.option(form.Flag, '_multipathvpn', _('MPTCP over VPN'));
 		o.rmempty = true;

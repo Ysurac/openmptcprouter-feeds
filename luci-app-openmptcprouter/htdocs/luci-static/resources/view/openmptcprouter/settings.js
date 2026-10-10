@@ -20,7 +20,7 @@ var callSettingsAdd = rpc.declare({
 		'shadowsocksudp', 'v2rayudp', 'ndpi', 'disablefastopen', 'enablenodelay',
 		'obfs', 'obfs_plugin', 'obfs_type',
 		'scaling_min_freq', 'scaling_max_freq', 'scaling_governor',
-		'sfe_enabled', 'sfe_bridge', 'sipalg', 'vxlan', 'vxlan_mode', 'vxlan_bridge_if',
+		'sipalg', 'vxlan', 'vxlan_mode', 'vxlan_bridge_if',
 		'status_time_budget'
 	],
 	expect: { '': {} }
@@ -56,20 +56,11 @@ return view.extend({
 			L.resolveDefault(fs.read('/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq'),          ''),
 			L.resolveDefault(fs.read('/sys/devices/system/cpu/cpufreq/policy0/scaling_governor'),          ''),
 			L.resolveDefault(fs.read('/sys/devices/system/cpu/cpufreq/policy0/scaling_available_governors'),''),
-			L.resolveDefault(fs.read('/proc/sys/kernel/osrelease'), ''),
-		]).then(function(res) {
-			var kern = (res[14] || '').trim();
-			return Promise.all([
-				res,
-				kern ? L.resolveDefault(fs.stat('/lib/modules/' + kern + '/shortcut-fe.ko'), null)
-				     : Promise.resolve(null)
-			]);
-		});
+		]);
 	},
 
 	render: function(data) {
-		var res     = data[0];
-		var sfeStat = data[1];
+		var res     = data;
 		var m, s, o;
 		var self = this;
 
@@ -89,11 +80,9 @@ return view.extend({
 		var cpuGov      = (res[12] || '').trim();
 		var cpuGovAvail = (res[13] || '').trim().split(/\s+/).filter(Boolean);
 		var hasCpuFreq  = !!cpuMin;
-		var hasSfe      = !!(sfeStat && sfeStat.type);
 
 		this._hasObfs    = hasObfs || hasV2ray;
 		this._hasCpuFreq = hasCpuFreq;
-		this._hasSfe     = hasSfe;
 
 		/* Values sourced from configs other than openmptcprouter */
 		var v2rayCfg = uci.get('v2ray', 'main_transparent_proxy', 'redirect_udp')
@@ -101,7 +90,8 @@ return view.extend({
 		var fwBanudp = uci.get('firewall', 'omr_dst_udp_banip_rule_v4', 'enabled') || '0';
 		var ss0Obfs     = uci.get('shadowsocks-libev', 'sss0',         'obfs')        || '0';
 		var ss0Plugin   = uci.get('shadowsocks-libev', 'sss0',         'obfs_plugin') || 'v2ray';
-		var trkObfsType = uci.get('shadowsocks-libev', 'tracker_sss0', 'obfs_type')   || 'http';
+		/* where enableobfs() writes it: tracker_sss0, an ss_local, never had it */
+		var ss0ObfsType = uci.get('shadowsocks-libev', 'sss0',         'obfs_type')   || 'http';
 		var zoneLan     = L.toArray(uci.get('firewall', 'zone_lan', 'network'));
 		var zoneWan     = L.toArray(uci.get('firewall', 'zone_wan', 'network'));
 
@@ -140,8 +130,12 @@ return view.extend({
 			o.inputtitle = _('Update server');
 			o.inputstyle = 'apply';
 			o.onclick    = function(ev, section_id) {
-				return callUpdateVPS(section_id).then(function() {
+				return callUpdateVPS(section_id).then(function(res) {
+					if (res && res.error)
+						throw new Error(res.error);
 					ui.addNotification(null, _('Update started.'), 'info');
+				}).catch(function(err) {
+					ui.addNotification(null, _('Update failed: ') + ((err && err.message) || String(err)), 'error');
 				});
 			};
 		}
@@ -164,7 +158,6 @@ return view.extend({
 		s.tab('network', _('Network'));
 		s.tab('other',   _('Other'));
 		if (hasObfs || hasV2ray) s.tab('obfs', _('Obfuscation'));
-		if (hasSfe)              s.tab('sfe',  _('Qualcomm SFE'));
 		if (hasCpuFreq)          s.tab('cpu',  _('System'));
 
 		/* ── Network tab ───────────────────────────────────────────── */
@@ -278,6 +271,9 @@ return view.extend({
 		o = s.taboption('other', form.Flag, 'vnstat_backup',
 			_('Save vnstats stats'),
 			_('Save vnstats statistics on disk'));
+		/* unticked was removed, so '' was sent and the backend, which only
+		 * acts on a value, never turned the backup off */
+		o.rmempty = false;
 
 		o = s.taboption('other', form.Flag, 'disablegwping',
 			_('Disable gateway ping'),
@@ -373,6 +369,14 @@ return view.extend({
 			_('Debug'),
 			_('Enable debug logs'));
 
+		o = s.taboption('other', form.Flag, 'ndpi',
+			_('Disable nDPI'),
+			_('Disable nDPI, used for protocols in OMR-ByPass'));
+		o.enabled = '0'; o.disabled = '1';
+		/* Same rmempty/default collision as disable_ipv6 above (#4352) */
+		o.default = '1'; /* unset = nDPI enabled */
+		o.rmempty = false;
+
 		/* ── Obfuscation tab ───────────────────────────────────────── */
 		if (hasObfs || hasV2ray) {
 			o = s.taboption('obfs', form.Flag, 'obfs',
@@ -380,24 +384,21 @@ return view.extend({
 				_('Obfuscating will be enabled on both side'));
 			o.cfgvalue = function() { return ss0Obfs; };
 
+			/* The values shown come from shadowsocks-libev: an unchanged
+			 * ListValue is not written, so get() below found nothing in
+			 * openmptcprouter.settings and every save sent the backend's
+			 * v2ray/http defaults over simple-obfs or tls. */
 			o = s.taboption('obfs', form.ListValue, 'obfs_plugin', _('Obfuscating plugin'));
 			o.cfgvalue = function() { return ss0Plugin; };
+			o.forcewrite = true;
 			if (hasV2ray) o.value('v2ray', 'v2ray');
 			if (hasObfs)  o.value('obfs',  'simple-obfs');
 
 			o = s.taboption('obfs', form.ListValue, 'obfs_type', _('Obfuscating type'));
-			o.cfgvalue = function() { return trkObfsType; };
+			o.cfgvalue = function() { return ss0ObfsType; };
+			o.forcewrite = true;
 			o.value('http', 'http');
 			o.value('tls',  'tls');
-		}
-
-		/* ── SFE tab ───────────────────────────────────────────────── */
-		if (hasSfe) {
-			o = s.taboption('sfe', form.Flag, 'sfe_enabled',
-				_('Enable Fast Path offloading for connections'));
-
-			o = s.taboption('sfe', form.Flag, 'sfe_bridge',
-				_('Enable Bridge Acceleration'));
 		}
 
 		/* ── CPU frequency tab ─────────────────────────────────────── */
@@ -442,7 +443,6 @@ return view.extend({
 
 			var hasObfs    = self._hasObfs;
 			var hasCpuFreq = self._hasCpuFreq;
-			var hasSfe     = self._hasSfe;
 
 			/*
 			 * Positional mapping to rpcd settingsadd params.
@@ -487,7 +487,7 @@ return view.extend({
 				get('disablemultipathtest'),
 				get('shadowsocksudp'),
 				get('v2rayudp'),
-				'1',
+				get('ndpi'),
 				get('disable_fastopen'),
 				get('enable_nodelay'),
 				hasObfs    ? get('obfs')              : '0',
@@ -496,8 +496,6 @@ return view.extend({
 				hasCpuFreq ? get('scaling_min_freq')  : '',
 				hasCpuFreq ? get('scaling_max_freq')  : '',
 				hasCpuFreq ? get('scaling_governor')  : '',
-				hasSfe     ? get('sfe_enabled')       : '0',
-				hasSfe     ? get('sfe_bridge')        : '0',
 				get('sipalg'),
 				get('vxlan'),
 				get('vxlan_mode'),
