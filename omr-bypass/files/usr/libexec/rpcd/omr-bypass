@@ -55,25 +55,90 @@ _intf_ipset_exists() {
 		|| nft list set inet fw4 "omr_dst_bypass_${dev}_6" >/dev/null 2>&1
 }
 
-# Delete conntrack entries for IPs in the old interface's bypass nftables
-# sets. The kernel sends RST to peers when their tracked entries disappear.
+# The last prefix list omr-bypass-nft got from RIPE for each AS
+ASN_CACHE="/tmp/omr-bypass-asn-cache"
+
+# _rule_destinations <section>: the destinations of a bypass rule, one
+# address or prefix per line: its IPs, what its domain resolves to (dnsmasq
+# answers from its cache, the addresses it put in the sets), its AS's
+# prefixes. Nothing for the rules that do not match on a destination.
+_rule_destinations() {
+	local sec="$1" v
+	case "$(uci -q get "omr-bypass.${sec}")" in
+		ips)
+			for v in $(uci -q get "omr-bypass.${sec}.ip"); do echo "$v"; done
+			;;
+		domains)
+			v=$(uci -q get "omr-bypass.${sec}.name")
+			v="${v#.}"
+			case "$v" in ""|*[!A-Za-z0-9._-]*|*.) return ;; esac
+			command -v dig >/dev/null 2>&1 || return
+			dig a +short +timeout=1 +tries=1 "$v" 2>/dev/null
+			dig aaaa +short +timeout=1 +tries=1 "$v" 2>/dev/null
+			;;
+		asns)
+			v=$(uci -q get "omr-bypass.${sec}.asn")
+			v="${v#[Aa][Ss]}"
+			case "$v" in ""|*[!0-9]*) return ;; esac
+			cat "${ASN_CACHE}/AS${v}" 2>/dev/null
+			;;
+	esac | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$|^[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*(/[0-9]{1,3})?$'
+}
+
+# _prefix_mask <addr> <length>: the netmask conntrack's --mask-dst takes,
+# in the address's family
+_prefix_mask() {
+	local n="$2" i o m="" bits=8 max=4 sep=. fmt=%d
+	case "$1" in *:*) bits=16; max=8; sep=:; fmt=%x ;; esac
+	case "$n" in ""|*[!0-9]*) return 1 ;; esac
+	i=0
+	while [ "$i" -lt "$max" ]; do
+		if [ "$n" -ge "$bits" ]; then
+			o=$(( (1 << bits) - 1 ))
+			n=$((n - bits))
+		else
+			o=$(( ((1 << bits) - 1) & ~((1 << (bits - n)) - 1) ))
+			n=0
+		fi
+		m="${m:+$m$sep}$(printf "$fmt" "$o")"
+		i=$((i + 1))
+	done
+	printf '%s' "$m"
+}
+
+# Delete the conntrack entries of a rule's destinations that its previous
+# output's sets hold: the kernel sends RST to the peers whose entries
+# disappear, and the next connection takes the new output. It used to take
+# every element of the old sets, from "nft list set" output read as one line
+# ("elements = { ... }"): nft wraps a set over several lines, so nothing was
+# ever reset, and on one line it would have reset every bypassed connection
+# of that WAN. "nft get element" also finds an address in a range or prefix
+# the set merged it into. conntrack takes no range: a prefix goes through
+# --mask-dst.
 _rst_old_intf_connections() {
-	local old_intf=$1
+	local old_intf=$1 sec=$2
 	[ -z "$old_intf" ] || [ "$old_intf" = "all" ] || [ "$old_intf" = "srv_vpn1" ] && return
 
-	local dev
+	local dev dst set_name mask
 	dev=$(_map_intf_device "$old_intf")
 
-	local set_name
-	for set_name in "omr_dst_bypass_${dev}_4" "omr_dst_bypass_${dev}_6"; do
-		nft list set inet fw4 "$set_name" 2>/dev/null \
-			| sed -n 's/.*elements = { \(.*\) }.*/\1/p' \
-			| tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
-			| while read -r ip; do
-				[ -z "$ip" ] && continue
-				conntrack -D --orig-dst "$ip" >/dev/null 2>&1
-				conntrack -D --reply-src "$ip" >/dev/null 2>&1
-			done
+	for dst in $(_rule_destinations "$sec"); do
+		for set_name in "omr_dst_bypass_${dev}_4" "omr_dst_bypass_${dev}_6" \
+			"omr_dst_bypass_${dev}_4_tcp" "omr_dst_bypass_${dev}_6_tcp" \
+			"omr_dst_bypass_${dev}_4_udp" "omr_dst_bypass_${dev}_6_udp"; do
+			nft get element inet fw4 "$set_name" "{ $dst }" >/dev/null 2>&1 || continue
+			case "$dst" in
+				*/*)
+					mask=$(_prefix_mask "${dst%/*}" "${dst#*/}") && \
+						conntrack -D --orig-dst "${dst%/*}" --mask-dst "$mask" >/dev/null 2>&1
+					;;
+				*)
+					conntrack -D --orig-dst "$dst" >/dev/null 2>&1
+					conntrack -D --reply-src "$dst" >/dev/null 2>&1
+					;;
+			esac
+			break
+		done
 	done
 }
 
@@ -318,7 +383,7 @@ case "$1" in
 				uci -q commit omr-bypass
 
 				if [ "$force" = "1" ]; then
-					_rst_old_intf_connections "$old_key"
+					_rst_old_intf_connections "$old_key" "$section"
 					/etc/init.d/omr-bypass reload_rules >/dev/null 2>&1 &
 				elif [ "$reload" = "1" ]; then
 					/etc/init.d/omr-bypass reload_rules >/dev/null 2>&1 &

@@ -7,6 +7,23 @@
 
 var callHostHints;
 
+/* Ports and port ranges (a-b or a:b), separated by commas or spaces: the
+ * backend makes one firewall entry of each. */
+function validatePorts(section_id, value) {
+	if (value == null || value === '')
+		return true;
+	var tokens = String(value).split(/[\s,]+/).filter(function(t) { return t !== ''; });
+	if (!tokens.length)
+		return _('Expecting: %s').format(_('port or port range'));
+	for (var i = 0; i < tokens.length; i++) {
+		var m = tokens[i].match(/^([1-9]\d{0,4})(?:[-:]([1-9]\d{0,4}))?$/);
+		var a = m ? +m[1] : 0, b = m ? (m[2] != null ? +m[2] : a) : 0;
+		if (!m || a < 1 || b > 65535 || a > b)
+			return _('Expecting: %s').format(_('port or port range'));
+	}
+	return true;
+}
+
 var callUciCommit = rpc.declare({
 	object: 'uci',
 	method: 'commit',
@@ -226,6 +243,10 @@ return L.view.extend({
 
 		o = s.option(form.Value, 'ip', _('IP'),
 			_('Enter a destination IP address or network in CIDR notation.'));
+		/* Each entry becomes an element of an nftables set: a prefix length
+		 * out of range or an address range made nft refuse the whole
+		 * firewall ruleset. */
+		o.datatype = 'list(or(cidr4,cidr6,ip4addr(1),ip6addr(1)))';
 		o.rmempty = false;
 
 		o = s.option(form.Flag, 'vpn', _('VPN on server'),_('Bypass using VPN configured on server.'));
@@ -286,6 +307,7 @@ return L.view.extend({
 
 		o = s.option(form.Value, 'dport', _('port'),
 			_('Destination port number to match.'));
+		o.validate = validatePorts;
 		o.rmempty = false;
 
 		o = s.option(form.ListValue, 'proto', _('protocol'),
@@ -342,6 +364,7 @@ return L.view.extend({
 
 		o = s.option(form.Value, 'sport', _('port'),
 			_('Source port number to match.'));
+		o.validate = validatePorts;
 		o.rmempty = false;
 
 		o = s.option(form.ListValue, 'proto', _('protocol'),
@@ -793,6 +816,10 @@ return L.view.extend({
 			o = s.option(form.Flag, 'ndpi', _('Enable ndpi'),
 				_('Enable deep packet inspection for this rule when nDPI support is available.'));
 			o.default = o.enabled;
+			/* written either way: a ticked box equal to the default was
+			 * removed on save, and the backend read the missing option as
+			 * disabled for some rules */
+			o.rmempty = false;
 			o.modalonly = true
 			o.depends('vpn', '0');
 		}
@@ -843,6 +870,7 @@ return L.view.extend({
 			o = s.option(form.Flag, 'ndpi', _('Enable ndpi'),
 				_('Enable deep packet inspection for this rule when nDPI support is available.'));
 			o.default = o.enabled;
+			o.rmempty = false;
 			o.modalonly = true;
 			o.depends('vpn', '0');
 		}

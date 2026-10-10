@@ -269,6 +269,105 @@ _valid_port_spec() {
 	return 0
 }
 
+_valid_port() {
+	case "$1" in
+		""|*[!0-9]*|0*|??????*) return 1 ;;
+	esac
+	[ "$1" -le 65535 ]
+}
+
+# _rule_ports <var> <section> <ports>: the ports and port ranges of a rule,
+# one per word, a range as a-b. "80,443" was one dest_port entry, which fw4
+# refuses: it then dropped the shared rule of that WAN and protocol, and with
+# it every port rule of the WAN. A value that is not a port is logged and
+# left out.
+_rule_ports() {
+	local __rp="" __p __a __b IFS=", 	"
+	for __p in $3; do
+		[ -n "$__p" ] || continue
+		case "$__p" in *:*) __p="${__p%%:*}-${__p#*:}" ;; esac
+		__a="${__p%%-*}"
+		__b="${__p#*-}"
+		if _valid_port "$__a" && _valid_port "$__b" && [ "$__a" -le "$__b" ]; then
+			[ "$__a" = "$__b" ] && __p="$__a"
+			__rp="${__rp:+$__rp }$__p"
+		else
+			logger -t "omr-bypass" "Rule $2: invalid port '$__p' ignored"
+		fi
+	done
+	eval "$1=\"\$__rp\""
+}
+
+# Addresses and networks of the sets and rules fw4 generates. iptools'
+# valid_subnet4/6 only look at the first characters: 1.2.3.4/33 or
+# 2001:db8::/129 went into a set, nft refused the whole ruleset fw4 built
+# ("Prefix length 33 is invalid"), and after a reboot there was no firewall
+# at all. A range passed too, and fw4 writes it as "<addr>/null" in a set.
+_valid_ip4() {
+	local IFS=. __o
+	case "$1" in ""|*[!0-9.]*|.*|*.|*..*) return 1 ;; esac
+	set -- $1
+	[ $# -eq 4 ] || return 1
+	for __o in "$@"; do
+		case "$__o" in ????*|0?*) return 1 ;; esac
+		[ "$__o" -le 255 ] || return 1
+	done
+}
+
+_valid_ip6() {
+	local __a="$1" __g __n=0 IFS=:
+	case "$__a" in *:*) ;; *) return 1 ;; esac
+	case "$__a" in *[!0-9A-Fa-f:.]*|*:::*|*::*::*|:[!:]*|*[!:]:) return 1 ;; esac
+	# an embedded IPv4 address counts as two groups
+	case "$__a" in
+		*.*)
+			_valid_ip4 "${__a##*:}" || return 1
+			__a="${__a%:*}:0:0"
+			;;
+	esac
+	set -- $__a
+	for __g in "$@"; do
+		[ -n "$__g" ] || continue
+		case "$__g" in *.*|?????*) return 1 ;; esac
+		__n=$((__n + 1))
+	done
+	case "$__a" in
+		*::*) [ "$__n" -le 7 ] ;;
+		*) [ "$__n" -eq 8 ] ;;
+	esac
+}
+
+# _valid_prefix_len <length> <max>
+_valid_prefix_len() {
+	case "$1" in ""|*[!0-9]*|????*) return 1 ;; esac
+	[ "$1" -le "$2" ]
+}
+
+# _valid_ip4net / _valid_ip6net <value>: an address, or a network with a
+# prefix length, as a set element
+_valid_ip4net() {
+	case "$1" in */*) _valid_prefix_len "${1#*/}" 32 || return 1 ;; esac
+	_valid_ip4 "${1%%/*}"
+}
+
+_valid_ip6net() {
+	case "$1" in */*) _valid_prefix_len "${1#*/}" 128 || return 1 ;; esac
+	_valid_ip6 "${1%%/*}"
+}
+
+# _valid_rule_ip <value>: what fw4 also takes in a rule's src_ip: a range, or
+# an IPv4 network with a netmask
+_valid_rule_ip() {
+	case "$1" in
+		*-*)
+			{ _valid_ip4 "${1%%-*}" && _valid_ip4 "${1#*-}"; } || \
+				{ _valid_ip6 "${1%%-*}" && _valid_ip6 "${1#*-}"; }
+			;;
+		*/*.*) _valid_ip4 "${1%%/*}" && _valid_ip4 "${1#*/}" ;;
+		*) _valid_ip4net "$1" || _valid_ip6net "$1" ;;
+	esac
+}
+
 # _nft_ports <ports>: a port, a range or a list, as nft takes it. The DSCP
 # port rules were written "ip tcp dport 443", which nft refuses ("ip" then a
 # protocol): no port DSCP rule was ever installed.
@@ -284,6 +383,8 @@ _nft_ports() {
 # config_load of the firewall config turned every one of them into a shell
 # variable, which made a start take minutes.
 _BYPASS_ASN_DIR="/tmp/omr-bypass-asn"
+# The last prefix list RIPE gave for each AS, one file per AS
+_BYPASS_ASN_CACHE="/tmp/omr-bypass-asn-cache"
 
 # _asn_set_add <set section> <prefix>...
 _asn_set_add() {
@@ -362,15 +463,25 @@ _wan_groups_collect() {
 # Collect every list in use, keep the ids of known groups, hand out free
 # ids to new ones and drop the groups nothing uses any more.
 _wan_groups_setup() {
-	local t key id used=""
+	local t key id used="" metrics
 	_wan_groups=""
 	config_load omr-bypass
 	for t in domains ips macs lan_ip dest_port src_port asns dpis categories; do
 		config_foreach _wan_groups_collect "$t"
 	done
+	# A WAN's own bypass mark is 0x4539<metric>: a group id equal to a
+	# metric would share it, and its ip rule
+	metrics=" $(uci -q show network 2>/dev/null | sed -n "s/^network\.[^.]*\.metric='\{0,1\}\([0-9]*\)'\{0,1\}$/\1/p" | xargs) "
+	used="$metrics"
 	for key in $(uci -q -X show omr-bypass 2>/dev/null | sed -n 's/^omr-bypass\.\([^.=]*\)=wangroup$/\1/p'); do
 		case " $_wan_groups " in
-			*" $key "*) used="$used $(uci -q get "omr-bypass.${key}.id")" ;;
+			*" $key "*)
+				id=$(uci -q get "omr-bypass.${key}.id")
+				case "$metrics" in
+					*" $id "*) uci -q delete "omr-bypass.${key}.id" ;;
+					*) used="$used $id" ;;
+				esac
+				;;
 			*) uci -q delete "omr-bypass.${key}" ;;
 		esac
 	done
@@ -401,8 +512,13 @@ _bypass_ip() {
 	case "$tcpudp" in tcp|udp) ;; *) tcpudp="all" ;; esac
 	# none and srv_vpn1 have no sets and rules per protocol
 	case "$type" in none|srv_vpn1) tcpudp="all" ;; esac
-	valid_ip4=$( valid_subnet4 $ip)
-	valid_ip6=$( valid_subnet6 $ip)
+	valid_ip4=""
+	valid_ip6=""
+	if _valid_ip4net "$ip"; then
+		valid_ip4=$( valid_subnet4 "$ip")
+	elif _valid_ip6net "$ip"; then
+		valid_ip6=$( valid_subnet6 "$ip")
+	fi
 	if [ "$tcpudp" = "all" ]; then
 		if [ "$valid_ip4" = "ok" ]; then
 			_uci_add_list_unique firewall.omr_dst_bypass_${type}_4.entry "$ip"
@@ -629,8 +745,12 @@ _dscp_ip() {
 	local ip=$1
 	local dscp=$2
 	[ -z "$dscp" ] && return
-	local valid_ip4=$( valid_subnet4 "$ip")
-	local valid_ip6=$( valid_subnet6 "$ip")
+	local valid_ip4="" valid_ip6=""
+	if _valid_ip4net "$ip"; then
+		valid_ip4=$( valid_subnet4 "$ip")
+	elif _valid_ip6net "$ip"; then
+		valid_ip6=$( valid_subnet6 "$ip")
+	fi
 	_dscp_ensure_ipset "$dscp"
 	if [ "$valid_ip4" = "ok" ]; then
 		_uci_add_list_unique "firewall.omr_dst_bypass_dscp_${dscp}_4.entry" "$ip"
@@ -962,6 +1082,10 @@ _bypass_lan_ip() {
 
 	[ "$intf" = "default" ] && intf="all"
 	[ -z "$ip" ] && return
+	_valid_rule_ip "$ip" || {
+		logger -t "omr-bypass" "Rule $1: invalid IP address or network '$ip' ignored"
+		return
+	}
 	if [ -n "$intf" ]; then
 		for zone in $(_get_firewall_zones); do
 			valid_ip4=$(valid_subnet4 $ip)
@@ -1015,7 +1139,8 @@ _bypass_dest_port() {
 		logger -t "omr-bypass" "Rule $1: invalid port '$dport' ignored"
 		return
 	}
-	dport=$(echo "$dport" | sed 's/:/-/')
+	_rule_ports dport "$1" "$dport"
+	[ -z "$dport" ] && return
 	[ -z "$proto" ] && return
 	if [ "$disableipv6" = "0" ]; then
 		protocol="4 6"
@@ -1028,13 +1153,17 @@ _bypass_dest_port() {
 			if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
 				for ipv46 in $protocol; do
 					uci -q set firewall.omr_dst_bypass_${intf}_dstport_tcp_${ipv46}_${zone}.enabled='1'
-					_uci_add_list_unique firewall.omr_dst_bypass_${intf}_dstport_tcp_${ipv46}_${zone}.dest_port "$dport"
+					for _port in $dport; do
+						_uci_add_list_unique firewall.omr_dst_bypass_${intf}_dstport_tcp_${ipv46}_${zone}.dest_port "$_port"
+					done
 				done
 			fi
 			if [ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ]; then
 				for ipv46 in $protocol; do
 					uci -q set firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}_${zone}.enabled='1'
-					_uci_add_list_unique firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}_${zone}.dest_port "$dport"
+					for _port in $dport; do
+						_uci_add_list_unique firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}_${zone}.dest_port "$_port"
+					done
 				done
 			fi
 		done
@@ -1079,7 +1208,8 @@ _bypass_src_port() {
 		logger -t "omr-bypass" "Rule $1: invalid port '$sport' ignored"
 		return
 	}
-	sport=$(echo "$sport" | sed 's/:/-/')
+	_rule_ports sport "$1" "$sport"
+	[ -z "$sport" ] && return
 	[ -z "$proto" ] && return
 	if [ "$disableipv6" = "0" ]; then
 		protocol="4 6"
@@ -1092,13 +1222,17 @@ _bypass_src_port() {
 			if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
 				for ipv46 in $protocol; do
 					uci -q set firewall.omr_dst_bypass_${intf}_srcport_tcp_${ipv46}_${zone}.enabled='1'
-					_uci_add_list_unique firewall.omr_dst_bypass_${intf}_srcport_tcp_${ipv46}_${zone}.src_port "$sport"
+					for _port in $sport; do
+						_uci_add_list_unique firewall.omr_dst_bypass_${intf}_srcport_tcp_${ipv46}_${zone}.src_port "$_port"
+					done
 				done
 			fi
 			if [ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ]; then
 				for ipv46 in $protocol; do
 					uci -q set firewall.omr_dst_bypass_${intf}_srcport_udp_${ipv46}_${zone}.enabled='1'
-					_uci_add_list_unique firewall.omr_dst_bypass_${intf}_srcport_udp_${ipv46}_${zone}.src_port "$sport"
+					for _port in $sport; do
+						_uci_add_list_unique firewall.omr_dst_bypass_${intf}_srcport_udp_${ipv46}_${zone}.src_port "$_port"
+					done
 				done
 			fi
 		done
@@ -1168,7 +1302,7 @@ _bypass_proto() {
 	_rule_proto proto $1
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
-	config_get ndpi $1 ndpi
+	config_get ndpi $1 ndpi "${_ndpi_default:-1}"
 	config_get noipv6 $1 noipv6
 	config_get family $1 family
 	config_get vpn $1 vpn
@@ -1260,8 +1394,13 @@ _bypass_proto_core() {
 			local ALLIPS
 			ALLIPS=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select ip from ipproto where proto=\"$proto\";" ".exit")
 			for ip in $ALLIPS; do
-				valid_ip4=$(valid_subnet4 $ip)
-				valid_ip6=$(valid_subnet6 $ip)
+				valid_ip4=""
+				valid_ip6=""
+				if _valid_ip4net "$ip"; then
+					valid_ip4=$(valid_subnet4 "$ip")
+				elif _valid_ip6net "$ip"; then
+					valid_ip6=$(valid_subnet6 "$ip")
+				fi
 				if [ "$valid_ip4" = "ok" ]; then
 					_omr_defer _uci_add_list_unique firewall.omr_dst_bypass_none_4.entry "$ip"
 					for zone in $(_get_firewall_zones); do
@@ -1327,8 +1466,13 @@ _bypass_proto_core() {
 			fi
 			local _nft4="" _nft6="" _nft4n=0 _nft6n=0
 			for ip in $ALLIPS; do
-				valid_ip4=$( valid_subnet4 $ip )
-				valid_ip6=$( valid_subnet6 $ip )
+				valid_ip4=""
+				valid_ip6=""
+				if _valid_ip4net "$ip"; then
+					valid_ip4=$( valid_subnet4 "$ip" )
+				elif _valid_ip6net "$ip"; then
+					valid_ip6=$( valid_subnet6 "$ip" )
+				fi
 				if [ "$valid_ip4" = "ok" ]; then
 					if [ "$vpn" != "1" ]; then
 						_nft4="${_nft4:+$_nft4, }$ip"
@@ -1374,7 +1518,7 @@ _bypass_proto_without_ndpi() {
 	_rule_proto proto $1
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
-	config_get ndpi $1 ndpi "0"
+	config_get ndpi $1 ndpi "${_ndpi_default:-1}"
 	config_get noipv6 $1 noipv6 "1"
 	config_get family $1 family "ipv4ipv6"
 	config_get vpn $1 vpn
@@ -1397,7 +1541,7 @@ _bypass_category() {
 	config_get enabled $1 enabled
 	config_get vpn $1 vpn
 	config_get tcpudp $1 tcpudp "all"
-	config_get ndpi $1 ndpi "0"
+	config_get ndpi $1 ndpi "${_ndpi_default:-1}"
 	config_get noipv6 $1 noipv6 "1"
 	config_get family $1 family "ipv4ipv6"
 	[ "$enabled" = "0" ] && return
@@ -1950,6 +2094,10 @@ _bypass_ip_set() {
 	local tcpudp
 	config_get tcpudp $1 proto "all"
 	for ip in $ip; do
+		_valid_ip4net "$ip" || _valid_ip6net "$ip" || {
+			logger -t "omr-bypass" "Rule $1: invalid IP address or network '$ip' ignored"
+			continue
+		}
 		[ -n "$interface" ] && _bypass_ip $ip $interface $tcpudp
 		[ -n "$dscp" ] && _dscp_ip $ip $dscp
 	done
@@ -1979,21 +2127,38 @@ _bypass_asn() {
 			return
 			;;
 	esac
-	local asnips
+	local asnips cache="$_BYPASS_ASN_CACHE/AS${asn}"
+	mkdir -p "$_BYPASS_ASN_CACHE"
 	# the escaped quotes were part of the filter, which jsonfilter refused:
 	# no ASN rule ever matched anything. Unverified TLS (-k) let anyone on
 	# the path choose the prefixes.
-	asnips=$(curl --max-time 4 -s "https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS${asn}" | jsonfilter -q -e '@.data.prefixes[*].prefix')
+	curl --max-time 4 -s -o "${cache}.json" "https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS${asn}"
+	# The set files are rebuilt from scratch on every run: when RIPE did not
+	# answer (no WAN up yet at boot, a timeout) the AS lost all its prefixes
+	# until the next reload. Its last answer is kept for that.
+	if [ "$(jsonfilter -q -t '@.data.prefixes' < "${cache}.json" 2>/dev/null)" = "array" ]; then
+		asnips=$(jsonfilter -q -e '@.data.prefixes[*].prefix' < "${cache}.json")
+		printf '%s\n' $asnips > "$cache"
+	else
+		asnips=$(cat "$cache" 2>/dev/null)
+		if [ -n "$asnips" ]; then
+			logger -t "omr-bypass" "Rule $1: no answer from RIPE for AS${asn}, its last prefixes are kept"
+		else
+			logger -t "omr-bypass" "Rule $1: no answer from RIPE for AS${asn}, no prefix for it"
+		fi
+	fi
+	rm -f "${cache}.json"
 	# A large AS announces thousands of prefixes, and adding them one by one
 	# (two uci runs and a scan of the whole list each) took minutes: the
 	# first prefix of each family sets the sets and rules up, all of them go
-	# to the set's file.
+	# to the set's file, which fw4 reads into the set as it is.
 	local ip v4="" v6=""
 	for ip in $asnips; do
-		case "$ip" in
-			*:*) case "$ip" in *[!0-9A-Fa-f:/]*) ;; *) v6="$v6 $ip" ;; esac ;;
-			*) case "$ip" in *[!0-9./]*) ;; *) v4="$v4 $ip" ;; esac ;;
-		esac
+		if _valid_ip4net "$ip"; then
+			v4="$v4 $ip"
+		elif _valid_ip6net "$ip"; then
+			v6="$v6 $ip"
+		fi
 	done
 	local fam list
 	for fam in 4 6; do
@@ -2018,9 +2183,12 @@ bypass_asn() {
 }
 
 _bypass_omr_server() {
-	local ip
+	local ip _srv_ip
 	config_get ip $1 ip
-	_bypass_ip $ip
+	# a list: the second address was taken as _bypass_ip's interface
+	for _srv_ip in $ip; do
+		_bypass_ip "$_srv_ip"
+	done
 }
 
 
@@ -2156,16 +2324,20 @@ _bypass_ndpid_collect_proto() {
 }
 
 _bypass_proto_collect_ndpid() {
-	local proto intf enabled intfid tcpudp ndpi dscp
+	local proto intf enabled intfid tcpudp ndpi dscp vpn
 	_rule_proto proto $1
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get tcpudp $1 tcpudp "all"
-	config_get ndpi $1 ndpi "1"
+	config_get ndpi $1 ndpi "${_ndpi_default:-1}"
 	_rule_dscp dscp $1
+	config_get vpn $1 vpn
 	[ "$enabled" = "0" ] && return
 	[ "$ndpi" = "0" ] && return
 	[ -z "$proto" ] && return
+	# like a category: the detected addresses go to the server VPN's set,
+	# not to the rule's interface
+	[ "$vpn" = "1" ] && intf="srv_vpn1"
 	intf=$(_map_intf_device "$intf")
 	intf=$(_sanitize_intf_key "$intf")
 	# no interface: DSCP marking only, if the rule has a class
@@ -2191,7 +2363,7 @@ _bypass_category_collect_ndpid() {
 	config_get enabled $1 enabled
 	config_get vpn $1 vpn
 	config_get tcpudp $1 tcpudp "all"
-	config_get ndpi $1 ndpi "0"
+	config_get ndpi $1 ndpi "${_ndpi_default:-1}"
 	_rule_dscp dscp $1
 	[ "$enabled" = "0" ] && return
 	[ "$ndpi" = "0" ] && return
@@ -2245,15 +2417,17 @@ _stop_ndpid_consumer() {
 # Set _ndpid_wanted=1 when at least one enabled proto bypass rule relies on
 # nDPId detection (same conditions as _bypass_proto_collect_ndpid)
 _ndpid_rule_wanted() {
-	local proto intf enabled ndpi dscp
+	local proto intf enabled ndpi dscp vpn
 	_rule_proto proto $1
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
-	config_get ndpi $1 ndpi "1"
+	config_get ndpi $1 ndpi "${_ndpi_default:-1}"
 	_rule_dscp dscp $1
+	config_get vpn $1 vpn
 	[ "$enabled" = "0" ] && return
 	[ "$ndpi" = "0" ] && return
 	[ -z "$proto" ] && return
+	[ "$vpn" = "1" ] && intf="srv_vpn1"
 	[ -z "$intf" ] && [ -z "$dscp" ] && return
 	[ "$intf" = "none" ] && return
 	_ndpid_wanted=1
@@ -2267,7 +2441,7 @@ _ndpid_category_rule_wanted() {
 	config_get category $1 category
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
-	config_get ndpi $1 ndpi "0"
+	config_get ndpi $1 ndpi "${_ndpi_default:-1}"
 	_rule_dscp dscp $1
 	config_get vpn $1 vpn
 	[ "$enabled" = "0" ] && return
@@ -2401,6 +2575,13 @@ start_service() {
 	# Cache proxy/VPN/ndpi/ndpid state — read once, reused by _intf_rule and _bypass_proto (called per interface/proto)
 	_omr_proxy=$(uci -q get openmptcprouter.settings.proxy)
 	_omr_ndpi=$(uci -q get openmptcprouter.settings.ndpi)
+	# A dpis/categories rule without the ndpi option: LuCI shows "Enable
+	# ndpi" ticked when nDPI or nDPId is there (and the option hidden when
+	# not), so that is what it means. Each function used to read it its own
+	# way ("0", "1" or empty), and a category saved with the box ticked was
+	# never watched by nDPId.
+	_ndpi_default=0
+	{ [ -e /proc/net/xt_ndpi/proto ] || [ -e /usr/sbin/ndpisrvd ]; } && _ndpi_default=1
 	_omr_ndpid=0
 	if [ -x /usr/sbin/ndpid ]; then
 		_ensure_ndpid_running
@@ -2416,7 +2597,12 @@ start_service() {
 	fwfilechangemd5=""
 	[ -f /etc/firewall.omr-bypass ] && fwfilechangemd5="$(md5sum /etc/firewall.omr-bypass)"
 	[ -f "$_REPLY_NFT" ] && fwfilechangemd5="${fwfilechangemd5} $(md5sum "$_REPLY_NFT")"
-	fwfilechangemd5="${fwfilechangemd5} $(_asn_files_md5)"
+	# Not part of the restart decision below: an AS announcing one prefix
+	# more or less (most nights) forced a full fw4 and dnsmasq restart,
+	# which also dropped every address dnsmasq had added to the sets. The
+	# light reload deletes the prefixes a set lost (_asn_stale) and adds the
+	# new ones from the files.
+	_asnmd5="$(_asn_files_md5)"
 	rm -f /etc/firewall.omr-bypass "$_REPLY_INCLUDE" "$_REPLY_NFT"
 	#cat > /etc/firewall.omr-bypass <<-EOF
 	##!/bin/sh
@@ -2559,7 +2745,7 @@ start_service() {
 	fwfilechangemd5check=""
 	[ -f /etc/firewall.omr-bypass ] && fwfilechangemd5check="$(md5sum /etc/firewall.omr-bypass)"
 	[ -f "$_REPLY_NFT" ] && fwfilechangemd5check="${fwfilechangemd5check} $(md5sum "$_REPLY_NFT")"
-	fwfilechangemd5check="${fwfilechangemd5check} $(_asn_files_md5)"
+	_asnmd5check="$(_asn_files_md5)"
 	# Force the heavier fw4/dnsmasq restart path only when the generated
 	# bypass content actually changed (new/removed nft elements). This
 	# comparison used to be inverted ("=" instead of "!="), so it forced a
@@ -2616,7 +2802,7 @@ start_service() {
 		mv -f "$_proxy_nft_down" "${_proxy_nft_down%.down}"
 		_proxy_down_restored=1
 	done
-	if [ -n "$(uci -q changes firewall)" ] || [ "$fwfilechangemd5" != "$fwfilechangemd5check" ] || [ "${_ndpid_fw_needed:-0}" = "1" ] || [ -n "$_proxy_down_restored" ]; then
+	if [ -n "$(uci -q changes firewall)" ] || [ "$fwfilechangemd5" != "$fwfilechangemd5check" ] || [ "$_asnmd5" != "$_asnmd5check" ] || [ "${_ndpid_fw_needed:-0}" = "1" ] || [ -n "$_proxy_down_restored" ]; then
 		uci -q commit firewall
 		[ -z "$RELOAD" ] && {
 			fw4 restart || logger -t "omr-bypass" "ERROR: fw4 restart failed"
@@ -2652,7 +2838,9 @@ start_service() {
 		logger -t "omr-bypass" "Restart dnsmasq..."
 		/etc/init.d/dnsmasq restart
 	}
-	[ -z "$_dnsmasq_restart" ] && [ -n "$RELOAD" ] && [ "$add_domains" = "true" ] && {
+	# also when the last domain went away: dnsmasq kept filling the sets for
+	# it until its next restart
+	[ -z "$_dnsmasq_restart" ] && [ -n "$RELOAD" ] && { [ "$add_domains" = "true" ] || [ -n "${_dhcp_had_domains:-}" ]; } && {
 		logger -t "omr-bypass" "Reload dnsmasq..."
 		/etc/init.d/dnsmasq reload
 	}
@@ -2762,8 +2950,10 @@ _soft_wipe_dynamic() {
 	for key in $(uci -q show firewall 2>/dev/null | grep -E '^firewall\.omr6?_dst_bypass_[^.]+=rule$' | cut -d= -f1); do
 		uci -q set "${key}.enabled=0"
 	done
+	_dhcp_had_domains=""
 	for key in $(uci -q show dhcp 2>/dev/null | grep -E '^dhcp\.omr_dst_bypass_[^.]+\.domain=' | cut -d= -f1); do
 		uci -q delete "$key"
+		_dhcp_had_domains=1
 	done
 }
 

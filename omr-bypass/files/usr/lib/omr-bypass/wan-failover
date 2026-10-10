@@ -298,12 +298,15 @@ _groups_apply() {
 	printf '%s' "$_groups_status" > "$GROUPS_FILE"
 }
 
-# ip rules of groups that no longer exist
+# ip rules of groups that no longer exist. Only the group ids (9001-9899),
+# and never one that is also a WAN's metric: 0x4539<metric> is that WAN's own
+# bypass mark, whose rule is not this script's to delete.
 _groups_cleanup() {
 	local fam mark id keep
 	keep=" $(echo "$_groups_rules" | awk '{ print $2 }' | xargs) "
+	keep="$keep$(uci -q show network 2>/dev/null | sed -n "s/^network\.[^.]*\.metric='\{0,1\}\([0-9]*\)'\{0,1\}$/\1/p" | xargs) "
 	for fam in -4 -6; do
-		for mark in $(ip "$fam" rule list pref 1 2>/dev/null | sed -n 's/.*fwmark \(0x[46]5399[0-8][0-9][0-9]\) .*/\1/p' | sort -u); do
+		for mark in $(ip "$fam" rule list pref 1 2>/dev/null | sed -n -E 's/.*fwmark (0x[46]5399(00[1-9]|0[1-9][0-9]|[1-8][0-9][0-9])) .*/\1/p' | sort -u); do
 			id="${mark#0x?539}"
 			case "$keep" in *" $id "*) continue ;; esac
 			while ip "$fam" rule del pref 1 fwmark "$mark" 2>/dev/null; do :; done
