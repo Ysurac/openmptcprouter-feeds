@@ -20,9 +20,7 @@ function run_test(server,proto,mode,updown,omit,parallel,transmit,bitrate)
 	end
 	local addr = uci:get("iperf",server,"host")
 	local ports = uci:get("iperf",server,"ports")
-	local user = uci:get("iperf",server,"user") or ""
 	local password = uci:get("iperf",server,"password") or ""
-	local key = uci:get("iperf",server,"key") or ""
 	if not addr or not ports then
 		luci.http.write_json({ error = "Invalid server" })
 		return
@@ -34,12 +32,9 @@ function run_test(server,proto,mode,updown,omit,parallel,transmit,bitrate)
 	if not bitrate:match("^[0-9]+[KMG]?$") then
 		bitrate = "1M"
 	end
+	-- With credentials omr-iperf runs the test: it writes the key to its own
+	-- private temp file and adds --username/--rsa-public-key-path itself
 	local options = {}
-	if user ~= "" and password ~= "" and key ~= "" then
-		luci.sys.call("printf %s " .. ut.shellquote(key) .. " | base64 -d > /tmp/iperf.pem")
-		options[#options + 1] = "--username " .. ut.shellquote(user)
-		options[#options + 1] = "--rsa-public-key-path /tmp/iperf.pem"
-	end
 	if mode == "udp" then
 		options[#options + 1] = "-u -b " .. ut.shellquote(bitrate)
 	end
@@ -64,7 +59,7 @@ function run_test(server,proto,mode,updown,omit,parallel,transmit,bitrate)
 	local port = t[ math.random( #t ) ]
 	options = table.concat(options, " ")
 	if password ~= "" then
-		iperf = io.popen("omr-iperf %s -P %s -%s -O %s -t %s -J -Z %s" % {ut.shellquote(server),parallel,ipv,omit,transmit,options})
+		iperf = io.popen("omr-iperf --server %s -P %s -%s -O %s -t %s -J -Z %s" % {ut.shellquote(server),parallel,ipv,omit,transmit,options})
 	else
 		iperf = io.popen("iperf3 -c %s -P %s -%s -p %s -O %s -t %s -J -Z %s" % {ut.shellquote(addr),parallel,ipv,port,omit,transmit,options})
 	end
