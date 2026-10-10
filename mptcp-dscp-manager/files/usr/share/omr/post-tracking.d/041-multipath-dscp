@@ -30,9 +30,11 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && \
 	([ "$scheduler" = "mptcp_bpf_dscp.o" ] || [ "$scheduler" = "bpf_dscp" ]) && \
 	([ "$(uci -q get network.${OMR_TRACKER_INTERFACE}.multipath)" = "on" ] || [ "$(uci -q get network.${OMR_TRACKER_INTERFACE}.multipath)" = "master" ] || [ "$(uci -q get network.${OMR_TRACKER_INTERFACE}.multipath)" = "backup" ]); then
 	relevant=0
+	pinned=""
 	for section in $(uci -q show network 2>/dev/null | sed -n "s/^network\.\([^.=]*\)=dscp_pin\$/\1/p"); do
 		dscp="$(uci -q get network.${section}.dscp)"
 		[ -z "$dscp" ] && continue
+		[ -n "$(uci -q get network.${section}.upload_interface)" ] && pinned="$pinned $dscp"
 		if [ "$(uci -q get network.${section}.upload_interface)" = "$OMR_TRACKER_INTERFACE" ]; then
 			/usr/sbin/mptcp-scheduler-dscp.sh set "$dscp" "${OMR_TRACKER_DEVICE}" 2>&1 >/dev/null
 			relevant=1
@@ -42,6 +44,10 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && \
 		# named there still means the VPS sync below needs to run.
 		[ "$(uci -q get network.${section}.download_interface)" = "$OMR_TRACKER_INTERFACE" ] && relevant=1
 	done
+	# Only "set" was done here, so a row deleted on the DSCP routing page
+	# kept its class pinned until the next reboot: drop every class that
+	# no row pins to an upload interface any more.
+	[ -n "$(/usr/sbin/mptcp-scheduler-dscp.sh prune $pinned 2>/dev/null)" ] && relevant=1
 	# Keep the VPS's own dscp_remote_ids map in sync so pins also hold for
 	# traffic the VPS sends (downloads) -- see openmptcprouter-vps's
 	# _set_mptcp_dscp_vps for details. Backgrounded: this is an HTTPS round

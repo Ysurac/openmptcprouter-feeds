@@ -11,6 +11,8 @@
 
 MAP_PATH="/sys/fs/bpf/endpoint_weights"
 MAP_PATH2="/sys/fs/bpf/weight_remote_id"
+# The keys last set for each device, see forget_old_keys
+STATE_DIR="/var/state/mptcp-weight"
 
 # Check required commands
 for cmd in bpftool ip; do
@@ -55,9 +57,14 @@ get_weight_from_key() {
 # Get BPF endpoint IP from interface name
 get_bpf_ep_ip_from_iface() {
 	iface="$1"
+	# The device is compared as a field, not as a regex ("dev eth0.2"
+	# matched eth0.20, the "." any character), and only an IPv4 address
+	# is a key of the map: on a dual-stack WAN whose IPv6 endpoint came
+	# first, the IPv4 conversion below turned "2001:db8::1" into 2001.
 	ep_ips=$(ip mptcp endpoint show | awk -v dev="$iface" '
-		$0 ~ "dev "dev {
-			{ print $1; exit }
+		$1 !~ /:/ {
+			for (i = 2; i < NF; i++)
+				if ($i == "dev" && $(i + 1) == dev) { print $1; exit }
 		}')
 	if [ -z "$ep_ips" ]; then
 		return 1
@@ -67,6 +74,39 @@ get_bpf_ep_ip_from_iface() {
 		echo "$ip" | awk -F. '{print ($4 * 256^3) + ($3 * 256^2) + ($2 * 256) + $1}'
 	done
 	return 0
+}
+
+# The map keys (get_bpf_ep_ip_from_iface's form) of every IPv4 endpoint
+ep_keys_all() {
+	ip mptcp endpoint show | awk '$1 !~ /:/ {
+		split($1, a, ".")
+		print (a[4] * 256^3) + (a[3] * 256^2) + (a[2] * 256) + a[1]
+	}'
+}
+
+# endpoint_weights is keyed by WAN address and holds 64 entries. The key of
+# an address a WAN no longer has was never deleted, so after enough DHCP
+# renumbering the map was full and every new weight failed (E2BIG): the WANs
+# silently fell back to the neutral 100. Delete the keys set before for the
+# device $1 that are not among its keys $2 any more, unless another WAN has
+# that address now, and remember $2.
+forget_old_keys() {
+	local dev="$1" keys current old state
+	case "$dev" in ''|*/*|.*) return 0 ;; esac
+	state="$STATE_DIR/$dev"
+	keys="$(echo $2)"
+	if [ -f "$state" ]; then
+		current=" $keys $(echo $(ep_keys_all)) "
+		while read -r old; do
+			[ -n "$old" ] || continue
+			case "$current" in
+				*" $old "*) continue ;;
+			esac
+			bpftool map delete pinned "$MAP_PATH" key hex $(to_le_hex "$old") >/dev/null 2>&1
+		done < "$state"
+	fi
+	mkdir -p "$STATE_DIR"
+	printf '%s\n' $keys > "$state"
 }
 
 is_uint_0_255() {
@@ -101,6 +141,8 @@ if [ "$ACTION" = "show" ]; then
 		ip mptcp endpoint show | while read -r line; do
 			IP_EP=$(echo "$line" | awk '{print $1}')
 			IFACE=$(echo "$line" | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}')
+			# not a key of the map, see get_bpf_ep_ip_from_iface
+			case "$IP_EP" in *:*) continue ;; esac
 
 			if [ -n "$IP_EP" ] && [ -n "$IFACE" ]; then
 				#BPF_EP_IP=$(echo $IP_EP | awk -F. '{print ($1*16777216)+($2*65536)+($3*256)+$4}')
@@ -196,6 +238,8 @@ elif [ "$ACTION" = "set" ]; then
 		exit 1
 	fi
 
+	forget_old_keys "$IFACE" "$BPF_EP_IPS"
+
 	echo "$BPF_EP_IPS" | while read -r BPF_EP_IP; do
 		KEY_HEX=$(to_le_hex "$BPF_EP_IP")
 		VALUE_HEX=$(to_le_hex "$WEIGHT")
@@ -239,6 +283,7 @@ elif [ "$ACTION" = "del" ]; then
 		EP_IP=$(printf "%d.%d.%d.%d\n" $(( BPF_EP_IP & 255 )) $(( (BPF_EP_IP >> 8) & 255 )) $(( (BPF_EP_IP >> 16) & 255 )) $(( (BPF_EP_IP >> 24) & 255 )) )
 		echo "Weight removed: interface=$IFACE endpoint_ip=$EP_IP (reset to neutral 100)"
 	done
+	forget_old_keys "$IFACE" ""
 	exit 0
 
 elif [ "$ACTION" = "debug" ]; then

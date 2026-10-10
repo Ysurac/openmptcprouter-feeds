@@ -142,9 +142,14 @@ get_remote_ids() {
 # Get BPF endpoint IP (decimal, LE-integer form) from interface name
 get_bpf_ep_ip_from_iface() {
 	iface="$1"
+	# The device is compared as a field, not as a regex ("dev eth0.2"
+	# matched eth0.20, the "." any character), and only an IPv4 address
+	# is a key of the map: on a dual-stack WAN whose IPv6 endpoint came
+	# first, the IPv4 conversion below turned "2001:db8::1" into 2001.
 	ep_ips=$(ip mptcp endpoint show | awk -v dev="$iface" '
-		$0 ~ "dev "dev {
-			{ print $1; exit }
+		$1 !~ /:/ {
+			for (i = 2; i < NF; i++)
+				if ($i == "dev" && $(i + 1) == dev) { print $1; exit }
 		}')
 	if [ -z "$ep_ips" ]; then
 		return 1
@@ -162,6 +167,7 @@ usage() {
 	echo "  $0 set <dscp> <interface>   # Pin a DSCP class to a local WAN interface (router-side)"
 	echo "  $0 set <dscp> id <N>...     # Pin a DSCP class to remote endpoint ids 0-255 (server/VPS-side)"
 	echo "  $0 del <dscp>               # Remove a DSCP pin (both forms)"
+	echo "  $0 prune [<dscp>...]        # Remove the interface pins of every other DSCP class"
 	echo "  $0 debug                    # Show live BPF trace output"
 	echo ""
 	echo "<dscp> can be a class name (cs0-cs7, af11-af43, ef, le) or a raw 0-63 value."
@@ -309,6 +315,28 @@ del)
 	[ -e "$MAP_PATH2" ] && bpftool map delete pinned "$MAP_PATH2" key hex $KEY_HEX >/dev/null 2>&1
 	[ -e "$MAP_PATH2_OLD" ] && bpftool map delete pinned "$MAP_PATH2_OLD" key hex $KEY_HEX >/dev/null 2>&1
 	echo "DSCP pin removed: dscp=$2 (${val})"
+	exit 0
+	;;
+
+prune)
+	# Pins are only ever set from the rows of the DSCP routing page, so a
+	# deleted row left its class pinned to its WAN until the map went away
+	# (a reboot). Every class of dscp_iface not given here is removed.
+	shift
+	keep=""
+	for name in "$@"; do
+		val=$(dscp_to_val "$name")
+		[ -n "$val" ] && keep="$keep $val"
+	done
+	for hex in $(bpftool -j map dump pinned "$MAP_PATH" 2>/dev/null | \
+		grep -o '"key":\["0x[0-9a-fA-F]*"' | sed 's/.*"0x//;s/"//'); do
+		val=$((0x$hex))
+		case " $keep " in
+			*" $val "*) continue ;;
+		esac
+		bpftool map delete pinned "$MAP_PATH" key hex $(to_byte_hex "$val") >/dev/null 2>&1 && \
+			echo "DSCP pin removed: dscp=$val"
+	done
 	exit 0
 	;;
 
