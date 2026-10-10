@@ -6,9 +6,36 @@ START=50
 
 USE_PROCD=1
 
-. /usr/lib/unbound/iptools.sh
 . /lib/functions/network.sh
 . /usr/lib/mptcp/init_helpers.sh
+
+# Was sourced from /usr/lib/unbound/iptools.sh, which only unbound-daemon
+# ships: without unbound the "." aborted the whole script (no MPTCP setup at
+# all), so the one function used here is kept as its own copy.
+valid_subnet4() {
+	case "$1" in
+		169"."254"."*) echo "not" ;;
+		127"."*) echo "not" ;;
+		0"."*) echo "not" ;;
+		255"."*) echo "not" ;;
+		25[0-4]"."[0-9]*) echo "ok" ;;
+		2[0-4][0-9]"."[0-9]*) echo "ok" ;;
+		1[0-9][0-9]"."[0-9]*) echo "ok" ;;
+		[0-9][0-9]"."[0-9]*) echo "ok" ;;
+		[0-9]"."[0-9]*) echo "ok" ;;
+		*) echo "not" ;;
+	esac
+}
+
+# An MPTCP limit as the kernel takes it: a number from 0 to 8, $2 when $1
+# is not a number
+_mptcp_limit() {
+	case "$1" in
+		''|*[!0-9]*) echo "$2" ;;
+		?|??) if [ "$1" -gt 8 ]; then echo 8; else echo "$1"; fi ;;
+		*) echo 8 ;;
+	esac
+}
 
 restart_scheduler_dependent_services() {
 	local proxy vpn
@@ -30,6 +57,54 @@ restart_scheduler_dependent_services() {
 		glorytun_tcp) /etc/init.d/glorytun restart >/dev/null 2>&1 ;;
 	esac
 	logger -t "MPTCP" "Scheduler changed, restarted proxy=${proxy:-none} vpn=${vpn:-none} (vpn restart skipped unless TCP-based)"
+}
+
+# Register the BPF scheduler $1 when /usr/share/bpf/scheduler has an object
+# for it, unless that object is what is registered already.
+#
+# This ran on every global reload, and procd reloads mptcp on every interface
+# event: all schedulers were unregistered and the selected one registered
+# again, so the verifier ran each time and, until it was done, the configured
+# scheduler did not exist. The connections opened in that window got the
+# default scheduler for their whole life (mptcp_init_sched()). It is now only
+# done when the scheduler is not registered, when another one was selected
+# or when its object changed (an upgrade).
+_mptcp_bpf_scheduler() {
+	local sched="$1" pin_dir="/sys/fs/bpf/mptcp" state="/var/state/mptcp-bpf-scheduler"
+	local obj="/usr/share/bpf/scheduler/mptcp_${1}.o" stamp="" pin reg_err
+	[ -f "$obj" ] && stamp="$sched $(md5sum "$obj" 2>/dev/null | cut -d' ' -f1)"
+	if [ -n "$stamp" ] && [ "$(cat "$state" 2>/dev/null)" = "$stamp" ]; then
+		case " $(cat /proc/sys/net/mptcp/available_schedulers 2>/dev/null) " in
+			*" $sched "*) return 0 ;;
+		esac
+	fi
+	mkdir -p "$pin_dir"
+	# Deleting the pinned link is what unregisters a scheduler; bpftool's
+	# "unregister" takes a map id or name, never a pinned path, so
+	# `unregister pinned "$pin"` exited 255 on a usage error and the
+	# `&& rm -f` behind it never ran. Pins then accumulated, every
+	# scheduler ever selected stayed registered, and re-registering
+	# a rebuilt object failed with "File exists" -- silently, since
+	# the output was discarded, so the router kept running the OLD
+	# program after an upgrade shipped a fixed one.
+	for pin in "$pin_dir"/*; do
+		[ -e "$pin" ] || continue
+		rm -f "$pin"
+	done
+	rm -f "$state"
+	[ -n "$stamp" ] || return 0
+	mkdir -p "${state%/*}"
+	if reg_err="$(bpftool struct_ops register "$obj" "$pin_dir/" 2>&1)"; then
+		echo "$stamp" > "$state"
+	else
+		logger -t "MPTCP" "Failed to register BPF scheduler $obj: $reg_err"
+		# When a scheduler of that name is still registered (bpftool can't
+		# unregister one on every kernel), it is used as it is: retrying on
+		# every reload only repeated this error.
+		case " $(cat /proc/sys/net/mptcp/available_schedulers 2>/dev/null) " in
+			*" $sched "*) echo "$stamp" > "$state" ;;
+		esac
+	fi
 }
 
 global_multipath_settings() {
@@ -60,7 +135,9 @@ global_multipath_settings() {
 	config_get mptcp_pm_type globals mptcp_pm_type "0"
 	config_get mptcp_allow_join_initial_addr_port globals mptcp_allow_join_initial_addr_port "1"
 	config_get mptcp_close_timeout globals mptcp_close_timeout "60"
-	config_get mptcp_blackhole_timeout globals mptcp_blackhole_timeout "3600"
+	# 0 as in uci-defaults and the LuCI form: OMR keeps MPTCP on behind a
+	# middlebox that drops its options rather than disabling it for an hour
+	config_get mptcp_blackhole_timeout globals mptcp_blackhole_timeout "0"
 	config_get mptcp_syn_retrans_before_tcp_fallback globals mptcp_syn_retrans_before_tcp_fallback "2"
 	
 	[ "$multipath" = "enable" ] && multipath_status=1
@@ -98,6 +175,11 @@ global_multipath_settings() {
 		else
 			echo "net.mptcp.enabled=${multipath_status}" >> /etc/sysctl.d/zzz_openmptcprouter.conf
 		fi
+		# The kernel takes at most 8 for each limit (MPTCP_PM_ADDR_MAX) and
+		# refuses the whole command when one is above, so a single value too
+		# high left both limits at whatever they were
+		mptcp_add_addr_accepted="$(_mptcp_limit "$mptcp_add_addr_accepted" 1)"
+		mptcp_subflows="$(_mptcp_limit "$mptcp_subflows" 3)"
 		ip mptcp limits set add_addr_accepted $mptcp_add_addr_accepted subflows $mptcp_subflows >/dev/null 2>&1
 		# The subflow limit decides how many socket buffers one MPTCP connection
 		# can hold open at once, and they all draw on the same net.ipv4.tcp_mem
@@ -109,6 +191,22 @@ global_multipath_settings() {
 		[ -z "$mptcp_checksum" ] || sysctl -qew net.mptcp.checksum_enabled="$mptcp_checksum"
 		[ -z "$mptcp_stale_loss_cnt" ] || sysctl -qew net.mptcp.stale_loss_cnt="$mptcp_stale_loss_cnt"
 		[ -z "$mptcp_pm_type" ] || sysctl -qew net.mptcp.pm_type="$mptcp_pm_type"
+		# net.mptcp.path_manager and pm_type are two views of the same
+		# setting: the kernel sets one when the other is written. pm_type
+		# chooses between "kernel" and "userspace" (its absent value must
+		# stay in-kernel, #4349), so path_manager is only written for another
+		# path manager the kernel registers (a BPF one).
+		if [ -n "$mptcp_path_manager" ] && [ -f /proc/sys/net/mptcp/path_manager ]; then
+			case "$mptcp_path_manager" in
+				kernel|userspace) ;;
+				*)
+					case " $(cat /proc/sys/net/mptcp/available_path_managers 2>/dev/null) " in
+						*" $mptcp_path_manager "*) sysctl -qew net.mptcp.path_manager="$mptcp_path_manager" ;;
+						*) logger -t "MPTCP" "Path manager '$mptcp_path_manager' is not available (kernel offers: $(cat /proc/sys/net/mptcp/available_path_managers 2>/dev/null))" ;;
+					esac
+					;;
+			esac
+		fi
 		[ -z "$mptcp_allow_join_initial_addr_port" ] || sysctl -qew net.mptcp.allow_join_initial_addr_port="$mptcp_allow_join_initial_addr_port"
 		[ -z "$mptcp_close_timeout" ] || sysctl -qew net.mptcp.close_timeout="$mptcp_close_timeout"
 		[ -z "$mptcp_syn_retrans_before_tcp_fallback" ] || sysctl -qew net.mptcp.syn_retrans_before_tcp_fallback="$mptcp_syn_retrans_before_tcp_fallback"
@@ -116,29 +214,17 @@ global_multipath_settings() {
 		if [ -n "$mptcp_scheduler" ]; then
 			local sched="${mptcp_scheduler#mptcp_}"; sched="${sched%.o}"
 			local prev_sched="$(cat /proc/sys/net/mptcp/scheduler 2>/dev/null)"
-			if [ -d /usr/share/bpf/scheduler ]; then
-				local pin_dir="/sys/fs/bpf/mptcp"
-				mkdir -p "$pin_dir"
-				# Unregister any previously pinned struct_ops to avoid conflicts.
-				# Deleting the pinned link is what unregisters it; bpftool's
-				# "unregister" takes a map id or name, never a pinned path, so
-				# `unregister pinned "$pin"` exited 255 on a usage error and the
-				# `&& rm -f` behind it never ran. Pins then accumulated, every
-				# scheduler ever selected stayed registered, and re-registering
-				# a rebuilt object failed with "File exists" -- silently, since
-				# the output was discarded, so the router kept running the OLD
-				# program after an upgrade shipped a fixed one.
-				for pin in "$pin_dir"/*; do
-					[ -e "$pin" ] || continue
-					rm -f "$pin"
-				done
-				local obj="/usr/share/bpf/scheduler/mptcp_${sched}.o"
-				if [ -f "$obj" ]; then
-					local reg_err
-					reg_err="$(bpftool struct_ops register "$obj" "$pin_dir/" 2>&1)" || \
-						logger -t "MPTCP" "Failed to register BPF scheduler $obj: $reg_err"
-				fi
-			fi
+			# The name becomes the path of the object registered below, so
+			# only a plain name is taken: with "/" and ".." in it (the rpcd
+			# API wrote any string) it could point outside of
+			# /usr/share/bpf/scheduler.
+			case "$sched" in
+				''|*[!A-Za-z0-9_]*)
+					logger -t "MPTCP" "Invalid scheduler name '$mptcp_scheduler', using 'default'"
+					sched="default"
+					;;
+			esac
+			[ -d /usr/share/bpf/scheduler ] && _mptcp_bpf_scheduler "$sched"
 			# Only a scheduler the kernel lists can be set. A legacy name left
 			# in uci ('blest' from the v0.9x defaults is not a 6.x scheduler)
 			# or a BPF object that failed to register makes the sysctl fail;
@@ -246,6 +332,52 @@ _root_qdisc_managed_elsewhere() {
 		"qdisc tbf "*) return 0 ;;
 	esac
 	return 1
+}
+
+# Delete the pref 0 rules of the routing table $2 ("-4"/"-6" in $1) other
+# than "from $3" and "oif $4", the two added below. The rules of a previous
+# address or device of the WAN were never removed: the delete looked for
+# " <id> " in "ip rule show", whose lines end with "lookup <id>", so every new
+# address (each IPv6 prefix change) left one more rule behind. Only pref 0
+# is looked at: netifd's rules for the same table and the fwmark ones are not
+# ours, and deleting them by table alone took those too.
+_prune_wan_rules() {
+	local family="$1" table="$2" from="$3" dev="$4" sel
+	ip $family rule show pref 0 table "$table" 2>/dev/null | \
+		awk -v t="$table" '$1 == "0:" && $(NF-1) == "lookup" && $NF == t {
+			# "[detached]" (device gone) is shown, not part of the selector
+			$1 = ""; $(NF-1) = ""; $NF = ""
+			for (i = 2; i < NF - 1; i++) if ($i ~ /^\[/) $i = ""
+			print }' | \
+		while read -r sel; do
+			[ -n "$from" ] && [ "$sel" = "from $from" ] && continue
+			[ "$sel" = "from all oif $dev" ] && continue
+			ip $family rule del pref 0 $sel table "$table" >/dev/null 2>&1
+		done
+}
+
+# Delete the routes of the routing table $2 ("-4"/"-6" in $1) that were added
+# here for the device $3 and are not among the ones added again below ($4...),
+# the network and gateway routes of a previous address. This replaces
+# "ip route flush <id>", which took the id for a destination: it flushed
+# <id>.0.0.0/8 from the main table and never touched the WAN's own. Only routes
+# added without a protocol (proto boot) on that device are looked at, so
+# netifd's routes and omr-tracker's "unreachable default" are kept, and
+# add_route puts the ones of the uci route sections back afterwards. A route
+# deleted although it is wanted (another spelling of the same prefix) is only
+# missing until the "ip route replace" that follows.
+_prune_wan_routes() {
+	local family="$1" table="$2" dev="$3" dst rest keep
+	shift 3
+	ip $family route show table "$table" dev "$dev" proto boot 2>/dev/null | \
+		while read -r dst rest; do
+			[ -n "$dst" ] || continue
+			for keep in default "$@"; do
+				keep="${keep%/32}"; keep="${keep%/128}"
+				[ "$keep" = "$dst" ] && continue 2
+			done
+			ip $family route del "$dst" dev "$dev" proto boot table "$table" >/dev/null 2>&1
+		done
 }
 
 interface_multipath_settings() {
@@ -440,9 +572,6 @@ interface_multipath_settings() {
 			delete network.${config}_route_default
 			commit network
 		EOF
-	else
-		ip rule show | grep -q " $id " && ip rule del table $ip4table > /dev/null 2>&1
-		ip route flush $id > /dev/null 2>&1
 	fi
 
 	if [ -n "$gateway" ] && [ -n "$network" ]; then
@@ -472,6 +601,8 @@ interface_multipath_settings() {
 				commit network
 			EOF
 		else
+			_prune_wan_rules -4 "$ip4table" "$ipaddr" "$iface"
+			_prune_wan_routes -4 "$ip4table" "$iface" "$network/$netmask" "$gateway"
 			[ -n "$ipaddr" ] && [ -z "$(ip rule show from $ipaddr table $ip4table)" ] && ip rule add from $ipaddr table $ip4table pref 0
 			[ -z "$(ip rule show oif $iface table $ip4table)" ] && ip rule add oif $iface table $ip4table pref 0
 			ip route replace $network/$netmask dev $iface scope link metric $id $initcwrwnd >/dev/null 2>&1
@@ -520,6 +651,7 @@ interface_multipath_settings() {
 				commit network
 			EOF
 		else
+			_prune_wan_rules -4 "$ip4table" "$ipaddr" "$iface"
 			[ -n "$ipaddr" ] && [ -z "$(ip rule show from $ipaddr table $ip4table)" ] && ip rule add from $ipaddr table $ip4table pref 0
 			[ -z "$(ip rule show oif $iface table $ip4table)" ] && ip rule add oif $iface table $ip4table pref 0
 			ip route replace $network/$netmask dev $iface scope link metric $id $initcwrwnd >/dev/null 2>&1
@@ -583,9 +715,6 @@ interface_multipath_settings() {
 				delete network.${config}_route6_default
 				commit network
 			EOF
-		else
-			ip -6 rule show | grep -q " 6$id " && ip -6 rule del table $ip6table > /dev/null 2>&1
-			ip -6 route flush 6$id > /dev/null 2>&1
 		fi
 		if [ -n "$gateway6" ] && [ -n "$network6" ]; then
 			#echo "gateway6: $gateway6 - network6: $network6 -> ok"
@@ -613,6 +742,8 @@ interface_multipath_settings() {
 					commit network
 				EOF
 			else
+				_prune_wan_rules -6 "$ip6table" "$ip6addr" "$iface"
+				_prune_wan_routes -6 "$ip6table" "$iface" "$network6/$netmask6" "$gateway6"
 				[ -n "$ip6addr" ] && ip -6 rule add from $ip6addr table $ip6table pref 0 >/dev/null 2>&1
 				[ -z "$(ip -6 rule show pref 0 table $ip6table oif $iface)" ] && ip -6 rule add oif $iface table $ip6table pref 0
 				ip -6 route replace $network6/$netmask6 dev $iface scope link metric 6$id $initcwrwnd >/dev/null 2>&1
@@ -834,6 +965,7 @@ stop_service() {
 		[ -e "$pin" ] || continue
 		rm -f "$pin"
 	done
+	rm -f /var/state/mptcp-bpf-scheduler
 }
 
 reload_service() {

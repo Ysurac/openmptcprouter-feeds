@@ -43,6 +43,15 @@ return L.view.extend({
 	// otherwise keep showing the selected one.
 	var activeScheduler = String(res[2] || '').trim();
 
+	// Compared as numbers, not as a float of the version string: "6.6"
+	// read as 6.6 is above 6.18.
+	var kernelVersion = String(boardinfo.kernel || '').split('.');
+	var kernelMajor = parseInt(kernelVersion[0], 10) || 0;
+	var kernelMinor = parseInt(kernelVersion[1], 10) || 0;
+	function kernelAtLeast(major, minor) {
+		return kernelMajor > major || (kernelMajor == major && kernelMinor >= minor);
+	}
+
 	function normalizeSchedulerValue(value) {
 		if (value == null)
 			return value;
@@ -170,7 +179,7 @@ return L.view.extend({
 
 		if (activeScheduler && selected && selected != activeScheduler)
 			L.dom.append(widget, E('div', { 'class': 'cbi-value-description' }, [
-				E('strong', {}, _('The kernel uses the %s scheduler: %s could not be enabled, see the system log.').format(activeScheduler, selected))
+				E('strong', {}, [ _('The kernel uses the %s scheduler: %s could not be enabled, see the system log.').format(activeScheduler, selected) ])
 			]));
 
 		return widget;
@@ -293,8 +302,10 @@ return L.view.extend({
 		o.depends("mptcp_pm_type","1");
 		o.retain = true;
 
+		// The kernel takes 8 at most for both limits, and one value above
+		// it made "ip mptcp limits set" fail for both
 		o = s.option(form.Value, "mptcp_subflows", _("Max subflows"),_("specifies the maximum number of additional subflows allowed for each MPTCP connection"));
-		o.datatype = "uinteger";
+		o.datatype = "range(0,8)";
 		o.rmempty = false;
 		o.default = 3;
 
@@ -304,7 +315,7 @@ return L.view.extend({
 		o.default = 4;
 
 		o = s.option(form.Value, "mptcp_add_addr_accepted", _("Max add address"),_("specifies the maximum number of ADD_ADDR (add address) suboptions accepted for each MPTCP connection"));
-		o.datatype = "uinteger";
+		o.datatype = "range(0,8)";
 		o.rmempty = false;
 		o.default = 1;
 
@@ -312,18 +323,18 @@ return L.view.extend({
 		o.datatype = "uinteger";
 		o.rmempty = false;
 		o.default = 120;
-		if (parseFloat(boardinfo.kernel.substring(0,4)) >= 6.18) {
+		if (kernelAtLeast(6, 18)) {
 			o = s.option(form.Value, "mptcp_blackhole_timeout", _("Blackhole timeout"),_("Initial time period in second to disable MPTCP on active MPTCP sockets when a MPTCP firewall blackhole issue happens. This time period will grow exponentially when more blackhole issues get detected right after MPTCP is re-enabled and will reset to the initial value when the blackhole issue goes away."));
 			o.datatype = "uinteger";
 			o.rmempty = false;
-			o.default = 3600;
+			o.default = 0;
 
 			o = s.option(form.Value, "mptcp_close_timeout", _("Close timeout"),_("Set the make-after-break timeout: in absence of any close or shutdown syscall, MPTCP sockets will maintain the status unchanged for such time, after the last subflow removal, before moving to TCP_CLOSE."));
 			o.datatype = "uinteger";
 			o.rmempty = false;
 			o.default = 60;
 
-			o = s.option(form.Value, "mptcp_syn_retrans_before_tcp_fallback", _("Control message timeout"),_("The number of SYN + MP_CAPABLE retransmissions before falling back to TCP, i.e. dropping the MPTCP options."));
+			o = s.option(form.Value, "mptcp_syn_retrans_before_tcp_fallback", _("SYN retransmissions before TCP fallback"),_("The number of SYN + MP_CAPABLE retransmissions before falling back to TCP, i.e. dropping the MPTCP options."));
 			o.datatype = "uinteger";
 			o.rmempty = false;
 			o.default = 2;

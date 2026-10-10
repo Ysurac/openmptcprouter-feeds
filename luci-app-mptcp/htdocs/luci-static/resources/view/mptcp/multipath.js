@@ -341,7 +341,7 @@ return view.extend({
 				E('a', { 'href': '#', 'click': function(ev) {
 					ev.preventDefault();
 					self._switchTab(tab, allTabs);
-				}}, tab.label)
+				}}, [ tab.label ])
 			);
 			li.id = 'bwtab-' + tab.name;
 			tabmenu.appendChild(li);
@@ -432,7 +432,7 @@ return view.extend({
 				var sid = self._domSafeId(iface.name);
 				var c   = self._ifaceColor(iface.name);
 				cells.push(E('div', { 'class': 'mptcp-stat' }, [
-					E('span', { 'class': 'mptcp-stat__value', 'style': 'color:' + c + ';font-weight:700;font-size:11px;' }, iface.label)
+					E('span', { 'class': 'mptcp-stat__value', 'style': 'color:' + c + ';font-weight:700;font-size:11px;' }, [ iface.label ])
 				]));
 				['_cur', '_avg', '_peak'].forEach(function(suf) {
 					cells.push(E('div', { 'class': 'mptcp-stat' }, [
@@ -576,7 +576,7 @@ return view.extend({
 					var j = self._xToIndex(svgX, series.length);
 					if (j < 0) return;
 					var c = st.cards[itf];
-					lines.push('<span style="color:' + (c ? c.color : '#aaa') + '">' + (c ? c.label : itf) + ':</span> ' + self._bwLabel(series[j] || 0, false));
+					lines.push('<span style="color:' + (c ? c.color : '#aaa') + '">' + '%h'.format(c ? c.label : itf) + ':</span> ' + self._bwLabel(series[j] || 0, false));
 				});
 				return lines.length ? lines.join('<br>') : null;
 			});
@@ -591,7 +591,7 @@ return view.extend({
 					var j = self._xToIndex(svgX, series.length);
 					if (j < 0) return;
 					var c = st.cards[itf];
-					lines.push('<span style="color:' + (c ? c.color : '#aaa') + '">' + (c ? c.label : itf) + ':</span> ' + self._bwLabel(series[j] || 0, false));
+					lines.push('<span style="color:' + (c ? c.color : '#aaa') + '">' + '%h'.format(c ? c.label : itf) + ':</span> ' + self._bwLabel(series[j] || 0, false));
 				});
 				return lines.length ? lines.join('<br>') : null;
 			});
@@ -628,10 +628,10 @@ return view.extend({
 		var card = E('div', { 'class': 'mptcp-wan-card' }, [
 			E('div', { 'class': 'mptcp-wan-card__header' }, [
 				E('div', {}, [
-					E('div', { 'class': 'mptcp-wan-card__title' }, tab.label),
-					E('div', { 'class': 'mptcp-wan-card__meta' }, tab.device || '')
+					E('div', { 'class': 'mptcp-wan-card__title' }, [ tab.label ]),
+					E('div', { 'class': 'mptcp-wan-card__meta' }, [ tab.device || '' ])
 				]),
-				E('span', { 'class': 'mptcp-wan-card__badge', 'style': badgeStyle }, tab.name)
+				E('span', { 'class': 'mptcp-wan-card__badge', 'style': badgeStyle }, [ tab.name ])
 			]),
 			E('div', { 'class': 'mptcp-chart-block' }, [
 				E('div', { 'class': 'mptcp-chart-block__title' }, _('Inbound traffic')),

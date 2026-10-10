@@ -563,6 +563,52 @@ end
 -- RPC methods
 -- -------------------------------------------------------------------------
 
+-- What set_settings / set_interface_settings accept for each field. They
+-- wrote any string: the init script builds a file path from mptcp_scheduler
+-- ("../" in it registered an arbitrary .o as the scheduler), passes the
+-- limits to "ip mptcp limits set" (a value above 8 made it fail for both)
+-- and the rest to sysctl.
+local function valid_uint(v, max)
+	local n = tonumber(v)
+	return v:match("^%d+$") ~= nil and n ~= nil and (max == nil or n <= max)
+end
+
+local function valid_name(v)
+	return v:match("^[%w_]+$") ~= nil
+end
+
+local setting_checks = {
+	mptcp_checksum = function(v) return v == "0" or v == "1" end,
+	mptcp_debug = function(v) return v == "0" or v == "1" end,
+	mptcp_path_manager = valid_name,
+	-- stored with or without the "mptcp_" prefix and ".o" suffix of its object
+	mptcp_scheduler = function(v) return valid_name((v:gsub("%.o$", ""))) end,
+	mptcp_syn_retries = valid_uint,
+	mptcp_version = function(v) return v == "0" or v == "1" end,
+	congestion = valid_name,
+	mptcp_pm_type = function(v) return v == "0" or v == "1" end,
+	mptcp_disable_initial_config = function(v) return v == "0" or v == "1" end,
+	mptcp_force_multipath = function(v) return v == "0" or v == "1" end,
+	mptcpd_enable = function(v) return v == "enable" or v == "disable" end,
+	mptcp_subflows = function(v) return valid_uint(v, 8) end,
+	mptcp_stale_loss_cnt = valid_uint,
+	mptcp_add_addr_accepted = function(v) return valid_uint(v, 8) end,
+	mptcp_add_addr_timeout = valid_uint,
+	mptcp_blackhole_timeout = valid_uint,
+	mptcp_close_timeout = valid_uint,
+	mptcp_syn_retrans_before_tcp_fallback = valid_uint,
+	mptcp_fullmesh_num_subflows = valid_uint,
+	mptcp_fullmesh_create_on_err = function(v) return v == "0" or v == "1" end,
+	mptcp_ndiffports_num_subflows = valid_uint,
+	mptcp_rr_cwnd_limited = function(v) return v == "Y" or v == "N" end,
+	mptcp_rr_num_segments = valid_uint,
+	-- list entries: plugin / path manager file names and flag names
+	mptcpd_path_manager = function(v) return v:match("^[%w_.%-]+$") ~= nil end,
+	mptcpd_plugins = function(v) return v:match("^[%w_.%-]+$") ~= nil end,
+	mptcpd_addr_flags = valid_name,
+	mptcpd_notify_flags = valid_name,
+}
+
 local methods = {
 
 	-- -----------------------------------------------------------------------
@@ -653,6 +699,23 @@ local methods = {
 				"mptcpd_path_manager", "mptcpd_plugins",
 				"mptcpd_addr_flags", "mptcpd_notify_flags"
 			}
+			-- Every value is checked before anything is written, so a
+			-- rejected call leaves the config as it was
+			for _, field in ipairs(string_fields) do
+				if args[field] ~= nil and args[field] ~= "" and
+				   not setting_checks[field](args[field]) then
+					return { error = "Invalid value for " .. field }
+				end
+			end
+			for _, field in ipairs(list_fields) do
+				if type(args[field]) == "table" then
+					for _, v in ipairs(args[field]) do
+						if type(v) ~= "string" or not setting_checks[field](v) then
+							return { error = "Invalid value for " .. field }
+						end
+					end
+				end
+			end
 			for _, field in ipairs(string_fields) do
 				if args[field] ~= nil and args[field] ~= "" then
 					uci:set("network", "globals", field, args[field])
@@ -715,8 +778,17 @@ local methods = {
 			if not section or section[".type"] ~= "interface" then
 				return { error = "Interface not found" }
 			end
-			if args.multipath ~= nil and args.multipath ~= "" then
-				uci:set("network", iface, "multipath", args.multipath)
+			local mp = args.multipath or ""
+			if mp ~= "" and mp ~= "on" and mp ~= "off" and mp ~= "master" and
+			   mp ~= "backup" then
+				return { error = "Invalid value for multipath" }
+			end
+			if (args.multipath_weight or "") ~= "" and
+			   not valid_uint(args.multipath_weight) then
+				return { error = "Invalid value for multipath_weight" }
+			end
+			if mp ~= "" then
+				uci:set("network", iface, "multipath", mp)
 			end
 			if args.multipath_weight ~= nil and args.multipath_weight ~= "" then
 				uci:set("network", iface, "multipath_weight", args.multipath_weight)
