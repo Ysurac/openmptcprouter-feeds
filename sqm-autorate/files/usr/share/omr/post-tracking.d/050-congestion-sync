@@ -7,7 +7,7 @@
 # Feeds omr-metrics' per-WAN congestion score (queuing delay, loss, jitter,
 # TC backlog/ECN, BBR delivery gap, signal quality -- see 040-metrics in the
 # omr-metrics package) into cake-autorate's own OWD-based bufferbloat
-# threshold (sqm.<iface>.delay_thr_ms), instead of the two running as fully
+# threshold (delay_thr_ms), instead of the two running as fully
 # independent control loops: cake-autorate reacts sub-second to queuing
 # delay it measures itself via ICMP timestamps, but has no visibility into
 # loss/jitter/signal/TC-queue conditions omr-metrics already tracks, so a
@@ -16,18 +16,23 @@
 #
 # cake-autorate.sh itself is never touched (see docs/dev-guide.md, it is
 # treated as an upstream black box with no live "reload config" signal) --
-# this only ever writes sqm.<iface>.delay_thr_ms via UCI and, when the
+# this only ever writes the threshold to a runtime file, which
+# config_template.sh prefers over sqm.<iface>.delay_thr_ms, and, when the
 # change is significant enough, asks the sqm-autorate rpcd plugin's
 # restart_instance to kill+respawn just that one WAN's cake-autorate
 # instance so it re-reads the new value (every other WAN's instance, and
-# its warm OWD baselines/shaper rate, is left untouched).
+# its warm OWD baselines/shaper rate, is left untouched). Committing the
+# value to UCI instead wrote flash on every band change, hundreds of times
+# a day per WAN.
 #
 # Opt-in per WAN via: uci set sqm.<iface>.congestion_sync='1'
 # (default off -- this periodically restarts the WAN's autorate instance).
-# Turning it back off is handled here too: as long as a baseline is still
-# recorded for the WAN, the next run restores delay_thr_ms to it (one
-# restart), deletes the baseline, and stops -- so disabling the feature
-# never leaves a WAN silently stuck at a tightened threshold.
+# Turning it back off is handled here too: the next run drops the runtime
+# threshold (one restart when that changes the instance's threshold),
+# deletes the recorded baseline, and stops -- so disabling the feature
+# never leaves a WAN silently stuck at a tightened threshold. Older versions
+# committed the tightened value to sqm.<iface>.delay_thr_ms itself: that
+# path also puts the baseline back there.
 #
 # Tunables (all sqm.<iface>.*, all optional):
 #   congestion_sync_factor_moderate  delay_thr_ms multiplier at congestion
@@ -61,6 +66,9 @@ _iface="$OMR_TRACKER_INTERFACE"
 # real install path (same default launcher.sh/the rpcd plugin use).
 config_file="${SQM_AUTORATE_DIR:-/usr/share/sqm-autorate}/config.${_iface}.sh"
 last_action_file="${OMR_METRICS_DIR:-/tmp/metrics}/.${_iface}.sqm_congestion_sync"
+run_dir="${SQM_AUTORATE_RUN_DIR:-/var/run/sqm-autorate}"
+# read by config_template.sh in place of sqm.<iface>.delay_thr_ms
+override_file="${run_dir}/delay_thr_ms.${_iface}"
 
 # cake-autorate's config validation types delay_thr_ms as a float and
 # rejects a value without a decimal point at instance startup, so every
@@ -78,6 +86,8 @@ _request_restart() {
 }
 
 base="$(uci -q get "sqm.${_iface}.congestion_sync_base_delay_thr_ms")"
+override=""
+[ -f "$override_file" ] && read -r override < "$override_file" 2>/dev/null
 
 if [ "$(uci -q get "sqm.${_iface}.congestion_sync")" != "1" ]; then
 	# Feature off (or never on) for this WAN. A baseline still on record
@@ -89,17 +99,20 @@ if [ "$(uci -q get "sqm.${_iface}.congestion_sync")" != "1" ]; then
 	# sqm.js keeps congestion_sync_base_delay_thr_ms (retain) precisely so
 	# this path can still see it after the form hid it together with the
 	# other congestion_sync_* fields.
-	[ -n "$base" ] || exit 0
-	restore="$(_norm "$base")"
+	[ -n "$base" ] || [ -f "$override_file" ] || exit 0
 	current="$(uci -q get "sqm.${_iface}.delay_thr_ms")"
-	uci -q delete "sqm.${_iface}.congestion_sync_base_delay_thr_ms"
-	if [ -n "$current" ] && [ "$(_norm "$current")" != "$restore" ]; then
-		uci -q set "sqm.${_iface}.delay_thr_ms=${restore}"
+	effective="${override:-$current}"
+	rm -f "$override_file"
+	if [ -n "$base" ]; then
+		restore="$(_norm "$base")"
+		uci -q delete "sqm.${_iface}.congestion_sync_base_delay_thr_ms"
+		[ -n "$current" ] && [ "$(_norm "$current")" != "$restore" ] && \
+			uci -q set "sqm.${_iface}.delay_thr_ms=${restore}" && current="$restore"
 		uci -q commit sqm
-		logger -t "sqm-autorate-congestion-sync" "interface ${_iface}: congestion sync disabled -- restoring delay_thr_ms ${current} -> ${restore}ms, requesting per-interface restart"
+	fi
+	if [ -n "$effective" ] && [ -n "$current" ] && [ "$(_norm "$effective")" != "$(_norm "$current")" ]; then
+		logger -t "sqm-autorate-congestion-sync" "interface ${_iface}: congestion sync disabled -- restoring delay_thr_ms ${effective} -> $(_norm "$current")ms, requesting per-interface restart"
 		_request_restart
-	else
-		uci -q commit sqm
 	fi
 	rm -f "$last_action_file"
 	exit 0
@@ -144,7 +157,8 @@ min_delay="$(uci -q get "sqm.${_iface}.congestion_sync_min_delay_thr_ms")"
 
 target=$(awk -v base="$base" -v factor="$factor" -v floor="$min_delay" 'BEGIN{v=base*factor; if (v<floor) v=floor; printf "%.1f", v}')
 
-current="$(uci -q get "sqm.${_iface}.delay_thr_ms")"
+current="$override"
+[ -z "$current" ] && current="$(uci -q get "sqm.${_iface}.delay_thr_ms")"
 [ -z "$current" ] && current="250.0"
 current_norm="$(_norm "$current")"
 
@@ -162,8 +176,8 @@ if [ "$last_action" -gt 0 ] 2>/dev/null && [ $((now - last_action)) -lt "$cooldo
 	exit 0
 fi
 
-uci -q set "sqm.${_iface}.delay_thr_ms=${target}"
-uci -q commit sqm
+mkdir -p "$run_dir"
+printf '%s\n' "$target" > "${override_file}.tmp" && mv "${override_file}.tmp" "$override_file"
 
 logger -t "sqm-autorate-congestion-sync" "interface ${_iface}: congestion score ${score_int} (band ${band}) -- delay_thr_ms ${current_norm} -> ${target}ms, requesting per-interface restart"
 

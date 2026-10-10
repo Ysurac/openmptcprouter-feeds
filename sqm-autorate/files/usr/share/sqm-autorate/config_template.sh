@@ -80,7 +80,10 @@ reflector_ping_interval_s=$(uci -q get sqm.${INTERFACE}.reflector_ping_interval_
 # (adjustment significant at sub 12Mbit/s rates, else negligible)
 #logger -t "sqm-autorate" "ping for ${INTERFACE} (${ul_if}): $(echo $(/sbin/uci -q get sqm.${INTERFACE}.delay_thr_ms || echo '100'))"
 #dl_owd_delta_thr_ms=$(echo $(echo $(uci -q get sqm.${INTERFACE}.delay_thr_ms || echo $(echo "$(/usr/bin/ping -B -w 5 -c 5 -I ${ul_if} 1.1.1.1 | cut -d '/' -s -f6 | tr -d '\n' 2>/dev/null)+30" | bc) || echo "100")) + "0.1" | bc)  # (milliseconds)
-dl_owd_delta_thr_ms=$(uci -q get sqm.${INTERFACE}.delay_thr_ms || echo "250.0")
+# 050-congestion-sync (omr-tracker post-tracking) keeps its congestion-driven
+# threshold in a runtime file rather than committing it to flash every time.
+# One assignment only: cake-autorate rejects any other line shaped "x=..."
+dl_owd_delta_thr_ms=$(cat "${SQM_AUTORATE_RUN_DIR:-/var/run/sqm-autorate}/delay_thr_ms.${INTERFACE}" 2>/dev/null || uci -q get sqm.${INTERFACE}.delay_thr_ms || echo "250.0")
 ul_owd_delta_thr_ms=${dl_owd_delta_thr_ms}
 
 # average owd delta threshold in ms at which maximum adjust_down_bufferbloat is applied

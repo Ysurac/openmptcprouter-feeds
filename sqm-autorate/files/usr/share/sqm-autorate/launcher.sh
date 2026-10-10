@@ -26,6 +26,7 @@ rm -f "${RESTART_REQUEST_DIR}"/* 2>/dev/null
 declare -A cake_instance_pids
 declare -A cake_instance_configs
 shutting_down=0
+idle_pid=""
 
 trap kill_cake_instances INT TERM EXIT
 trap handle_restart_requests USR1
@@ -59,6 +60,8 @@ kill_cake_instances()
 	do
 		kill "${cake_instance_pids[${iface}]}" 2>/dev/null || true
 	done
+	# the idle sleep below, which the `wait` further down would wait out
+	[[ -n "${idle_pid}" ]] && kill "${idle_pid}" 2>/dev/null
 
 	# Clean up state files before the (potentially longer) wait below, not
 	# after: the trap was just disarmed above, so a second incoming signal
@@ -163,4 +166,21 @@ do
 			unset "cake_instance_configs[${iface}]"
 		}
 	done
+done
+
+# Every instance died on its own (an instance whose config fails
+# cake-autorate's validation exits at once). Exiting here had procd respawn
+# the launcher (respawn 0 10 0) and with it those same instances every 10s,
+# forever: stay up idle instead, as with one dead instance among several,
+# until the service is stopped or restarted.
+# A USR1 interrupts the wait, not the sleep: reuse it rather than pile up
+# sleeps the shutdown `wait` would then sit out.
+while ! ((shutting_down))
+do
+	if [[ -z "${idle_pid}" ]] || ! kill -0 "${idle_pid}" 2>/dev/null
+	then
+		sleep 3600 &
+		idle_pid=${!}
+	fi
+	wait "${idle_pid}"
 done
