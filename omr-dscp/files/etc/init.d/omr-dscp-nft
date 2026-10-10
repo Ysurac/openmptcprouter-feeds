@@ -54,10 +54,88 @@ _resolve_auto_dest_port() {
 	esac
 }
 
+# Addresses of the classify rules, checked the way nft takes them: a source
+# or destination like 1.2.3.4/33 or 2001:db8::/129 went into the rule as is,
+# fw4 wrote it out unchanged and nft refused the whole ruleset ("Prefix
+# length 33 is invalid"): no firewall at all. The same checks as omr-bypass,
+# which this package does not depend on.
+_valid_ip4() {
+	local IFS=. __o
+	case "$1" in ""|*[!0-9.]*|.*|*.|*..*) return 1 ;; esac
+	set -- $1
+	[ $# -eq 4 ] || return 1
+	for __o in "$@"; do
+		case "$__o" in ????*|0?*) return 1 ;; esac
+		[ "$__o" -le 255 ] || return 1
+	done
+}
+
+_valid_ip6() {
+	local __a="$1" __g __n=0 IFS=:
+	case "$__a" in *:*) ;; *) return 1 ;; esac
+	case "$__a" in *[!0-9A-Fa-f:.]*|*:::*|*::*::*|:[!:]*|*[!:]:) return 1 ;; esac
+	# an embedded IPv4 address counts as two groups
+	case "$__a" in
+		*.*)
+			_valid_ip4 "${__a##*:}" || return 1
+			__a="${__a%:*}:0:0"
+			;;
+	esac
+	set -- $__a
+	for __g in "$@"; do
+		[ -n "$__g" ] || continue
+		case "$__g" in *.*|?????*) return 1 ;; esac
+		__n=$((__n + 1))
+	done
+	case "$__a" in
+		*::*) [ "$__n" -le 7 ] ;;
+		*) [ "$__n" -eq 8 ] ;;
+	esac
+}
+
+_valid_prefix_len() {
+	case "$1" in ""|*[!0-9]*|????*) return 1 ;; esac
+	[ "$1" -le "$2" ]
+}
+
+# _valid_rule_ip <value>: an address, a network with a prefix length or a
+# netmask, or a range, as fw4 takes them in a rule
+_valid_rule_ip() {
+	case "$1" in
+		*-*)
+			{ _valid_ip4 "${1%%-*}" && _valid_ip4 "${1#*-}"; } || \
+				{ _valid_ip6 "${1%%-*}" && _valid_ip6 "${1#*-}"; }
+			;;
+		*/*.*) _valid_ip4 "${1%%/*}" && _valid_ip4 "${1#*/}" ;;
+		*/*:*) _valid_ip6 "${1%%/*}" && _valid_ip6 "${1#*/}" ;;
+		*/*)
+			{ _valid_prefix_len "${1#*/}" 32 && _valid_ip4 "${1%%/*}"; } || \
+				{ _valid_prefix_len "${1#*/}" 128 && _valid_ip6 "${1%%/*}"; }
+			;;
+		*) _valid_ip4 "$1" || _valid_ip6 "$1" ;;
+	esac
+}
+
+# _valid_rule_hosts <value>: every word an address as above or the name of
+# a network interface (fw4 takes its addresses), "!" for a negation
+_valid_rule_hosts() {
+	local __h
+	case "$1" in *[!A-Za-z0-9_.:/!\ -]*) return 1 ;; esac
+	for __h in $1; do
+		__h="${__h#!}"
+		case "$__h" in
+			"") return 1 ;;
+			*[!A-Za-z0-9_]*) _valid_rule_ip "$__h" || return 1 ;;
+		esac
+	done
+}
+
 _add_dscp_domain() {
 	domain=""; config_get domain "$1" name ""
 	class=""; config_get class "$1" class ""
-	[ -n "$domain" ] && [ -n "$class" ] && [ -z "$(uci -q get dhcp.omr_dscp_$class.domain | grep $domain)" ] && [ "$(uci -q get dhcp.dnsmasq1.filter_aaaa)" != "1" ]&& {
+	# exact match: "grep $domain" skipped example.com once www.example.com
+	# was in the list (and read the dots as any character)
+	[ -n "$domain" ] && [ -n "$class" ] && ! uci -q get dhcp.omr_dscp_$class.domain | tr ' ' '\n' | grep -qxF -- "$domain" && [ "$(uci -q get dhcp.dnsmasq1.filter_aaaa)" != "1" ]&& {
 		uci -q batch <<-EOF
 			add_list dhcp.omr_dscp_$class.domain="$domain"
 			commit dhcp
@@ -195,6 +273,10 @@ _add_dscp_rules() {
 		fi
 	fi
 
+	if ! _valid_rule_hosts "$src_ip" || ! _valid_rule_hosts "$dest_ip"; then
+		logger -t "omr-dscp" "Rule $1: invalid source or destination host '$src_ip' / '$dest_ip', rule ignored"
+		return
+	fi
 	src_port="$(echo $src_port | sed 's/:/-/g')"
 	dest_port="$(echo $dest_port | sed 's/:/-/g')"
 	count=$((count + 1))
@@ -202,11 +284,18 @@ _add_dscp_rules() {
 	src=""
 	dst=""
 	add_output_rule=0
+	# Both zones are given: fw4 puts a DSCP rule with only a src zone in
+	# mangle_input and one with only a dest zone in mangle_output, i.e. on
+	# traffic to and from the router itself, never on what LAN clients send
+	# or receive through it. src=lan dest=* is mangle_prerouting (iif lan),
+	# src=* dest=lan mangle_postrouting (oif lan).
 	case "$direction" in
 		upload)
 				src="lan"
+				dst="*"
 			;;
 		download)
+				src="*"
 				dst="lan"
 			;;
 		both)

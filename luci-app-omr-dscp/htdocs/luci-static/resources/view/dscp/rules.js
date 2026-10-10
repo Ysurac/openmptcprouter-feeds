@@ -31,7 +31,11 @@ return view.extend({
 	proto.value('icmp');
 	proto.value('esp');
 
+	/* an address, a network (prefix or netmask), a range or a network
+	 * interface name, "!" to negate: a prefix out of range went into the
+	 * firewall rule as is and nft refused the whole ruleset */
 	srch = s.option(form.Value, 'src_ip', _('Source host'));
+	srch.datatype = 'list(neg(or(ipmask4,ipmask6,iprange,uciname)))';
 	srch.rmempty = true;
 	srch.value('', _('all'));
 
@@ -42,6 +46,7 @@ return view.extend({
 	sports.depends('proto', 'udp');
 
 	dsth = s.option(form.Value, 'dest_ip', _('Destination host'));
+	dsth.datatype = 'list(neg(or(ipmask4,ipmask6,iprange,uciname)))';
 	dsth.rmempty = true;
 	dsth.value('', _('all'));
 	dsth.depends('direction', 'upload');
