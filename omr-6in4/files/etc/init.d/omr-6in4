@@ -11,10 +11,14 @@
 }
 
 set_shadowsocks_address() {
+	[ "$(uci -q get shadowsocks-libev.$1.local_address)" = "$2" ] && return
 	uci -q set shadowsocks-libev.$1.local_address="$2"
+	ss_address_changed=1
 }
 set_shadowsocks_rust_address() {
+	[ "$(uci -q get shadowsocks-rust.$1.local_address)" = "$2" ] && return
 	uci -q set shadowsocks-rust.$1.local_address="$2"
+	ss_address_changed=1
 }
 
 set_ipv6_state() {
@@ -55,7 +59,6 @@ set_ipv6_state() {
 		uci -q batch <<-EOF >/dev/null
 			set dhcp.dnsmasq1.filter_aaaa='1'
 			commit dhcp
-		EOF
 		EOF
 		config_load shadowsocks-libev
 		config_foreach set_shadowsocks_address ss_redir "0.0.0.0"
@@ -99,21 +102,26 @@ set_ipv6_state() {
 			commit dhcp
 		EOF
 
+		# This runs on every boot and every status-page apply: restarting a
+		# proxy whose listen address is already "::" only cuts the proxied
+		# connections, so restart one only when its address was changed.
 		if [ -f /etc/init.d/shadowsocks-libev ]; then
+			ss_address_changed=0
 			config_load shadowsocks-libev
 			config_foreach set_shadowsocks_address ss_redir "::"
-			uci -q batch <<-EOF >/dev/null
-				commit shadowsocks-libev
-			EOF
-			/etc/init.d/shadowsocks-libev restart
+			if [ "$ss_address_changed" = "1" ]; then
+				uci -q commit shadowsocks-libev
+				/etc/init.d/shadowsocks-libev restart
+			fi
 		fi
 		if [ -f /etc/init.d/shadowsocks-rust ]; then
+			ss_address_changed=0
 			config_load shadowsocks-rust
 			config_foreach set_shadowsocks_rust_address ss_redir "::"
-			uci -q batch <<-EOF >/dev/null
-				commit shadowsocks-rust
-			EOF
-			/etc/init.d/shadowsocks-rust restart
+			if [ "$ss_address_changed" = "1" ]; then
+				uci -q commit shadowsocks-rust
+				/etc/init.d/shadowsocks-rust restart
+			fi
 		fi
 		if [ -f /etc/init.d/v2ray ]; then
 			if [ "$(uci -q get v2ray.main.inbounds | grep omr6)" = "" ]; then
@@ -143,7 +151,12 @@ set_ipv6_state() {
 
 		rm -f /etc/wgetrc
 	fi
-	/etc/init.d/odhcpd restart
+	# A restart drops odhcpd's RA/DHCPv6 state for the whole LAN: only do it
+	# when this pass changed the dhcp/network config or odhcpd is not running.
+	if [ "$(uci -q show dhcp; uci -q show network)" != "$ipv6_conf_before" ] || \
+	   ! /etc/init.d/odhcpd status >/dev/null 2>&1; then
+		/etc/init.d/odhcpd restart
+	fi
 	if [ "$previous" != "1" ]; then
 		env -i /bin/ubus call network reload
 	fi
@@ -206,6 +219,7 @@ start_service() {
 	local disable_ipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
 	[ -z "$disable_ipv6" ] && disable_ipv6="0"
 	if [ "$disable_ipv6" != "1" ]; then
+		local ipv6_conf_before="$(uci -q show dhcp; uci -q show network)"
 		if [ "$(uci -q get openmptcprouter.settings.disable_6in4)" != "1" ]; then
 			config_load network
 			config_foreach set_ipv6_state_intf interface
