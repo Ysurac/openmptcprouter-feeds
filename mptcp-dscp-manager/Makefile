@@ -25,7 +25,7 @@ define Package/mptcp-dscp-manager
   SECTION:=net
   CATEGORY:=Network
   TITLE:=MPTCP BPF DSCP Manager
-  DEPENDS:=+libbpf +mptcp-bpf-dscp @!LINUX_5_4
+  DEPENDS:=+libbpf +bpftool +mptcp-bpf-dscp @!LINUX_5_4
 endef
 
 define Package/mptcp-dscp-manager/description

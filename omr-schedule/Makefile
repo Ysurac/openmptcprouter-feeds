@@ -13,6 +13,10 @@ PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
 
+MY_DEPENDS := \
+    curl \
+    !LINUX_5_4:nftables
+
 define Package/$(PKG_NAME)
 SECTION:=OMR
 CATEGORY:=OpenMPTCProuter
@@ -22,10 +26,6 @@ endef
 
 define Package/$(PKG_NAME)/description
 OpenMPTCProuter schedule scripts
-endef
-
-define Package/$(PKG_NAME)/conffiles
-/etc/contabs/root
 endef
 
 define Build/Compile

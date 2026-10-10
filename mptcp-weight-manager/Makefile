@@ -25,7 +25,7 @@ define Package/mptcp-weight-manager
   SECTION:=net
   CATEGORY:=Network
   TITLE:=MPTCP BPF Weight Manager
-  DEPENDS:=+libbpf @!LINUX_5_4
+  DEPENDS:=+libbpf +bpftool @!LINUX_5_4
 endef
 
 define Build/Prepare

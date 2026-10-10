@@ -28,7 +28,7 @@ define Package/mptcp-bpf-weight-rr
   SECTION:=net
   CATEGORY:=Network
   TITLE:=MPTCP BPF Weight Scheduler
-  DEPENDS:=+libbpf +kmod-sched-core +kmod-sched-flower +kmod-sched-bpf $(BPF_DEPENDS) @!LINUX_5_4
+  DEPENDS:=+libbpf +bpftool +kmod-sched-core +kmod-sched-flower +kmod-sched-bpf $(BPF_DEPENDS) @!LINUX_5_4
 endef
 
 define Build/Prepare

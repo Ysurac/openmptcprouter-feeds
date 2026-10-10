@@ -28,7 +28,7 @@ define Package/mptcp-bpf-bkup
   SECTION:=net
   CATEGORY:=Network
   TITLE:=MPTCP BPF bkup Scheduler
-  DEPENDS:=+libbpf +kmod-sched-core +kmod-sched-flower +kmod-sched-bpf $(BPF_DEPENDS)
+  DEPENDS:=+libbpf +bpftool +kmod-sched-core +kmod-sched-flower +kmod-sched-bpf $(BPF_DEPENDS)
 endef
 
 define Build/Prepare
