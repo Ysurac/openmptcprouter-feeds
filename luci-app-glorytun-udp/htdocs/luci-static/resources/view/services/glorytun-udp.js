@@ -73,6 +73,7 @@ return L.view.extend({
 		o.rmempty = false;
 
 		o = s.taboption('advanced', form.Flag, 'persist', _('Persist'), _('Keep the tunnel device after exiting'));
+		o.default = o.enabled;
 		o.modalonly = true;
 
 		o = s.taboption('advanced', form.Flag, 'chacha', _('chacha'), _('Force fallback cipher'));

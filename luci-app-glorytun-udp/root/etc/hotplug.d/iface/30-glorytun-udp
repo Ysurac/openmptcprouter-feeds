@@ -24,10 +24,17 @@ set_default() {
 		config_get timetolerance "$config" timetolerance "10m"
 		config_get keepalive "$config" keepalive "25s"
 		[ "$remoteip" != "" ] && [ "$localip" != "" ] &&  ifconfig $DEVICE $localip pointopoint $remoteip up
-		while [ -z "$(glorytun-udp list | grep $iface)" ]; do
-			sleep 1
-		done
-		glorytun-udp set dev $iface kxtimeout $kxtimeout timetolerance $timetolerance keepalive $keepalive
+		# Hotplug scripts run one at a time: wait for glorytun in the
+		# background, and not forever, or every later event waits too
+		(
+			count=0
+			while ! glorytun-udp list 2>/dev/null | grep -qxF "$iface"; do
+				count=$((count + 1))
+				[ "$count" -gt 10 ] && exit 0
+				sleep 1
+			done
+			glorytun-udp set dev "$iface" kxtimeout "$kxtimeout" timetolerance "$timetolerance" keepalive "$keepalive"
+		) </dev/null >/dev/null 2>&1 &
 	}
 }
 

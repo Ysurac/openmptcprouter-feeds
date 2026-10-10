@@ -27,11 +27,16 @@ validate_section() {
 		'port:port'                \
 		'mtuauto:bool:0'           \
 		'chacha:bool:0'            \
+		'persist:bool:1'           \
+		'kxtimeout:string:7d'      \
+		'timetolerance:string:10m' \
+		'keepalive:string:25s'     \
 		'dev:string'
 }
 
 start_instance() {
 	local enable key host port listener proto mtuauto chacha dev mode
+	local persist kxtimeout timetolerance keepalive
 	local key_dir="/var/run/${PROG_NAME}"
 	local key_file="${key_dir}/${1}.key"
 
@@ -64,7 +69,16 @@ start_instance() {
 
 	_log "starting ${PROG_NAME} ${1} instance $*"
 
-	host=$(resolveip $host)
+	# One address: resolveip prints all of them, which split into extra
+	# arguments, and none on failure, both respawned broken forever
+	local addr
+	addr="$(resolveip -4 -t 5 "$host" | head -n1)"
+	[ -n "$addr" ] || addr="$(resolveip -6 -t 5 "$host" | head -n1)"
+	[ -n "$addr" ] || {
+		_err "can't resolve $host"
+		return 1
+	}
+	host="$addr"
 
 	if [ "$mode" = "to" ]; then
 		bind="bind from addr :: port 5000 to addr $host port $port"
@@ -76,9 +90,11 @@ start_instance() {
 	procd_set_param command ${PROG} \
 		${bind} \
 		${dev:+dev "$dev"} \
-		keyfile "$key_file" \
-		persist
+		keyfile "$key_file"
 
+	# LuCI's "Persist" was ignored: the device was always kept. Unset still
+	# means kept, as before
+	[ "${persist}" = "1" ] && procd_append_param command persist
 	[ "${chacha}" = "1" ] && procd_append_param command chacha
 
 	procd_set_param respawn 0 30 0
@@ -89,6 +105,23 @@ start_instance() {
 	procd_set_param stderr 1
 
 	procd_close_instance
+
+	# kxtimeout, timetolerance and keepalive are not bind arguments: only
+	# the ifup hotplug set them, and a restart that keeps the device raises
+	# no ifup, nor does a change of them alone (procd keeps the instance).
+	# Set them once the tunnel answers; the delay leaves procd the time to
+	# replace an instance it restarts. fd 1000 is procd.sh's service lock:
+	# kept open, it would block every other glorytun-udp init call meanwhile
+	(
+		sleep 2
+		count=0
+		while ! ${PROG} list 2>/dev/null | grep -qxF "$dev"; do
+			count=$((count + 1))
+			[ "$count" -gt 10 ] && exit 0
+			sleep 1
+		done
+		${PROG} set dev "$dev" kxtimeout "$kxtimeout" timetolerance "$timetolerance" keepalive "$keepalive"
+	) </dev/null >/dev/null 2>&1 1000>&- &
 
 	#tc qdisc replace dev ${dev} root cake
 
