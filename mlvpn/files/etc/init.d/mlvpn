@@ -1,8 +1,7 @@
 #!/bin/sh /etc/rc.common
 
 START=88
-SERVICE_DAEMONIZE=1
-#SERVICE_SIG="KILL"
+USE_PROCD=1
 
 interface_multipath_settings() {
 	local mode port
@@ -32,7 +31,7 @@ interface_multipath_settings() {
 	EOF
 }
 
-start() {
+start_service() {
 	local enable timeout mode password reorder_buffer_size interface_name host firstport loss_tolerance latency_tolerance
 	[ "$(uci -q get mlvpn.general.enable)" = "1" ] || return 1
 	interface_name="$(uci -q get mlvpn.general.interface_name)"
@@ -75,14 +74,15 @@ start() {
 	config_foreach interface_multipath_settings interface
 
 	chmod 0600 "/tmp/etc/${interface_name}.conf"
-	service_start /usr/sbin/mlvpn -c /tmp/etc/${interface_name}.conf --user nobody
+	procd_open_instance
+	procd_set_param command /usr/sbin/mlvpn -c /tmp/etc/${interface_name}.conf --user nobody
+	procd_set_param file "/tmp/etc/${interface_name}.conf"
+	procd_set_param respawn
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
 }
 
-stop() {
-	service_stop /usr/sbin/mlvpn
-}
-
-reload() {
-	stop
-	start
+service_triggers() {
+	procd_add_reload_trigger mlvpn
 }
