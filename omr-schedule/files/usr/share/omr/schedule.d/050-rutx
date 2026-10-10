@@ -6,126 +6,56 @@
 # See /LICENSE for more information.
 #
 # This script set lights on RUTX device
+#
+# It runs from cron, where no tracker sets OMR_TRACKER_DEVICE: each modem is
+# found by its fixed USB path instead.
 
-if [ -n "$(grep RUTX /etc/board.json)" ] && [ -z "$(grep RUTX50 /etc/board.json)" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
-	if [ "$OMR_TRACKER_DEVICE" = "wwan0" ]; then
-		modemdata=$(omr-modemmanager '/sys/devices/platform/soc/60f8800.usb2/6000000.dwc3/xhci-hcd.1.auto/usb3/3-1' all)
-		gen=$(echo $modemdata | cut -d ';' -f 5 | tr -d '\n')
-		if [ "$gen" = "gsm" ]; then
-			echo "default-on" > /sys/class/leds/mob_gen_2/trigger
-			echo "none" > /sys/class/leds/mob_gen_3/trigger
-			echo "none" > /sys/class/leds/mob_gen_4/trigger
-		elif [ "$gen" = "umts" ]; then
-			echo "none" > /sys/class/leds/mob_gen_2/trigger
-			echo "default-on" > /sys/class/leds/mob_gen_3/trigger
-			echo "none" > /sys/class/leds/mob_gen_4/trigger
-		elif [ "$gen" = "lte" ]; then
-			echo "none" > /sys/class/leds/mob_gen_2/trigger
-			echo "none" > /sys/class/leds/mob_gen_3/trigger
-			echo "default-on" > /sys/class/leds/mob_gen_4/trigger
-		fi
-		bar=$(echo $modemdata | cut -d ';' -f 1 | tr -d '\n')
-		if [ "$bar" -gt "0" ]; then
-			echo "default-on" > /sys/class/leds/mob_ssid_1/trigger
+# $1: modem USB path, $2: led for gsm, umts, lte, then the signal leds and
+# the signal percent each one needs, as "led:threshold"
+_rutx_modem_leds() {
+	local modemdata gen bar led
+	modemdata=$(omr-modemmanager "$1" all)
+	gen=$(echo $modemdata | cut -d ';' -f 5 | tr -d '\n')
+	if [ "$gen" = "gsm" ]; then
+		echo "default-on" > /sys/class/leds/$2/trigger
+		echo "none" > /sys/class/leds/$3/trigger
+		echo "none" > /sys/class/leds/$4/trigger
+	elif [ "$gen" = "umts" ]; then
+		echo "none" > /sys/class/leds/$2/trigger
+		echo "default-on" > /sys/class/leds/$3/trigger
+		echo "none" > /sys/class/leds/$4/trigger
+	elif [ "$gen" = "lte" ]; then
+		echo "none" > /sys/class/leds/$2/trigger
+		echo "none" > /sys/class/leds/$3/trigger
+		echo "default-on" > /sys/class/leds/$4/trigger
+	fi
+	bar=$(echo $modemdata | cut -d ';' -f 1 | tr -d '\n')
+	# no modem (or no signal value) turns the signal leds off
+	case "$bar" in
+		''|*[!0-9]*) bar=0 ;;
+	esac
+	shift 4
+	for led in "$@"; do
+		if [ "$bar" -gt "${led##*:}" ]; then
+			echo "default-on" > /sys/class/leds/${led%:*}/trigger
 		else
-			echo "none" > /sys/class/leds/mob_ssid_1/trigger
+			echo "none" > /sys/class/leds/${led%:*}/trigger
 		fi
-		if [ "$bar" -gt "30" ]; then
-			echo "default-on" > /sys/class/leds/mob_ssid_2/trigger
-		else
-			echo "none" > /sys/class/leds/mob_ssid_2/trigger
-		fi
-		if [ "$bar" -gt "50" ]; then
-			echo "default-on" > /sys/class/leds/mob_ssid_3/trigger
-		else
-			echo "none" > /sys/class/leds/mob_ssid_3/trigger
-		fi
-		if [ "$bar" -gt "70" ]; then
-			echo "default-on" > /sys/class/leds/mob_ssid_4/trigger
-		else
-			echo "none" > /sys/class/leds/mob_ssid_4/trigger
-		fi
-		if [ "$bar" -gt "90" ]; then
-			echo "default-on" > /sys/class/leds/mob_ssid_5/trigger
-		else
-			echo "none" > /sys/class/leds/mob_ssid_5/trigger
-		fi
-	elif [ "$OMR_TRACKER_DEVICE" = "wwan1" ]; then
-		modemdata=$(omr-modemmanager '/sys/devices/platform/soc/8af8800.usb3/8a00000.dwc3/xhci-hcd.0.auto/usb1/1-1/1-1.2' all)
-		gen=$(echo $modemdata | cut -d ';' -f 5 | tr -d '\n')
-		if [ "$gen" = "gsm" ]; then
-			echo "default-on" > /sys/class/leds/mob2_gen_2/trigger
-			echo "none" > /sys/class/leds/mob2_gen_3/trigger
-			echo "none" > /sys/class/leds/mob2_gen_4/trigger
-		elif [ "$gen" = "umts" ]; then
-			echo "none" > /sys/class/leds/mob2_gen_2/trigger
-			echo "default-on" > /sys/class/leds/mob2_gen_3/trigger
-			echo "none" > /sys/class/leds/mob2_gen_4/trigger
-		elif [ "$gen" = "lte" ]; then
-			echo "none" > /sys/class/leds/mob2_gen_2/trigger
-			echo "none" > /sys/class/leds/mob2_gen_3/trigger
-			echo "default-on" > /sys/class/leds/mob2_gen_4/trigger
-		fi
-		bar=$(echo $modemdata | cut -d ';' -f 1 | tr -d '\n')
-		if [ "$bar" -gt "0" ]; then
-			echo "default-on" > /sys/class/leds/mob2_ssid_1/trigger
-		else
-			echo "none" > /sys/class/leds/mob2_ssid_1/trigger
-		fi
-		if [ "$bar" -gt "30" ]; then
-			echo "default-on" > /sys/class/leds/mob2_ssid_2/trigger
-		else
-			echo "none" > /sys/class/leds/mob2_ssid_2/trigger
-		fi
-		if [ "$bar" -gt "50" ]; then
-			echo "default-on" > /sys/class/leds/mob2_ssid_3/trigger
-		else
-			echo "none" > /sys/class/leds/mob2_ssid_3/trigger
-		fi
-		if [ "$bar" -gt "70" ]; then
-			echo "default-on" > /sys/class/leds/mob2_ssid_4/trigger
-		else
-			echo "none" > /sys/class/leds/mob2_ssid_4/trigger
-		fi
-		if [ "$bar" -gt "90" ]; then
-			echo "default-on" > /sys/class/leds/mob2_ssid_5/trigger
-		else
-			echo "none" > /sys/class/leds/mob2_ssid_5/trigger
-		fi
+	done
+}
+
+if [ -n "$(grep RUTX /etc/board.json)" ] && [ -z "$(grep RUTX50 /etc/board.json)" ]; then
+	_rutx_modem_leds '/sys/devices/platform/soc/60f8800.usb2/6000000.dwc3/xhci-hcd.1.auto/usb3/3-1' \
+		mob_gen_2 mob_gen_3 mob_gen_4 \
+		mob_ssid_1:0 mob_ssid_2:30 mob_ssid_3:50 mob_ssid_4:70 mob_ssid_5:90
+	if [ -d /sys/class/leds/mob2_gen_2 ]; then
+		_rutx_modem_leds '/sys/devices/platform/soc/8af8800.usb3/8a00000.dwc3/xhci-hcd.0.auto/usb1/1-1/1-1.2' \
+			mob2_gen_2 mob2_gen_3 mob2_gen_4 \
+			mob2_ssid_1:0 mob2_ssid_2:30 mob2_ssid_3:50 mob2_ssid_4:70 mob2_ssid_5:90
 	fi
 fi
-if [ -n "$(grep RUTX /etc/board.json)" ] && [ -n "$(grep RUTX50 /etc/board.json)" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
-	if [ "$OMR_TRACKER_DEVICE" = "wwan0" ]; then
-		modemdata=$(omr-modemmanager '/sys/devices/platform/soc/8af8800.usb3/8a00000.dwc3/xhci-hcd.0.auto/usb2/2-1' all)
-		gen=$(echo $modemdata | cut -d ';' -f 5 | tr -d '\n')
-		if [ "$gen" = "gsm" ]; then
-			echo "default-on" > /sys/class/leds/green:3g/trigger
-			echo "none" > /sys/class/leds/green:4g/trigger
-			echo "none" > /sys/class/leds/green:5g/trigger
-		elif [ "$gen" = "umts" ]; then
-			echo "none" > /sys/class/leds/green:3g/trigger
-			echo "default-on" > /sys/class/leds/green:4g/trigger
-			echo "none" > /sys/class/leds/green:5g/trigger
-		elif [ "$gen" = "lte" ]; then
-			echo "none" > /sys/class/leds/green:3g/trigger
-			echo "none" > /sys/class/leds/green:4g/trigger
-			echo "default-on" > /sys/class/leds/green:5g/trigger
-		fi
-		bar=$(echo $modemdata | cut -d ';' -f 1 | tr -d '\n')
-		if [ "$bar" -gt "10" ]; then
-			echo "default-on" > /sys/class/leds/green:rssi0/trigger
-		else
-			echo "none" > /sys/class/leds/green:rssi0/trigger
-		fi
-		if [ "$bar" -gt "50" ]; then
-			echo "default-on" > /sys/class/leds/green:rssi1/trigger
-		else
-			echo "none" > /sys/class/leds/green:rssi1/trigger
-		fi
-		if [ "$bar" -gt "70" ]; then
-			echo "default-on" > /sys/class/leds/green:rssi2/trigger
-		else
-			echo "none" > /sys/class/leds/green:rssi2/trigger
-		fi
-	fi
+if [ -n "$(grep RUTX /etc/board.json)" ] && [ -n "$(grep RUTX50 /etc/board.json)" ]; then
+	_rutx_modem_leds '/sys/devices/platform/soc/8af8800.usb3/8a00000.dwc3/xhci-hcd.0.auto/usb2/2-1' \
+		green:3g green:4g green:5g \
+		green:rssi0:10 green:rssi1:50 green:rssi2:70
 fi
