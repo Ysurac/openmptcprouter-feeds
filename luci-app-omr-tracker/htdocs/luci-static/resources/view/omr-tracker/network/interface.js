@@ -304,7 +304,7 @@ return view.extend({
 
 		o = s.option(form.Flag, 'mail_alert', _('Mail alert'),
 			_('Send a mail when connection status change. You need to configure e-mail settings here.'));
-		o.rmempty = false;
+		inheritFlag(o, '0');
 		o.depends('_show_adv', '1');
 		o.modalonly = true;
 
@@ -440,7 +440,8 @@ return view.extend({
 
 		o = s.option(form.Value, 'failure_interval', _('Failure interval'),
 			_('Ping interval during failure detection'));
-		o.default = '5';
+		// the tracker's own default (init script)
+		o.default = '20';
 		o.value('1', _('%d second').format('1'));
 		o.value('3', _('%d seconds').format('3'));
 		o.value('5', _('%d seconds').format('5'));
@@ -499,7 +500,7 @@ return view.extend({
 
 		o = s.option(form.Flag, 'restart_down', _('Restart if down'),
 			_('Restart interface if detected as down.'));
-		o.rmempty = false;
+		inheritFlag(o, '0');
 		o.modalonly = true;
 
 

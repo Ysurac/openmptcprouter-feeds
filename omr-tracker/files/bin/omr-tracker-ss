@@ -53,6 +53,9 @@ _ping_server() {
 }
 
 _get_ip() {
+	local _rest
+	read -r _get_ip_time _rest < /proc/uptime
+	_get_ip_time="${_get_ip_time%%.*}"
 	[ "$(uci -q get openmptcprouter.omr)" = "router" ] || { uci -q set openmptcprouter.omr=router; uci -q commit openmptcprouter; }
 	if [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ]; then
 		check_ipv4_website="$(uci -q get openmptcprouter.settings.check_ipv4_website)"
@@ -114,6 +117,52 @@ _send_mail_alert_ss() {
 _set_omr_proxy_state() {
 	[ "$(omr_state_get openmptcprouter.omr.proxy)" = "$1" ] && return
 	omr_state_set openmptcprouter omr proxy "$1"
+}
+
+# _get_ip again when a detected address is missing: the IPv4 one on every
+# cycle, the IPv6 one once in 15 minutes. A router without IPv6 never gets
+# one, and its 3 curls ran on every healthy cycle for good.
+_get_ip_if_missing() {
+	local _now _rest
+	if [ "$(omr_state_get openmptcprouter.omr.detected_public_ipv4)" = "" ]; then
+		_get_ip
+	elif [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(omr_state_get openmptcprouter.omr.detected_public_ipv6)" = "" ]; then
+		read -r _now _rest < /proc/uptime
+		[ $((${_now%%.*} - _get_ip_time)) -ge 900 ] && _get_ip
+	fi
+}
+
+# Are the redirect rules up, with the server among their remote servers? The
+# shadowsocks init puts the address of a server given by name in that set,
+# so grepping the ruleset for the name never matched and the server was
+# never marked down; the whole ruleset (omr-bypass's sets) is not listed
+# either, on each failed check.
+_ss_rules_on_server() {
+	local _ips _ip _set
+	nft list chain inet fw4 ss_rules_src_tcp 2>/dev/null | grep -q 'goto ss_rules_forward_tcp' || return 1
+	case "$1" in
+		"") return 1 ;;
+		*:*) _ips="$1" ;;
+		*[!0-9.]*) _ips="$(resolveip -t 5 "$1" 2>/dev/null)" ;;
+		*) _ips="$1" ;;
+	esac
+	for _ip in $_ips; do
+		case "$_ip" in
+			*:*) _set="ss_rules6_remote_servers" ;;
+			*) _set="ss_rules_remote_servers" ;;
+		esac
+		nft get element inet fw4 "$_set" "{ $_ip }" >/dev/null 2>&1 && return 0
+	done
+	return 1
+}
+
+# The hosts that did not answer since the last success, each one once: the
+# list grew by a host on every failed check for as long as an outage lasted
+_add_nocontact() {
+	case ", $nocontact, " in
+		*", $1, "*) ;;
+		*) nocontact="${nocontact:+$nocontact, }$1" ;;
+	esac
 }
 
 # Is the procd instance of the ss_redir section $1 (in $_ss_cfg) running?
@@ -207,6 +256,7 @@ type=${OMR_TRACKER_SS_TYPE:-libev}
 
 last=0
 nocontact=""
+_get_ip_time=0
 [ "$(uci -q get openmptcprouter.omr)" = "router" ] || { uci -q set openmptcprouter.omr=router; uci -q commit openmptcprouter; }
 omr_state_del openmptcprouter omr shadowsocks
 _get_ip
@@ -283,7 +333,7 @@ while true; do
 				_get_ip
 			fi
 		fi
-		[ "$(omr_state_get openmptcprouter.omr.detected_public_ipv4)" = "" ] || { [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(omr_state_get openmptcprouter.omr.detected_public_ipv6)" = "" ]; } && _get_ip
+		_get_ip_if_missing
 		# First healthy cycle of this tracker process: catch a redir section that
 		# was re-enabled without a service restart before this process existed
 		[ -n "$_ss_cfg" ] && [ -z "$OMR_TRACKER_PREV_STATUS" ] && _ss_restart_if_redir_missing
@@ -292,7 +342,7 @@ while true; do
 		_set_omr_proxy_state "up"
 	else
 		last=$((last + 1 ))
-		[ -z "$nocontact" ] && nocontact="$host" || nocontact="$nocontact, $host"
+		_add_nocontact "$host"
 		case "$type" in
 		libev)
 			serverip="$(uci -q get shadowsocks-libev.${server}.server)"
@@ -307,8 +357,7 @@ while true; do
 		[ -n "$_ss_cfg" ] && ssredir="$(_ss_active_redirs)"
 
 		[ "${last}" -ge "${retry}" ] && [ "$ssredir" -ge 1 ] && {
-			nft_ruleset="$(nft list ruleset 2>/dev/null)"
-			if printf '%s\n' "$nft_ruleset" | grep -q -- "$serverip" && printf '%s\n' "$nft_ruleset" | grep -q 'goto ss_rules_forward_tcp'; then
+			if _ss_rules_on_server "$serverip"; then
 				_log "Shadowsocks $type ${server} is down (can't contact via http ${nocontact})"
 				OMR_TRACKER_STATUS_MSG="Shadowsocks $type ${server} is down (can't contact via http ${nocontact})"
 				omr_state_set openmptcprouter omr ss_${server} "down"

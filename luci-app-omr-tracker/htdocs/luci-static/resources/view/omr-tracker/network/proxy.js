@@ -58,6 +58,13 @@ return view.extend({
 		o.value('ipv4ipv6', _('IPv4 & IPv6'));
 		o.modalonly = true;
 
+		// The host group (hosts_proxy section) the proxy trackers test with,
+		// listed below
+		o = s.option(form.ListValue, 'country', _('Country'),
+			_('Select the host group used for the proxy tests.'));
+		o.default = 'world_proxy';
+		o.modalonly = true;
+
 		const hostSections = uci.sections('omr-tracker').filter(s => s['.type'] === 'hosts_proxy');
 		const countryData = {};
 
@@ -114,8 +121,9 @@ return view.extend({
 		o.default = '1';
 */
 		o = s.option(form.ListValue, 'tries', _('Test count'),
-			_('Number of probes sent during each proxy test cycle.'));
-		o.default = '1';
+			_('Number of consecutive failed tests after which the proxy is deemed down.'));
+		// the proxy trackers' own default: a value equal to it is removed
+		o.default = '4';
 		o.value('1');
 		o.value('2');
 		o.value('3');

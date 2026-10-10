@@ -21,12 +21,30 @@ interface_up=$(ubus call network.interface."$OMR_TRACKER_INTERFACE" status 2>/de
 # stays in the persistent config, unlike the runtime values in /var/state:
 # kept there, it was gone after each reboot and the 6 tests ran again on
 # every boot on each interface with testspeed enabled.
-if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(pgrep -f omr-test-speed-server)" = "" ] && [ -z "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed_lc)" ]; then
+# A test without a result leaves it unset: the 3 to 6 transfers (each a VPS
+# login and up to 30 s, with SQM stopped) then ran again on every cycle, so
+# the time of the last attempt is kept, in the runtime state, and the test
+# is tried again an hour later.
+printf -v _speedtest_now '%(%s)T' -1
+_speedtest_tried="$(omr_state_get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed_tried)"
+case "$_speedtest_tried" in
+	''|*[!0-9]*) _speedtest_tried=0 ;;
+esac
+if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(pgrep -f omr-test-speed-server)" = "" ] && [ -z "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed_lc)" ] && [ $((_speedtest_now - _speedtest_tried)) -ge 3600 ]; then
 	speedtest_bin="/bin/omr-test-speed-server"
 	[ -x "$speedtest_bin" ] || speedtest_bin="omr-test-speed-server"
+	# The results are staged and committed apart from /tmp/.uci: a commit
+	# of network or sqm there also committed what other processes have
+	# pending in these packages
+	_speedtest_uci_dir="/tmp/.uci-omr-speedtest-${OMR_TRACKER_INTERFACE}"
+	rm -rf "$_speedtest_uci_dir"
+	_speedtest_uci() {
+		uci -q -t "$_speedtest_uci_dir" "$@"
+	}
 	launch_speedtest() {
 		local server=$1
 		[ "$(omr_state_get openmptcprouter.${server}.current)" != "1" ] && return
+		omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" testspeed_tried "$_speedtest_now"
 		download_speed=$("$speedtest_bin" ${server} ${OMR_TRACKER_DEVICE} fasttest)
 		download_speed2=$("$speedtest_bin" ${server} ${OMR_TRACKER_DEVICE} fasttest)
 		download_speed3=$("$speedtest_bin" ${server} ${OMR_TRACKER_DEVICE} fasttest)
@@ -42,36 +60,38 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(pgrep
 
 			# Set Download speed settings
 			if [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.autorate)" = "1" ]; then
-				uci -q set sqm.${OMR_TRACKER_INTERFACE}.download=$((download_speed*65/100))
-				uci -q set sqm.${OMR_TRACKER_INTERFACE}.max_download=${download_speed}
-				uci -q set sqm.${OMR_TRACKER_INTERFACE}.min_download=$((download_speed*10/100))
+				_speedtest_uci set sqm.${OMR_TRACKER_INTERFACE}.download=$((download_speed*65/100))
+				_speedtest_uci set sqm.${OMR_TRACKER_INTERFACE}.max_download=${download_speed}
+				_speedtest_uci set sqm.${OMR_TRACKER_INTERFACE}.min_download=$((download_speed*10/100))
 			else
-				uci -q set sqm.${OMR_TRACKER_INTERFACE}.download=$((download_speed*95/100))
+				_speedtest_uci set sqm.${OMR_TRACKER_INTERFACE}.download=$((download_speed*95/100))
 			fi
 			_log "Calculated ${OMR_TRACKER_INTERFACE} download speed: ${download_speed}"
-			uci -q set network.${OMR_TRACKER_INTERFACE}.downloadspeed=${download_speed}
+			_speedtest_uci set network.${OMR_TRACKER_INTERFACE}.downloadspeed=${download_speed}
 
 			# Set Upload speed settings
 			upload_speed=$((upload_speed*8/1000))
 			if [ -n "$upload_speed" ] && [ "$upload_speed" != "0" ]; then
 				if [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.autorate)" = "1" ]; then
-					uci -q set sqm.${OMR_TRACKER_INTERFACE}.upload=$((upload_speed*65/100))
-					uci -q set sqm.${OMR_TRACKER_INTERFACE}.max_upload=${upload_speed}
-					uci -q set sqm.${OMR_TRACKER_INTERFACE}.min_upload=$((upload_speed*10/100))
+					_speedtest_uci set sqm.${OMR_TRACKER_INTERFACE}.upload=$((upload_speed*65/100))
+					_speedtest_uci set sqm.${OMR_TRACKER_INTERFACE}.max_upload=${upload_speed}
+					_speedtest_uci set sqm.${OMR_TRACKER_INTERFACE}.min_upload=$((upload_speed*10/100))
 				else
-					uci -q set sqm.${OMR_TRACKER_INTERFACE}.upload=$((upload_speed*95/100))
+					_speedtest_uci set sqm.${OMR_TRACKER_INTERFACE}.upload=$((upload_speed*95/100))
 				fi
 				_log "Calculated ${OMR_TRACKER_INTERFACE} upload speed: ${upload_speed}"
-				uci -q set network.${OMR_TRACKER_INTERFACE}.uploadspeed=${upload_speed}
-				uci -q set openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed_lc=$(date +"%s")
-				uci -q commit openmptcprouter
-				uci commit network
-				uci commit sqm
+				_speedtest_uci set network.${OMR_TRACKER_INTERFACE}.uploadspeed=${upload_speed}
+				_speedtest_uci set openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed_lc=$(date +"%s")
+				_speedtest_uci commit openmptcprouter
+				_speedtest_uci commit network
+				_speedtest_uci commit sqm
 			fi
 		fi
 	}
 	config_load openmptcprouter
 	config_foreach launch_speedtest server
+	# what a test without an upload result staged is dropped
+	rm -rf "$_speedtest_uci_dir"
 
 	sleep 5
 fi

@@ -154,7 +154,20 @@ _launch_tracker() {
 	[ -z "${tries_up}" ] && tries_up=${tries}
 	[ "$(uci -q get openmptcprouter.settings.disable_ipv6)" = "1" ] && ipv6="0"
 	[ -z "${family}" ] && family='ipv4'
-	#[ -z "${failure_interval}" ] && failure_interval=5
+	# LuCI removes an emptied field, the defaults section's included: without
+	# a value, "ping -w ''" failed every probe, and an empty failure interval
+	# let the tracker test again at once, without a pause, while down
+	[ -z "${timeout}" ] && timeout=4
+	[ -z "${failure_interval}" ] && failure_interval=20
+	# The thresholds LuCI shows for a quality check without its own: the
+	# tracker skips a check without a threshold, so a ticked "Check link
+	# quality" left alone checked nothing
+	if [ "${check_quality}" = "1" ]; then
+		[ -z "${failure_latency}" ] && failure_latency=1000
+		[ -z "${failure_loss}" ] && failure_loss=40
+		[ -z "${recovery_latency}" ] && recovery_latency=500
+		[ -z "${recovery_loss}" ] && recovery_loss=10
+	fi
 
 	procd_open_instance "$1"
 	# shellcheck disable=SC2086
@@ -505,6 +518,16 @@ _tracker_cmdline_matches() {
 	return 1
 }
 
+# Is any tracker daemon (interface, proxy, server or GRE) still running?
+_any_tracker_running() {
+	local pid ppid
+	for pid in $(pgrep -f '/bin/omr-tracker'); do
+		ppid="$(awk '/^PPid:/ {print $2}' "/proc/$pid/status" 2>/dev/null)"
+		[ "$ppid" = "1" ] && return 0
+	done
+	return 1
+}
+
 # Is a tracker daemon already running for interface $1?
 _tracker_running() {
 	local pid ppid
@@ -655,9 +678,22 @@ restart() {
 		_cleanup_locks "$1"
 		start "$@"
 	else
+		# Run by a tracker, as above: a stop kills what is left in its cgroup
+		read -r _cg 2>/dev/null </proc/self/cgroup
+		case "$_cg" in
+			*"/services/omr-tracker/"*) echo "$$" 2>/dev/null >/sys/fs/cgroup/cgroup.procs ;;
+		esac
 		trap '' TERM
 		stop
 		trap - TERM
+		# stop_service removed the locks before the trackers got the TERM, and
+		# a tracker finishes the post-tracking hook it runs first: its 003-up
+		# then removed, on exit, the lock of the 003-up of the new tracker
+		while _any_tracker_running && [ "$_kill_wait" -lt 35 ]; do
+			sleep 1
+			_kill_wait=$((_kill_wait + 1))
+		done
+		_cleanup_locks
 		start
 	fi
 }

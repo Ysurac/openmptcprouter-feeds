@@ -363,7 +363,17 @@ _parse_ping_output() {
 	# one process per ping instead of three
 	IFS='|' read -r PING_LOSS PING_LATENCY PING_JITTER PING_RTT_MIN PING_RTT_MAX <<-EOF
 $(awk '
-/packet loss/ && !/errors/ {gsub("%", "", $6); loss=$6; have_loss=1}
+/packet loss/ {
+	# the field ending with "%": "+N errors" or "+N duplicates" come before
+	# it, and iputils prints a fraction (33.3333% for 1 lost out of 3)
+	for (i = 1; i <= NF; i++) {
+		if ($i ~ /%$/) {
+			sub("%", "", $i)
+			loss = int($i)
+			have_loss = 1
+		}
+	}
+}
 /rtt/ {
 	n=split($0, parts, "/")
 	split(parts[4], prefix, "= ")
@@ -565,7 +575,12 @@ while true; do
 	OMR_TRACKER_RTT_MIN=
 	OMR_TRACKER_RTT_MAX=
 	#OMR_TRACKER_TIMEOUT=$((rto / 1000 + (rto % 1000 ? 1 : 0)))
+	# Both lists are only of this cycle's failed hosts: a list never reset
+	# grew on every failed probe and went into the exported status message,
+	# until it was past the size of the environment and every command the
+	# tracker ran failed with "Argument list too long"
 	OMR_TRACKER_LIST_HOSTS=""
+	OMR_TRACKER_LIST_HOSTS6=""
 	# Reuse the last known gateways while the link is healthy: rediscovery
 	# costs ~15 processes per cycle. A stale gateway makes the next ping
 	# fail, flipping status to ERROR, which forces a full rediscovery on

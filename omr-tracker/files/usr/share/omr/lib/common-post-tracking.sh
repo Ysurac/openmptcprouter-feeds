@@ -296,9 +296,11 @@ _omr_balancing_unlock() {
 # logging is on.
 debug=$(command uci -q get openmptcprouter.settings.debug 2>/dev/null)
 
+# The device section (config device) named after the device of interface
+# $1, or after the tracked device when the interface names none
 find_network_device() {
 	local interface="${1}"
-	local device_section=""
+	local device_section="" device=""
 
 	check_device() {
 		local cfg="${1}"
@@ -309,9 +311,11 @@ find_network_device() {
 
 		[ "${name}" = "${device}" ] && device_section="${cfg}"
 	}
+	device="$(uci -q get network.${interface}.device)"
+	[ -z "$device" ] && device="$OMR_TRACKER_DEVICE"
 	if [ -n "$device" ]; then
 		config_load network
-		config_foreach check_device device "$(uci -q network.${interface}.device)"
+		config_foreach check_device device "$device"
 	fi
 	echo "${device_section}"
 }

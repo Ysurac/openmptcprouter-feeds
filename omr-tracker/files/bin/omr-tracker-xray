@@ -109,6 +109,9 @@ _xray_rules_present() {
 }
 
 _get_ip() {
+	local _rest
+	read -r _get_ip_time _rest < /proc/uptime
+	_get_ip_time="${_get_ip_time%%.*}"
 	[ "$(uci -q get openmptcprouter.omr)" = "router" ] || { uci -q set openmptcprouter.omr=router; uci -q commit openmptcprouter; }
 	if [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ]; then
 		check_ipv4_website="$(uci -q get openmptcprouter.settings.check_ipv4_website)"
@@ -143,6 +146,28 @@ _set_omr_proxy_state() {
 	omr_state_set openmptcprouter omr proxy "$1"
 }
 
+# _get_ip again when a detected address is missing: the IPv4 one on every
+# cycle, the IPv6 one once in 15 minutes. A router without IPv6 never gets
+# one, and its 3 curls ran on every healthy cycle for good.
+_get_ip_if_missing() {
+	local _now _rest
+	if [ "$(omr_state_get openmptcprouter.omr.detected_public_ipv4)" = "" ]; then
+		_get_ip
+	elif [ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(omr_state_get openmptcprouter.omr.detected_public_ipv6)" = "" ]; then
+		read -r _now _rest < /proc/uptime
+		[ $((${_now%%.*} - _get_ip_time)) -ge 900 ] && _get_ip
+	fi
+}
+
+# The hosts that did not answer since the last success, each one once: the
+# list grew by a host on every failed check for as long as an outage lasted
+_add_nocontact() {
+	case ", $nocontact, " in
+		*", $1, "*) ;;
+		*) nocontact="${nocontact:+$nocontact, }$1" ;;
+	esac
+}
+
 timeout=${OMR_TRACKER_TIMEOUT:-5}
 interval=${OMR_TRACKER_INTERVAL:-10}
 retry=${OMR_TRACKER_TRIES:-4}
@@ -154,6 +179,7 @@ nodns=0
 
 last=0
 nocontact=""
+_get_ip_time=0
 [ "$(uci -q get openmptcprouter.omr)" = "router" ] || { uci -q set openmptcprouter.omr=router; uci -q commit openmptcprouter; }
 omr_state_del openmptcprouter omr xray
 _get_ip
@@ -196,13 +222,13 @@ while true; do
 			config_foreach set_server_fw server
 			_get_ip
 		fi
-		[ "$(omr_state_get openmptcprouter.omr.detected_public_ipv4)" = "" ] || ([ "$(uci -q get openmptcprouter.settings.disable_ipv6)" != "1" ] && [ "$(omr_state_get openmptcprouter.omr.detected_public_ipv6)" = "" ]) && _get_ip
+		_get_ip_if_missing
 		last=0
 		OMR_TRACKER_STATUS="OK"
 		_set_omr_proxy_state "up"
 	else
 		last=$((last + 1 ))
-		[ -z "$nocontact" ] && nocontact="$host" || nocontact="$nocontact, $host"
+		_add_nocontact "$host"
 		[ "${last}" -ge "${retry}" ] && {
 			if _xray_rules_present; then
 				_log "xray is down (can't contact via http ${nocontact})"

@@ -40,7 +40,7 @@ _parse_ping() {
 
 _ping_server() {
 	local host=$1
-	ret=$(ping -w "$OMR_TRACKER_TIMEOUT" -c 1 -q "${host}" 2>&1)
+	ret=$(ping -w "$timeout" -c 1 -q "${host}" 2>&1)
 	_parse_ping
 	if [ -n "$loss" ] && [ "$loss" != "100" ]; then
 		[ -n "$latency" ] && OMR_TRACKER_LATENCY="$latency"
@@ -54,7 +54,7 @@ _ping_server_intf() {
 	for intf in $mp_default_intfs; do
 		local k=0
 		while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
-			ret=$(ping -w "$OMR_TRACKER_TIMEOUT" -c 1 -q -I "$intf" "${host}" 2>&1)
+			ret=$(ping -w "$timeout" -c 1 -q -I "$intf" "${host}" 2>&1)
 			_parse_ping
 			if [ -n "$loss" ] && [ "$loss" != "100" ]; then
 				[ -n "$latency" ] && OMR_TRACKER_LATENCY="$latency"
@@ -62,7 +62,7 @@ _ping_server_intf() {
 				server_ping=true
 				if [ "$OMR_TRACKER_CHECK_QUALITY" = "1" ]; then
 					if [ "$OMR_TRACKER_PREV_STATUS" = "OK" ]; then
-						if [ -n "$OMR_TRACKER_LOSS" ] && [ -n "$OMR_TRACKER_RECOVERY_LOSS" ] && [ "$OMR_TRACKER_LOSS" -ge "$OMR_TRACKER_FAILURE_LOSS" ]; then
+						if [ -n "$OMR_TRACKER_LOSS" ] && [ -n "$OMR_TRACKER_FAILURE_LOSS" ] && [ "$OMR_TRACKER_LOSS" -ge "$OMR_TRACKER_FAILURE_LOSS" ]; then
 							OMR_TRACKER_STATUS="ERROR"
 							OMR_TRACKER_STATUS_MSG="Packet loss is $OMR_TRACKER_LOSS this is more than failure limit defined at $OMR_TRACKER_FAILURE_LOSS"
 							server_ping=false
@@ -98,7 +98,7 @@ _check_server() {
 		url="https://${host}:${port}/"
 	fi
 	while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
-		ret=$(omr_vps_curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k "$url")
+		ret=$(omr_vps_curl --max-time "$timeout" -s -k "$url")
 		[ -n "$ret" ] && server_ping=true
 		k=$((k+1))
 		[ "$server_ping" = false ] && sleep "${intervaltries}"
@@ -117,9 +117,9 @@ _check_server_intf() {
 		k=0
 		while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
 			if [ "$valid_ip6" = "ok" ]; then
-				ret=$(omr_vps_curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k "$url")
+				ret=$(omr_vps_curl --max-time "$timeout" -s -k "$url")
 			else
-				ret=$(omr_vps_curl --max-time "$OMR_TRACKER_TIMEOUT" -s -k --interface "$intf" "$url")
+				ret=$(omr_vps_curl --max-time "$timeout" -s -k --interface "$intf" "$url")
 			fi
 			[ -n "$ret" ] && server_ping=true
 			k=$((k+1))
@@ -538,7 +538,7 @@ _check_backup() {
 	local OMR_VPS_SERVER="$name"
 	config_get backup "$1" backup
 	config_get ip "$1" ip
-	config_get port "$1" port
+	config_get port "$1" port "65500"
 	config_get disabled "$1" disabled
 	serverip=""
 	[ "$backup" = "1" ] && [ -n "$ip" ] && [ "$disabled" != "1" ] && {
@@ -733,6 +733,9 @@ _bc_pid=""
 # instead of on every check. Worst case a hotplugged/removed WAN is seen up
 # to 30s late here; the per-interface checks tolerate a stale entry (a dead
 # interface just fails its probe and the loop moves on).
+# The interfaces in backup mode are listed too, after the others: with only
+# the default ones, every server was declared down (proxies, VPN and DNS
+# restarted) as soon as a backup WAN was the only one left.
 mp_default_intfs=""
 _mp_intfs_ts=0
 # Last value written to openmptcprouter.omr.server, so the global up/down
@@ -743,7 +746,7 @@ while true; do
 	oneserverup="0"
 	printf -v _mp_now '%(%s)T' -1
 	if [ $((_mp_now - _mp_intfs_ts)) -ge 30 ]; then
-		mp_default_intfs="$(multipath 2>/dev/null | awk '/default/{print $1}')"
+		mp_default_intfs="$(multipath 2>/dev/null | awk '/ is in default mode/ { d = d " " $1 } / is in backup mode/ { b = b " " $1 } END { print d b }')"
 		_mp_intfs_ts=$_mp_now
 	fi
 	_check_servers
