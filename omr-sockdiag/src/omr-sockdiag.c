@@ -247,6 +247,7 @@ static void drain_family(int fd, int family, const struct filter *f)
 			const struct inet_diag_msg *m = NLMSG_DATA(nlh);
 			int rtalen = nlh->nlmsg_len - NLMSG_LENGTH(sizeof(*m));
 			const struct tcp_info *ti = NULL;
+			struct tcp_info ti_buf;
 			const char *cc_name = NULL;
 			size_t cc_len = 0;
 			const struct tcp_bbr_info *bbr = NULL;
@@ -255,9 +256,17 @@ static void drain_family(int fd, int family, const struct filter *f)
 				struct rtattr *rta = (struct rtattr *)
 					(((char *)m) + NLMSG_ALIGN(sizeof(*m)));
 				for (; RTA_OK(rta, rtalen); rta = RTA_NEXT(rta, rtalen)) {
-					if (rta->rta_type == INET_DIAG_INFO)
-						ti = (const struct tcp_info *)RTA_DATA(rta);
-					else if (rta->rta_type == INET_DIAG_CONG) {
+					if (rta->rta_type == INET_DIAG_INFO) {
+						/* An older kernel sends a shorter tcp_info than
+						 * the headers this was built against: copy what
+						 * it sent and leave the rest zero, like ss does. */
+						size_t n = RTA_PAYLOAD(rta);
+						if (n > sizeof(ti_buf))
+							n = sizeof(ti_buf);
+						memset(&ti_buf, 0, sizeof(ti_buf));
+						memcpy(&ti_buf, RTA_DATA(rta), n);
+						ti = &ti_buf;
+					} else if (rta->rta_type == INET_DIAG_CONG) {
 						cc_name = (const char *)RTA_DATA(rta);
 						cc_len = RTA_PAYLOAD(rta);
 					/* Requested via the single VEGASINFO bit (see

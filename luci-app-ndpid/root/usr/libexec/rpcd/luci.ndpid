@@ -144,28 +144,18 @@ methods = {
 	get_status = {
 		args = {},
 		call = function()
-			local ndpid_running = false
-			local tracker_running = false
-
-			local pid_f = io.open("/var/run/ndpid.pid", "r")
-			if pid_f then
-				local pid = pid_f:read("*line")
-				pid_f:close()
-				if pid and pid ~= "" then
-					local rc = os.execute("kill -0 " .. pid .. " 2>/dev/null")
-					ndpid_running = (rc == 0)
-				end
+			-- The pid goes into a shell command line: only a plain number
+			local function pid_alive(path)
+				local f = io.open(path, "r")
+				if not f then return false end
+				local pid = tonumber((f:read("*line") or ""):match("^%s*(%d+)%s*$"))
+				f:close()
+				if not pid or pid < 1 then return false end
+				return os.execute("kill -0 " .. pid .. " 2>/dev/null") == 0
 			end
 
-			local tr_f = io.open("/var/run/omr-bypass-ndpid-flows.pid", "r")
-			if tr_f then
-				local pid = tr_f:read("*line")
-				tr_f:close()
-				if pid and pid ~= "" then
-					local rc = os.execute("kill -0 " .. pid .. " 2>/dev/null")
-					tracker_running = (rc == 0)
-				end
-			end
+			local ndpid_running = pid_alive("/var/run/ndpid.pid")
+			local tracker_running = pid_alive("/var/run/omr-bypass-ndpid-flows.pid")
 
 			local flow_count = 0
 			local ls = io.popen("ls " .. FLOWS_DIR .. "/ 2>/dev/null | wc -l")

@@ -249,20 +249,31 @@ start_service() {
 	logger -t ndpid "Starting nDPId on interfaces: $interfaces"
 	[ -n "$bpf" ] && logger -t ndpid "BPF filter: $bpf"
 
-	# Use procd_append_param so the BPF string (which contains spaces)
-	# is passed as a single argument rather than being word-split.
-	procd_open_instance ndpid
-	procd_set_param command "$PROG"
-	procd_append_param command -c "$collector"
+	# nDPId captures on a single interface: with several -i only the last
+	# one was used. One instance per interface, all feeding the same
+	# collector (nDPIsrvd tells them apart by their "source" interface); the
+	# first keeps the ndpid instance name and pidfile LuCI looks at.
+	# procd_append_param keeps the BPF string (which contains spaces) one
+	# argument rather than word-split.
+	local n=1 name pidfile
 	for iface in $interfaces; do
+		if [ "$n" = "1" ]; then
+			name=ndpid pidfile=/var/run/ndpid.pid
+		else
+			name="ndpid$n" pidfile="/var/run/ndpid$n.pid"
+		fi
+		procd_open_instance "$name"
+		procd_set_param command "$PROG"
+		procd_append_param command -c "$collector"
 		procd_append_param command -i "$iface"
+		[ -n "$bpf" ] && procd_append_param command -B "$bpf"
+		procd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-5}
+		procd_set_param stdout 1
+		procd_set_param stderr 1
+		procd_set_param pidfile "$pidfile"
+		procd_close_instance
+		n=$((n + 1))
 	done
-	[ -n "$bpf" ] && procd_append_param command -B "$bpf"
-	procd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-5}
-	procd_set_param stdout 1
-	procd_set_param stderr 1
-	procd_set_param pidfile /var/run/ndpid.pid
-	procd_close_instance
 }
 
 stop_service() {
