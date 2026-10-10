@@ -32,6 +32,28 @@ static __always_inline bool first_usable(struct mptcp_subflow_context *subflow,
 	       bpf_sk_stream_memory_free(ssk);
 }
 
+/* Whether a non-backup subflow is active, even one that cannot take data
+ * right now. A walk of its own, run only when the main one found no
+ * non-backup subflow to send on: counting them in the main walk multiplied
+ * its verifier states past the 1M instruction limit.
+ */
+static __always_inline bool has_active_nonbackup(struct sock *sk)
+{
+	struct mptcp_subflow_context *subflow;
+	bool found = false;
+
+	bpf_for_each(mptcp_subflow, subflow, sk) {
+		if (subflow->backup || subflow->request_bkup)
+			continue;
+		if (mptcp_subflow_active(subflow)) {
+			found = true;
+			break;
+		}
+	}
+
+	return found;
+}
+
 /* Still "first": msk->first is used whenever it can carry data, so the
  * scheduler keeps its single-path character. It just no longer insists on a
  * subflow that cannot. Scheduling the initial subflow unconditionally meant
@@ -40,6 +62,11 @@ static __always_inline bool first_usable(struct mptcp_subflow_context *subflow,
  * application-visible stall with 110228 duplicate segments and 3.6x the payload
  * on the wire, where the default scheduler had no stall at all. Falling back to
  * the first subflow that is usable turns that into an ordinary failover.
+ *
+ * The fallback is a non-backup subflow, and a backup one only when no other
+ * subflow is active, as in the default scheduler and bpf_bkup: msk->first is
+ * also full whenever an upload saturates it, and taking any usable subflow
+ * then put every such upload on the backup WAN too.
  */
 SEC("struct_ops")
 int BPF_PROG(bpf_first_get_send, struct mptcp_sock *msk)
@@ -67,6 +94,8 @@ int BPF_PROG(bpf_first_get_send, struct mptcp_sock *msk)
 			break;
 		seen++;
 
+		if (subflow->backup || subflow->request_bkup)
+			continue;
 		ssk = mptcp_subflow_tcp_sock(subflow);
 		if (!first_usable(subflow, ssk))
 			continue;
@@ -75,6 +104,26 @@ int BPF_PROG(bpf_first_get_send, struct mptcp_sock *msk)
 		break;
 	}
 
+	if (!pick) {
+		if (has_active_nonbackup(sk))
+			return -1;
+		/* only backup subflows are left */
+		seen = 0;
+		bpf_for_each(mptcp_subflow, subflow, sk) {
+			struct sock *ssk;
+
+			if (seen >= MAX_SUBFLOWS)
+				break;
+			seen++;
+
+			ssk = mptcp_subflow_tcp_sock(subflow);
+			if (!first_usable(subflow, ssk))
+				continue;
+
+			pick = ssk;
+			break;
+		}
+	}
 	if (!pick)
 		return -1;
 

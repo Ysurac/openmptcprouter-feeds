@@ -70,6 +70,28 @@ static __always_inline bool tcp_rtx_and_write_queues_empty(struct sock *sk)
 	return bpf_mptcp_subflow_queues_empty(sk) && tcp_write_queue_empty(sk);
 }
 
+/* Whether a non-backup subflow is active, even one that cannot take data
+ * right now. A walk of its own, run only when the main one found no
+ * non-backup subflow to send on: counting them in the main walk multiplied
+ * its verifier states past the 1M instruction limit.
+ */
+static __always_inline bool has_active_nonbackup(struct sock *sk)
+{
+	struct mptcp_subflow_context *subflow;
+	bool found = false;
+
+	bpf_for_each(mptcp_subflow, subflow, sk) {
+		if (subflow->backup || subflow->request_bkup)
+			continue;
+		if (mptcp_subflow_active(subflow)) {
+			found = true;
+			break;
+		}
+	}
+
+	return found;
+}
+
 SEC("struct_ops")
 void BPF_PROG(mptcp_sched_weight_init, struct mptcp_sock *msk)
 {
@@ -159,9 +181,16 @@ int BPF_PROG(bpf_weight_get_send, struct mptcp_sock *msk)
 	}
 	mptcp_set_timeout(sk);
 
-	/* fall back to best backup when no active subflow is available */
-	if (!nr_active)
+	/* fall back to best backup when no active subflow is available. Only
+	 * then: the screen above also drops active subflows that are merely
+	 * full, and the kernel's mptcp_subflow_get_send() waits for those
+	 * rather than loading the backup WAN with every saturating upload.
+	 */
+	if (!nr_active) {
+		if (has_active_nonbackup(sk))
+			return -1;
 		send_info[SSK_MODE_ACTIVE].ssk = send_info[SSK_MODE_BACKUP].ssk;
+	}
 
 	ssk = send_info[SSK_MODE_ACTIVE].ssk;
 	if (!ssk || !bpf_sk_stream_memory_free(ssk))
