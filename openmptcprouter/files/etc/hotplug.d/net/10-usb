@@ -1,34 +1,43 @@
 #!/bin/sh
 # Come from https://github.com/ofmodemsandmen/RooterSource/blob/main/package/rooter/ext-rooter-basic/files/etc/hotplug.d/net/10-usb
+# Only for a USB network interface (modem) that appears: tunnels and other
+# interfaces come and go all the time. RPS is set by 20-rps-xps.
 
-log() {
-	logger -t "NET" "$@"
+[ "$ACTION" = "add" ] || exit 0
+[ -n "$INTERFACE" ] || exit 0
+case "$(readlink -f "/sys/class/net/${INTERFACE}/device" 2>/dev/null)" in
+	*/usb[0-9]*) ;;
+	*) exit 0 ;;
+esac
+
+NP=$(grep -c ^processor /proc/cpuinfo)
+[ "$NP" -gt 1 ] || exit 0
+
+ethtool -K "$INTERFACE" gro on >/dev/null 2>&1
+
+# irqbalance places the interrupts itself, whatever is written here.
+[ "$(uci -q get irqbalance.irqbalance.enabled)" = "1" ] && exit 0
+
+# Hex mask of CPUs [start, start+count-1], in 32-bit groups.
+_cpu_mask() {
+	awk -v s="$1" -v c="$2" 'BEGIN {
+		val = 0
+		for (i = s; i < s + c; i++) val += 2 ^ i
+		hi = int(val / 4294967296)
+		lo = val % 4294967296
+		if (hi > 0) printf "%x,%08x\n", hi, lo
+		else printf "%x\n", lo
+	}'
 }
 
-NP=$(grep -c ^processor /proc/cpuinfo )
-if [ "$NP" -gt 1 ]; then
-	log "hotplug (iface): action='$ACTION' interface='$INTERFACE'"
-	if [ "$ACTION" = "add" ]; then
-		IFACE=$(ls /sys/class/net)
-		for i in ${IFACE}; do
-			ethtool -K $i gro on 2>/dev/null
-			if [[ -e /sys/class/net/$i/queues/rx-0/rps_cpus ]]; then
-				echo f > /sys/class/net/$i/queues/rx-0/rps_cpus
-			fi
-		done
-		
-		INTERRUPT=$(ls /proc/irq/ | sed '/default/d')
-		USB3_NUMBER=$(grep xhci /proc/interrupts | awk -F: '{print $1}' | sed 's/^ //')
-
-		for i in ${INTERRUPT}; do
-			if [[ $i = ${USB3_NUMBER} ]]; then
-				echo f > /proc/irq/$i/smp_affinity 2>/dev/null
-			else
-				echo e > /proc/irq/$i/smp_affinity 2>/dev/null
-			fi
-		done
-
-		#inter=$(grep . /sys/class/net/$INTERFACE/queues/?x-0/?ps_cpus)
-		#log "$inter"
-	fi
-fi
+# The USB controller on every CPU, the other interrupts off CPU0.
+all_mask=$(_cpu_mask 0 "$NP")
+other_mask=$(_cpu_mask 1 "$((NP - 1))")
+USB3_NUMBERS=" $(grep xhci /proc/interrupts | awk -F: '{print $1}' | tr -d ' ' | tr '\n' ' ') "
+for i in $(ls /proc/irq/ | sed '/default/d'); do
+	case "$USB3_NUMBERS" in
+		*" $i "*) echo "$all_mask" > /proc/irq/$i/smp_affinity 2>/dev/null ;;
+		*) echo "$other_mask" > /proc/irq/$i/smp_affinity 2>/dev/null ;;
+	esac
+done
+logger -t "NET" "USB interface ${INTERFACE}: GRO on, USB interrupts on CPUs $all_mask, others on $other_mask"

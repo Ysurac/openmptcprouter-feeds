@@ -25,7 +25,9 @@ _getremoteip() {
 
 mptcp_over_vpn() {
 	local interface=$1
-	[ -n "$(uci show firewall.zone_wan.network | grep $interface)" ] && nbintf=$(($nbintf+1))
+	case " $(uci -q get firewall.zone_wan.network) " in
+		*" $interface "*) nbintf=$(($nbintf+1)) ;;
+	esac
 	if [ "$(uci -q get openmptcprouter.${interface}.multipathvpn)" = "1" ]; then
 		remoteip=""
 		config_load openmptcprouter
@@ -212,8 +214,80 @@ mptcp_over_vpn() {
 	fi
 }
 
+_master_ip() {
+	[ -z "$remoteip" ] && [ "$(uci -q get openmptcprouter.$1.master)" = "1" ] && \
+		remoteip=$(uci -q get openmptcprouter.$1.ip | awk '{print $1}')
+}
+
+# Back from MPTCP over VPN on every WAN: only what it changed is undone. The
+# ss_rules of a proxy package that is not installed reads as empty, and that
+# used to send every network reload here to point the VPNs at the first IP of
+# the "vps" section, whatever server was in use.
+mptcp_over_vpn_restore() {
+	local restored="" ss vpnhosts vpnhost
+	for ss in shadowsocks-libev shadowsocks-rust; do
+		[ -n "$(uci -q get ${ss}.ss_rules)" ] || continue
+		[ "$(uci -q get ${ss}.ss_rules.server)" != "sss0" ] || continue
+		uci -q set ${ss}.ss_rules.server='sss0'
+		uci -q commit ${ss}
+		restored="1"
+	done
+	vpnhosts=" $(uci -q get glorytun.vpn.host) $(uci -q get glorytun-udp.vpn.host) $(uci -q get openvpn.omr.remote) "
+	case "$vpnhosts" in
+		*" 10.255.250.1 "*|*" 10.255.247.1 "*)
+			remoteip=""
+			config_load openmptcprouter
+			config_foreach _getremoteip server
+			config_foreach _master_ip server
+			[ -n "$remoteip" ] || remoteip=$(uci -q get openmptcprouter.vps.ip | awk '{print $1}')
+			if [ -n "$remoteip" ]; then
+				for vpnhost in glorytun.vpn.host glorytun-udp.vpn.host; do
+					case "$(uci -q get $vpnhost)" in
+						10.255.250.1|10.255.247.1) uci -q set $vpnhost="$remoteip" ;;
+					esac
+				done
+				case " $(uci -q get openvpn.omr.remote) " in
+					*" 10.255.250.1 "*|*" 10.255.247.1 "*)
+						uci -q batch <<-EOF >/dev/null
+							delete openvpn.omr.remote
+							add_list openvpn.omr.remote="$remoteip"
+						EOF
+					;;
+				esac
+				uci -q batch <<-EOF >/dev/null
+					commit glorytun
+					commit glorytun-udp
+					commit openvpn
+				EOF
+				restored="1"
+			fi
+		;;
+	esac
+	[ "$restored" = "1" ] || return
+	if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set shadowsocks-libev.sss0.disabled='0'
+			commit shadowsocks-libev
+		EOF
+	elif [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks-rust" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set shadowsocks-rust.sss0.disabled='0'
+			commit shadowsocks-rust
+		EOF
+	fi
+}
+
+# The proxy and openvpn are restarted only when their config really changed:
+# this runs on every network reload.
+_config_sum() {
+	md5sum /etc/config/$1 2>/dev/null
+}
+
 start_service()
 {
+	local libev_sum="$(_config_sum shadowsocks-libev)"
+	local rust_sum="$(_config_sum shadowsocks-rust)"
+	local openvpn_sum="$(_config_sum openvpn)"
 	nbintf=0
 	nbintfvpn=0
 	vpn="$(uci -q get openmptcprouter.settings.mptcpovervpn)"
@@ -277,26 +351,8 @@ start_service()
 			set shadowsocks-rust.ss_rules.server='mptcpovervpn'
 			set shadowsocks-rust.ss_rules.redir_tcp='all'
 		EOF
-	elif ([ "$(uci -q get glorytun.vpn.host)" = "10.255.250.1" ] || [ "$(uci -q get glorytun.vpn.host)" = "10.255.247.1" ] || [ "$(uci -q get openvpn.omr.remote)" = "10.255.250.1" ] || [ "$(uci -q get openvpn.omr.remote)" = "10.255.247.1" ] || [ "$(uci -q get shadowsocks-libev.ss_rules.server)" != "sss0" ] || [ "$(uci -q get shadowsocks-rust.ss_rules.server)" != "sss0" ]) && [ "$nbintf" != "$nbintfvpn" ]; then
-		if [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks" ]; then
-			uci -q batch <<-EOF >/dev/null
-				set shadowsocks-libev.sss0.disabled='0'
-			EOF
-		elif [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks-rust" ]; then
-			uci -q batch <<-EOF >/dev/null
-				set shadowsocks-rust.sss0.disabled='0'
-			EOF
-		fi
-		uci -q batch <<-EOF >/dev/null
-			set shadowsocks-libev.ss_rules.server='sss0'
-			set shadowsocks-rust.ss_rules.server='sss0'
-			set glorytun.vpn.host="$(uci -q get openmptcprouter.vps.ip | awk '{print $1}')"
-			set glorytun-udp.vpn.host="$(uci -q get openmptcprouter.vps.ip | awk '{print $1}')"
-			set openvpn.omr.remote="$(uci -q get openmptcprouter.vps.ip | awk '{print $1}')"
-			commit glorytun
-			commit glorytun-udp
-			commit openvpn
-		EOF
+	elif [ "$nbintf" != "$nbintfvpn" ]; then
+		mptcp_over_vpn_restore
 	fi
 	NBCPU=$(grep -c '^processor' /proc/cpuinfo | tr -d "\n")
 	if [ "$nbintfvpn" != 0 ] && [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks" ]; then
@@ -339,8 +395,8 @@ start_service()
 		uci -q batch <<-EOF >/dev/null
 			commit shadowsocks-libev
 		EOF
-		/etc/init.d/shadowsocks-libev restart
-		/etc/init.d/openvpn restart
+		[ "$(_config_sum shadowsocks-libev)" != "$libev_sum" ] && /etc/init.d/shadowsocks-libev restart
+		[ "$(_config_sum openvpn)" != "$openvpn_sum" ] && /etc/init.d/openvpn restart
 	elif [ "$nbintfvpn" != 0 ] && [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks-rust" ]; then
 		if [ "$vpn" = "openvpn" ]; then
 			uci -q batch <<-EOF >/dev/null
@@ -379,8 +435,8 @@ start_service()
 		uci -q batch <<-EOF >/dev/null
 			commit shadowsocks-rust
 		EOF
-		/etc/init.d/shadowsocks-rust restart
-		/etc/init.d/openvpn restart
+		[ "$(_config_sum shadowsocks-rust)" != "$rust_sum" ] && /etc/init.d/shadowsocks-rust restart
+		[ "$(_config_sum openvpn)" != "$openvpn_sum" ] && /etc/init.d/openvpn restart
 	elif [ "$(uci -q get shadowsocks-libev.hivpn1)" != "" ]; then
 		for c in $(seq 1 $NBCPU); do
 			uci -q batch <<-EOF >/dev/null

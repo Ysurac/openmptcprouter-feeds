@@ -57,6 +57,8 @@ PERSIST_FILE="/etc/sysctl.d/zz-omr-reserved-ports.conf"
 # (seen on the bench: a stock ttyd missed the same port change), so the
 # omr-schedule part 040-reserved-ports re-syncs when this is over 10 minutes
 # old. On tmpfs, so the periodic pass never writes to flash.
+# A refused or rejected list is touched too: it stays refused until the config
+# changes, and 040-reserved-ports would otherwise retry and log it every minute.
 STAMP_FILE="/tmp/omr-reserved-ports.stamp"
 
 # Every UCI config read below. /etc/init.d/omr-reserved-ports registers a
@@ -300,6 +302,7 @@ _report
 if [ "$RANGE_SIZE" -gt 0 ] && [ "$(( IN_RANGE * 100 / RANGE_SIZE ))" -gt "$MAX_RESERVED_PCT" ]; then
 	_warn "refusing: ${IN_RANGE} of ${RANGE_SIZE} ephemeral ports would be reserved (> ${MAX_RESERVED_PCT}%);"
 	_warn "the router would run out of source ports for its own connections"
+	[ "$ACTION" = "apply" ] && touch "$STAMP_FILE" 2>/dev/null
 	exit 1
 fi
 
@@ -318,6 +321,7 @@ elif echo "$LIST" > /proc/sys/net/ipv4/ip_local_reserved_ports 2>/dev/null; then
 	_say "applied net.ipv4.ip_local_reserved_ports = ${LIST:-<none>}"
 else
 	_warn "failed to set net.ipv4.ip_local_reserved_ports"
+	touch "$STAMP_FILE" 2>/dev/null
 	exit 1
 fi
 touch "$STAMP_FILE" 2>/dev/null

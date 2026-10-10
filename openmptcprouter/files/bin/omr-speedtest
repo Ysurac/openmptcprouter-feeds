@@ -8,12 +8,22 @@
 # This script check speed using Speedtest servers
 
 INTERFACE="$1"
+sqm_stopped=""
+
+# The host comes as a bare name (speedtest.example.com) or an URL: keep only
+# the name, awk -F/ '{print $3}' alone gave nothing for a bare name.
+_host_domain() {
+	echo "$1" | sed -e 's|^[a-zA-Z]*://||' -e 's|[/:].*$||'
+}
 
 bypass_host_enable() {
 	INTERFACE=$1
 	HOST=$2
-	[ -n "$(tc qdisc show dev $INTERFACE | grep ingress)" ] && /etc/init.d/sqm stop $INTERFACE
-	domain=$(echo $HOST | awk -F/ '{print $3}')
+	if [ -n "$(tc qdisc show dev $INTERFACE | grep ingress)" ]; then
+		/etc/init.d/sqm stop $INTERFACE
+		sqm_stopped="1"
+	fi
+	domain=$(_host_domain "$HOST")
 	if [ "$IPV6" = true ]; then
 		hostip=$(dig +nocmd +noall +answer AAAA $domain | grep -v CNAME | awk '{print $5}' | tr '\n' ' ')
 		if [ -n "$(ipset list 2>/dev/null | grep ss_rules6)" ]; then
@@ -45,7 +55,7 @@ bypass_host_enable() {
 bypass_host_disable() {
 	INTERFACE=$1
 	HOST=$2
-	domain=$(echo $HOST | awk -F/ '{print $3}')
+	domain=$(_host_domain "$HOST")
 	if [ "$IPV6" = true ]; then
 		hostip=$(dig +nocmd +noall +answer AAAA $domain | grep -v CNAME | awk '{print $5}' | tr '\n' ' ')
 		if [ -n "$(ipset list 2>/dev/null | grep ss_rules6)" ]; then
@@ -71,7 +81,8 @@ bypass_host_disable() {
 			done
 		fi
 	fi
-	/etc/init.d/sqm start $INTERFACE
+	# Only what the test stopped: SQM may be off on this interface.
+	[ "$sqm_stopped" = "1" ] && /etc/init.d/sqm start $INTERFACE
 }
 
 if [ -f /usr/bin/v2ray ]; then

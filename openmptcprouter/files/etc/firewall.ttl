@@ -5,10 +5,11 @@
 _set_ttl() {
 	device=$(uci -q get network.$1.name)
 	ttl=$(uci -q get network.$1.ttl)
-	if [ -n "$ttl" ]; then
-		if [ -e /usr/sbin/iptables-nft ] && [ -z "$(nft list ruleset 2>/dev/null | grep ttl | grep $device)" ]; then
+	# The device name is matched whole: eth1 is not eth10 nor eth1.2.
+	if [ -n "$ttl" ] && [ -n "$device" ]; then
+		if [ -e /usr/sbin/iptables-nft ] && [ -z "$(nft list ruleset 2>/dev/null | grep -F "oifname \"$device\" ip ttl set")" ]; then
 			nft add rule inet fw4 mangle_forward oifname $device ip ttl set $ttl >/dev/null 2>&1
-		elif [ ! -e /usr/sbin/iptables-nft ] && [ -z "$(iptables-save 2>/dev/null | grep TTL | grep $device)" ]; then
+		elif [ ! -e /usr/sbin/iptables-nft ] && [ -z "$(iptables-save 2>/dev/null | grep -F -- "-o $device -j TTL ")" ]; then
 			iptables -w -t mangle -I POSTROUTING -o $device -j TTL --ttl-set $ttl >/dev/null 2>&1
 		fi
 	fi

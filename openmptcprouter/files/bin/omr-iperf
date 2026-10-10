@@ -8,38 +8,66 @@
 
 . /lib/functions.sh
 
+_iperf_server() {
+	KEY=$(uci -q get iperf.$1.key)
+	USER=$(uci -q get iperf.$1.user)
+	PASSWORD=$(uci -q get iperf.$1.password)
+	HOST=$(uci -q get iperf.$1.host)
+	PORTS=$(uci -q get iperf.$1.ports | sed 's/,/ /g')
+	PORT="${PORTS%% *}"
+}
+
 get_auth_data() {
 	SERVER="$1"
 	# current is runtime state (omr-state.sh): config_load does not see it
 	current="$(uci -q -P /var/state get openmptcprouter.$SERVER.current)"
-	if [ "$current" = "1" ]; then
-		KEY=$(uci -q get iperf.$SERVER.key)
-		USER=$(uci -q get iperf.$SERVER.user)
-		PASSWORD=$(uci -q get iperf.$SERVER.password)
-		HOST=$(uci -q get iperf.$SERVER.host)
-		PORTS=$(uci -q get iperf.$SERVER.ports | sed 's/,/ /g')
-		PORT="${PORTS%% *}"
-	fi
+	# Before the tracker has marked a server current, the master one.
+	[ "$current" != "1" ] && [ -z "$HOST" ] && [ "$2" = "master" ] && \
+		[ "$(uci -q get openmptcprouter.$SERVER.master)" = "1" ] && current="1"
+	[ "$current" = "1" ] && _iperf_server "$SERVER"
 }
 
-config_load openmptcprouter
-config_foreach get_auth_data server
+HOST="" PORT="" KEY="" USER="" PASSWORD=""
+# --server <name>: the iperf section LuCI picked, instead of the current server
+if [ "$1" = "--server" ]; then
+	case "$2" in
+		""|*[!A-Za-z0-9_-]*)
+			echo "omr-iperf: invalid server name" >&2
+			exit 1
+		;;
+	esac
+	_iperf_server "$2"
+	shift 2
+else
+	config_load openmptcprouter
+	config_foreach get_auth_data server
+	[ -z "$HOST" ] && config_foreach get_auth_data server master
+fi
+
+if [ -z "$HOST" ]; then
+	echo "omr-iperf: no iperf server for the current server" >&2
+	exit 1
+fi
 
 if [ -n "$PASSWORD" ] && [ -n "$USER" ] && [ -n "$KEY" ]; then
-	echo $KEY | base64 -d > /tmp/iperf.pem
-		#IPERF3_PASSWORD=$PASSWORD iperf3 --username $USER --rsa-public-key-path /tmp/iperf.pem --use-pkcs1-padding -c $HOST -p $PORT "$@"
+	# A fixed /tmp name can be a link planted by anyone.
+	PEM="$(mktemp /tmp/iperf.XXXXXX)" || exit 1
+	trap 'rm -f "$PEM"' EXIT
+	trap 'exit 1' INT TERM
+	echo $KEY | base64 -d > "$PEM"
+		#IPERF3_PASSWORD=$PASSWORD iperf3 --username $USER --rsa-public-key-path "$PEM" --use-pkcs1-padding -c $HOST -p $PORT "$@"
 	case "$0" in
 		*proxy)
-				IPERF3_PASSWORD=$PASSWORD iperf3 --username $USER --rsa-public-key-path /tmp/iperf.pem -c $HOST -p $PORT --socks5 127.0.0.1:1111 "$@"
+				IPERF3_PASSWORD=$PASSWORD iperf3 --username $USER --rsa-public-key-path "$PEM" -c $HOST ${PORT:+-p $PORT} --socks5 127.0.0.1:1111 "$@"
 		;;
 		*vpn)
 			VPNIP=$(ip r show default metric 0 | awk '{ if (length($3) != 0) { print $3; exit; } }' | tr -d '\n')
-			IPERF3_PASSWORD=$PASSWORD iperf3 --username $USER --rsa-public-key-path /tmp/iperf.pem -c $VPNIP -p $PORT "$@"
+			IPERF3_PASSWORD=$PASSWORD iperf3 --username $USER --rsa-public-key-path "$PEM" -c $VPNIP ${PORT:+-p $PORT} "$@"
 		;;
 		*)
-				IPERF3_PASSWORD=$PASSWORD iperf3 --username $USER --rsa-public-key-path /tmp/iperf.pem -c $HOST -p $PORT "$@"
+				IPERF3_PASSWORD=$PASSWORD iperf3 --username $USER --rsa-public-key-path "$PEM" -c $HOST ${PORT:+-p $PORT} "$@"
 		;;
 	esac
 else
-	iperf3 -c $HOST -p $PORT "$@"
+	iperf3 -c $HOST ${PORT:+-p $PORT} "$@"
 fi
