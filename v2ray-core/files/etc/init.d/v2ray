@@ -7,10 +7,13 @@
 
 START=99
 USE_PROCD=1
-EXTRA_COMMANDS="rules_up rules_down rules_exist"
+EXTRA_COMMANDS="rules_up rules_down rules_exist tls_pin_retry"
 
 NAME=v2ray
 CONFIG_FOLDER=/var/etc/$NAME
+TLS_PIN_DIR=/etc/$NAME/tls-pins
+TLS_PIN_PENDING=/var/run/$NAME-tls-pending
+TLS_RETRY_PID=/var/run/$NAME-tls-retry.pid
 
 v2rrules_uc="/usr/share/v2ray-rules/v2r-rules.uc"
 v2rrules_nft="/etc/nftables.d/90-proxy-v2ray-rules.nft"
@@ -62,12 +65,16 @@ _err() {
 # chose it. Only pin a certificate the CA the VPS API sent (over the pinned
 # API connection) issued as a server certificate; validity dates are left out,
 # the clock may not be set yet at boot and a pin does not check them either.
+# The certificate is kept once verified: when the VPS can't be reached as the
+# proxy starts (boot before the WANs, a VPS reboot), nothing else lets the
+# proxy verify it, and it would stay down until the next restart.
 # hex: xray's pinnedPeerCertSha256, chain: v2ray's
 # pinnedPeerCertificateChainSha256 (base64, the VPS sends no chain)
 _tls_vps_pin() {
-	local format="$1" addr="$2" port="$3" sni="$4" ca="/etc/luci-uploads/ca.crt" peer
+	local format="$1" addr="$2" port="$3" sni="$4" ca="/etc/luci-uploads/ca.crt" peer cache
 	[ -s "$ca" ] && [ -n "$addr" ] && [ -n "$port" ] || return 1
 	command -v openssl >/dev/null 2>&1 || return 1
+	cache="$TLS_PIN_DIR/$(printf '%s_%s' "$addr" "$port" | tr -c 'A-Za-z0-9._-' '_').pem"
 	case "$addr" in
 		*:*) addr="[$addr]" ;;
 	esac
@@ -77,13 +84,83 @@ _tls_vps_pin() {
 		| openssl x509 -out "$peer" 2>/dev/null
 	if [ -s "$peer" ] && openssl verify -no_check_time -purpose sslserver \
 		-CAfile "$ca" "$peer" >/dev/null 2>&1 ; then
-		if [ "$format" = "chain" ] ; then
-			openssl x509 -in "$peer" -outform DER | openssl dgst -sha256 -binary | base64
-		else
-			openssl x509 -in "$peer" -outform DER | openssl dgst -sha256 | awk '{print $NF}'
-		fi
+		cmp -s "$peer" "$cache" || {
+			mkdir -p "$TLS_PIN_DIR" && cp "$peer" "$cache.new" && mv -f "$cache.new" "$cache"
+		}
+	elif [ -s "$cache" ] && openssl verify -no_check_time -purpose sslserver \
+		-CAfile "$ca" "$cache" >/dev/null 2>&1 ; then
+		_info "${addr}:${port} certificate not received, pinning the one verified earlier"
+		cp "$cache" "$peer"
+	else
+		rm -f "$peer"
+		return 1
+	fi
+	if [ "$format" = "chain" ] ; then
+		openssl x509 -in "$peer" -outform DER | openssl dgst -sha256 -binary | base64
+	else
+		openssl x509 -in "$peer" -outform DER | openssl dgst -sha256 | awk '{print $NF}'
 	fi
 	rm -f "$peer"
+}
+
+# _tls_pin_pending <address> <port> [<server name>]
+# No certificate could be pinned for this server: tls_pin_retry probes it
+# again in the background and restarts the proxy once it is verified
+_tls_pin_pending() {
+	local entry="$1 $2 $3"
+	grep -qxF "$entry" "$TLS_PIN_PENDING" 2>/dev/null || echo "$entry" >>"$TLS_PIN_PENDING"
+}
+
+_tls_retry_running() {
+	local pid
+	pid="$(cat "$TLS_RETRY_PID" 2>/dev/null)"
+	[ -n "$pid" ] && [ "$pid" != "$$" ] && grep -q tls_pin_retry "/proc/$pid/cmdline" 2>/dev/null
+}
+
+_tls_retry_schedule() {
+	[ -s "$TLS_PIN_PENDING" ] || return 0
+	_tls_retry_running && return 0
+	_info "VPS certificate not verified, retrying in the background"
+	# Out of the caller's cgroup and stdio, and without the service lock
+	# (fd 1000) the caller holds: every other init call would wait on it
+	sh -c 'echo $$ >/sys/fs/cgroup/cgroup.procs 2>/dev/null; exec /etc/init.d/'"$NAME"' tls_pin_retry' \
+		</dev/null >/dev/null 2>&1 1000>&- 9>&- &
+}
+
+_tls_retry_stop() {
+	_tls_retry_running && kill "$(cat "$TLS_RETRY_PID")" 2>/dev/null
+	rm -f "$TLS_RETRY_PID" "$TLS_PIN_PENDING"
+}
+
+tls_pin_retry() {
+	local delay=15 try=0 addr port sni found
+	# rc.common took the service lock on load: held while this sleeps, it
+	# would block every restart
+	exec 1000>&-
+	exec 9>"/var/lock/$NAME-tls-retry.lock"
+	flock -n 9 || return 0
+	echo $$ >"$TLS_RETRY_PID"
+	while [ "$try" -lt 20 ] ; do
+		# a sleep left behind by a stop must not keep the lock
+		sleep "$delay" 9>&-
+		try=$((try + 1))
+		delay=$((delay * 2))
+		[ "$delay" -gt 300 ] && delay=300
+		[ "$(uci -q get "$NAME.main.enabled")" = "1" ] || break
+		[ -s "$TLS_PIN_PENDING" ] || break
+		found=""
+		while read -r addr port sni ; do
+			[ -n "$(_tls_vps_pin hex "$addr" "$port" "$sni")" ] && found=1
+		done <"$TLS_PIN_PENDING"
+		if [ -n "$found" ] ; then
+			rm -f "$TLS_RETRY_PID"
+			_info "VPS certificate verified, restarting"
+			exec 9>&-
+			exec /etc/init.d/$NAME restart
+		fi
+	done
+	rm -f "$TLS_RETRY_PID"
+	[ "$try" -lt 20 ] || _err "VPS certificate still not verified, giving up until the next start"
 }
 
 # _tls_pin_list <hex|base64> <pins>
@@ -145,6 +222,20 @@ _tls_pin_list() {
 			*) echo "$pin" ;;
 		esac
 	done
+}
+
+# _path_allowed <binary|log> <path>
+# Both come from uci and are used as root: the binary is run and made
+# executable, the logs are created or appended to
+_path_allowed() {
+	case "$2" in
+		*/../*|*/..) return 1 ;;
+	esac
+	case "$1:$2" in
+		binary:/usr/bin/?*|binary:/usr/sbin/?*|binary:/bin/?*|binary:/sbin/?*|binary:/tmp/?*) return 0 ;;
+		log:|log:/dev/null|log:/tmp/?*|log:/var/log/?*) return 0 ;;
+	esac
+	return 1
 }
 
 # _nft_set_populate <set> <type> <addr-list-on-stdin>
@@ -618,7 +709,9 @@ add_v2ray_redirect_rules() {
 	ifnames="$(uci -q get shadowsocks-libev.ss_rules.ifnames)"
 	[ -z "$ifnames" ] && ifnames="$(uci -q get shadowsocks-rust.ss_rules.ifnames)"
 
-	local tmp="/tmp/v2rrules"
+	local tmpdir tmp
+	tmpdir="$(mktemp -d /tmp/v2rrules.XXXXXX)" || return 0
+	tmp="$tmpdir/rules"
 	json_init
 	json_add_string o_remote_servers "$remote_servers"
 	json_add_int o_redir_tcp_port "$port"
@@ -647,10 +740,8 @@ add_v2ray_redirect_rules() {
 			mv "$tmp.nft" "$v2rrules_nft"
 			fw4 -q reload
 		fi
-		rm -f "$tmp.nft.chk"
 	fi
-	rm -f "$tmp.json"
-	rm -f "$tmp.nft"
+	rm -rf "$tmpdir"
 
 	# Trailing space = the init script's own cmdline only. A bare "omr-bypass"
 	# also matches /usr/lib/omr-bypass/ndpid-flows-tracker, which runs forever.
@@ -1852,6 +1943,7 @@ add_outbound_setting() {
 			if [ -z "$_pinned_chain" ] ; then
 				_err "$section: ${_pin_addr}:${_pin_port} certificate not verified by /etc/luci-uploads/ca.crt, allowInsecure ignored"
 				_allow_insecure=0
+				_tls_pin_pending "$_pin_addr" "$_pin_port" "$ss_tls_server_name"
 			fi
 		fi
 
@@ -2264,10 +2356,6 @@ clear_transparent_proxy() {
 
 start_instance() {
 	local section="$1"
-	[ -n "$(uci -q get firewall.v2ray)" ] && {
-		uci -q del firewall.v2ray
-		uci -q commit firewall
-	}
 
 	if ! v2ray_section_validate "$section" ; then
 		_err "Invalid config."
@@ -2279,12 +2367,21 @@ start_instance() {
 		return 0
 	fi
 
-	if [ -z "$v2ray_file" ] || [ ! -s "$v2ray_file" ] ; then
+	if ! _path_allowed binary "$v2ray_file" || [ ! -f "$v2ray_file" ] || [ ! -s "$v2ray_file" ] ; then
 		_err "Invalid V2Ray file."
 		return 1
 	fi
 
-	test -x "$v2ray_file" || chmod 755 "$v2ray_file"
+	test -x "$v2ray_file" || [ -L "$v2ray_file" ] || chmod 755 "$v2ray_file"
+
+	_path_allowed log "$access_log" || {
+		_err "Access log $access_log refused, only /tmp or /var/log"
+		access_log=/dev/null
+	}
+	_path_allowed log "$error_log" || {
+		_err "Error log $error_log refused, only /tmp or /var/log"
+		error_log=/dev/null
+	}
 
 	local temp_config
 
@@ -2468,6 +2565,7 @@ rules_down() {
 }
 
 start_service() {
+	rm -f "$TLS_PIN_PENDING"
 	clear_transparent_proxy
 
 	config_load "$NAME"
@@ -2488,6 +2586,7 @@ start_service() {
 	else
 		rules_up
 	fi
+	_tls_retry_schedule
 
 	unset OUTBOUND_SERVERS_V4 \
 		OUTBOUND_SERVERS_V6 \
@@ -2503,6 +2602,7 @@ stop_service() {
 		return 0
 	fi
 
+	_tls_retry_stop
 	clear_transparent_proxy
 	rules_down
 	gracefully_restart_dnsmasq
