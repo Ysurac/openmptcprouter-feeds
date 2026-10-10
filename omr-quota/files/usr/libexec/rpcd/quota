@@ -23,8 +23,26 @@
 _PERSIST_DIR="/etc/omr-quota/state"
 _TSTATE_DIR="/tmp/omr-quota"
 
+# JSON string contents: a newline or a tab in a value made the whole reply
+# invalid JSON, and with it the quota page
 _json_str() {
-	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+	printf '%s' "$1" | awk 'BEGIN { ORS = "" }
+		{
+			gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); gsub(/\r/, "\\r")
+			gsub(/[\001-\037]/, "")
+			print (NR > 1 ? "\\n" : "") $0
+		}'
+}
+
+# _json_num <value> <default>: a uci value printed unquoted in the replies,
+# the default when it is not a plain number (a single bad value made
+# get_quota and get_status invalid JSON for every quota, and its arithmetic
+# aborted get_status)
+_json_num() {
+	case "$1" in
+		""|*[!0-9]*) printf '%s' "$2" ;;
+		*) printf '%s' "$1" ;;
+	esac
 }
 
 _safe_iface() {
@@ -194,11 +212,11 @@ _quota_config_json() {
 	scope=$(uci -q get "omr-quota.${iface}.exceedance_scope"   2>/dev/null); scope=${scope:-month_only}
 	printf '{"name":"%s","type":"%s","enabled":"%s","txquota":%s,"rxquota":%s,"ttquota":%s,"interval":%s,"interfaces":"%s","down_interfaces":"%s","begindate":"%s","enddate":"%s","method":%s,"percent":%s,"calculation_interval":%s,"block_lan":"%s","exceedance_action":"%s","throttle_dl":%s,"throttle_ul":%s,"exceedance_scope":"%s","live_counters":"%s"}' \
 		"$(_json_str "$iface")" "$(_json_str "$type")" "$(_json_str "$enabled")" \
-		"$txquota" "$rxquota" "$ttquota" "$interval" \
+		"$(_json_num "$txquota" 0)" "$(_json_num "$rxquota" 0)" "$(_json_num "$ttquota" 0)" "$(_json_num "$interval" 60)" \
 		"$(_json_str "$interfaces")" "$(_json_str "$down_interfaces")" \
 		"$(_json_str "$begindate")" "$(_json_str "$enddate")" \
-		"$method" "$percent" "$calculation_interval" "$(_json_str "$block_lan")" \
-		"$(_json_str "$action")" "$dl" "$ul" \
+		"$(_json_num "$method" 0)" "$(_json_num "$percent" 80)" "$(_json_num "$calculation_interval" 120)" "$(_json_str "$block_lan")" \
+		"$(_json_str "$action")" "$(_json_num "$dl" 1)" "$(_json_num "$ul" 1)" \
 		"$(_json_str "$scope")" "$(_json_str "$live_counters")"
 }
 
@@ -220,9 +238,9 @@ _quota_status_json() {
 	local enabled txquota rxquota ttquota action scope
 	local begindate interfaces
 	enabled=$(uci -q get "omr-quota.${iface}.enabled"          2>/dev/null); enabled=${enabled:-0}
-	txquota=$(uci -q get "omr-quota.${iface}.txquota"          2>/dev/null); txquota=${txquota:-0}
-	rxquota=$(uci -q get "omr-quota.${iface}.rxquota"          2>/dev/null); rxquota=${rxquota:-0}
-	ttquota=$(uci -q get "omr-quota.${iface}.ttquota"          2>/dev/null); ttquota=${ttquota:-0}
+	txquota=$(_json_num "$(uci -q get "omr-quota.${iface}.txquota" 2>/dev/null)" 0)
+	rxquota=$(_json_num "$(uci -q get "omr-quota.${iface}.rxquota" 2>/dev/null)" 0)
+	ttquota=$(_json_num "$(uci -q get "omr-quota.${iface}.ttquota" 2>/dev/null)" 0)
 	begindate=$(uci -q get "omr-quota.${iface}.begindate"      2>/dev/null)
 	interfaces=$(uci -q get "omr-quota.${iface}.interfaces"   2>/dev/null)
 	if [ "$type" = "global" ]; then
@@ -338,6 +356,44 @@ case "$1" in
 					printf '{"error":"invalid type, expected \\"interface\\" or \\"global\\""}\n'
 					exit 1
 				fi
+				# Checked before anything is written: the numbers go unquoted
+				# into get_quota's JSON and into the daemon's arithmetic.
+				for field in enabled txquota rxquota ttquota interval interfaces down_interfaces begindate enddate method percent calculation_interval block_lan exceedance_action throttle_dl throttle_ul exceedance_scope live_counters; do
+					val=$(printf '%s' "$input" | jsonfilter -q -e "@.${field}")
+					[ -n "$val" ] || continue
+					case "$field" in
+						enabled|block_lan|live_counters) valid="0 1 true false yes no on off" ;;
+						method) valid="0 1 2" ;;
+						exceedance_action) valid="cut throttle" ;;
+						exceedance_scope) valid="month_only persistent" ;;
+						*) valid="" ;;
+					esac
+					ok=1
+					if [ -n "$valid" ]; then
+						case "$val" in *[!a-z0-9_]*) ok=0 ;; esac
+						case " $valid " in *" $val "*) ;; *) ok=0 ;; esac
+					else
+						case "$field" in
+							interfaces|down_interfaces)
+								case "$val" in *[!A-Za-z0-9_@\ .-]*) ok=0 ;; esac
+								;;
+							begindate|enddate)
+								case "$val" in [0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]) ;; *) ok=0 ;; esac
+								;;
+							*)
+								case "$val" in *[!0-9]*|?????????????????*) ok=0 ;; esac
+								;;
+						esac
+						case "$field" in
+							interval) [ "$ok" = "1" ] && { [ "$val" -lt 5 ] || [ "$val" -gt 86400 ]; } && ok=0 ;;
+							percent) [ "$ok" = "1" ] && { [ "$val" -lt 1 ] || [ "$val" -gt 100 ]; } && ok=0 ;;
+						esac
+					fi
+					if [ "$ok" != "1" ]; then
+						printf '{"error":"invalid value for %s"}\n' "$field"
+						exit 1
+					fi
+				done
 				existing_type=$(_section_type "$iface")
 				if [ -z "$existing_type" ]; then
 					uci -q set "omr-quota.${iface}=${type}"

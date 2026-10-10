@@ -23,8 +23,10 @@ function addQuotaFields(s, downInterfacesHint) {
 	o.datatype = 'uinteger';
 	o.placeholder = '0';
 
+	/* there is no 'date' datatype: YYYY-MM-DD is what vnstat -b and
+	 * date -d take in the daemon */
 	o = s.option(form.Value, 'begindate', _('Begin date'));
-	o.datatype = 'date';
+	o.datatype = 'dateyyyymmdd';
 	o.placeholder = 'YYYY-MM-DD';
 	o.rmempty = true;
 
@@ -37,7 +39,7 @@ function addQuotaFields(s, downInterfacesHint) {
 	 * leftovers: keep them so switching the method (or the action) back finds
 	 * them where they were left. Same fix as the wizard's #4350. */
 	o = s.option(form.Value, 'enddate', _('End date'));
-	o.datatype = 'date';
+	o.datatype = 'dateyyyymmdd';
 	o.placeholder = 'YYYY-MM-DD';
 	o.rmempty = true;
 	o.retain = true;
@@ -45,7 +47,7 @@ function addQuotaFields(s, downInterfacesHint) {
 	o.depends('method', '2');
 
 	o = s.option(form.Value, 'interval', _('Interval between checks (s)'));
-	o.datatype = 'uinteger';
+	o.datatype = 'range(5,86400)';
 	o.placeholder = '60';
 
 	o = s.option(form.ListValue, 'method', _('Daily budget method'));
@@ -143,13 +145,6 @@ return view.extend({
 		s.addremove = true;
 		s.anonymous = false;
 		s.addbtntitle = _('Add interface…');
-
-		s.handleAdd = function(ev) {
-			this.sectiontype = 'interface';
-			var promise = form.TypedSection.prototype.handleAdd.apply(this, arguments);
-			this.sectiontype = undefined;
-			return promise;
-		};
 
 		s.sectiontitle = function(section_id) {
 			return section_id;

@@ -17,6 +17,19 @@ _PERSIST_DIR="${OMR_QUOTA_STATE_DIR:-/etc/omr-quota/state}"
 # omr-quota unit tests already pass.
 _TSTATE_DIR="${OMR_QUOTA_RUNTIME_DIR:-${OMR_QUOTA_THROTTLE_STATE_DIR:-/tmp/omr-quota}}"
 
+# The poll interval, at least 5 s: 0 (which the config accepts) made the main
+# loop fork vnstat, jsonfilter and ifstatus back to back without a pause.
+case "${OMR_QUOTA_INTERVAL:-}" in
+	''|*[!0-9]*) ;;
+	*)
+		if [ "$OMR_QUOTA_INTERVAL" -lt 5 ]; then
+			[ "${OMR_QUOTA_UNDO:-0}" = "1" ] || \
+				logger -t "OMR-QUOTA" "Check interval of ${OMR_QUOTA_INTERVAL}s for $OMR_QUOTA_INTERFACE is too short, using 5s"
+			OMR_QUOTA_INTERVAL=5
+		fi
+		;;
+esac
+
 # Enforcement markers, keyed by this daemon's identity ($1 -- the interface
 # name for "interface" sections, "global_<id>" for "global" ones). Besides
 # telling the daemon what it did on the previous loop, they let
@@ -390,9 +403,28 @@ _sqm_manages() {
 # derived 2 Mbit/s limit: upload 1897 kbit/s, download 20003 kbit/s, i.e. a
 # "limit speed using remaining daily volume" that did not slow the direction
 # the volume is actually spent on.
+#
+# It runs on every poll while a quota is exceeded. Replacing the qdiscs and
+# the redirect filter each time reset the shaper's state, and on an SQM device
+# logged "Taking over the SQM shaper" and ran "sqm stop" every interval: the
+# shaping is only redone when it changed or something removed it (the ifup
+# hotplug's "mptcp reload" replaces the root qdisc). shaped.<dev> in the
+# runtime dir records what was installed.
+_shaped_file() {
+	printf '%s/shaped.%s' "$_TSTATE_DIR" "$(echo "$1" | tr '/' '-')"
+}
+
 _shape_device() {
 	local dev="$1" dl_kbit="$2" ul_kbit="$3" burst="$4" latency="$5"
 	local ifb_dev="ifb-$(echo "$dev" | tr '/' '-')"
+	local shaped want="$2 $3 $4 $5"
+	shaped="$(_shaped_file "$dev")"
+	if [ "$(cat "$shaped" 2>/dev/null)" = "$want" ] && \
+	   tc qdisc show dev "$dev" root 2>/dev/null | grep -q '^qdisc tbf ' && \
+	   tc filter show dev "$dev" parent ffff: 2>/dev/null | grep -q "Redirect to device $ifb_dev)" && \
+	   tc qdisc show dev "$ifb_dev" root 2>/dev/null | grep -q '^qdisc tbf '; then
+		return 0
+	fi
 	if _sqm_manages "$dev"; then
 		logger -t "OMR-QUOTA" "Taking over the SQM shaper on $dev"
 		"$_SQM_RUN" stop "$dev" >/dev/null 2>&1
@@ -408,6 +440,8 @@ _shape_device() {
 	tc filter add dev "$dev" parent ffff: protocol all u32 match u32 0 0 \
 		action mirred egress redirect dev "$ifb_dev"
 	tc qdisc replace dev "$ifb_dev" root tbf rate "${dl_kbit}kbit" burst "$burst" latency "$latency"
+	mkdir -p "$_TSTATE_DIR"
+	printf '%s' "$want" > "$shaped"
 }
 
 # _unshape_device <dev>: undo _shape_device, including the IFB device, and
@@ -415,6 +449,7 @@ _shape_device() {
 _unshape_device() {
 	local dev="$1"
 	local ifb_dev="ifb-$(echo "$dev" | tr '/' '-')"
+	rm -f "$(_shaped_file "$dev")"
 	tc qdisc del dev "$dev" root 2>/dev/null || true
 	tc qdisc del dev "$dev" ingress 2>/dev/null || true
 	if ip link show "$ifb_dev" > /dev/null 2>&1; then
@@ -607,10 +642,16 @@ _block_lan() {
 	# left by an older daemon without them still gets the rules added.
 	# omr_quota_lan_fwd is part of the test too: a daemon older than the
 	# forward block left input=DROP and the input rules behind, and that
-	# state still needs the forward pair added.
-	[ "$(uci -q get firewall.zone_lan.input)" = "DROP" ] && \
+	# state still needs the forward pair added. The marker is written here
+	# too: after a reboot the block is still in the firewall config but its
+	# tmpfs marker is gone, and without it disabling the quota never lifted
+	# the block.
+	if [ "$(uci -q get firewall.zone_lan.input)" = "DROP" ] && \
 		[ -n "$(uci -q get firewall.omr_quota_lan_tcp)" ] && \
-		[ -n "$(uci -q get firewall.omr_quota_lan_fwd)" ] && return
+		[ -n "$(uci -q get firewall.omr_quota_lan_fwd)" ]; then
+		[ -f "$_blocklan_file" ] || { mkdir -p "$_TSTATE_DIR"; touch "$_blocklan_file"; }
+		return
+	fi
 
 	logger -t "OMR-QUOTA" "Block LAN interfaces: $1"
 	uci -q set firewall.zone_lan.input='DROP'
