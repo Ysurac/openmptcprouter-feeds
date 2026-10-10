@@ -257,7 +257,11 @@ _apply_weights() {
 	while IFS= read -r _iface; do
 		[ -z "$_iface" ] && continue
 
-		_dev=$(uci -q get "network.${_iface}.device" 2>/dev/null)
+		# The MPTCP endpoint sits on the l3 device: for PPPoE (or any
+		# protocol with its own netdev) the uci device is the underlying
+		# port, which has no endpoint, so that WAN never got its weight
+		_dev=$(ifstatus "$_iface" 2>/dev/null | jsonfilter -e '@.l3_device' 2>/dev/null)
+		[ -z "$_dev" ] && _dev=$(uci -q get "network.${_iface}.device" 2>/dev/null)
 		[ -z "$_dev" ] && _dev=$(uci -q get "network.${_iface}.ifname" 2>/dev/null)
 		[ -z "$_dev" ] && continue
 

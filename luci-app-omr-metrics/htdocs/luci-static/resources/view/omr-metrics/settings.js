@@ -61,7 +61,7 @@ return view.extend({
 
 		o = s.option(form.Value, 'interval', _('Send interval'),
 			_('How often metrics are sent to the VPS, in seconds.'));
-		o.datatype = 'uinteger';
+		o.datatype = 'and(uinteger,min(5))';
 		o.placeholder = '30';
 		o.retain = true;
 		o.depends('send_to_vps', '1');

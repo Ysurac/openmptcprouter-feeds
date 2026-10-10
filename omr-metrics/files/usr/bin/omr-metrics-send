@@ -14,6 +14,10 @@
 METRICS_DIR="${OMR_METRICS_DIR:-/tmp/metrics}"
 STATE_DIR="${OMR_METRICS_STATE_DIR:-/tmp/omr-metrics-send}"
 INTERVAL="${OMR_METRICS_INTERVAL:-30}"
+# 0 (which the settings page used to accept) made the loop POST back to back
+case "$INTERVAL" in ''|*[!0-9]*) INTERVAL=30 ;; esac
+[ "${#INTERVAL}" -gt 9 ] && INTERVAL=30
+[ "$INTERVAL" -lt 5 ] && INTERVAL=5
 
 # Login backoff caps, in seconds. A POST /token the server *answers* with a
 # rejection is a failed login on the VPS side: fail2ban's omradmin jail counts
@@ -252,12 +256,24 @@ _post_metrics() {
 	# 404/501 means the metrics module is not loaded on the VPS.
 	# Mark this server as unavailable so we stop trying until restarted.
 	if [ "$http_code" = "404" ] || [ "$http_code" = "501" ]; then
-		_log "metrics endpoint not available on ${server} (HTTP ${http_code}) — disabling until restart"
+		_log "metrics endpoint not available on ${server} (HTTP ${http_code}) — disabling for an hour"
 		touch "${STATE_DIR}/${servername}.no_metrics" 2>/dev/null
 		return 1
 	fi
 
 	#_log "POST ${url}: HTTP ${http_code}"
+	return 1
+}
+
+# Whether server $1 answered 404/501 to POST /metrics less than an hour ago:
+# the module can be added to the VPS later, so the mark does not stay forever.
+_no_metrics() {
+	local f="${STATE_DIR}/${1}.no_metrics" since
+	[ -f "$f" ] || return 1
+	since=$(date -r "$f" +%s 2>/dev/null)
+	case "$since" in ''|*[!0-9]*) since=0 ;; esac
+	[ $(($(date +%s) - since)) -lt 3600 ] && return 0
+	rm -f "$f"
 	return 1
 }
 
@@ -277,7 +293,7 @@ _send_to_server() {
 		# A lost token or a server without the metrics module applies to
 		# the whole batch: stop instead of replaying it file by file.
 		[ -z "$SRV_TOKEN" ] && return 1
-		[ -f "${STATE_DIR}/${servername}.no_metrics" ] && return 1
+		_no_metrics "$servername" && return 1
 	done
 	return 0
 }
@@ -329,7 +345,7 @@ _send_cycle() {
 
 	# If a custom omr-metrics server is configured, use it exclusively.
 	if [ -n "$custom_server" ]; then
-		[ -f "${STATE_DIR}/omr_metrics_custom.no_metrics" ] && return
+		_no_metrics omr_metrics_custom && return
 		_send_to_server "omr_metrics_custom" "$custom_server" "$custom_serverport" "$payload_files"
 		return
 	fi
@@ -341,7 +357,7 @@ _send_cycle() {
 		[ "$disabled" = "1" ] && continue
 
 		# Skip servers where the metrics endpoint was found unavailable.
-		[ -f "${STATE_DIR}/${servername}.no_metrics" ] && continue
+		_no_metrics "$servername" && continue
 
 		serverport=$(uci -q get "openmptcprouter.${servername}.port" 2>/dev/null)
 		[ -z "$serverport" ] && serverport="65500"
@@ -357,6 +373,9 @@ _send_cycle() {
 }
 
 mkdir -p "$STATE_DIR"
+# STATE_DIR outlives the daemon: a restart is the documented way to retry a
+# server marked as not having the metrics module
+rm -f "${STATE_DIR}"/*.no_metrics 2>/dev/null
 _log "started (interval=${INTERVAL}s)"
 while true; do
 	_send_cycle

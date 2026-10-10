@@ -162,7 +162,8 @@ _wifi_signal_cached() {
 	} <<EOF
 $(printf '%s\n' "$iw_out" | awk '
 	BEGIN { ssid=""; mode=""; chan=""; sig=""; noise=""; rate=""; bssid=""; lq="" }
-	/ESSID:/ && ssid=="" { n=split($0, q, "\""); if (n>=2) ssid=q[2] }
+	# between the first and the last quote: an SSID can hold quotes itself
+	/ESSID: "/ && ssid=="" { v=$0; sub(/^[^"]*"/, "", v); sub(/"[^"]*$/, "", v); ssid=v }
 	{
 		for (i=1; i<=NF; i++) {
 			if ($i=="Mode:" && mode=="") mode=$(i+1)
@@ -779,10 +780,17 @@ _jval_to() {
 }
 
 # _jstr_to <var> <value>: JSON string or null
+# Operator names, SSIDs and ASN descriptions come from outside: a quote or a
+# backslash in one made the whole payload invalid JSON.
 _jstr_to() {
-	local _q
-	if [ -n "$2" ] && [ "$2" != "--" ]; then
-		_q="\"$2\""
+	local _q _v="$2"
+	if [ -n "$_v" ] && [ "$_v" != "--" ]; then
+		case "$_v" in
+			*[\\\"]*|*[[:cntrl:]]*)
+				_v=$(printf '%s' "$_v" | tr -d '\000-\037\177' | sed 's/\\/\\\\/g; s/"/\\"/g')
+				;;
+		esac
+		_q="\"$_v\""
 		eval "$1=\$_q"
 	else
 		eval "$1=null"
@@ -1056,6 +1064,8 @@ _reap_removed_interfaces() {
 		rm -f "$_f" \
 			"${METRICS_DIR}/.${iface}.bw" \
 			"${METRICS_DIR}/.${iface}.modemsig" \
+			"${METRICS_DIR}/.${iface}.wifisig" \
+			"${METRICS_DIR}/.${iface}.sqm_congestion_sync" \
 			"${METRICS_DIR}/.${iface}.tmp"
 		logger -t omr-metrics "dropped metrics of ${iface}: no longer a configured interface, last sample older than ${ttl}s"
 	done

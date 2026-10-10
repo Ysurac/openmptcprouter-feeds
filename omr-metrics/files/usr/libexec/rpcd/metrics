@@ -161,6 +161,12 @@ _get_settings() {
 	printf '%s"password_set":%s}\n' "$sep" "$val"
 }
 
+# Whether $1 is a non-negative integer fit for a query string
+_qs_uint() {
+	case "$1" in ''|*[!0-9]*) return 1 ;; esac
+	[ "${#1}" -le 9 ]
+}
+
 # Whether set_settings may store value $2 for option $1 (empty values,
 # which remove the option, are not checked)
 _setting_valid() {
@@ -169,8 +175,9 @@ _setting_valid() {
 			case "$2" in 0|1) ;; *) return 1 ;; esac
 			;;
 		interval)
+			# 0 made omr-metrics-send POST in a tight loop
 			case "$2" in *[!0-9]*) return 1 ;; esac
-			[ "${#2}" -le 9 ]
+			[ "${#2}" -le 9 ] && [ "$2" -ge 5 ]
 			;;
 		decision_horizon)
 			case "$2" in *[!0-9]*) return 1 ;; esac
@@ -335,6 +342,11 @@ case "$1" in
 				horizon=$(echo "$input" | jsonfilter -q -e '@.horizon' 2>/dev/null)
 				since=$(echo "$input"   | jsonfilter -q -e '@.since'   2>/dev/null)
 				limit=$(echo "$input"   | jsonfilter -q -e '@.limit'   2>/dev/null)
+				# These go into the query string unencoded
+				_qs_uint "$horizon" || horizon=""
+				_qs_uint "$limit" || limit=""
+				case "$since" in *[!A-Za-z0-9._:-]*) since="" ;; esac
+				[ "${#since}" -le 32 ] || since=""
 				qs=""
 				[ -n "$horizon" ] && [ "$horizon" != "0" ] && qs="${qs}horizon=${horizon}&"
 				[ -n "$since" ]                             && qs="${qs}since=${since}&"
@@ -346,6 +358,7 @@ case "$1" in
 				input=$(cat)
 				predict=$(echo "$input" | jsonfilter -q -e '@.predict' 2>/dev/null)
 				horizon=$(echo "$input" | jsonfilter -q -e '@.horizon' 2>/dev/null)
+				_qs_uint "$horizon" || horizon=""
 				qs=""
 				[ "$predict" = "true" ] && qs="${qs}predict=true&"
 				[ -n "$horizon" ] && [ "$horizon" != "0" ] && qs="${qs}horizon=${horizon}&"
