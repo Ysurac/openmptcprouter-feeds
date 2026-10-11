@@ -389,10 +389,20 @@ _cleanup() {
 	config_foreach _remove_rules
 	uci -q commit dhcp
 	uci -q commit firewall
-	fw4 -q reload
+}
+
+# What omr-dscp generates, to tell whether a run changed anything
+_dscp_fw_state() {
+	uci -q -X show firewall | grep -E '^firewall\.omr6?_dscp'
+}
+_dscp_dhcp_state() {
+	uci -q -X show dhcp | grep -E '^dhcp\.(omr_dscp|cfg[0-9a-f]+\.(ipset|name)=.*omr)'
 }
 
 start_service() {
+	local fw_before dhcp_before
+	fw_before="$(_dscp_fw_state | md5sum)"
+	dhcp_before="$(_dscp_dhcp_state | md5sum)"
 	# Cleanup
 	_cleanup
 	disableipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
@@ -408,11 +418,28 @@ start_service() {
 	config_foreach _add_dscp_rules classify
 	config_foreach _add_dscp_domain domains
 	uci -q commit dhcp
-	fw4 -q restart
+	uci -q commit firewall
+	# Every commit of the openmptcprouter config gets here (reload trigger),
+	# and this ran an fw4 reload then an fw4 restart: the restart deletes the
+	# fw4 table, and with it the addresses dnsmasq had added to every set
+	# (omr-bypass's included), which then went through the default route
+	# until dnsmasq resolved them again. A reload keeps the set elements.
+	# Nothing changed: no fw4 run at all, unless the sets are not loaded.
+	if [ "$(_dscp_fw_state | md5sum)" != "$fw_before" ] || \
+	   ! nft -t list set inet fw4 omr_dscp_cs0_4 >/dev/null 2>&1; then
+		# a set whose type changed cannot be redeclared by a reload
+		fw4 -q reload || {
+			logger -t "omr-dscp" "fw4 reload failed, restarting it"
+			fw4 -q restart
+		}
+	fi
+	# dnsmasq builds its nftset lines from the dhcp config when it starts
+	[ "$(_dscp_dhcp_state | md5sum)" != "$dhcp_before" ] && /etc/init.d/dnsmasq reload
 }
 
 stop_service() {
 	_cleanup
+	fw4 -q reload
 }
 
 reload_service() {
