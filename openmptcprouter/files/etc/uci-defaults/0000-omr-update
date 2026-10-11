@@ -19,6 +19,15 @@ files="$(ls /etc/uci-defaults/)"
 # Do not keep /etc/nftables.d
 rm -f /lib/upgrade/keep.d/firewall4
 
-sed -i 's:cmd="$ipkg_bin":cmd="$ipkg_bin --allow-untrusted":' /usr/libexec/package-manager-call
+# Package signatures are checked: an image and its repositories share the
+# build's key. Only a package file uploaded in LuCI (a local path, with no
+# signed index behind it) goes in without a trusted signature, as before.
+pmc=/usr/libexec/package-manager-call
+if [ -f "$pmc" ]; then
+	sed -i 's:cmd="$ipkg_bin --allow-untrusted":cmd="$ipkg_bin":' "$pmc"
+	grep -q 'omr: local package file' "$pmc" || sed -i '/^[[:space:]]*if flock -x 200; then/i\
+			# omr: local package file (LuCI upload), no signed index behind it\
+			for _pkg in "$@"; do [ -f "$_pkg" ] \&\& { cmd="$cmd --allow-untrusted"; break; }; done' "$pmc"
+fi
 
 exit 0
