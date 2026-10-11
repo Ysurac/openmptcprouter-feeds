@@ -70,10 +70,16 @@ jobs:
         OMR_KERNEL: ${{ matrix.OMR_KERNEL }}
         OMR_HOST: ${{ secrets.OMR_HOST }}
         OMR_PORT: ${{ secrets.OMR_PORT }}
+        OMR_APK_PRIVKEY: ${{ secrets.OMR_APK_PRIVKEY }}
       run: |
         OMR_KERNEL="${OMR_KERNEL}" OMR_FEED_SRC="${SOURCE_NAME}" sh build.sh prepare {tools,toolchain}/install -j$(nproc) || OMR_KERNEL="${OMR_KERNEL}" OMR_FEED_SRC="${SOURCE_NAME}" sh build.sh prepare {tools,toolchain}/install -j1 V=s
-        #echo -e "${{ secrets.OMR_PRIVKEY }}" > $OMR_TARGET/$OMR_KERNEL/source/key-build
-        #echo -e "${{ secrets.OMR_PUBKEY }}" > $OMR_TARGET/$OMR_KERNEL/source/key-build.pub
+        # Sign packages and indexes with the OMR key: without it each run made
+        # its own pair, and an image only trusted its own run's repositories.
+        # The build keeps generating one when the secret is not set (forks).
+        if [ -n "$OMR_APK_PRIVKEY" ]; then
+          ( umask 077; printf '%s\n' "$OMR_APK_PRIVKEY" > $OMR_TARGET/$OMR_KERNEL/source/private-key.pem )
+          openssl ec -in $OMR_TARGET/$OMR_KERNEL/source/private-key.pem -pubout > $OMR_TARGET/$OMR_KERNEL/source/public-key.pem
+        fi
     - name: Build packages
       working-directory: ../../omr
       env:
