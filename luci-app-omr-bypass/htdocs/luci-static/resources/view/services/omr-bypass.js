@@ -709,6 +709,12 @@ return L.view.extend({
 						name.push(protodata[i].proto);
 				}
 			}
+			/* omr-bypass's own protocols (m6replay, mycanal...): only the
+			 * kernel nDPI match listed them */
+			uci.sections('omr-bypass', 'proto').forEach(function(p) {
+				if (name.indexOf(p['.name']) < 0)
+					name.push(p['.name']);
+			});
 			if (host.length > 2) {
 				name = Array.from(new Set(name)).sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase())}).reduce(function(a, b){ if (a.slice(-1)[0] !== b) a.push(b);return a;},[]);
 			}
@@ -812,7 +818,9 @@ return L.view.extend({
 		o.default = true;
 		o.modalonly = true
 
-		if (testhosts[0] || testhosts[5]) {
+		/* nDPId only: the kernel nDPI match (/proc/net/xt_ndpi) has no
+		 * nftables counterpart, nothing marks for it under fw4 */
+		if (testhosts[5]) {
 			o = s.option(form.Flag, 'ndpi', _('Enable ndpi'),
 				_('Enable deep packet inspection for this rule when nDPI support is available.'));
 			o.default = o.enabled;
@@ -866,7 +874,7 @@ return L.view.extend({
 		o.default = true;
 		o.modalonly = true;
 
-		if (testhosts[0] || testhosts[5]) {
+		if (testhosts[5]) {
 			o = s.option(form.Flag, 'ndpi', _('Enable ndpi'),
 				_('Enable deep packet inspection for this rule when nDPI support is available.'));
 			o.default = o.enabled;

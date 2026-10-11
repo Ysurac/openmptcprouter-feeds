@@ -31,24 +31,6 @@ _BYPASS_MAX_DOMAINS_PER_DNSIPSET=200
 # top of a full slot and pushed the line past 1024 bytes.
 _BYPASS_MAX_DNSIPSET_LINE_BYTES=900
 
-# Only for the kernel nDPI netfilter match (/proc/net/xt_ndpi), which has no
-# nftables expression: its rules go through iptables(-nft) compat.
-if [ -e /usr/sbin/iptables-nft ]; then
-	IPTABLES="/usr/sbin/iptables-nft"
-	IPTABLESRESTORE="/usr/sbin/iptables-nft-restore"
-	IPTABLESSAVE="/usr/sbin/iptables-nft-save"
-	IP6TABLES="/usr/sbin/ip6tables-nft"
-	IP6TABLESRESTORE="/usr/sbin/ip6tables-nft-restore"
-	IP6TABLESSAVE="/usr/sbin/ip6tables-nft-save"
-else
-	IPTABLES="/usr/sbin/iptables"
-	IPTABLESRESTORE="/usr/sbin/iptables-restore"
-	IPTABLESSAVE="/usr/sbin/iptables-save"
-	IP6TABLES="/usr/sbin/ip6tables"
-	IP6TABLESRESTORE="/usr/sbin/ip6tables-restore"
-	IP6TABLESSAVE="/usr/sbin/ip6tables-save"
-fi
-
 # Zone list cache: computing it needs a full config_load of the (large)
 # firewall config, and callers invoke this in per-proto/per-interface loops.
 _omr_fw_zones=""
@@ -896,16 +878,26 @@ _bypass_domain() {
 	[ "$intf" = "default" ] && intf="all"
 	[ -z "$noipv6" ] && noipv6="1"
 	[ -z "$tcpudp" ] && tcpudp="all"
+	# "IPv4 only" / "IPv6 only": the sets, rules and DNS answers of the
+	# other family are left alone. An IPv6 only rule ignores noipv6 (on by
+	# default): blocking the AAAA answers would leave it nothing to match.
+	local _v4=4 _v6=6 _fk=""
+	case "$family" in
+		ipv4) _v6="" _fk="_ipv4" ;;
+		ipv6) _v4="" _fk="_ipv6" noipv6="0" ;;
+	esac
 	if [ -n "$domain" ]; then
 		domain=$(echo $domain | sed 's:^\.::')
 		#logger -t "omr-bypass" "Get IPs of $domain..."
 		if [ -z "$RELOAD" ]; then
-			resolve=$(dig a +timeout=1 +tries=1 +nocmd +noall +answer $domain | grep -v CNAME | awk '{print $5}')
-			for ip in $resolve; do
-				[ -n "$intf" ] && _bypass_ip $ip $intf $tcpudp
-				[ -n "$dscp" ] && _dscp_ip $ip $dscp
-			done
-			if [ "$disableipv6" = "0" ]; then
+			if [ -n "$_v4" ]; then
+				resolve=$(dig a +timeout=1 +tries=1 +nocmd +noall +answer $domain | grep -v CNAME | awk '{print $5}')
+				for ip in $resolve; do
+					[ -n "$intf" ] && _bypass_ip $ip $intf $tcpudp
+					[ -n "$dscp" ] && _dscp_ip $ip $dscp
+				done
+			fi
+			if [ -n "$_v6" ] && [ "$disableipv6" = "0" ]; then
 				resolve=$(dig aaaa +timeout=1 +tries=1 +nocmd +noall +answer $domain | grep AAAA | awk '{print $5}')
 				for ip in $resolve; do
 					[ -n "$intf" ] && _bypass_ip $ip $intf $tcpudp
@@ -917,34 +909,40 @@ _bypass_domain() {
 		# the interface and a DSCP class, or a DSCP class alone (no
 		# routing change). Every domain of an ipset entry populates every
 		# set it names, so a domain without a DSCP class must not share an
-		# entry with the DSCP set names of another rule. _dnsipset_add
-		# spreads each family over omr_dst_bypass_<family>, _d1, _d2, ...
+		# entry with the DSCP set names of another rule, nor a domain of
+		# one family with the sets of the other. _dnsipset_add spreads
+		# each family over omr_dst_bypass_<family>, _d1, _d2, ...
 		if [ -n "$intf" ]; then
 			# TCP or UDP only: the sets, rules and dnsmasq list of that
 			# protocol, which _intf_rule makes next to the generic ones
 			# (none and srv_vpn1 have none)
-			local _p=""
+			local _p="" _f _names=""
 			case "$intf:$tcpudp" in
 				none:*|srv_vpn1:*) ;;
 				*:tcp|*:udp) _p="_${tcpudp}" ;;
 			esac
+			for _f in $_v4 $_v6; do
+				_names="$_names omr_dst_bypass_${intf}_${_f}${_p}"
+			done
 			if [ -n "$dscp" ]; then
 				_dscp_ensure_ipset "$dscp"
-				_dnsipset_add "${intf}${_p}_dscp_${dscp}" "$domain" \
-					"omr_dst_bypass_${intf}_4${_p}" "omr_dst_bypass_${intf}_6${_p}" \
-					"omr_dst_bypass_dscp_${dscp}_4" "omr_dst_bypass_dscp_${dscp}_6"
+				for _f in $_v4 $_v6; do
+					_names="$_names omr_dst_bypass_dscp_${dscp}_${_f}"
+				done
+				_dnsipset_add "${intf}${_p}_dscp_${dscp}${_fk}" "$domain" $_names
 			else
-				_dnsipset_add "${intf}${_p}" "$domain" \
-					"omr_dst_bypass_${intf}_4${_p}" "omr_dst_bypass_${intf}_6${_p}"
+				_dnsipset_add "${intf}${_p}${_fk}" "$domain" $_names
 			fi && {
-				uci -q set firewall.omr_dst_bypass_${intf}_4${_p}.enabled='1'
+				uci -q set firewall.omr_dst_bypass_${intf}_${_v4:-6}${_p}.enabled='1'
 				add_domains="true"
 			}
-			for zone in $(_get_firewall_zones); do
-				uci -q set firewall.omr_dst_bypass_${intf}_dstip_4_${zone}${_p}.enabled='1'
-				uci -q set firewall.omr_dst_bypass_${intf}_dstip_4_${zone}_accept.enabled='1'
-			done
-			if [ "$noipv6" != "1" ]; then
+			if [ -n "$_v4" ]; then
+				for zone in $(_get_firewall_zones); do
+					uci -q set firewall.omr_dst_bypass_${intf}_dstip_4_${zone}${_p}.enabled='1'
+					uci -q set firewall.omr_dst_bypass_${intf}_dstip_4_${zone}_accept.enabled='1'
+				done
+			fi
+			if [ -n "$_v6" ] && [ "$noipv6" != "1" ]; then
 				uci -q set firewall.omr_dst_bypass_${intf}_6${_p}.enabled='1'
 				for zone in $(_get_firewall_zones); do
 					uci -q set firewall.omr_dst_bypass_${intf}_dstip_6_${zone}${_p}.enabled='1'
@@ -963,9 +961,12 @@ _bypass_domain() {
 			fi
 		elif [ -n "$dscp" ]; then
 			# DSCP-only domain: a dnsmasq ipset of its own for the DSCP sets
+			local _f _names=""
 			_dscp_ensure_ipset "$dscp"
-			_dnsipset_add "dscp_${dscp}" "$domain" \
-				"omr_dst_bypass_dscp_${dscp}_4" "omr_dst_bypass_dscp_${dscp}_6" \
+			for _f in $_v4 $_v6; do
+				_names="$_names omr_dst_bypass_dscp_${dscp}_${_f}"
+			done
+			_dnsipset_add "dscp_${dscp}${_fk}" "$domain" $_names \
 				&& add_domains="true"
 		fi
 		#logger -t "omr-bypass" "Get IPs of $domain... Done"
@@ -1295,90 +1296,6 @@ _omr_run_deferred() {
 	rm -f "$_defer_q"
 }
 
-_bypass_proto() {
-	local proto
-	local intf
-	local enabled
-	_rule_proto proto $1
-	_get_rule_intf intf $1
-	config_get enabled $1 enabled
-	config_get ndpi $1 ndpi "${_ndpi_default:-1}"
-	config_get noipv6 $1 noipv6
-	config_get family $1 family
-	config_get vpn $1 vpn
-	[ "$vpn" = "1" ] && intf="srv_vpn1"
-
-	[ "$enabled" = "0" ] && return
-	[ -z "$noipv6" ] && noipv6="1"
-	[ -z "$family" ] && family="ipv4ipv6"
-	intf=$(_map_intf_device "$intf")
-	intf=$(_sanitize_intf_key "$intf")
-	#[ -n "$intf" ] && [ -z "$(ipset --list | grep omr_dst_bypass_$intf)" ] && return
-	local intfid="$(uci -q get omr-bypass.$intf.id)"
-
-	[ -z "$intf" ] && return
-	[ "$intf" = "default" ] && intf="all"
-	[ -z "$proto" ] && return
-	if [ "$_omr_ndpi" != "0" ] && [ "$ndpi" != "0" ] && [ "$vpn" != "1" ]; then
-		if [ "$intf" = "all" ]; then
-			if [ "$family" = "ipv4" ] || [ "$family" = "ipv4ipv6" ]; then
-				$IPTABLESRESTORE -w --wait=60  --noflush <<-EOF
-				*mangle
-				-A omr-bypass-dpi -m ndpi --proto $proto -j MARK --set-mark 0x4539
-				-A omr-bypass-dpi -m mark --mark 0x4539 -j RETURN
-				COMMIT
-				EOF
-			fi
-			if [ "$disableipv6" = "0" ] && ([ "$family" = "ipv6" ] || [ "$family" = "ipv4ipv6" ]); then
-				$IP6TABLESRESTORE -w --wait=60  --noflush <<-EOF
-				*mangle
-				-A omr-bypass6-dpi -m ndpi --proto $proto -j MARK --set-mark 0x6539
-				-A omr-bypass6-dpi -m mark --mark 0x6539 -j RETURN
-				COMMIT
-				EOF
-			fi
-		else
-			if [ "$family" = "ipv4" ] || [ "$family" = "ipv4ipv6" ]; then
-				$IPTABLESRESTORE -w --wait=60  --noflush <<-EOF
-				*mangle
-				-A omr-bypass-dpi -m ndpi --proto $proto -j MARK --set-mark 0x4539$intfid
-				-A omr-bypass-dpi -m mark --mark 0x4539$intfid -j RETURN
-				COMMIT
-				EOF
-			fi
-			if [ "$disableipv6" = "0" ] && ([ "$family" = "ipv6" ] || [ "$family" = "ipv4ipv6" ]); then
-				$IP6TABLESRESTORE -w --wait=60  --noflush <<-EOF
-				*mangle
-				-A omr-bypass6-dpi -m ndpi --proto $proto -j MARK --set-mark 0x6539$intfid
-				-A omr-bypass6-dpi -m mark --mark 0x6539$intfid -j RETURN
-				COMMIT
-				EOF
-			fi
-		fi
-	fi
-	# Use dnsmasq ipset to bypass domains of the proto
-	local domains
-	domains="$(cat /proc/net/xt_ndpi/host_proto | grep -i $proto: | sed -e "s/$proto://i" -e 's/*//' -e 's/,/ /g')"
-	if [ -n "$domains" ]; then
-		_fetch_tlds
-		for domain in $domains; do
-			if [ -n "$domain" ]; then
-				domain="${domain#.}"
-				case "$domain" in *.)
-					domainlist="$(_expand_wildcard_domain "$domain")"
-					for validdomain in $domainlist; do
-						_omr_defer _bypass_domain "$validdomain" "$intf" "$family" "$noipv6"
-					done
-					;;
-				*)
-					_omr_defer _bypass_domain "$domain" "$intf" "$family" "$noipv6"
-					;;
-				esac
-			fi
-		done
-	fi
-}
-
 _bypass_proto_core() {
 	local proto=$1
 	local intf=$2
@@ -1389,10 +1306,30 @@ _bypass_proto_core() {
 	local noipv6=$7
 	local family=$8
 	[ -z "$proto" ] && return
+	# The static IP list, unless nDPId detects the protocol's addresses: it
+	# is not running, or it never handles "none" rules. The kernel nDPI
+	# match (/proc/net/xt_ndpi) marks nothing under fw4, so it does not
+	# count: with it, ndpi=1 left a rule with its domains only.
+	local static=1
+	[ "$_omr_ndpi" != "0" ] && [ "$ndpi" != "0" ] && [ "$vpn" != "1" ] && \
+		[ "${_omr_ndpid:-0}" = "1" ] && [ "$intf" != "none" ] && static=""
+	# A protocol of omr-bypass's own ("proto" sections: m6replay, mycanal...)
+	# has its domains and addresses there, not in the database. Only the
+	# kernel nDPI match ever read them, and only for interface rules.
+	local cdomains="" cips=""
+	case "$proto" in
+		*[!A-Za-z0-9_]*) ;;
+		*)
+			if [ "$(uci -q get "omr-bypass.${proto}")" = "proto" ]; then
+				cdomains="$(uci -q get "omr-bypass.${proto}.url")"
+				cips="$(uci -q get "omr-bypass.${proto}.ip")"
+			fi
+			;;
+	esac
 	if [ "$intf" = "none" ]; then
-		if [ "$_omr_ndpi" = "0" ] || [ "$ndpi" = "0" ] || [ "$vpn" = "1" ]; then
+		if [ -n "$static" ]; then
 			local ALLIPS
-			ALLIPS=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select ip from ipproto where proto=\"$proto\";" ".exit")
+			ALLIPS="$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select ip from ipproto where proto=\"$proto\";" ".exit") $cips"
 			for ip in $ALLIPS; do
 				valid_ip4=""
 				valid_ip6=""
@@ -1401,6 +1338,8 @@ _bypass_proto_core() {
 				elif _valid_ip6net "$ip"; then
 					valid_ip6=$(valid_subnet6 "$ip")
 				fi
+				[ "$family" = "ipv6" ] && valid_ip4=""
+				[ "$family" = "ipv4" ] && valid_ip6=""
 				if [ "$valid_ip4" = "ok" ]; then
 					_omr_defer _uci_add_list_unique firewall.omr_dst_bypass_none_4.entry "$ip"
 					for zone in $(_get_firewall_zones); do
@@ -1415,15 +1354,15 @@ _bypass_proto_core() {
 			done
 		fi
 		local domains
-		domains=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select host from hostproto where proto='"$proto"';" ".exit")
+		domains="$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select host from hostproto where proto='"$proto"';" ".exit") $cdomains"
 		for domain in $domains; do
 			[ -n "$domain" ] && _omr_defer _bypass_domain "${domain#.}" "none" "$family" "$noipv6" "${tcpudp}"
 		done
 		return
 	fi
-	if [ "$_omr_ndpi" = "0" ] || [ "$ndpi" = "0" ] || [ "$vpn" = "1" ]; then
-		ALLIPS=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select ip from ipproto where proto=\"$proto\";" ".exit")
-		if [ -n "$ALLIPS" ]; then
+	if [ -n "$static" ]; then
+		ALLIPS="$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select ip from ipproto where proto=\"$proto\";" ".exit") $cips"
+		if [ -n "${ALLIPS# }" ]; then
 			cat >> "$_fw_uci_batch" <<-EOF
 				set firewall.bypass_${proto}=ipset
 				set firewall.bypass_${proto}.name="bypass_${proto}"
@@ -1473,6 +1412,8 @@ _bypass_proto_core() {
 				elif _valid_ip6net "$ip"; then
 					valid_ip6=$( valid_subnet6 "$ip" )
 				fi
+				[ "$family" = "ipv6" ] && valid_ip4=""
+				[ "$family" = "ipv4" ] && valid_ip6=""
 				if [ "$valid_ip4" = "ok" ]; then
 					if [ "$vpn" != "1" ]; then
 						_nft4="${_nft4:+$_nft4, }$ip"
@@ -1505,7 +1446,7 @@ _bypass_proto_core() {
 	# plain domains: nDPI's any-TLD patterns ("youtube.") are expanded when
 	# it is built, so a reload adds back the same domains as a start.
 	local domains
-	domains=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select host from hostproto where proto='"$proto"';" ".exit")
+	domains="$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select host from hostproto where proto='"$proto"';" ".exit") $cdomains"
 	for domain in $domains; do
 		[ -n "$domain" ] && _omr_defer _bypass_domain "${domain#.}" "$intf" "$family" "$noipv6" "${tcpudp}"
 	done
@@ -2272,7 +2213,7 @@ _bypass_proto_ndpid_list=""
 # (categories): registers one proto for nDPId watching and, for interface=all,
 # ensures the nftables sets/rules used to receive detected IPs exist.
 _bypass_ndpid_collect_proto() {
-	local proto="$1" intf="$2" intfid="$3" tcpudp="$4" dscp="$5"
+	local proto="$1" intf="$2" intfid="$3" tcpudp="$4" dscp="$5" family="$6"
 
 	# Ensure nftables sets and rules exist for this protocol (even if DB is empty)
 	if [ "$intf" = "all" ]; then
@@ -2320,15 +2261,19 @@ _bypass_ndpid_collect_proto() {
 	# written, so detected flows were never DSCP-marked. Its set has to
 	# exist even when no domain or IP of the rule created it.
 	[ -n "$dscp" ] && _omr_defer _dscp_ensure_ipset "$dscp"
+	# a 5th field for "IPv4 only" / "IPv6 only": the consumer skips the
+	# addresses of the other family
+	case "$family" in ipv4|ipv6) dscp="${dscp}:${family}" ;; esac
 	_bypass_proto_ndpid_list="${_bypass_proto_ndpid_list} ${proto}:${intf}:${intfid}:${dscp}"
 }
 
 _bypass_proto_collect_ndpid() {
-	local proto intf enabled intfid tcpudp ndpi dscp vpn
+	local proto intf enabled intfid tcpudp ndpi dscp vpn family
 	_rule_proto proto $1
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get tcpudp $1 tcpudp "all"
+	config_get family $1 family "ipv4ipv6"
 	config_get ndpi $1 ndpi "${_ndpi_default:-1}"
 	_rule_dscp dscp $1
 	config_get vpn $1 vpn
@@ -2347,7 +2292,7 @@ _bypass_proto_collect_ndpid() {
 	intfid=""
 	[ -n "$intf" ] && intfid=$(uci -q get omr-bypass.$intf.id)
 	[ "$intf" = "all" ] && intfid=""
-	_bypass_ndpid_collect_proto "$proto" "$intf" "$intfid" "$tcpudp" "$dscp"
+	_bypass_ndpid_collect_proto "$proto" "$intf" "$intfid" "$tcpudp" "$dscp" "$family"
 }
 
 # Categories (a set of protos grouped in omr-bypass-proto.json) were never
@@ -2357,12 +2302,13 @@ _bypass_proto_collect_ndpid() {
 # the category into its member protos here, same as _bypass_proto_collect_ndpid
 # does for a single dpis proto.
 _bypass_category_collect_ndpid() {
-	local category intf enabled vpn intfid tcpudp ndpi proto dscp
+	local category intf enabled vpn intfid tcpudp ndpi proto dscp family
 	config_get category $1 category
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
 	config_get vpn $1 vpn
 	config_get tcpudp $1 tcpudp "all"
+	config_get family $1 family "ipv4ipv6"
 	config_get ndpi $1 ndpi "${_ndpi_default:-1}"
 	_rule_dscp dscp $1
 	[ "$enabled" = "0" ] && return
@@ -2380,7 +2326,7 @@ _bypass_category_collect_ndpid() {
 
 	for proto in $(grep -F "\"category\":\"${category}\"" /usr/share/omr-bypass/omr-bypass-proto.json 2>/dev/null | awk -F'"' '{print $4}'); do
 		[ -n "$proto" ] || continue
-		_bypass_ndpid_collect_proto "$proto" "$intf" "$intfid" "$tcpudp" "$dscp"
+		_bypass_ndpid_collect_proto "$proto" "$intf" "$intfid" "$tcpudp" "$dscp" "$family"
 	done
 }
 
@@ -2572,16 +2518,17 @@ start_service() {
 		config_foreach _add_proto proto
 	}
 	disableipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
-	# Cache proxy/VPN/ndpi/ndpid state — read once, reused by _intf_rule and _bypass_proto (called per interface/proto)
+	# Cache proxy/VPN/ndpi/ndpid state — read once, reused by _intf_rule and _bypass_proto_core (called per interface/proto)
 	_omr_proxy=$(uci -q get openmptcprouter.settings.proxy)
 	_omr_ndpi=$(uci -q get openmptcprouter.settings.ndpi)
 	# A dpis/categories rule without the ndpi option: LuCI shows "Enable
-	# ndpi" ticked when nDPI or nDPId is there (and the option hidden when
-	# not), so that is what it means. Each function used to read it its own
-	# way ("0", "1" or empty), and a category saved with the box ticked was
-	# never watched by nDPId.
+	# ndpi" ticked when nDPId is there (and the option hidden when not), so
+	# that is what it means. Each function used to read it its own way ("0",
+	# "1" or empty), and a category saved with the box ticked was never
+	# watched by nDPId. The kernel nDPI match (/proc/net/xt_ndpi) does not
+	# count: it has no nftables counterpart and nothing marks for it.
 	_ndpi_default=0
-	{ [ -e /proc/net/xt_ndpi/proto ] || [ -e /usr/sbin/ndpisrvd ]; } && _ndpi_default=1
+	[ -e /usr/sbin/ndpisrvd ] && _ndpi_default=1
 	_omr_ndpid=0
 	if [ -x /usr/sbin/ndpid ]; then
 		_ensure_ndpid_running
@@ -2676,7 +2623,6 @@ start_service() {
 	# their direct uci writes wait for the hash gate, see _omr_defer
 	_omr_defer_file="/tmp/omr-bypass-deferred"
 	: > "$_omr_defer_file"
-	[ -d /proc/net/xt_ndpi/proto ] && config_foreach _bypass_proto dpis
 	config_foreach _bypass_proto_without_ndpi dpis
 	config_foreach _bypass_category categories
 	if [ "$_omr_ndpid" = "1" ]; then

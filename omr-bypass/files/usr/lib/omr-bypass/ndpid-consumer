@@ -7,8 +7,9 @@
 # classified by nDPId is bypassed according to omr-bypass protocol rules.
 #
 # Usage: ndpid-consumer <proto_list>
-#   proto_list: space-separated entries of the form  proto:intf:intfid:dscp
-#               as written by _bypass_ndpid_collect_proto in omr-bypass-nft.
+#   proto_list: space-separated entries of the form
+#               proto:intf:intfid:dscp:family as written by
+#               _bypass_ndpid_collect_proto in omr-bypass-nft.
 #               intf and dscp are independent and either may be empty: intf
 #               drives the routing-bypass fwmark set, dscp drives the
 #               omr_dst_bypass_dscp_<class> set -- a rule can populate one, the
@@ -65,13 +66,17 @@ while true; do
 		base=$(echo "$proto_str" | tr '.' '\n' | head -1 | tr '[:upper:]' '[:lower:]')
 
 		for entry in $proto_list; do
-			# proto:intf:intfid:dscp, any field but proto may be empty and
-			# an older list has no dscp field at all: pad, then split
-			_f="${entry}:::"
+			# proto:intf:intfid:dscp:family, any field but proto may be
+			# empty and an older list has fewer fields: pad, then split
+			_f="${entry}::::"
 			bp="${_f%%:*}"; _f="${_f#*:}"
 			intf="${_f%%:*}"; _f="${_f#*:}"
 			_f="${_f#*:}"
-			dscp="${_f%%:*}"
+			dscp="${_f%%:*}"; _f="${_f#*:}"
+			family="${_f%%:*}"
+			case "$family:$is_v6" in
+				ipv4:1|ipv6:0) continue ;;
+			esac
 			bp_lower=$(echo "$bp" | tr '[:upper:]' '[:lower:]')
 			if [ "$bp_lower" = "$app" ] || [ "$bp_lower" = "$base" ] || \
 			   echo "$proto_str" | grep -qi "^${bp}$" || \
