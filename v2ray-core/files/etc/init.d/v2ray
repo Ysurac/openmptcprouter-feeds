@@ -733,12 +733,14 @@ add_v2ray_redirect_rules() {
 	v2ray_extra_json
 	json_dump -i >"$tmp.json"
 
-	if utpl -S -F "$tmp.json" "$v2rrules_uc" >"$tmp.nft" \
-		&& ! cmp -s "$tmp.nft" "$v2rrules_nft"; then
-		echo "table inet chk {include \"$tmp.nft\";}" >"$tmp.nft.chk"
-		if nft -f "$tmp.nft.chk" -c; then
-			mv "$tmp.nft" "$v2rrules_nft"
-			fw4 -q reload
+	if utpl -S -F "$tmp.json" "$v2rrules_uc" >"$tmp.nft"; then
+		grep -q tproxy "$tmp.nft" || v2ray_tproxy_route_del
+		if ! cmp -s "$tmp.nft" "$v2rrules_nft"; then
+			echo "table inet chk {include \"$tmp.nft\";}" >"$tmp.nft.chk"
+			if nft -f "$tmp.nft.chk" -c; then
+				mv "$tmp.nft" "$v2rrules_nft"
+				fw4 -q reload
+			fi
 		fi
 	fi
 	rm -rf "$tmpdir"
@@ -2339,12 +2341,31 @@ setup_transparent_proxy() {
 	add_v2ray_redirect_rules "$ext_args" "$lan_devices" "$lan_ipaddrs"
 }
 
+# The template adds "fwmark 1 lookup 100" (local delivery of what tproxy
+# marks) when it renders a tproxy redirect. The other proxies' templates add
+# the same rule: kept while one of their rule files has a tproxy redirect
+v2ray_tproxy_route_del() {
+	local f family
+	for f in /etc/nftables.d/90-proxy-*.nft*; do
+		case "$f" in
+			"$v2rrules_nft"*) continue ;;
+		esac
+		grep -qs tproxy "$f" && return 0
+	done
+	for family in -4 -6; do
+		while ip $family rule del fwmark 1 lookup 100 2>/dev/null; do :; done
+		ip $family route flush table 100 2>/dev/null
+	done
+	return 0
+}
+
 clear_transparent_proxy() {
 	if [ -f "${v2rrules_nft}" ] || [ -f "${v2rrules_nft}.down" ]; then
 		rm -f "$v2rrules_nft"
 		rm -f "${v2rrules_nft}.down"
 		fw4 -q reload
 	fi
+	v2ray_tproxy_route_del
 
 	#v2ray-rules -f
 
@@ -2525,7 +2546,7 @@ rules_up() {
 	# and no instance is configured/enabled (disabled server, proxy switched
 	# away, empty/broken outbound config, ...), the missing rules file makes
 	# every caller of rules_up() -- procd, the omr-tracker-v2ray watchdog,
-	# the firewall.v2ray-rules hotplug, manual restart -- re-trigger
+	# manual restart -- re-trigger
 	# `/etc/init.d/v2ray restart &` forever, independent of procd's own
 	# respawn handling (issue #4347).
 	[ "$(uci -q get v2ray.main.enabled)" = "1" ] || return 0

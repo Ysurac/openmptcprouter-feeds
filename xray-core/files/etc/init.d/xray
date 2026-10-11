@@ -757,12 +757,14 @@ add_xray_redirect_rules() {
 	json_add_string o_nft_udp_extra "$nft_udp_extra"
 	json_dump -i >"$tmp.json"
 
-	if utpl -S -F "$tmp.json" "$xrrules_uc" >"$tmp.nft" \
-		&& ! cmp -s "$tmp.nft" "$xrrules_nft"; then
-		echo "table inet chk {include \"$tmp.nft\";}" >"$tmp.nft.chk"
-		if nft -f "$tmp.nft.chk" -c; then
-			mv "$tmp.nft" "$xrrules_nft"
-			fw4 -q reload
+	if utpl -S -F "$tmp.json" "$xrrules_uc" >"$tmp.nft"; then
+		grep -q tproxy "$tmp.nft" || xray_tproxy_route_del
+		if ! cmp -s "$tmp.nft" "$xrrules_nft"; then
+			echo "table inet chk {include \"$tmp.nft\";}" >"$tmp.nft.chk"
+			if nft -f "$tmp.nft.chk" -c; then
+				mv "$tmp.nft" "$xrrules_nft"
+				fw4 -q reload
+			fi
 		fi
 	fi
 	rm -rf "$tmpdir"
@@ -2449,6 +2451,24 @@ setup_transparent_proxy() {
 	fi
 }
 
+# The template adds "fwmark 1 lookup 100" (local delivery of what tproxy
+# marks) when it renders a tproxy redirect. The other proxies' templates add
+# the same rule: kept while one of their rule files has a tproxy redirect
+xray_tproxy_route_del() {
+	local f family
+	for f in /etc/nftables.d/90-proxy-*.nft*; do
+		case "$f" in
+			"$xrrules_nft"*) continue ;;
+		esac
+		grep -qs tproxy "$f" && return 0
+	done
+	for family in -4 -6; do
+		while ip $family rule del fwmark 1 lookup 100 2>/dev/null; do :; done
+		ip $family route flush table 100 2>/dev/null
+	done
+	return 0
+}
+
 clear_transparent_proxy() {
 	if [ -f "${xrrules_nft}" ] || [ -f "${xrrules_nft}.down" ]; then
 		for f in $xrrules_nft*; do
@@ -2456,6 +2476,7 @@ clear_transparent_proxy() {
 		done
 		fw4 -q reload
 	fi
+	xray_tproxy_route_del
 
 
 	if [ -s "$FILE_XRAY_DNSMASQ" ] ; then
@@ -2701,8 +2722,8 @@ rules_up() {
 	# with no VPN at all, should be up). Without this, whenever wait_proxy=0
 	# and no instance is configured/enabled (disabled server, proxy switched
 	# away, empty/broken outbound config, ...), the missing rules file makes
-	# every caller of rules_up() -- procd, the omr-tracker-xray watchdog, the
-	# firewall.xray-rules hotplug, manual restart -- re-trigger
+	# every caller of rules_up() -- procd, the omr-tracker-xray watchdog,
+	# manual restart -- re-trigger
 	# `/etc/init.d/xray restart &` forever, independent of procd's own
 	# respawn handling (issue #4347, same mechanism as v2ray).
 	[ "$(uci -q get xray.main.enabled)" = "1" ] || return 0

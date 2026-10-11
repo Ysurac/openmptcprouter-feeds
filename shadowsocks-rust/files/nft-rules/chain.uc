@@ -86,8 +86,9 @@ function extra_rules(tun) {
 	return res;
 }
 
-// fwmark 1 -> table 100 delivers the tproxied packets locally: only set up
-// with a redirect to render, the init script removes it with the rules
+// fwmark 1 -> table 100 delivers the tproxied packets locally, fwmark 0x9988
+// -> table 9988 sends the tun mode TCP to tunprox: only set up with a
+// redirect to render, the init script removes them with the rules
 let type, hook, priority, redir_port;
 if (o_tun == "tcp_only") {
 	if (proto == "tcp") {
@@ -95,10 +96,10 @@ if (o_tun == "tcp_only") {
 		hook = "prerouting";
 		priority = 1;
 		redir_port = o_redir_tcp_port;
-		if (system("
+		if (redir_port && system("
 			set -o errexit
 			iprr() {
-				while ip $1 rule del fwmark 9988 lookup 9988 2>/dev/null; do true; done
+				while ip $1 rule del fwmark 0x9988 lookup 9988 2>/dev/null; do true; done
 				ip $1 rule add fwmark 0x9988 lookup 9988
 				ip $1 route flush table 9988 2>/dev/null || true
 				ip $1 route add local default dev tunprox table 9988

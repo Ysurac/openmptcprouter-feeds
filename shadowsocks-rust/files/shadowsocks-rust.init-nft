@@ -393,6 +393,7 @@ ss_rules_nft_gen() {
 
 	if utpl -S -F "$tmp.json" "$ssrules_uc" >"$tmp.nft"; then
 		grep -q tproxy "$tmp.nft" || ss_tproxy_route_del
+		grep -q 0x00009988 "$tmp.nft" || ss_tun_route_del
 		if ! cmp -s "$tmp.nft" "$ssrules_nft"; then
 			echo "table inet chk {include \"$tmp.nft\";}" >"$tmp.nft.chk"
 			if nft -f "$tmp.nft.chk" -c; then
@@ -422,6 +423,17 @@ ss_tproxy_route_del() {
 	return 0
 }
 
+# The template adds "fwmark 0x9988 lookup 9988" (tun mode TCP to tunprox)
+# when it renders the tun mode mark. Hex as added: "fwmark 9988" is 0x2704
+ss_tun_route_del() {
+	local family
+	for family in -4 -6; do
+		while ip $family rule del fwmark 0x9988 lookup 9988 2>/dev/null; do :; done
+		ip $family route flush table 9988 2>/dev/null
+	done
+	return 0
+}
+
 ss_rules_nft_reset() {
 	if [ -f "$ssrules_nft" ] || [ -f "${ssrules_nft}.down" ]; then
 		rm -f "$ssrules_nft"
@@ -429,6 +441,7 @@ ss_rules_nft_reset() {
 		fw4 -q reload
 	fi
 	ss_tproxy_route_del
+	ss_tun_route_del
 }
 
 ss_rules() {

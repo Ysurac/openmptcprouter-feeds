@@ -66,6 +66,8 @@ function extra_rules() {
 	return res;
 }
 
+// fwmark 1 -> table 100 delivers the tproxied packets locally: only set up
+// with a redirect to render, the init script removes it with the rules
 let type, hook, priority, redir_port;
 if (o_tproxy == "1") {
 	if (proto == "tcp") {
@@ -76,7 +78,7 @@ if (o_tproxy == "1") {
 	type = "filter";
 	hook = "prerouting";
 	priority = "mangle";
-	if (system("
+	if (redir_port && system("
 		set -o errexit
 		iprr() {
 			while ip $1 rule del fwmark 1 lookup 100 2>/dev/null; do true; done
@@ -100,7 +102,7 @@ if (o_tproxy == "1") {
 		hook = "prerouting";
 		priority = "mangle";
 		redir_port = o_redir_udp_port;
-		if (system("
+		if (redir_port && system("
 			set -o errexit
 			iprr() {
 				while ip $1 rule del fwmark 1 lookup 100 2>/dev/null; do true; done
