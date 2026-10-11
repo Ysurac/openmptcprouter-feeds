@@ -94,6 +94,10 @@ return view.extend({
 	_updateStatus: function(div, s) {
 		var ndpidState  = s.ndpid_running   ? E('span', { 'style': 'color:green' }, [ _('running') ])
 		                                     : E('span', { 'style': 'color:red'  }, [ _('stopped') ]);
+		/* one instance per interface: say when only some of them run */
+		if (s.ndpid_instances > 1)
+			ndpidState = E('span', { 'style': s.ndpid_alive == s.ndpid_instances ? 'color:green' : 'color:orange' },
+				[ '%s (%d/%d)'.format(s.ndpid_alive ? _('running') : _('stopped'), s.ndpid_alive, s.ndpid_instances) ]);
 		var trackerState = s.tracker_running  ? E('span', { 'style': 'color:green' }, [ _('running') ])
 		                                      : E('span', { 'style': 'color:red'  }, [ _('stopped') ]);
 

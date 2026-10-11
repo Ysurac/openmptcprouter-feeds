@@ -154,7 +154,20 @@ methods = {
 				return os.execute("kill -0 " .. pid .. " 2>/dev/null") == 0
 			end
 
-			local ndpid_running = pid_alive("/var/run/ndpid.pid")
+			-- One nDPId instance per interface (ndpid, ndpid2, ndpid3...):
+			-- only the first one was looked at
+			local ndpid_total, ndpid_alive = 0, 0
+			local n = 1
+			while true do
+				local path = (n == 1) and "/var/run/ndpid.pid" or ("/var/run/ndpid" .. n .. ".pid")
+				local f = io.open(path, "r")
+				if not f then break end
+				f:close()
+				ndpid_total = ndpid_total + 1
+				if pid_alive(path) then ndpid_alive = ndpid_alive + 1 end
+				n = n + 1
+			end
+			local ndpid_running = ndpid_alive > 0
 			local tracker_running = pid_alive("/var/run/omr-bypass-ndpid-flows.pid")
 
 			local flow_count = 0
@@ -167,6 +180,8 @@ methods = {
 
 			return {
 				ndpid_running   = ndpid_running,
+				ndpid_instances = ndpid_total,
+				ndpid_alive     = ndpid_alive,
 				tracker_running = tracker_running,
 				flow_count      = flow_count,
 			}
