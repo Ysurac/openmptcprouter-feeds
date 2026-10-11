@@ -6,7 +6,7 @@ START=85
 
 USE_PROCD=1
 
-EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key set_gre_tunnel set_vxlan token set_bypass_ips set_vpn_ip set_mptcp_dscp_vps set_mptcp_weight_vps set_dscp_classify_vps"
+EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key set_gre_tunnel set_vxlan token set_bypass_ips set_vpn_ip set_mptcp_dscp_vps set_mptcp_weight_vps set_mptcp_pins_vps set_dscp_classify_vps"
 
 . /usr/lib/unbound/iptools.sh
 # omr_vps_curl: curl with the VPS API certificate public key pinned
@@ -1941,6 +1941,16 @@ _match_first_subflow_wan() {
 	[ "$l3dev" = "$2" ] && first_subflow_wan="$1"
 }
 
+# Only a WAN that MPTCP uses has subflows to pin to. The pushed sets took
+# every interface with an ip4table: docker, or a WAN taken out of
+# multipath, kept its ids in the VPS's maps.
+_vps_pin_wan() {
+	case "$(uci -q get network.$1.multipath)" in
+		on|master|backup|handover) return 0 ;;
+	esac
+	return 1
+}
+
 _get_dscp_vps_pin() {
 	local section="$1" dscp remote_id remote_ids download_iface
 	# Reads network's anonymous `config dscp_pin` sections (added by
@@ -1959,6 +1969,7 @@ _get_dscp_vps_pin() {
 		download_iface="$(uci -q get network.${section}.upload_interface)"
 		[ -z "$download_iface" ] && return
 	fi
+	_vps_pin_wan "$download_iface" || return
 	dscp="$(uci -q get network.${section}.dscp)"
 	[ -z "$dscp" ] && return
 	remote_id="$(uci -q get network.${download_iface}.ip4table)"
@@ -2059,6 +2070,7 @@ _get_weight_vps_pin() {
 	local iface="$1" weight remote_id id ids
 	weight="$(uci -q get network.${iface}.multipath_weight)"
 	[ -z "$weight" ] && return
+	_vps_pin_wan "$iface" || return
 	remote_id="$(uci -q get network.${iface}.ip4table)"
 	case "$remote_id" in
 		''|*[!0-9]*) return ;;
@@ -2109,6 +2121,41 @@ set_mptcp_weight_vps() {
 	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
 	token=""
 	_set_mptcp_weight_vps
+}
+
+# The pins of the scheduler in use, with the same gates as the tracker hooks.
+# 041-multipath-dscp only syncs when a pin row names the tracked WAN or its
+# own prune removed a class: a deleted row with a download interface only, a
+# deletion the VPS did not apply, or the last row deleted before a reboot,
+# were never pushed, and the VPS kept pinning the class. Run by
+# _config_service (boot, then at least hourly) and on network changes
+# (service_triggers); the caches make it a no-op once the VPS has the set.
+_set_mptcp_pins_vps() {
+	[ "$(uci -q get network.globals.mptcp_dscp_weight_vps_sync)" = "0" ] && return
+	case "$(uci -q get network.globals.mptcp_scheduler)" in
+		mptcp_bpf_dscp.o|bpf_dscp)
+			_set_mptcp_dscp_vps
+			;;
+		mptcp_bpf_weight.o|mptcp_bpf_burstweight.o|mptcp_bpf_weight_rr.o|bpf_weight|bpf_burstweight|bpf_weight_rr)
+			_set_mptcp_weight_vps
+			;;
+	esac
+}
+
+set_mptcp_pins_vps() {
+	local pservername=$1
+	if [ -z "$pservername" ]; then
+		config_load openmptcprouter
+		config_foreach set_mptcp_pins_vps server
+		return
+	fi
+	servername=$pservername
+	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
+	token=""
+	_set_mptcp_pins_vps
 }
 
 # Reads one DSCP class's current ipset/nftables-set members on this router
@@ -4181,6 +4228,31 @@ _split_tokenserver() {
 	server="${1%:*}"
 }
 
+# A rebooted VPS comes back with empty DSCP/weight maps (and classify sets),
+# while the caches here still say they were sent: nothing was pushed again
+# until the set changed. Its boot time (now - uptime) is kept per server; on
+# a change, the "already sent" caches of that server are dropped.
+_vps_reboot_check() {
+	local uptime boot last marker="/tmp/.omr-vps-boot-${servername}"
+	uptime="$(echo "$vps_config" | jsonfilter -q -e '@.vps.uptime')"
+	uptime="${uptime%%.*}"
+	case "$uptime" in
+		""|*[!0-9]*) return 0 ;;
+	esac
+	boot=$(( $(date +%s) - uptime ))
+	[ -f "$marker" ] && read -r last < "$marker"
+	# a minute of slack: the API answer and this date are not the same instant
+	if [ -n "$last" ] && [ $((boot - last)) -gt 60 ]; then
+		logger -t "OMR-VPS" "Server $servername rebooted, its MPTCP pins, weights and classify sets are sent again"
+		rm -f "/tmp/.mptcp_dscp_vps_pins-${servername}" "/tmp/.mptcp_dscp_vps_pins-${servername}.retry" \
+			"/tmp/.mptcp_weight_vps_pins-${servername}" "/tmp/.mptcp_weight_vps_pins-${servername}.retry" \
+			"/tmp/.dscp_classify_vps-${servername}" "/tmp/.dscp_classify_vps_ts-${servername}" \
+			/tmp/.omr-vps-sent-"${servername}"-*
+	fi
+	{ [ -z "$last" ] || [ $((boot - last)) -gt 60 ] || [ $((last - boot)) -gt 60 ]; } && echo "$boot" > "$marker"
+	return 0
+}
+
 _config_service() {
 	servername=$1
 	# left by older versions
@@ -4219,6 +4291,7 @@ _config_service() {
 	[ -z "$vps_config" ] && return
 	kernel="$(echo "$vps_config" | jsonfilter -q -e '@.vps.kernel')"
 	[ -z "$kernel" ] && return
+	_vps_reboot_check
 	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
 	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && _is_config_server "$servername" && {
 		_set_config_from_vps
@@ -4284,6 +4357,7 @@ _config_service() {
 		[ -z "$(_set_mptcp_vps)" ] && error=1
 		[ -z "$(_set_vpn_vps)" ] && error=1
 		[ -z "$(_set_proxy_vps)" ] && error=1
+		( _set_mptcp_pins_vps ) >/dev/null
 	fi
 	([ -n "$(uci -q get shadowsocks-libev.sss0)" ] || [ -n "$(uci -q get shadowsocks-rust.sss0)" ]) && [ "$(uci -q get shadowsocks-libev.sss0.key)" = "" ] && [ "$(uci -q get shadowsocks-rust.sss0.password)" = "" ] && _want_config
 	
@@ -4402,6 +4476,7 @@ service_triggers() {
 	#procd_add_reload_trigger openmptcprouter network shadowsocks-libev v2ray glorytun glorytun-udp mlvpn openvpn dsvpn
 	procd_add_reload_trigger shadowsocks-libev shadowsocks-rust v2ray xray glorytun glorytun-udp mlvpn dsvpn mqvpn
 	procd_add_config_trigger "config.change" "firewall" /etc/init.d/openmptcprouter-vps set_vps_firewall
+	procd_add_config_trigger "config.change" "network" /etc/init.d/openmptcprouter-vps set_mptcp_pins_vps
 	#procd_add_config_trigger "config.change" "network" /etc/init.d/openmptcprouter-vps set_gre_tunnel
 	#procd_add_reload_trigger openmptcprouter shadowsocks-libev network upnpd
 }
