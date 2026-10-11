@@ -58,8 +58,48 @@ EOF
 # When another device still holds the id of the first address, it is added
 # with an id picked by the kernel instead of failing on every tracker check,
 # and "multipath -i" tells the callers to fix it once the id is free.
+# The in-kernel path manager takes 8 endpoints at most (MPTCP_PM_ADDR_MAX;
+# beyond: "Result not representable"). Added WAN by WAN as they come up, the
+# extra IPv6 endpoints of the first WANs could take every slot and leave a
+# later WAN out of MPTCP, with nothing logged. When full, the first endpoint
+# of a WAN takes the slot of another WAN's extra one (id 128 and up), extra
+# endpoints only use a free slot, and a refused add is logged.
+MPTCP_ENDPOINTS_MAX=8
+
+# Return 0 when a slot is free, or was freed by removing the extra endpoint
+# with the highest id of another device
+_free_endpoint_slot() {
+	local line ep_addr ep_id ep_dev victim_id="" victim_addr="" victim_dev="" count=0
+	while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		count=$((count + 1))
+		set -- $line
+		ep_addr="$1"
+		ep_id=""
+		ep_dev=""
+		while [ "$#" -gt 1 ]; do
+			case "$1" in
+				id) ep_id="$2" ;;
+				dev) ep_dev="$2" ;;
+			esac
+			shift
+		done
+		[ -n "$ep_id" ] && [ "$ep_id" -ge 128 ] && [ "$ep_dev" != "$DEVICE" ] || continue
+		[ -z "$victim_id" ] || [ "$ep_id" -gt "$victim_id" ] || continue
+		victim_id="$ep_id"
+		victim_addr="$ep_addr"
+		victim_dev="$ep_dev"
+	done <<EOF
+$(ip mptcp endpoint show)
+EOF
+	[ "$count" -lt "$MPTCP_ENDPOINTS_MAX" ] && return 0
+	[ -n "$victim_id" ] || return 1
+	ip mptcp endpoint delete id "$victim_id" >/dev/null 2>&1 || return 1
+	logger -t "MPTCP" "Endpoint limit ($MPTCP_ENDPOINTS_MAX) reached: $victim_addr of $victim_dev removed so that $DEVICE gets one"
+}
+
 add_endpoints() {
-	local addr addr_id n=0
+	local addr addr_id err n=0
 	for addr in $IP; do
 		addr_id=""
 		if [ -n "$ENDPOINT_ID" ]; then
@@ -83,7 +123,15 @@ add_endpoints() {
 				addr_id=""
 			fi
 		fi
-		ip mptcp endpoint add "$addr" dev "$DEVICE" "$@" ${addr_id:+id "$addr_id"}
+		if [ "$n" -eq 0 ]; then
+			_free_endpoint_slot
+		elif [ "$(ip mptcp endpoint show | grep -c .)" -ge "$MPTCP_ENDPOINTS_MAX" ]; then
+			logger -t "MPTCP" "Endpoint limit ($MPTCP_ENDPOINTS_MAX) reached: $addr on $DEVICE not added to MPTCP"
+			n=$((n + 1))
+			continue
+		fi
+		err="$(ip mptcp endpoint add "$addr" dev "$DEVICE" "$@" ${addr_id:+id "$addr_id"} 2>&1)" || \
+			logger -t "MPTCP" "Can't add endpoint $addr on $DEVICE: $err"
 		n=$((n + 1))
 	done
 }
