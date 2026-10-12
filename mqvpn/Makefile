@@ -33,7 +33,8 @@ include $(INCLUDE_DIR)/cmake.mk
 XQUIC_DIR  := $(PKG_BUILD_DIR)/third_party/xquic
 XQUIC_BUILD:= $(XQUIC_DIR)/build
 
-# BoringSSL built in-tree (not a submodule — cloned during Build/Prepare)
+# BoringSSL built in-tree, a submodule of the xquic fork pinned to an exact
+# commit, so in the tarball too
 BSSL_DIR   := $(XQUIC_DIR)/third_party/boringssl
 BSSL_BUILD := $(BSSL_DIR)/build
 
@@ -86,10 +87,12 @@ endef
 
 define Build/Prepare
 	$(call Build/Prepare/Default)
-	# xquic is already in the tarball (OpenWrt submodule handling)
-	# BoringSSL is not a submodule of xquic — clone it
+	# xquic and its BoringSSL submodule are already in the tarball (OpenWrt
+	# submodule handling). No clone of BoringSSL's master as a fallback: the
+	# build would link whatever it was on that day, unchecked.
 	if [ ! -f "$(BSSL_DIR)/CMakeLists.txt" ]; then \
-		git clone --depth 1 https://github.com/google/boringssl.git "$(BSSL_DIR)"; \
+		echo "BoringSSL is missing from the mqvpn source: the xquic submodule must provide it" >&2; \
+		exit 1; \
 	fi
 endef
 
