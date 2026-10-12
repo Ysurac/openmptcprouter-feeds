@@ -3,38 +3,29 @@
 'require form';
 'require fs';
 'require poll';
-'require rpc';
 'require ui';
 'require view';
 'require uci';
 
 var cfgtypes = ['server'];
 
-var callUciState = rpc.declare({
-	object: 'uci',
-	method: 'state',
-	params: [ 'config' ],
-	expect: { values: {} }
-});
-
 // The master that omr-tracker-server keeps waiting while a backup server
-// is in use (failback delayed or manual), and that backup
+// is in use (failback delayed or manual), and that backup. Asked to the
+// init script: reading them from uci would need read access to the whole
+// openmptcprouter config, VPS passwords and API tokens included.
 function getFailbackHold() {
-	return L.resolveDefault(callUciState('openmptcprouter'), {}).then(function(sections) {
+	return L.resolveDefault(fs.exec('/etc/init.d/omr-tracker', [ 'failback_status' ]), {}).then(function(res) {
 		var hold = { held: false, master: null, backup: null };
 
-		if (!sections.omr || sections.omr.failback_hold != '1')
-			return hold;
-		hold.held = true;
-		for (var name in sections) {
-			var sec = sections[name];
-			if (sec['.type'] != 'server' || sec.disabled == '1')
-				continue;
-			if (sec.master == '1' && !hold.master)
-				hold.master = name;
-			if (sec.backup == '1' && sec.current == '1')
-				hold.backup = name;
-		}
+		(res.stdout || '').trim().split(/\n/).forEach(function(line) {
+			var f = line.split(' ');
+			if (f[0] == 'held')
+				hold.held = true;
+			else if (f[0] == 'master' && f[1])
+				hold.master = f[1];
+			else if (f[0] == 'backup' && f[1])
+				hold.backup = f[1];
+		});
 		return hold;
 	});
 }

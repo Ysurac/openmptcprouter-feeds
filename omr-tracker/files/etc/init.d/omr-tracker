@@ -8,8 +8,9 @@
 {
 	START=90
 	USE_PROCD=1
-	EXTRA_COMMANDS="start_interface failback"
-	EXTRA_HELP="	failback	Move back to the master server now, when the failback setting keeps a backup in use"
+	EXTRA_COMMANDS="start_interface failback failback_status"
+	EXTRA_HELP="	failback	Move back to the master server now, when the failback setting keeps a backup in use
+	failback_status	Print \"held\", then the master and the backup in use, when a backup is kept in use"
 }
 
 . /usr/lib/unbound/iptools.sh
@@ -548,6 +549,31 @@ failback() {
 		return 1
 	fi
 	omr_state_set openmptcprouter omr failback_now 1
+}
+
+_failback_status_server() {
+	local disabled master backup
+	config_get disabled "$1" disabled
+	[ "$disabled" = "1" ] && return
+	config_get master "$1" master
+	config_get backup "$1" backup
+	if [ "$master" = "1" ] && [ -z "$_failback_master" ]; then
+		_failback_master="$1"
+		echo "master $1"
+	fi
+	if [ "$backup" = "1" ] && [ "$(omr_state_get openmptcprouter."$1".current)" = "1" ]; then
+		echo "backup $1"
+	fi
+}
+
+# For LuCI's server page, so that it doesn't need uci read access to
+# openmptcprouter, which also holds the VPS passwords and API tokens
+failback_status() {
+	[ "$(omr_state_get openmptcprouter.omr.failback_hold)" = "1" ] || return 0
+	echo "held"
+	_failback_master=""
+	config_load openmptcprouter
+	config_foreach _failback_status_server server
 }
 
 start_interface() {
