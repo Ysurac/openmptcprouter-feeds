@@ -91,8 +91,8 @@ return L.view.extend({
 		o.value('info',  _('Info'));
 		o.value('warn',  _('Warning'));
 		o.value('error', _('Error'));
-		o.description = _('Warning is the default: it keeps the log quiet while still recording why a tunnel failed to establish. Error hides the tunnel setup result entirely; raise to Info when reporting a tunnel problem.');
-		o.default = 'warn';
+		o.description = _('Info is the default: it records the path and connection events needed to follow a tunnel problem. Warning keeps the log quieter but still records why a tunnel failed to establish; Error hides the tunnel setup result entirely.');
+		o.default = 'info';
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'mtu', _('MTU'));
