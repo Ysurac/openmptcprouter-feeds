@@ -100,8 +100,12 @@ unreachable still gets the reachable ones configured:
 
 ![Peer test against an offline router](images/05-test-peers.png)
 
-The peer push uses HTTPS where available and falls back to plain HTTP on
-the LAN.
+The peer push uses HTTPS only: the root password is never sent over plain
+HTTP. The peer's LuCI certificate is self-signed, so its public key is
+trusted on first contact and pinned (`keepalived.ha_pins`); a peer that
+later answers with another key is refused before the password is sent. After
+reinstalling a peer (new certificate), run `keepalived-ha forget <ip>` on the
+router that pushes to it.
 
 ## What a deploy generates
 

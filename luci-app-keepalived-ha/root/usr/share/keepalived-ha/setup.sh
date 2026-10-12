@@ -448,15 +448,72 @@ kaha_status() {
 
 # --- remote configuration through the peer's LuCI ubus RPC endpoint ---
 
-# On success sets KAHA_SCHEME and KAHA_TOKEN (no command substitution so
-# that KAHA_ERROR set on failure survives into the caller's shell)
+# The peer's LuCI answers with uhttpd's self-signed certificate. Calls were
+# a plain curl -k, then fell back to http: the root password went to
+# whoever answered on the peer's address, in clear text over http. Now
+# https only, and the public key of the peer's certificate is pinned on
+# first contact (trust on first use), in keepalived.ha_pins.
+kaha_pin_opt() { # <ip>
+	printf 'p_%s' "$1" | tr -c 'A-Za-z0-9_' '_'
+}
+
+kaha_pin_valid() { # <pin>
+	case "$1" in
+		# SHA-256 of zero bytes: what a broken openssl pipeline would hash
+		47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=) return 1 ;;
+	esac
+	expr "$1" : '[A-Za-z0-9+/]\{43\}=$' >/dev/null
+}
+
+# Sets KAHA_PIN to the pin of <ip>, learned from a bare GET when there is none
+kaha_peer_pin() { # <ip>
+	local ip="$1" opt pin pem
+	opt=$(kaha_pin_opt "$ip")
+	pin=$(kaha_uci -q get "keepalived.ha_pins.$opt")
+	if [ -z "$pin" ]; then
+		pem=$(curl -s -k -m 10 --connect-timeout 5 -w '%{certs}' -o /dev/null "https://$ip/" 2>/dev/null) || {
+			KAHA_ERROR="cannot reach the LuCI HTTPS endpoint on $ip"
+			return 1
+		}
+		pin=$(printf '%s\n' "$pem" | \
+			sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/{p;/-----END CERTIFICATE-----/q;}' | \
+			openssl x509 -pubkey -noout 2>/dev/null | \
+			openssl pkey -pubin -outform der 2>/dev/null | \
+			openssl dgst -sha256 -binary 2>/dev/null | openssl enc -base64 2>/dev/null)
+		kaha_pin_valid "$pin" || {
+			KAHA_ERROR="cannot read the HTTPS certificate of $ip"
+			return 1
+		}
+		kaha_uci -q get keepalived.ha_pins >/dev/null || kaha_uci set keepalived.ha_pins=ha_pins
+		kaha_uci set "keepalived.ha_pins.$opt=$pin"
+		kaha_uci commit keepalived
+		logger -t keepalived-ha "peer $ip: trusting its HTTPS public key sha256//$pin from now on" 2>/dev/null
+	fi
+	kaha_pin_valid "$pin" || {
+		KAHA_ERROR="invalid HTTPS key pin for $ip, run: keepalived-ha forget $ip"
+		return 1
+	}
+	KAHA_PIN="$pin"
+}
+
+kaha_forget_peer() { # <ip>
+	kaha_uci -q delete "keepalived.ha_pins.$(kaha_pin_opt "$1")"
+	kaha_uci commit keepalived
+}
+
+# On success sets KAHA_SCHEME, KAHA_PIN and KAHA_TOKEN (no command
+# substitution so that KAHA_ERROR set on failure survives into the caller's
+# shell)
 kaha_login() { # <ip> <user> <pass>
 	kaha_jshn
 	local ip="$1" user="${2:-root}" pass="$3"
-	local scheme resp token code args
+	local resp token code args rc
 
 	KAHA_SCHEME=''
 	KAHA_TOKEN=''
+	KAHA_PIN=''
+
+	kaha_peer_pin "$ip" || return 1
 
 	json_init
 	json_add_string username "$user"
@@ -464,30 +521,33 @@ kaha_login() { # <ip> <user> <pass>
 	json_add_int timeout 300
 	args=$(json_dump)
 
-	for scheme in https http; do
-		resp=$(curl -s -k -m 10 --connect-timeout 5 \
-			-H 'Content-Type: application/json' \
-			-d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"call\",\"params\":[\"00000000000000000000000000000000\",\"session\",\"login\",$args]}" \
-			"$scheme://$ip/ubus" 2>/dev/null)
-		[ -n "$resp" ] || continue
-		token=$(echo "$resp" | jsonfilter -q -e '@.result[1].ubus_rpc_session')
-		if [ -n "$token" ]; then
-			KAHA_SCHEME="$scheme"
-			KAHA_TOKEN="$token"
-			return 0
-		fi
-		code=$(echo "$resp" | jsonfilter -q -e '@.result[0]')
-		if [ -n "$code" ]; then
-			KAHA_ERROR="authentication failed on $ip (wrong username/password?)"
-			return 1
-		fi
-	done
-	KAHA_ERROR="cannot reach the LuCI RPC endpoint on $ip"
+	resp=$(curl -s -k --pinnedpubkey "sha256//$KAHA_PIN" -m 10 --connect-timeout 5 \
+		-H 'Content-Type: application/json' \
+		-d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"call\",\"params\":[\"00000000000000000000000000000000\",\"session\",\"login\",$args]}" \
+		"https://$ip/ubus" 2>/dev/null)
+	rc=$?
+	if [ "$rc" = "90" ]; then
+		KAHA_ERROR="the HTTPS key of $ip is not the one seen on first contact: not sending the password. If the peer was reinstalled, run: keepalived-ha forget $ip"
+		return 1
+	fi
+	token=$(echo "$resp" | jsonfilter -q -e '@.result[1].ubus_rpc_session')
+	if [ -n "$token" ]; then
+		KAHA_SCHEME=https
+		KAHA_TOKEN="$token"
+		return 0
+	fi
+	code=$(echo "$resp" | jsonfilter -q -e '@.result[0]')
+	if [ -n "$code" ]; then
+		KAHA_ERROR="authentication failed on $ip (wrong username/password?)"
+		return 1
+	fi
+	KAHA_ERROR="cannot reach the LuCI HTTPS endpoint on $ip"
 	return 1
 }
 
 kaha_call_remote() { # <scheme> <ip> <token> <object> <method> <args json>
-	curl -s -k -m 30 --connect-timeout 5 \
+	[ -n "$KAHA_PIN" ] || return 1
+	curl -s -k --pinnedpubkey "sha256//$KAHA_PIN" -m 30 --connect-timeout 5 \
 		-H 'Content-Type: application/json' \
 		-d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"call\",\"params\":[\"$3\",\"$4\",\"$5\",$6]}" \
 		"$1://$2/ubus" 2>/dev/null
