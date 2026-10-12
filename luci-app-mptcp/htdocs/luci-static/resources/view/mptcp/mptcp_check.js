@@ -14,7 +14,9 @@ return view.extend({
 	load: function() {
 		return Promise.all([
 			uci.load('network'),
-			uci.load('openmptcprouter')
+			// only for the old copy of the mode below: the ACL doesn't
+			// give this config (VPS passwords and tokens) to non-root users
+			L.resolveDefault(uci.load('openmptcprouter'), null)
 		]);
 	},
 
