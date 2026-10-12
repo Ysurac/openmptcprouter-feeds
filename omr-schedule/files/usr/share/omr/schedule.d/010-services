@@ -398,13 +398,53 @@ _dnsmasq_has_server() {
 	esac
 }
 
+# unbound fails lookups while a root server answers: its root trust anchor
+# may be stale (with a root key it can't validate, unbound answers SERVFAIL
+# even with DNSSEC checking off). unbound follows the root key by RFC 5011,
+# which has to watch a new key for 30 days and keeps that state in RAM
+# (saved to /etc every 9 days only). A router installed or reset too close
+# to a root KSK rollover, as on 2026-10-11, kept the old key and every
+# lookup failed; restarting unbound changes nothing. unbound-anchor gets the
+# current keys from IANA, checked against ICANN's certificate, and finds
+# IANA's server without the local resolver. It works on a copy (unbound
+# rewrites its own file), at most once an hour. Exit 1 means it updated the
+# anchor, 0 is both "nothing to do" and an error.
+_unbound_anchor_update() {
+	local cur=/var/lib/unbound/root.key new=/tmp/omr-root.key.new now last rc
+	[ -x /usr/sbin/unbound-anchor ] || return 1
+	[ -n "$(dig +time=3 +tries=1 . DNSKEY @198.41.0.4 | grep 'ANSWER: [1-9]')" ] || return 1
+	now=$(date +%s)
+	last=$(cat /tmp/omr-unbound-anchor-last 2>/dev/null)
+	case "$last" in
+		''|*[!0-9]*) ;;
+		*) [ $((now - last)) -lt 3600 ] && return 1 ;;
+	esac
+	echo "$now" > /tmp/omr-unbound-anchor-last
+	[ -f "$cur" ] || cur=/etc/unbound/root.key
+	rm -f "$new"
+	[ -f "$cur" ] && cp "$cur" "$new"
+	timeout 120 /usr/sbin/unbound-anchor -a "$new" >/dev/null 2>&1
+	rc=$?
+	if [ "$rc" = "1" ] && grep -q '^\. .*\(DS\|DNSKEY\)' "$new"; then
+		cp "$new" /etc/unbound/root.key
+		rm -f /var/lib/unbound/root.key "$new"
+		return 0
+	fi
+	rm -f "$new"
+	return 1
+}
+
 if [ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" = "1" ] && _dnsmasq_has_server '127.0.0.1#5353'; then
 	if [ "$(pgrep -f unbound)" = "" ]; then
 		_log "Can't find unbound, restart it..."
 		/etc/init.d/unbound restart >/dev/null 2>&1
 		sleep 5
 	elif [ "$(uci -q get openmptcprouter.settings.external_check)" != "0" ] && [ "$(uci -q get unbound.ub_main.listen_port)" = "5353" ] && [ -n "$(dig +timeout=4 +tries=2 openmptcprouter.com -p 5353 | grep 'ANSWER: 0')" ]; then
-		_log "Can't resolve via unbound, restart it..."
+		if _unbound_anchor_update; then
+			_log "Can't resolve via unbound: its DNSSEC root trust anchor was stale, updated it from IANA, restart it..."
+		else
+			_log "Can't resolve via unbound, restart it..."
+		fi
 		/etc/init.d/unbound restart >/dev/null 2>&1
 		sleep 5
 	fi
