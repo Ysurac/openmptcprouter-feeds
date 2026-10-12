@@ -824,10 +824,10 @@ return view.extend({
 			o.depends({ '_show_adv': '1', 'vpn': 'mqvpn' });
 			o.value('wlb',    _('Weighted Load Balancing'));
 			o.value('minrtt', _('Minimum RTT'));
-			o.default = 'wlb';
-			/* see _v2ray_udp: going back to wlb must be written */
+			o.default = 'minrtt';
+			/* see _v2ray_udp: going back to minrtt must be written */
 			o.rmempty = false;
-			o.cfgvalue = function() { return uci.get('mqvpn', 'multipath', 'scheduler') || 'wlb'; };
+			o.cfgvalue = function() { return uci.get('mqvpn', 'multipath', 'scheduler') || 'minrtt'; };
 			o.write = function(sid, val) { uci.set('mqvpn', 'multipath', 'scheduler', val); };
 			o.remove = function() {};
 

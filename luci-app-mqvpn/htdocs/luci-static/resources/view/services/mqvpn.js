@@ -171,9 +171,9 @@ return L.view.extend({
 		o.value('rap',         _('RAP'));
 		o.value('redundant',   _('Redundant'));
 		o.value('dscp',        _('DSCP'));
-		o.default = 'wlb';
+		o.default = 'minrtt';
 		/* Removed when it equals the default, the VPS sync would then adopt
-		 * the server's own scheduler: WLB could not be chosen back */
+		 * the server's own scheduler: Minimum RTT could not be chosen back */
 		o.rmempty = false;
 		o.description = _('With "Weighted RTT" or "Weighted Round Robin", each path\'s weight is taken from its interface\'s "Weight" setting (Network page, same value used by the MPTCP weight schedulers and settable via the API) and pushed to mqvpn automatically. "Weighted RTT" favors the highest-weight path until it\'s congestion-window-limited, while "Weighted Round Robin" interleaves traffic across paths in proportion to their weight. "Redundant" broadcasts every packet on every usable path; use only for loss-critical, low-bitrate traffic.');
 
