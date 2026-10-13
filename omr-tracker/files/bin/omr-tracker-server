@@ -420,6 +420,7 @@ _check_master() {
 			ip="$serverip"
 			local ss_libev_server ss_rust_server
 			local state_key="m:${name}:${countips}"
+			local alert_up="" alert_down=""
 			ss_libev_server=$(uci -q get shadowsocks-libev.sss${count}.server)
 			ss_rust_server=$(uci -q get shadowsocks-rust.sss${count}.server)
 			if [ "$server_ping" = true ]; then
@@ -476,13 +477,18 @@ _check_master() {
 						uci -q del_list openmptcprouter.${name}.ip_down="$ip" && cfg_changes="1"
 					omr_state_set openmptcprouter ${name} current '1'
 					_send_mail_alert "up" "$name" "$ip"
+					alert_up="1"
 				fi
 				_srv_prev_up[$state_key]="1"
 				OMR_TRACKER_SERVER_IP="$ip"
 				OMR_TRACKER_SERVER_NAME="$name"
 				OMR_TRACKER_STATUS="OK"
-				script_alert_up=$(uci -q get omr-tracker.proxy.script_alert_up)
-				[ -n "$script_alert_up" ] && eval "$script_alert_up"
+				# Like the mail, once per transition, after the variables
+				# the script may read are set
+				[ "$alert_up" = "1" ] && {
+					script_alert_up=$(uci -q get omr-tracker.proxy.script_alert_up)
+					[ -n "$script_alert_up" ] && eval "$script_alert_up"
+				}
 				count=$((count+1))
 			else
 				OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
@@ -494,13 +500,16 @@ _check_master() {
 						logger -t "OMR-Tracker-Server" "Master server ${name} down ($ip)"
 					_disable_ss_redirs_by_ip "$ip"
 					_send_mail_alert "down" "$name" "$ip"
+					alert_down="1"
 				fi
 				_srv_prev_up[$state_key]="0"
 				_failback_since[$state_key]=""
 				_failback_logged[$state_key]=""
 				OMR_TRACKER_STATUS="ERROR"
-				script_alert_down=$(uci -q get omr-tracker.proxy.script_alert_down)
-				[ -n "$script_alert_down" ] && eval "$script_alert_down"
+				[ "$alert_down" = "1" ] && {
+					script_alert_down=$(uci -q get omr-tracker.proxy.script_alert_down)
+					[ -n "$script_alert_down" ] && eval "$script_alert_down"
+				}
 			fi
 		}
 		server_answered="0"
@@ -548,6 +557,7 @@ _check_backup() {
 			ip="$serverip"
 			local ss_libev_server ss_rust_server
 			local state_key="b:${name}:${countips}"
+			local alert_up="" alert_down=""
 			ss_libev_server=$(uci -q get shadowsocks-libev.sss${count}.server)
 			ss_rust_server=$(uci -q get shadowsocks-rust.sss${count}.server)
 			if [ "$server_ping" = true ]; then
@@ -585,13 +595,18 @@ _check_backup() {
 						uci -q del_list openmptcprouter.${name}.ip_down="$ip" && cfg_changes="1"
 					omr_state_set openmptcprouter ${name} current '1'
 					_send_mail_alert "up" "$name" "$ip"
+					alert_up="1"
 				fi
 				_srv_prev_up[$state_key]="1"
 				OMR_TRACKER_SERVER_IP="$ip"
 				OMR_TRACKER_SERVER_NAME="$name"
 				OMR_TRACKER_STATUS="OK"
-				script_alert_up=$(uci -q get omr-tracker.proxy.script_alert_up)
-				[ -n "$script_alert_up" ] && eval "$script_alert_up"
+				# Like the mail, once per transition, after the variables
+				# the script may read are set
+				[ "$alert_up" = "1" ] && {
+					script_alert_up=$(uci -q get omr-tracker.proxy.script_alert_up)
+					[ -n "$script_alert_up" ] && eval "$script_alert_up"
+				}
 				count=$((count+1))
 			else
 				[ -z "$OMR_TRACKER_STATUS_MSG" ] && OMR_TRACKER_STATUS_MSG="No answer to ping and to API check"
@@ -604,11 +619,14 @@ _check_backup() {
 					omr_state_set openmptcprouter ${name} current '0'
 					_disable_ss_redirs_by_ip "$ip"
 					_send_mail_alert "down" "$name" "$ip"
+					alert_down="1"
 				fi
 				_srv_prev_up[$state_key]="0"
 				OMR_TRACKER_STATUS="ERROR"
-				script_alert_down=$(uci -q get omr-tracker.proxy.script_alert_down)
-				[ -n "$script_alert_down" ] && eval "$script_alert_down"
+				[ "$alert_down" = "1" ] && {
+					script_alert_down=$(uci -q get omr-tracker.proxy.script_alert_down)
+					[ -n "$script_alert_down" ] && eval "$script_alert_down"
+				}
 			fi
 			countips=$((countips+1))
 		}
