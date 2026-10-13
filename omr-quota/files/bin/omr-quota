@@ -41,7 +41,8 @@ esac
 #   <id>.ifdown      of those, the ones it actually called ifdown on
 #   <id>.throttled   interfaces this daemon shapes with _apply_throttle
 #   <id>.downstream  interfaces shaped by the daily-budget speed limit
-#   <id>.blocklan    the LAN block (firewall lan input DROP) is in effect
+#   <id>.blocklan    this daemon claims the LAN block (firewall lan input
+#                    DROP), which every quota with block_lan shares
 #
 # .cut and .ifdown are deliberately two files. .cut is the cross-package
 # one: 002-error reads its *contents* so that any interface a quota cut
@@ -636,20 +637,27 @@ _del_lan_access_rules() {
 	done
 }
 
+# The LAN block is one firewall state shared by every quota with block_lan.
+# Each quota that wants it holds a claim, its <id>.blocklan marker, and the
+# block is lifted only once no claim is left (_release_lan_block): lifting
+# it as soon as one quota was under its limit made two quotas, one of them
+# exceeded, undo and redo the block -- a firewall reload and a flash commit
+# each -- on every poll.
 _block_lan() {
 	[ "${OMR_QUOTA_BLOCK_LAN:-0}" = "1" ] || return
+	# The claim comes first, so a quota releasing its own at the same moment
+	# already sees this one. It is written even when the block is in place:
+	# after a reboot the block is still in the firewall config but the
+	# tmpfs claims are gone.
+	[ -f "$_blocklan_file" ] || { mkdir -p "$_TSTATE_DIR"; touch "$_blocklan_file"; }
 	# Already blocked *with* the router-access rules in place. An input=DROP
 	# left by an older daemon without them still gets the rules added.
 	# omr_quota_lan_fwd is part of the test too: a daemon older than the
 	# forward block left input=DROP and the input rules behind, and that
-	# state still needs the forward pair added. The marker is written here
-	# too: after a reboot the block is still in the firewall config but its
-	# tmpfs marker is gone, and without it disabling the quota never lifted
-	# the block.
+	# state still needs the forward pair added.
 	if [ "$(uci -q get firewall.zone_lan.input)" = "DROP" ] && \
 		[ -n "$(uci -q get firewall.omr_quota_lan_tcp)" ] && \
 		[ -n "$(uci -q get firewall.omr_quota_lan_fwd)" ]; then
-		[ -f "$_blocklan_file" ] || { mkdir -p "$_TSTATE_DIR"; touch "$_blocklan_file"; }
 		return
 	fi
 
@@ -657,19 +665,17 @@ _block_lan() {
 	uci -q set firewall.zone_lan.input='DROP'
 	_add_lan_access_rules
 	uci -q commit firewall
-	mkdir -p "$_TSTATE_DIR"
-	touch "$_blocklan_file"
 	/etc/init.d/firewall reload >/dev/null 2>&1
 }
 
+# _unblock_lan: take the LAN block out of the firewall config. Callers
+# decide whether it is time to (_release_lan_block, undo mode).
 _unblock_lan() {
-	[ "${OMR_QUOTA_BLOCK_LAN:-0}" = "1" ] || return
 	# Nothing to lift: input already ACCEPT and no leftover access rules
 	# (e.g. input restored by hand while the rules were still there).
 	if [ "$(uci -q get firewall.zone_lan.input)" = "ACCEPT" ] && \
 	   [ -z "$(uci -q get firewall.omr_quota_lan_tcp)" ] && \
 	   [ -z "$(uci -q get firewall.omr_quota_lan_fwd)" ]; then
-		rm -f "$_blocklan_file"
 		return
 	fi
 
@@ -677,8 +683,41 @@ _unblock_lan() {
 	uci -q set firewall.zone_lan.input='ACCEPT'
 	_del_lan_access_rules
 	uci -q commit firewall
-	rm -f "$_blocklan_file"
 	/etc/init.d/firewall reload >/dev/null 2>&1
+}
+
+# _lan_block_in_place: the firewall carries a quota LAN block: the access
+# rules only _block_lan creates or, for a quota with block_lan as before,
+# the bare input=DROP a daemon older than those rules left.
+_lan_block_in_place() {
+	[ -n "$(uci -q get firewall.omr_quota_lan_tcp)" ] || \
+		[ -n "$(uci -q get firewall.omr_quota_lan_fwd)" ] || \
+		{ [ "${OMR_QUOTA_BLOCK_LAN:-0}" = "1" ] && [ "$(uci -q get firewall.zone_lan.input)" = "DROP" ]; }
+}
+
+# _release_lan_block: this quota does not want the LAN blocked (under its
+# limit, block_lan unticked, switched to throttle, disabled). Lifting used
+# to depend on block_lan still being set, so unticking it while blocked, or
+# switching to throttle, left the LAN blocked for good. Drops this quota's
+# claim and lifts the block when no other quota holds one. A block nobody
+# claims is a leftover (the claims are on tmpfs, a reboot drops them) and is
+# lifted too, but not on this daemon's first poll: every quota daemon starts
+# together at boot, and a quota still exceeded gets to claim the block back
+# first instead of seeing it lifted and set again.
+_release_lan_block() {
+	local f claimed=0
+	if [ -f "$_blocklan_file" ]; then
+		rm -f "$_blocklan_file"
+		claimed=1
+	fi
+	for f in "$_TSTATE_DIR"/*.blocklan; do
+		[ -f "$f" ] && return 0
+	done
+	if [ "$claimed" = "0" ]; then
+		[ "$_prev_exceeded" = "-1" ] && return 0
+		_lan_block_in_place || return 0
+	fi
+	_unblock_lan
 }
 
 # _undo_enforcement: revert everything this daemon identity currently
@@ -708,10 +747,13 @@ _undo_enforcement() {
 		undone=1
 	fi
 	if [ -f "$_blocklan_file" ]; then
-		OMR_QUOTA_BLOCK_LAN=1
-		_unblock_lan
-		rm -f "$_blocklan_file"
+		_release_lan_block
 		undone=1
+	fi
+	# Asked by the init when no active quota can want the block any more:
+	# whatever block is left, claimed or not, is nobody's.
+	if [ "${OMR_QUOTA_LIFT_LAN:-0}" = "1" ] && _lan_block_in_place; then
+		_unblock_lan
 	fi
 	if [ -f "$_ifdown_file" ] || [ -f "$_cut_file" ]; then
 		# Same rule as the main loop's recovery: only what this daemon took
@@ -924,11 +966,16 @@ while true; do
 				[ -n "$real_iface" ] && _apply_throttle "$real_iface"
 			done
 			# a cut quota switched to throttle: its interfaces are up again,
-			# so nothing is owed an ifup any more
+			# so nothing is owed an ifup any more, nor a LAN block
 			rm -f "$_cut_file" "$_ifdown_file"
+			_release_lan_block
 		else
 			# cut: bring the interface(s) down
-			_block_lan "$reason reached"
+			if [ "${OMR_QUOTA_BLOCK_LAN:-0}" = "1" ]; then
+				_block_lan "$reason reached"
+			else
+				_release_lan_block
+			fi
 			mkdir -p "$_TSTATE_DIR"
 			printf '%s' "$target_interfaces" > "$_cut_file"
 			# Cumulative, not "what went down this poll": from the second
@@ -981,7 +1028,7 @@ while true; do
 			fi
 		done
 		rm -f "$_cut_file" "$_ifdown_file"
-		_unblock_lan
+		_release_lan_block
 	fi
 
 	_prev_exceeded=$exceeded

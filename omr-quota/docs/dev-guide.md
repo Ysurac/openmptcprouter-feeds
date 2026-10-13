@@ -383,7 +383,7 @@ The daemon records what it currently enforces under `_TSTATE_DIR`
 | `<id>.ifdown` | the cut path actually calls `ifdown` on an interface (cumulative across polls) | the same places as `<id>.cut` |
 | `<id>.throttled` | the throttle path runs (`target_interfaces`) | the not-exceeded path runs `_remove_throttle` |
 | `<id>.downstream` | `_apply_downstream_limit` (down interfaces, daily-budget method 2) | `_remove_downstream_limit` |
-| `<id>.blocklan` | `_block_lan` actually flips the LAN input to DROP and installs the forward block | `_unblock_lan` |
+| `<id>.blocklan` | `_block_lan` runs (this quota's claim on the LAN block, which every quota with `block_lan` shares) | `_release_lan_block`, whenever the quota does not want the block (under its limit, `block_lan` unticked, throttle action, undo); the block itself is lifted once no claim is left |
 
 `<id>.cut` and `<id>.ifdown` look redundant and are not. `<id>.cut` is the
 cross-package one: 002-error reads its *contents* so that every interface a
@@ -546,6 +546,13 @@ Both methods are mutually exclusive per section (`method` is a single
 When `block_lan=1` and `exceedance_action=cut`, bringing the interface down
 also sets `firewall.zone_lan.input=DROP` (committed + `firewall reload`), then
 restores `ACCEPT` in `_unblock_lan` once the interface is brought back up.
+The block is shared: each quota that wants it holds a `<id>.blocklan` claim,
+and `_release_lan_block` lifts it only when no claim is left, whatever
+`block_lan` says now (unticking it, or switching to throttle, while blocked
+lifts it too). A block nobody claims, as after a reboot, is lifted from a
+daemon's second poll on, and by the init when no launched quota can block
+the LAN (`OMR_QUOTA_UNDO=1 OMR_QUOTA_LIFT_LAN=1 /bin/omr-quota lan-block`)
+or on a real stop.
 Proxy processes and their UCI enabled/disabled state are deliberately left
 unchanged: stopping one backend was incomplete (the others stayed running),
 and `omr-schedule/021-proxy` could immediately restore the configured one.

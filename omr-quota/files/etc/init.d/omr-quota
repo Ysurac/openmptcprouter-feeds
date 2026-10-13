@@ -22,6 +22,8 @@ _PERSIST_DIR="${OMR_QUOTA_STATE_DIR:-/etc/omr-quota/state}"
 # the config is walked -- the reference for the orphan sweep below.
 _ACTIVE_IDS=" "
 _SECTIONS_SEEN=0
+# 1 once a launched quota can block the LAN (block_lan with the cut action)
+_LAN_BLOCKERS=0
 
 # Clearing reset_exceeded (UCI/ubus) only matters for exceedance_scope=persistent
 # -- month_only has no persistent marker of its own, so the daemon is also
@@ -120,6 +122,7 @@ _launch_quota() {
 	_track_vnstat "$interface"
 
 	_ACTIVE_IDS="${_ACTIVE_IDS}${interface} "
+	[ "$block_lan" = "1" ] && [ "$exceedance_action" != "throttle" ] && _LAN_BLOCKERS=1
 	procd_open_instance
 	procd_set_param command "$_QUOTA_BIN" "$interface"
 	procd_append_param env "OMR_QUOTA_TX=$txquota"
@@ -196,6 +199,7 @@ _launch_global_quota() {
 	_track_vnstat $interfaces
 
 	_ACTIVE_IDS="${_ACTIVE_IDS}${state_id} "
+	[ "$block_lan" = "1" ] && [ "$exceedance_action" != "throttle" ] && _LAN_BLOCKERS=1
 	procd_open_instance
 	procd_set_param command "$_QUOTA_BIN" "$state_id"
 	procd_append_param env "OMR_QUOTA_TX=$txquota"
@@ -246,6 +250,14 @@ _undo_ids() {
 	done
 }
 
+# _lift_lan_block: take a quota LAN block out of the firewall, whichever
+# quota claimed it. The daemon does the work, in undo mode, under an id no
+# uci section can have (so no quota's markers are touched).
+_lift_lan_block() {
+	[ -n "$(uci -q get firewall.omr_quota_lan_tcp)$(uci -q get firewall.omr_quota_lan_fwd)" ] || return 0
+	OMR_QUOTA_UNDO=1 OMR_QUOTA_LIFT_LAN=1 "$_QUOTA_BIN" "lan-block"
+}
+
 # _undo_orphaned_enforcement: lift the cut/throttle/LAN block left by quotas
 # this start_service did *not* relaunch (disabled, removed, quota values
 # cleared, global section without interfaces). Without it, a disabled
@@ -278,12 +290,17 @@ _undo_orphaned_enforcement() {
 		orphans="${orphans}${id} "
 	done
 	[ -n "$orphans" ] && _undo_ids $orphans
+	# No quota launched can block the LAN: a block still in the firewall is
+	# nobody's. After a reboot (the claims are on tmpfs) with the quota that
+	# blocked now disabled, nothing else would lift it.
+	[ "$_LAN_BLOCKERS" = "1" ] || _lift_lan_block
 	return 0
 }
 
 start_service() {
 	_ACTIVE_IDS=" "
 	_SECTIONS_SEEN=0
+	_LAN_BLOCKERS=0
 	config_load omr-quota
 	config_foreach _launch_quota interface
 	config_foreach _launch_global_quota global
@@ -311,5 +328,6 @@ reload_service() {
 service_stopped() {
 	[ -n "$_OMR_QUOTA_RELOADING" ] && return 0
 	_undo_ids $(_marker_ids)
+	_lift_lan_block
 	return 0
 }
