@@ -54,8 +54,12 @@ if [ "$(uci -q get firewall.omr_dst_udp_banip_v4.match)" != "dest_net dest_port"
 	fi
 fi
 
-if [ -z "$(grep banudpipv4 /etc/crontabs/root 2>/dev/null)" ]; then
-	echo '0 1 * * * /usr/bin/wget -O /etc/luci-uploads/banudpipv4.list https://files-update.openmptcprouter.com/banudpipv4.list' >> /etc/crontabs/root
-	echo '1 1 * * * /usr/bin/wget -O /etc/luci-uploads/banudpipv6.list https://files-update.openmptcprouter.com/banudpipv6.list && /etc/init.d/firewall reload' >> /etc/crontabs/root
+# The lists used to be fetched into /etc (flash) and the firewall reloaded
+# every day, with both rules off: omr-banudpip-update only does it when needed
+if grep -q 'banudpipv[46]\.list' /etc/crontabs/root 2>/dev/null; then
+	sed -i '/banudpipv[46]\.list/d' /etc/crontabs/root
+fi
+if ! grep -q omr-banudpip-update /etc/crontabs/root 2>/dev/null; then
+	echo '0 1 * * * /usr/bin/omr-banudpip-update' >> /etc/crontabs/root
 	rm -f /etc/crontab
 fi

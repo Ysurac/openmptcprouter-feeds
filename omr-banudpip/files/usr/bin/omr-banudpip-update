@@ -1,0 +1,27 @@
+#!/bin/sh
+# Daily refresh of the lists of the omr_dst_udp_banip_* firewall rules.
+# Both rules are off by default: a list is only fetched while its rule is on.
+# /etc/luci-uploads is on flash, so a list is only written when it changed,
+# and the firewall only reloaded then.
+
+URL="https://files-update.openmptcprouter.com"
+DIR="/etc/luci-uploads"
+
+changed=""
+for family in v4 v6; do
+	rule="firewall.omr_dst_udp_banip_rule_$family"
+	# fw4 takes a rule without "enabled" as enabled
+	[ -n "$(uci -q get "$rule")" ] || continue
+	[ "$(uci -q get "$rule.enabled")" = "0" ] && continue
+	list="$DIR/banudpip$family.list"
+	tmp="$(mktemp /tmp/banudpip$family.XXXXXX)" || continue
+	# A list holds "<network> <port>" lines: an error page is no list
+	if /usr/bin/wget -q -T 30 -O "$tmp" "$URL/banudpip$family.list" 2>/dev/null \
+		&& grep -qE '^[0-9A-Fa-f.:]+/[0-9]+[[:space:]]+[0-9]+' "$tmp" \
+		&& ! cmp -s "$tmp" "$list"; then
+		cp "$tmp" "$list.new" && mv -f "$list.new" "$list" && changed=1
+	fi
+	rm -f "$tmp" "$list.new"
+done
+[ -n "$changed" ] && /etc/init.d/firewall reload
+exit 0
