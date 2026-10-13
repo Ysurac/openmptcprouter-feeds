@@ -4499,6 +4499,8 @@ _set_pihole_server() {
 		glorytun_tcp|glorytun_udp|openvpn|mlvpn|dsvpn|mqvpn) ;;
 		*) return ;;
 	esac
+	_pihole_backoff "$pservername" && return
+	local dns_before
 	token=""
 	vps_config=""
 	_login
@@ -4510,7 +4512,39 @@ _set_pihole_server() {
 		EOF
 		return
 	}
+	dns_before="$(uci -q get dhcp.@dnsmasq[0].server)"
 	_get_pihole $pservername
+	if [ "$(uci -q get dhcp.@dnsmasq[0].server)" = "$dns_before" ]; then
+		date +%s > "/tmp/.omr-vps-pihole-${pservername}"
+	else
+		rm -f "/tmp/.omr-vps-pihole-${pservername}"
+	fi
+}
+
+# 003-up asks for set_pihole on every tracker cycle while dnsmasq is on the
+# local resolver and the servers have Pi-hole. When that cannot clear (a
+# refused login, no tunnel address in the answer) each cycle was a login
+# and a GET /config, and the failed logins got the router banned by the VPS
+# fail2ban. Waits 10 minutes after a failed login (until a sync logs in
+# again) and 5 minutes after a pass that changed nothing.
+_pihole_backoff() { # <server>
+	local now first last count seen
+	now="$(date +%s)"
+	if [ -f "/tmp/.omr-vps-tokenfail-$1" ]; then
+		read -r first last count seen < "/tmp/.omr-vps-tokenfail-$1"
+		case "$seen" in
+			''|*[!0-9]*) ;;
+			*) [ "$((now - seen))" -lt 600 ] && return 0 ;;
+		esac
+	fi
+	if [ -f "/tmp/.omr-vps-pihole-$1" ]; then
+		read -r last < "/tmp/.omr-vps-pihole-$1"
+		case "$last" in
+			''|*[!0-9]*) ;;
+			*) [ "$((now - last))" -lt 300 ] && return 0 ;;
+		esac
+	fi
+	return 1
 }
 
 # _pihole_dns_server <server> [any]
