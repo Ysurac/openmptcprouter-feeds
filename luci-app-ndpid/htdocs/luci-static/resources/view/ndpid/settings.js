@@ -350,62 +350,8 @@ return view.extend({
 		o.datatype = 'uinteger';
 		o.default = '10';
 
-		// ── Compatibility ─────────────────────────────────────────────────
-		s = m.section(form.NamedSection, 'compat', 'compat', _('Netifyd Compatibility'));
-		s.addremove = false;
-		s.anonymous = true;
-
-		o = s.option(form.Flag, 'enabled', _('Enable compatibility layer'),
-			_('Write Netifyd-compatible status and flow JSON files'));
-		o.default = '0';
-		o.rmempty = false;
-
-		o = s.option(form.Value, 'status_file', _('Status file'),
-			_('Path for Netifyd-compatible status JSON'));
-		o.default = '/var/run/netifyd/status.json';
-
-		o = s.option(form.Value, 'flows_file', _('Flows file'),
-			_('Path for Netifyd-compatible flow JSON'));
-		o.default = '/tmp/ndpid-flows.json';
-
-		o = s.option(form.Value, 'update_interval', _('Update interval'),
-			_('Seconds between status/flow file updates'));
-		o.datatype = 'uinteger';
-		o.default = '1';
-
-		// ── Flow Actions ──────────────────────────────────────────────────
-		s = m.section(form.NamedSection, 'actions', 'actions', _('Flow Actions'));
-		s.addremove = false;
-		s.anonymous = true;
-
-		o = s.option(form.Flag, 'enabled', _('Enable flow actions'),
-			_('Populate ipsets based on detected application categories'));
-		o.default = '0';
-		o.rmempty = false;
-
-		o = s.option(form.Value, 'bittorrent_ipset', _('BitTorrent ipset name'));
-		o.default = 'secubox-bittorrent';
-
-		o = s.option(form.Value, 'bittorrent_timeout', _('BitTorrent ipset timeout (s)'));
-		o.datatype = 'uinteger';
-		o.default = '900';
-
-		o = s.option(form.Value, 'streaming_ipset', _('Streaming ipset name'));
-		o.default = 'secubox-streaming';
-
-		o = s.option(form.Value, 'streaming_timeout', _('Streaming ipset timeout (s)'));
-		o.datatype = 'uinteger';
-		o.default = '1800';
-
-		o = s.option(form.Value, 'blocked_ipset', _('Blocked ipset name'));
-		o.default = 'secubox-blocked';
-
-		o = s.option(form.Value, 'blocked_timeout', _('Blocked ipset timeout (s)'));
-		o.datatype = 'uinteger';
-		o.default = '3600';
-
-		o = s.option(form.DynamicList, 'blocked_app', _('Blocked applications'),
-			_('Application names to block (e.g. <code>bittorrent</code>, <code>tor</code>)'));
+		// The "compat" (Netifyd compatibility) and "actions" (flow actions)
+		// sections of the config have no reader: their settings did nothing.
 
 		return m.render();
 	}
