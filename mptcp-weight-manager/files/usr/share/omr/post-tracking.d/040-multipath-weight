@@ -21,8 +21,28 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && \
 	  [ "$scheduler" = "bpf_weight" ] || [ "$scheduler" = "bpf_burstweight" ] || [ "$scheduler" = "bpf_weight_rr" ]; } && \
 	{ [ "$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath)" = "on" ] || [ "$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath)" = "master" ] || [ "$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath)" = "backup" ]; }; then
 	weight="$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath_weight)"
-	current_weight="$(/usr/sbin/mptcp-scheduler-weight.sh show "${OMR_TRACKER_DEVICE}" 2>/dev/null | sed -n 's/.*weight=\([0-9]*\).*/\1/p' | head -n1)"
-	if [ -n "$weight" ] && [ "$weight" != "$current_weight" ]; then
+	# omr-weight-sync keeps the VPS model's weight in /var/state, not in the
+	# config: while it runs with decision weights on, the map holds that
+	# weight, and putting the user's back here made the two alternate
+	model_weight=""
+	if [ "$(uci -q get omr-metrics.settings.enable_weight_sync)" != "0" ] && \
+	   [ "$(uci -q get omr-metrics.settings.enable_decision_weights)" != "0" ] && \
+	   [ -n "$(uci -q get omr-metrics.settings)" ]; then
+		model_weight="$(uci -q -P /var/state get openmptcprouter."${OMR_TRACKER_INTERFACE}".decision_weight)"
+		case "$model_weight" in
+			''|*[!0-9]*) model_weight="" ;;
+		esac
+	fi
+	# One line per key of the WAN, its IPv4 address and the ids of its IPv6
+	# endpoints: comparing the first line only never set a weight the IPv6
+	# keys lacked (an IPv6-only WAN, or the map new after an upgrade)
+	current_weights="$(/usr/sbin/mptcp-scheduler-weight.sh show "${OMR_TRACKER_DEVICE}" 2>/dev/null | sed -n 's/.*weight=\([0-9]*\).*/\1/p')"
+	if [ -n "$model_weight" ]; then
+		# The config stays the user's: only the map follows the model
+		if [ -z "$current_weights" ] || printf '%s\n' "$current_weights" | grep -qvx "$model_weight"; then
+			/usr/sbin/mptcp-scheduler-weight.sh set "${OMR_TRACKER_DEVICE}" "$model_weight" >/dev/null 2>&1
+		fi
+	elif [ -n "$weight" ] && { [ -z "$current_weights" ] || printf '%s\n' "$current_weights" | grep -qvx "$weight"; }; then
 		/usr/sbin/mptcp-scheduler-weight.sh set "${OMR_TRACKER_DEVICE}" "$weight" >/dev/null 2>&1
 		if [ "$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath)" = "on" ] || [ "$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath)" = "master" ]; then
 			uci -q set network."${OMR_TRACKER_INTERFACE}".weight="$weight"

@@ -45,6 +45,17 @@ if [ "$multipath_config" != "on" ] && [ "$multipath_config" != "master" ] && [ "
 fi
 
 weight="$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath_weight")"
+# The VPS model's weight, kept in /var/state by omr-weight-sync while it
+# runs with decision weights on, is the one in the router's map: use that
+_mw="$(uci -q -P /var/state get openmptcprouter.$OMR_TRACKER_INTERFACE.decision_weight)"
+case "$_mw" in
+	''|*[!0-9]*) _mw="" ;;
+esac
+if [ -n "$_mw" ] && [ -n "$(uci -q get omr-metrics.settings)" ] && \
+   [ "$(uci -q get omr-metrics.settings.enable_weight_sync)" != "0" ] && \
+   [ "$(uci -q get omr-metrics.settings.enable_decision_weights)" != "0" ]; then
+	weight="$_mw"
+fi
 [ -z "$weight" ] && exit 0
 
 # openmptcprouter.<iface>.mqvpn_weight is the weight last applied to this

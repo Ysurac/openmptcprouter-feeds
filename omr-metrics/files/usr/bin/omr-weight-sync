@@ -2,8 +2,9 @@
 # omr-weight-sync: Sync UCI multipath_weight → BPF endpoint_weights map
 # and uci network.<iface>.weight (ip route semantics).
 # When enable_decision_weights=1 (default), polls GET /metrics/decision on
-# each configured VPS first and writes model-assigned weights into UCI before
-# the BPF sync.
+# each configured VPS first and keeps model-assigned weights in /var/state
+# (openmptcprouter.<iface>.decision_weight), which then go to the BPF map
+# instead of the UCI ones.
 # Polls every MPTCP_WEIGHT_INTERVAL seconds (default: 5).
 
 . "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-vps-curl.sh"
@@ -85,8 +86,8 @@ _get_decision() {
 }
 
 # _differs <current> <new>: the new weight is far enough from the current one
-# to be written. The model's weights move by a unit or two from one answer to
-# the next, and each write commits the network config to flash.
+# to be applied. The model's weights move by a unit or two from one answer to
+# the next.
 _differs() {
 	local cur="$1" new="$2" d
 	case "$cur" in
@@ -97,36 +98,31 @@ _differs() {
 	[ "$d" -ge 2 ] && [ "$((d * 20))" -ge "$cur" ]
 }
 
-# _apply_decision <response> <interfaces>: write the weights of a
+# _apply_decision <response> <interfaces>: keep the weights of a
 # /metrics/decision answer, {"weights": {"<interface>": 1-255, ...}, ...},
-# into network.<interface>.multipath_weight and .weight. They were read at
-# the top level ("@['wan1']"), where the answer has none: no model weight was
-# ever applied.
+# as openmptcprouter.<interface>.decision_weight in /var/state, for
+# _apply_weights. They were written to network.<interface>.multipath_weight
+# and .weight and committed: a flash write on every change, and the weights
+# the user set were lost for good.
 _apply_decision() {
-	local response="$1" iface_list="$2" _changed=0 _iface _weight _cur
+	local response="$1" iface_list="$2" _iface _weight _cur
 	for _iface in $iface_list; do
 		_weight=$(jsonfilter -s "$response" -e "@.weights['${_iface}']" 2>/dev/null)
 		case "$_weight" in
 			''|*[!0-9]*) continue ;;
 		esac
 		[ "$_weight" -lt 1 ] && continue
+		[ "$_weight" -gt 255 ] && _weight=255
 
-		_cur=$(uci -q get "network.${_iface}.multipath_weight" 2>/dev/null)
-		if _differs "$_cur" "$_weight"; then
-			uci -q set "network.${_iface}.multipath_weight=$_weight"
-			_changed=1
-		fi
-		_cur=$(uci -q get "network.${_iface}.weight" 2>/dev/null)
-		if _differs "$_cur" "$_weight"; then
-			uci -q set "network.${_iface}.weight=$_weight"
-			_changed=1
-		fi
+		_cur=$(omr_state_get "openmptcprouter.${_iface}.decision_weight")
+		_differs "$_cur" "$_weight" && \
+			omr_state_set openmptcprouter "$_iface" decision_weight "$_weight"
 	done
-	[ "$_changed" -eq 1 ] && uci -q commit network 2>/dev/null || true
+	return 0
 }
 
-# Fetch model-assigned weights from the first responding VPS and write them
-# into UCI multipath_weight / weight.  Returns 0 when at least one weight was
+# Fetch model-assigned weights from the first responding VPS and keep them
+# in /var/state (_apply_decision).  Returns 0 when at least one weight was
 # received; falls through to UCI-only weights otherwise.
 _fetch_decision_weights() {
 	_is_weight_scheduler || return 1
@@ -195,9 +191,10 @@ _apply_weights() {
 	[ -e "$MAP_PATH" ] || return 0
 	[ -x "$WEIGHT_SCRIPT" ] || return 0
 
-	local _tmpfile _changed _iface _dev _weight _cur
+	local _tmpfile _changed _iface _dev _weight _uweight _cur _decision=0
 	_tmpfile=$(mktemp /tmp/omr-weight.XXXXXX 2>/dev/null) || return 1
 	_changed=0
+	_decision_enabled && _decision=1
 
 	uci show network 2>/dev/null \
 		| grep -E "multipath='(on|master|backup)'" \
@@ -215,25 +212,40 @@ _apply_weights() {
 		[ -z "$_dev" ] && _dev=$(uci -q get "network.${_iface}.ifname" 2>/dev/null)
 		[ -z "$_dev" ] && continue
 
-		# Source of truth: multipath_weight, then weight, default 100
-		_weight=$(uci -q get "network.${_iface}.multipath_weight" 2>/dev/null)
-		[ -z "$_weight" ] && _weight=$(uci -q get "network.${_iface}.weight" 2>/dev/null)
-		[ -z "$_weight" ] && _weight=100
+		# The user's weight: multipath_weight, then weight, default 100
+		_uweight=$(uci -q get "network.${_iface}.multipath_weight" 2>/dev/null)
+		[ -z "$_uweight" ] && _uweight=$(uci -q get "network.${_iface}.weight" 2>/dev/null)
+		[ -z "$_uweight" ] && _uweight=100
+
+		# The model's weight, when there is one, goes to the map instead.
+		# It is runtime state (see _apply_decision), never the config.
+		_weight=""
+		[ "$_decision" = "1" ] && _weight=$(omr_state_get "openmptcprouter.${_iface}.decision_weight")
+		case "$_weight" in
+			''|*[!0-9]*) _weight="" ;;
+		esac
 
 		# Apply to BPF map
-		"$WEIGHT_SCRIPT" set "$_dev" "$_weight" >/dev/null 2>&1 || true
+		"$WEIGHT_SCRIPT" set "$_dev" "${_weight:-$_uweight}" >/dev/null 2>&1 || true
+
+		# Keep weight and multipath_weight consistent with each other,
+		# with the user's value. Not while a model weight is in the map:
+		# 040-multipath-weight puts the user's weight back in the map and
+		# drops .weight of a backup WAN, and setting it again here made
+		# the two commit network to flash in turn.
+		[ -n "$_weight" ] && continue
 
 		# Sync network.<iface>.weight (ip route semantics)
 		_cur=$(uci -q get "network.${_iface}.weight" 2>/dev/null)
-		if [ "$_cur" != "$_weight" ]; then
-			uci -q set "network.${_iface}.weight=$_weight"
+		if [ "$_cur" != "$_uweight" ]; then
+			uci -q set "network.${_iface}.weight=$_uweight"
 			_changed=1
 		fi
 
 		# Sync network.<iface>.multipath_weight
 		_cur=$(uci -q get "network.${_iface}.multipath_weight" 2>/dev/null)
-		if [ "$_cur" != "$_weight" ]; then
-			uci -q set "network.${_iface}.multipath_weight=$_weight"
+		if [ "$_cur" != "$_uweight" ]; then
+			uci -q set "network.${_iface}.multipath_weight=$_uweight"
 			_changed=1
 		fi
 	done < "$_tmpfile"

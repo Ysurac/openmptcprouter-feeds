@@ -2119,8 +2119,19 @@ set_mptcp_dscp_vps() {
 }
 
 _get_weight_vps_pin() {
-	local iface="$1" weight remote_id id ids
+	local iface="$1" weight remote_id id ids _mw
 	weight="$(uci -q get network.${iface}.multipath_weight)"
+	# The VPS model's weight, kept in /var/state by omr-weight-sync while it
+	# runs with decision weights on, is the one in the router's map: send that
+	_mw="$(uci -q -P /var/state get openmptcprouter.${iface}.decision_weight)"
+	case "$_mw" in
+		''|*[!0-9]*) _mw="" ;;
+	esac
+	if [ -n "$_mw" ] && [ -n "$(uci -q get omr-metrics.settings)" ] && \
+	   [ "$(uci -q get omr-metrics.settings.enable_weight_sync)" != "0" ] && \
+	   [ "$(uci -q get omr-metrics.settings.enable_decision_weights)" != "0" ]; then
+		weight="$_mw"
+	fi
 	[ -z "$weight" ] && return
 	_vps_pin_wan "$iface" || return
 	remote_id="$(uci -q get network.${iface}.ip4table)"
