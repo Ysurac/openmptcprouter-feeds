@@ -1109,8 +1109,15 @@ local function looks_like_ipv6(ip)
 	return type(ip) == "string" and ip:find(":", 1, true) ~= nil
 end
 
--- Every uci config the wizard may read or write. Used both to discard
--- stale staged deltas before applying and to commit everything at the end.
+-- An IPv6 address goes in brackets in a URL, an IPv4 address or a name as is
+local function url_host(ip)
+	if looks_like_ipv6(ip) and not ip:match("^%[") then
+		return "[" .. ip .. "]"
+	end
+	return ip
+end
+
+-- Every uci config the wizard may read or write, committed at the end
 local wizard_uci_configs = {
 	"network", "firewall", "openmptcprouter", "qos", "sqm",
 	"shadowsocks-libev", "shadowsocks-rust", "v2ray", "xray",
@@ -2179,15 +2186,27 @@ function update_vps(server)
 	if not _backup_server(server) then
 		return { error = "Unknown server" }
 	end
-	local serverip = _as_string_list(ucic:get("openmptcprouter", server, "ip"))[1] or ""
+	-- The first IPv4 address (or name), as openmptcprouter-vps does; an
+	-- IPv6-only server is asked in brackets over IPv6, not as
+	-- https://2001:db8::1:65500 over IPv4
+	local ips = _as_string_list(ucic:get("openmptcprouter", server, "ip"))
+	local serverip = ""
+	for _, ip in ipairs(ips) do
+		if not looks_like_ipv6(ip) then
+			serverip = ip
+			break
+		end
+	end
+	if serverip == "" then serverip = ips[1] or "" end
 	if serverip == "" then
 		return { error = "No server IP" }
 	end
+	local family = looks_like_ipv6(serverip) and "-6" or "-4"
 	local adminport = integer_string(ucic:get("openmptcprouter", server, "port") or "65500", "65500", 1, 65535)
 	local script = "/etc/init.d/openmptcprouter-vps restart; " ..
 		"token=$(uci -q get openmptcprouter." .. server .. ".token); " ..
-		"[ -n \"$token\" ] && OMR_VPS_SERVER=" .. shell_quote(server) .. " /bin/omr-vps-curl -4 --max-time 20 -s -k -H \"Authorization: Bearer $token\" " ..
-		shell_quote("https://" .. serverip .. ":" .. adminport .. "/update") .. "; " ..
+		"[ -n \"$token\" ] && OMR_VPS_SERVER=" .. shell_quote(server) .. " /bin/omr-vps-curl " .. family .. " --max-time 20 -s -k -H \"Authorization: Bearer $token\" " ..
+		shell_quote("https://" .. url_host(serverip) .. ":" .. adminport .. "/update") .. "; " ..
 		"/etc/init.d/openmptcprouter-vps restart"
 	sys.exec("sh -c " .. shell_quote("(" .. script .. ") >/dev/null 2>&1 </dev/null &"))
 	return { status = "started" }
@@ -2712,10 +2731,11 @@ function interfaces_status()
 				local token = uci:get("openmptcprouter",s[".name"],"token") or ""
 				if token ~= "" then
 					local vpsinfo_json = ""
-					if mArray.openmptcprouter["service_addr_ip"] ~= "" then
-						vpsinfo_json = sys.exec("OMR_VPS_SERVER=" .. shell_quote(s[".name"]) .. " /bin/omr-vps-curl --max-time " .. timeout .. " -s -k -H " .. curl_auth_header(token) .. " " .. shell_quote("https://" .. serverip .. ":" .. adminport .. "/status"))
-					elseif mArray.openmptcprouter["service_addr_ip6"] ~= "" then
-						vpsinfo_json = sys.exec("OMR_VPS_SERVER=" .. shell_quote(s[".name"]) .. " /bin/omr-vps-curl --max-time " .. timeout .. " -s -k -H " .. curl_auth_header(token) .. " " .. shell_quote("https://[" .. serverip .. "]:" .. adminport .. "/status"))
+					-- brackets for the address asked, not for the proxy's:
+					-- an IPv6 first server address made a URL with none
+					-- and a token error on every poll
+					if mArray.openmptcprouter["service_addr_ip"] ~= "" or mArray.openmptcprouter["service_addr_ip6"] ~= "" then
+						vpsinfo_json = sys.exec("OMR_VPS_SERVER=" .. shell_quote(s[".name"]) .. " /bin/omr-vps-curl --max-time " .. timeout .. " -s -k -H " .. curl_auth_header(token) .. " " .. shell_quote("https://" .. url_host(serverip) .. ":" .. adminport .. "/status"))
 					end
 					if vpsinfo_json ~= "" and vpsinfo_json ~= nil then
 						local status, vpsinfo = pcall(function()
@@ -2822,10 +2842,8 @@ function interfaces_status()
 				end
 				if mArray.openmptcprouter["vps_admin"] == false then
 					local vpstest = ""
-					if mArray.openmptcprouter["service_addr_ip"] ~= "" then
-						vpstest = sys.exec("OMR_VPS_SERVER=" .. shell_quote(s[".name"]) .. " /bin/omr-vps-curl --max-time " .. timeout .. " -s -k " .. shell_quote("https://" .. serverip .. ":" .. adminport .. "/"))
-					elseif mArray.openmptcprouter["service_addr_ip6"] ~= "" then
-						vpstest = sys.exec("OMR_VPS_SERVER=" .. shell_quote(s[".name"]) .. " /bin/omr-vps-curl --max-time " .. timeout .. " -s -k " .. shell_quote("https://[" .. serverip .. "]:" .. adminport .. "/"))
+					if mArray.openmptcprouter["service_addr_ip"] ~= "" or mArray.openmptcprouter["service_addr_ip6"] ~= "" then
+						vpstest = sys.exec("OMR_VPS_SERVER=" .. shell_quote(s[".name"]) .. " /bin/omr-vps-curl --max-time " .. timeout .. " -s -k " .. shell_quote("https://" .. url_host(serverip) .. ":" .. adminport .. "/"))
 					end
 					if vpstest == "" then
 						mArray.openmptcprouter["vps_admin_error_msg"] = mArray.openmptcprouter["vps_admin_error_msg"] .. " - No API script answer"
