@@ -406,6 +406,12 @@ function remove_interface(intf)
 		ucic:delete("network",intf .. "_6")
 		ucic:delete("openmptcprouter",intf .. "_6")
 	end
+	-- its multipath copy would come back on a WAN added with the same name
+	if ucic:get("openmptcprouter",intf) == "interface" then
+		ucic:delete("openmptcprouter",intf)
+	end
+	ucic:save("openmptcprouter")
+	ucic:commit("openmptcprouter")
 	ucic:save("network")
 	ucic:commit("network")
 	ucic:delete("sqm",intf)
@@ -806,8 +812,14 @@ function server_settings(server,server_ip,openmptcprouter_vps_key,openmptcproute
 	ucic:set("openmptcprouter",server,"username",openmptcprouter_vps_username)
 	ucic:set("openmptcprouter",server,"password",openmptcprouter_vps_key)
 	ucic:set("openmptcprouter",server,"ip",{server_ip})
-	ucic:set("openmptcprouter",server,"port","65500")
+	-- A port of its own (a VPS API moved off 65500) is kept: only a
+	-- server without one gets the default
+	if (ucic:get("openmptcprouter",server,"port") or "") == "" then
+		ucic:set("openmptcprouter",server,"port","65500")
+	end
+	-- setserver is a call of its own: what it changed was never committed
 	ucic:save("openmptcprouter")
+	ucic:commit("openmptcprouter")
 	if ucic:get("openmptcprouter",server,"master") == "1" then
 		ucic:set("shadowsocks-libev","sss0","server",server_ip)
 		ucic:set("shadowsocks-rust","sss0","server",server_ip)
@@ -828,9 +840,13 @@ function server_settings(server,server_ip,openmptcprouter_vps_key,openmptcproute
 		ucic:set("glorytun-udp","vpn","host",server_ip)
 		ucic:set("dsvpn","vpn","host",server_ip)
 		ucic:set("mlvpn","general","host",server_ip)
-		local mqvpn_port = "65443"
 		ucic:set("mqvpn","server","ip",server_ip)
-		ucic:set("mqvpn","server","port",mqvpn_port)
+		-- The port the user chose (443 to get through a firewall...) was
+		-- set back to 65443 on every wizard save, and the next sync moved
+		-- the VPS listener with it
+		if (ucic:get("mqvpn","server","port") or "") == "" then
+			ucic:set("mqvpn","server","port","65443")
+		end
 			ucic:delete("openvpn", "omr", "remote")
 			uci_add_list("openvpn", "omr", "remote", server_ip)
 		ucic:set("qos","serverin","srchost",server_ip)
