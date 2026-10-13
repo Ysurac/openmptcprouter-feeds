@@ -67,6 +67,13 @@ static __always_inline bool has_active_nonbackup(struct sock *sk)
  * subflow is active, as in the default scheduler and bpf_bkup: msk->first is
  * also full whenever an upload saturates it, and taking any usable subflow
  * then put every such upload on the backup WAN too.
+ *
+ * Nor is msk->first taken directly when it is a backup subflow (a connection
+ * opened while only the backup WAN was up): the whole connection then stayed
+ * on the backup WAN after the others came back. The walks below pick a
+ * non-backup subflow, wait for a full one, and only when no other subflow is
+ * active take the first usable backup one, normally msk->first again since
+ * the initial subflow heads the subflow list.
  */
 SEC("struct_ops")
 int BPF_PROG(bpf_first_get_send, struct mptcp_sock *msk)
@@ -82,7 +89,8 @@ int BPF_PROG(bpf_first_get_send, struct mptcp_sock *msk)
 	mptcp_set_timeout(sk);
 
 	subflow = bpf_mptcp_subflow_ctx(msk->first);
-	if (subflow && first_usable(subflow, mptcp_subflow_tcp_sock(subflow))) {
+	if (subflow && !subflow->backup && !subflow->request_bkup &&
+	    first_usable(subflow, mptcp_subflow_tcp_sock(subflow))) {
 		mptcp_subflow_set_scheduled(subflow, true);
 		return 0;
 	}
