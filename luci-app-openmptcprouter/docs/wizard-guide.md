@@ -165,7 +165,8 @@ traffic to the ISP.
 - **IPv6 Prefix** — the `/48` (or similar) prefix delegated to your LAN;
   only meaningful with a single, dedicated server.
 - **Enable DNS64** — turn on only if your uplink/host network requires
-  NAT64.
+  NAT64. It also turns DNSSEC validation off in unbound, which the
+  synthesized answers would fail.
 
 ### Advanced: Country
 

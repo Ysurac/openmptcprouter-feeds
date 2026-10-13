@@ -1337,8 +1337,36 @@ function wizard_add(args)
 		default_proxy(_as_string(args.default_proxy, "shadowsocks-rust"), any_server_enabled)
 	end
 	_set_or_delete("openmptcprouter", "settings", "mptcpovervpn", _as_string(args.mptcpovervpn_vpn, ""))
-	_set_or_delete("openmptcprouter", "settings", "country", _as_string(args.country, ""))
+	local country = _as_string(args.country, "")
+	_set_or_delete("openmptcprouter", "settings", "country", country)
 	_set_or_delete("openmptcprouter", "settings", "dns64", _to_flag(args.dns64))
+	-- What the Country and DNS64 choices act on, as the Lua wizard did:
+	-- since the move to rpcd only the openmptcprouter copy was written.
+	-- omr-tracker is restarted by restart_all_async() below.
+	if country ~= "" and ucic:get("omr-tracker", "defaults") ~= nil
+	   and ucic:get("omr-tracker", "defaults", "country") ~= country then
+		ucic:set("omr-tracker", "defaults", "country", country)
+		ucic:save("omr-tracker")
+		ucic:commit("omr-tracker")
+	end
+	if _as_string(args.dns64, "") ~= "" and ucic:get("unbound", "ub_main") ~= nil then
+		local dns64 = _to_flag(args.dns64)
+		local unbound_changed = false
+		if (ucic:get("unbound", "ub_main", "dns64") or "0") ~= dns64 then
+			ucic:set("unbound", "ub_main", "dns64", dns64)
+			unbound_changed = true
+		end
+		-- the synthesized AAAA answers fail DNSSEC validation
+		if dns64 == "1" and ucic:get("unbound", "ub_main", "validator") ~= "0" then
+			ucic:set("unbound", "ub_main", "validator", "0")
+			unbound_changed = true
+		end
+		if unbound_changed then
+			ucic:save("unbound")
+			ucic:commit("unbound")
+			sys.exec("sh -c '(/etc/init.d/unbound restart) >/dev/null 2>&1 &'")
+		end
+	end
 	_set_or_delete("openmptcprouter", "settings", "vxlan", _to_optional_flag(args.vxlan))
 	local wizard_vxlan_mode = _as_string(args.vxlan_mode, "")
 	if wizard_vxlan_mode ~= "l2" and wizard_vxlan_mode ~= "l3" then wizard_vxlan_mode = "" end
