@@ -16,7 +16,9 @@ include $(INCLUDE_DIR)/package.mk
 define Package/$(PKG_NAME)
 SECTION:=net
 CATEGORY:=Network
-DEPENDS:= +dnsmasq-full +LINUX_5_4:iptables +LINUX_5_4:iptables-mod-extra +LINUX_5_4:ipset
+# iptables/ipset variant: both install /etc/init.d/omr-dscp, and only the
+# nft one works with firewall4
+DEPENDS:= +dnsmasq-full +LINUX_5_4:iptables +LINUX_5_4:iptables-mod-extra +LINUX_5_4:ipset @LINUX_5_4
 TITLE:=OMR-DSCP
 endef
 
