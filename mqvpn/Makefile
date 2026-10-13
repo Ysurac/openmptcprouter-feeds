@@ -19,7 +19,7 @@ PKG_SOURCE_VERSION:=ba9db56903bf7c08f9652c289ebfd28fc22efa11
 PKG_MIRROR_HASH:=skip
 
 PKG_BUILD_PARALLEL:=1
-PKG_USE_MIPS16:=0
+PKG_BUILD_FLAGS:=no-mips16
 # Disable cmake.mk's own configure/install steps — we drive cmake manually
 PKG_USE_NINJA:=0
 PKG_INSTALL:=0

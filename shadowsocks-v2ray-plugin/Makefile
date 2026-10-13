@@ -22,7 +22,7 @@ PKG_BUILD_PARALLEL:=1
 GO_PKG:=github.com/shadowsocks/v2ray-plugin
 #GO_PKG_BUILD_PKG:=github.com/shadowsocks/v2ray-plugin
 
-PKG_USE_MIPS16:=0
+PKG_BUILD_FLAGS:=no-mips16
 
 include $(INCLUDE_DIR)/package.mk
 include ../golang/golang-package.mk
