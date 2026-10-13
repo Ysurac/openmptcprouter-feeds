@@ -990,13 +990,51 @@ if [ -f /etc/backup/installed_packages.txt ] && [ -n "$(grep overlay /etc/backup
 fi
 
 
-if [ -n "$OMR_TRACKER_INTERFACE" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.enabled)" = "1" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.autorate)" = "1" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ -z "$(pgrep -f "config.${OMR_TRACKER_INTERFACE}")" ]; then
-	if [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.max_download)" != "0" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.download)" != "0" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.max_upload)" != "0" ] && [ "$(uci -q get sqm.${OMR_TRACKER_INTERFACE}.upload)" != "0" ]; then
-		_log "Restart SQM Autorate"
-		/etc/init.d/sqm-autorate restart >/dev/null 2>&1
-		sleep 5
+# A cake-autorate instance that died is not started again by the launcher
+# (see sqm-autorate's launcher.sh), and this check went by
+# OMR_TRACKER_INTERFACE, which cron never sets: it never ran. Every queue the
+# init starts an instance for is checked. An instance that dies again at
+# once (a config cake-autorate refuses) is not restarted every minute: the
+# delay doubles from 1 minute to 1 hour, and starts over once all of them
+# are seen running.
+_sqm_autorate_watchdog() {
+	local q o v dead="" state=/tmp/omr-sqm-autorate-restart fails next now delay
+	[ -x /etc/init.d/sqm-autorate ] || return
+	/etc/init.d/sqm-autorate enabled || return
+	for q in $(uci -q show sqm | sed -n 's/^sqm\.\([^.=][^.=]*\)=queue$/\1/p'); do
+		[ "$(uci -q get "sqm.${q}.enabled")" = "1" ] || continue
+		[ "$(uci -q get "sqm.${q}.autorate")" = "1" ] || continue
+		# The init starts no instance without all four rates
+		for o in max_download download max_upload upload; do
+			v="$(uci -q get "sqm.${q}.${o}")"
+			[ -z "$v" ] || [ "$v" = "0" ] && continue 2
+		done
+		pgrep -f "/config\.${q}\.sh" >/dev/null 2>&1 || dead="$dead $q"
+	done
+	if [ -z "$dead" ]; then
+		rm -f "$state"
+		return
 	fi
-fi
+	now=$(date +%s)
+	fails=0
+	next=0
+	[ -f "$state" ] && read -r fails next < "$state" 2>/dev/null
+	case "$fails" in ''|*[!0-9]*) fails=0 ;; esac
+	case "$next" in ''|*[!0-9]*) next=0 ;; esac
+	[ "$now" -lt "$next" ] && return
+	delay=60
+	v=0
+	while [ "$v" -lt "$fails" ] && [ "$delay" -lt 3600 ]; do
+		delay=$((delay * 2))
+		v=$((v + 1))
+	done
+	[ "$delay" -gt 3600 ] && delay=3600
+	echo "$((fails + 1)) $((now + delay))" > "$state"
+	_log "SQM autorate not running for${dead}, restart it..."
+	/etc/init.d/sqm-autorate restart >/dev/null 2>&1
+	sleep 5
+}
+_sqm_autorate_watchdog
 
 # Hourly: the latest OMR and VPS versions (shown by LuCI) and a firewall check
 _omr_latest_versions_check() {
