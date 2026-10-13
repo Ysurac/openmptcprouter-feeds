@@ -389,8 +389,16 @@ _prune_wan_routes() {
 		done
 }
 
+# config_foreach callback: device_section is the "config device" section of
+# the device $2
+_find_device_section() {
+	local name
+	config_get name "$1" name
+	[ -n "$name" ] && [ "$name" = "$2" ] && device_section="$1"
+}
+
 interface_multipath_settings() {
-	local mode iface proto metric ip4table qdisc
+	local mode iface proto metric ip4table qdisc device_section
 	local config="$1"
 	local intf="$2"
 	# DHCPv6 companion interfaces (<intf>_6) share the parent's device:
@@ -409,6 +417,17 @@ interface_multipath_settings() {
 	config_get txqueuelen "$config" txqueuelen
 	config_get qdisc "$config" qdisc
 	case "$iface" in *@*) iface=$(ifstatus "$config" | jsonfilter -q -e '@["device"]') ;; esac
+	# LuCI's device dialog writes the qdisc, the TX queue length and the
+	# offloads to the "config device" section of the device: only the
+	# interface's own options were read, so those were never applied and the
+	# queue length was put back to 1000 over the one netifd had set. The
+	# device's value wins, the interface's is the fallback.
+	device_section=""
+	[ -n "$iface" ] && config_foreach _find_device_section device "$iface"
+	[ -n "$device_section" ] && {
+		config_get txqueuelen "$device_section" txqueuelen "$txqueuelen"
+		config_get qdisc "$device_section" qdisc "$qdisc"
+	}
 	if [ "$(uci -q get openmptcprouter.${config}.metric)" = "" ] || [ "$(uci -q get openmptcprouter.${config}.metric)" = "1" ]; then
 		count=$((count+1))
 		metric=$count
@@ -439,7 +458,8 @@ interface_multipath_settings() {
 	[ -n "$iface" ] && {
 		local offload val
 		for offload in gro gso lro ufo tso; do
-			val=$(uci -q get network.${config}.${offload})
+			config_get val "$config" "$offload"
+			[ -n "$device_section" ] && config_get val "$device_section" "$offload" "$val"
 			[ "$val" = "1" ] && ethtool -K $iface $offload on >/dev/null 2>&1
 			[ "$val" = "0" ] && ethtool -K $iface $offload off >/dev/null 2>&1
 		done
