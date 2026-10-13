@@ -3028,8 +3028,14 @@ _set_vps_firewall() {
 	fwservername=$1
 	[ -n "$fwservername" ] && servername=$fwservername
 	[ -z "$fwservername" ] && fwservername=$servername
-	[ "$(uci -q get openmptcprouter.${fwservername}.disabled)" = "1" ] && return
-	[ "$(uci -q get openmptcprouter.${fwservername}.nofwredirect)" = "1" ] && return
+	# Nothing to push, but the flag the firewall reload raised has to go:
+	# omr-schedule asked for this push, ran blocklanfw and logged every
+	# minute otherwise
+	if [ "$(uci -q get openmptcprouter.${fwservername}.disabled)" = "1" ] || \
+	   [ "$(uci -q get openmptcprouter.${fwservername}.nofwredirect)" = "1" ]; then
+		_vps_firewall_pushed "$fwservername"
+		return
+	fi
 	[ -z "$(uci -q get openmptcprouter.${fwservername}.username)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${fwservername}.password)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${fwservername}.port)" ] && return
@@ -3083,9 +3089,13 @@ _set_vps_firewall() {
 		logger -t "OMR-VPS" "Remove old firewall rules"
 		_vps_firewall_close_port
 	}
+	_vps_firewall_pushed "$fwservername"
+}
+
+_vps_firewall_pushed() {
 	uci -q -P /var/state batch <<-EOF >/dev/null
-		revert openmptcprouter.${fwservername}.set_firewall
-		set openmptcprouter.${fwservername}.set_firewall=0
+		revert openmptcprouter.${1}.set_firewall
+		set openmptcprouter.${1}.set_firewall=0
 	EOF
 }
 
