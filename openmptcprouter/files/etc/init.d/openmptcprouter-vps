@@ -1697,12 +1697,49 @@ _get_vxlan() {
 	fi
 }
 
+# omr-schedule runs set_vxlan every minute while openmptcprouter.settings.vxlan
+# and the omrvxlan interface disagree. When the tunnel cannot be set up (no
+# VPN, a VPS without VXLAN, a read only user, a refused login) that was a
+# login and a GET /config every minute. Tried again after 5 minutes, then
+# 10, 20... up to an hour; a change of the setting tries at once.
 _set_vxlan_service() {
-	local tokenserver user_permission
+	local marker="/tmp/.omr-vps-vxlan-$1" want now last delay wanted stuck=0
 	servername=$1
 	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
 	# VXLAN rides on top of the VPN of the master/current server only
 	_is_config_server "$servername" || return
+	want="$(uci -q get openmptcprouter.settings.vxlan)"
+	[ "$want" = "1" ] || want=0
+	now="$(date +%s)"
+	if [ -f "$marker" ]; then
+		read -r last delay wanted < "$marker"
+		case "$last$delay" in
+			''|*[!0-9]*) ;;
+			*) [ "$wanted" = "$want" ] && [ "$((now - last))" -lt "$delay" ] && return ;;
+		esac
+	fi
+	_set_vxlan_sync
+	if [ -n "$(uci -q get network.omrvxlan)" ]; then
+		[ "$want" = "1" ] || stuck=1
+	else
+		[ "$want" = "1" ] && stuck=1
+	fi
+	if [ "$stuck" = "1" ]; then
+		if [ "$wanted" = "$want" ] && [ -n "$delay" ]; then
+			delay=$((delay * 2))
+			[ "$delay" -gt 3600 ] && delay=3600
+		else
+			delay=300
+			logger -t "OMR-VPS" "VXLAN can't be set up with server ${servername} yet, next try in ${delay}s"
+		fi
+		echo "$now $delay $want" > "$marker"
+	else
+		rm -f "$marker"
+	fi
+}
+
+_set_vxlan_sync() {
+	local tokenserver user_permission
 	vps_config=""
 	tokenserver=$(_get_token $servername)
 	_split_tokenserver "$tokenserver"

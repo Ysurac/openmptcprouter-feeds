@@ -121,6 +121,28 @@ _vps_retry_reset() {
 	EOF
 }
 
+# Whether openmptcprouter-vps's set_vxlan is waiting before its next try on
+# the server it would act on (the current or master one): its marker
+# /tmp/.omr-vps-vxlan-<server> holds "<last try> <delay> <wanted setting>",
+# and a change of the setting makes it try at once.
+_vxlan_backing_off() {
+	local marker server last delay wanted want now
+	want="$(uci -q get openmptcprouter.settings.vxlan)"
+	[ "$want" = "1" ] || want=0
+	now=$(date +%s)
+	for marker in /tmp/.omr-vps-vxlan-*; do
+		[ -f "$marker" ] || continue
+		server="${marker#/tmp/.omr-vps-vxlan-}"
+		[ "$(uci -q -P /var/state get "openmptcprouter.${server}.current")" = "1" ] ||
+			[ "$(uci -q get "openmptcprouter.${server}.master")" = "1" ] || continue
+		last="" delay="" wanted=""
+		read -r last delay wanted < "$marker" 2>/dev/null
+		case "$last$delay" in ''|*[!0-9]*) continue ;; esac
+		[ "$wanted" = "$want" ] && [ $((now - last)) -lt "$delay" ] && return 0
+	done
+	return 1
+}
+
 # Token retry, openmptcprouter-vps restart and firewall push, from the flags
 # of the enabled servers only
 _vps_watchdog() {
@@ -374,8 +396,11 @@ if [ -n "$(printf '%s\n' "$_omr_snapshot" | awk -F= '/password/ { gsub("\047",""
 
 	# VXLAN is toggled purely via UCI (openmptcprouter.settings.vxlan) but only
 	# takes effect once openmptcprouter-vps pushes/pulls it against the VPS, so
-	# catch a UCI flag that drifted from the actual omrvxlan interface state
-	if [ "$(pgrep -f openmptcprouter-vps)" = "" ]; then
+	# catch a UCI flag that drifted from the actual omrvxlan interface state.
+	# set_vxlan backs off on its own when the tunnel can't be set up (see
+	# _set_vxlan_service in openmptcprouter-vps): while it waits, this logged
+	# and slept 5 s every minute for a call that did nothing.
+	if [ "$(pgrep -f openmptcprouter-vps)" = "" ] && ! _vxlan_backing_off; then
 		if [ "$(uci -q get openmptcprouter.settings.vxlan)" = "1" ] && [ -z "$(uci -q get network.omrvxlan)" ]; then
 			_log "VXLAN enabled but not set up, enable it..."
 			/etc/init.d/openmptcprouter-vps set_vxlan >/dev/null 2>&1
