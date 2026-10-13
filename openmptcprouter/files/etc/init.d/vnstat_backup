@@ -22,17 +22,24 @@ _chk_omrquota() {
 	[ "$enabled" = "1" ] && backup="true"
 }
 
-backup_database() {
+_backup_enabled() {
 	backup="false"
 	config_load omr-quota
 	config_foreach _chk_omrquota interface
 	[ "$(uci -q get openmptcprouter.settings.vnstat_backup)" = "1" ] && backup="true"
-	if [ "$backup" = "true" ]; then
+	[ "$backup" = "true" ]
+}
+
+backup_database() {
+	if _backup_enabled; then
 		if [ ! -d $VNSTAT_DIR ]; then
 			logger -t $LOGGER_TAG -p err "cannot backup, data directory $VNSTAT_DIR does not exist (yet)"
 		else
 			logger -t $LOGGER_TAG -p info "backing up database"
-			/bin/tar -zcf $BACKUP_FILE -C $VNSTAT_DIR .
+			# A power cut while tar writes left a truncated archive in
+			# place of the last good one
+			/bin/tar -zcf $BACKUP_FILE.tmp -C $VNSTAT_DIR . && mv -f $BACKUP_FILE.tmp $BACKUP_FILE
+			rm -f $BACKUP_FILE.tmp
 		fi
 	fi
 }
@@ -45,7 +52,12 @@ restore_database() {
 	fi
 }
  
+# The package's postinst runs start too: restoring then put the archive,
+# hours or days old, over the live database. Only at boot, while vnstatd
+# (START=60) has not created it yet, and only when backups are on.
 start() {
+	[ -n "$(ls -A $VNSTAT_DIR 2>/dev/null)" ] && return 0
+	_backup_enabled || return 0
 	restore_database
 }
  
