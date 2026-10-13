@@ -477,9 +477,14 @@ if [ "$multipath_config" = "master" ]; then
 		ip -6 route replace default via $OMR_TRACKER_DEVICE_GATEWAY6 dev $OMR_TRACKER_DEVICE table 6991337 $initcwrwnd >/dev/null 2>&1
 		#ip -6 route flush cache >/dev/null 2>&1
 	fi
+	# Hourly refresh only. A server left with admin_error or get_config is
+	# retried by omr-schedule's VPS watchdog, with a back-off: restarting
+	# the whole sync from here on every cycle while a VPS stayed unreachable
+	# or refused the key logged in back to back, until its fail2ban banned
+	# the router
 	lc_jitter=$((10 + RANDOM % 10))
 	_omr_uci_get_var _lc "openmptcprouter.$OMR_TRACKER_INTERFACE.lc"
-	if { [ -n "$OMR_TRACKER_INTERFACE" ] && [ -z "$_lc" ]; } || [ $((_omr_now + lc_jitter - ${_lc:-0})) -gt 3600 ] || _omr_uci_has "get_config='1'" || _omr_uci_has "admin_error='1'"; then
+	if { [ -n "$OMR_TRACKER_INTERFACE" ] && [ -z "$_lc" ]; } || [ $((_omr_now + lc_jitter - ${_lc:-0})) -gt 3600 ]; then
 		[ -z "$(pgrep -f openmptcprouter-vps)" ] && {
 			_omr_detach /etc/init.d/openmptcprouter-vps restart
 			omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" lc "$_omr_now"
@@ -515,9 +520,10 @@ if [ "$master_setting" = "balancing" ] && { [ "$multipath_config" = "on" ] || [ 
 	# port-forward/redirect state (only the master WAN's own up-event did,
 	# incidentally, via the block above) - mirror that lc-staleness-gated
 	# resync here so a secondary WAN flap also repairs port-forwarding.
+	# Servers in error are omr-schedule's, as above.
 	lc_jitter=$((10 + RANDOM % 10))
 	_omr_uci_get_var _lc "openmptcprouter.$OMR_TRACKER_INTERFACE.lc"
-	if { [ -n "$OMR_TRACKER_INTERFACE" ] && [ -z "$_lc" ]; } || [ $((_omr_now + lc_jitter - ${_lc:-0})) -gt 3600 ] || _omr_uci_has "get_config='1'" || _omr_uci_has "admin_error='1'"; then
+	if { [ -n "$OMR_TRACKER_INTERFACE" ] && [ -z "$_lc" ]; } || [ $((_omr_now + lc_jitter - ${_lc:-0})) -gt 3600 ]; then
 		[ -z "$(pgrep -f openmptcprouter-vps)" ] && {
 			_omr_detach /etc/init.d/openmptcprouter-vps restart
 			omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" lc "$_omr_now"
