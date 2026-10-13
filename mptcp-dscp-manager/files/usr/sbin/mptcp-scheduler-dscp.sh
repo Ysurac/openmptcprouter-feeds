@@ -12,9 +12,14 @@
 #    to that WAN and stays stable across the router's WAN IP changing).
 #    One id per address of the WAN: a dual-stack WAN has its metric for
 #    IPv4 and +128/+192 for IPv6 (see the router's multipath script).
+# The IPv6 endpoints of the router's WAN go to dscp_local_ids by their
+# endpoint ids: the scheduler reads 127.0.0.6 as the local IPv4 address of
+# every native IPv6 subflow, so dscp_iface never matched one.
 
 MAP_PATH="/sys/fs/bpf/dscp_iface"
 MAP_PATH2="/sys/fs/bpf/dscp_remote_ids"
+# Absent with an mptcp-bpf-dscp older than the IPv6 support
+MAP_PATH3="/sys/fs/bpf/dscp_local_ids"
 # Single id per class, pinned by an mptcp-bpf-dscp older than the id set
 MAP_PATH2_OLD="/sys/fs/bpf/dscp_remote_id"
 
@@ -111,10 +116,11 @@ get_value_bytes() {
 		sed -n 's/.*"value":\[\([^]]*\)\].*/\1/p' | tr -d '"' | tr ',' ' '
 }
 
-# The ids of the dscp_remote_ids entry for key $1 (hex), space separated
+# The ids of the id set entry for key $1 (hex) of the map $2 (default
+# dscp_remote_ids), space separated
 get_remote_ids_from_key() {
 	local byte val bit idx=0 ids=""
-	for byte in $(get_value_bytes "$1" "$MAP_PATH2"); do
+	for byte in $(get_value_bytes "$1" "${2:-$MAP_PATH2}"); do
 		val=$((byte))
 		bit=0
 		while [ "$bit" -lt 8 ]; do
@@ -160,6 +166,30 @@ get_bpf_ep_ip_from_iface() {
 	return 0
 }
 
+# The endpoint ids of the IPv6 endpoints of device $1
+get_ep_ids6_from_iface() {
+	ip mptcp endpoint show | awk -v dev="$1" '
+		$1 ~ /:/ {
+			id = ""; d = ""
+			for (i = 2; i < NF; i++) {
+				if ($i == "id") id = $(i + 1)
+				if ($i == "dev") d = $(i + 1)
+			}
+			if (id != "" && d == dev) print id
+		}'
+}
+
+# Delete the entry of the DSCP class $2 (hex) of every map of the pinned
+# paths $1...
+del_keys() {
+	local key="$1" map
+	shift
+	for map in "$@"; do
+		[ -e "$map" ] && bpftool map delete pinned "$map" key hex $key >/dev/null 2>&1
+	done
+	return 0
+}
+
 usage() {
 	echo "Usage:"
 	echo "  $0 show                    # Show all configured DSCP pins"
@@ -171,6 +201,7 @@ usage() {
 	echo "  $0 debug                    # Show live BPF trace output"
 	echo ""
 	echo "<dscp> can be a class name (cs0-cs7, af11-af43, ef, le) or a raw 0-63 value."
+	echo "An interface pin covers its IPv4 endpoint and the ids of its IPv6 endpoints."
 	echo ""
 	echo "Use 'set <dscp> <interface>' on the router, where each WAN has its own local"
 	echo "endpoint IP. Use 'set <dscp> id <N>...' on the server (VPS) side, where every"
@@ -197,6 +228,10 @@ show)
 			fi
 			BPF_REMOTE_ID=$(get_remote_ids "$KEY_HEX")
 			[ -n "$BPF_REMOTE_ID" ] && echo "dscp=$name (${val}) remote_id=$BPF_REMOTE_ID"
+			if [ -e "$MAP_PATH3" ]; then
+				BPF_LOCAL_ID=$(get_remote_ids_from_key "$KEY_HEX" "$MAP_PATH3")
+				[ -n "$BPF_LOCAL_ID" ] && echo "dscp=$name (${val}) local_id=$BPF_LOCAL_ID"
+			fi
 		done
 		exit 0
 	elif [ "$#" -eq 2 ]; then
@@ -205,7 +240,9 @@ show)
 		KEY_HEX=$(to_byte_hex "$val")
 		BPF_EP_IP=$(get_value_from_key "$KEY_HEX" "$MAP_PATH")
 		BPF_REMOTE_ID=$(get_remote_ids "$KEY_HEX")
-		if [ -z "$BPF_EP_IP" ] && [ -z "$BPF_REMOTE_ID" ]; then
+		BPF_LOCAL_ID=""
+		[ -e "$MAP_PATH3" ] && BPF_LOCAL_ID=$(get_remote_ids_from_key "$KEY_HEX" "$MAP_PATH3")
+		if [ -z "$BPF_EP_IP" ] && [ -z "$BPF_REMOTE_ID" ] && [ -z "$BPF_LOCAL_ID" ]; then
 			echo "dscp=$2 (${val}) not pinned"
 			exit 0
 		fi
@@ -214,6 +251,7 @@ show)
 			echo "dscp=$2 (${val}) endpoint_ip=$EP_IP"
 		fi
 		[ -n "$BPF_REMOTE_ID" ] && echo "dscp=$2 (${val}) remote_id=$BPF_REMOTE_ID"
+		[ -n "$BPF_LOCAL_ID" ] && echo "dscp=$2 (${val}) local_id=$BPF_LOCAL_ID"
 		exit 0
 	else
 		usage
@@ -268,12 +306,10 @@ set)
 	[ -z "$val" ] && { echo "Unknown DSCP class '$2'"; exit 1; }
 	IFACE="$3"
 
-	found=0
 	# NOT "get_bpf_ep_ip_from_iface ... | while read ...": piping into a
 	# while loop runs the loop in a SUBSHELL under POSIX sh (dash, this
-	# script's own #!/bin/sh on Debian -- confirmed live, "found"'s
-	# post-loop check needs to see what the loop body set), losing the
-	# "found=1" assignment the moment the loop exits. The original used
+	# script's own #!/bin/sh on Debian -- confirmed live), so its
+	# "exit 1" on an update error only left that subshell. The original used
 	# bash-only "done < <(...)" process substitution to dodge that,
 	# which fails outright on a real POSIX sh with "Syntax error:
 	# redirection unexpected" (also confirmed live) -- process
@@ -282,10 +318,26 @@ set)
 	# heredoc keeps the loop in the current shell (no subshell) while
 	# staying POSIX.
 	BPF_EP_IPS_LIST="$(get_bpf_ep_ip_from_iface "$IFACE")"
+	EP_IDS6="$(get_ep_ids6_from_iface "$IFACE")"
+	if [ -z "$BPF_EP_IPS_LIST" ] && [ -z "$EP_IDS6" ]; then
+		echo "Interface '$IFACE' not found"
+		exit 1
+	fi
+	KEY_HEX=$(to_byte_hex "$val")
+	# The class goes to this WAN only: a family it has no endpoint of loses
+	# the pin it may still have to another WAN
+	if [ -n "$EP_IDS6" ] && [ -e "$MAP_PATH3" ]; then
+		if ! bpftool map update pinned "$MAP_PATH3" key hex $KEY_HEX value hex $(ids_to_set_hex $EP_IDS6); then
+			echo "Error updating map"
+			exit 1
+		fi
+		echo "DSCP pin updated: dscp=$2 (${val}) interface=$IFACE endpoint_id="$EP_IDS6
+	else
+		del_keys "$KEY_HEX" "$MAP_PATH3"
+	fi
+	[ -n "$BPF_EP_IPS_LIST" ] || del_keys "$KEY_HEX" "$MAP_PATH"
 	while read -r BPF_EP_IP; do
 		[ -z "$BPF_EP_IP" ] && continue
-		found=1
-		KEY_HEX=$(to_byte_hex "$val")
 		VALUE_HEX=$(to_le_hex "$BPF_EP_IP")
 
 		if ! bpftool map update pinned "$MAP_PATH" key hex $KEY_HEX value hex $VALUE_HEX; then
@@ -299,10 +351,6 @@ set)
 		$BPF_EP_IPS_LIST
 	EOF
 
-	if [ "$found" -eq 0 ]; then
-		echo "Interface '$IFACE' not found"
-		exit 1
-	fi
 	exit 0
 	;;
 
@@ -314,6 +362,7 @@ del)
 	bpftool map delete pinned "$MAP_PATH" key hex $KEY_HEX >/dev/null 2>&1
 	[ -e "$MAP_PATH2" ] && bpftool map delete pinned "$MAP_PATH2" key hex $KEY_HEX >/dev/null 2>&1
 	[ -e "$MAP_PATH2_OLD" ] && bpftool map delete pinned "$MAP_PATH2_OLD" key hex $KEY_HEX >/dev/null 2>&1
+	del_keys "$KEY_HEX" "$MAP_PATH3"
 	echo "DSCP pin removed: dscp=$2 (${val})"
 	exit 0
 	;;
@@ -328,14 +377,17 @@ prune)
 		val=$(dscp_to_val "$name")
 		[ -n "$val" ] && keep="$keep $val"
 	done
-	for hex in $(bpftool -j map dump pinned "$MAP_PATH" 2>/dev/null | \
-		grep -o '"key":\["0x[0-9a-fA-F]*"' | sed 's/.*"0x//;s/"//'); do
-		val=$((0x$hex))
-		case " $keep " in
-			*" $val "*) continue ;;
-		esac
-		bpftool map delete pinned "$MAP_PATH" key hex $(to_byte_hex "$val") >/dev/null 2>&1 && \
-			echo "DSCP pin removed: dscp=$val"
+	for map in "$MAP_PATH" "$MAP_PATH3"; do
+		[ -e "$map" ] || continue
+		for hex in $(bpftool -j map dump pinned "$map" 2>/dev/null | \
+			grep -o '"key":\["0x[0-9a-fA-F]*"' | sed 's/.*"0x//;s/"//'); do
+			val=$((0x$hex))
+			case " $keep " in
+				*" $val "*) continue ;;
+			esac
+			bpftool map delete pinned "$map" key hex $(to_byte_hex "$val") >/dev/null 2>&1 && \
+				echo "DSCP pin removed: dscp=$val"
+		done
 	done
 	exit 0
 	;;

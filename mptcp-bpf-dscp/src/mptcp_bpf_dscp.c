@@ -25,6 +25,9 @@
  *                    <N>...`. A set, as a dual-stack WAN has one id
  *                    per address (its metric for IPv4, +128/+192 for
  *                    IPv6, see the router's multipath script).
+ *  - dscp_local_ids: DSCP -> set of local endpoint ids, for the router's
+ *                    IPv6 subflows, whose skc_rcv_saddr is 127.0.0.6
+ *                    whatever the WAN. Set together with dscp_iface.
  *
  * Why weighted instead of exclusive: an earlier version picked the
  * pinned subflow outright whenever mptcp_subflow_active() reported it
@@ -39,7 +42,7 @@
  * accumulator algorithm either way -- won 9/10 trials on the identical
  * setup, because a subflow that misses one round doesn't lose the pin
  * permanently: its accumulated weight (dscp_cw_map, keyed by
- * (msk, local_ip), same design as bpf_weight_rr's subflow_cw_map)
+ * (msk, subflow), same design as bpf_weight_rr's subflow_cw_map)
  * just keeps growing untouched while it's inactive, and it resumes
  * dominating the instant it's active again. Same DSCP_PIN_WEIGHT
  * ratio as an exclusive pin when the pinned subflow is consistently
@@ -49,6 +52,7 @@
 
 #include "mptcp_bpf.h"
 #include <bpf/bpf_tracing.h>
+#include <bpf/bpf_endian.h>
 #include "limits.h"
 
 char _license[] SEC("license") = "GPL";
@@ -83,6 +87,9 @@ char _license[] SEC("license") = "GPL";
 #define DSCP_NEUTRAL_WEIGHT	1
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
+
+/* skc_rcv_saddr of every native IPv6 socket (tcp_v6_connect() sets it) */
+#define LOOPBACK4_IPV6		bpf_htonl(0x7f000006)
 
 extern bool mptcp_subflow_active(struct mptcp_subflow_context *subflow) __ksym;
 extern void mptcp_set_timeout(struct sock *sk) __ksym;
@@ -129,27 +136,33 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } dscp_remote_ids SEC(".maps");
 
-/* local_ip alone is NOT a safe per-subflow discriminator here: on the
- * VPS (dscp_remote_ids pinning), every subflow shares the SAME local_ip
- * (the VPS has one address; only remote_id differs per router WAN) --
- * confirmed live via bpf_printk-instrumented debug builds + trace_pipe
- * on the VPS (bench, 2026-08-07, see mptcp-dscp-weight-vps-sync-feature
- * memory): with only local_ip in the key, all candidates for a given
- * msk collided onto the SAME dscp_cw_map entry and clobbered each
- * other's accumulator within the same get_send call, so "best_idx"
- * degenerated to whichever subflow bpf_for_each happened to enumerate
- * LAST -- not the one with the highest weight. Confirmed win_pin=1 in
- * only 0/431 sampled real-traffic decisions with local_ip alone, vs.
- * 408/409 once remote_port was added below. remote_port (skc_dport)
- * differs per subflow on the VPS side (each router WAN uses a distinct
- * ephemeral source port) while local_ip differs per subflow on the
- * router side (dscp_iface pinning) -- keying on both together is
- * unique on either end.
+/* DSCP (0-63) -> local endpoint ids, same set layout as dscp_remote_ids.
+ * Router-side pins of IPv6 subflows: dscp_iface keys on the local IPv4
+ * address and every native IPv6 socket has 127.0.0.6 there, so no IPv6
+ * subflow ever matched a pin. Populated by mptcp-scheduler-dscp.sh set
+ * <dscp> <interface> with the ids of the WAN's IPv6 endpoints; empty on the
+ * VPS. Looked up only for an IPv6 subflow, inside the subflow loop, so it
+ * adds no pointer that stays live across the loop (see MAX_SUBFLOWS).
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__type(key, __u8);
+	__type(value, struct dscp_remote_ids);
+	__uint(max_entries, 64);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} dscp_local_ids SEC(".maps");
+
+/* The SWRR state of one subflow. It was keyed by (local_ip, remote_port),
+ * which is unique for IPv4 subflows only: local_ip is 127.0.0.6 for every
+ * native IPv6 socket and remote_port is the VPS's one port on the router,
+ * so all the IPv6 subflows of a connection shared one accumulator, clobbered
+ * it within the same get_send call, and the one enumerated last won. The
+ * subflow socket itself is unique on either end. (local_ip alone had already
+ * collided on the VPS, where every subflow has the same local address.)
  */
 struct dscp_cw_key {
 	__u64 msk;
-	__u32 local_ip;
-	__be16 remote_port;
+	__u64 ssk;
 };
 
 /* Per-(connection, WAN) smooth weighted round-robin state -- identical
@@ -161,7 +174,10 @@ struct dscp_cw_key {
  * mptcp-dscp-weight-vps-sync-feature memory -- so there's no upgrade
  * path to preserve, but the key layout changed and LIBBPF_PIN_BY_NAME
  * would otherwise fail to reuse a stale pinned map with the old
- * key_size) rather than reusing the old "dscp_cw_map" name.
+ * key_size) rather than reusing the old "dscp_cw_map" name. The (msk, ssk)
+ * key kept the size of the (msk, local_ip, remote_port) one, so the name
+ * stays: an entry left from the old layout can't match a socket address and
+ * ages out.
  */
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -173,8 +189,6 @@ struct {
 
 struct dscp_entry {
 	struct sock *ssk;
-	__u32 local_ip;
-	__be16 remote_port;
 	__u32 weight;
 	__s32 cw;
 	__u8 is_backup;
@@ -191,6 +205,45 @@ static __always_inline bool remote_id_matches(struct mptcp_subflow_context *subf
 	__u8 id = subflow->remote_id;
 
 	return desired->ids[id >> 3] & (1 << (id & 7));
+}
+
+/* Whether the local endpoint id of the IPv6 subflow is pinned to the class
+ * dscp. The initial subflow has the address id 0 whatever its endpoint,
+ * which the in-kernel path manager keeps in mpc_endpoint_id.
+ */
+static __always_inline bool local_id_pinned(const struct mptcp_sock *msk,
+					    const struct mptcp_subflow_context *subflow,
+					    __u8 dscp)
+{
+	const struct dscp_remote_ids *desired;
+	__u8 id = subflow->local_id;
+
+	if (!id)
+		id = msk->mpc_endpoint_id;
+	desired = bpf_map_lookup_elem(&dscp_local_ids, &dscp);
+	return desired && (desired->ids[id >> 3] & (1 << (id & 7)));
+}
+
+/* Whether a non-backup subflow is active, even one that cannot take data
+ * right now. A walk of its own, run only when the main one found no
+ * non-backup subflow to send on: counting them in the main walk multiplied
+ * its verifier states past the 1M instruction limit (bpf_weight_rr).
+ */
+static __always_inline bool has_active_nonbackup(struct sock *sk)
+{
+	struct mptcp_subflow_context *subflow;
+	bool found = false;
+
+	bpf_for_each(mptcp_subflow, subflow, sk) {
+		if (subflow->backup || subflow->request_bkup)
+			continue;
+		if (mptcp_subflow_active(subflow)) {
+			found = true;
+			break;
+		}
+	}
+
+	return found;
 }
 
 static __always_inline bool tcp_write_queue_empty(struct sock *sk)
@@ -251,14 +304,6 @@ int BPF_PROG(bpf_dscp_get_send, struct mptcp_sock *msk)
 		if (!mptcp_subflow_active(subflow))
 			continue;
 
-		pace = subflow->avg_pacing_rate;
-		if (!pace) {
-			subflow->avg_pacing_rate = cur->sk_pacing_rate;
-			pace = subflow->avg_pacing_rate;
-			if (!pace)
-				continue;
-		}
-
 		/* Direct member access on this trusted pointer, like
 		 * bpf_weight_rr_get_send's identical local_ip read -- NOT
 		 * BPF_CORE_READ()/local_ip_matches() (which does its own,
@@ -271,11 +316,33 @@ int BPF_PROG(bpf_dscp_get_send, struct mptcp_sock *msk)
 		local_ip = cur->__sk_common.skc_rcv_saddr;
 		is_pin_target = (desired_ip && local_ip == *desired_ip) ||
 				(desired_remote_ids && remote_id_matches(subflow, desired_remote_ids));
+		if (!is_pin_target && local_ip == LOOPBACK4_IPV6)
+			is_pin_target = local_id_pinned(msk, subflow, dscp);
+
+		/* Only subflows that can take data right now are candidates,
+		 * as in bpf_weight_rr (f2abf1d5): a winner whose send buffer
+		 * was full was debited its turn and then dropped by the check
+		 * after the loop, so the round produced nothing. The pin
+		 * target is kept when it is merely full: the round then waits
+		 * for it (-1) instead of moving its class to another WAN
+		 * whenever it is saturated. A stale one is screened like the
+		 * others, so a class still fails over off a dead path.
+		 */
+		if (subflow->stale ||
+		    (!is_pin_target && !bpf_sk_stream_memory_free(cur)))
+			continue;
+
+		pace = subflow->avg_pacing_rate;
+		if (!pace) {
+			subflow->avg_pacing_rate = cur->sk_pacing_rate;
+			pace = subflow->avg_pacing_rate;
+			if (!pace)
+				continue;
+		}
+
 		weight = is_pin_target ? DSCP_PIN_WEIGHT : DSCP_NEUTRAL_WEIGHT;
 
 		entries[nr_total].ssk = cur;
-		entries[nr_total].local_ip = local_ip;
-		entries[nr_total].remote_port = cur->__sk_common.skc_dport;
 		entries[nr_total].weight = weight;
 		entries[nr_total].is_backup = is_backup;
 		nr_total++;
@@ -289,14 +356,18 @@ int BPF_PROG(bpf_dscp_get_send, struct mptcp_sock *msk)
 		return -1;
 
 	/* Prefer active subflows; fall back to backup if none active --
-	 * same convention as bpf_weight_rr.
+	 * same convention as bpf_weight_rr. Only then: the screen above also
+	 * drops active subflows that are merely full, and the kernel's
+	 * mptcp_subflow_get_send() waits for those rather than loading the
+	 * backup WAN with every saturating upload.
 	 */
 	use_backup = (nr_active == 0) ? 1 : 0;
+	if (use_backup && has_active_nonbackup(sk))
+		return -1;
 
 	/* Smooth weighted round-robin (nginx-style), identical algorithm to
 	 * bpf_weight_rr_get_send: every candidate's current-weight
-	 * (persisted in dscp_cw_map_v2, keyed by (msk, local_ip,
-	 * remote_port)) is bumped by its own weight and written back in
+	 * (persisted in dscp_cw_map_v2, keyed by (msk, ssk)) is bumped by its own weight and written back in
 	 * this same pass, while total_weight accumulates alongside it;
 	 * the winner isn't known
 	 * until the pass finishes, so its debit (cw -= total_weight) is
@@ -328,8 +399,7 @@ int BPF_PROG(bpf_dscp_get_send, struct mptcp_sock *msk)
 		total_weight += entries[i].weight;
 
 		key.msk = msk_key;
-		key.local_ip = entries[i].local_ip;
-		key.remote_port = entries[i].remote_port;
+		key.ssk = (__u64)(unsigned long)entries[i].ssk;
 		cw_ptr = bpf_map_lookup_elem(&dscp_cw_map_v2, &key);
 		cw = cw_ptr ? *cw_ptr : 0;
 		cw += (__s32)entries[i].weight;
@@ -360,8 +430,7 @@ int BPF_PROG(bpf_dscp_get_send, struct mptcp_sock *msk)
 		__s32 cw = entries[best_idx].cw - (__s32)total_weight;
 
 		key.msk = msk_key;
-		key.local_ip = entries[best_idx].local_ip;
-		key.remote_port = entries[best_idx].remote_port;
+		key.ssk = (__u64)(unsigned long)entries[best_idx].ssk;
 		bpf_map_update_elem(&dscp_cw_map_v2, &key, &cw, BPF_ANY);
 
 		ssk = entries[best_idx].ssk;
