@@ -704,11 +704,35 @@ _oldest_pid() {
 	echo "$oldest"
 }
 
+# Whether the tracker of interface $1 had been looked at by this watchdog,
+# and omr-tracker's init chose not to start it, since the last change of its
+# config. The same interfaces as _launch_tracker in the omr-tracker init
+# are skipped by name or setting below; for the rest (no hosts to ping, ...)
+# the init itself is the reference: when it defines no procd instance, the
+# tracker is not retried, with a 10 s wait each time, every minute, but
+# once an hour only.
+_omrtracker_skipped() {
+	local mark="/tmp/omr-tracker-skipped-$1" since
+	[ -f "$mark" ] && [ "$mark" -nt /etc/config/omr-tracker ] && [ "$mark" -nt /etc/config/network ] || return 1
+	read -r since < "$mark" 2>/dev/null
+	case "$since" in ''|*[!0-9]*) return 1 ;; esac
+	[ $(($(date +%s) - since)) -lt 3600 ]
+}
+
 restart_omrtracker() {
 	config_get multipath "$1" multipath
 	config_get ifenabled "$1" auto
 	{ [ -z "$multipath" ] || [ "$multipath" = "off" ]; } && return
 	[ "$ifenabled" = "0" ] && return
+	case "$1" in
+		loopback|lan*|if0*|*_6) return ;;
+	esac
+	local disabled tracker_enabled
+	config_get disabled "$1" disabled
+	[ "$disabled" = "1" ] && return
+	tracker_enabled=$(uci -q get "omr-tracker.$1.enabled")
+	[ -z "$tracker_enabled" ] && tracker_enabled=$(uci -q get omr-tracker.defaults.enabled)
+	[ "$tracker_enabled" = "0" ] && return
 	local daemons daemon_count keep pid
 	daemons=$(_tracker_pids "$1")
 	daemon_count=$(echo $daemons | wc -w)
@@ -726,6 +750,7 @@ restart_omrtracker() {
 		return
 	}
 	[ "$daemon_count" -eq 1 ] && return
+	_omrtracker_skipped "$1" && return
 	# Atomic lock to prevent concurrent starts from overlapping cron runs
 	local lockdir="/tmp/omr-tracker-lock-${1}"
 	if ! mkdir "$lockdir" 2>/dev/null; then
@@ -738,7 +763,14 @@ restart_omrtracker() {
 	fi
 	/etc/init.d/omr-tracker enable
 	/etc/init.d/omr-tracker start_interface "$1"
-	sleep 10
+	local instances
+	if instances="$(ubus call service list '{"name":"omr-tracker"}' 2>/dev/null)" &&
+	   [ -z "$(printf '%s' "$instances" | jsonfilter -q -e "@['omr-tracker'].instances['$1']")" ]; then
+		date +%s > "/tmp/omr-tracker-skipped-$1"
+	else
+		rm -f "/tmp/omr-tracker-skipped-$1"
+		sleep 10
+	fi
 	rmdir "$lockdir" 2>/dev/null
 }
 
