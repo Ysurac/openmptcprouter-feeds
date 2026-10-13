@@ -195,10 +195,16 @@ if [ ! -f /etc/crontabs/root ] || [ "$(cat /etc/crontabs/root | grep bypass)" = 
 fi
 
 # Migrate sections with no interface set to 'default' (skip if already a new-format config)
+# A rule with a DSCP class and no interface is a new-format "DSCP marking
+# only" rule (no routing change), which an old-format rule never was: the
+# check above is no proof of a new-format config (no rule may use
+# 'default'), and these rules were turned into default bypass rules on
+# every upgrade.
 if ! uci -q show omr-bypass | grep -q "\.interface='default'"; then
 	_need_commit=0
 	for _type in domains ips dest_port src_port macs lan_ip asns dpis categories; do
 		for _sec in $(uci -q show omr-bypass | grep "^omr-bypass\.[^.=]*=${_type}$" | cut -d= -f1); do
+			[ -n "$(uci -q get "${_sec}.dscp")" ] && continue
 			_intf=$(uci -q get "${_sec}.interface" 2>/dev/null)
 			if [ -z "$_intf" ]; then
 				uci -q set "${_sec}.interface=default"
