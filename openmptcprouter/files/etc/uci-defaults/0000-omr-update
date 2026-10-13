@@ -3,7 +3,18 @@
 cd /etc/uci-defaults || exit 0
 # Keep dnsmasq ipset with old method
 rm -f /etc/uci-defaults/50-dnsmasq-migrate-ipset.sh
-uci -q del dhcp.@dnsmasq[0].ipset
+# omr-bypass' 41_omr-bypass turns the entries of the old omr-bypass into
+# bypass domains, and removes them: deleted here first, it never saw them
+if [ -f /etc/uci-defaults/41_omr-bypass ]; then
+	for entry in $(uci -q get dhcp.@dnsmasq[0].ipset); do
+		case "$entry" in
+			/*/ss_rules_dst_bypass_all) ;;
+			*) uci -q del_list dhcp.@dnsmasq[0].ipset="$entry" ;;
+		esac
+	done
+else
+	uci -q del dhcp.@dnsmasq[0].ipset
+fi
 
 source /etc/os-release
 
