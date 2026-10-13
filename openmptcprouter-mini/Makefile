@@ -29,9 +29,10 @@ MY_DEPENDS := \
     arptables \
     bind-dig \
     libnetfilter-conntrack ip-full \
-    iptables-mod-iface iptables-mod-ipmark iptables-mod-hashlimit iptables-mod-condition iptables-mod-trace iptables-mod-conntrack-extra iptables-mod-account \
-    kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra iptables-mod-extra \
-    iptables-mod-ipsec kmod-crypto-authenc kmod-ipsec kmod-ipsec4 kmod-ipsec6 kmod-ipt-ipsec \
+    LINUX_5_4:iptables-mod-iface LINUX_5_4:iptables-mod-ipmark LINUX_5_4:iptables-mod-hashlimit LINUX_5_4:iptables-mod-condition LINUX_5_4:iptables-mod-trace LINUX_5_4:iptables-mod-conntrack-extra LINUX_5_4:iptables-mod-account \
+    kmod-nf-nat kmod-nf-nathelper kmod-nf-nathelper-extra LINUX_5_4:iptables-mod-extra \
+    LINUX_5_4:iptables-mod-ipsec kmod-crypto-authenc kmod-ipsec kmod-ipsec4 kmod-ipsec6 LINUX_5_4:kmod-ipt-ipsec \
+    !LINUX_5_4:iptables-nft \
     wireless-tools \
     libiwinfo-lua \
     ca-bundle ca-certificates libustream-openssl \
@@ -42,10 +43,12 @@ MY_DEPENDS := \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail luci-app-upnp \
     luci-app-opkg \
     luci-app-uhttpd \
-    luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
+    LINUX_5_4:luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
     luci-proto-openvpn \
-    macvlan \
-    shadowsocks-libev-ss-server shadowsocks-libev-ss-tunnel \
+    kmod-macvlan \
+    shadowsocks-libev-ss-server shadowsocks-libev-ss-redir !LINUX_5_4:shadowsocks-libev-ss-rules-nft shadowsocks-libev-ss-tunnel \
+    shadowsocks-rust-sslocal !LINUX_5_4:shadowsocks-rust-config-nft luci-app-shadowsocks-rust \
+    omr-schedule \
     omr-6in4 ip6tables-mod-nat luci-proto-ipv6 6to4 6in4 6rd ip6tables \
     iftop \
     htop \
@@ -77,7 +80,7 @@ MY_DEPENDS := \
     luci-app-mlvpn mlvpn 464xlat kmod-zram kmod-swconfig swconfig kmod-ipt-nat kmod-ipt-nat6 luci-app-https-dns-proxy iptables-mod-ipopt ss \
     luci-app-acl block-mount blockd fstools luci-app-shutdown libwebp luci-proto-gre
 
-OMR_SUPPORTED_LANGS := en
+OMR_SUPPORTED_LANGS :=
 
 define Package/$(PKG_NAME)
 SECTION:=OMR
