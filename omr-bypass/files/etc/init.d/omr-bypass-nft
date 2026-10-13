@@ -824,6 +824,31 @@ _dnsipset_add() {
 	return 0
 }
 
+# _valid_domain <name>: a domain dnsmasq and dig can take, in the forms the
+# Domains table accepts: a host name, optionally with a leading "." or "*."
+# and a trailing "." or ".*" (TLD wildcard). Anything else went to dnsmasq
+# as is: a pasted URL ("https://x.com", "x.com/") made an nftset= entry
+# with an empty domain, which matches every name, and a non-ASCII or
+# over-long label stopped dnsmasq from starting (no DNS, no DHCP).
+_valid_domain() {
+	local d="$1" l
+	case "$d" in
+		''|*[!A-Za-z0-9.*_-]*) return 1 ;;
+	esac
+	d="${d#\*.}"
+	d="${d#.}"
+	d="${d%.\*}"
+	d="${d%.}"
+	case "$d" in
+		''|*\**|.*|*.|*..*) return 1 ;;
+	esac
+	[ "${#d}" -le 253 ] || return 1
+	for l in $(echo "$d" | tr '.' ' '); do
+		[ "${#l}" -le 63 ] || return 1
+	done
+	return 0
+}
+
 _bypass_domains() {
 	local domain
 	local intf
@@ -844,6 +869,10 @@ _bypass_domains() {
 	[ "$intf" = "default" ] && intf="all"
 	[ "$enabled" = "0" ] && return
 	[ -z "$domain" ] && return
+	if ! _valid_domain "$domain"; then
+		logger -t "omr-bypass" "Skipping invalid bypass domain '$domain'"
+		return
+	fi
 	#[ -z "$family" ] && family="ipv4ipv6"
 	#[ -z "$noipv6" ] && noipv6="1"
 	case "$domain" in
@@ -887,18 +916,18 @@ _bypass_domain() {
 		ipv6) _v4="" _fk="_ipv6" noipv6="0" ;;
 	esac
 	if [ -n "$domain" ]; then
-		domain=$(echo $domain | sed 's:^\.::')
+		domain="${domain#.}"
 		#logger -t "omr-bypass" "Get IPs of $domain..."
 		if [ -z "$RELOAD" ]; then
 			if [ -n "$_v4" ]; then
-				resolve=$(dig a +timeout=1 +tries=1 +nocmd +noall +answer $domain | grep -v CNAME | awk '{print $5}')
+				resolve=$(dig a +timeout=1 +tries=1 +nocmd +noall +answer "$domain" | grep -v CNAME | awk '{print $5}')
 				for ip in $resolve; do
 					[ -n "$intf" ] && _bypass_ip $ip $intf $tcpudp
 					[ -n "$dscp" ] && _dscp_ip $ip $dscp
 				done
 			fi
 			if [ -n "$_v6" ] && [ "$disableipv6" = "0" ]; then
-				resolve=$(dig aaaa +timeout=1 +tries=1 +nocmd +noall +answer $domain | grep AAAA | awk '{print $5}')
+				resolve=$(dig aaaa +timeout=1 +tries=1 +nocmd +noall +answer "$domain" | grep AAAA | awk '{print $5}')
 				for ip in $resolve; do
 					[ -n "$intf" ] && _bypass_ip $ip $intf $tcpudp
 					[ -n "$dscp" ] && _dscp_ip $ip $dscp

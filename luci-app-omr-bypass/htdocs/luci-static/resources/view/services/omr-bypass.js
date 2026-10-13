@@ -7,6 +7,22 @@
 
 var callHostHints;
 
+/* A domain name as the backend takes it: a host name, optionally with a
+ * leading "." or "*." and a trailing "." or ".*" (any TLD). A pasted URL
+ * made dnsmasq match every name, and a non-ASCII or over-long label stopped
+ * it from starting. */
+function validateDomain(section_id, value) {
+	if (value == null || value === '')
+		return true;
+	var d = String(value);
+	if (/[^A-Za-z0-9.*_-]/.test(d))
+		return _('Expecting: %s').format(_('domain name'));
+	d = d.replace(/^\*\./, '').replace(/^\./, '').replace(/\.\*$/, '').replace(/\.$/, '');
+	if (d === '' || d.length > 253 || /\*/.test(d) || d.split('.').some(function(l) { return l === '' || l.length > 63; }))
+		return _('Expecting: %s').format(_('domain name'));
+	return true;
+}
+
 /* Ports and port ranges (a-b or a:b), separated by commas or spaces: the
  * backend makes one firewall entry of each. */
 function validatePorts(section_id, value) {
@@ -171,6 +187,7 @@ return L.view.extend({
 		o = s.option(form.Value, 'name', _('Domain'),
 			_('Enter a domain name to route through the selected interface or the server VPN.'));
 		o.rmempty = false;
+		o.validate = validateDomain;
 
 		o = s.option(form.Flag, 'vpn', _('VPN on server'),_('Bypass using VPN configured on server.'));
 		o.modalonly = true
