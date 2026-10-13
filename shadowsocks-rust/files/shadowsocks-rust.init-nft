@@ -154,6 +154,7 @@ ss_xxx() {
 	procd_set_param file "$confjson"
 	procd_set_param respawn
 	procd_close_instance
+	[ "$cfgtype" = ss_redir ] && ss_redir_started=1
 	ss_rules_cb
 }
 
@@ -387,13 +388,11 @@ ss_rules_nft_gen() {
 	json_add_string o_dst_default "$dst_default"
 	json_add_string o_nft_tcp_extra "$nft_tcp_extra"
 	json_add_string o_nft_udp_extra "$nft_udp_extra"
-	json_add_string o_tun "$tun_mode"
 	ss_rules_extra_json
 	json_dump -i >"$tmp.json"
 
 	if utpl -S -F "$tmp.json" "$ssrules_uc" >"$tmp.nft"; then
 		grep -q tproxy "$tmp.nft" || ss_tproxy_route_del
-		grep -q 0x00009988 "$tmp.nft" || ss_tun_route_del
 		if ! cmp -s "$tmp.nft" "$ssrules_nft"; then
 			echo "table inet chk {include \"$tmp.nft\";}" >"$tmp.nft.chk"
 			if nft -f "$tmp.nft.chk" -c; then
@@ -423,17 +422,6 @@ ss_tproxy_route_del() {
 	return 0
 }
 
-# The template adds "fwmark 0x9988 lookup 9988" (tun mode TCP to tunprox)
-# when it renders the tun mode mark. Hex as added: "fwmark 9988" is 0x2704
-ss_tun_route_del() {
-	local family
-	for family in -4 -6; do
-		while ip $family rule del fwmark 0x9988 lookup 9988 2>/dev/null; do :; done
-		ip $family route flush table 9988 2>/dev/null
-	done
-	return 0
-}
-
 ss_rules_nft_reset() {
 	if [ -f "$ssrules_nft" ] || [ -f "${ssrules_nft}.down" ]; then
 		rm -f "$ssrules_nft"
@@ -441,7 +429,6 @@ ss_rules_nft_reset() {
 		fw4 -q reload
 	fi
 	ss_tproxy_route_del
-	ss_tun_route_del
 }
 
 ss_rules() {
@@ -488,6 +475,32 @@ rules_reset() {
 	ss_rules
 }
 
+# Let the kernel copy each newly-accepted TCP connection's inbound DSCP onto that
+# socket's own outgoing ToS/Traffic-Class field, so a redirected connection already
+# classified by an upstream firewall rule (e.g. omr-dscp, matching by destination) can
+# be reflected per-connection onto the matching outbound proxy socket instead of only
+# the ss_redir/server instance's static dscp option -- see
+# patches/002-add-dynamic-per-connection-dscp-reflection.patch.
+# Only an ss_redir reads it: with none running (another proxy chosen), the kernel
+# default comes back. Nothing else in OMR sets it. The file under /etc is on flash:
+# only written when its line has to change.
+ss_reflect_tos() {
+	local val="$1" conf=/etc/sysctl.d/zzz_openmptcprouter.conf
+	[ "$(cat /proc/sys/net/ipv4/tcp_reflect_tos 2>/dev/null)" = "$val" ] || \
+		sysctl -qew "net.ipv4.tcp_reflect_tos=$val"
+	if [ "$val" = "1" ]; then
+		grep -qx "net.ipv4.tcp_reflect_tos=1" "$conf" 2>/dev/null && return 0
+		if grep -q "^net.ipv4.tcp_reflect_tos=" "$conf" 2>/dev/null; then
+			sed -i "s:^net.ipv4.tcp_reflect_tos=.*:net.ipv4.tcp_reflect_tos=1:" "$conf"
+		else
+			echo "net.ipv4.tcp_reflect_tos=1" >> "$conf"
+		fi
+	elif grep -q "^net.ipv4.tcp_reflect_tos=" "$conf" 2>/dev/null; then
+		sed -i "/^net.ipv4.tcp_reflect_tos=/d" "$conf"
+	fi
+	return 0
+}
+
 start_service() {
 	local cfgtype
 	[ -n "$(uci -q get firewall.ssr_rules)" ] && {
@@ -499,6 +512,7 @@ start_service() {
 	mkdir -p "$ss_confdir"
 	chmod 0700 "$ss_confdir"
 	config_load shadowsocks-rust
+	ss_redir_started=""
 	for cfgtype in ss_local ss_redir ss_server ss_tunnel; do
 		config_foreach ss_xxx "$cfgtype" "$cfgtype"
 	done
@@ -506,17 +520,10 @@ start_service() {
 		config_load openmptcprouter
 		config_foreach ss_omr_servers server
 	fi
-	# Let the kernel copy each newly-accepted TCP connection's inbound DSCP onto that
-	# socket's own outgoing ToS/Traffic-Class field, so a redirected connection already
-	# classified by an upstream firewall rule (e.g. omr-dscp, matching by destination) can
-	# be reflected per-connection onto the matching outbound proxy socket instead of only
-	# the ss_redir/server instance's static dscp option -- see
-	# patches/002-add-dynamic-per-connection-dscp-reflection.patch.
-	sysctl -qew net.ipv4.tcp_reflect_tos=1
-	if grep -q net.ipv4.tcp_reflect_tos /etc/sysctl.d/zzz_openmptcprouter.conf; then
-		sed -i "s:^net.ipv4.tcp_reflect_tos=[0-1]*:net.ipv4.tcp_reflect_tos=1:" /etc/sysctl.d/zzz_openmptcprouter.conf
+	if [ -n "$ss_redir_started" ]; then
+		ss_reflect_tos 1
 	else
-		echo "net.ipv4.tcp_reflect_tos=1" >> /etc/sysctl.d/zzz_openmptcprouter.conf
+		ss_reflect_tos 0
 	fi
 	local wait_proxy
 	wait_proxy=$(uci -q get shadowsocks-rust.ss_rules.wait_proxy 2>/dev/null)
@@ -642,7 +649,6 @@ validate_ss_rules_section() {
 		'nft_tcp_extra:string' \
 		'nft_udp_extra:string' \
 		'ifnames:maxlength(15)' \
-		'tun_mode:string' \
 		'tproxy:bool:0' \
 		'wait_proxy:bool:1'
 }

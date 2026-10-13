@@ -64,10 +64,8 @@ function redir_target(ports) {
 // (an IPv4 set, ingress interfaces) to their own ss-redir. Rendered here,
 // ahead of the catch-all redirect: each in a file of its own, they were
 // appended to the same chain behind it and never matched.
-function extra_rules(tun) {
+function extra_rules() {
 	let res = [];
-	if (tun)
-		return res;
 	for (let r in o_extra_rules) {
 		let port = (proto == "tcp") ? r.tcp : r.udp;
 		if (!port)
@@ -86,52 +84,10 @@ function extra_rules(tun) {
 	return res;
 }
 
-// fwmark 1 -> table 100 delivers the tproxied packets locally, fwmark 0x9988
-// -> table 9988 sends the tun mode TCP to tunprox: only set up with a
-// redirect to render, the init script removes them with the rules
+// fwmark 1 -> table 100 delivers the tproxied packets locally: only set up
+// with a redirect to render, the init script removes it with the rules
 let type, hook, priority, redir_port;
-if (o_tun == "tcp_only") {
-	if (proto == "tcp") {
-		type = "nat";
-		hook = "prerouting";
-		priority = 1;
-		redir_port = o_redir_tcp_port;
-		if (redir_port && system("
-			set -o errexit
-			iprr() {
-				while ip $1 rule del fwmark 0x9988 lookup 9988 2>/dev/null; do true; done
-				ip $1 rule add fwmark 0x9988 lookup 9988
-				ip $1 route flush table 9988 2>/dev/null || true
-				ip $1 route add local default dev tunprox table 9988
-			}
-			iprr -4
-			iprr -6
-		") != 0) {
-			return ;
-		}
-	} else if (proto == "udp") {
-		type = "filter";
-		hook = "prerouting";
-		priority = "mangle";
-		redir_port = o_redir_udp_port;
-		if (redir_port && system("
-			set -o errexit
-			iprr() {
-				while ip $1 rule del fwmark 1 lookup 100 2>/dev/null; do true; done
-				      ip $1 rule add fwmark 1 lookup 100
-				ip $1 route flush table 100 2>/dev/null || true
-				ip $1 route add local default dev lo table 100
-			}
-			iprr -4
-			iprr -6
-		") != 0) {
-			return ;
-		}
-	} else {
-		return;
-	}
-
-} else if (o_tproxy == "1") {
+if (o_tproxy == "1") {
 	if (proto == "tcp") {
 		redir_port = o_redir_tcp_port;
 	} else if (proto == "udp") {
@@ -225,16 +181,14 @@ chain omr_proxy_fw_{{ proto }} {
 
 chain ss_rules_forward_{{ proto }} {
 	jump omr_proxy_fw_{{ proto }};
-{%	for (let r in extra_rules(o_tun == "tcp_only")): %}
+{%	for (let r in extra_rules()): %}
 {%		if (o_tproxy == "1"): %}
 	meta l4proto tcp {{ o_nft_tcp_extra }} {{ r.match }} meta mark set 1 tproxy ip to :{{ r.port }} accept;
 {%		else %}
 	meta l4proto tcp {{ o_nft_tcp_extra }} {{ r.match }} redirect to :{{ r.port }};
 {%		endif %}
 {%	endfor %}
-{%	if (o_tun == "tcp_only"): %}
-	meta l4proto tcp {{ o_nft_tcp_extra }} meta mark set 0x00009988;
-{% 	elif (o_tproxy == "1"): %}
+{%	if (o_tproxy == "1"): %}
 	meta l4proto tcp {{ o_nft_tcp_extra }} meta mark set 1 tproxy to :{{ redir_target(redir_port) }};
 {% 	else %}
 	meta l4proto tcp {{ o_nft_tcp_extra }} redirect to :{{ redir_target(redir_port) }};
@@ -264,7 +218,7 @@ chain omr_proxy_fw_{{ proto }} {
 
 chain ss_rules_forward_{{ proto }} {
 	jump omr_proxy_fw_{{ proto }};
-{%	for (let r in extra_rules(o_tun == "tcp_only")): %}
+{%	for (let r in extra_rules()): %}
 	meta l4proto udp {{ o_nft_udp_extra }} {{ r.match }} meta mark set 1 tproxy ip to :{{ r.port }} accept;
 {%	endfor %}
 	meta l4proto udp {{ o_nft_udp_extra }} meta mark set 1 tproxy to :{{ redir_port }};
