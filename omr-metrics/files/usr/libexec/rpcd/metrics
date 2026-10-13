@@ -17,43 +17,37 @@
 . "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
 METRICS_DIR="${OMR_METRICS_DIR:-/tmp/metrics}"
 
-_is_ip6() {
-	case "$1" in *:*) return 0 ;; esac
-	return 1
+# _is_ip6, _server_creds, _login (and the login backoff it shares with
+# omr-metrics-send and omr-weight-sync), _token_store and _token_drop come
+# from omr-metrics-curl.sh. The Metrics page makes three calls here every
+# 5 s: logging in on each of them, with no backoff, a wrong key reached the
+# API (and fail2ban) that often.
+SRV_TOKEN=""
+SRV_TOKEN_KEY=""
+SRV_USERNAME=""
+SRV_PASSWORD=""
+
+_log() {
+	logger -t "omr-metrics" "$@"
 }
 
-# The custom server's token is runtime state, kept out of the omr-metrics
-# config: set_settings commits that config, which wrote the token to flash.
-# A VPS token is shared with openmptcprouter-vps, which keeps it in its
-# config.
-_token_store() {
-	case "$1" in
-		omr-metrics.settings.token) omr_state_set omr-metrics settings token "$2" ;;
-		*) uci -q set "${1}=${2}" ;;
-	esac
-}
-
-# Obtain a Bearer token via POST /token and keep it with _token_store.
-# $1 = full UCI key, $2 = server, $3 = port, $4 = username, $5 = password
-_login() {
-	local uci_token_key="$1" server="$2" serverport="$3" username="$4" password="$5"
-	local auth token
-	# URL-encoded by curl, the password read on stdin: not altered by a
-	# '&', '+', '=' or '%', and not shown in ps
-	if _is_ip6 "$server"; then
-		auth=$(printf '%s' "$password" | omr_metrics_curl -6 --max-time 10 -s -k \
-			-H "Content-Type: application/x-www-form-urlencoded" \
-			-X POST --data-urlencode "username=${username}" --data-urlencode "password@-" \
-			"https://[${server}]:${serverport}/token" 2>/dev/null)
-	else
-		auth=$(printf '%s' "$password" | omr_metrics_curl --max-time 10 -s -k \
-			-H "Content-Type: application/x-www-form-urlencoded" \
-			-X POST --data-urlencode "username=${username}" --data-urlencode "password@-" \
-			"https://${server}:${serverport}/token" 2>/dev/null)
-	fi
-	token=$(echo "$auth" | jsonfilter -q -e '@.access_token' 2>/dev/null)
-	[ -n "$token" ] && _token_store "$uci_token_key" "$token"
-	printf '%s' "$token"
+# The VPS the router is on: the current server, else the master, else the
+# first one, never a disabled one. "head -1" of the server list could be a
+# disabled server, which still got the key.
+_vps_server() {
+	local name master="" first=""
+	for name in $(uci -q show openmptcprouter 2>/dev/null | \
+		sed -n 's/^openmptcprouter\.\([^.=][^.=]*\)=server$/\1/p'); do
+		[ "$(uci -q get "openmptcprouter.${name}.disabled")" = "1" ] && continue
+		[ -n "$(uci -q get "openmptcprouter.${name}.ip")" ] || continue
+		if [ "$(omr_state_get "openmptcprouter.${name}.current")" = "1" ]; then
+			echo "$name"
+			return
+		fi
+		[ -z "$master" ] && [ "$(uci -q get "openmptcprouter.${name}.master")" = "1" ] && master="$name"
+		[ -z "$first" ] && first="$name"
+	done
+	echo "${master:-$first}"
 }
 
 # GET a VPS metrics endpoint and print the JSON response (or {} on failure).
@@ -61,7 +55,7 @@ _login() {
 # $2 = optional query string (e.g. "horizon=300&since=1h")
 _vps_get() {
 	local endpoint="$1" extra="${2:-}"
-	local token username password server="" serverport url http_code uci_token_key tmpfile
+	local servername server="" serverport url http_code tmpfile
 
 	# The server omr-metrics-send sends to: the custom one when it is on and
 	# set, else the VPS. Going by a username set in omr-metrics instead
@@ -70,37 +64,26 @@ _vps_get() {
 	[ "$(uci -q get omr-metrics.settings.use_custom_server)" = "1" ] && \
 		server=$(uci -q get "omr-metrics.settings.server" 2>/dev/null)
 	if [ -n "$server" ]; then
-		token=$(omr_state_get "omr-metrics.settings.token")
-		username=$(uci -q get "omr-metrics.settings.username" 2>/dev/null)
-		password=$(uci -q get "omr-metrics.settings.password" 2>/dev/null)
-		uci_token_key="omr-metrics.settings.token"
+		servername="omr_metrics_custom"
 		serverport=$(uci -q get "omr-metrics.settings.serverport" 2>/dev/null)
-		[ -z "$serverport" ] && serverport="65500"
 	else
-		local servername
-		servername=$(uci -q show openmptcprouter 2>/dev/null | \
-			sed -n 's/^openmptcprouter\.\([^.=][^.=]*\)=server$/\1/p' | head -1)
+		servername=$(_vps_server)
 		if [ -z "$servername" ]; then
 			echo '{}'
 			return 1
 		fi
-		token=$(uci -q get "openmptcprouter.${servername}.token" 2>/dev/null)
-		username=$(uci -q get "openmptcprouter.${servername}.username" 2>/dev/null)
-		password=$(uci -q get "openmptcprouter.${servername}.password" 2>/dev/null)
-		uci_token_key="openmptcprouter.${servername}.token"
 		serverport=$(uci -q get "openmptcprouter.${servername}.port" 2>/dev/null)
-		[ -z "$serverport" ] && serverport="65500"
 		server=$(uci -q get "openmptcprouter.${servername}.ip" 2>/dev/null | awk '{print $1}')
 	fi
+	[ -z "$serverport" ] && serverport="65500"
 
 	if [ -z "$server" ]; then
 		echo '{}'
 		return 1
 	fi
 
-	[ -z "$token" ] && \
-		token=$(_login "$uci_token_key" "$server" "$serverport" "$username" "$password")
-	if [ -z "$token" ]; then
+	_server_creds "$servername"
+	if [ -z "$SRV_TOKEN" ] && ! _login "$servername" "$server" "$serverport"; then
 		echo '{}'
 		return 1
 	fi
@@ -117,20 +100,24 @@ _vps_get() {
 	http_code=$(omr_metrics_curl --max-time 10 -s -k \
 		-o "$tmpfile" -w "%{http_code}" \
 		-H "accept: application/json" \
-		-H "Authorization: Bearer ${token}" \
+		-H "Authorization: Bearer ${SRV_TOKEN}" \
 		"$url" 2>/dev/null)
 
 	if [ "$http_code" = "401" ]; then
-		token=$(_login "$uci_token_key" "$server" "$serverport" "$username" "$password")
-		[ -n "$token" ] && http_code=$(omr_metrics_curl --max-time 10 -s -k \
+		# Refused: not sent again on every call while the login backs off
+		_token_drop "$SRV_TOKEN_KEY"
+		SRV_TOKEN=""
+		_login "$servername" "$server" "$serverport" && http_code=$(omr_metrics_curl --max-time 10 -s -k \
 			-o "$tmpfile" -w "%{http_code}" \
 			-H "accept: application/json" \
-			-H "Authorization: Bearer ${token}" \
+			-H "Authorization: Bearer ${SRV_TOKEN}" \
 			"$url" 2>/dev/null)
 	fi
 
 	if [ "$http_code" = "200" ]; then
 		cat "$tmpfile"
+		# The stored token works: whatever armed a backoff is over
+		_login_ok "$(_state_key "$servername" "$server")"
 	else
 		echo '{}'
 	fi
