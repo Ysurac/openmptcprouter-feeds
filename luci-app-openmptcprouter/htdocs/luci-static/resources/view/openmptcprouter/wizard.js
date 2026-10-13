@@ -838,8 +838,20 @@ return view.extend({
 		if (has.mqvpn) {
 			o = s.taboption('vpn', form.ListValue, '_mqvpn_scheduler', _('MQVPN scheduler'));
 			o.depends({ '_show_adv': '1', 'vpn': 'mqvpn' });
-			o.value('wlb',    _('Weighted Load Balancing'));
-			o.value('minrtt', _('Minimum RTT'));
+			/* Every scheduler the MQVPN page offers, with its labels: a
+			 * stored one this list lacked showed as the first choice, and
+			 * a save wrote that over it and pushed it to the server */
+			o.value('wlb',         _('Weighted Load Balancing'));
+			o.value('wlb_udp_pin', _('WLB with UDP pinning'));
+			o.value('minrtt',      _('Minimum RTT'));
+			o.value('wrtt',        _('Weighted RTT'));
+			o.value('wrr',         _('Weighted Round Robin'));
+			o.value('backup',      _('Backup', 'multipath mode'));
+			o.value('backup_fec',  _('Backup with FEC'));
+			o.value('rap',         _('RAP'));
+			o.value('redundant',   _('Redundant'));
+			o.value('dscp',        _('DSCP'));
+			addCurrentChoices(o, ['multipath'], function() { return uci.get('mqvpn', 'multipath', 'scheduler'); });
 			o.default = 'minrtt';
 			/* see _v2ray_udp: going back to minrtt must be written */
 			o.rmempty = false;
