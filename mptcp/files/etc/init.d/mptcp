@@ -37,6 +37,21 @@ _mptcp_limit() {
 	esac
 }
 
+# Persist the sysctl $1=$2 in zzz_openmptcprouter.conf. procd reloads mptcp on
+# every interface event, and "sed -i" rewrote the file on flash each time,
+# the value unchanged: it is only edited when a line of that key differs.
+_sysctl_conf_set() {
+	local conf=/etc/sysctl.d/zzz_openmptcprouter.conf
+	if grep -q "^$1=" "$conf" 2>/dev/null && ! grep "^$1=" "$conf" | grep -qvx "$1=$2"; then
+		return 0
+	fi
+	if grep -q "$1" "$conf" 2>/dev/null; then
+		sed -i "s:^$1=[0-1]*:$1=$2:" "$conf"
+	else
+		echo "$1=$2" >> "$conf"
+	fi
+}
+
 restart_scheduler_dependent_services() {
 	local proxy vpn
 	proxy="$(uci -q get openmptcprouter.settings.proxy)"
@@ -145,11 +160,7 @@ global_multipath_settings() {
 	# Global MPTCP configuration
 	if [ -f /proc/sys/net/mptcp/mptcp_enabled ]; then
 		sysctl -qew net.mptcp.mptcp_enabled="$multipath_status"
-		if grep -q net.mptcp.mptcp_enabled /etc/sysctl.d/zzz_openmptcprouter.conf; then
-			sed -i "s:^net.mptcp.mptcp_enabled=[0-1]*:net.mptcp.mptcp_enabled=${multipath_status}:" /etc/sysctl.d/zzz_openmptcprouter.conf
-		else
-			echo "net.mptcp.mptcp_enabled=${multipath_status}" >> /etc/sysctl.d/zzz_openmptcprouter.conf
-		fi
+		_sysctl_conf_set net.mptcp.mptcp_enabled "$multipath_status"
 		[ -z "$mptcp_path_manager" ] || sysctl -qew net.mptcp.mptcp_path_manager="$mptcp_path_manager"
 		if [ -n "$mptcp_scheduler" ]; then
 			local prev_sched="$(cat /proc/sys/net/mptcp/mptcp_scheduler 2>/dev/null)"
@@ -170,11 +181,7 @@ global_multipath_settings() {
 		[ -z "$mptcp_version" ] || sysctl -qew net.mptcp.mptcp_version="$mptcp_version"
 	elif [ -f /proc/sys/net/mptcp/enabled ]; then
 		sysctl -qew net.mptcp.enabled="$multipath_status"
-		if grep -q net.mptcp.enabled /etc/sysctl.d/zzz_openmptcprouter.conf; then
-			sed -i "s:^net.mptcp.enabled=[0-1]*:net.mptcp.enabled=${multipath_status}:" /etc/sysctl.d/zzz_openmptcprouter.conf
-		else
-			echo "net.mptcp.enabled=${multipath_status}" >> /etc/sysctl.d/zzz_openmptcprouter.conf
-		fi
+		_sysctl_conf_set net.mptcp.enabled "$multipath_status"
 		# The kernel takes at most 8 for each limit (MPTCP_PM_ADDR_MAX) and
 		# refuses the whole command when one is above, so a single value too
 		# high left both limits at whatever they were
@@ -282,7 +289,9 @@ interface_max_metric() {
 			EOF
 			;;
 		lan)
-			sed -i 's:50 lan:9999 lan:g' /etc/iproute2/rt_tables
+			# only when needed: this runs on every reload, sed -i writes flash
+			grep -q '50 lan' /etc/iproute2/rt_tables 2>/dev/null && \
+				sed -i 's:50 lan:9999 lan:g' /etc/iproute2/rt_tables
 			;;
 		loopback)
 			;;
