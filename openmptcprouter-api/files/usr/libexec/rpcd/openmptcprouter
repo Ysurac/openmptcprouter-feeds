@@ -1835,7 +1835,21 @@ function settings_add(args)
 	_set_or_delete("openmptcprouter", "settings", "disable_fastopen", _to_flag(args.disablefastopen))
 	_set_or_delete("openmptcprouter", "settings", "enable_nodelay", _to_flag(args.enablenodelay))
 	_set_or_delete("openmptcprouter", "settings", "sipalg", _to_flag(args.sipalg))
+	-- unset is "1", multi clients
+	local function openvpn_lb() return ucic:get("openmptcprouter", "settings", "openvpn_lb") == "0" and "0" or "1" end
+	local old_openvpn_lb = openvpn_lb()
 	_set_flag_if_given("openvpn_lb", args.openvpnlb)
+	if openvpn_lb() ~= old_openvpn_lb then
+		-- The OpenVPN client instances come with the server config: ask the
+		-- server it is pulled from (master, or the one in use) for it
+		-- again, or the change waited for the next forced pull.
+		-- openmptcprouter-vps clears get_config on the others.
+		ucic:foreach("openmptcprouter", "server", function(srv)
+			if srv.master == "1" or ucis:get("openmptcprouter", srv[".name"], "current") == "1" then
+				ucic:set("openmptcprouter", srv[".name"], "get_config", "1")
+			end
+		end)
+	end
 	_set_or_delete("openmptcprouter", "settings", "vxlan", _to_flag(args.vxlan))
 	local vxlan_mode = _as_string(args.vxlan_mode, "")
 	if vxlan_mode ~= "l2" and vxlan_mode ~= "l3" then vxlan_mode = "" end
