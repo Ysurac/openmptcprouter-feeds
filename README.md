@@ -15,6 +15,14 @@ For More information, see [https://github.com/ysurac/openmptcprouter](https://gi
 A LuCI interface was made to make it easier to use. It's used in OpenMPTCProuter to redirect ports from the VPS to the router and for UDP/ICMP traffic from the router.
 
 
+## Shadowsocks-rust
+*Source:* [https://github.com/shadowsocks/shadowsocks-rust](https://github.com/shadowsocks/shadowsocks-rust)
+
+*Description:* A Rust port of shadowsocks
+
+This is the default proxy. MPTCP and DSCP support are added, with a LuCI interface and nftables init scripts.
+
+
 ## Shadowsocks-libev
 *Source:* [https://github.com/shadowsocks/shadowsocks-libev](https://github.com/shadowsocks/shadowsocks-libev)
 
@@ -24,7 +32,7 @@ A LuCI interface was made to make it easier to use. It's used in OpenMPTCProuter
 MPTCP support is added in LuCI interface and init scripts. IPv6 support added.
 
 ## Shadowsocks-v2ray-plugin-bin
-*Source:* [https://github.com/shadowsocks/v2ray-plugin](https://github.com/shadowsocks/v2ray-plugin)
+*Source:* [https://github.com/teddysun/v2ray-plugin](https://github.com/teddysun/v2ray-plugin)
 
 *Description:* V2ray plugin for Shadowsocks
 
@@ -48,29 +56,12 @@ Support is added in ShadowSocks LuCI interface and init scripts.
 Used to test speed. No LuCI interface.
 
 
-## Nginx
-*Source:* [https://www.nginx.org](https://www.nginx.org)
-
-*Description:* nginx is an HTTP and reverse proxy server, a mail proxy server, and a generic TCP/UDP proxy server. 
-
-
-A LuCI interface for TCP/UDP stream is added. Used for TCP/UDP failover.
-
-
-## luci-proto-ipv6
-*Source:* [https://github.com/openwrt/luci](https://github.com/openwrt/luci)
-
-*Description:* Luci support for DHCPv6/6in4/6to4/6rd/DS-Lite/aiccu
-
-Added support to gateway set by user for 6in4. Used for IPv6 over the glorytun IPv4 VPN.
-
-
 ## luci-omr-bypass
 *Source:* [https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-bypass](https://github.com/Ysurac/openmptcprouter-feeds/tree/master/luci-app-omr-bypass)
 
-*Description:* Luci interface to bypass domains, IPs and networks with shadowsocks
+*Description:* Luci interface to bypass domains, IPs and networks
 
-Domains, IPs, networks and protocol (using DPI) added are bypassed when shadowsocks is used. This can be used when VPS IP is blacklisted from some sites.
+Domains, IPs, networks and protocols (using DPI) added are sent directly through a WAN instead of the VPS. This can be used when the VPS IP is blacklisted from some sites.
 
 
 ## omr-tracker
@@ -125,14 +116,6 @@ Interface to omr-tracker.
 *Description:* This package set all MPTCP settings
 
 
-## ndisc6
-*Source:* [http://www.remlab.net/files/ndisc6](http://www.remlab.net/files/ndisc6)
-
-*Description:* An ICMPv6 neighbour discovery tool
-
-This is used to check if there is no other IPv6 route announced on the network
-
-
 ## mlvpn
 *Source:* [https://github.com/markfoodyburton/MLVPN/tree/new-reorder](https://github.com/markfoodyburton/MLVPN/tree/new-reorder)
 
@@ -142,7 +125,7 @@ This is an other way to aggregate same latency connections
 
 
 ## dsvpn
-*Source:* [https://github.com/jedisct1/dsvpn][https://github.com/jedisct1/dsvpn]
+*Source:* [https://github.com/jedisct1/dsvpn](https://github.com/jedisct1/dsvpn)
 
 *Description:* A Dead Simple VPN
 
@@ -169,6 +152,22 @@ This is used to bypass a protocol
 *Description:* A platform for building proxies to bypass network restrictions.
 
 This is used as proxy, alternative to Shadowsocks
+
+
+## Xray
+*Source:* [https://github.com/XTLS/Xray-core](https://github.com/XTLS/Xray-core)
+
+*Description:* A platform for building proxies, superset of V2Ray
+
+This is used as proxy, alternative to Shadowsocks
+
+
+## MQVPN
+*Source:* [https://github.com/mp0rta/mqvpn](https://github.com/mp0rta/mqvpn)
+
+*Description:* A multipath QUIC VPN
+
+This is used as VPN, alternative to Glorytun and OpenVPN
 
 
 
