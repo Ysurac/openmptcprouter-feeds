@@ -64,10 +64,14 @@ ha_sync_send() {
 		[ -n "$(echo "$watch_list" | tr -d '[:space:]')" ] || watch_list="$sync_list $(sysupgrade -l)"
 		need_sync=0
 		for sync_file in $watch_list; do
-			if [ -e "$sync_file" ] && [ "$sync_file" -nt "$stamp" ]; then
+			if [ -d "$sync_file" ]; then
+				# A directory's mtime only moves when an entry is added
+				# or removed, not when a file inside it is edited
+				[ -n "$(find "$sync_file" -newer "$stamp" 2>/dev/null | head -n 1)" ] && need_sync=1
+			elif [ -e "$sync_file" ] && [ "$sync_file" -nt "$stamp" ]; then
 				need_sync=1
-				break
 			fi
+			[ "$need_sync" = "1" ] && break
 		done
 		if [ "$need_sync" = "0" ]; then
 			log_debug "no applied file changed since last sync for $cfg"
