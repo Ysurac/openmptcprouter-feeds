@@ -47,6 +47,32 @@ static __always_inline bool rr_usable(struct mptcp_subflow_context *subflow,
 	       bpf_sk_stream_memory_free(ssk);
 }
 
+static __always_inline bool rr_backup(struct mptcp_subflow_context *subflow)
+{
+	return subflow->backup || subflow->request_bkup;
+}
+
+/* Whether a non-backup subflow is active, even one that cannot take data
+ * right now. A walk of its own, run only when the main one found no
+ * non-backup subflow to send on, as in bpf_first and bpf_weight_rr.
+ */
+static __always_inline bool has_active_nonbackup(struct sock *sk)
+{
+	struct mptcp_subflow_context *subflow;
+	bool found = false;
+
+	bpf_for_each(mptcp_subflow, subflow, sk) {
+		if (rr_backup(subflow))
+			continue;
+		if (mptcp_subflow_active(subflow)) {
+			found = true;
+			break;
+		}
+	}
+
+	return found;
+}
+
 /* Round-robin, so nothing here is meant to be sent twice: one subflow is
  * scheduled per call and the turn moves on. The cost came from taking the next
  * subflow in the list whether or not it could carry anything -- one whose send
@@ -64,6 +90,11 @@ static __always_inline bool rr_usable(struct mptcp_subflow_context *subflow,
  * collapsed onto whichever subflow happened to come first -- one WAN took 80%
  * of the traffic and another got 3 KB. A counter has no position to lose, so
  * paths dropping in and out cannot derail it.
+ *
+ * The rotation is over the non-backup subflows: a backup WAN (often metered
+ * or slow) took its turn like the others. As in the default scheduler and
+ * bpf_bkup, the backup subflows rotate only when no other subflow is active,
+ * and a non-backup subflow that is merely full is waited for.
  */
 SEC("struct_ops")
 int BPF_PROG(bpf_rr_get_send, struct mptcp_sock *msk)
@@ -72,6 +103,7 @@ int BPF_PROG(bpf_rr_get_send, struct mptcp_sock *msk)
 	struct sock *sk = (struct sock *)msk;
 	struct mptcp_rr_storage *ptr;
 	__u32 nr = 0, target, idx = 0;
+	bool use_backup = false;
 	int seen = 0;
 
 	/* the MPTCP retransmission timer follows the subflows' own timers
@@ -84,18 +116,35 @@ int BPF_PROG(bpf_rr_get_send, struct mptcp_sock *msk)
 	if (!ptr)
 		return -1;
 
-	/* First walk: how many subflows can take data right now. */
+	/* First walk: how many non-backup subflows can take data right now. */
 	bpf_for_each(mptcp_subflow, subflow, sk) {
 		if (seen >= MAX_SUBFLOWS)
 			break;
 		seen++;
 
+		if (rr_backup(subflow))
+			continue;
 		if (rr_usable(subflow, mptcp_subflow_tcp_sock(subflow)))
 			nr++;
 	}
 
-	if (!nr)
-		return -1;
+	if (!nr) {
+		if (has_active_nonbackup(sk))
+			return -1;
+		/* only backup subflows are left: count them */
+		use_backup = true;
+		seen = 0;
+		bpf_for_each(mptcp_subflow, subflow, sk) {
+			if (seen >= MAX_SUBFLOWS)
+				break;
+			seen++;
+
+			if (rr_usable(subflow, mptcp_subflow_tcp_sock(subflow)))
+				nr++;
+		}
+		if (!nr)
+			return -1;
+	}
 
 	/* Unsigned: BPF has no signed division. */
 	target = ptr->turn % nr;
@@ -114,6 +163,8 @@ int BPF_PROG(bpf_rr_get_send, struct mptcp_sock *msk)
 			break;
 		seen++;
 
+		if (!use_backup && rr_backup(subflow))
+			continue;
 		ssk = mptcp_subflow_tcp_sock(subflow);
 		if (!rr_usable(subflow, ssk))
 			continue;

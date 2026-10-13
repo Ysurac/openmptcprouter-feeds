@@ -54,18 +54,35 @@ void BPF_PROG(mptcp_sched_red_release, struct mptcp_sock *msk)
  */
 #define MAX_SUBFLOWS	8
 
-SEC("struct_ops")
-int BPF_PROG(bpf_red_get_send, struct mptcp_sock *msk)
+/* Whether a non-backup subflow is active, even one that cannot take data
+ * right now. A walk of its own, run only when the main one found no
+ * non-backup subflow to send on, as in bpf_first and bpf_weight_rr.
+ */
+static __always_inline bool has_active_nonbackup(struct sock *sk)
 {
 	struct mptcp_subflow_context *subflow;
-	struct sock *sk = (struct sock *)msk;
+	bool found = false;
+
+	bpf_for_each(mptcp_subflow, subflow, sk) {
+		if (subflow->backup || subflow->request_bkup)
+			continue;
+		if (mptcp_subflow_active(subflow)) {
+			found = true;
+			break;
+		}
+	}
+
+	return found;
+}
+
+/* Schedule every usable subflow whose backup state is backup, return how
+ * many were.
+ */
+static __always_inline int red_schedule(struct sock *sk, bool backup)
+{
+	struct mptcp_subflow_context *subflow;
 	int scheduled = 0;
 	int seen = 0;
-
-	/* the MPTCP retransmission timer follows the subflows' own timers
-	 * (see get_retrans below)
-	 */
-	mptcp_set_timeout(sk);
 
 	bpf_for_each(mptcp_subflow, subflow, sk) {
 		struct sock *ssk;
@@ -74,6 +91,9 @@ int BPF_PROG(bpf_red_get_send, struct mptcp_sock *msk)
 		if (seen >= MAX_SUBFLOWS)
 			break;
 		seen++;
+
+		if ((subflow->backup || subflow->request_bkup) != backup)
+			continue;
 
 		ssk = mptcp_subflow_tcp_sock(subflow);
 		if (!ssk)
@@ -96,6 +116,33 @@ int BPF_PROG(bpf_red_get_send, struct mptcp_sock *msk)
 
 		mptcp_subflow_set_scheduled(subflow, true);
 		scheduled++;
+	}
+
+	return scheduled;
+}
+
+/* Redundant over the non-backup subflows. A backup subflow (a metered or
+ * slow WAN set as backup) got a copy of everything as well, so it carried
+ * the whole traffic whenever the others did. As in the default scheduler
+ * and bpf_bkup, the backup subflows are used only when no other subflow is
+ * active, and a non-backup subflow that is merely full is waited for.
+ */
+SEC("struct_ops")
+int BPF_PROG(bpf_red_get_send, struct mptcp_sock *msk)
+{
+	struct sock *sk = (struct sock *)msk;
+	int scheduled;
+
+	/* the MPTCP retransmission timer follows the subflows' own timers
+	 * (see get_retrans below)
+	 */
+	mptcp_set_timeout(sk);
+
+	scheduled = red_schedule(sk, false);
+	if (!scheduled) {
+		if (has_active_nonbackup(sk))
+			return -1;
+		scheduled = red_schedule(sk, true);
 	}
 
 	/* Nothing usable: say so rather than marking a subflow that cannot
