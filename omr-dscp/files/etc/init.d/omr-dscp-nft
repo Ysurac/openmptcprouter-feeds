@@ -460,11 +460,14 @@ start_service() {
 	# Nothing changed: no fw4 run at all, unless the sets are not loaded.
 	if [ "$(_dscp_fw_state | md5sum)" != "$fw_before" ] || \
 	   ! nft -t list set inet fw4 omr_dscp_cs0_4 >/dev/null 2>&1; then
-		# a set whose type changed cannot be redeclared by a reload
-		fw4 -q reload || {
+		# A set whose type changed cannot be redeclared by a reload. fw4
+		# returns the status of its includes, not of the nft load, so such
+		# a refused ruleset (the running one stays) never got here: its
+		# check mode tries the same ruleset against the running one.
+		if ! fw4 -q reload || ! fw4 -q check; then
 			logger -t "omr-dscp" "fw4 reload failed, restarting it"
-			fw4 -q restart
-		}
+			fw4 -q restart || logger -t "omr-dscp" "fw4 restart refused: the firewall ruleset has errors"
+		fi
 	fi
 	# dnsmasq builds its nftset lines from the dhcp config when it starts
 	[ "$(_dscp_dhcp_state | md5sum)" != "$dhcp_before" ] && /etc/init.d/dnsmasq reload
