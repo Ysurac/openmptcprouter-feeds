@@ -337,13 +337,75 @@ _valid_ip6net() {
 	_valid_ip6 "${1%%/*}"
 }
 
+# _ip4_int <a.b.c.d>: the address as a number
+_ip4_int() {
+	local IFS=.
+	set -- $1
+	echo $(( ($1 << 24) + ($2 << 16) + ($3 << 8) + $4 ))
+}
+
+# _ip6_hex <address>: the address as 32 hex digits, which compare as strings
+_ip6_hex() {
+	local a="$1" h t g n=0 out="" IFS
+	case "$a" in
+		*.*)
+			IFS=.
+			set -- ${a##*:}
+			a="${a%:*}:$(printf '%x' $((($1 << 8) + $2))):$(printf '%x' $((($3 << 8) + $4)))"
+			;;
+	esac
+	case "$a" in
+		*::*) h="${a%%::*}" t="${a#*::}" ;;
+		*) h="$a" t="" ;;
+	esac
+	IFS=:
+	for g in $h $t; do n=$((n + 1)); done
+	for g in $h; do out="$out$(printf '%04x' "0x$g")"; done
+	while [ "$n" -lt 8 ]; do out="${out}0000"; n=$((n + 1)); done
+	for g in $t; do out="$out$(printf '%04x' "0x$g")"; done
+	echo "$out"
+}
+
+# _ip4_mask_prefix <a.b.c.d>: the prefix length of a contiguous netmask
+_ip4_mask_prefix() {
+	local IFS=. __o __n=0 __end=""
+	set -- $1
+	for __o in "$@"; do
+		case "$__o" in
+			255) [ -z "$__end" ] || return 1; __n=$((__n + 8)) ;;
+			0) __end=1 ;;
+			254|252|248|240|224|192|128)
+				[ -z "$__end" ] || return 1
+				__end=1
+				case "$__o" in
+					254) __n=$((__n + 7)) ;; 252) __n=$((__n + 6)) ;;
+					248) __n=$((__n + 5)) ;; 240) __n=$((__n + 4)) ;;
+					224) __n=$((__n + 3)) ;; 192) __n=$((__n + 2)) ;;
+					128) __n=$((__n + 1)) ;;
+				esac
+				;;
+			*) return 1 ;;
+		esac
+	done
+	echo "$__n"
+}
+
 # _valid_rule_ip <value>: what fw4 also takes in a rule's src_ip: a range, or
-# an IPv4 network with a netmask
+# an IPv4 network with a netmask. A range given high to low (only the CLI
+# can write one) made nft refuse the whole ruleset.
 _valid_rule_ip() {
 	case "$1" in
 		*-*)
-			{ _valid_ip4 "${1%%-*}" && _valid_ip4 "${1#*-}"; } || \
-				{ _valid_ip6 "${1%%-*}" && _valid_ip6 "${1#*-}"; }
+			if _valid_ip4 "${1%%-*}" && _valid_ip4 "${1#*-}"; then
+				[ "$(_ip4_int "${1%%-*}")" -le "$(_ip4_int "${1#*-}")" ]
+			elif _valid_ip6 "${1%%-*}" && _valid_ip6 "${1#*-}"; then
+				local __a __b
+				__a="$(_ip6_hex "${1%%-*}")"
+				__b="$(_ip6_hex "${1#*-}")"
+				[ "$__a" = "$__b" ] || [ "$__b" \> "$__a" ]
+			else
+				return 1
+			fi
 			;;
 		*/*.*) _valid_ip4 "${1%%/*}" && _valid_ip4 "${1#*/}" ;;
 		*) _valid_ip4net "$1" || _valid_ip6net "$1" ;;
@@ -1122,10 +1184,31 @@ _bypass_lan_ip() {
 
 	[ "$intf" = "default" ] && intf="all"
 	[ -z "$ip" ] && return
+	# valid_subnet6 knows lower case only: an upper-case address was dropped
+	# without a word
+	case "$ip" in *[A-F]*) ip="$(printf '%s' "$ip" | tr 'A-F' 'a-f')" ;; esac
 	_valid_rule_ip "$ip" || {
-		logger -t "omr-bypass" "Rule $1: invalid IP address or network '$ip' ignored"
+		logger -t "omr-bypass" "Rule $1: invalid IP address, network or range '$ip' ignored"
 		return
 	}
+	# fw4 takes a netmask, nft (the DSCP rule) only a prefix length
+	case "$ip" in
+		*/*.*)
+			local __plen
+			__plen="$(_ip4_mask_prefix "${ip#*/}")" || {
+				logger -t "omr-bypass" "Rule $1: netmask of '$ip' is not contiguous, ignored"
+				return
+			}
+			ip="${ip%%/*}/${__plen}"
+			;;
+	esac
+	case "$ip" in
+		*-*) ;;
+		*)
+			[ "$(valid_subnet4 "$ip")" = "ok" ] || [ "$(valid_subnet6 "$ip")" = "ok" ] || \
+				logger -t "omr-bypass" "Rule $1: '$ip' is not a routable address (link-local, loopback...), ignored"
+			;;
+	esac
 	if [ -n "$intf" ]; then
 		for zone in $(_get_firewall_zones); do
 			valid_ip4=$(valid_subnet4 $ip)
@@ -2074,8 +2157,15 @@ _bypass_ip_set() {
 	local tcpudp
 	config_get tcpudp $1 proto "all"
 	for ip in $ip; do
+		# valid_subnet6 knows lower case only: an upper-case address was
+		# dropped without a word
+		case "$ip" in *[A-F]*) ip="$(printf '%s' "$ip" | tr 'A-F' 'a-f')" ;; esac
 		_valid_ip4net "$ip" || _valid_ip6net "$ip" || {
 			logger -t "omr-bypass" "Rule $1: invalid IP address or network '$ip' ignored"
+			continue
+		}
+		[ "$(valid_subnet4 "$ip")" = "ok" ] || [ "$(valid_subnet6 "$ip")" = "ok" ] || {
+			logger -t "omr-bypass" "Rule $1: '$ip' is not a routable address (link-local, loopback...), ignored"
 			continue
 		}
 		[ -n "$interface" ] && _bypass_ip $ip $interface $tcpudp
