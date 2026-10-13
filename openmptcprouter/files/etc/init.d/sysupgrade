@@ -8,20 +8,48 @@
 	USE_PROCD=1
 }
 
-start_service()
-{
-	if [ -f /etc/backup/installed_packages.txt ]; then
-		if [ -e /usr/bin/apk ]; then
-			apk update >/dev/null 2>&1
-			if [ -z "$(grep '\toverlay' /etc/backup/installed_packages.txt | cut -f1 | xargs -r apk add)" ]; then
-				rm /etc/backup/installed_packages.txt
-			fi
-		else
-			opkg -V0 update >/dev/null 2>&1
-			if [ -z "$(grep '\toverlay' /etc/backup/installed_packages.txt | cut -f1 | xargs -r opkg -V0 install)" ]; then
-				rm /etc/backup/installed_packages.txt
-			fi
-		fi
+# sysupgrade -k lists the packages as "name<TAB>rom|overlay|unknown", the
+# overlay ones are the user's. "apk add" prints "OK:" even on success, so the
+# list, tested on the output being empty, was never deleted: each
+# openmptcprouter-vps start and the hourly omr-schedule run did an update and
+# an install again, putting back what the user had removed since.
+_pkg_update() {
+	if [ -e /usr/bin/apk ]; then
+		apk update >/dev/null 2>&1
+	else
+		opkg -V0 update >/dev/null 2>&1
 	fi
 }
 
+_pkg_add() {
+	if [ -e /usr/bin/apk ]; then
+		apk add "$@" >/dev/null 2>&1
+	else
+		opkg -V0 install "$@" >/dev/null 2>&1
+	fi
+}
+
+start_service()
+{
+	local list=/etc/backup/installed_packages.txt tab pkgs pkg failed=""
+	[ -f "$list" ] || return 0
+	tab="$(printf '\t')"
+	pkgs="$(grep "${tab}overlay\$" "$list" | cut -f1)"
+	if [ -n "$pkgs" ]; then
+		_pkg_update
+		# apk adds all of them or none: one package missing from the new
+		# release kept every other one out
+		if ! _pkg_add $pkgs; then
+			for pkg in $pkgs; do
+				_pkg_add "$pkg" || failed="$failed $pkg"
+			done
+		fi
+	fi
+	if [ -n "$failed" ]; then
+		# kept for a later try (omr-schedule, next start), with only those
+		logger -t "OMR-Sysupgrade" "Can't reinstall:$failed, try later"
+		printf "%s${tab}overlay\n" $failed > "$list.tmp" && mv -f "$list.tmp" "$list"
+	else
+		rm -f "$list"
+	fi
+}
