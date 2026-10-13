@@ -28,8 +28,12 @@ function run_test(server,proto,mode,updown,omit,parallel,transmit,bitrate)
 	parallel = tostring(parallel or "1"):match("^%d+$") or "1"
 	omit = tostring(omit or "0"):match("^%d+$") or "0"
 	transmit = tostring(transmit or "10"):match("^%d+$") or "10"
-	bitrate = tostring(bitrate or "1M")
-	if not bitrate:match("^[0-9]+[KMG]?$") then
+	-- The page asks for Mbit/s and sends a bare number, which iperf3
+	-- reads as bit/s
+	bitrate = tostring(bitrate or "")
+	if bitrate:match("^%d+$") or bitrate:match("^%d+%.%d+$") then
+		bitrate = bitrate .. "M"
+	elseif not bitrate:match("^%d+[KMG]$") then
 		bitrate = "1M"
 	end
 	-- With credentials omr-iperf runs the test: it writes the key to its own
