@@ -29,6 +29,9 @@ start_service() {
 	
 	[ -f /var/softethervpn/vpnclient ] || ln -sf /usr/libexec/softethervpn/vpnclient /var/softethervpn/
 	[ -f /var/softethervpn/vpn_client.config ] || ln -sf /usr/libexec/softethervpn/vpn_client.config /var/softethervpn/
+	# vpnclient keeps the account password hash there, which logs in as well
+	# as the password: the package installs it 0644
+	chmod 0600 /usr/libexec/softethervpn/vpn_client.config 2>/dev/null
 
 	procd_open_instance
 	procd_set_param env LANG=en_US.UTF-8
@@ -83,12 +86,14 @@ initialize() {
 	if ! /usr/bin/vpncmd 127.0.0.1 /CLIENT /CSV /CMD AccountGet openmptcprouter >/dev/null; then
 		# If not exist.
 		echo "Create user $username"
-		/usr/bin/vpncmd 127.0.0.1 /CLIENT /CSV /CMD AccountCreate openmptcprouter /SERVER:$host:$port /HUB:OMRVPN /USERNAME:$username /NICNAME:SoftEther >/dev/null 2>&1
+		/usr/bin/vpncmd 127.0.0.1 /CLIENT /CSV /CMD AccountCreate openmptcprouter "/SERVER:$host:$port" /HUB:OMRVPN "/USERNAME:$username" /NICNAME:SoftEther >/dev/null 2>&1
 	fi
 	# Set server and user parameters
-	/usr/bin/vpncmd 127.0.0.1 /CLIENT /CSV /CMD AccountSet openmptcprouter /SERVER:$host:$port /HUB:OMRVPN  >/dev/null 2>&1
-	/usr/bin/vpncmd 127.0.0.1 /CLIENT /CSV /CMD AccountUsernameSet openmptcprouter /USERNAME:$username >/dev/null 2>&1
-	/usr/bin/vpncmd 127.0.0.1 /CLIENT /CSV /CMD AccountPasswordSet openmptcprouter /PASSWORD:$password /TYPE:standard >/dev/null 2>&1
+	/usr/bin/vpncmd 127.0.0.1 /CLIENT /CSV /CMD AccountSet openmptcprouter "/SERVER:$host:$port" /HUB:OMRVPN  >/dev/null 2>&1
+	/usr/bin/vpncmd 127.0.0.1 /CLIENT /CSV /CMD AccountUsernameSet openmptcprouter "/USERNAME:$username" >/dev/null 2>&1
+	# Quoted: unquoted, a password with a space or a glob character was cut or
+	# expanded by the shell
+	/usr/bin/vpncmd 127.0.0.1 /CLIENT /CSV /CMD AccountPasswordSet openmptcprouter "/PASSWORD:$password" /TYPE:standard >/dev/null 2>&1
 	# Create Network interface
 	/usr/bin/vpncmd 127.0.0.1 /CLIENT /CSV /CMD NicCreate SoftEther >/dev/null 2>&1
 	/usr/bin/vpncmd 127.0.0.1 /CLIENT /CSV /CMD AccountNicSet openmptcprouter /NICNAME:SoftEther >/dev/null 2>&1
@@ -102,7 +107,7 @@ initialize() {
 	fi
 
 	# Set connection settings
-	/usr/bin/vpncmd 127.0.0.1 /CLIENT /CSV /CMD AccountDetailSet openmptcprouter /MAXTCP:$maxtcp /INTERVAL:$interval /TTL:$ttl /HALF:$half /BRIDGE:yes /MONITOR:no /NOTRACK:yes /NOQOS:no /DISABLEUDP:yes >/dev/null 2>&1
+	/usr/bin/vpncmd 127.0.0.1 /CLIENT /CSV /CMD AccountDetailSet openmptcprouter "/MAXTCP:$maxtcp" "/INTERVAL:$interval" "/TTL:$ttl" "/HALF:$half" /BRIDGE:yes /MONITOR:no /NOTRACK:yes /NOQOS:no /DISABLEUDP:yes >/dev/null 2>&1
 
 	# Disconnect/reconnect to be sur to use lastest settings
 	/usr/bin/vpncmd 127.0.0.1 /CLIENT /CSV /CMD AccountDisconnect openmptcprouter >/dev/null 2>&1

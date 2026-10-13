@@ -132,7 +132,7 @@ endef
 define Package/softethervpn5-server/install
 	$(INSTALL_DIR) $(1)/usr/libexec/softethervpn
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/libexec/softether/vpnserver/vpnserver $(1)/usr/libexec/softethervpn/
-	$(INSTALL_DATA) files/dummy $(1)/usr/libexec/softethervpn/vpn_server.config
+	$(INSTALL_CONF) files/dummy $(1)/usr/libexec/softethervpn/vpn_server.config
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) files/vpnserver.init $(1)/etc/init.d/softethervpnserver
 endef
@@ -140,7 +140,7 @@ endef
 define Package/softethervpn5-bridge/install
 	$(INSTALL_DIR) $(1)/usr/libexec/softethervpn
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/libexec/softether/vpnbridge/vpnbridge $(1)/usr/libexec/softethervpn/
-	$(INSTALL_DATA) files/dummy $(1)/usr/libexec/softethervpn/vpn_bridge.config
+	$(INSTALL_CONF) files/dummy $(1)/usr/libexec/softethervpn/vpn_bridge.config
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) files/vpnbridge.init $(1)/etc/init.d/softethervpnbridge
 endef
@@ -149,7 +149,7 @@ define Package/softethervpn5-client/install
 	$(INSTALL_DIR) $(1)/usr/libexec/softethervpn
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/libexec/softether/vpnclient/vpnclient $(1)/usr/libexec/softethervpn/
 #	$(INSTALL_DATA) files/vpn_client.config $(1)/usr/libexec/softethervpn/vpn_client.config
-	$(INSTALL_DATA) files/dummy $(1)/usr/libexec/softethervpn/vpn_client.config
+	$(INSTALL_CONF) files/dummy $(1)/usr/libexec/softethervpn/vpn_client.config
 	$(INSTALL_DIR) $(1)/etc/init.d
 #	$(INSTALL_BIN) files/vpnclient.init $(1)/etc/init.d/softethervpnclient
 	$(CP) ./files/etc $(1)/
@@ -166,6 +166,7 @@ define Package/softethervpn5-bridge/conffiles
 endef
 
 define Package/softethervpn5-client/conffiles
+/etc/config/softethervpn
 /usr/libexec/softethervpn/vpn_client.config
 /usr/libexec/softethervpn/lang.config
 endef
