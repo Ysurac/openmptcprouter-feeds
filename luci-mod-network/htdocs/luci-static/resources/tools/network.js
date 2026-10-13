@@ -1176,12 +1176,27 @@ return baseclass.extend({
 		o.datatype = 'uinteger';
 		o.depends('autoneg', '0');
 
+		/* netifd parses duplex as a bool: the half/full this list used
+		   to write were ignored. Show them as 0/1 and rewrite them as
+		   such on the next save. */
 		o = this.replaceOption(s, 'devadvanced', form.ListValue, 'duplex', _('Duplex'));
 		o.default = '';
 		o.value('', _('unknown'));
-		o.value('half', _('half'));
-		o.value('full', _('full'));
+		o.value('0', _('half'));
+		o.value('1', _('full'));
 		o.depends('autoneg', '0');
+		o.cfgvalue = function(section_id, set_value) {
+			var v = form.ListValue.prototype.cfgvalue.apply(this, arguments);
+
+			return (v == 'full') ? '1' : (v == 'half') ? '0' : v;
+		};
+		o.parse = function(section_id) {
+			var raw = this.load(section_id);
+
+			this.forcewrite = (raw == 'full' || raw == 'half');
+
+			return form.ListValue.prototype.parse.apply(this, arguments);
+		};
 
 		/* PSE / PoE options */
 		if (hasPSE) {
