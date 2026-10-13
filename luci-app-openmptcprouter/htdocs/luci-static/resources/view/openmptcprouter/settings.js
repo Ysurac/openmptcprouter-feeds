@@ -15,7 +15,7 @@ var callSettingsAdd = rpc.declare({
 		'disable_ipv6', 'disable_6in4', 'disable_modemmanager', 'banudpip',
 		'externalcheck', 'openvpnlb', 'restricttolan', 'debug', 'savevnstat',
 		'disablegwping', 'status_vps_timeout', 'status_getip_timeout', 'status_whois_timeout',
-		'disableloopdetection', 'disableserverhttptest', 'disableintfrename',
+		'disableloopdetection', 'disableintfrename',
 		'disabledefaultgw', 'disabletracebox', 'disableserverping', 'disablemultipathtest',
 		'shadowsocksudp', 'v2rayudp', 'ndpi', 'disablefastopen', 'enablenodelay',
 		'obfs', 'obfs_plugin', 'obfs_type',
@@ -279,10 +279,6 @@ return view.extend({
 			_('Disable gateway ping'),
 			_('Disable gateway ping check in status page'));
 
-		o = s.taboption('other', form.Flag, 'disableserverhttptest',
-			_('Disable server http test'),
-			_('Disable HTTP test on Server API'));
-
 		o = s.taboption('other', form.Value, 'status_vps_timeout',
 			_('VPS checks timeout'),
 			_('Timeout for VPS checks on status pages'));
@@ -479,7 +475,6 @@ return view.extend({
 				get('status_getip_timeout'),
 				get('status_whois_timeout'),
 				get('disableloopdetection'),
-				get('disableserverhttptest'),
 				get('disableintfrename'),
 				get('defaultgw'),
 				get('tracebox'),

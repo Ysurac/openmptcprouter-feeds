@@ -83,7 +83,6 @@ Feature toggles and status-page behavior:
 |---|---|
 | **Save vnstats stats** | Persists vnstat traffic history to disk so it survives a reboot. |
 | **Disable gateway ping** | Skips the gateway-reachability ping shown on the Status page. |
-| **Disable server http test** | Skips the HTTP reachability test against the Server API. |
 | **VPS checks timeout / WAN IPs retrieve timeout / Whois WAN IPs retrieve timeout** | Per-check timeouts (seconds) used by the Status page — raise these on slow links if checks are timing out prematurely. |
 | **Disable interfaces auto rename** | Stops OMR from renaming WAN/LAN interfaces automatically. |
 | **Disable ModemManager** | Turns off ModemManager integration for cellular modems. |
