@@ -571,9 +571,14 @@ if [ -f /etc/init.d/dnsmasq ] && [ "$_keepalived_backup" != "1" ]; then
 	fi
 fi
 
+# unbound only when it is there to answer: with unbound disabled or not
+# installed, 127.0.0.1#5353 sent every lookup to a closed port
 if [ -f /etc/init.d/dnsmasq ] && [ -z "$(uci -q get dhcp.@dnsmasq[0].server)" ]; then
+	_unbound_server=""
+	[ -f /etc/init.d/unbound ] && [ "$(uci -q get unbound.@unbound[0].enabled)" = "1" ] &&
+		_unbound_server="add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'"
 	uci -q batch <<-EOF >/dev/null
-		add_list dhcp.@dnsmasq[0].server='127.0.0.1#5353'
+		${_unbound_server}
 		add_list dhcp.@dnsmasq[0].server='/lan/'
 		add_list dhcp.@dnsmasq[0].server='/use-application-dns.net/'
 		commit dhcp
