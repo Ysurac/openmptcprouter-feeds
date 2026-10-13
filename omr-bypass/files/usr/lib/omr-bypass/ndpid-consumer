@@ -32,18 +32,36 @@ TCP_PORT=$(uci -q get ndpid.distributor.tcp_port 2>/dev/null)
 TCP_HOST=${TCP_HOST:-127.0.0.1}
 TCP_PORT=${TCP_PORT:-7000}
 
+# nc gets a stdin that never ends and is not a pipeline: a FIFO opened
+# read-write, which this script holds and never writes to. With
+# "tail -f /dev/null | nc" the shell also waited for tail, which never
+# writes and so never gets SIGPIPE: once ndpisrvd restarted and nc exited,
+# the consumer hung for good and nDPI bypass stopped. Now nc's exit ends the
+# read loop below and the distributor is connected to again. (GNU netcat
+# 0.7.1 keeps reading the socket after a stdin EOF, but an nc that quits
+# then would read nothing at all.)
+STDIN_FIFO="${PIDFILE%.pid}.stdin"
+rm -f "$STDIN_FIFO"
+mkfifo "$STDIN_FIFO" || exit 1
+exec 3<>"$STDIN_FIFO"
+rm -f "$STDIN_FIFO"
+
 _nc_distributor() {
-	# GNU netcat exits when stdin reaches EOF; pipe from tail -f /dev/null to
-	# provide a never-ending stdin so the connection stays open for events.
-	if tail -f /dev/null | nc "$TCP_HOST" "$TCP_PORT" 2>/dev/null; then
+	if nc "$TCP_HOST" "$TCP_PORT" <&3 2>/dev/null; then
 		return
 	fi
 	[ ! -S "$SOCK" ] && return
-	tail -f /dev/null | nc -U "$SOCK" 2>/dev/null
+	nc -U "$SOCK" <&3 2>/dev/null
 }
 
 while true; do
 	_nc_distributor | while IFS= read -r line; do
+		# Most events are not detections (new, idle, update, end, packet,
+		# daemon status): skip them before forking jsonfilter for each.
+		case "$line" in
+			*'"flow_event_name":"detect'*) ;;
+			*) continue ;;
+		esac
 		# nDPId frames are prefixed with a 5-character hex length field
 		json="${line:5}"
 		[ -z "$json" ] && continue
