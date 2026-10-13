@@ -617,13 +617,27 @@ while true; do
 	# costs ~15 processes per cycle. A stale gateway makes the next ping
 	# fail, flipping status to ERROR, which forces a full rediscovery on
 	# the following cycle.
+	# A gateway that stopped answering while the hosts still did leaves the
+	# status OK, so it is also looked up again then (a DHCP renumbering left
+	# the table 991337 default route on the old one), once per address:
+	# some gateways never answer a ping.
 	if [ "$OMR_TRACKER_PREV_STATUS" = "OK" ]; then
 		OMR_TRACKER_DEVICE_GATEWAY="$OMR_TRACKER_PREV_GATEWAY"
 		OMR_TRACKER_DEVICE_GATEWAY6="$OMR_TRACKER_PREV_GATEWAY6"
+		if [ -n "$_gw4_failed" ] && [ "$_gw4_failed" != "$_gw4_relooked" ]; then
+			_gw4_relooked="$_gw4_failed"
+			OMR_TRACKER_DEVICE_GATEWAY=
+		fi
+		if [ -n "$_gw6_failed" ] && [ "$_gw6_failed" != "$_gw6_relooked" ]; then
+			_gw6_relooked="$_gw6_failed"
+			OMR_TRACKER_DEVICE_GATEWAY6=
+		fi
 	else
 		OMR_TRACKER_DEVICE_GATEWAY=
 		OMR_TRACKER_DEVICE_GATEWAY6=
 	fi
+	_gw4_failed=""
+	_gw6_failed=""
 	serverip_ping=false
 	OMR_TRACKER_PINGED=""
 	# The VPS is the latency reference when its IP is defined, the custom
@@ -731,6 +745,8 @@ while true; do
 				if [ -z "$OMR_TRACKER_DEVICE_IP" ]; then
 					OMR_TRACKER_DEVICE_IP=$(ip -4 addr show dev "$OMR_TRACKER_DEVICE" | grep -m 1 inet | awk '{print $2}' | cut -d'/' -s -f1)
 				fi
+				# a new address may come with a new gateway
+				[ "$OMR_TRACKER_DEVICE_IP" != "$OMR_TRACKER_PREV_DEVICE_IP" ] && OMR_TRACKER_DEVICE_GATEWAY=
 				#OMR_TRACKER_DEVICE_IP=$(ubus call network.interface.$OMR_TRACKER_INTERFACE status | jsonfilter -q -e '@["ipv4-address"][0].address' | tr -d "\n")
 				#if [ -z "$OMR_TRACKER_DEVICE_GATEWAY" ]; then
 				#	OMR_TRACKER_DEVICE_GATEWAY=$(ip -4 r list dev "$OMR_TRACKER_DEVICE" | grep -v default | awk '/proto static/ {print $1}' | tr -d "\n")
@@ -781,6 +797,7 @@ while true; do
 				#if [ -z "$OMR_TRACKER_DEVICE_IP6" ]; then
 					_device_ip6_var OMR_TRACKER_DEVICE_IP6 "$OMR_TRACKER_DEVICE"
 				#fi
+				[ "$OMR_TRACKER_DEVICE_IP6" != "$OMR_TRACKER_PREV_DEVICE_IP6" ] && OMR_TRACKER_DEVICE_GATEWAY6=
 				# without a global IPv6 address no IPv6 probe can run, so
 				# don't burn ubus/jsonfilter calls looking for a gateway
 				if [ -n "$OMR_TRACKER_DEVICE_IP6" ]; then
@@ -849,6 +866,7 @@ while true; do
 					else
 						_ping "$OMR_TRACKER_DEVICE_GATEWAY" "$OMR_TRACKER_DEVICE" "$OMR_TRACKER_GATEWAY_IS_REMOTE"
 						status=$?
+						[ "$status" -ne 0 ] && _gw4_failed="$OMR_TRACKER_DEVICE_GATEWAY"
 					fi
 					if [ "$status" -eq 0 ] && [ "$OMR_TRACKER_TYPE" = "none" ]; then
 						OMR_TRACKER_STATUS_MSG=""
@@ -983,6 +1001,7 @@ while true; do
 					#else
 						_ping "$OMR_TRACKER_DEVICE_GATEWAY6" "$OMR_TRACKER_DEVICE" "$OMR_TRACKER_GATEWAY_IS_REMOTE"
 						status=$?
+						[ "$status" -ne 0 ] && _gw6_failed="$OMR_TRACKER_DEVICE_GATEWAY6"
 					#fi
 					if [ "$status" -eq 0 ] && [ "$OMR_TRACKER_TYPE" = "none" ]; then
 						OMR_TRACKER_STATUS_MSG=""
