@@ -83,8 +83,9 @@ return network.registerProtocol('mbim', {
 		o.password = true;
 
 		if (L.hasSystemFeature('ipv6')) {
-			o = s.taboption('advanced', form.Flag, 'ipv6', _('Enable IPv6 negotiation'));
-			o.default = o.disabled;
+			o = s.taboption('advanced', form.Flag, 'mbim_ipv6', _('Enable IPv6 negotiation'));
+			o.ucioption = 'ipv6';
+			o.default = o.enabled;
 		}
 
 		o = s.taboption('advanced', form.Value, 'delay', _('Modem init timeout'), _('Maximum amount of seconds to wait for the modem to become ready'));
