@@ -1432,8 +1432,11 @@ _bypass_proto_core() {
 	# is not running, or it never handles "none" rules. The kernel nDPI
 	# match (/proc/net/xt_ndpi) marks nothing under fw4, so it does not
 	# count: with it, ndpi=1 left a rule with its domains only.
+	# Only a rule with "Enable ndpi" saved ticked leaves the list out: one
+	# without the option (older LuCI, the CLI, the 41_omr-bypass migration)
+	# keeps it, as before, with nDPId's detections added on top.
 	local static=1
-	[ "$_omr_ndpi" != "0" ] && [ "$ndpi" != "0" ] && [ "$vpn" != "1" ] && \
+	[ "$_omr_ndpi" != "0" ] && [ "$ndpi" = "1" ] && [ "$vpn" != "1" ] && \
 		[ "${_omr_ndpid:-0}" = "1" ] && [ "$intf" != "none" ] && static=""
 	# A protocol of omr-bypass's own ("proto" sections: m6replay, mycanal...)
 	# has its domains and addresses there, not in the database. Only the
@@ -1581,7 +1584,7 @@ _bypass_proto_without_ndpi() {
 	_rule_proto proto $1
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
-	config_get ndpi $1 ndpi "${_ndpi_default:-1}"
+	config_get ndpi $1 ndpi
 	config_get noipv6 $1 noipv6 "1"
 	config_get family $1 family "ipv4ipv6"
 	config_get vpn $1 vpn
@@ -1604,7 +1607,7 @@ _bypass_category() {
 	config_get enabled $1 enabled
 	config_get vpn $1 vpn
 	config_get tcpudp $1 tcpudp "all"
-	config_get ndpi $1 ndpi "${_ndpi_default:-1}"
+	config_get ndpi $1 ndpi
 	config_get noipv6 $1 noipv6 "1"
 	config_get family $1 family "ipv4ipv6"
 	[ "$enabled" = "0" ] && return
@@ -2409,7 +2412,7 @@ _bypass_proto_collect_ndpid() {
 	config_get enabled $1 enabled
 	config_get tcpudp $1 tcpudp "all"
 	config_get family $1 family "ipv4ipv6"
-	config_get ndpi $1 ndpi "${_ndpi_default:-1}"
+	config_get ndpi $1 ndpi
 	_rule_dscp dscp $1
 	config_get vpn $1 vpn
 	[ "$enabled" = "0" ] && return
@@ -2444,7 +2447,7 @@ _bypass_category_collect_ndpid() {
 	config_get vpn $1 vpn
 	config_get tcpudp $1 tcpudp "all"
 	config_get family $1 family "ipv4ipv6"
-	config_get ndpi $1 ndpi "${_ndpi_default:-1}"
+	config_get ndpi $1 ndpi
 	_rule_dscp dscp $1
 	[ "$enabled" = "0" ] && return
 	[ "$ndpi" = "0" ] && return
@@ -2502,7 +2505,7 @@ _ndpid_rule_wanted() {
 	_rule_proto proto $1
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
-	config_get ndpi $1 ndpi "${_ndpi_default:-1}"
+	config_get ndpi $1 ndpi
 	_rule_dscp dscp $1
 	config_get vpn $1 vpn
 	[ "$enabled" = "0" ] && return
@@ -2516,17 +2519,18 @@ _ndpid_rule_wanted() {
 
 # Same check as _ndpid_rule_wanted, for categories sections (a category rule
 # has no single "proto" — any enabled, ndpi=1 category with a routing
-# interface or a DSCP class is enough to require the consumer).
+# interface or a DSCP class is enough to require the consumer). Only with
+# ndpi=1 saved: a category rule without the option never started nDPId.
 _ndpid_category_rule_wanted() {
 	local category intf enabled ndpi dscp vpn
 	config_get category $1 category
 	_get_rule_intf intf $1
 	config_get enabled $1 enabled
-	config_get ndpi $1 ndpi "${_ndpi_default:-1}"
+	config_get ndpi $1 ndpi
 	_rule_dscp dscp $1
 	config_get vpn $1 vpn
 	[ "$enabled" = "0" ] && return
-	[ "$ndpi" = "0" ] && return
+	[ "$ndpi" = "1" ] || return
 	[ -z "$category" ] && return
 	[ "$vpn" = "1" ] && intf="srv_vpn1"
 	[ -z "$intf" ] && [ -z "$dscp" ] && return
@@ -2656,14 +2660,13 @@ start_service() {
 	# Cache proxy/VPN/ndpi/ndpid state — read once, reused by _intf_rule and _bypass_proto_core (called per interface/proto)
 	_omr_proxy=$(uci -q get openmptcprouter.settings.proxy)
 	_omr_ndpi=$(uci -q get openmptcprouter.settings.ndpi)
-	# A dpis/categories rule without the ndpi option: LuCI shows "Enable
-	# ndpi" ticked when nDPId is there (and the option hidden when not), so
-	# that is what it means. Each function used to read it its own way ("0",
-	# "1" or empty), and a category saved with the box ticked was never
-	# watched by nDPId. The kernel nDPI match (/proc/net/xt_ndpi) does not
-	# count: it has no nftables counterpart and nothing marks for it.
-	_ndpi_default=0
-	[ -e /usr/sbin/ndpisrvd ] && _ndpi_default=1
+	# A dpis/categories rule's ndpi option: 1 (saved ticked) relies on
+	# nDPId instead of the static address list, 0 uses the list only, and
+	# no option at all (rules saved before LuCI wrote it, the CLI, the
+	# 41_omr-bypass migration) is what it always was: the list, with nDPId's
+	# detections added when nDPId runs, and nDPId started for a dpis rule
+	# but not for a category. Reading a missing option as 1 dropped the
+	# list of those rules on upgrade and started nDPId for every category.
 	_omr_ndpid=0
 	if [ -x /usr/sbin/ndpid ]; then
 		_ensure_ndpid_running
