@@ -174,6 +174,23 @@ function addCurrentChoices(o, sids, get) {
 	});
 }
 
+/* Force TTL: /etc/firewall.ttl sets a network device section's ttl on the
+ * device that section names, so it is read from the section naming the
+ * interface's device. A modem's sysfs path names no device: its value is on
+ * a nameless <intf>_dev, where the backend keeps it. */
+function ttlOf(sid) {
+	var dev = uci.get('network', sid, 'device') || '';
+	var sec = null;
+	if (dev)
+		uci.sections('network', 'device', function(d) {
+			if (!sec && d.name === dev)
+				sec = d['.name'];
+		});
+	if (!sec && uci.get('network', sid + '_dev') && !uci.get('network', sid + '_dev', 'name'))
+		sec = sid + '_dev';
+	return sec ? (uci.get('network', sec, 'ttl') || '') : '';
+}
+
 function ensureWizardCSSLoaded() {
 	if (document.getElementById('omr-wizard-css'))
 		return;
@@ -339,8 +356,7 @@ return view.extend({
 					qosenabled: uci.get('qos', intf, 'enabled') || '0',
 					multipath: uci.get('network', intf, 'multipath') || 'on',
 					lan: zoneLan.indexOf(intf) !== -1 ? '1' : '0',
-					ttl: ttlValues.hasOwnProperty(intf) ? ttlValues[intf] :
-						(uci.get('network', intf + '_dev', 'ttl') || ''),
+					ttl: ttlValues.hasOwnProperty(intf) ? ttlValues[intf] : ttlOf(intf),
 					downloadspeed: uci.get('network', intf, 'downloadspeed') || '0',
 					uploadspeed: uci.get('network', intf, 'uploadspeed') || '0',
 					testspeed: uci.get('openmptcprouter', intf, 'testspeed') || '0',
@@ -1226,7 +1242,7 @@ return view.extend({
 		o.optional = true;
 		o.description = _('65 often solves LTE tethering detection.');
 		o.cfgvalue = function(sid) {
-			return ttlValues.hasOwnProperty(sid) ? ttlValues[sid] : uci.get('network', sid + '_dev', 'ttl');
+			return ttlValues.hasOwnProperty(sid) ? ttlValues[sid] : ttlOf(sid);
 		};
 		o.write = function(sid, val) { ttlValues[sid] = val || ''; };
 		o.remove = function(sid) { ttlValues[sid] = ''; };

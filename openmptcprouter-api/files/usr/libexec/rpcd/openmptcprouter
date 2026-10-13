@@ -1509,10 +1509,15 @@ function wizard_add(args)
 	local wan_networks = {}
 
 	local managed_names = {}
+	-- the devices the interfaces end up on, for Force TTL below
+	local managed_devices = {}
 	for _, itf in ipairs(interfaces) do
 		if type(itf) == "table" then
 			local n = _sanitize_name(itf.name)
 			if n ~= "" then managed_names[n] = true end
+			local d = _as_string(itf.ifname, "")
+			if d ~= "" and _as_string(itf.vlan, "") ~= "" then d = d .. "." .. _as_string(itf.vlan, "") end
+			if d ~= "" then managed_devices[d] = true end
 		end
 	end
 
@@ -1601,24 +1606,52 @@ function wizard_add(args)
 				_set_or_delete("openmptcprouter", name, "testspeed", _as_string(itf.testspeed, "0"))
 				_set_or_delete("openmptcprouter", name, "multipathvpn", _to_flag(itf.multipathvpn))
 
-				if _as_string(itf.ttl, "") ~= "" then
-					if ucic:get("network", name .. "_dev") == nil then
-						ucic:set("network", name .. "_dev", "device")
-						-- /etc/firewall.ttl sets the TTL on the device this
-						-- names: a section created without it did nothing.
-						-- Never a second section for a device already
-						-- configured, and never a modem's sysfs path.
-						local named = false
-						ucic:foreach("network", "device", function(d)
-							if d.name == _dev then named = true end
-						end)
-						if _dev ~= "" and not _dev:find("/", 1, true) and not named then
-							ucic:set("network", name .. "_dev", "name", _dev)
+				-- Force TTL: /etc/firewall.ttl sets a device section's ttl on
+				-- the device that section names, so it goes on the section
+				-- naming this interface's device. <name>_dev could name the
+				-- device the WAN had before, or none, and the TTL then went
+				-- to the wrong device or nowhere. A modem's sysfs path names
+				-- no network device: its value stays on a nameless <name>_dev.
+				local ttl = _as_string(itf.ttl, "")
+				local own = name .. "_dev"
+				local own_type = ucic:get("network", own)
+				local own_name = ucic:get("network", own, "name")
+				local plain_dev = _dev ~= "" and not _dev:find("/", 1, true)
+				local ttl_sec
+				if plain_dev then
+					ucic:foreach("network", "device", function(d)
+						if not ttl_sec and d.name == _dev then ttl_sec = d[".name"] end
+					end)
+				end
+				-- the TTL this interface had on its previous device, unless
+				-- another interface of the wizard is on that device now
+				if own_type == "device" and own_name ~= nil and own_name ~= _dev
+				   and not managed_devices[own_name] then
+					ucic:delete("network", own, "ttl")
+				end
+				if ttl ~= "" then
+					if not ttl_sec then
+						if own_type == nil or (own_type == "device" and own_name == nil) then
+							ucic:set("network", own, "device")
+							if plain_dev then
+								ucic:set("network", own, "name", _dev)
+							end
+							ttl_sec = own
+						elseif plain_dev then
+							ttl_sec = ucic:add("network", "device")
+							ucic:set("network", ttl_sec, "name", _dev)
 						end
 					end
-					ucic:set("network", name .. "_dev", "ttl", _as_string(itf.ttl, ""))
+					if ttl_sec then
+						ucic:set("network", ttl_sec, "ttl", ttl)
+					end
 				else
-					ucic:delete("network", name .. "_dev", "ttl")
+					if ttl_sec then
+						ucic:delete("network", ttl_sec, "ttl")
+					end
+					if own_type == "device" and own_name == nil then
+						ucic:delete("network", own, "ttl")
+					end
 				end
 
 				if ucic:get("qos", name) == nil then
