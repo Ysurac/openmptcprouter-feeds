@@ -17,11 +17,6 @@ return L.view.extend({
 		o.default = o.disabled;
 		o.rmempty = false;
 
-		o = s.option(form.Flag, 'daemon', _('Daemon mode'),
-			_('Run bpftune as a background daemon.'));
-		o.default = '1';
-		o.rmempty = false;
-
 		o = s.option(form.Flag, 'rollback', _('Rollback on stop'),
 			_('Revert all tuning changes when bpftune stops.'));
 		o.default = o.disabled;
@@ -58,7 +53,7 @@ return L.view.extend({
 		o.placeholder = '/usr/lib/bpftune';
 
 		s = m.section(form.TypedSection, 'config', _('Tuner Selection'),
-			_('Available tuners: tcp_buffer, tcp_conn, ip_frag, neigh, sysctl, net_buffer, netns, udp_buffer.'));
+			_('Available tuners: tcp_buffer, tcp_conn, ip_frag, neigh_table, sysctl, net_buffer, netns, route_table, udp_buffer.'));
 		s.addremove = false;
 		s.anonymous = true;
 
