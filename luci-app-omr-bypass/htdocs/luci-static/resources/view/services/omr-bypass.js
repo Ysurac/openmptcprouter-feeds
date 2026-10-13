@@ -117,7 +117,8 @@ return L.view.extend({
 				var active = v.length > 1 ? groupStatus[v.join(',')] : null;
 				if (active)
 					text += ' (' + _('now: %s').format(active) + ')';
-				return text;
+				/* the grid inserts it as HTML, and a custom value is any text */
+				return '%h'.format(text);
 			};
 			if (vpn)
 				o.depends('vpn', '0');
@@ -593,7 +594,7 @@ return L.view.extend({
 				return _('All WANs down: default path');
 			if (st === 'fallback:block')
 				return _('All WANs down: blocked');
-			return st;
+			return '%h'.format(st);
 		};
 
 		o = s.option(form.Value, 'note', _('Note'),
