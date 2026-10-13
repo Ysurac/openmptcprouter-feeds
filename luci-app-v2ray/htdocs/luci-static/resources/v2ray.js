@@ -94,6 +94,18 @@ return L.Class.extend({
 		return o;
 	},
 
+	/* An option whose depends() do not match is removed on save unless
+	 * retained: a save would then wipe the fields of the other protocols and
+	 * transports, which the VPS sync fills for all of them, and the next
+	 * switch would start from nothing (a reality port of 0...). Run once all
+	 * the options of the section are added. */
+	retainHidden: function(s) {
+		s.children.forEach(function(o) {
+			if (o.deps && o.deps.length)
+				o.retain = true;
+		});
+	},
+
 	/* stream transport + TLS + sockopt, shared by inbound & outbound sections.
 	 * sockopt: 'tproxy' (inbound: redirect/tproxy/off) or 'mark' (outbound: uinteger)
 	 */
@@ -108,6 +120,7 @@ return L.Class.extend({
 		o.value('domainsocket', _('Domain socket'));
 		o.value('quic', _('QUIC'));
 		o.default = 'tcp';
+		o.rmempty = false;
 
 		/* tcp header */
 		o = s.taboption('transport', form.ListValue, 'ss_tcp_header_type', _('TCP header obfuscation'));
@@ -187,6 +200,7 @@ return L.Class.extend({
 		o.value('none', _('None'));
 		o.value('tls', 'TLS');
 		o.default = 'none';
+		o.rmempty = false;
 
 		o = s.taboption('tls', form.Value, 'ss_tls_server_name', _('TLS server name (SNI)'));
 		o.datatype = 'host'; o.depends('ss_security', 'tls');
@@ -242,6 +256,9 @@ return L.Class.extend({
 			o = s.taboption('sockopt', form.ListValue, 'ss_sockopt_tproxy', _('TPROXY mode'));
 			o.value('redirect', _('Redirect')); o.value('tproxy', 'TPROXY'); o.value('off', _('Off'));
 			o.default = 'redirect';
+			/* the init has no default: without it a redirect inbound
+			 * never learns the original destination */
+			o.rmempty = false;
 		} else {
 			o = s.taboption('sockopt', form.Value, 'ss_sockopt_mark', _('Firewall mark'));
 			o.datatype = 'uinteger';
@@ -274,7 +291,7 @@ return L.Class.extend({
 		o = s.taboption('protocol', form.Value, 's_dokodemo_door_timeout', _('Timeout'));
 		o.datatype = 'uinteger'; o.depends('protocol', 'dokodemo-door');
 		o = s.taboption('protocol', form.Flag, 's_dokodemo_door_follow_redirect', _('Follow redirect'));
-		o.default = o.enabled; o.depends('protocol', 'dokodemo-door');
+		o.default = o.enabled; o.rmempty = false; o.depends('protocol', 'dokodemo-door');
 		o = s.taboption('protocol', form.Value, 's_dokodemo_door_user_level', _('User level'));
 		o.datatype = 'uinteger'; o.depends('protocol', 'dokodemo-door');
 
@@ -320,7 +337,7 @@ return L.Class.extend({
 		o = s.taboption('protocol', form.Value, 's_socks_client_email', _('Client email'));
 		o.default = 'openmptcprouter'; o.depends('protocol', 'socks');
 		o = s.taboption('protocol', form.Flag, 's_socks_udp', _('UDP'));
-		o.default = o.enabled; o.depends('protocol', 'socks');
+		o.default = o.enabled; o.rmempty = false; o.depends('protocol', 'socks');
 		o = s.taboption('protocol', form.Value, 's_socks_ip', _('IP'));
 		o.datatype = 'host'; o.depends('protocol', 'socks');
 		o = s.taboption('protocol', form.Value, 's_socks_user_level', _('User level'));

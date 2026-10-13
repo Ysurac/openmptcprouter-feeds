@@ -49,6 +49,8 @@ return L.view.extend({
 		v2.addInboundProtocolFields(s);
 		v2.addStreamSettings(s, 'tproxy');
 
+		v2.retainHidden(s);
+
 		return m.render();
 	}
 });

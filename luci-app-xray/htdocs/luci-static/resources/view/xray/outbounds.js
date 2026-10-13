@@ -54,6 +54,8 @@ return L.view.extend({
 		xr.addOutboundProtocolFields(s, true);
 		xr.addStreamSettings(s, 'mark', true);
 
+		xr.retainHidden(s);
+
 		return m.render();
 	}
 });
