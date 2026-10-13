@@ -3221,6 +3221,15 @@ _set_openvpn_enabled() {
 	_set_openvpn_server "$section" "enabled" "$wanted"
 }
 
+# config_foreach-compatible: every omr* section but $2 off. omr turned off
+# here and back on right after left two deltas for the same value, and the
+# "uci changes" test restarted OpenVPN on every config pull with
+# openvpn_lb=0, the default on a multi-core router.
+_set_openvpn_other_off() {
+	[ "$1" = "$2" ] && return
+	_set_openvpn_server "$1" "enabled" "0"
+}
+
 # Which proxy engine is switched on. omr-tracker picks the proxy watchdog it
 # launches (omr-tracker-ss, -v2ray, -xray) from these flags, not from
 # openmptcprouter.settings.proxy, so a change here needs it to reconcile even
@@ -3637,7 +3646,7 @@ _set_config_from_vps() {
 		#	set openvpn.omr.secret="/etc/luci-uploads/openvpn.key"
 		#EOF
 		if [ "$(uci -q get openmptcprouter.settings.openvpn_lb)" = "0" ]; then
-			config_foreach _set_openvpn_server openvpn "enabled" "0"
+			config_foreach _set_openvpn_other_off openvpn omr
 			_set_openvpn_enabled omr "$openvpn_state"
 		else
 			config_foreach _set_openvpn_enabled openvpn "$openvpn_state"
@@ -3702,7 +3711,7 @@ _set_config_from_vps() {
 		config_foreach _del_openvpn_option openvpn "secret"
 		# "enabled" comes last: the readiness check reads the options set above.
 		if [ "$(uci -q get openmptcprouter.settings.openvpn_lb)" = "0" ]; then
-			config_foreach _set_openvpn_server openvpn "enabled" "0"
+			config_foreach _set_openvpn_other_off openvpn omr
 			_set_openvpn_enabled omr "$openvpn_state"
 		else
 			config_foreach _set_openvpn_enabled openvpn "$openvpn_state"
