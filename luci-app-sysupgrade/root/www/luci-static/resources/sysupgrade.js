@@ -173,7 +173,11 @@ function upgrade_check() {
     hide("#server_div");
     set_status("info", _("Searching for upgrades"), true);
     fetch(data.url + "/api/versions?v=" + Date.now())
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok)
+                throw new Error("HTTP " + response.status);
+            return response.json();
+        })
         .then(response => {
             var branches = response["branches"]
             for (var i in branches) {
@@ -224,6 +228,10 @@ function upgrade_check() {
                 set_status("success", _("No upgrades available"))
 
             }
+        })
+        .catch(err => {
+            set_status("danger", _("Searching for upgrades failed:") + " " + esc(err.message));
+            show("#upgrade_button");
         });
 
 }
@@ -254,9 +262,11 @@ function upgrade_request() {
 function upgrade_request_callback(response) {
     var sysupgrade_file = "";
     console.log(response)
+    data.sysupgrade_sha256 = "";
     for (var i in response.images) {
         if (response.images[i].type == "sysupgrade") {
             sysupgrade_file = response.images[i].name;
+            data.sysupgrade_sha256 = String(response.images[i].sha256 || "").toLowerCase();
         }
     }
     if (sysupgrade_file != "") {
@@ -323,7 +333,22 @@ function upload_image(blob) {
     form_data.append("filedata", blob)
 
     request.addEventListener('load', function(event) {
-        request_json = JSON.parse(request.responseText)
+        var res = null;
+        try {
+            res = JSON.parse(request.responseText);
+        } catch (e) {}
+        if (request.status !== 200 || !res || res.failure || !res.sha256sum) {
+            var why = (res && (res.message || (res.failure && res.failure[1]))) || ("HTTP " + request.status);
+            set_status("danger", _("Upload of firmware failed, please retry by reloading web interface") + "<br />" + esc(why));
+            return;
+        }
+        // The image went through the browser: flash only what the build
+        // server built
+        if (data.sysupgrade_sha256 && res.sha256sum.toLowerCase() !== data.sysupgrade_sha256) {
+            ubus_call("rpc-sys", "upgrade_clean", {});
+            set_status("danger", _("The firmware checksum does not match the one given by the server, the firmware was not flashed.") + "<br />" + esc(res.sha256sum) + " != " + esc(data.sysupgrade_sha256));
+            return;
+        }
         flash_image();
     });
 
@@ -350,7 +375,12 @@ function download_image() {
                 type: "application/octet-stream"
             });
             upload_image(blob)
+        } else {
+            set_status("danger", _("Download of firmware failed:") + " HTTP " + esc(this.status));
         }
+    };
+    download_request.onerror = function() {
+        set_status("danger", _("Download of firmware failed:") + " " + _("network error"));
     };
     set_status("info", _("Downloading firmware to web browser memory"), true);
     download_request.send();
@@ -370,6 +400,9 @@ function server_request() {
                     response.json()
                         .then(response => {
                             upgrade_request_callback(response)
+                        })
+                        .catch(err => {
+                            set_status("danger", _("Firmware request failed:") + " " + esc(err.message));
                         });
                     break;
                 case 202:
@@ -387,10 +420,19 @@ function server_request() {
                             if (response.buildlog) {
                                 data.buildlog_url = data.url + '/' + response.bin_dir + '/buildlog.txt';
                             }
-                            set_status("danger", esc(response.message));
+                            set_status("danger", esc(response.message), false, true);
+                        })
+                        .catch(err => {
+                            set_status("danger", _("Firmware request failed:") + " HTTP " + esc(response.status));
                         });
                     break;
+                default:
+                    set_status("danger", _("Firmware request failed:") + " HTTP " + esc(response.status));
+                    break;
             }
+        })
+        .catch(err => {
+            set_status("danger", _("Firmware request failed:") + " " + esc(err.message));
         });
 }
 
