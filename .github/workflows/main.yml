@@ -67,22 +67,38 @@ jobs:
     - name: Build toolchain
       working-directory: ../../omr
       env:
-        OMR_FEED_URL: https://github.com/ysurac/openmptcprouter-feeds
-        SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
+        # Build the pushed commit of the repository that ran the workflow,
+        # not the branch tip of ysurac's feed at clone time.
+        OMR_FEED_URL: ${{ github.server_url }}/${{ github.repository }}
+        OMR_FEED_SRC: ${{ github.sha }}
         OMR_TARGET: ${{ matrix.OMR_TARGET }}
         OMR_KERNEL: ${{ matrix.OMR_KERNEL }}
         OMR_HOST: ${{ secrets.OMR_HOST }}
         OMR_PORT: ${{ secrets.OMR_PORT }}
+      run: |
+        OMR_KERNEL="${OMR_KERNEL}" OMR_FEED_SRC="${OMR_FEED_SRC}" sh build.sh prepare {tools,toolchain}/install -j$(nproc) || OMR_KERNEL="${OMR_KERNEL}" OMR_FEED_SRC="${OMR_FEED_SRC}" sh build.sh prepare {tools,toolchain}/install -j1 V=s
+    - name: Install the apk keys
+      working-directory: ../../omr
+      env:
+        OMR_TARGET: ${{ matrix.OMR_TARGET }}
+        OMR_KERNEL: ${{ matrix.OMR_KERNEL }}
         OMR_APK_PRIVKEY: ${{ secrets.OMR_APK_PRIVKEY }}
       run: |
-        OMR_KERNEL="${OMR_KERNEL}" OMR_FEED_SRC="${SOURCE_NAME}" sh build.sh prepare {tools,toolchain}/install -j$(nproc) || OMR_KERNEL="${OMR_KERNEL}" OMR_FEED_SRC="${SOURCE_NAME}" sh build.sh prepare {tools,toolchain}/install -j1 V=s
-        # Sign packages and indexes with the OMR key: without it each run made
-        # its own pair, and an image only trusted its own run's repositories.
-        # The build keeps generating one when the secret is not set (forks).
-        if [ -n "$OMR_APK_PRIVKEY" ]; then
-          ( umask 077; printf '%s\n' "$OMR_APK_PRIVKEY" > $OMR_TARGET/$OMR_KERNEL/source/private-key.pem )
-          openssl ec -in $OMR_TARGET/$OMR_KERNEL/source/private-key.pem -pubout > $OMR_TARGET/$OMR_KERNEL/source/public-key.pem
-        fi
+        # Images must trust the OMR key, so its public half is the
+        # public-key.pem that base-files ships. The private half never
+        # enters the buildroot, where every package build could read it:
+        # packages and indexes are signed with a throwaway key, trusted at
+        # image install time through build-public-key.pem (apk loads every
+        # file of its keys dir), then re-signed after the build. Without the
+        # secret (forks) the buildroot generates its own pair as before.
+        [ -n "$OMR_APK_PRIVKEY" ] || exit 0
+        TOPDIR="$OMR_TARGET/$OMR_KERNEL/source"
+        ( umask 077; openssl ecparam -name prime256v1 -genkey -noout -out "$TOPDIR/private-key.pem" )
+        openssl ec -in "$TOPDIR/private-key.pem" -pubout -out "$TOPDIR/build-public-key.pem"
+        printf '%s\n' "$OMR_APK_PRIVKEY" | openssl ec -pubout -out "$TOPDIR/public-key.pem"
+        # package/Makefile regenerates public-key.pem from private-key.pem
+        # when it is not the newer of the two
+        touch "$TOPDIR/public-key.pem"
     - name: Build packages
       working-directory: ../../omr
       env:
@@ -97,13 +113,56 @@ jobs:
         OMR_KERNEL: ${{ matrix.OMR_KERNEL }}
       run: |
         make IGNORE_ERRORS=m -C $OMR_TARGET/$OMR_KERNEL/source target/install -j$(nproc) || make IGNORE_ERRORS=m -C $OMR_TARGET/$OMR_KERNEL/source target/install -j1 V=s
+    - name: Sign packages with the OMR key
+      working-directory: ../../omr
+      env:
+        OMR_TARGET: ${{ matrix.OMR_TARGET }}
+        OMR_KERNEL: ${{ matrix.OMR_KERNEL }}
+        OMR_APK_PRIVKEY: ${{ secrets.OMR_APK_PRIVKEY }}
+      run: |
+        [ -n "$OMR_APK_PRIVKEY" ] || exit 0
+        TOPDIR="$PWD/$OMR_TARGET/$OMR_KERNEL/source"
+        APK="$TOPDIR/staging_dir/host/bin/apk"
+        KEYDIR="$(mktemp -d "$RUNNER_TEMP/apkkey.XXXXXX")"
+        trap 'rm -rf "$KEYDIR"' EXIT
+        ( umask 077; printf '%s\n' "$OMR_APK_PRIVKEY" > "$KEYDIR/omr.pem" )
+        # Check against the key the images ship, not the secret itself
+        mkdir "$KEYDIR/trust"
+        cp "$TOPDIR/public-key.pem" "$KEYDIR/trust/"
+        cd "$TOPDIR/bin"
+        # One file per call: apk 3.0.5 adbsign only signs the first file of
+        # a list and leaves the others without any signature
+        find . -name '*.apk' -type f -print0 | xargs -0 -r -n1 "$APK" adbsign --allow-untrusted --reset-signatures --sign-key "$KEYDIR/omr.pem"
+        # Rebuild the indexes instead of re-signing them: the new signature
+        # can change a package's size, which the index records
+        find . -name packages.adb -type f | while IFS= read -r idx; do
+          ( cd "${idx%/packages.adb}" && "$APK" mkndx --root "$TOPDIR" --keys-dir "$KEYDIR/trust" --allow-untrusted --sign "$KEYDIR/omr.pem" --output packages.adb *.apk )
+        done
+        # adbsign exits 0 on errors: fail here if anything is not signed
+        if ! find . \( -name '*.apk' -o -name packages.adb \) -type f -print0 | xargs -0 -r "$APK" verify --keys-dir "$KEYDIR/trust" > "$KEYDIR/verify.log" 2>&1; then
+          grep -v ': OK$' "$KEYDIR/verify.log"
+          exit 1
+        fi
+        find . -name sha256sums -type f | while IFS= read -r sums; do
+          d="${sums%/sha256sums}"
+          while IFS= read -r line; do
+            f="${line#* \*}"
+            case "$f" in
+            *.apk|packages.adb|*/packages.adb)
+              printf '%s *%s\n' "$(sha256sum < "$d/$f" | cut -d' ' -f1)" "$f" ;;
+            *)
+              printf '%s\n' "$line" ;;
+            esac
+          done < "$sums" > "$sums.new"
+          mv "$sums.new" "$sums"
+        done
     - name: Upload artifacts
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
         name: ${{ matrix.OMR_TARGET }}
         path: /home/runner/work/omr/${{ matrix.OMR_TARGET }}/${{ matrix.OMR_KERNEL }}/source/bin
         overwrite: true
-    - if: steps.branch_name.outputs.SOURCE_BRANCH == ''
+    - if: startsWith(github.ref, 'refs/tags/')
       name: Deploy - Create directory
       uses: ysurac/ssh-action@5a841de87115730aff750ac127773e3b2b3f56dd # master as of 2026-10-12
       env:
@@ -118,7 +177,7 @@ jobs:
         port: ${{ secrets.OMR_DEPLOY_PORT }}
         key: ${{ secrets.PRIVATE_KEY }}
         args: -tt
-    - if: steps.branch_name.outputs.SOURCE_BRANCH != ''
+    - if: ${{ !startsWith(github.ref, 'refs/tags/') }}
       name: Deploy - Create directory
       uses: ysurac/ssh-action@5a841de87115730aff750ac127773e3b2b3f56dd # master as of 2026-10-12
       env:
@@ -141,7 +200,7 @@ jobs:
         GITHUB_WORKSPACE: ${{ steps.branch_name.outputs.WORKSPACE }}
       run: |
         mv ${OMR_TARGET}/${OMR_KERNEL}/source/bin ${GITHUB_WORKSPACE}/
-    - if: steps.branch_name.outputs.SOURCE_BRANCH == ''
+    - if: startsWith(github.ref, 'refs/tags/')
       name: Deploy - Upload via rsync
       uses: ysurac/action-rsync@1032c2593f9067e6ce901a1d77c6342dc50bcd24 # master as of 2026-10-12
       env:
@@ -156,7 +215,7 @@ jobs:
         SOURCE_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
         SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
         GITHUB_WORKSPACE: ${{ steps.branch_name.outputs.WORKSPACE }}
-    - if: steps.branch_name.outputs.SOURCE_BRANCH != ''
+    - if: ${{ !startsWith(github.ref, 'refs/tags/') }}
       name: Deploy - Upload via rsync
       uses: ysurac/action-rsync@1032c2593f9067e6ce901a1d77c6342dc50bcd24 # master as of 2026-10-12
       env:
