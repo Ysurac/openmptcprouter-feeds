@@ -66,10 +66,45 @@ EOF
 # endpoints only use a free slot, and a refused add is logged.
 MPTCP_ENDPOINTS_MAX=8
 
+# The id of the endpoint whose address is $2 in the listing $1. The address
+# is compared as the whole first field: "grep -F '1.2.3.4 '" also matched
+# 11.2.3.4, the endpoint of another WAN, which was then deleted.
+endpoint_id_of_addr() {
+	printf '%s\n' "$1" | awk -v a="$2" '$1 == a {
+		for (i = 2; i < NF; i++) if ($i == "id") { print $(i + 1); exit }
+	}'
+}
+
+# Whether the device $2 has an endpoint with an id below $3 in the listing $1
+_dev_has_lower_id() {
+	local listing="$1" dev="$2" below="$3" ep_line ep_id ep_dev
+	[ -n "$dev" ] || return 1
+	while IFS= read -r ep_line; do
+		ep_id=""
+		ep_dev=""
+		set -- $ep_line
+		while [ "$#" -gt 1 ]; do
+			case "$1" in
+				id) ep_id="$2" ;;
+				dev) ep_dev="$2" ;;
+			esac
+			shift
+		done
+		[ "$ep_dev" = "$dev" ] && [ -n "$ep_id" ] && [ "$ep_id" -lt "$below" ] && return 0
+	done <<EOF
+$listing
+EOF
+	return 1
+}
+
 # Return 0 when a slot is free, or was freed by removing the extra endpoint
-# with the highest id of another device
+# with the highest id of another device. An id of 128 or more alone does not
+# make an extra endpoint: one the kernel picked (no id given, or the WAN's id
+# was held by another device) can be the only endpoint of a WAN, which was
+# then taken out of MPTCP. The device must keep an endpoint with a lower id.
 _free_endpoint_slot() {
-	local line ep_addr ep_id ep_dev victim_id="" victim_addr="" victim_dev="" count=0
+	local line ep_addr ep_id ep_dev victim_id="" victim_addr="" victim_dev="" count=0 listing
+	listing="$(ip mptcp endpoint show)"
 	while IFS= read -r line; do
 		[ -n "$line" ] || continue
 		count=$((count + 1))
@@ -86,11 +121,12 @@ _free_endpoint_slot() {
 		done
 		[ -n "$ep_id" ] && [ "$ep_id" -ge 128 ] && [ "$ep_dev" != "$DEVICE" ] || continue
 		[ -z "$victim_id" ] || [ "$ep_id" -gt "$victim_id" ] || continue
+		_dev_has_lower_id "$listing" "$ep_dev" "$ep_id" || continue
 		victim_id="$ep_id"
 		victim_addr="$ep_addr"
 		victim_dev="$ep_dev"
 	done <<EOF
-$(ip mptcp endpoint show)
+$listing
 EOF
 	[ "$count" -lt "$MPTCP_ENDPOINTS_MAX" ] && return 0
 	[ -n "$victim_id" ] || return 1
@@ -228,7 +264,7 @@ case $1 in
 		fi
         if [ -n "$IP" ] && [ -n "$endpoint" ]; then
             for i in $IP; do
-                ID=$(echo "${endpoint}" | grep -F "$i " | awk '{print $3}')
+                ID=$(endpoint_id_of_addr "${endpoint}" "$i")
                 [ -n "$ID" ] && break
             done
         fi
@@ -364,7 +400,7 @@ EOF
 		fi
         if [ -z "$ID" ] && [ -n "$IP" ] && [ -n "$endpoint" ]; then
             for i in $IP; do
-                ID=$(echo "${endpoint}" | grep -F "$i " | awk '{print $3}')
+                ID=$(endpoint_id_of_addr "${endpoint}" "$i")
                 [ -n "$ID" ] && break
             done
         fi
