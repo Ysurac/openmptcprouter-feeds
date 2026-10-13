@@ -2033,24 +2033,32 @@ _get_dscp_vps_pin() {
 # an omr-admin without the route): it was never sent again. What it did not
 # apply is tried again, the same set at most every 10 minutes
 # (_vps_push_wait): the tracker hooks ask on every cycle, a login and a POST
-# each time.
+# each time. A refusal that stays (a read only user, the manager not
+# installed on the VPS) hourly only, as _set_json_once does.
 _vps_push_done() {
-	if [ "$(_parse_result "$3")" = "done" ]; then
-		echo "$2" > "$1"
-		rm -f "$1.retry"
-	else
-		echo "$(date +%s) $2" > "$1.retry"
-	fi
+	local wait=600
+	case "$(_parse_result "$3")" in
+		done)
+			echo "$2" > "$1"
+			rm -f "$1.retry"
+			return
+			;;
+		permission|warning) wait=3600 ;;
+	esac
+	echo "$(date +%s) $wait $2" > "$1.retry"
 }
 
 _vps_push_wait() { # <cache> <desired>
-	local last pushed
+	local last wait pushed
 	[ -f "$1.retry" ] || return 1
-	read -r last pushed < "$1.retry"
+	read -r last wait pushed < "$1.retry"
 	case "$last" in
 		''|*[!0-9]*) return 1 ;;
 	esac
-	[ "$pushed" = "$2" ] && [ "$(($(date +%s) - last))" -lt 600 ]
+	case "$wait" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	[ "$pushed" = "$2" ] && [ "$(($(date +%s) - last))" -lt "$wait" ]
 }
 
 # Pushes network's dscp_pin rows' download_interface (router-side pick of
