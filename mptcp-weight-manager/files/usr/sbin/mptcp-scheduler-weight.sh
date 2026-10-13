@@ -8,9 +8,14 @@
 # every subflow shares the same local IP there) to a weight. Same
 # router/VPS split as mptcp-scheduler-dscp.sh's dscp_iface/dscp_remote_id
 # -- see that script's header comment for the underlying reasoning.
+# The IPv6 endpoints of a router WAN are keyed by their endpoint id instead
+# (weight_local_id): the schedulers read 127.0.0.6 as the local IPv4 address
+# of every native IPv6 subflow.
 
 MAP_PATH="/sys/fs/bpf/endpoint_weights"
 MAP_PATH2="/sys/fs/bpf/weight_remote_id"
+# Absent with an mptcp-bpf-weight(-rr) older than the IPv6 support
+MAP_PATH3="/sys/fs/bpf/weight_local_id"
 # The keys last set for each device, see forget_old_keys
 STATE_DIR="/var/state/mptcp-weight"
 
@@ -76,6 +81,20 @@ get_bpf_ep_ip_from_iface() {
 	return 0
 }
 
+# The endpoint ids of the IPv6 endpoints of device $1, or of every device
+# without $1
+ep_ids6() {
+	ip mptcp endpoint show | awk -v dev="$1" '
+		$1 ~ /:/ {
+			id = ""; d = ""
+			for (i = 2; i < NF; i++) {
+				if ($i == "id") id = $(i + 1)
+				if ($i == "dev") d = $(i + 1)
+			}
+			if (id != "" && (dev == "" || d == dev)) print id
+		}'
+}
+
 # The map keys (get_bpf_ep_ip_from_iface's form) of every IPv4 endpoint
 ep_keys_all() {
 	ip mptcp endpoint show | awk '$1 !~ /:/ {
@@ -109,6 +128,29 @@ forget_old_keys() {
 	printf '%s\n' $keys > "$state"
 }
 
+# The same for weight_local_id: delete the ids set before for the device $1
+# that are not among its IPv6 endpoint ids $2 any more, unless another WAN's
+# IPv6 endpoint has that id now, and remember $2.
+forget_old_ids() {
+	local dev="$1" ids current old state
+	case "$dev" in ''|*/*|.*) return 0 ;; esac
+	[ -e "$MAP_PATH3" ] || return 0
+	state="$STATE_DIR/ids/$dev"
+	ids="$(echo $2)"
+	if [ -f "$state" ]; then
+		current=" $ids $(echo $(ep_ids6)) "
+		while read -r old; do
+			[ -n "$old" ] || continue
+			case "$current" in
+				*" $old "*) continue ;;
+			esac
+			bpftool map delete pinned "$MAP_PATH3" key hex $(to_byte_hex "$old") >/dev/null 2>&1
+		done < "$state"
+	fi
+	mkdir -p "$STATE_DIR/ids"
+	printf '%s\n' $ids > "$state"
+}
+
 is_uint_0_255() {
 	case "$1" in
 		''|*[!0-9]*) return 1 ;;
@@ -131,6 +173,8 @@ usage() {
 	echo "endpoint IP. Use 'set id <N> <w>' on the server (VPS), where every subflow"
 	echo "shares the same local IP: <N> is the MPTCP endpoint id the router assigned"
 	echo "to that WAN (kept stable across reconnects, e.g. via network.<iface>.ip4table)."
+	echo "On the router, an interface's weight also goes to the endpoint ids of its"
+	echo "IPv6 endpoints, the key of IPv6 subflows."
 	exit 1
 }
 
@@ -162,6 +206,11 @@ if [ "$ACTION" = "show" ]; then
 				/"key":/   { k=$2; gsub(/,/, "", k) }
 				/"value":/ { v=$2; gsub(/,/, "", v); print "remote_id="k" weight="v }'
 		fi
+		if [ -e "$MAP_PATH3" ]; then
+			bpftool map dump pinned "$MAP_PATH3" 2>/dev/null | awk '
+				/"key":/   { k=$2; gsub(/,/, "", k) }
+				/"value":/ { v=$2; gsub(/,/, "", v); print "local_id="k" weight="v }'
+		fi
 		exit 0
 
 	elif [ "$#" -eq 2 ] && [ "$2" = "id" ]; then
@@ -186,6 +235,14 @@ if [ "$ACTION" = "show" ]; then
 			EP_IP=$(printf "%d.%d.%d.%d\n" $(( BPF_EP_IP & 255 )) $(( (BPF_EP_IP >> 8) & 255 )) $(( (BPF_EP_IP >> 16) & 255 )) $(( (BPF_EP_IP >> 24) & 255 )) )
 			echo "interface=$IFACE endpoint_ip=$EP_IP weight=$WEIGHT"
 		done
+		# One line per IPv6 endpoint id too, so that 040-multipath-weight
+		# also sets a weight missing there only
+		if [ -e "$MAP_PATH3" ]; then
+			for EP_ID in $(ep_ids6 "$IFACE"); do
+				WEIGHT=$(get_weight_from_key "$(to_byte_hex "$EP_ID")" "$MAP_PATH3")
+				echo "interface=$IFACE endpoint_id=$EP_ID weight=${WEIGHT:-100}"
+			done
+		fi
 		exit 0
 
 	elif [ "$#" -eq 3 ] && [ "$2" = "id" ]; then
@@ -232,14 +289,27 @@ elif [ "$ACTION" = "set" ]; then
 	IFACE="$2"
 	WEIGHT="$3"
 	BPF_EP_IPS="$(get_bpf_ep_ip_from_iface "$IFACE")"
+	EP_IDS6="$(ep_ids6 "$IFACE")"
 
-	if [ -z "$BPF_EP_IPS" ]; then
+	if [ -z "$BPF_EP_IPS" ] && [ -z "$EP_IDS6" ]; then
 		echo "Interface '$IFACE' not found"
 		exit 1
 	fi
 
 	forget_old_keys "$IFACE" "$BPF_EP_IPS"
+	forget_old_ids "$IFACE" "$EP_IDS6"
 
+	if [ -e "$MAP_PATH3" ]; then
+		for EP_ID in $EP_IDS6; do
+			if ! bpftool map update pinned "$MAP_PATH3" key hex $(to_byte_hex "$EP_ID") value hex $(to_le_hex "$WEIGHT"); then
+				echo "Error updating map"
+				exit 1
+			fi
+			echo "Weight updated: interface=$IFACE endpoint_id=$EP_ID weight=$WEIGHT"
+		done
+	fi
+
+	[ -n "$BPF_EP_IPS" ] || exit 0
 	echo "$BPF_EP_IPS" | while read -r BPF_EP_IP; do
 		KEY_HEX=$(to_le_hex "$BPF_EP_IP")
 		VALUE_HEX=$(to_le_hex "$WEIGHT")
@@ -273,11 +343,19 @@ elif [ "$ACTION" = "del" ]; then
 	[ "$#" -eq 2 ] || usage
 	IFACE="$2"
 	BPF_EP_IPS="$(get_bpf_ep_ip_from_iface "$IFACE")"
-	if [ -z "$BPF_EP_IPS" ]; then
+	EP_IDS6="$(ep_ids6 "$IFACE")"
+	if [ -z "$BPF_EP_IPS" ] && [ -z "$EP_IDS6" ]; then
 		echo "Interface '$IFACE' not found"
 		exit 1
 	fi
-	echo "$BPF_EP_IPS" | while read -r BPF_EP_IP; do
+	if [ -e "$MAP_PATH3" ]; then
+		for EP_ID in $EP_IDS6; do
+			bpftool map delete pinned "$MAP_PATH3" key hex $(to_byte_hex "$EP_ID") >/dev/null 2>&1
+			echo "Weight removed: interface=$IFACE endpoint_id=$EP_ID (reset to neutral 100)"
+		done
+	fi
+	forget_old_ids "$IFACE" ""
+	[ -n "$BPF_EP_IPS" ] && echo "$BPF_EP_IPS" | while read -r BPF_EP_IP; do
 		KEY_HEX=$(to_le_hex "$BPF_EP_IP")
 		bpftool map delete pinned "$MAP_PATH" key hex $KEY_HEX >/dev/null 2>&1
 		EP_IP=$(printf "%d.%d.%d.%d\n" $(( BPF_EP_IP & 255 )) $(( (BPF_EP_IP >> 8) & 255 )) $(( (BPF_EP_IP >> 16) & 255 )) $(( (BPF_EP_IP >> 24) & 255 )) )

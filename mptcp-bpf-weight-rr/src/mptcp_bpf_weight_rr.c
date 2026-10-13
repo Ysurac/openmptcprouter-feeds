@@ -6,6 +6,7 @@
 #include "mptcp_bpf.h"
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
 #include "limits.h"
 
 char _license[] SEC("license") = "GPL";
@@ -14,6 +15,9 @@ char _license[] SEC("license") = "GPL";
 #define MAX_SUBFLOWS		8
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
+
+/* skc_rcv_saddr of every native IPv6 socket (tcp_v6_connect() sets it) */
+#define LOOPBACK4_IPV6		bpf_htonl(0x7f000006)
 
 extern bool mptcp_subflow_active(struct mptcp_subflow_context *subflow) __ksym;
 extern void mptcp_set_timeout(struct sock *sk) __ksym;
@@ -24,8 +28,6 @@ extern void mptcp_pm_subflow_chk_stale(const struct mptcp_sock *msk, struct sock
 
 struct subflow_entry {
 	struct sock *ssk;
-	__u32 local_ip;
-	__be16 remote_port;
 	__u32 weight;
 	__s32 cw;      /* bumped current-weight for this round (SWRR) */
 	__u8 is_backup;
@@ -55,32 +57,33 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } weight_remote_id SEC(".maps");
 
-/* local_ip alone is NOT a safe per-subflow discriminator here: on the
- * VPS (weight_remote_id pinning), every subflow shares the SAME
- * local_ip (the VPS has one address; only remote_id differs per router
- * WAN) -- confirmed live via bpf_printk-instrumented debug builds +
- * trace_pipe on the VPS (bench, 2026-08-07, see
- * mptcp-dscp-weight-vps-sync-feature memory): with only local_ip in the
- * key, all candidates for a given msk collided onto the SAME
- * subflow_cw_map entry and clobbered each other's accumulator within
- * the same get_send call, so "best_idx" degenerated to whichever
- * subflow bpf_for_each happened to enumerate LAST -- not the one with
- * the highest weight. This is almost certainly the real explanation for
- * this scheduler's own documented long-download anomaly (one of two
- * 200MB runs reversed ~1.77:1 against the pinned target) previously
- * attributed to kernel-level primary-subflow race timing -- that
- * explanation was based on router-side-only bpf_printk tracing (see
- * weight-rr-scheduler-bias-open-question memory), which never exercises
- * this VPS-side remote_id path at all, so it never could have caught
- * this. remote_port (skc_dport) differs per subflow on the VPS side
- * (each router WAN uses a distinct ephemeral source port) while
- * local_ip differs per subflow on the router side (endpoint_weights
- * pinning) -- keying on both together is unique on either end.
+/* Router-side weights of IPv6 subflows, keyed by the endpoint id of their
+ * local address. endpoint_weights can't hold them: skc_rcv_saddr is
+ * 127.0.0.6 for every native IPv6 socket, so all of them missed it and kept
+ * the neutral weight. Set by mptcp-scheduler-weight.sh set <interface> <w>
+ * for the IPv6 endpoints of that WAN. Shared (same pinned name) with
+ * mptcp_bpf_weight.c's identical map. Empty on the VPS, whose IPv6
+ * subflows go on to weight_remote_id as before.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__type(key, __u8);    /* endpoint id, see ipv6_local_id() */
+	__type(value, __u32); /* weight, same semantics as endpoint_weights */
+	__uint(max_entries, 256);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} weight_local_id SEC(".maps");
+
+/* The SWRR state of one subflow. It was keyed by (local_ip, remote_port),
+ * which is unique for IPv4 subflows only: local_ip is 127.0.0.6 for every
+ * native IPv6 socket and remote_port is the VPS's one port on the router,
+ * so all the IPv6 subflows of a connection shared one accumulator, clobbered
+ * it within the same get_send call, and the one enumerated last won. The
+ * subflow socket itself is unique on either end. (local_ip alone had already
+ * collided on the VPS, where every subflow has the same local address.)
  */
 struct cw_key {
 	__u64 msk;
-	__u32 local_ip;
-	__be16 remote_port;
+	__u64 ssk;
 };
 
 /* Per-(connection, WAN) smooth weighted round-robin state (nginx-style:
@@ -96,9 +99,9 @@ struct cw_key {
  * ratio to ~1:1 or worse. Confirmed via bpf_printk trace + a 200MB bench
  * transfer.
  *
- * Keyed directly by (msk, local_ip) rather than a per-connection
+ * Keyed directly by (msk, subflow) rather than a per-connection
  * fixed-size slot array: an earlier version searched a small
- * per-connection array for the matching local_ip, which needed nested
+ * per-connection array for the matching subflow, which needed nested
  * loops that made the BPF verifier's state space explode (rejected with
  * "BPF program is too large. Processed 1000001 insn"). A single
  * lookup/update per subflow avoids that entirely. LRU so orphaned
@@ -108,7 +111,9 @@ struct cw_key {
  * Named _v2: the key layout changed (see struct cw_key's comment above)
  * and LIBBPF_PIN_BY_NAME would otherwise fail to reuse a stale pinned
  * map with the old key_size; this map was never actually shipped, so
- * there's no upgrade path to preserve.
+ * there's no upgrade path to preserve. The (msk, ssk) key kept the size of
+ * the (msk, local_ip, remote_port) one, so the name stays: an entry left
+ * from the old layout can't match a socket address and ages out.
  */
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -121,6 +126,18 @@ struct {
 static __always_inline __u64 div_u64(__u64 dividend, __u32 divisor)
 {
 	return dividend / divisor;
+}
+
+/* The endpoint id of the local address of an IPv6 subflow: the initial
+ * subflow has the address id 0 whatever its endpoint, which the in-kernel
+ * path manager keeps in mpc_endpoint_id.
+ */
+static __always_inline __u8 ipv6_local_id(const struct mptcp_sock *msk,
+					  const struct mptcp_subflow_context *subflow)
+{
+	__u8 id = subflow->local_id;
+
+	return id ? id : msk->mpc_endpoint_id;
 }
 
 static __always_inline bool tcp_write_queue_empty(struct sock *sk)
@@ -165,9 +182,9 @@ void BPF_PROG(mptcp_sched_weight_rr_init, struct mptcp_sock *msk)
 SEC("struct_ops")
 void BPF_PROG(mptcp_sched_weight_rr_release, struct mptcp_sock *msk)
 {
-	/* subflow_cw_map_v2 is an LRU hash keyed by (msk, local_ip,
-	 * remote_port); entries for a closed connection simply age out,
-	 * no explicit cleanup needed here.
+	/* subflow_cw_map_v2 is an LRU hash keyed by (msk, ssk); entries
+	 * for a closed connection simply age out, no explicit cleanup
+	 * needed here.
 	 */
 }
 
@@ -230,7 +247,13 @@ int BPF_PROG(bpf_weight_rr_get_send, struct mptcp_sock *msk)
 
 		local_ip = ssk->__sk_common.skc_rcv_saddr;
 		weight = 100;
-		w_ptr = bpf_map_lookup_elem(&endpoint_weights, &local_ip);
+		if (local_ip == LOOPBACK4_IPV6) {
+			__u8 local_id = ipv6_local_id(msk, subflow);
+
+			w_ptr = bpf_map_lookup_elem(&weight_local_id, &local_id);
+		} else {
+			w_ptr = bpf_map_lookup_elem(&endpoint_weights, &local_ip);
+		}
 		if (!w_ptr) {
 			__u8 remote_id = subflow->remote_id;
 
@@ -246,8 +269,6 @@ int BPF_PROG(bpf_weight_rr_get_send, struct mptcp_sock *msk)
 			weight = *w_ptr;
 
 		entries[nr_total].ssk = ssk;
-		entries[nr_total].local_ip = local_ip;
-		entries[nr_total].remote_port = ssk->__sk_common.skc_dport;
 		entries[nr_total].weight = weight;
 		entries[nr_total].is_backup = is_backup;
 		nr_total++;
@@ -271,7 +292,7 @@ int BPF_PROG(bpf_weight_rr_get_send, struct mptcp_sock *msk)
 
 	/* Smooth weighted round-robin (nginx-style): every candidate's
 	 * current-weight (persisted in subflow_cw_map_v2, keyed by
-	 * (msk, local_ip, remote_port)) is bumped by its own weight and
+	 * (msk, ssk)) is bumped by its own weight and
 	 * written back in this same pass, while total_weight accumulates
 	 * alongside it; the winner isn't known until the pass finishes, so
 	 * its debit
@@ -301,8 +322,7 @@ int BPF_PROG(bpf_weight_rr_get_send, struct mptcp_sock *msk)
 		total_weight += entries[i].weight;
 
 		key.msk = msk_key;
-		key.local_ip = entries[i].local_ip;
-		key.remote_port = entries[i].remote_port;
+		key.ssk = (__u64)(unsigned long)entries[i].ssk;
 		cw_ptr = bpf_map_lookup_elem(&subflow_cw_map_v2, &key);
 		cw = cw_ptr ? *cw_ptr : 0;
 		cw += (__s32)entries[i].weight;
@@ -321,8 +341,7 @@ int BPF_PROG(bpf_weight_rr_get_send, struct mptcp_sock *msk)
 		__s32 cw = entries[best_idx].cw - (__s32)total_weight;
 
 		key.msk = msk_key;
-		key.local_ip = entries[best_idx].local_ip;
-		key.remote_port = entries[best_idx].remote_port;
+		key.ssk = (__u64)(unsigned long)entries[best_idx].ssk;
 		bpf_map_update_elem(&subflow_cw_map_v2, &key, &cw, BPF_ANY);
 
 		ssk = entries[best_idx].ssk;

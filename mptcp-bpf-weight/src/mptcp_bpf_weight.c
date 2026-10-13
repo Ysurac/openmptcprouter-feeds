@@ -5,6 +5,7 @@
 
 #include "mptcp_bpf.h"
 #include <bpf/bpf_tracing.h>
+#include <bpf/bpf_endian.h>
 #include "limits.h"
 
 char _license[] SEC("license") = "GPL";
@@ -16,6 +17,9 @@ char _license[] SEC("license") = "GPL";
 #define SSK_MODE_MAX	2
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
+
+/* skc_rcv_saddr of every native IPv6 socket (tcp_v6_connect() sets it) */
+#define LOOPBACK4_IPV6		bpf_htonl(0x7f000006)
 
 extern bool mptcp_subflow_active(struct mptcp_subflow_context *subflow) __ksym;
 extern void mptcp_set_timeout(struct sock *sk) __ksym;
@@ -53,9 +57,37 @@ struct {
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } weight_remote_id SEC(".maps");
 
+/* Router-side weights of IPv6 subflows, keyed by the endpoint id of their
+ * local address. endpoint_weights can't hold them: skc_rcv_saddr is
+ * 127.0.0.6 for every native IPv6 socket, so all of them missed it and kept
+ * the neutral weight. Set by mptcp-scheduler-weight.sh set <interface> <w>
+ * for the IPv6 endpoints of that WAN. Shared (same pinned name) with
+ * mptcp_bpf_weight_rr.c's identical map. Empty on the VPS, whose IPv6
+ * subflows go on to weight_remote_id as before.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__type(key, __u8);    /* endpoint id, see ipv6_local_id() */
+	__type(value, __u32); /* weight, same semantics as endpoint_weights */
+	__uint(max_entries, 256);
+	__uint(pinning, LIBBPF_PIN_BY_NAME);
+} weight_local_id SEC(".maps");
+
 static __always_inline __u64 div_u64(__u64 dividend, __u32 divisor)
 {
 	return dividend / divisor;
+}
+
+/* The endpoint id of the local address of an IPv6 subflow: the initial
+ * subflow has the address id 0 whatever its endpoint, which the in-kernel
+ * path manager keeps in mpc_endpoint_id.
+ */
+static __always_inline __u8 ipv6_local_id(const struct mptcp_sock *msk,
+					  const struct mptcp_subflow_context *subflow)
+{
+	__u8 id = subflow->local_id;
+
+	return id ? id : msk->mpc_endpoint_id;
 }
 
 static __always_inline bool tcp_write_queue_empty(struct sock *sk)
@@ -151,7 +183,13 @@ int BPF_PROG(bpf_weight_get_send, struct mptcp_sock *msk)
 
 		local_ip = ssk->__sk_common.skc_rcv_saddr;
 		weight = 100; /* neutral default */
-		w_ptr = bpf_map_lookup_elem(&endpoint_weights, &local_ip);
+		if (local_ip == LOOPBACK4_IPV6) {
+			__u8 local_id = ipv6_local_id(msk, subflow);
+
+			w_ptr = bpf_map_lookup_elem(&weight_local_id, &local_id);
+		} else {
+			w_ptr = bpf_map_lookup_elem(&endpoint_weights, &local_ip);
+		}
 		if (!w_ptr) {
 			__u8 remote_id = subflow->remote_id;
 
