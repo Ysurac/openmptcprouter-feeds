@@ -279,16 +279,19 @@ _post_tracking() {
 	done
 }
 
+# _ping_server <server> <device> [<localip>]: localip "no" for another WAN's
+# device, whose latency and loss are not this interface's
 _ping_server() {
 	local servername="$1"
 	[ -z "$servername" ] && return
 	local disabled=$(uci -q get openmptcprouter."$servername".disabled)
 	local device="$2"
+	local localip="${3:-yes}"
 	if [ -n "$device" ] && [ "$disabled" != "1" ]; then
 		check_ping() {
 			serverip="$1"
 			if [ -n "$serverip" ]; then
-				_ping "$serverip" "$device" "yes"
+				_ping "$serverip" "$device" "$localip"
 				statusp=$?
 				if [ "$statusp" -eq 0 ]; then
 					serverip_ping=true
@@ -310,29 +313,61 @@ count_server() {
 	fi
 }
 
-# Whether another WAN still reaches the servers: backup-mode WANs count too,
-# or with the server answering only through one, this WAN was kept OK
-_ping_server_all() {
-	config_load openmptcprouter
-	config_foreach count_server server
-	if [ "$servers" = true ]; then
-		for intf in $(multipath 2>/dev/null | awk '/ is in (default|backup) mode/ { print $1 }'); do
-			config_foreach _ping_server server $intf
-		done
-	fi
+# _server_all_intfs <probe function> <default|backup>: probe the servers
+# through the other WANs of that mode until one answers. Their address is
+# given for httping, which binds to it (-y), their device for ping. Done
+# from here, a WAN without a bind address set NO_BIND for this tracker.
+_server_all_intfs() {
+	local _fn="$1" _mode="$2" _intf _ip _ignore _no_bind="$OMR_TRACKER_NO_BIND"
+	for _intf in $(multipath 2>/dev/null | awk -v m="$_mode" '$0 ~ " is in " m " mode" { print $1 }'); do
+		# this WAN's own probe has just failed
+		[ "$_intf" = "$OMR_TRACKER_DEVICE" ] && continue
+		if [ "$_fn" = "_httping_server" ]; then
+			read -r _ignore _ignore _ip _ignore <<<"$(ip -4 -br addr ls dev "$_intf" 2>/dev/null)"
+			_ip="${_ip%%/*}"
+			[ -n "$_ip" ] || continue
+			config_foreach "$_fn" server "$_ip" no
+		else
+			config_foreach "$_fn" server "$_intf" no
+		fi
+		[ "$serverip_ping" = true ] && break
+	done
+	OMR_TRACKER_NO_BIND="$_no_bind"
 }
 
+# Whether another WAN still reaches the servers: backup-mode WANs count too,
+# or with the server answering only through one, this WAN was kept OK. They
+# are only tried when no default-mode WAN answered, with a single probe:
+# with the server down each of them made this cycle much longer.
+_server_all() {
+	local _fn="$1" _count="$OMR_TRACKER_COUNT"
+	config_load openmptcprouter
+	config_foreach count_server server
+	[ "$servers" = true ] || return
+	_server_all_intfs "$_fn" default
+	[ "$serverip_ping" = true ] && return
+	OMR_TRACKER_COUNT=1
+	_server_all_intfs "$_fn" backup
+	OMR_TRACKER_COUNT="$_count"
+}
+
+_ping_server_all() {
+	_server_all _ping_server
+}
+
+# _httping_server <server> <local address> [<localip>]
 _httping_server() {
 	local servername="$1"
 	[ -z "$servername" ] && return
 	local disabled=$(uci -q get openmptcprouter."$servername".disabled)
 	local port=$(uci -q get openmptcprouter."$servername".port)
 	local device="$2"
+	local localip="${3:-yes}"
 	if [ -n "$device" ] && [ "$disabled" != "1" ]; then
 		check_ping() {
 			serverip="$1"
 			if [ -n "$serverip" ]; then
-				_httping "${serverip}:${port}" "$device" "yes" true
+				_httping "${serverip}:${port}" "$device" "$localip" true
 				statusp=$?
 				if [ "$statusp" -eq 0 ]; then
 					serverip_ping=true
@@ -346,13 +381,7 @@ _httping_server() {
 }
 
 _httping_server_all() {
-	config_load openmptcprouter
-	config_foreach count_server server
-	if [ "$servers" = true ]; then
-		for intf in $(multipath 2>/dev/null | awk '/ is in (default|backup) mode/ { print $1 }'); do
-			config_foreach _httping_server server $intf
-		done
-	fi
+	_server_all _httping_server
 }
 
 _parse_ping_output() {
