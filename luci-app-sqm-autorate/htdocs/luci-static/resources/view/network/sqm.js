@@ -268,14 +268,6 @@ return view.extend({
 		o.default = false;
 		o.depends("autorate","1");
 
-		o = s.taboption("tab_autorate", form.Value, "reflector_ping_interval_s", _("Reflector ping interval in seconds:"));
-		o.default = "0.2";
-		o.depends("autorate","1");
-
-		o = s.taboption("tab_autorate", form.Value, "no_pingers", _("Pingers numbers:"));
-		o.default = "4";
-		o.depends("autorate","1");
-
 		// cake-autorate types these by whether the value carries a decimal
 		// point (typeof float vs integer) and refuses to start an instance
 		// whose value has the wrong type, so always persist a float here.
@@ -285,8 +277,22 @@ return view.extend({
 			return form.Value.prototype.write.call(this, section_id, value);
 		};
 
+		// The defaults below are the ones config_template.sh applies to an
+		// unset option. The page showed others (25.0 ms against 250.0 ms
+		// for the delay threshold): a value typed in equal to the page's
+		// default was removed on save, and the backend's ran instead.
+		o = s.taboption("tab_autorate", form.Value, "reflector_ping_interval_s", _("Reflector ping interval in seconds:"));
+		o.default = "0.5";
+		o.datatype = 'ufloat';
+		o.write = writeFloat;
+		o.depends("autorate","1");
+
+		o = s.taboption("tab_autorate", form.Value, "no_pingers", _("Pingers numbers:"));
+		o.default = "4";
+		o.depends("autorate","1");
+
 		o = s.taboption("tab_autorate", form.Value, "delay_thr_ms",_("delay threshold in ms:"));
-		o.default = "25.0";
+		o.default = "250.0";
 		o.datatype = 'ufloat';
 		o.write = writeFloat;
 		o.depends("autorate","1");
@@ -307,8 +313,9 @@ return view.extend({
 		o.depends("autorate","1");
 
 		o = s.taboption("tab_autorate", form.Value, "startup_wait_s",_("Number of seconds to wait on startup:"));
-		o.default = "60.0";
-		o.datatype = 'float'
+		o.default = "0.0";
+		o.datatype = 'float';
+		o.write = writeFloat;
 		o.depends("autorate","1");
 
 		o = s.taboption("tab_autorate", form.Flag, "congestion_sync", _("Sync bufferbloat threshold with congestion score"),
@@ -351,6 +358,14 @@ return view.extend({
 		// off; without retain LuCI deletes it with the other hidden fields.
 		o.retain = true;
 
+		// Every option hidden by its dependency keeps its stored value: a
+		// save with autorate, the advanced qdisc options or the link layer
+		// off deleted delay_thr_ms (omrvpn's 300 ms from 2040-omr-sqm), the
+		// qdisc option strings and the overhead of every queue
+		s.children.forEach(function(opt) {
+			if (opt.deps && opt.deps.length)
+				opt.retain = true;
+		});
 
 		return m.render();
 	}
