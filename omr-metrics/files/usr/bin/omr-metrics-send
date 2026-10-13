@@ -44,11 +44,14 @@ _log() {
 # omr-weight-sync and the metrics rpcd log in to the same API and share the
 # backoff.
 
-# POST one JSON payload to /metrics on a single server, using SRV_TOKEN.
+# POST one JSON payload file to /metrics on a single server, using SRV_TOKEN.
 # Retries once with a fresh token on HTTP 401.
 # Returns 0 on HTTP 200, 1 on any other outcome.
+# The file is read by the HTTP client: passed as -d "<payload>", a WAN
+# with a few hundred subflows went over the 128 KiB limit of one argument,
+# the exec failed and the WAN was silently never sent.
 _post_metrics() {
-	local servername="$1" server="$2" serverport="$3" payload="$4"
+	local servername="$1" server="$2" serverport="$3" json_file="$4"
 	local url http_code
 
 	[ -z "$SRV_TOKEN" ] && return 1
@@ -64,7 +67,7 @@ _post_metrics() {
 		-H "accept: application/json" \
 		-H "Authorization: Bearer ${SRV_TOKEN}" \
 		-H "Content-Type: application/json" \
-		-X POST -d "${payload}" "$url" 2>/dev/null)
+		-X POST --data-binary "@${json_file}" "$url" 2>/dev/null)
 
 	if [ "$http_code" = "401" ]; then
 		_token_drop "$SRV_TOKEN_KEY"
@@ -75,7 +78,7 @@ _post_metrics() {
 			-H "accept: application/json" \
 			-H "Authorization: Bearer ${SRV_TOKEN}" \
 			-H "Content-Type: application/json" \
-			-X POST -d "${payload}" "$url" 2>/dev/null)
+			-X POST --data-binary "@${json_file}" "$url" 2>/dev/null)
 	fi
 
 	if [ "$http_code" = "200" ]; then
@@ -113,15 +116,14 @@ _no_metrics() {
 # once for the whole batch.
 _send_to_server() {
 	local servername="$1" server="$2" serverport="$3" files="$4"
-	local json_file payload
+	local json_file
 
 	_server_creds "$servername"
 	[ -z "$SRV_TOKEN" ] && { _login "$servername" "$server" "$serverport" || return 1; }
 
 	for json_file in $files; do
-		payload=$(cat "$json_file" 2>/dev/null)
-		[ -z "$payload" ] && continue
-		_post_metrics "$servername" "$server" "$serverport" "$payload"
+		[ -s "$json_file" ] || continue
+		_post_metrics "$servername" "$server" "$serverport" "$json_file"
 		# A lost token or a server without the metrics module applies to
 		# the whole batch: stop instead of replaying it file by file.
 		[ -z "$SRV_TOKEN" ] && return 1

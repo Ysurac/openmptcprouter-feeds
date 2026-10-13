@@ -629,6 +629,72 @@ _get_subflow_stats_via_ss() {
 }
 
 
+# Keep the busiest OMR_METRICS_MAX_SUBFLOWS subflows (default 32) of a WAN,
+# by bytes sent plus received, and sum up all of them in SUBFLOWS_TOTAL.
+# Every proxied connection is an MPTCP connection with a subflow on each WAN:
+# with a few hundred of them the file grew past 128 KiB, more than one
+# argument can hold, and omr-metrics-send never sent it. At about 600 bytes
+# a subflow at most, 32 keep a file under 25 KiB. SUBFLOWS_TOTAL stays empty
+# (null) when nothing was left out. Both producers print flat objects in one
+# array, so "},{" only ever separates two of them.
+_cap_subflows() {
+	local max="${OMR_METRICS_MAX_SUBFLOWS:-32}" rest n=0
+	SUBFLOWS_TOTAL=""
+	case "$max" in ''|*[!0-9]*) max=32 ;; esac
+	[ "$max" -ge 1 ] || max=1
+	# Counted in the shell: no process at all for the usual one subflow
+	rest="$SUBFLOWS_JSON"
+	while :; do
+		case "$rest" in *'"local_ip"'*) ;; *) break ;; esac
+		rest="${rest#*\"local_ip\"}"
+		n=$((n + 1))
+		[ "$n" -gt "$max" ] && break
+	done
+	[ "$n" -gt "$max" ] || return 0
+	{
+		read -r SUBFLOWS_JSON
+		read -r SUBFLOWS_TOTAL
+	} <<EOF
+$(printf '%s\n' "$SUBFLOWS_JSON" | awk -v max="$max" '
+	function num(o, k,   v) {
+		if (!match(o, "\"" k "\":-?[0-9.]+")) return 0
+		v = substr(o, RSTART + length(k) + 3, RLENGTH - length(k) - 3)
+		return v + 0
+	}
+	{ buf = buf $0 }
+	END {
+		sub(/^[ \t]*\[/, "", buf)
+		sub(/\][ \t]*$/, "", buf)
+		m = split(buf, p, /[}],[{]/)
+		for (i = 1; i <= m; i++) {
+			o = p[i]
+			if (substr(o, 1, 1) != "{") o = "{" o
+			if (substr(o, length(o), 1) != "}") o = o "}"
+			obj[i] = o
+			bs = num(o, "bytes_sent")
+			br = num(o, "bytes_received")
+			key[i] = bs + br
+			ts += bs
+			tr += br
+			rt += num(o, "retrans_total")
+			if (o ~ /"rwnd":0[,}]/) zr = 1
+		}
+		out = ""
+		for (j = 1; j <= max && j <= m; j++) {
+			best = 0
+			for (i = 1; i <= m; i++)
+				if (!(i in used) && (best == 0 || key[i] > key[best])) best = i
+			used[best] = 1
+			out = out (j > 1 ? "," : "") obj[best]
+		}
+		print "[" out "]"
+		printf "{\"count\":%d,\"retrans_total\":%.0f,\"bytes_sent\":%.0f,\"bytes_received\":%.0f,\"zero_rwnd\":%s}\n", m, rt, ts, tr, (zr ? "true" : "false")
+	}')
+EOF
+	case "$SUBFLOWS_JSON" in \[*\]) ;; *) SUBFLOWS_JSON="[]"; SUBFLOWS_TOTAL="" ;; esac
+}
+
+
 # Measure current link bandwidth by diffing /sys/class/net stats against a
 # stored state file.  Rates are in bytes/sec; null when no prior sample exists.
 _get_bandwidth_usage() {
@@ -866,6 +932,7 @@ BBR_MIN_RTT=""
 BBR_RETRANS=""
 
 SUBFLOWS_JSON="[]"
+SUBFLOWS_TOTAL=""
 MPTCP_EP_ID=""
 MPTCP_EP_SIGNAL="false"
 MPTCP_EP_SUBFLOW="false"
@@ -882,6 +949,7 @@ fi
 _get_tc_stats
 _get_bbr_stats
 _get_subflow_stats
+_cap_subflows
 _get_bandwidth_usage
 _compute_congestion
 
@@ -1012,6 +1080,7 @@ cat > "$_tmp" <<EOF
 		"retrans": ${J_BBR_RETRANS}
 	},
 	"subflows": ${SUBFLOWS_JSON:-[]},
+	"subflows_total": ${SUBFLOWS_TOTAL:-null},
 	"mptcp_endpoint": {
 		"id": ${J_EP_ID},
 		"signal": ${J_EP_SIGNAL},

@@ -690,6 +690,11 @@ return view.extend({
 			subRetrans += (sf.retrans_total || 0);
 			if (sf.rwnd === 0) zeroRwnd = true;
 		});
+		/* With many subflows only the busiest are listed: the sums cover all */
+		if (iface.subflows_total) {
+			subRetrans = iface.subflows_total.retrans_total || 0;
+			zeroRwnd = !!iface.subflows_total.zero_rwnd;
+		}
 		if (subRetrans > 0) {
 			factors.push({ severity: 'warning', scope: 'bandwidth',
 				label: _('Subflow retransmissions'),
@@ -726,7 +731,7 @@ return view.extend({
 	 *  that case is already covered by the "No active subflow" chip.    *
 	 * ------------------------------------------------------------------ */
 
-	_renderSubflows: function(subflows) {
+	_renderSubflows: function(subflows, total) {
 		var self = this;
 		if (!subflows || !subflows.length) return null;
 
@@ -766,6 +771,14 @@ return view.extend({
 				E('td', { style: tdStyle }, [ self._fmtBytes(sf.bytes_sent) + ' / ' + self._fmtBytes(sf.bytes_received) ])
 			]));
 		});
+
+		if (total && total.count > subflows.length) {
+			tbody.appendChild(E('tr', {}, [
+				E('td', { style: tdStyle + ';color:#666', colspan: 5 }, [
+					_('The %d busiest of %d subflows').format(subflows.length, total.count)
+				])
+			]));
+		}
 
 		return E('table', { style: 'border-collapse:collapse;width:100%' }, [ thead, tbody ]);
 	},
@@ -945,7 +958,7 @@ return view.extend({
 			]),
 		];
 
-		var subflowsSection = self._renderSubflows(subflows);
+		var subflowsSection = self._renderSubflows(subflows, iface.subflows_total);
 
 		if (bwRows.length) {
 			cols.push(E('div', { style: colStyle }, [
