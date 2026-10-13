@@ -1933,20 +1933,28 @@ add_outbound_setting() {
 			_pinned_chain="$(_tls_pin_list base64 "$ss_tls_pinned_sha256")"
 			[ -n "$_pinned_chain" ] && _allow_insecure=1
 		fi
-		if [ -z "$_pinned_chain" ] && [ "$section" = "omrout" ] && [ "$_allow_insecure" = "1" ] ; then
+		# Every outbound, as xray: openmptcprouter-vps copies omrout, its
+		# allowInsecure included, into the tunnel of each other public IP of
+		# the VPS (oip<i>server_tunnel). A server the VPS CA did not certify
+		# needs ss_tls_pinned_sha256 to keep allowInsecure
+		if [ -z "$_pinned_chain" ] && [ "$_allow_insecure" = "1" ] ; then
 			case "$protocol" in
 				vless)  _pin_addr="$s_vless_address"  ; _pin_port="$s_vless_port" ;;
 				vmess)  _pin_addr="$s_vmess_address"  ; _pin_port="$s_vmess_port" ;;
 				trojan) _pin_addr="$s_trojan_address" ; _pin_port="$s_trojan_port" ;;
 				socks)  _pin_addr="$s_socks_address"  ; _pin_port="$s_socks_port" ;;
 			esac
-			_pinned_chain="$(_tls_vps_pin chain "$_pin_addr" "$_pin_port" "$ss_tls_server_name")"
-			[ "${#_pinned_chain}" -ne 44 ] && _pinned_chain=""
-			if [ -z "$_pinned_chain" ] ; then
-				_err "$section: ${_pin_addr}:${_pin_port} certificate not verified by /etc/luci-uploads/ca.crt, allowInsecure ignored"
-				_allow_insecure=0
-				_tls_pin_pending "$_pin_addr" "$_pin_port" "$ss_tls_server_name"
+			if [ -n "$_pin_addr" ] && [ -n "$_pin_port" ] ; then
+				_pinned_chain="$(_tls_vps_pin chain "$_pin_addr" "$_pin_port" "$ss_tls_server_name")"
+				[ "${#_pinned_chain}" -ne 44 ] && _pinned_chain=""
+				if [ -z "$_pinned_chain" ] ; then
+					_err "$section: ${_pin_addr}:${_pin_port} certificate not verified by /etc/luci-uploads/ca.crt, allowInsecure ignored (set ss_tls_pinned_sha256 for another server)"
+					_tls_pin_pending "$_pin_addr" "$_pin_port" "$ss_tls_server_name"
+				fi
 			fi
+			# no server to pin (yet): nothing to retry, and no certificate
+			# accepted unchecked either
+			[ -n "$_pinned_chain" ] || _allow_insecure=0
 		fi
 
 		json_add_boolean "allowInsecure" "$_allow_insecure"
