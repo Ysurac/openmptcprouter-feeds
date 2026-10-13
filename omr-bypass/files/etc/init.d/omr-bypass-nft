@@ -365,8 +365,13 @@ _nft_ports() {
 # config_load of the firewall config turned every one of them into a shell
 # variable, which made a start take minutes.
 _BYPASS_ASN_DIR="/tmp/omr-bypass-asn"
-# The last prefix list RIPE gave for each AS, one file per AS
-_BYPASS_ASN_CACHE="/tmp/omr-bypass-asn-cache"
+# The last prefix list RIPE gave for each AS, one file per AS. On flash:
+# on tmpfs it was gone after a reboot, and with RIPE unreachable at boot
+# the ASN rules matched nothing until the 02:00 refresh. Written only when
+# the list changes (at most a start and the daily refresh).
+_BYPASS_ASN_CACHE="/etc/omr-bypass/asn-cache"
+# RIPE's answers while they are read
+_BYPASS_ASN_TMP="/tmp/omr-bypass-asn-cache"
 
 # _asn_set_add <set section> <prefix>...
 _asn_set_add() {
@@ -2102,18 +2107,24 @@ _bypass_asn() {
 			return
 			;;
 	esac
-	local asnips cache="$_BYPASS_ASN_CACHE/AS${asn}"
-	mkdir -p "$_BYPASS_ASN_CACHE"
+	local asnips cache="$_BYPASS_ASN_CACHE/AS${asn}" tmp="$_BYPASS_ASN_TMP/AS${asn}"
+	mkdir -p "$_BYPASS_ASN_TMP"
 	# the escaped quotes were part of the filter, which jsonfilter refused:
 	# no ASN rule ever matched anything. Unverified TLS (-k) let anyone on
 	# the path choose the prefixes.
-	curl --max-time 4 -s -o "${cache}.json" "https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS${asn}"
+	curl --max-time 4 -s -o "${tmp}.json" "https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS${asn}"
 	# The set files are rebuilt from scratch on every run: when RIPE did not
 	# answer (no WAN up yet at boot, a timeout) the AS lost all its prefixes
 	# until the next reload. Its last answer is kept for that.
-	if [ "$(jsonfilter -q -t '@.data.prefixes' < "${cache}.json" 2>/dev/null)" = "array" ]; then
-		asnips=$(jsonfilter -q -e '@.data.prefixes[*].prefix' < "${cache}.json")
-		printf '%s\n' $asnips > "$cache"
+	if [ "$(jsonfilter -q -t '@.data.prefixes' < "${tmp}.json" 2>/dev/null)" = "array" ]; then
+		asnips=$(jsonfilter -q -e '@.data.prefixes[*].prefix' < "${tmp}.json")
+		# sorted, so that the same prefixes in another order are no change
+		printf '%s\n' $asnips | sort > "$tmp"
+		if ! cmp -s "$tmp" "$cache"; then
+			mkdir -p "$_BYPASS_ASN_CACHE"
+			cp "$tmp" "${cache}.new" && mv "${cache}.new" "$cache"
+		fi
+		rm -f "$tmp"
 	else
 		asnips=$(cat "$cache" 2>/dev/null)
 		if [ -n "$asnips" ]; then
@@ -2122,7 +2133,7 @@ _bypass_asn() {
 			logger -t "omr-bypass" "Rule $1: no answer from RIPE for AS${asn}, no prefix for it"
 		fi
 	fi
-	rm -f "${cache}.json"
+	rm -f "${tmp}.json"
 	# A large AS announces thousands of prefixes, and adding them one by one
 	# (two uci runs and a scan of the whole list each) took minutes: the
 	# first prefix of each family sets the sets and rules up, all of them go
