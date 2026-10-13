@@ -1,6 +1,17 @@
 #!/bin/sh
 
-grep -q "wed_enable=Y" /etc/modules.d/mt7915e 2>/dev/null || \
-	echo "options mt7915e wed_enable=Y" >> /etc/modules.d/mt7915e
+# kmodloader reads "options" lines from /etc/modules.conf only. In
+# /etc/modules.d it took "options" for a module name and skipped the line,
+# so WED was never enabled, and the file was created on every platform.
+if [ -f /etc/modules.d/mt7915e ] && grep -q '^options mt7915e wed_enable=Y' /etc/modules.d/mt7915e; then
+	sed -i '/^options mt7915e wed_enable=Y/d' /etc/modules.d/mt7915e
+	[ -s /etc/modules.d/mt7915e ] || rm -f /etc/modules.d/mt7915e
+fi
+
+# Only where the driver is installed
+if [ -f /etc/modules.d/mt7915e ] || ls /lib/modules/*/mt7915e.ko >/dev/null 2>&1; then
+	grep -qE '^[[:space:]]*options[[:space:]]+mt7915e[[:space:]].*wed_enable=' /etc/modules.conf 2>/dev/null || \
+		echo "options mt7915e wed_enable=Y" >> /etc/modules.conf
+fi
 
 exit 0
