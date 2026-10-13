@@ -743,7 +743,9 @@ _get_vps_config() {
 	[ -z "$vps_config" ] && vps_config=$(_get_json "config")
 	[ -z "$vps_config" ] && return
 	vps_lastchange="$(echo "$vps_config" | jsonfilter -q -e '@.vps.lastchange')"
-	if [ -n "$(uci -q get openmptcprouter.${servername}.lastchange)" ] && [ -n "$vps_lastchange" ] && [ "$vps_lastchange" -gt "$(uci -q get openmptcprouter.${servername}.lastchange)" ]; then
+	# _config_service has just applied this answer: the local lastchange is
+	# only updated at its end, so it was applied a second time in the same pull
+	if [ "$vps_config_applied" != "$servername" ] && [ -n "$(uci -q get openmptcprouter.${servername}.lastchange)" ] && [ -n "$vps_lastchange" ] && [ "$vps_lastchange" -gt "$(uci -q get openmptcprouter.${servername}.lastchange)" ]; then
 		_set_config_from_vps
 	fi
 
@@ -2341,22 +2343,31 @@ _set_wan_ip() {
 }
 
 _get_lan_ip() {
-	local intf=$1
-	if [ "$(uci -q get firewall.zone_lan.network | grep $intf)" != "" ]; then
-		lanip="$(uci -q get network.${intf}.ipaddr)/$(uci -q get network.${intf}.netmask)"
-		if [ "$lanip" != "/" ]; then
-			if [ -z "$lanips" ]; then
-				lanips='"'${lanip}'"'
-			else
-				# comma-separated so the /lan JSON array stays valid with
-				# more than one lan-zone interface, and so the comparison in
-				# _set_lan_ip matches jsonfilter's '"a", "b"' rendering of
-				# the stored list (issue 4361: the old '" "' concatenation
-				# made every POST /lan fail with 422 on multi-LAN setups)
-				lanips=$lanips', "'${lanip}'"'
-			fi
+	local intf=$1 addr mask lanip
+	# a whole word: grep took lan for lan2
+	case " $(uci -q get firewall.zone_lan.network) " in
+		*" $intf "*) ;;
+		*) return ;;
+	esac
+	# ipaddr can be a list, and an address can carry its prefix with no
+	# netmask option: 192.168.1.1/24 was sent as "192.168.1.1/24/"
+	mask="$(uci -q get network.${intf}.netmask)"
+	for addr in $(uci -q get network.${intf}.ipaddr); do
+		case "$addr" in
+			*/*) lanip="$addr" ;;
+			*) lanip="${addr}${mask:+/$mask}" ;;
+		esac
+		if [ -z "$lanips" ]; then
+			lanips='"'${lanip}'"'
+		else
+			# comma-separated so the /lan JSON array stays valid with
+			# more than one lan-zone interface, and so the comparison in
+			# _set_lan_ip matches jsonfilter's '"a", "b"' rendering of
+			# the stored list (issue 4361: the old '" "' concatenation
+			# made every POST /lan fail with 422 on multi-LAN setups)
+			lanips=$lanips', "'${lanip}'"'
 		fi
-	fi
+	done
 }
 
 _set_lan_ip() {
@@ -4302,8 +4313,10 @@ _config_service() {
 	[ -z "$kernel" ] && return
 	_vps_reboot_check
 	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
+	vps_config_applied=""
 	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && _is_config_server "$servername" && {
 		_set_config_from_vps
+		vps_config_applied="$servername"
 		_get_gre_tunnel
 		_get_vps_config
 	}
