@@ -63,6 +63,9 @@ return view.extend({
 		o = s.option(form.ListValue, 'country', _('Country'),
 			_('Select the host group used for the proxy tests.'));
 		o.default = 'world_proxy';
+		// Written even when it is the default: removed, the init fell back on
+		// the country of the WAN interfaces, a hosts_defaults group
+		o.rmempty = false;
 		o.modalonly = true;
 
 		const hostSections = uci.sections('omr-tracker').filter(s => s['.type'] === 'hosts_proxy');

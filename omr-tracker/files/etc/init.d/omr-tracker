@@ -100,13 +100,24 @@ _validate_section_hosts() {
 }
 
 
+# The proxy section's host group, world_proxy without one. "world" (a WAN
+# hosts_defaults group, not a hosts_proxy one) was accepted by older pages.
+_proxy_country() {
+	case "$country" in
+		''|world) country="world_proxy" ;;
+	esac
+}
+
 _launch_tracker() {
 	# *_6: DHCPv6 companion interfaces are tracked through their parent
 	case "$1" in
 		loopback|lan*|if0*|*_6) return;;
 	esac
 	[ -z "$1" ] && return
-	local hosts hosts6 timeout count tries tries_up interval interval_tries post_interval post_interval_down options type enabled wait_test ipv6 proto server_http_test size max_ttl failure_loss failure_interval failure_latency recovery_loss recovery_latency failure_congestion recovery_congestion family reliability latency_ip latency_ip6
+	# Every option _validate_section reads: one left global leaked from an
+	# interface into the next ones (check_quality, country...) and into the
+	# proxy trackers
+	local hosts hosts6 timeout count tries tries_up interval interval_tries post_interval post_interval_down options type enabled wait_test ipv6 proto server_http_test server_test check_quality country size max_ttl failure_loss failure_interval failure_latency recovery_loss recovery_latency failure_congestion recovery_congestion family reliability latency_ip latency_ip6
 	_validate_section "defaults" "defaults"
 	_validate_section "interface" "$1"
 	[ -z "$country" ] && country="world"
@@ -346,14 +357,13 @@ _initialize_shadowsocks_rust_tracker() {
 }
 
 _launch_shadowsocks_tracker() {
-	local hosts timeout tries interval local_port enabled server wait_test
+	local hosts hosts6 timeout tries interval local_port enabled server wait_test country
 
 	[ "$(echo $1 | grep tracker)" != "" ] || return
 	[ "$(uci -q get openmptcprouter.settings.proxy)" = "none" ] && return
 
 	_validate_section "proxy" "proxy"
-	[ "$country" = "world" ] && country="world_proxy"
-	[ -z "$country" ] && country="world_proxy"
+	_proxy_country
 	_validate_section_hosts "hosts_proxy" "$country"
 	
 	config_get local_port "$1" local_port
@@ -390,14 +400,13 @@ _launch_shadowsocks_tracker() {
 }
 
 _launch_shadowsocks_rust_tracker() {
-	local hosts timeout tries interval local_port enabled server wait_test
+	local hosts hosts6 timeout tries interval local_port enabled server wait_test country
 
 	[ "$(echo $1 | grep tracker)" != "" ] || return
 	[ "$(uci -q get openmptcprouter.settings.proxy)" = "none" ] && return
 
 	_validate_section "proxy" "proxy"
-	[ "$country" = "world" ] && country="world_proxy"
-	[ -z "$country" ] && country="world_proxy"
+	_proxy_country
 	_validate_section_hosts "hosts_proxy" "$country"
 	
 	config_get local_port "$1" local_port
@@ -435,10 +444,10 @@ _launch_shadowsocks_rust_tracker() {
 }
 
 _launch_v2ray_tracker() {
-	local hosts timeout tries interval local_port enabled server wait_test
+	local hosts timeout tries interval local_port enabled server wait_test country
 	
 	_validate_section "proxy" "proxy"
-	[ -z "$country" ] && country="world_proxy"
+	_proxy_country
 	_validate_section_hosts "hosts_proxy" "$country"
 
 	{ [ "$enabled" = "0" ] || [ -z "$hosts" ]; } && return
@@ -460,10 +469,10 @@ _launch_v2ray_tracker() {
 }
 
 _launch_xray_tracker() {
-	local hosts timeout tries interval local_port enabled server wait_test
+	local hosts timeout tries interval local_port enabled server wait_test country
 	
 	_validate_section "proxy" "proxy"
-	[ -z "$country" ] && country="world_proxy"
+	_proxy_country
 	_validate_section_hosts "hosts_proxy" "$country"
 	{ [ "$enabled" = "0" ] || [ -z "$hosts" ]; } && return
 
