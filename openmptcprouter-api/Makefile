@@ -16,7 +16,7 @@ include $(INCLUDE_DIR)/package.mk
 define Package/$(PKG_NAME)
 SECTION:=OMR
 CATEGORY:=OpenMPTCProuter
-DEPENDS:=+tracebox +bind-dig +curl +libuci-lua +omr-tracker
+DEPENDS:=+tracebox +bind-dig +curl +libuci-lua +omr-tracker +luci-compat +luci-lib-json +!LINUX_5_4:mptcpd
 TITLE:=OpenMPTCProuter API
 endef
 

@@ -15,7 +15,9 @@ include $(INCLUDE_DIR)/package.mk
 MY_DEPENDS := \
     omr-tracker \
     curl \
-    jsonfilter
+    jsonfilter \
+    tc \
+    ss
 
 define Package/$(PKG_NAME)
 SECTION:=net

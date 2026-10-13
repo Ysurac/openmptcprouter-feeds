@@ -6,6 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI Support for MPTCP
+LUCI_DEPENDS:=+mptcp +ip-full +ss +nstat +tracebox +omr-sockdiag
 PKG_LICENSE:=GPLv3
 
 #include ../luci/luci.mk

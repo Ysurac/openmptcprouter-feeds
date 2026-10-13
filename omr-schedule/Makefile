@@ -15,6 +15,7 @@ include $(INCLUDE_DIR)/package.mk
 
 MY_DEPENDS := \
     curl \
+    bind-dig \
     !LINUX_5_4:nftables
 
 define Package/$(PKG_NAME)
