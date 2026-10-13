@@ -174,6 +174,9 @@ return L.Class.extend({
 			o.value(m);
 		});
 		o.default = 'tcp_and_udp';
+		/* the init falls back to tcp_only: kept as shown, or a save
+		 * would drop UDP */
+		o.rmempty = false;
 		o = s.taboption(tab, form.Value, 'mtu', _('MTU'));
 		o.datatype = 'uinteger';
 		o = s.taboption(tab, form.Value, 'timeout', _('Timeout (sec)'));
