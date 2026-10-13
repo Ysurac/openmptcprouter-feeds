@@ -150,6 +150,109 @@ _uci_list_has() {
 	return 1
 }
 
+# _uci_batch: what "uci -q batch" does with the commands on stdin, for the
+# set, add_list and delete commands this script generates. "uci batch"
+# unloads every config after each command, so each line parsed the whole
+# config again, and its delta, which every line made longer. The skeleton of
+# 15 interfaces and 8 zones (14,000 lines, a 450 KB firewall config) was
+# still running after 17 minutes at boot, and procd held the reboot until it
+# was done. Here the deletes are done in one uci cursor, and what is left is
+# merged with one "uci import -m" per config: import reads a value with the
+# same parser as batch, so the value text is passed on as it is. Commands
+# that only apply to what an earlier one left (a set after a delete of the
+# same section or option) are dropped when a later delete undoes them, as
+# batch would. A line of any other form falls back to "uci batch".
+_uci_batch() {
+	local tmp="/tmp/omr-bypass-uci.$$" f
+	rm -f "$tmp".*
+	cat > "$tmp.in"
+	[ -s "$tmp.in" ] || { rm -f "$tmp".*; return 0; }
+	if ! awk -v out="$tmp" '
+		function parse() {
+			sub(/^[ \t]+/, ""); sub(/[ \t]+$/, "")
+			if ($0 == "") return 0
+			cmd = $1; r = substr($0, length(cmd) + 1); sub(/^[ \t]+/, "", r)
+			eq = index(r, "="); hasv = (eq > 0)
+			v = hasv ? substr(r, eq + 1) : ""
+			if (hasv) r = substr(r, 1, eq - 1)
+			n = split(r, k, ".")
+			if (n < 2 || n > 3 || k[1] !~ /^[A-Za-z0-9_-]+$/ || k[2] !~ /^[A-Za-z0-9_]+$/ || (n == 3 && k[3] !~ /^[A-Za-z0-9_]+$/)) return -1
+			s = k[1] "." k[2]; o = s "." k[3]
+			empty = (v == "" || v == "\"\"" || v == "\047\047")
+			if (cmd == "delete" && !hasv) return n == 2 ? 1 : 2
+			# an empty value deletes the option
+			if (cmd == "set" && n == 3 && hasv) return empty ? 2 : 3
+			if (cmd == "set" && n == 2 && hasv && !empty) {
+				t = v; gsub(/^["\047]|["\047]$/, "", t)
+				return t ~ /^[A-Za-z0-9_-]+$/ ? 4 : -1
+			}
+			if (cmd == "add_list" && n == 3 && hasv && !empty) return 5
+			return -1
+		}
+		NR == FNR {
+			c = parse()
+			if (c < 0) { bad = 1; exit 1 }
+			if (c == 1) dels[s] = FNR
+			if (c == 2) delo[o] = FNR
+			next
+		}
+		{
+			c = parse()
+			if (c <= 0) next
+			if (c == 1 || c == 2) {
+				x = (c == 1) ? s : o
+				if (!(x in done)) { print x > (out ".del"); done[x] = 1 }
+				if (c == 1) { delete type[s]; if (cur[k[1]] == k[2]) cur[k[1]] = "" }
+				next
+			}
+			if ((s in dels) && FNR < dels[s]) next
+			if (c != 4 && (o in delo) && FNR < delo[o]) next
+			f = out ".imp." k[1]
+			if (c == 4) {
+				type[s] = t
+				print "config " t " " k[2] > f
+				cur[k[1]] = k[2]
+				next
+			}
+			if (!(s in type)) {
+				# a section this input has not created (yet): its
+				# type is not known here, batch sets it, before the
+				# import, which only comes later for it
+				if (!(s in dels)) print > (out ".left")
+				next
+			}
+			if (cur[k[1]] != k[2]) { print "config " type[s] " " k[2] > f; cur[k[1]] = k[2] }
+			print "\t" (c == 3 ? "option" : "list") " " k[3] " " v > f
+		}
+		END { if (bad) exit 1 }
+	' "$tmp.in" "$tmp.in"; then
+		uci -q batch < "$tmp.in" 2>/dev/null
+		rm -f "$tmp".*
+		return 0
+	fi
+	if [ -s "$tmp.del" ]; then
+		ucode -e '
+			import { cursor } from "uci";
+			import { stdin } from "fs";
+			let c = cursor(), cfgs = {};
+			for (let l = stdin.read("line"); length(l); l = stdin.read("line")) {
+				let k = split(trim(l), ".");
+				c.delete(k[0], k[1], k[2]);
+				cfgs[k[0]] = true;
+			}
+			for (let p in cfgs)
+				c.save(p);
+		' < "$tmp.del" 2>/dev/null || sed 's/^/delete /' "$tmp.del" | uci -q batch
+	fi
+	[ -s "$tmp.left" ] && uci -q batch < "$tmp.left"
+	for f in "$tmp".imp.*; do
+		[ -f "$f" ] || continue
+		uci -q -S -m import "${f##*.imp.}" < "$f" 2>/dev/null
+	done
+	rm -f "$tmp".*
+	return 0
+}
+
 # Domain/mac/ip/port/proto/category bypass entries store the network
 # interface's own UCI section name (e.g. "wan1", from the LuCI interface
 # picker) in their "interface" option. _intf_rule resolves that to the
@@ -1962,12 +2065,10 @@ _intf_rule() {
 			:
 		elif [ "$intf" = "all" ]; then
 			cat >> "$_net_uci_batch" <<-EOF
-				delete network.${intf}_fw_rule=rule
 				set network.${intf}_fw_rule=rule
 				set network.${intf}_fw_rule.priority=1
 				set network.${intf}_fw_rule.mark=0x4539
 				set network.${intf}_fw_rule.lookup=991337
-				delete network.${intf}_fw_rule6=rule6
 				set network.${intf}_fw_rule6=rule6
 				set network.${intf}_fw_rule6.priority=1
 				set network.${intf}_fw_rule6.mark=0x6539
@@ -1975,12 +2076,10 @@ _intf_rule() {
 			EOF
 		else
 			cat >> "$_net_uci_batch" <<-EOF
-				delete network.${intf}_fw_rule=rule
 				set network.${intf}_fw_rule=rule
 				set network.${intf}_fw_rule.priority=1
 				set network.${intf}_fw_rule.mark=0x4539${count}
 				set network.${intf}_fw_rule.lookup=${count}
-				delete network.${intf}_fw_rule6=rule6
 				set network.${intf}_fw_rule6=rule6
 				set network.${intf}_fw_rule6.priority=1
 				set network.${intf}_fw_rule6.mark=0x6539${count}
@@ -2782,8 +2881,7 @@ start_service() {
 		if [ "$hash" = "$(uci -q get omr-bypass.global.${name}_hash)" ] && [ -n "$sentinel" ]; then
 			return 1
 		fi
-		[ -n "$delete_batch" ] && printf '%s' "$delete_batch" | uci -q batch
-		uci -q batch < "$file"
+		{ printf '%s' "$delete_batch"; cat "$file"; } | _uci_batch
 		uci -q set omr-bypass.global=global
 		uci -q set omr-bypass.global.${name}_hash="$hash"
 		return 0
@@ -2966,7 +3064,7 @@ stop_service() {
 	_dhcp_delete_batch=""
 	config_load dhcp
 	config_foreach _delete_dhcp_ipset ipset
-	[ -n "$_dhcp_delete_batch" ] && printf '%s' "$_dhcp_delete_batch" | uci -q batch
+	[ -n "$_dhcp_delete_batch" ] && printf '%s' "$_dhcp_delete_batch" | _uci_batch
 	uci -q delete dhcp.@dnsmasq[0].noipv6
 	uci -q commit dhcp
 	_noipv6_dnsmasq_conf && {
@@ -2977,7 +3075,7 @@ stop_service() {
 	config_load firewall
 	config_foreach _delete_firewall_rules rule
 	config_foreach _delete_firewall_rules ipset
-	[ -n "$_fw_delete_batch" ] && printf '%s' "$_fw_delete_batch" | uci -q batch
+	[ -n "$_fw_delete_batch" ] && printf '%s' "$_fw_delete_batch" | _uci_batch
 	uci -q commit firewall
 	[ -z "$RELOAD" ] && { fw4 restart || logger -t "omr-bypass" "ERROR: fw4 restart failed"; }
 }
@@ -3030,19 +3128,21 @@ _soft_wipe_dynamic() {
 			echo "$sec $v"
 		done >> "$_omr_entries_before"
 	done
-	for key in $(uci -q show firewall 2>/dev/null | grep -E '^firewall\.omr6?_dst_bypass_[^.]+\.(entry|src_mac|src_ip|src_port|dest_port)=' | cut -d= -f1); do
-		uci -q delete "$key"
-	done
-	# every generated omr_dst_bypass_* rule defaults to enabled='0' in the
-	# batch; the loops re-enable the ones that still have config entries
-	for key in $(uci -q show firewall 2>/dev/null | grep -E '^firewall\.omr6?_dst_bypass_[^.]+=rule$' | cut -d= -f1); do
-		uci -q set "${key}.enabled=0"
-	done
+	# one uci call per key took minutes with many interfaces and zones
+	{
+		uci -q show firewall 2>/dev/null | grep -E '^firewall\.omr6?_dst_bypass_[^.]+\.(entry|src_mac|src_ip|src_port|dest_port)=' | cut -d= -f1 | sed 's/^/delete /'
+		# every generated omr_dst_bypass_* rule defaults to enabled='0' in
+		# the batch; the loops re-enable the ones that still have config
+		# entries. "set <rule>=rule" changes nothing, it gives the type.
+		uci -q show firewall 2>/dev/null | grep -E '^firewall\.omr6?_dst_bypass_[^.]+=rule$' | cut -d= -f1 | \
+			awk '{ print "set " $0 "=rule"; print "set " $0 ".enabled=\047" "0" "\047" }'
+	} | _uci_batch
 	_dhcp_had_domains=""
-	for key in $(uci -q show dhcp 2>/dev/null | grep -E '^dhcp\.omr_dst_bypass_[^.]+\.domain=' | cut -d= -f1); do
-		uci -q delete "$key"
+	key="$(uci -q show dhcp 2>/dev/null | grep -E '^dhcp\.omr_dst_bypass_[^.]+\.domain=' | cut -d= -f1)"
+	if [ -n "$key" ]; then
+		printf 'delete %s\n' $key | _uci_batch
 		_dhcp_had_domains=1
-	done
+	fi
 }
 
 reload_rules() {
