@@ -391,6 +391,37 @@ _cleanup() {
 	uci -q commit firewall
 }
 
+# omr-bypass builds its firewall and dhcp sections under this lock, as
+# uncommitted uci changes, and every "uci commit firewall" writes out all
+# the pending changes, whoever made them: a run of each committed the
+# other's half-built sections. (A private savedir, uci -t, does not help:
+# uci still reads and commits the shared /tmp/.uci changes.) Held while
+# this script has changes pending; omr-bypass runs can take minutes on a
+# small board, a run that still holds it after that goes on without it.
+_UCI_LOCK="/var/run/omr-bypass.lock"
+_uci_lock() {
+	local _i=0 _pid
+	while ! mkdir "$_UCI_LOCK" 2>/dev/null; do
+		_pid="$(cat "$_UCI_LOCK/pid" 2>/dev/null)"
+		if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
+			rm -rf "$_UCI_LOCK"
+			continue
+		fi
+		_i=$((_i + 1))
+		if [ "$_i" -ge 300 ]; then
+			logger -t "omr-dscp" "omr-bypass still holds its lock after ${_i}s, going on"
+			return 1
+		fi
+		sleep 1
+	done
+	echo "$$" > "$_UCI_LOCK/pid"
+	_uci_locked=1
+}
+_uci_unlock() {
+	[ "$_uci_locked" = "1" ] && rm -rf "$_UCI_LOCK"
+	_uci_locked=""
+}
+
 # What omr-dscp generates, to tell whether a run changed anything
 _dscp_fw_state() {
 	uci -q -X show firewall | grep -E '^firewall\.omr6?_dscp'
@@ -403,6 +434,7 @@ start_service() {
 	local fw_before dhcp_before
 	fw_before="$(_dscp_fw_state | md5sum)"
 	dhcp_before="$(_dscp_dhcp_state | md5sum)"
+	_uci_lock
 	# Cleanup
 	_cleanup
 	disableipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
@@ -419,6 +451,7 @@ start_service() {
 	config_foreach _add_dscp_domain domains
 	uci -q commit dhcp
 	uci -q commit firewall
+	_uci_unlock
 	# Every commit of the openmptcprouter config gets here (reload trigger),
 	# and this ran an fw4 reload then an fw4 restart: the restart deletes the
 	# fw4 table, and with it the addresses dnsmasq had added to every set
@@ -438,7 +471,9 @@ start_service() {
 }
 
 stop_service() {
+	_uci_lock
 	_cleanup
+	_uci_unlock
 	fw4 -q reload
 }
 
