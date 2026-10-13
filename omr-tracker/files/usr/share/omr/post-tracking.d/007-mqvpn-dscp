@@ -93,6 +93,9 @@ for section in $(uci -q show network 2>/dev/null | sed -n "s/^network\.\([^.=]*\
 	[ -z "$val" ] && continue
 	mask=$((mask | (1 << val)))
 done
+# Bit 63 (DSCP 63) makes the shell's signed 64-bit value negative: mqvpn
+# takes the mask as an unsigned JSON number
+[ "$mask" -lt 0 ] && mask="$(printf '%u' "$mask")"
 
 # openmptcprouter.<iface>.mqvpn_dscp_mask is the mask last applied to this
 # path, as "<mqvpn pid>:<mask>", in /var/state -- same reasoning as
@@ -105,12 +108,16 @@ mqvpn_pid="${mqvpn_pid%% *}"
 current_mask="$(omr_state_get "openmptcprouter.$OMR_TRACKER_INTERFACE.mqvpn_dscp_mask")"
 [ -z "$current_mask" ] && current_mask="${mqvpn_pid}:0"
 
+# A failure is logged once, as in 006-mqvpn-weight
 if [ "${mqvpn_pid}:${mask}" != "$current_mask" ]; then
-	_log "mqvpn: set DSCP mask $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $mask"
+	failed_mask="$(omr_state_get "openmptcprouter.$OMR_TRACKER_INTERFACE.mqvpn_dscp_mask_failed")"
+	[ "$failed_mask" = "${mqvpn_pid}:${mask}" ] || _log "mqvpn: set DSCP mask $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $mask"
 	if mqvpn-path dscp "$OMR_TRACKER_DEVICE" "$mask" >/dev/null 2>&1; then
 		omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" mqvpn_dscp_mask "${mqvpn_pid}:${mask}"
-	else
+		[ -n "$failed_mask" ] && omr_state_del openmptcprouter "$OMR_TRACKER_INTERFACE" mqvpn_dscp_mask_failed
+	elif [ "$failed_mask" != "${mqvpn_pid}:${mask}" ]; then
 		_log "mqvpn: failed to set DSCP mask $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $mask"
+		omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" mqvpn_dscp_mask_failed "${mqvpn_pid}:${mask}"
 	fi
 fi
 

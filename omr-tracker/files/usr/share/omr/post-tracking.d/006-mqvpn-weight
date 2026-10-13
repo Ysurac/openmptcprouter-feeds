@@ -59,12 +59,18 @@ mqvpn_pid="$(pidof mqvpn 2>/dev/null)"
 mqvpn_pid="${mqvpn_pid%% *}"
 current_weight="$(omr_state_get "openmptcprouter.$OMR_TRACKER_INTERFACE.mqvpn_weight")"
 
+# mqvpn_weight_failed is the weight that could not be set: a down WAN has no
+# path, and the weight is tried again on every run until it has one. Logged
+# once, not every minute while it stays down.
 if [ "${mqvpn_pid}:${weight}" != "$current_weight" ]; then
-	_log "mqvpn: set weight $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $weight"
+	failed_weight="$(omr_state_get "openmptcprouter.$OMR_TRACKER_INTERFACE.mqvpn_weight_failed")"
+	[ "$failed_weight" = "${mqvpn_pid}:${weight}" ] || _log "mqvpn: set weight $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $weight"
 	if mqvpn-path weight "$OMR_TRACKER_DEVICE" "$weight" >/dev/null 2>&1; then
 		omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" mqvpn_weight "${mqvpn_pid}:${weight}"
-	else
+		[ -n "$failed_weight" ] && omr_state_del openmptcprouter "$OMR_TRACKER_INTERFACE" mqvpn_weight_failed
+	elif [ "$failed_weight" != "${mqvpn_pid}:${weight}" ]; then
 		_log "mqvpn: failed to set weight $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE) -> $weight"
+		omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" mqvpn_weight_failed "${mqvpn_pid}:${weight}"
 	fi
 fi
 
