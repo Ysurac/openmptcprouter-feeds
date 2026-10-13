@@ -465,9 +465,10 @@ kaha_pin_valid() { # <pin>
 	expr "$1" : '[A-Za-z0-9+/]\{43\}=$' >/dev/null
 }
 
-# Sets KAHA_PIN to the pin of <ip>, learned from a bare GET when there is none
+# Sets KAHA_PINS for curl --pinnedpubkey: the pin of <ip>, learned from a
+# bare GET when there is none, and the pin of this node's own key
 kaha_peer_pin() { # <ip>
-	local ip="$1" opt pin pem
+	local ip="$1" opt pin pem own
 	opt=$(kaha_pin_opt "$ip")
 	pin=$(kaha_uci -q get "keepalived.ha_pins.$opt")
 	if [ -z "$pin" ]; then
@@ -493,7 +494,27 @@ kaha_peer_pin() { # <ip>
 		KAHA_ERROR="invalid HTTPS key pin for $ip, run: keepalived-ha forget $ip"
 		return 1
 	}
-	KAHA_PIN="$pin"
+	KAHA_PINS="sha256//$pin"
+	own=$(kaha_own_pin) && [ "$own" != "$pin" ] && KAHA_PINS="$KAHA_PINS;sha256//$own"
+	return 0
+}
+
+# Pin of this node's own uhttpd key. keepalived-sync copies uhttpd.key
+# and uhttpd.crt from the master to the backups, so after the first sync
+# a backup answers with the master's key and no longer with the one pinned
+# on first contact: deploys then failed as if the peer had been
+# reinstalled. Only a holder of this private key can show it, so it is
+# accepted next to the pin; any other key is still refused.
+kaha_own_pin() {
+	local key pin
+	key=$(kaha_get uhttpd.main.key /etc/uhttpd.key)
+	[ -r "$key" ] || return 1
+	# px5g writes the key in DER, openssl in PEM
+	pin=$( { openssl pkey -in "$key" -pubout -outform der 2>/dev/null || \
+		openssl pkey -inform der -in "$key" -pubout -outform der 2>/dev/null; } | \
+		openssl dgst -sha256 -binary 2>/dev/null | openssl enc -base64 2>/dev/null)
+	kaha_pin_valid "$pin" || return 1
+	echo "$pin"
 }
 
 kaha_forget_peer() { # <ip>
@@ -501,7 +522,7 @@ kaha_forget_peer() { # <ip>
 	kaha_uci commit keepalived
 }
 
-# On success sets KAHA_SCHEME, KAHA_PIN and KAHA_TOKEN (no command
+# On success sets KAHA_SCHEME, KAHA_PINS and KAHA_TOKEN (no command
 # substitution so that KAHA_ERROR set on failure survives into the caller's
 # shell)
 kaha_login() { # <ip> <user> <pass>
@@ -511,7 +532,7 @@ kaha_login() { # <ip> <user> <pass>
 
 	KAHA_SCHEME=''
 	KAHA_TOKEN=''
-	KAHA_PIN=''
+	KAHA_PINS=''
 
 	kaha_peer_pin "$ip" || return 1
 
@@ -521,7 +542,7 @@ kaha_login() { # <ip> <user> <pass>
 	json_add_int timeout 300
 	args=$(json_dump)
 
-	resp=$(curl -s -k --pinnedpubkey "sha256//$KAHA_PIN" -m 10 --connect-timeout 5 \
+	resp=$(curl -s -k --pinnedpubkey "$KAHA_PINS" -m 10 --connect-timeout 5 \
 		-H 'Content-Type: application/json' \
 		-d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"call\",\"params\":[\"00000000000000000000000000000000\",\"session\",\"login\",$args]}" \
 		"https://$ip/ubus" 2>/dev/null)
@@ -546,8 +567,8 @@ kaha_login() { # <ip> <user> <pass>
 }
 
 kaha_call_remote() { # <scheme> <ip> <token> <object> <method> <args json>
-	[ -n "$KAHA_PIN" ] || return 1
-	curl -s -k --pinnedpubkey "sha256//$KAHA_PIN" -m 30 --connect-timeout 5 \
+	[ -n "$KAHA_PINS" ] || return 1
+	curl -s -k --pinnedpubkey "$KAHA_PINS" -m 30 --connect-timeout 5 \
 		-H 'Content-Type: application/json' \
 		-d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"call\",\"params\":[\"$3\",\"$4\",\"$5\",$6]}" \
 		"$1://$2/ubus" 2>/dev/null
