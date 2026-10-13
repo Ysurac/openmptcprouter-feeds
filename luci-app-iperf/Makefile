@@ -10,6 +10,10 @@ LUCI_DEPENDS:=+iperf3-ssl
 
 PKG_LICENSE:=GPLv3
 
+define Package/luci-app-iperf/conffiles
+/etc/config/iperf
+endef
+
 #include ../luci/luci.mk
 include $(TOPDIR)/feeds/luci/luci.mk
 

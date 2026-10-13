@@ -37,6 +37,10 @@ endef
 define Build/Compile
 endef
 
+define Package/macvlan/conffiles
+/etc/config/macvlan
+endef
+
 define Package/macvlan/install
 	$(INSTALL_DIR) $(1)
 	$(CP) ./files/* $(1)/

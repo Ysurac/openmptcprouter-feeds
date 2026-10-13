@@ -31,6 +31,10 @@ endef
 define Build/Compile
 endef
 
+define Package/luci-theme-$(THEME_NAME)/conffiles
+/etc/config/alpha
+endef
+
 define Package/luci-theme-$(THEME_NAME)/install
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	echo "uci set luci.themes.$(THEME_TITLE)=/luci-static/$(THEME_NAME); uci commit luci" > $(1)/etc/uci-defaults/30-luci-theme-$(THEME_NAME)

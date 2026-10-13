@@ -41,6 +41,10 @@ define Package/shadowsocks-libev-config
   URL:=https://github.com/shadowsocks/shadowsocks-libev
 endef
 
+define Package/shadowsocks-libev-config/conffiles
+/etc/config/shadowsocks-libev
+endef
+
 define Package/shadowsocks-libev-config/install
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_DATA) ./files/shadowsocks-libev.config $(1)/etc/config/shadowsocks-libev

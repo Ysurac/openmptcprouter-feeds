@@ -38,6 +38,14 @@ endef
 define Build/Compile
 endef
 
+define Package/$(PKG_NAME)/conffiles
+/etc/config/dscp
+endef
+
+define Package/$(PKG_NAME)-nft/conffiles
+/etc/config/dscp
+endef
+
 define Package/$(PKG_NAME)/install
 	$(CP) ./files/* $(1)/
 	rm -f $(1)/etc/init.d/omr-dscp-nft

@@ -33,6 +33,10 @@ endef
 define Build/Compile
 endef
 
+define Package/$(PKG_NAME)-nft/conffiles
+/etc/config/omr-bypass
+endef
+
 define Package/$(PKG_NAME)-nft/install
 	$(CP) ./files/* $(1)/
 	mv $(1)/etc/init.d/omr-bypass-nft $(1)/etc/init.d/omr-bypass

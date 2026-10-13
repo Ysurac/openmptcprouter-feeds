@@ -62,6 +62,9 @@ define Package/shadowsocks-rust-config-nft
        @!LINUX_5_4
 endef
 
+define Package/shadowsocks-rust-config-nft/conffiles
+/etc/config/shadowsocks-rust
+endef
 
 define Package/shadowsocks-rust-config-nft/install
 	$(INSTALL_DIR) $(1)/etc/config
