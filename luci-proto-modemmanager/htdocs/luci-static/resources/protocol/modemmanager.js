@@ -76,9 +76,6 @@ return network.registerProtocol('modemmanager', {
 		o = s.taboption('general', form.Value, 'pincode', _('PIN'));
 		o.datatype = 'and(uinteger,minlength(4),maxlength(8))';
 
-		o = s.taboption('general', form.Value, 'pukcode', _('PUK'));
-		o.datatype = "uinteger";
-
 		o = s.taboption('general', form.Value, 'plmn', _('PLMN'));
 		o.datatype = "uinteger";
 

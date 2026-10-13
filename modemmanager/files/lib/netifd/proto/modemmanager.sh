@@ -285,7 +285,7 @@ proto_modemmanager_init_config() {
 	proto_config_add_string init_iptype
 	proto_config_add_string 'init_allowedauth:list(string)'
 	proto_config_add_string init_password
-	proto_config_add_string init_user
+	proto_config_add_string init_username
 	proto_config_add_string init_apn
 	proto_config_add_defaults
 }
@@ -587,7 +587,7 @@ proto_modemmanager_setup() {
 
 	local init_epsbearer
 	local init_iptype init_allowedauth
-	local init_password init_user init_apn
+	local init_password init_username init_apn
 
 	local address prefix gateway mtu dns1 dns2
 
@@ -597,7 +597,7 @@ proto_modemmanager_setup() {
 
 	json_get_vars init_epsbearer
 	json_get_vars init_iptype init_allowedauth
-	json_get_vars init_password init_user init_apn
+	json_get_vars init_password init_username init_apn
 
 	# validate sysfs path given in config
 	[ -n "${device}" ] || {
