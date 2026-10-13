@@ -28,12 +28,16 @@ return view.extend({
 		o.datatype = 'uinteger';
 		o.placeholder = '172800';
 		o.depends('enabled', '1');
+		// Kept while the history is off: without retain, LuCI deleted the
+		// value on save, and turning it back on brought the default back
+		o.retain = true;
 
 		o = s.option(form.Value, 'max_size', _('Maximum log size'),
 			_('Oldest events are discarded once the log exceeds this size, in bytes. Default: 10485760 (10 MB).'));
 		o.datatype = 'uinteger';
 		o.placeholder = '10485760';
 		o.depends('enabled', '1');
+		o.retain = true;
 
 		return m.render();
 	}
