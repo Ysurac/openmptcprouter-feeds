@@ -947,6 +947,9 @@ return view.extend({
 		o = s.option(form.Value, 'netmask', _('IPv4 netmask'));
 		o.datatype = 'ip4addr';
 		o.default = '255.255.255.0';
+		/* rmempty: picking the default mask removed the option, the
+		 * backend then kept the old mask and /24 could not be chosen back */
+		o.rmempty = false;
 		o.depends('proto', 'static');
 
 		/* ── Step 4: WAN ───────────────────────────────── */
@@ -1019,6 +1022,9 @@ return view.extend({
 		o.default = 'static';
 		o.depends('_type', 'normal');
 		o.depends('_type', 'bridge');
+		/* Hidden for a MacVLAN WAN, whose proto it still is: removed, the
+		 * payload fell back to static and a DHCP MacVLAN lost its address */
+		o.retain = true;
 		/* A protocol this form has no fields for (mbim, 3g, wwan, l2tp,
 		 * wireguard...) used to show as the first choice, static, which the
 		 * next save wrote. As "other" it is never written: the payload
@@ -1053,6 +1059,9 @@ return view.extend({
 			return d.indexOf('/') !== -1 ? d : d.split('.')[0];
 		};
 		addCurrentChoices(o, zoneWan, L.bind(o.cfgvalue, o));
+		/* the device is this field and _vlan together: changing only the
+		 * VLAN left this one unchanged, not written, and the change lost */
+		o.forcewrite = true;
 		o.write = function(sid, val) {
 			var vl = this.section.formvalue(sid, '_vlan') || '';
 			uci.set('network', sid, 'device', vl ? val + '.' + vl : val);
@@ -1083,6 +1092,7 @@ return view.extend({
 		o = s.option(form.Value, 'netmask', _('IPv4 netmask'));
 		o.datatype = 'ip4addr';
 		o.default = '255.255.255.0';
+		o.rmempty = false; /* see the LAN netmask */
 		o.depends('proto', 'static');
 		o.depends('_type', 'macvlan');
 		keepForOtherProto(o);
@@ -1095,12 +1105,19 @@ return view.extend({
 		keepForOtherProto(o);
 
 		// IPv6 — proto=static OR type=macvlan
-		o = s.option(form.Value, 'ip6addr', _('IPv6 address'));
+		/* a list in uci, as LuCI's interface page keeps it: one Value
+		 * showed several addresses as one invalid text */
+		o = s.option(form.DynamicList, 'ip6addr', _('IPv6 address'));
 		o.rmempty = true;
 		o.datatype = 'ip6addr';
 		o.optional = true;
 		o.depends('proto', 'static');
 		o.depends('_type', 'macvlan');
+		/* as an array, so an unchanged single address is not rewritten */
+		o.cfgvalue = function(sid) {
+			var v = uci.get('network', sid, 'ip6addr');
+			return (v == null || v === '') ? null : L.toArray(v);
+		};
 		keepForOtherProto(o);
 
 		o = s.option(form.Value, 'ip6gw', _('IPv6 gateway'));
@@ -1126,7 +1143,11 @@ return view.extend({
 		o.description = _('Acquire an IPv6 address on this WAN via router advertisements or DHCPv6. IPv6 must also be enabled in the advanced settings.');
 		o.cfgvalue = function(sid) { return uci.get('openmptcprouter', sid, 'ipv6') || '0'; };
 		o.write = function(sid, val) { uci.set('openmptcprouter', sid, 'ipv6', val); };
-		o.remove = function(sid) { uci.unset('openmptcprouter', sid, 'ipv6'); };
+		/* hidden with the protocol (a MacVLAN WAN on DHCP): kept */
+		o.remove = function(sid) {
+			if (wanProto.isActive(sid))
+				uci.unset('openmptcprouter', sid, 'ipv6');
+		};
 
 		// Device NCM — proto=ncm
 		o = s.option(form.ListValue, '_device_ncm', _('Device'));

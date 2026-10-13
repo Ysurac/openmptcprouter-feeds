@@ -127,6 +127,43 @@ local function uci_del_list(config, section, option, value)
 	return changed
 end
 
+-- Options LuCI may keep as a list (ip6addr, ipaddr in CIDR list notation)
+-- reach the API as JSON arrays. A table tostring()ed into one option was
+-- written as "table: 0x...", which netifd refused along with the whole
+-- interface. Returns a non-empty list, a non-empty string or nil.
+local function uci_value(value)
+	if type(value) == "table" then
+		local list, seen = {}, {}
+		for _, item in ipairs(value) do
+			if type(item) == "string" or type(item) == "number" then
+				item = tostring(item):match("^%s*(.-)%s*$")
+				if item ~= "" and not seen[item] then
+					seen[item] = true
+					list[#list + 1] = item
+				end
+			end
+		end
+		return #list > 0 and list or nil
+	elseif type(value) == "string" or type(value) == "number" then
+		value = tostring(value)
+		return value ~= "" and value or nil
+	end
+	return nil
+end
+
+-- Writes what uci_value() returns: a list with set_list, a string with set,
+-- nothing deletes the option
+local function uci_set_value(config, section, option, value)
+	local v = uci_value(value)
+	if type(v) == "table" then
+		ucic:set_list(config, section, option, v)
+	elseif v ~= nil then
+		ucic:set(config, section, option, v)
+	else
+		ucic:delete(config, section, option)
+	end
+end
+
 local function _nonempty_string(v)
 	return type(v) == "string" and v ~= ""
 end
@@ -450,13 +487,16 @@ end
 
 function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspeed,uploadspeed)
 	-- Set interfaces settings
-	local dl = tonumber(downloadspeed) or 0
-	local ul = tonumber(uploadspeed) or 0
+	-- nil: speed not given, kept; 0 (what the wizard sends for an emptied
+	-- field): cleared
+	local dl = downloadspeed ~= nil and (tonumber(downloadspeed) or 0) or nil
+	local ul = uploadspeed ~= nil and (tonumber(uploadspeed) or 0) or nil
 	local sqm_on = tostring(sqmenabled) == "1"
 
-	-- _as_string is declared further down the file, so normalise here
+	-- _as_string is declared further down the file, so normalise here.
+	-- ipaddr may be a CIDR list (LuCI's list notation): kept as a list.
 	proto   = (proto   ~= nil) and tostring(proto)   or ""
-	ipaddr  = (ipaddr  ~= nil) and tostring(ipaddr)  or ""
+	ipaddr  = uci_value(ipaddr) or ""
 	netmask = (netmask ~= nil) and tostring(netmask) or ""
 	gateway = (gateway ~= nil) and tostring(gateway) or ""
 
@@ -480,12 +520,15 @@ function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspee
 	-- branch below and as _set_flag_if_given. They are cleared only when the
 	-- interface is (or becomes) non-static, where they have no meaning; an
 	-- address is changed by sending the new one, not by sending a blank.
-	if ipaddr ~= "" then
+	if type(ipaddr) == "table" then
+		ucic:set_list("network",intf,"ipaddr",ipaddr)
+	elseif ipaddr ~= "" then
 		ucic:set("network",intf,"ipaddr",ipaddr)
 	elseif eff_proto ~= "static" then
 		ucic:delete("network",intf,"ipaddr")
 	end
-	if netmask ~= "" then
+	-- the wizard shows the netmask of a MacVLAN WAN on DHCP too
+	if netmask ~= "" and eff_proto == "static" then
 		ucic:set("network",intf,"netmask",netmask)
 	elseif eff_proto == "static" then
 		-- rmempty strips default '255.255.255.0' from the wizard form; keep existing or apply default
@@ -532,22 +575,32 @@ function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspee
 		ucic:set("sqm",intf,"upload","0")
 	end
 
-	if dl ~= 0 and ul ~= 0 then
-		ucic:set("network",intf,"downloadspeed",tostring(dl))
-		ucic:set("network",intf,"uploadspeed",tostring(ul))
+	-- Each direction is kept, set or cleared on its own. The SQM and QoS
+	-- rates follow only when both speeds are known: rates set up on the SQM
+	-- page leave network.<intf>.downloadspeed unset, and zeroing them (and
+	-- disabling SQM) whenever a speed was missing undid that setup on every
+	-- wizard save.
+	if dl ~= nil then
+		if dl > 0 then
+			ucic:set("network",intf,"downloadspeed",tostring(dl))
+		else
+			ucic:delete("network",intf,"downloadspeed")
+		end
+	end
+	if ul ~= nil then
+		if ul > 0 then
+			ucic:set("network",intf,"uploadspeed",tostring(ul))
+		else
+			ucic:delete("network",intf,"uploadspeed")
+		end
+	end
+	if dl ~= nil and ul ~= nil and dl > 0 and ul > 0 then
 		ucic:set("sqm",intf,"download",tostring(math.ceil(dl*95/100)))
 		ucic:set("sqm",intf,"upload",tostring(math.ceil(ul*95/100)))
 		ucic:set("sqm",intf,"enabled", sqm_on and "1" or "0")
 		ucic:set("qos",intf,"download",tostring(math.ceil(dl*95/100)))
 		ucic:set("qos",intf,"upload",tostring(math.ceil(ul*95/100)))
 		ucic:set("qos",intf,"enabled", sqm_on and "1" or "0")
-	else
-		ucic:set("sqm",intf,"download","0")
-		ucic:set("sqm",intf,"upload","0")
-		ucic:set("sqm",intf,"enabled","0")
-		ucic:set("qos",intf,"download","0")
-		ucic:set("qos",intf,"upload","0")
-		ucic:set("qos",intf,"enabled","0")
 	end
 
 	-- Disable multipath on LAN, VPN and loopback
@@ -958,8 +1011,10 @@ function set_mqvpn(mqvpn_key)
 	ucic:commit("mqvpn")
 end
 
+-- A table (a JSON array or object where a scalar was expected) is no value:
+-- tostring() made it "table: 0x..." in uci. Lists go through uci_value().
 local function _as_string(v, default)
-	if v == nil then
+	if v == nil or type(v) == "table" then
 		return default or ""
 	end
 	if type(v) == "string" then
@@ -1536,15 +1591,21 @@ function wizard_add(args)
 				end
 
 				local proto = _as_string(itf.proto, "dhcp")
+				-- a speed left out (or that is no value) is kept
+				local function speed(v)
+					if v == nil or type(v) == "table" then return nil end
+					return _as_string(v, "0")
+				end
 				set_interface(
 					name,
 					proto,
-					_as_string(itf.ipaddr, ""),
+					-- a CIDR list stays a list
+					uci_value(itf.ipaddr) or "",
 					_as_string(itf.netmask, ""),
 					_as_string(itf.gateway, ""),
 					_to_flag(itf.sqmenabled),
-					_as_string(itf.downloadspeed, "0"),
-					_as_string(itf.uploadspeed, "0")
+					speed(itf.downloadspeed),
+					speed(itf.uploadspeed)
 				)
 
 				_set_or_delete("network", name, "type", _as_string(itf.type, ""))
@@ -1553,7 +1614,8 @@ function wizard_add(args)
 				local _dev = _as_string(itf.ifname, "")
 				if _vlan ~= "" then _dev = _dev .. "." .. _vlan end
 				_set_or_delete("network", name, "device", _dev)
-				_set_or_delete("network", name, "ip6addr", _as_string(itf.ip6addr, ""))
+				-- LuCI keeps ip6addr as a list
+				uci_set_value("network", name, "ip6addr", itf.ip6addr)
 				_set_or_delete("network", name, "ip6gw", _as_string(itf.ip6gw, ""))
 				local itf_ipv6 = _as_string(itf.ipv6, "0")
 				if proto == "dhcp" then
