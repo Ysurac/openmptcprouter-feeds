@@ -34,4 +34,22 @@ if [ "$(uci -q get mqvpn.settings.log_level_default_migrated)" != "1" ]; then
 	EOF
 fi
 
+# Turn off the reorder buffer that the shipped config had on (b3af0d3a).
+# The VPS never enables it (omr-admin defaults it to off, and the router
+# doesn't push it), so it was never negotiated, and the client still took
+# its 8-byte header off the tunnel MTU. The MQVPN page and its guide call
+# it off by default.
+#
+# One-shot, marked in mqvpn.settings, as above: a user who turns it on
+# afterwards keeps it on.
+if [ "$(uci -q get mqvpn.settings.reorder_default_migrated)" != "1" ]; then
+	[ "$(uci -q get mqvpn.reorder.enabled)" = "1" ] && \
+		uci -q set mqvpn.reorder.enabled='0'
+	uci -q batch <<-EOF >/dev/null
+		set mqvpn.settings=settings
+		set mqvpn.settings.reorder_default_migrated='1'
+		commit mqvpn
+	EOF
+fi
+
 exit 0
