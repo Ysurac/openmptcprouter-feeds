@@ -61,6 +61,13 @@ _blocklan_file="${_TSTATE_DIR}/${OMR_QUOTA_INTERFACE}.blocklan"
 # persistent scope: once exceeded, stay exceeded even across month boundaries
 _persist_file="${_PERSIST_DIR}/${OMR_QUOTA_INTERFACE}.exceeded"
 
+# exceedance_action=block is the LAN block alone: the WAN(s) stay up, so the
+# router keeps its own connectivity -- a remote-management tunnel riding the
+# metered WAN, the VPS sync -- while LAN clients lose internet. A cut takes
+# all of that down with the interface. The block is the very one block_lan
+# adds to a cut, so the action implies the option.
+[ "${OMR_QUOTA_ACTION:-cut}" = "block" ] && OMR_QUOTA_BLOCK_LAN=1
+
 _get_real_interface() {
 	local iface="$1"
 	local real
@@ -877,6 +884,40 @@ if [ "${OMR_QUOTA_RESET_BASELINE:-0}" = "1" ]; then
 	logger -t "OMR-QUOTA" "Reset quota baseline for $OMR_QUOTA_INTERFACE (rx=${_rx0}KB tx=${_tx0}KB)"
 fi
 
+# _lift_throttle <interfaces>: remove the throttle this daemon applied, if any.
+_lift_throttle() {
+	local iface real_iface
+	[ -f "$_tstate_file" ] || return 0
+	logger -t "OMR-QUOTA" "Removing throttle from $1"
+	for iface in $1; do
+		real_iface="$(_get_real_interface "$iface")"
+		[ -n "$real_iface" ] && _remove_throttle "$real_iface"
+	done
+	rm -f "$_tstate_file"
+}
+
+# _raise_cut_interfaces: raise back exactly what this daemon took down --
+# not every interface the quota covers. <id>.ifdown is that list; a lone
+# <id>.cut is a marker from a daemon older than it, which recorded the whole
+# target list, so honour that once rather than leaving an upgraded router's
+# interface down for good.
+_raise_cut_interfaces() {
+	local iface up_list=""
+	if [ -f "$_ifdown_file" ]; then
+		up_list="$(cat "$_ifdown_file")"
+	elif [ -f "$_cut_file" ]; then
+		up_list="$(cat "$_cut_file")"
+		up_list="${up_list:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}"
+	fi
+	for iface in $up_list; do
+		if [ "$(ifstatus "$iface" | jsonfilter -e '@.up')" = "false" ]; then
+			logger -t "OMR-QUOTA" "Set interface $iface up"
+			ifup $iface
+		fi
+	done
+	rm -f "$_cut_file" "$_ifdown_file"
+}
+
 _prev_exceeded=-1
 last_calculation=0
 last_tt=0
@@ -920,7 +961,7 @@ while true; do
 	# Once enforcement is active, an unreadable/incomplete vnstat sample must
 	# not be interpreted as a usage reset. Keep the current cut/throttle until
 	# a complete sample proves that the quota is no longer exceeded.
-	if [ "$usage_complete" != "1" ] && { [ "$_prev_exceeded" = "1" ] || [ -f "$_cut_file" ] || [ -f "$_tstate_file" ]; }; then
+	if [ "$usage_complete" != "1" ] && { [ "$_prev_exceeded" = "1" ] || [ -f "$_cut_file" ] || [ -f "$_tstate_file" ] || [ -f "$_blocklan_file" ]; }; then
 		exceeded=1
 		[ -z "$reason" ] && reason="usage counters temporarily unavailable"
 	fi
@@ -969,6 +1010,12 @@ while true; do
 			# so nothing is owed an ifup any more, nor a LAN block
 			rm -f "$_cut_file" "$_ifdown_file"
 			_release_lan_block
+		elif [ "${OMR_QUOTA_ACTION:-cut}" = "block" ]; then
+			_block_lan "$reason reached"
+			# A quota switched from throttle or cut: the WAN(s) must carry
+			# the router's own traffic at full speed again.
+			_lift_throttle "$target_interfaces"
+			_raise_cut_interfaces
 		else
 			# cut: bring the interface(s) down
 			if [ "${OMR_QUOTA_BLOCK_LAN:-0}" = "1" ]; then
@@ -1000,34 +1047,8 @@ while true; do
 		fi
 	else
 		# Quota not exceeded — remove any throttle that was active
-		if [ -f "$_tstate_file" ]; then
-			logger -t "OMR-QUOTA" "Removing throttle from $target_interfaces"
-			for iface in $target_interfaces; do
-				real_iface="$(_get_real_interface "$iface")"
-				[ -n "$real_iface" ] && _remove_throttle "$real_iface"
-			done
-			rm -f "$_tstate_file"
-		fi
-		# Raise back exactly what this daemon took down -- not every
-		# interface the quota covers. <id>.ifdown is that list; a lone
-		# <id>.cut is a marker from a daemon older than it, which recorded
-		# the whole target list, so honour that once rather than leaving an
-		# upgraded router's interface down for good.
-		up_list=""
-		if [ -f "$_ifdown_file" ]; then
-			up_list="$(cat "$_ifdown_file")"
-		elif [ -f "$_cut_file" ]; then
-			up_list="$(cat "$_cut_file")"
-			up_list="${up_list:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}"
-		fi
-		for iface in $up_list; do
-			iface_up="$(ifstatus "$iface" | jsonfilter -e '@.up')"
-			if [ "$iface_up" = "false" ]; then
-				logger -t "OMR-QUOTA" "Set interface $iface up"
-				ifup $iface
-			fi
-		done
-		rm -f "$_cut_file" "$_ifdown_file"
+		_lift_throttle "$target_interfaces"
+		_raise_cut_interfaces
 		_release_lan_block
 	fi
 

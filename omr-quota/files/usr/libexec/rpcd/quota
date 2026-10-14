@@ -281,10 +281,11 @@ _quota_status_json() {
 
 	# Exceeded / throttled / cut state (markers kept by the daemon, see
 	# /bin/omr-quota; "cut" = the daemon currently holds the interface(s) down)
-	local exceeded=false throttled=false cut=false
+	local exceeded=false throttled=false cut=false lan_blocked=false
 	[ -f "${_PERSIST_DIR}/${state_id}.exceeded" ] && exceeded=true
 	[ -f "${_TSTATE_DIR}/${state_id}.throttled" ] && throttled=true
 	[ -f "${_TSTATE_DIR}/${state_id}.cut" ] && cut=true
+	[ -f "${_TSTATE_DIR}/${state_id}.blocklan" ] && lan_blocked=true
 
 	# Derive exceeded from current data too (covers month_only scope)
 	if [ "$exceeded" = "false" ]; then
@@ -308,9 +309,9 @@ _quota_status_json() {
 		[ "$tt_pct" -gt 100 ] && tt_pct=100
 	fi
 
-	printf '{"name":"%s","type":"%s","interfaces":"%s","enabled":"%s","exceeded":%s,"throttled":%s,"cut":%s,"rx_kib":%d,"tx_kib":%d,"tt_kib":%d,"rxquota":%d,"txquota":%d,"ttquota":%d,"rx_pct":%d,"tx_pct":%d,"tt_pct":%d,"exceedance_action":"%s","exceedance_scope":"%s"}' \
+	printf '{"name":"%s","type":"%s","interfaces":"%s","enabled":"%s","exceeded":%s,"throttled":%s,"cut":%s,"lan_blocked":%s,"rx_kib":%d,"tx_kib":%d,"tt_kib":%d,"rxquota":%d,"txquota":%d,"ttquota":%d,"rx_pct":%d,"tx_pct":%d,"tt_pct":%d,"exceedance_action":"%s","exceedance_scope":"%s"}' \
 		"$(_json_str "$iface")" "$(_json_str "$type")" "$(_json_str "$interfaces")" "$(_json_str "$enabled")" \
-		"$exceeded" "$throttled" "$cut" \
+		"$exceeded" "$throttled" "$cut" "$lan_blocked" \
 		"$rx_kib" "$tx_kib" "$tt_kib" \
 		"$rxquota" "$txquota" "$ttquota" \
 		"$rx_pct" "$tx_pct" "$tt_pct" \
@@ -364,7 +365,7 @@ case "$1" in
 					case "$field" in
 						enabled|block_lan|live_counters) valid="0 1 true false yes no on off" ;;
 						method) valid="0 1 2" ;;
-						exceedance_action) valid="cut throttle" ;;
+						exceedance_action) valid="cut throttle block" ;;
 						exceedance_scope) valid="month_only persistent" ;;
 						*) valid="" ;;
 					esac

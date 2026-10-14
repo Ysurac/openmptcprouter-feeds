@@ -76,9 +76,11 @@ function addQuotaFields(s, downInterfacesHint) {
 	o.retain = true;
 	o.depends('method', '2');
 
-	o = s.option(form.ListValue, 'exceedance_action', _('Action when quota is reached'));
+	o = s.option(form.ListValue, 'exceedance_action', _('Action when quota is reached'),
+		_('Block LAN stops LAN clients as a cut with LAN block does, but keeps the interface(s) up: traffic from the router itself, such as a remote management tunnel, keeps working and still counts towards the quota.'));
 	o.value('cut',      _('Cut — bring interface(s) down for the rest of the month'));
 	o.value('throttle', _('Throttle — limit interface(s) bandwidth'));
+	o.value('block',    _('Block LAN — cut LAN clients off, keep interface(s) up'));
 	o.default = 'cut';
 	o.rmempty = false;
 

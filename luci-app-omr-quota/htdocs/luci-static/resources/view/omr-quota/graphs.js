@@ -76,6 +76,7 @@ return view.extend({
 		if (!enabled) badges.push(self._badge(_('Disabled'), '#999'));
 		if (enabled && iface.exceeded) badges.push(self._badge(_('Exceeded'), '#f44336'));
 		if (enabled && iface.throttled) badges.push(self._badge(_('Throttled'), '#ff9800'));
+		if (enabled && iface.lan_blocked) badges.push(self._badge(_('LAN blocked'), '#f44336'));
 
 		var meta = _('Action: %s · Scope: %s').format(iface.exceedance_action || '—', iface.exceedance_scope || '—');
 
