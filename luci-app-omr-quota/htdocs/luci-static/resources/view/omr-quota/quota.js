@@ -77,10 +77,11 @@ function addQuotaFields(s, downInterfacesHint) {
 	o.depends('method', '2');
 
 	o = s.option(form.ListValue, 'exceedance_action', _('Action when quota is reached'),
-		_('Block LAN stops LAN clients as a cut with LAN block does, but keeps the interface(s) up: traffic from the router itself, such as a remote management tunnel, keeps working and still counts towards the quota.'));
+		_('Block LAN stops LAN clients as a cut with LAN block does, but keeps the interface(s) up: traffic from the router itself, such as a remote management tunnel, keeps working and still counts towards the quota. Cut except the last WAN cuts while another WAN is up for omr-tracker, and blocks the LAN instead when the interface is the last one.'));
 	o.value('cut',      _('Cut — bring interface(s) down for the rest of the month'));
 	o.value('throttle', _('Throttle — limit interface(s) bandwidth'));
 	o.value('block',    _('Block LAN — cut LAN clients off, keep interface(s) up'));
+	o.value('cut_keep_last', _('Cut except the last WAN — block LAN instead of cutting the last WAN up'));
 	o.default = 'cut';
 	o.rmempty = false;
 
@@ -90,6 +91,7 @@ function addQuotaFields(s, downInterfacesHint) {
 	o.rmempty = false;
 	o.retain = true;
 	o.depends('exceedance_action', 'cut');
+	o.depends('exceedance_action', 'cut_keep_last');
 
 	o = s.option(form.Value, 'throttle_dl', _('Download limit (Mbps)'),
 		_('Maximum download speed applied to the interface(s) when quota is exceeded'));

@@ -651,7 +651,6 @@ _del_lan_access_rules() {
 # exceeded, undo and redo the block -- a firewall reload and a flash commit
 # each -- on every poll.
 _block_lan() {
-	[ "${OMR_QUOTA_BLOCK_LAN:-0}" = "1" ] || return
 	# The claim comes first, so a quota releasing its own at the same moment
 	# already sees this one. It is written even when the block is in place:
 	# after a reboot the block is still in the firewall config but the
@@ -918,7 +917,36 @@ _raise_cut_interfaces() {
 	rm -f "$_cut_file" "$_ifdown_file"
 }
 
+# _valid_wan_besides <interfaces>: some WAN other than these still carries
+# traffic -- multipath not off, up in netifd, up for omr-tracker, and not cut
+# by a quota. A WAN up in netifd but dead for the tracker does not count:
+# keeping it as the last one would leave the router with no working WAN.
+_valid_wan_besides() {
+	local excluded marker entry iface multipath network interfaces
+	excluded=" $* "
+	for marker in "$_TSTATE_DIR"/*.cut; do
+		[ -f "$marker" ] || continue
+		entry="${marker##*/}"
+		excluded="$excluded${entry%.cut} $(cat "$marker" 2>/dev/null) "
+	done
+	network="$(uci -q show network)"
+	# interface sections only: network.globals has a multipath option too
+	interfaces=" $(printf '%s\n' "$network" | sed -n "s/^network\.\([^.=]*\)=interface\$/\1/p" | tr '\n' ' ')"
+	for entry in $(printf '%s\n' "$network" | sed -n "s/^network\.\([^.]*\)\.multipath='\{0,1\}\([a-z]*\)'\{0,1\}\$/\1=\2/p"); do
+		iface="${entry%%=*}"
+		multipath="${entry#*=}"
+		case "$interfaces" in *" $iface "*) ;; *) continue ;; esac
+		case "$multipath" in ''|off) continue ;; esac
+		case "$excluded" in *" $iface "*) continue ;; esac
+		[ "$(uci -q -P "${OMR_STATE_DIR:-/var/state}" get "openmptcprouter.${iface}.state")" = "up" ] || continue
+		[ "$(ifstatus "$iface" | jsonfilter -q -e '@.up')" = "true" ] || continue
+		return 0
+	done
+	return 1
+}
+
 _prev_exceeded=-1
+_keep_last_mode=""
 last_calculation=0
 last_tt=0
 
@@ -990,7 +1018,28 @@ while true; do
 			touch "$_persist_file"
 		fi
 
-		if [ "${OMR_QUOTA_ACTION:-cut}" = "throttle" ]; then
+		# cut_keep_last: cut while another WAN is valid, otherwise keep this
+		# one up and block the LAN, so the router never loses its last WAN
+		# (and the remote management riding it). Two quotas exceeded at the
+		# same poll would each see the other WAN still up and both cut: the
+		# lock makes the decision and the cut marker it writes one daemon at
+		# a time, so the second one finds the first already cut.
+		action="${OMR_QUOTA_ACTION:-cut}"
+		if [ "$action" = "cut_keep_last" ]; then
+			mkdir -p "$_TSTATE_DIR"
+			exec 9>"${_TSTATE_DIR}/keep-last.lock"
+			flock -x 9
+			if _valid_wan_besides $target_interfaces; then
+				action="cut"
+			else
+				action="block"
+				[ "$_keep_last_mode" != "block" ] && \
+					logger -t "OMR-QUOTA" "$target_interfaces: no other valid WAN, kept up with the LAN blocked: $reason reached"
+			fi
+			_keep_last_mode="$action"
+		fi
+
+		if [ "$action" = "throttle" ]; then
 			[ "$_prev_exceeded" != "1" ] && \
 				logger -t "OMR-QUOTA" "Throttling $target_interfaces to ${OMR_QUOTA_THROTTLE_DL:-1}/${OMR_QUOTA_THROTTLE_UL:-1} Mbps: $reason reached"
 			mkdir -p "$_TSTATE_DIR"
@@ -1010,7 +1059,7 @@ while true; do
 			# so nothing is owed an ifup any more, nor a LAN block
 			rm -f "$_cut_file" "$_ifdown_file"
 			_release_lan_block
-		elif [ "${OMR_QUOTA_ACTION:-cut}" = "block" ]; then
+		elif [ "$action" = "block" ]; then
 			_block_lan "$reason reached"
 			# A quota switched from throttle or cut: the WAN(s) must carry
 			# the router's own traffic at full speed again.
@@ -1045,7 +1094,9 @@ while true; do
 			# absent means "owes no ifup", which is exactly the case.
 			[ -n "$ifdown_list" ] && printf '%s' "$ifdown_list" > "$_ifdown_file"
 		fi
+		[ "${OMR_QUOTA_ACTION:-cut}" = "cut_keep_last" ] && exec 9>&-
 	else
+		_keep_last_mode=""
 		# Quota not exceeded — remove any throttle that was active
 		_lift_throttle "$target_interfaces"
 		_raise_cut_interfaces
