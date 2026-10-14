@@ -5,12 +5,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=rust
-PKG_VERSION:=1.95.0
-PKG_RELEASE:=1
+PKG_VERSION:=1.99.0
+PKG_RELEASE:=2
 
-PKG_SOURCE:=rustc-$(PKG_VERSION)-src.tar.gz
+PKG_SOURCE:=rustc-$(PKG_VERSION)-src.tar.xz
 PKG_SOURCE_URL:=https://static.rust-lang.org/dist/
-PKG_HASH:=ea9b82a83e46967537c3569ce9d6fa16811c043a96e651376c349e70241ca515
+PKG_HASH:=cc41916a8c84f5d9ec4f55561b44e39f43b647b133f8a6f51be9ea13c83f7036
 HOST_BUILD_DIR:=$(BUILD_DIR)/host/rustc-$(PKG_VERSION)-src
 
 PKG_MAINTAINER:=Luca Barbato <lu_zero@luminem.org>
@@ -20,7 +20,7 @@ PKG_LICENSE_FILES:=LICENSE-APACHE LICENSE-MIT
 PKG_HOST_ONLY:=1
 PKG_BUILD_FLAGS:=no-mips16
 
-HOST_BUILD_PARALLEL:=0
+#HOST_BUILD_PARALLEL:=0
 
 include $(INCLUDE_DIR)/host-build.mk
 include $(INCLUDE_DIR)/package.mk
@@ -75,11 +75,9 @@ HOST_CONFIGURE_ARGS = \
 	--dist-compression-formats=gz \
 	--disable-sanitizers \
 	--release-channel=stable \
-	--set=rust.omit-git-hash=true \
 	--enable-cargo-native-static \
 	--bootstrap-cache-path=$(DL_DIR)/rustc \
 	--set=llvm.download-ci-llvm=false \
-	--set=llvm.build-config.LLVM_APPEND_VC_REV=OFF \
 	$(TARGET_CONFIGURE_ARGS)
 
 define Host/Uninstall
@@ -92,6 +90,7 @@ define Host/Compile
 	$(RUST_SCCACHE_VARS) \
 	CARGO_HOME=$(CARGO_HOME) \
 	TARGET_CFLAGS="$(TARGET_CFLAGS)" \
+	$(if $(RUSTC_TARGET_RUSTFLAGS),$(RUSTC_TARGET_CARGO_RUSTFLAGS)="$(RUSTC_TARGET_RUSTFLAGS)") \
 	$(PYTHON) $(HOST_BUILD_DIR)/x.py \
 		--ci false \
 		--build-dir $(HOST_BUILD_DIR)/build \
@@ -101,7 +100,9 @@ endef
 define Host/Install
 	( \
 		cd $(HOST_BUILD_DIR)/build/dist ; \
-		find -iname "*.tar.gz" -exec tar -xzf {} \; ; \
+		for targz in *.tar.gz; do \
+			$(STAGING_DIR_HOST)/bin/libdeflate-gzip -dc "$$$$targz" | tar -xf - ; \
+		done ; \
 		find . -mindepth 2 -maxdepth 2 -type f -name install.sh \
 			-execdir bash '{}' --prefix=$(STAGING_DIR)/host --disable-ldconfig \; ; \
 	)

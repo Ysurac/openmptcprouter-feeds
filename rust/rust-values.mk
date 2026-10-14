@@ -69,6 +69,16 @@ ifeq ($(ARCH),aarch64)
     RUSTC_CFLAGS:=-mno-outline-atomics
 endif
 
+# The same flags have to reach the std that rust/host builds for the target,
+# or std and the packages linked against it disagree about how a double is
+# passed. Bootstrap sets RUSTFLAGS itself on the cargo invocations it spawns,
+# so setting that would be overwritten; it does however read
+# CARGO_TARGET_<TRIPLE>_RUSTFLAGS and fold it in, scoped to that triple, which
+# leaves the host artifacts built in the same run untouched.
+# Deferred, because the blocks above still rewrite RUSTC_TARGET_ARCH.
+RUSTC_TARGET_UPPER = $(subst -,_,$(call toupper,$(RUSTC_TARGET_ARCH)))
+RUSTC_TARGET_CARGO_RUSTFLAGS = CARGO_TARGET_$(RUSTC_TARGET_UPPER)_RUSTFLAGS
+
 # Support only a subset for now.
 RUST_ARCH_DEPENDS:=@(aarch64||arm||i386||i686||mips||mipsel||mips64||mips64el||mipsel||powerpc64||riscv64||x86_64)
 
