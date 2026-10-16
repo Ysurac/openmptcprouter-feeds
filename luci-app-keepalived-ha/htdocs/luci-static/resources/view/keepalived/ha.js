@@ -55,7 +55,11 @@ const callGenkey = rpc.declare({
 const callUciCommit = rpc.declare({
 	object: 'uci',
 	method: 'commit',
-	params: [ 'config' ]
+	params: [ 'config' ],
+	// rpcd refuses a commit while another session's apply waits for its
+	// rollback confirmation: without this the deploy went on with the old
+	// configuration
+	reject: true
 });
 
 const callKeepalivedDump = rpc.declare({
@@ -164,7 +168,10 @@ return view.extend({
 		dom.content(log, E('div', {}, _('Saving settings…')));
 
 		return m.save(null, true)
-			.then(() => callUciCommit('keepalived'))
+			.then(() => callUciCommit('keepalived').catch((err) => {
+				throw new Error(_('Settings not committed (%s): another session may have changes waiting for confirmation, retry in a moment.')
+					.format(err.message));
+			}))
 			.then(() => callApplyLocal())
 			.then((res) => {
 				if (!res.ok)
