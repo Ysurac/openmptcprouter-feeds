@@ -68,6 +68,19 @@ return view.extend({
 				  " and prioritisation on one " +
 				  "network interface.");
 
+		// For these options sqm-scripts and sqm-autorate read unset as the
+		// default: a stored value equal to it was deleted on save (rmempty),
+		// an unset one written (rmempty off). Keep either as it is.
+		var keepAsStored = function(o) {
+			var write = o.write;
+			o.rmempty = false;
+			o.write = function(section_id, value) {
+				if (value == this.default && uci.get('sqm', section_id, this.option) == null)
+					return;
+				return write.apply(this, arguments);
+			};
+		};
+
 		s = m.section(form.TypedSection, 'queue', _('Queues'));
 		s.tab("tab_basic", _("Basic Settings"));
 		s.tab("tab_qdisc", _("Queue Discipline"));
@@ -88,7 +101,7 @@ return view.extend({
 		}, this);
 
 		o = s.taboption("tab_basic", form.Flag, "autorate", _("Enable SQM autorate"));
-		o.rmempty = false;
+		keepAsStored(o);
 
 		o = s.taboption("tab_basic", widgets.DeviceSelect, "interface", _("Interface name"));
 		o.rmempty = false;
@@ -132,6 +145,7 @@ return view.extend({
 		o.value("8", "debug");
 		o.value("10", "trace");
 		o.default = "5";
+		keepAsStored(o);
 
 		o = s.taboption("tab_qdisc", form.ListValue, "qdisc", _("Queuing disciplines useable on this system. After installing a new qdisc, you need to restart the router to see updates!"),_("Must be set to cake if autorate is used."));
 		for (var i=0; i < qdiscs.length; i++) {
@@ -156,6 +170,7 @@ return view.extend({
 
 		o = s.taboption("tab_qdisc", form.Flag, "qdisc_advanced", _("Show and Use Advanced Configuration. Advanced options will only be used as long as this box is checked."));
 		o.default = false;
+		keepAsStored(o);
 
 		o = s.taboption("tab_qdisc", form.Flag, "use_mq", _("Enable multi-queue config"), _("Enable multi-queue qdisc on supported hardware. If .qos script does not support mq this option is ignored."));
 		o.default = false;
@@ -217,6 +232,7 @@ return view.extend({
 		o.value("ethernet", "Ethernet with overhead: select for e.g. VDSL2.");
 		o.value("atm", "ATM: select for e.g. ADSL1, ADSL2, ADSL2+.");
 		o.default = "none";
+		keepAsStored(o);
 
 		o = s.taboption("tab_linklayer", form.Value, "overhead", _("Per Packet Overhead (byte):"));
 		o.datatype = "and(integer,min(-1500))";
