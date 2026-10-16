@@ -1,0 +1,518 @@
+From 662dddd72f98418d751a821b6ce289a3859f28b7 Mon Sep 17 00:00:00 2001
+From: Pierre-Yves Le Borgne <pylaterreur@gmail.com>
+Date: Fri, 16 Oct 2026 08:17:31 +0100
+Subject: [PATCH] Read up to 256 KiB per recv() on the TCP data path, encrypt
+ as several AEAD chunks
+
+SOCKET_BUF_SIZE (16383) is the largest AEAD chunk payload the protocol
+allows, but the code also used it as the size of every recv(), so a relay
+moved bulk data in 16 KiB steps: one recv, one encrypt or decrypt pass and
+one send per chunk, plus a second recv whenever a full chunk (16417 bytes
+on the wire) did not fit in the 16383-byte read.
+
+aead_encrypt() now splits its input into as many chunks of at most
+CHUNK_SIZE_MASK bytes as needed (aead_decrypt() already handled several
+chunks per call), so the wire format is unchanged and old and new peers
+interoperate. A connection starts reading 16383 bytes at a time and
+multiplies the read size by 4 each time a recv() fills the buffer, up to
+TCP_IO_MAX (256 KiB), so memory is only spent on connections that move
+bulk data. -DTCP_IO_MAX=16383 restores the old behaviour.
+
+The buffers that grew are given back by a timer (every TCP_IO_SWEEP, 5 s,
+in ss-local, ss-redir, ss-server and ss-tunnel) when they are empty and
+were not used since its previous run, so a connection that moved bulk
+data and then idles does not keep them. For that, the first send in the
+recv callbacks now resets the buffer when everything was sent, as the
+other send paths already do, instead of leaving the length of the last
+recv() in it.
+
+Applies to ss-redir, ss-server, ss-tunnel and ss-local (data path only,
+the SOCKS5 handshake stays at one chunk).
+---
+ src/aead.c   | 27 ++++++++++++++++++++-------
+ src/crypto.c | 50 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ src/crypto.h | 49 +++++++++++++++++++++++++++++++++++++++++++++++++
+ src/local.c  | 34 ++++++++++++++++++++++++++++++++--
+ src/redir.c  | 27 ++++++++++++++++++++++++---
+ src/server.c | 28 ++++++++++++++++++++++++++--
+ src/tunnel.c | 29 +++++++++++++++++++++++++++--
+ 7 files changed, 228 insertions(+), 16 deletions(-)
+
+diff --git a/src/aead.c b/src/aead.c
+index 3388a54..cd0cff0 100644
+--- a/src/aead.c
++++ b/src/aead.c
+@@ -560,7 +560,10 @@ aead_encrypt(buffer_t *plaintext, cipher_ctx_t *cipher_ctx, size_t capacity)
+         salt_ofst = salt_len;
+     }
+ 
+-    size_t out_len = salt_ofst + 2 * tag_len + plaintext->len + CHUNK_SIZE_LEN;
++    /* The payload of one AEAD chunk is limited to CHUNK_SIZE_MASK bytes by the
++     * protocol, but the input may hold several chunks' worth of data. */
++    size_t nchunks  = (plaintext->len + CHUNK_SIZE_MASK - 1) / CHUNK_SIZE_MASK;
++    size_t out_len  = salt_ofst + nchunks * (2 * tag_len + CHUNK_SIZE_LEN) + plaintext->len;
+     brealloc(&tmp, out_len, capacity);
+     ciphertext      = &tmp;
+     ciphertext->len = out_len;
+@@ -573,12 +576,18 @@ aead_encrypt(buffer_t *plaintext, cipher_ctx_t *cipher_ctx, size_t capacity)
+         ppbloom_add((void *)cipher_ctx->salt, salt_len);
+     }
+ 
+-    err = aead_chunk_encrypt(cipher_ctx,
+-                             (uint8_t *)plaintext->data,
+-                             (uint8_t *)ciphertext->data + salt_ofst,
+-                             cipher_ctx->nonce, plaintext->len);
+-    if (err)
+-        return err;
++    uint8_t *p = (uint8_t *)plaintext->data;
++    uint8_t *c = (uint8_t *)ciphertext->data + salt_ofst;
++    size_t left = plaintext->len;
++    while (left > 0) {
++        size_t plen = left < CHUNK_SIZE_MASK ? left : CHUNK_SIZE_MASK;
++        err = aead_chunk_encrypt(cipher_ctx, p, c, cipher_ctx->nonce, plen);
++        if (err)
++            return err;
++        p    += plen;
++        c    += plen + 2 * tag_len + CHUNK_SIZE_LEN;
++        left -= plen;
++    }
+ 
+     brealloc(plaintext, ciphertext->len, capacity);
+     memcpy(plaintext->data, ciphertext->data, ciphertext->len);
+@@ -650,6 +659,10 @@ aead_decrypt(buffer_t *ciphertext, cipher_ctx_t *cipher_ctx, size_t capacity)
+ 
+     brealloc(cipher_ctx->chunk,
+              cipher_ctx->chunk->len + ciphertext->len, capacity);
++    if (cipher_ctx->chunk->capacity > capacity) {
++        tcp_io_track(cipher_ctx->chunk);
++        cipher_ctx->chunk->io_active = 1;
++    }
+     memcpy(cipher_ctx->chunk->data + cipher_ctx->chunk->len,
+            ciphertext->data, ciphertext->len);
+     cipher_ctx->chunk->len += ciphertext->len;
+diff --git a/src/crypto.c b/src/crypto.c
+index 561b560..7966d6c 100644
+--- a/src/crypto.c
++++ b/src/crypto.c
+@@ -66,11 +66,61 @@ brealloc(buffer_t *ptr, size_t len, size_t capacity)
+     return real_capacity;
+ }
+ 
++/* Buffers that grew for bulk TCP I/O, see tcp_io_sweep() */
++static buffer_t **io_tracked;
++static size_t io_ntracked, io_captracked;
++
++static void
++tcp_io_untrack(buffer_t *buf)
++{
++    size_t i       = buf->io_slot - 1;
++    buffer_t *last = io_tracked[--io_ntracked];
++    io_tracked[i]  = last;
++    last->io_slot  = i + 1;
++    buf->io_slot   = 0;
++}
++
++void
++tcp_io_track(buffer_t *buf)
++{
++    if (buf->io_slot)
++        return;
++    if (io_ntracked == io_captracked) {
++        io_captracked = io_captracked ? io_captracked * 2 : 64;
++        io_tracked    = ss_realloc(io_tracked, io_captracked * sizeof(buffer_t *));
++    }
++    io_tracked[io_ntracked++] = buf;
++    buf->io_slot              = io_ntracked;
++}
++
++void
++tcp_io_sweep(void)
++{
++    size_t i = 0;
++    while (i < io_ntracked) {
++        buffer_t *buf = io_tracked[i];
++        if (buf->io_active || buf->len != 0) {
++            buf->io_active = 0;
++            i++;
++            continue;
++        }
++        if (buf->capacity > TCP_IO_MIN) {
++            buf->data     = ss_realloc(buf->data, TCP_IO_MIN);
++            buf->capacity = TCP_IO_MIN;
++        }
++        buf->idx     = 0;
++        buf->io_size = 0;
++        tcp_io_untrack(buf); /* moves the last entry to slot i */
++    }
++}
++
+ void
+ bfree(buffer_t *ptr)
+ {
+     if (ptr == NULL)
+         return;
++    if (ptr->io_slot)
++        tcp_io_untrack(ptr);
+     ptr->idx      = 0;
+     ptr->len      = 0;
+     ptr->capacity = 0;
+diff --git a/src/crypto.h b/src/crypto.h
+index 1791551..869bfc6 100644
+--- a/src/crypto.h
++++ b/src/crypto.h
+@@ -92,8 +92,57 @@ typedef struct buffer {
+     size_t len;
+     size_t capacity;
+     char   *data;
++    size_t io_size; /* current TCP recv size, see tcp_io_size() below */
++    uint32_t io_slot;   /* 1 + index in the list of grown buffers, 0 if not in it */
++    uint32_t io_active; /* used since the last tcp_io_sweep() */
+ } buffer_t;
+ 
++/*
++ * TCP relay I/O size. The AEAD chunk payload is limited to SOCKET_BUF_SIZE by
++ * the protocol, but one recv()/send() may carry many chunks. A connection
++ * starts reading TCP_IO_MIN bytes at a time and multiplies that by 4 each time
++ * a recv() fills the buffer completely, up to TCP_IO_MAX, so memory is only
++ * spent on connections that move bulk data.
++ */
++#ifndef TCP_IO_MIN
++#define TCP_IO_MIN (16 * 1024 - 1) /* SOCKET_BUF_SIZE */
++#endif
++#ifndef TCP_IO_MAX
++#define TCP_IO_MAX (256 * 1024)
++#endif
++
++static inline size_t
++tcp_io_size(buffer_t *buf)
++{
++    return buf->io_size ? buf->io_size : TCP_IO_MIN;
++}
++
++/* Register a buffer that grew beyond the default size with tcp_io_sweep(). */
++void tcp_io_track(buffer_t *);
++
++/*
++ * Give back the memory of buffers that grew but have been unused and empty
++ * since the previous call: they go back to TCP_IO_MIN. Called every
++ * TCP_IO_SWEEP seconds by the event loop, so that a connection that moved bulk
++ * data and then idles does not keep its large buffers.
++ */
++void tcp_io_sweep(void);
++#ifndef TCP_IO_SWEEP
++#define TCP_IO_SWEEP 5.
++#endif
++
++/* Call after recv(): "room" is the size that was asked for. */
++static inline void
++tcp_io_grow(buffer_t *buf, ssize_t r, size_t room)
++{
++    size_t cur = tcp_io_size(buf);
++    if (r > 0 && (size_t)r == room && cur < TCP_IO_MAX) {
++        buf->io_size = cur * 4 < TCP_IO_MAX ? cur * 4 : TCP_IO_MAX;
++        tcp_io_track(buf);
++    }
++    buf->io_active = 1;
++}
++
+ typedef struct {
+     int method;
+     int skey;
+diff --git a/src/local.c b/src/local.c
+index c9c5c02..43914ad 100644
+--- a/src/local.c
++++ b/src/local.c
+@@ -780,6 +780,12 @@ server_stream(EV_P_ ev_io *w, buffer_t *buf)
+     }
+ }
+ 
++static void
++io_sweep_cb(EV_P_ ev_timer *watcher, int revents)
++{
++    tcp_io_sweep();
++}
++
+ static void
+ server_recv_cb(EV_P_ ev_io *w, int revents)
+ {
+@@ -798,7 +804,14 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
+     }
+ 
+     if (revents != EV_TIMER) {
+-        r = recv(server->fd, buf->data + buf->len, SOCKET_BUF_SIZE - buf->len, 0);
++        /* keep the handshake (remote == NULL) at one chunk, grow on the data path */
++        size_t room = remote == NULL ? SOCKET_BUF_SIZE : tcp_io_size(buf);
++        room -= buf->len;
++        brealloc(buf, buf->len + room, SOCKET_BUF_SIZE);
++        r = recv(server->fd, buf->data + buf->len, room, 0);
++        if (remote != NULL) {
++            tcp_io_grow(buf, r, room);
++        }
+ 
+         if (r == 0) {
+             // connection closed
+@@ -961,7 +974,10 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
+     remote_t *remote              = remote_recv_ctx->remote;
+     server_t *server              = remote->server;
+ 
+-    ssize_t r = recv(remote->fd, server->buf->data, SOCKET_BUF_SIZE, 0);
++    size_t room = tcp_io_size(server->buf);
++    brealloc(server->buf, room, SOCKET_BUF_SIZE);
++    ssize_t r = recv(remote->fd, server->buf->data, room, 0);
++    tcp_io_grow(server->buf, r, room);
+ 
+     if (r == 0) {
+         // connection closed
+@@ -1018,6 +1034,9 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
+         server->buf->idx  = s;
+         ev_io_stop(EV_A_ & remote_recv_ctx->io);
+         ev_io_start(EV_A_ & server->send_ctx->io);
++    } else {
++        server->buf->len = 0;
++        server->buf->idx = 0;
+     }
+ 
+     // Disable TCP_NODELAY after the first response are sent
+@@ -2009,6 +2028,12 @@ main(int argc, char **argv)
+     // Init connections
+     cork_dllist_init(&connections);
+ 
++    // give back the large I/O buffers of idle connections
++    static struct ev_timer io_sweep_watcher;
++    ev_timer_init(&io_sweep_watcher, io_sweep_cb, TCP_IO_SWEEP, TCP_IO_SWEEP);
++    ev_timer_start(loop, &io_sweep_watcher);
++    ev_unref(loop);
++
+     // Enter the loop
+     ev_run(loop, 0);
+ 
+@@ -2171,6 +2196,11 @@ _start_ss_local_server(profile_t profile, ss_local_callback callback, void *udat
+         callback(listen_ctx.fd, udp_fd, udata);
+     }
+ 
++    static struct ev_timer io_sweep_watcher;
++    ev_timer_init(&io_sweep_watcher, io_sweep_cb, TCP_IO_SWEEP, TCP_IO_SWEEP);
++    ev_timer_start(loop, &io_sweep_watcher);
++    ev_unref(loop);
++
+     // Enter the loop
+     ev_run(loop, 0);
+ 
+diff --git a/src/redir.c b/src/redir.c
+index 5ff78e1..3e7b59b 100644
+--- a/src/redir.c
++++ b/src/redir.c
+@@ -218,6 +218,12 @@ create_and_bind(const char *addr, const char *port)
+     return listen_sock;
+ }
+ 
++static void
++io_sweep_cb(EV_P_ ev_timer *watcher, int revents)
++{
++    tcp_io_sweep();
++}
++
+ static void
+ server_recv_cb(EV_P_ ev_io *w, int revents)
+ {
+@@ -227,8 +233,10 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
+ 
+     ev_timer_stop(EV_A_ & server->delayed_connect_watcher);
+ 
+-    ssize_t r = recv(server->fd, remote->buf->data + remote->buf->len,
+-                     SOCKET_BUF_SIZE - remote->buf->len, 0);
++    size_t room = tcp_io_size(remote->buf) - remote->buf->len;
++    brealloc(remote->buf, remote->buf->len + room, SOCKET_BUF_SIZE);
++    ssize_t r = recv(server->fd, remote->buf->data + remote->buf->len, room, 0);
++    tcp_io_grow(remote->buf, r, room);
+ 
+     if (r == 0) {
+         // connection closed
+@@ -394,7 +402,10 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
+     remote_t *remote              = remote_recv_ctx->remote;
+     server_t *server              = remote->server;
+ 
+-    ssize_t r = recv(remote->fd, server->buf->data, SOCKET_BUF_SIZE, 0);
++    size_t room = tcp_io_size(server->buf);
++    brealloc(server->buf, room, SOCKET_BUF_SIZE);
++    ssize_t r = recv(remote->fd, server->buf->data, room, 0);
++    tcp_io_grow(server->buf, r, room);
+ 
+     if (r == 0) {
+         // connection closed
+@@ -445,6 +456,9 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
+         server->buf->idx  = s;
+         ev_io_stop(EV_A_ & remote_recv_ctx->io);
+         ev_io_start(EV_A_ & server->send_ctx->io);
++    } else {
++        server->buf->len = 0;
++        server->buf->idx = 0;
+     }
+ 
+     // Disable TCP_NODELAY after the first response are sent
+@@ -1396,6 +1410,13 @@ main(int argc, char **argv)
+         LOGI("running from root user");
+     }
+ 
++    // give back the large I/O buffers of idle connections
++    static struct ev_timer io_sweep_watcher;
++    ev_timer_init(&io_sweep_watcher, io_sweep_cb, TCP_IO_SWEEP, TCP_IO_SWEEP);
++    ev_timer_start(loop, &io_sweep_watcher);
++    ev_unref(loop);
++
++    // Enter the loop
+     ev_run(loop, 0);
+ 
+     if (plugin != NULL) {
+diff --git a/src/server.c b/src/server.c
+index 98e0902..f44f6fa 100644
+--- a/src/server.c
++++ b/src/server.c
+@@ -723,6 +723,12 @@ setTosFromConnmark(remote_t *remote, server_t *server)
+ 
+ #endif
+ 
++static void
++io_sweep_cb(EV_P_ ev_timer *watcher, int revents)
++{
++    tcp_io_sweep();
++}
++
+ static void
+ server_recv_cb(EV_P_ ev_io *w, int revents)
+ {
+@@ -740,7 +746,10 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
+         ev_timer_again(EV_A_ & server->recv_ctx->watcher);
+     }
+ 
+-    ssize_t r = recv(server->fd, buf->data, SOCKET_BUF_SIZE, 0);
++    size_t room = tcp_io_size(buf);
++    brealloc(buf, room, SOCKET_BUF_SIZE);
++    ssize_t r = recv(server->fd, buf->data, room, 0);
++    tcp_io_grow(buf, r, room);
+ 
+     if (r == 0) {
+         // connection closed
+@@ -805,6 +814,9 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
+             remote->buf->idx  = s;
+             ev_io_stop(EV_A_ & server_recv_ctx->io);
+             ev_io_start(EV_A_ & remote->send_ctx->io);
++        } else {
++            remote->buf->len = 0;
++            remote->buf->idx = 0;
+         }
+         return;
+     } else if (server->stage == STAGE_INIT) {
+@@ -1161,7 +1173,10 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
+ 
+     ev_timer_again(EV_A_ & server->recv_ctx->watcher);
+ 
+-    ssize_t r = recv(remote->fd, server->buf->data, SOCKET_BUF_SIZE, 0);
++    size_t room = tcp_io_size(server->buf);
++    brealloc(server->buf, room, SOCKET_BUF_SIZE);
++    ssize_t r = recv(remote->fd, server->buf->data, room, 0);
++    tcp_io_grow(server->buf, r, room);
+ 
+     if (r == 0) {
+         // connection closed
+@@ -1220,6 +1235,9 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
+         server->buf->idx  = s;
+         ev_io_stop(EV_A_ & remote_recv_ctx->io);
+         ev_io_start(EV_A_ & server->send_ctx->io);
++    } else {
++        server->buf->len = 0;
++        server->buf->idx = 0;
+     }
+ 
+     // Disable TCP_NODELAY after the first response are sent
+@@ -2199,6 +2217,12 @@ main(int argc, char **argv)
+     // Init connections
+     cork_dllist_init(&connections);
+ 
++    // give back the large I/O buffers of idle connections
++    static struct ev_timer io_sweep_watcher;
++    ev_timer_init(&io_sweep_watcher, io_sweep_cb, TCP_IO_SWEEP, TCP_IO_SWEEP);
++    ev_timer_start(loop, &io_sweep_watcher);
++    ev_unref(loop);
++
+     // start ev loop
+     ev_run(loop, 0);
+ 
+diff --git a/src/tunnel.c b/src/tunnel.c
+index b35f7c8..4568f72 100644
+--- a/src/tunnel.c
++++ b/src/tunnel.c
+@@ -184,6 +184,12 @@ create_and_bind(const char *addr, const char *port)
+     return listen_sock;
+ }
+ 
++static void
++io_sweep_cb(EV_P_ ev_timer *watcher, int revents)
++{
++    tcp_io_sweep();
++}
++
+ static void
+ server_recv_cb(EV_P_ ev_io *w, int revents)
+ {
+@@ -196,7 +202,10 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
+         return;
+     }
+ 
+-    ssize_t r = recv(server->fd, remote->buf->data, SOCKET_BUF_SIZE, 0);
++    size_t room = tcp_io_size(remote->buf);
++    brealloc(remote->buf, room, SOCKET_BUF_SIZE);
++    ssize_t r = recv(server->fd, remote->buf->data, room, 0);
++    tcp_io_grow(remote->buf, r, room);
+ 
+     if (r == 0) {
+         // connection closed
+@@ -248,6 +257,9 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
+         ev_io_stop(EV_A_ & server_recv_ctx->io);
+         ev_io_start(EV_A_ & remote->send_ctx->io);
+         return;
++    } else {
++        remote->buf->len = 0;
++        remote->buf->idx = 0;
+     }
+ }
+ 
+@@ -320,7 +332,10 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
+     remote_t *remote              = remote_recv_ctx->remote;
+     server_t *server              = remote->server;
+ 
+-    ssize_t r = recv(remote->fd, server->buf->data, SOCKET_BUF_SIZE, 0);
++    size_t room = tcp_io_size(server->buf);
++    brealloc(server->buf, room, SOCKET_BUF_SIZE);
++    ssize_t r = recv(remote->fd, server->buf->data, room, 0);
++    tcp_io_grow(server->buf, r, room);
+ 
+     if (r == 0) {
+         // connection closed
+@@ -371,6 +386,9 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
+         server->buf->idx  = s;
+         ev_io_stop(EV_A_ & remote_recv_ctx->io);
+         ev_io_start(EV_A_ & server->send_ctx->io);
++    } else {
++        server->buf->len = 0;
++        server->buf->idx = 0;
+     }
+ 
+     // Disable TCP_NODELAY after the first response are sent
+@@ -1448,6 +1466,13 @@ main(int argc, char **argv)
+     }
+ #endif
+ 
++    // give back the large I/O buffers of idle connections
++    static struct ev_timer io_sweep_watcher;
++    ev_timer_init(&io_sweep_watcher, io_sweep_cb, TCP_IO_SWEEP, TCP_IO_SWEEP);
++    ev_timer_start(loop, &io_sweep_watcher);
++    ev_unref(loop);
++
++    // Enter the loop
+     ev_run(loop, 0);
+ 
+     if (plugin != NULL) {
+-- 
+2.51.0
+
