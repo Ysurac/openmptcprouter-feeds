@@ -9,7 +9,7 @@ return L.view.extend({
 		m = new form.Map('bpftune', _('bpftune'),
 			_('BPF-based auto-tuning of Linux system parameters (TCP buffers, congestion control, neighbour tables, etc.).'));
 
-		s = m.section(form.TypedSection, 'config', _('General Settings'));
+		s = m.section(form.NamedSection, 'config', 'bpftune', _('General Settings'));
 		s.addremove = false;
 		s.anonymous = true;
 
@@ -52,7 +52,7 @@ return L.view.extend({
 		o.rmempty = true;
 		o.placeholder = '/usr/lib/bpftune';
 
-		s = m.section(form.TypedSection, 'config', _('Tuner Selection'),
+		s = m.section(form.NamedSection, 'config', 'bpftune', _('Tuner Selection'),
 			_('Available tuners: tcp_buffer, tcp_conn, ip_frag, neigh_table, sysctl, net_buffer, netns, route_table, udp_buffer.'));
 		s.addremove = false;
 		s.anonymous = true;
@@ -67,7 +67,7 @@ return L.view.extend({
 		o.rmempty = true;
 		o.placeholder = 'e.g. tcp_buffer udp_buffer';
 
-		s = m.section(form.TypedSection, 'config', _('Respawn Settings'),
+		s = m.section(form.NamedSection, 'config', 'bpftune', _('Respawn Settings'),
 			_('procd respawn parameters controlling automatic restart behaviour.'));
 		s.addremove = false;
 		s.anonymous = true;
