@@ -43,13 +43,6 @@ return view.extend({
 		o.default = o.enabled;
 		o.rmempty = false;
 
-		o = s.option(form.ListValue, 'initial_state', _('Initial state'),
-			_('Expect interface state on up event'));
-		o.default = 'online';
-		o.value('online', _('Online'));
-		o.value('offline', _('Offline'));
-		o.modalonly = true;
-
 		o = s.option(form.ListValue, 'family', _('Internet Protocol'),
 			_('Choose whether proxy checks use IPv4 targets, IPv6 targets, or both.'));
 		o.default = 'ipv4ipv6';

@@ -124,13 +124,6 @@ return view.extend({
 		o.default = o.enabled;
 		o.rmempty = false;
 
-		o = s.option(form.ListValue, 'initial_state', _('Initial state'),
-			_('Expect interface state on up event'));
-		o.default = 'online';
-		o.value('online', _('Online'));
-		o.value('offline', _('Offline'));
-		o.modalonly = true;
-
 		o = s.option(form.ListValue, 'type', _('Tracking method'),_('Choose whether server health is verified through the API, ping probes, or both.'));
 		inheritValue(o, 'ping');
 		o.value('apiping',_('API & Ping'));
