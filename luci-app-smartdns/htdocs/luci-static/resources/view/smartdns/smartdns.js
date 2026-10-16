@@ -147,7 +147,7 @@ return view.extend({
 		o = s.taboption("settings", form.Value, "server_name", _("Server Name"), _("Smartdns server name"));
 		o.default = "smartdns";
 		o.datatype = "hostname";
-		o.rempty = false;
+		o.rmempty = false;
 
 		// Port;
 		o = s.taboption("settings", form.Value, "port", _("Local Port"),
@@ -155,7 +155,7 @@ return view.extend({
 		o.placeholder = 53;
 		o.default = 53;
 		o.datatype = "port";
-		o.rempty = false;
+		o.rmempty = false;
 		
 		// auto-conf-dnsmasq;
 		o = s.taboption("settings", form.Flag, "auto_set_dnsmasq", _("Automatically Set Dnsmasq"), _("Automatically set as upstream of dnsmasq when port changes."));
@@ -233,7 +233,7 @@ return view.extend({
 		// bind device name;
 		o = s.taboption("advanced", form.Value, "bind_device_name", _("Bind Device Name"), _("Name of device name listen on."));
 		o.placeholder = "default";
-		o.rempty = true;
+		o.rmempty = true;
 		o.datatype = "string";
 
 		// Support DualStack ip selection;
@@ -256,7 +256,7 @@ return view.extend({
 
 		// cache-size;
 		o = s.taboption("advanced", form.Value, "cache_size", _("Cache Size"), _("DNS domain result cache size"));
-		o.rempty = true;
+		o.rmempty = true;
 
 		// cache-persist;
 		o = s.taboption("advanced", form.Flag, "cache_persist", _("Cache Persist"), _("Write cache to disk on exit and load on startup."));
@@ -283,7 +283,7 @@ return view.extend({
 			_("Ipset name, Add domain result to ipset when speed check fails."));
 		o.rmempty = true;
 		o.datatype = "string";
-		o.rempty = true;
+		o.rmempty = true;
 		o.validate = function (section_id, value) {
 			if (value == "") {
 				return true;
@@ -304,7 +304,7 @@ return view.extend({
 			_("Nftset name, Add domain result to nftset when speed check fails, format: [#[4|6]:[family#table#set]]"));
 		o.rmempty = true;
 		o.datatype = "string";
-		o.rempty = true;
+		o.rmempty = true;
 		o.validate = function (section_id, value) {
 			if (value == "") {
 				return true;
@@ -322,12 +322,12 @@ return view.extend({
 
 		// rr-ttl;
 		o = s.taboption("advanced", form.Value, "rr_ttl", _("Domain TTL"), _("TTL for all domain result."));
-		o.rempty = true;
+		o.rmempty = true;
 
 		// rr-ttl-min;
 		o = s.taboption("advanced", form.Value, "rr_ttl_min", _("Domain TTL Min"),
 			_("Minimum TTL for all domain result."));
-		o.rempty = true;
+		o.rmempty = true;
 		o.placeholder = "600";
 		o.default = 600;
 		o.optional = true;
@@ -335,18 +335,18 @@ return view.extend({
 		// rr-ttl-max;
 		o = s.taboption("advanced", form.Value, "rr_ttl_max", _("Domain TTL Max"),
 			_("Maximum TTL for all domain result."));
-		o.rempty = true;
+		o.rmempty = true;
 
 		// rr-ttl-reply-max;
 		o = s.taboption("advanced", form.Value, "rr_ttl_reply_max", _("Reply Domain TTL Max"),
 			_("Reply maximum TTL for all domain result."));
-		o.rempty = true;
+		o.rmempty = true;
 
 		// other args
 		o = s.taboption("advanced", form.Value, "server_flags", _("Additional Server Args"), 
 			_("Additional server args, refer to the help description of the bind option."))
 		o.default = ""
-		o.rempty = true
+		o.rmempty = true
 
 		// include config
 		download_files = uci.sections('smartdns', 'download-file');
@@ -371,14 +371,14 @@ return view.extend({
 		o = s.taboption("seconddns", form.Flag, "seconddns_enabled", _("Enable"),
 			_("Enable or disable second DNS server."));
 		o.default = o.disabled;
-		o.rempty = true;
+		o.rmempty = true;
 
 		// Port;
 		o = s.taboption("seconddns", form.Value, "seconddns_port", _("Local Port"), _("Smartdns local server port"));
 		o.placeholder = 6553;
 		o.default = 6553;
 		o.datatype = "port";
-		o.rempty = false;
+		o.rmempty = false;
 
 		// Enable TCP server;
 		o = s.taboption("seconddns", form.Flag, "seconddns_tcp_server", _("TCP Server"), _("Enable TCP DNS Server"));
@@ -391,7 +391,7 @@ return view.extend({
 		o.rmempty = true;
 		o.placeholder = "default";
 		o.datatype = "hostname";
-		o.rempty = true;
+		o.rmempty = true;
 
 		o = s.taboption("seconddns", form.Flag, "seconddns_no_speed_check", _("Skip Speed Check"),
 			_("Do not check speed."));
@@ -440,7 +440,7 @@ return view.extend({
 		o = s.taboption("seconddns", form.Value, "seconddns_ipset_name", _("IPset Name"), _("IPset name."));
 		o.rmempty = true;
 		o.datatype = "string";
-		o.rempty = true;
+		o.rmempty = true;
 		o.validate = function (section_id, value) {
 			if (value == "") {
 				return true;
@@ -459,7 +459,7 @@ return view.extend({
 		o = s.taboption("seconddns", form.Value, "seconddns_nftset_name", _("NFTset Name"), _("NFTset name, format: [#[4|6]:[family#table#set]]"));
 		o.rmempty = true;
 		o.datatype = "string";
-		o.rempty = true;
+		o.rmempty = true;
 		o.validate = function (section_id, value) {
 			if (value == "") {
 				return true;
@@ -479,7 +479,7 @@ return view.extend({
 		o = s.taboption("seconddns", form.Value, "seconddns_server_flags", _("Additional Server Args"), 
 			_("Additional server args, refer to the help description of the bind option."))
 		o.default = ""
-		o.rempty = true
+		o.rmempty = true
 
 		///////////////////////////////////////
 		// DNS64 Settings
@@ -487,7 +487,7 @@ return view.extend({
 		o = s.taboption("dns64", form.Value, "dns64", _("DNS64"));
 		o.placeholder = "64:ff9b::/96";
 		o.datatype = "ip6addr";
-		o.rempty = true;
+		o.rmempty = true;
 
 		///////////////////////////////////////
 		// download Files Settings
@@ -495,20 +495,20 @@ return view.extend({
 		o = s.taboption("files", form.Flag, "enable_auto_update", _("Enable Auto Update"), _("Enable daily auto update."));
 		o.rmempty = true;
 		o.default = o.disabled;
-		o.rempty = true;
+		o.rmempty = true;
 
 		o = s.taboption("files", form.FileUpload, "upload_conf_file", _("Upload Config File"),
 			_("Upload smartdns config file to /etc/smartdns/conf.d"));
 		o.rmempty = true
 		o.datatype = "file"
-		o.rempty = true
+		o.rmempty = true
 		o.root_directory = "/etc/smartdns/conf.d"
 
 		o = s.taboption("files", form.FileUpload, "upload_list_file", _("Upload Domain List File"),
 			_("Upload domain list file to /etc/smartdns/domain-set"));
 		o.rmempty = true
 		o.datatype = "file"
-		o.rempty = true
+		o.rmempty = true
 		o.root_directory = "/etc/smartdns/domain-set"
 
 		o = s.taboption('files', form.DummyValue, "_update", _("Update Files"));
@@ -555,7 +555,7 @@ return view.extend({
 		so.value("list", _("domain list (/etc/smartdns/domain-set)"));
 		so.value("config", _("smartdns config (/etc/smartdns/conf.d)"));
 		so.default = "list";
-		so.rempty = false;
+		so.rmempty = false;
 
 		so = ss.option(form.Value, 'desc', _('Description'), _('Description'));
 		so.rmempty = true;
@@ -656,7 +656,7 @@ return view.extend({
 		o = s.taboption("general", form.Value, "port", _("DNS Server port"));
 		o.placeholder = "default";
 		o.datatype = "port";
-		o.rempty = true;
+		o.rmempty = true;
 		o.depends("type", "udp");
 		o.depends("type", "tcp");
 		o.depends("type", "tls");
@@ -669,14 +669,14 @@ return view.extend({
 		o.value("tls", _("tls"));
 		o.value("https", _("https"));
 		o.default = "udp";
-		o.rempty = false;
+		o.rmempty = false;
 
 		// server group
 		o = s.taboption("general", form.Value, "server_group", _("DNS Server group"))
 		o.rmempty = true;
 		o.placeholder = "default";
 		o.datatype = "hostname";
-		o.rempty = true;
+		o.rmempty = true;
 		servers = uci.sections('smartdns', 'server');
 		var groupnames = new Set();
 		for (var i = 0; i < servers.length; i++) {
@@ -709,7 +709,7 @@ return view.extend({
 			_("Set TLS hostname to verify."))
 		o.default = ""
 		o.datatype = "string"
-		o.rempty = true
+		o.rmempty = true
 		o.modalonly = true;
 		o.depends("type", "tls")
 		o.depends("type", "https")
@@ -728,7 +728,7 @@ return view.extend({
 			_("Sets the server name indication for query. '-' for disable SNI name."))
 		o.default = ""
 		o.datatype = "hostname"
-		o.rempty = true
+		o.rmempty = true
 		o.modalonly = true;
 		o.depends("type", "tls")
 		o.depends("type", "https")
@@ -738,7 +738,7 @@ return view.extend({
 			_("Set the HTTP host used for the query. Use this parameter when the host of the URL address is an IP address."))
 		o.default = ""
 		o.datatype = "hostname"
-		o.rempty = true
+		o.rmempty = true
 		o.modalonly = true;
 		o.depends("type", "https")
 
@@ -748,7 +748,7 @@ return view.extend({
 				+ "leaving blank to indicate that the validity of TLS is not verified."))
 		o.default = ""
 		o.datatype = "string"
-		o.rempty = true
+		o.rmempty = true
 		o.modalonly = true;
 		o.depends("type", "tls")
 		o.depends("type", "https")
@@ -757,7 +757,7 @@ return view.extend({
 		o = s.taboption("advanced", form.Value, "set_mark", _("Marking Packets"),
 			_("Set mark on packets."))
 		o.default = ""
-		o.rempty = true
+		o.rmempty = true
 		o.datatype = "uinteger"
 		o.modalonly = true;
 
@@ -767,7 +767,7 @@ return view.extend({
 		o.default = o.disabled
 		o.modalonly = true;
 		o.optional = true;
-		o.rempty = true;
+		o.rmempty = true;
 		o.validate = function (section_id, value) {
 			var flag = this.formvalue(section_id);
 			if (flag == "0") {
@@ -791,7 +791,7 @@ return view.extend({
 		o = s.taboption("advanced", form.Value, "addition_arg", _("Additional Server Args"),
 			_("Additional Args for upstream dns servers"))
 		o.default = ""
-		o.rempty = true
+		o.rmempty = true
 		o.modalonly = true;
 
 		////////////////
@@ -814,7 +814,7 @@ return view.extend({
 		o.rmempty = true
 		o.placeholder = "default"
 		o.datatype = "hostname"
-		o.rempty = true
+		o.rmempty = true
 		for (const groupname of groupnames) {
 			o.value(groupname);
 		}
@@ -846,7 +846,7 @@ return view.extend({
 		o = s.taboption("forwarding", form.Value, "ipset_name", _("IPset Name"), _("IPset name."));
 		o.rmempty = true;
 		o.datatype = "string";
-		o.rempty = true;
+		o.rmempty = true;
 		o.validate = function (section_id, value) {
 			if (value == "") {
 				return true;
@@ -865,7 +865,7 @@ return view.extend({
 		o = s.taboption("forwarding", form.Value, "nftset_name", _("NFTset Name"), _("NFTset name, format: [#[4|6]:[family#table#set]]"));
 		o.rmempty = true;
 		o.datatype = "string";
-		o.rempty = true;
+		o.rmempty = true;
 		o.validate = function (section_id, value) {
 			if (value == "") {
 				return true;
@@ -885,14 +885,14 @@ return view.extend({
 		o = s.taboption("forwarding", form.Value, "addition_flag", _("Additional Rule Flag"),
 			_("Additional Flags for rules, read help on domain-rule for more information."))
 		o.default = ""
-		o.rempty = true
+		o.rmempty = true
 		o.modalonly = true;
 
 		o = s.taboption("forwarding", form.FileUpload, "forwarding_domain_set_file", _("Domain List File"),
 			_("Upload domain list file, or configure auto download from Download File Setting page."));
 		o.rmempty = true
 		o.datatype = "file"
-		o.rempty = true
+		o.rmempty = true
 		o.editable = true
 		o.root_directory = "/etc/smartdns/domain-set"
 
@@ -921,7 +921,7 @@ return view.extend({
 		o = s.taboption("block", form.FileUpload, "block_domain_set_file", _("Domain List File"), _("Upload domain list file."));
 		o.rmempty = true
 		o.datatype = "file"
-		o.rempty = true
+		o.rmempty = true
 		o.editable = true
 		o.root_directory = "/etc/smartdns/domain-set"
 
@@ -968,7 +968,7 @@ return view.extend({
 		so.rmempty = true
 		so.placeholder = "default"
 		so.datatype = "hostname"
-		so.rempty = true
+		so.rmempty = true
 		for (const groupname of groupnames) {
 			so.value(groupname);
 		}
@@ -992,7 +992,7 @@ return view.extend({
 			_("Upload domain list file, or configure auto download from Download File Setting page."));
 		so.rmempty = true
 		so.datatype = "file"
-		so.rempty = true
+		so.rmempty = true
 		so.root_directory = "/etc/smartdns/domain-set"
 
 		so = ss.option(form.ListValue, "block_domain_type", _("Block domain"), _("Block domain."));
@@ -1062,13 +1062,13 @@ return view.extend({
 		so = ss.option(form.Value, "ipset_name", _("IPset Name"), _("IPset name."));
 		so.rmempty = true;
 		so.datatype = "hostname";
-		so.rempty = true;
+		so.rmempty = true;
 		so.modalonly = true;
 
 		so = ss.option(form.Value, "nftset_name", _("NFTset Name"), _("NFTset name, format: [#[4|6]:[family#table#set]]"));
 		so.rmempty = true;
 		so.datatype = "string";
-		so.rempty = true;
+		so.rmempty = true;
 		so.modalonly = true;
 		so.validate = function (section_id, value) {
 			if (value == "") {
@@ -1089,7 +1089,7 @@ return view.extend({
 		so = ss.option(form.Value, "addition_flag", _("Additional Rule Flag"),
 			_("Additional Flags for rules, read help on domain-rule for more information."))
 		so.default = ""
-		so.rempty = true
+		so.rmempty = true
 		so.modalonly = true;
 
 		///////////////////////////////////////
