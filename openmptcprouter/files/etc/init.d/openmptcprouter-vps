@@ -181,11 +181,27 @@ _json_one_line() {
 		-e 's/\\\\/@@OMRBS@@/g' -e 's/\\[nr]//g' -e 's/\\u000[aAdD]//g' -e 's/@@OMRBS@@/\\\\/g'
 }
 
+# A server that answered a call of this run on no path at all gets no other
+# call from it. Each one waited 10 s on every path again: a sync against a VPS
+# whose API stopped answering went on for minutes, and every other call of this
+# script waited for it, the server tracker's switch to a backup server included
+# (procd runs them one at a time). Kept in a file, as most calls run in a
+# $(...) subshell, and tied to this run (its pid and start time): the next run
+# tries the server again.
+_api_run="$$.$(sed 's/.*) //' /proc/$$/stat 2>/dev/null | cut -d' ' -f20)"
+_api_no_answer() {
+	[ "$(cat "/tmp/.omr-vps-noanswer-${server}" 2>/dev/null)" = "$_api_run" ]
+}
+_api_set_no_answer() {
+	echo "$_api_run" > "/tmp/.omr-vps-noanswer-${server}"
+	logger -t "OMR-VPS" "Server ${servername:-$server} API answers on no path, its other calls are skipped until the next sync"
+}
+
 _get_json() {
 	local route result
 	route=$1
 	[ -z "$token" ] && _login
-	[ -n "$token" ] && {
+	[ -n "$token" ] && ! _api_no_answer && {
 		#resolve="$(resolveip -t 5 $server)"
 		valid_ip6=$(valid_subnet6 $server)
 		if [ "$valid_ip6" = "ok" ]; then
@@ -202,6 +218,7 @@ _get_json() {
 				fi
 				[ -n "$result" ] && break
 			done
+			[ -z "$result" ] && _api_set_no_answer
 		fi
 		if [ "$(echo $result | grep 'Could not validate credentials')" ]; then
 			token=''
@@ -239,7 +256,7 @@ _set_json() {
 	settings="$2"
 	datafile="$3"
 	[ -z "$token" ] && _login
-	[ -n "$token" ] && {
+	[ -n "$token" ] && ! _api_no_answer && {
 		#resolve="$(resolveip -t 5 $server)"
 		valid_ip6=$(valid_subnet6 $server)
 		# The body goes on stdin (printf is an ash builtin): as a -d
@@ -259,6 +276,7 @@ _set_json() {
 				fi
 				[ -n "$result" ] && break
 			done
+			[ -z "$result" ] && _api_set_no_answer
 		fi
 		if [ "$(echo $result | grep 'Could not validate credentials')" ]; then
 			token=''
