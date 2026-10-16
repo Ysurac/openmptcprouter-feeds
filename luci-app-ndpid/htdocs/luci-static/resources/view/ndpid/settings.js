@@ -32,9 +32,11 @@ return view.extend({
 
 		o = s.taboption('general', form.Value, 'user', _('Run as user'));
 		o.default = 'nobody';
+		o.rmempty = false;
 
 		o = s.taboption('general', form.Value, 'group', _('Run as group'));
 		o.default = 'nogroup';
+		o.rmempty = false;
 
 		o = s.taboption('general', form.Value, 'bpf', _('BPF filter'),
 			_('Berkeley Packet Filter expression (e.g. <code>tcp or udp</code>)'));
@@ -151,85 +153,102 @@ return view.extend({
 
 		o = s.option(form.Value, 'max_flows_per_thread', _('Max flows per thread'));
 		o.datatype = 'uinteger';
-		o.default = '2048';
+		o.default = '32768';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'max_idle_flows_per_thread', _('Max idle flows per thread'));
 		o.datatype = 'uinteger';
-		o.default = '64';
+		o.default = '1024';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'max_reader_threads', _('Max reader threads'));
 		o.datatype = 'uinteger';
-		o.default = '10';
+		o.default = '2';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'daemon_status_interval', _('Daemon status interval'),
 			_('Interval between daemon status events (nanoseconds)'));
 		o.datatype = 'uinteger';
 		o.default = '600000000';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'flow_scan_interval', _('Flow scan interval'),
 			_('Interval between idle flow scans (nanoseconds)'));
 		o.datatype = 'uinteger';
 		o.default = '10000000';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'generic_max_idle_time', _('Generic max idle time'),
 			_('Generic flow idle timeout (nanoseconds)'));
 		o.datatype = 'uinteger';
 		o.default = '600000000';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'icmp_max_idle_time', _('ICMP max idle time'),
 			_('ICMP flow idle timeout (nanoseconds)'));
 		o.datatype = 'uinteger';
 		o.default = '120000000';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'tcp_max_idle_time', _('TCP max idle time'),
 			_('TCP flow idle timeout (nanoseconds)'));
 		o.datatype = 'uinteger';
-		o.default = '180000000';
+		o.default = '7440000000';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'udp_max_idle_time', _('UDP max idle time'),
 			_('UDP flow idle timeout (nanoseconds)'));
 		o.datatype = 'uinteger';
-		o.default = '7440000000';
+		o.default = '180000000';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'tcp_max_post_end_flow_time', _('TCP post-end flow time'),
 			_('Extra time to keep TCP flows after FIN/RST (nanoseconds)'));
 		o.datatype = 'uinteger';
 		o.default = '120000000';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'compression_scan_interval', _('Compression scan interval'),
 			_('Interval between compression eligibility scans (nanoseconds)'));
 		o.datatype = 'uinteger';
 		o.default = '20000000';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'compression_flow_inactivity', _('Compression flow inactivity'),
 			_('Inactivity threshold before compressing a flow (nanoseconds)'));
 		o.datatype = 'uinteger';
 		o.default = '30000000';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'max_packets_per_flow_to_send', _('Max packets to send per flow'),
 			_('Maximum packets forwarded to collector per flow'));
 		o.datatype = 'uinteger';
 		o.default = '15';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'max_packets_per_flow_to_process', _('Max packets to process per flow'),
 			_('Maximum packets processed by nDPI per flow'));
 		o.datatype = 'uinteger';
 		o.default = '32';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'max_packets_per_flow_to_analyse', _('Max packets to analyse per flow'),
 			_('Maximum packets used for statistical analysis per flow'));
 		o.datatype = 'uinteger';
 		o.default = '32';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'error_event_threshold_n', _('Error event threshold (count)'),
 			_('Number of errors within the time window before an error event is emitted'));
 		o.datatype = 'uinteger';
 		o.default = '16';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'error_event_threshold_time', _('Error event threshold (window)'),
 			_('Time window for error event threshold (nanoseconds)'));
 		o.datatype = 'uinteger';
 		o.default = '10000000';
+		o.rmempty = false;
 
 		// ── nDPI Library ──────────────────────────────────────────────────
 		s = m.section(form.NamedSection, 'ndpi', 'ndpi', _('nDPI Library'));
@@ -240,28 +259,34 @@ return view.extend({
 			_('Maximum packets inspected by libnDPI per flow'));
 		o.datatype = 'uinteger';
 		o.default = '32';
+		o.rmempty = false;
 
-		o = s.option(form.ListValue, 'flow_direction_detection', _('Flow direction detection'));
+		o = s.option(form.ListValue, 'flow_direction_detection', _('Flow direction detection'),
+			_('Not supported by the bundled libnDPI 5: this setting is ignored'));
 		o.value('enable',  _('Enable'));
 		o.value('disable', _('Disable'));
 		o.default = 'enable';
+		o.rmempty = false;
 
 		o = s.option(form.ListValue, 'flow_track_payload', _('Track payload'));
 		o.value('enable',  _('Enable'));
 		o.value('disable', _('Disable'));
 		o.default = 'disable';
+		o.rmempty = false;
 
 		o = s.option(form.ListValue, 'tcp_ack_payload_heuristic', _('TCP ACK payload heuristic'),
 			_('Use ACK packets for protocol detection'));
 		o.value('enable',  _('Enable'));
 		o.value('disable', _('Disable'));
 		o.default = 'disable';
+		o.rmempty = false;
 
 		o = s.option(form.ListValue, 'fully_encrypted_heuristic', _('Fully encrypted heuristic'),
 			_('Detect fully-encrypted traffic'));
 		o.value('enable',  _('Enable'));
 		o.value('disable', _('Disable'));
 		o.default = 'enable';
+		o.rmempty = false;
 
 		o = s.option(form.Flag, 'libgcrypt_init', _('libgcrypt init'),
 			_('Initialise libgcrypt for TLS/QUIC fingerprinting'));
@@ -282,10 +307,12 @@ return view.extend({
 		o.value('enable',  _('Enable'));
 		o.value('disable', _('Disable'));
 		o.default = 'disable';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'dpi_guess_on_giveup', _('Guess on give-up'),
 			_('Bitmask controlling best-guess on flow give-up: 0x01=by port, 0x02=by IP, 0x03=both'));
 		o.default = '0x03';
+		o.rmempty = false;
 
 		o = s.option(form.Flag, 'flow_risk_lists_load', _('Load flow risk lists'),
 			_('Load built-in flow risk domain/IP lists'));
@@ -298,6 +325,7 @@ return view.extend({
 			_('libnDPI log verbosity (0 = off, higher = more verbose)'));
 		o.datatype = 'uinteger';
 		o.default  = '0';
+		o.rmempty  = false;
 
 		// ── Protocol Settings ─────────────────────────────────────────────
 		s = m.section(form.NamedSection, 'protos', 'protos', _('Protocol Settings'));
@@ -308,17 +336,20 @@ return view.extend({
 			_('Days before expiry to flag a TLS certificate as at risk'));
 		o.datatype = 'uinteger';
 		o.default  = '7';
+		o.rmempty  = false;
 
 		o = s.option(form.ListValue, 'tls_app_blocks_tracking', _('TLS application blocks tracking'),
 			_('Track TLS application data blocks for deeper classification'));
 		o.value('enable',  _('Enable'));
 		o.value('disable', _('Disable'));
 		o.default = 'enable';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'stun_max_packets_extra_dissection', _('STUN extra dissection packets'),
 			_('Additional packets examined for STUN protocol dissection'));
 		o.datatype = 'uinteger';
 		o.default  = '8';
+		o.rmempty  = false;
 
 		// ── Distributor (nDPIsrvd) ────────────────────────────────────────
 		s = m.section(form.NamedSection, 'distributor', 'ndpisrvd', _('Distributor (nDPIsrvd)'));
@@ -332,23 +363,28 @@ return view.extend({
 		o = s.option(form.Value, 'listen_socket', _('Listen socket'),
 			_('UNIX socket path for consumer connections'));
 		o.default = '/var/run/ndpid/distributor.sock';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'tcp_address', _('TCP listen address'),
-			_('IP address for TCP consumer connections (leave empty to disable)'));
+			_('IP address for TCP consumer connections (empty means 127.0.0.1)'));
 		o.datatype = 'ipaddr';
 		o.optional = true;
 		o.rmempty = true;
-		o.default = '127.0.0.1';
+		// a placeholder, not a default: an optional option holding its
+		// default is removed by every save
+		o.placeholder = '127.0.0.1';
 
 		o = s.option(form.Value, 'tcp_port', _('TCP listen port'),
 			_('Port for TCP consumer connections (0 = disabled)'));
 		o.datatype = 'port';
 		o.default = '7000';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'max_clients', _('Max clients'),
 			_('Maximum number of simultaneous consumer connections'));
 		o.datatype = 'uinteger';
 		o.default = '10';
+		o.rmempty = false;
 
 		// The "compat" (Netifyd compatibility) and "actions" (flow actions)
 		// sections of the config have no reader: their settings did nothing.

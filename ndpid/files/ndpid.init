@@ -31,40 +31,15 @@ resolve_interfaces() {
 generate_config() {
 	config_load ndpid
 
-	# [general] settings
-	local user group collector bpf no_promisc decode_tunnel riskdomains protocols
+	# [general] settings. The collector, the capture interface and the BPF
+	# filter are given on the command line instead (per instance, and nDPId
+	# ignores a [general] key already set there): they are not written here.
+	local user group decode_tunnel riskdomains protocols
 	local categories ja4 sha1 cert_pem_file key_pem_file ca_pem_file
 	local alias uuid internal external compression analysis poll pfring
-	local interfaces
 
 	config_get user main user 'nobody'
 	config_get group main group 'nogroup'
-	config_get collector main collector '/var/run/ndpid/collector.sock'
-	config_get bpf main bpf ''
-	config_get_bool no_promisc main no_promisc 0
-	config_get interfaces main interface 'br-lan'
-	interfaces=$(resolve_interfaces "$interfaces")
-
-	# When no_promisc is set, prepend an ether-host BPF clause for every
-	# monitored interface so nDPId only processes packets addressed to/from
-	# those interfaces, even though pcap still opens them in promiscuous mode.
-	if [ "$no_promisc" = "1" ]; then
-		local mac_filter="" mac iface
-		for iface in $interfaces; do
-			mac=$(cat "/sys/class/net/$iface/address" 2>/dev/null)
-			[ -n "$mac" ] || continue
-			[ -n "$mac_filter" ] && mac_filter="$mac_filter or "
-			mac_filter="${mac_filter}ether host $mac"
-		done
-		if [ -n "$mac_filter" ]; then
-			if [ -n "$bpf" ]; then
-				bpf="($mac_filter) and ($bpf)"
-			else
-				bpf="$mac_filter"
-			fi
-		fi
-	fi
-
 	config_get_bool decode_tunnel main decode_tunnel 0
 	config_get riskdomains main riskdomains ''
 	config_get protocols main protocols ''
@@ -91,17 +66,17 @@ generate_config() {
 	local max_packets_per_flow_to_send max_packets_per_flow_to_process
 	local max_packets_per_flow_to_analyse error_event_threshold_n error_event_threshold_time
 
-	config_get max_flows_per_thread tuning max_flows_per_thread 2048
-	config_get max_idle_flows_per_thread tuning max_idle_flows_per_thread 64
-	config_get max_reader_threads tuning max_reader_threads 10
+	config_get max_flows_per_thread tuning max_flows_per_thread 32768
+	config_get max_idle_flows_per_thread tuning max_idle_flows_per_thread 1024
+	config_get max_reader_threads tuning max_reader_threads 2
 	config_get daemon_status_interval tuning daemon_status_interval 600000000
 	config_get compression_scan_interval tuning compression_scan_interval 20000000
 	config_get compression_flow_inactivity tuning compression_flow_inactivity 30000000
 	config_get flow_scan_interval tuning flow_scan_interval 10000000
 	config_get generic_max_idle_time tuning generic_max_idle_time 600000000
 	config_get icmp_max_idle_time tuning icmp_max_idle_time 120000000
-	config_get tcp_max_idle_time tuning tcp_max_idle_time 180000000
-	config_get udp_max_idle_time tuning udp_max_idle_time 7440000000
+	config_get tcp_max_idle_time tuning tcp_max_idle_time 7440000000
+	config_get udp_max_idle_time tuning udp_max_idle_time 180000000
 	config_get tcp_max_post_end_flow_time tuning tcp_max_post_end_flow_time 120000000
 	config_get max_packets_per_flow_to_send tuning max_packets_per_flow_to_send 15
 	config_get max_packets_per_flow_to_process tuning max_packets_per_flow_to_process 32
@@ -109,13 +84,14 @@ generate_config() {
 	config_get error_event_threshold_n tuning error_event_threshold_n 16
 	config_get error_event_threshold_time tuning error_event_threshold_time 10000000
 
-	# [ndpi] settings
-	local packets_limit_per_flow flow_direction_detection flow_track_payload
+	# [ndpi] settings. nDPId refuses to start on a key libnDPI does not know,
+	# and the bundled libnDPI 5 has no flow.direction_detection any more:
+	# the uci option is not written.
+	local packets_limit_per_flow flow_track_payload
 	local tcp_ack_payload_heuristic fully_encrypted_heuristic libgcrypt_init
 	local dpi_compute_entropy fpc dpi_guess_on_giveup flow_risk_lists_load log_level
 
 	config_get packets_limit_per_flow ndpi packets_limit_per_flow 32
-	config_get flow_direction_detection ndpi flow_direction_detection 'enable'
 	config_get flow_track_payload ndpi flow_track_payload 'disable'
 	config_get tcp_ack_payload_heuristic ndpi tcp_ack_payload_heuristic 'disable'
 	config_get fully_encrypted_heuristic ndpi fully_encrypted_heuristic 'enable'
@@ -139,8 +115,6 @@ generate_config() {
 		printf '%s\n' "[general]"
 		printf 'user        = %s\n' "$user"
 		printf 'group       = %s\n' "$group"
-		printf 'collector   = %s\n' "$collector"
-		[ -n "$bpf" ] && printf 'bpf         = %s\n' "$bpf"
 		[ "$decode_tunnel" = "1" ] && printf '%s\n' "decode-tunnel = true"
 		[ -n "$riskdomains" ] && printf 'riskdomains = %s\n' "$riskdomains"
 		[ -n "$protocols" ] && printf 'protocols   = %s\n' "$protocols"
@@ -180,7 +154,6 @@ generate_config() {
 		printf '\n'
 		printf '%s\n' "[ndpi]"
 		printf 'packets_limit_per_flow      = %s\n' "$packets_limit_per_flow"
-		printf 'flow.direction_detection    = %s\n' "$flow_direction_detection"
 		printf 'flow.track_payload          = %s\n' "$flow_track_payload"
 		printf 'tcp_ack_payload_heuristic   = %s\n' "$tcp_ack_payload_heuristic"
 		printf 'fully_encrypted_heuristic   = %s\n' "$fully_encrypted_heuristic"
@@ -226,9 +199,9 @@ start_service() {
 	config_get bpf main bpf ''
 	config_get_bool no_promisc main no_promisc 0
 
-	# Build the BPF ether-host filter when no_promisc is enabled.
-	# generate_config() writes it to /etc/ndpid.conf, but nDPId only reads
-	# that file when told via -f; passing -B here guarantees it takes effect.
+	# Build the BPF ether-host filter when no_promisc is enabled, so nDPId
+	# only processes packets addressed to/from the monitored interfaces,
+	# even though pcap still opens them in promiscuous mode.
 	if [ "$no_promisc" = "1" ]; then
 		local mac_filter="" mac iface
 		for iface in $interfaces; do
@@ -264,6 +237,7 @@ start_service() {
 		fi
 		procd_open_instance "$name"
 		procd_set_param command "$PROG"
+		procd_append_param command -f /etc/ndpid.conf
 		procd_append_param command -c "$collector"
 		procd_append_param command -i "$iface"
 		[ -n "$bpf" ] && procd_append_param command -B "$bpf"
