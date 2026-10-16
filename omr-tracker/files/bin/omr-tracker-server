@@ -306,6 +306,26 @@ _probe_ip() {
 	serverip=""
 	_resolve_ip "$1"
 	[ -z "$serverip" ] && return
+	# multipath lists no WAN when MPTCP is disabled (it only answers "MPTCP
+	# is disabled!") or before any WAN has its endpoint: ask through the
+	# routing table then, instead of finding every server down
+	if [ -z "$mp_default_intfs" ]; then
+		local k=0
+		case "$OMR_TRACKER_TYPE" in
+			api|apiping) _check_server "$serverip" "$port" ;;
+			none) server_ping=true ;;
+		esac
+		case "$OMR_TRACKER_TYPE" in
+			apiping|ping)
+				while [ "$server_ping" = false ] && [ "$k" -le "$retry" ]; do
+					_ping_server "$serverip"
+					k=$((k+1))
+					[ "$server_ping" = false ] && sleep "${intervaltries}"
+				done
+				;;
+		esac
+		return
+	fi
 	if [ "$OMR_TRACKER_TYPE" = "api" ]; then
 		_check_server_intf "$serverip" "$port"
 	elif [ "$OMR_TRACKER_TYPE" = "apiping" ]; then
