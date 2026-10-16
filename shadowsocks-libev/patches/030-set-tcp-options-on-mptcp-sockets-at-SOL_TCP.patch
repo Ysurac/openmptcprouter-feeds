@@ -1,0 +1,130 @@
+From 6a4bcdb6bde1bd0bc544e0fdadab7d09e8dbab07 Mon Sep 17 00:00:00 2001
+From: Pierre-Yves Le Borgne <pylaterreur@gmail.com>
+Date: Fri, 16 Oct 2026 11:24:20 +0100
+Subject: [PATCH] Set TCP options on MPTCP sockets at level SOL_TCP
+
+The listener, server-side and tunnel sockets are MPTCP sockets when
+mptcpu is set, and the code set TCP_NODELAY and TCP_FASTOPEN on them at
+level IPPROTO_TCP + 256, which is IPPROTO_MPTCP. That is a protocol
+number, not a socket option level: the kernel only handles the TCP
+options of an MPTCP socket at SOL_TCP (SOL_MPTCP, 284, is for the
+MPTCP-specific ones), and fails the others with ENOPROTOOPT or
+EOPNOTSUPP, so these calls never took effect: with -mptcpu, TCP_NODELAY
+was never set on the accepted, outgoing and tunnel connections and
+TCP_FASTOPEN never on the listener.
+
+Use SOL_TCP in all cases, as ss-local and ss-redir already do, and drop
+the now identical branches. In ss-server's remote_recv_cb the
+mptcpu branch cleared TCP_NODELAY on the client-facing socket instead of
+the remote one; it now clears it on the remote one in both modes, as
+upstream does.
+---
+ src/server.c | 24 ++++--------------------
+ src/tunnel.c | 21 ++++-----------------
+ 2 files changed, 8 insertions(+), 37 deletions(-)
+
+diff --git a/src/server.c b/src/server.c
+index 98e0902..02fff60 100644
+--- a/src/server.c
++++ b/src/server.c
+@@ -300,11 +300,7 @@ setfastopen(int fd)
+ #else
+         int opt = 5;
+ #endif
+-        if (mptcpu) {
+-            s = setsockopt(fd, IPPROTO_TCP + 256, TCP_FASTOPEN, &opt, sizeof(opt));
+-        } else {
+-            s = setsockopt(fd, IPPROTO_TCP, TCP_FASTOPEN, &opt, sizeof(opt));
+-        }
++        s = setsockopt(fd, SOL_TCP, TCP_FASTOPEN, &opt, sizeof(opt));
+ 
+         if (s == -1) {
+             if (errno == EPROTONOSUPPORT || errno == ENOPROTOOPT) {
+@@ -477,11 +473,7 @@ connect_to_remote(EV_P_ struct addrinfo *res,
+     }
+ 
+     int opt = 1;
+-    if (mptcpu) {
+-        setsockopt(sockfd, IPPROTO_TCP + 256, TCP_NODELAY, &opt, sizeof(opt));
+-    } else {
+-        setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+-    }
++    setsockopt(sockfd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+ #ifdef SO_NOSIGPIPE
+     setsockopt(sockfd, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt));
+ #endif
+@@ -1225,11 +1217,7 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
+     // Disable TCP_NODELAY after the first response are sent
+     if (!remote->recv_ctx->connected && !no_delay) {
+         int opt = 0;
+-        if (mptcpu) {
+-            setsockopt(server->fd, IPPROTO_TCP + 256, TCP_NODELAY, &opt, sizeof(opt));
+-        } else {
+-            setsockopt(remote->fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+-        }
++        setsockopt(remote->fd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+     }
+     remote->recv_ctx->connected = 1;
+ }
+@@ -1581,11 +1569,7 @@ accept_cb(EV_P_ ev_io *w, int revents)
+     }
+ 
+     int opt = 1;
+-    if (mptcpu) {
+-        setsockopt(serverfd, IPPROTO_TCP + 256, TCP_NODELAY, &opt, sizeof(opt));
+-    } else {
+-        setsockopt(serverfd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+-    }
++    setsockopt(serverfd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+ #ifdef SO_NOSIGPIPE
+     setsockopt(serverfd, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt));
+ #endif
+diff --git a/src/tunnel.c b/src/tunnel.c
+index b35f7c8..473f7c6 100644
+--- a/src/tunnel.c
++++ b/src/tunnel.c
+@@ -376,13 +376,8 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
+     // Disable TCP_NODELAY after the first response are sent
+     if (!remote->recv_ctx->connected && !no_delay) {
+         int opt = 0;
+-        if (mptcpu) {
+-            setsockopt(server->fd, IPPROTO_TCP + 256, TCP_NODELAY, &opt, sizeof(opt));
+-            setsockopt(remote->fd, IPPROTO_TCP + 256, TCP_NODELAY, &opt, sizeof(opt));
+-        } else {
+-            setsockopt(server->fd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+-            setsockopt(remote->fd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+-        }
++        setsockopt(server->fd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
++        setsockopt(remote->fd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+     }
+     remote->recv_ctx->connected = 1;
+ }
+@@ -727,11 +722,7 @@ accept_cb(EV_P_ ev_io *w, int revents)
+     }
+     setnonblocking(serverfd);
+     int opt = 1;
+-    if (mptcpu) {
+-        setsockopt(serverfd, IPPROTO_TCP + 256, TCP_NODELAY, &opt, sizeof(opt));
+-    } else {
+-        setsockopt(serverfd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+-    }
++    setsockopt(serverfd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+ #ifdef SO_NOSIGPIPE
+     setsockopt(serverfd, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt));
+ #endif
+@@ -777,11 +768,7 @@ accept_cb(EV_P_ ev_io *w, int revents)
+ 
+     int keepAlive = 1;
+     setsockopt(remotefd, SOL_SOCKET, SO_KEEPALIVE, (void *)&keepAlive, sizeof(keepAlive));
+-    if (mptcpu) {
+-        setsockopt(remotefd, IPPROTO_TCP + 256, TCP_NODELAY, &opt, sizeof(opt));
+-    } else {
+-        setsockopt(remotefd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+-    }
++    setsockopt(remotefd, SOL_TCP, TCP_NODELAY, &opt, sizeof(opt));
+ #ifdef SO_NOSIGPIPE
+     setsockopt(remotefd, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt));
+ #endif
+-- 
+2.51.0
+
