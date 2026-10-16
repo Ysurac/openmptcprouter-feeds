@@ -79,6 +79,13 @@ return L.view.extend({
 		o.rmempty = false;
 		o.modalonly = true;
 
+		// /etc/init.d/glorytun starts no instance without proto=tcp: an
+		// instance added here was never started
+		o = s.taboption('general', form.HiddenValue, 'proto');
+		o.default = 'tcp';
+		o.rmempty = false;
+		o.modalonly = true;
+
 		return m.render();
 	}
 });
