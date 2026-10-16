@@ -346,13 +346,21 @@ case "$1" in
 
 			set_quota)
 				input=$(cat)
-				iface=$(_safe_iface "$(printf '%s' "$input" | jsonfilter -q -e '@.interface')")
+				# The name becomes a uci section: refused when it is not a
+				# valid one, never silently rewritten into another section.
+				iface=$(printf '%s' "$input" | jsonfilter -q -e '@.interface')
 				type=$(printf '%s' "$input" | jsonfilter -q -e '@.type')
 				[ -z "$type" ] && type="interface"
 				if [ -z "$iface" ]; then
 					printf '{"error":"missing interface parameter"}\n'
 					exit 1
 				fi
+				case "$iface" in
+					*[!A-Za-z0-9_]*)
+						printf '{"error":"invalid interface name (letters, digits and _ only)"}\n'
+						exit 1
+						;;
+				esac
 				if [ "$type" != "interface" ] && [ "$type" != "global" ]; then
 					printf '{"error":"invalid type, expected \\"interface\\" or \\"global\\""}\n'
 					exit 1
@@ -395,19 +403,20 @@ case "$1" in
 						exit 1
 					fi
 				done
+				# Every check before the first write: a refused call must not
+				# leave a staged change that the next commit of omr-quota, by
+				# anyone, would pick up.
 				existing_type=$(_section_type "$iface")
-				if [ -z "$existing_type" ]; then
-					uci -q set "omr-quota.${iface}=${type}"
-				elif [ "$existing_type" != "$type" ]; then
+				if [ -n "$existing_type" ] && [ "$existing_type" != "$type" ]; then
 					printf '{"error":"section already exists with a different type"}\n'
 					exit 1
 				fi
 				if [ "$type" = "global" ] && [ -z "$existing_type" ] && \
 				   [ -z "$(printf '%s' "$input" | jsonfilter -q -e '@.interfaces')" ]; then
 					printf '{"error":"interfaces is required for type=global"}\n'
-					uci -q delete "omr-quota.${iface}"
 					exit 1
 				fi
+				[ -z "$existing_type" ] && uci -q set "omr-quota.${iface}=${type}"
 				# Apply every provided non-empty field
 				for field in enabled txquota rxquota ttquota interval interfaces down_interfaces begindate enddate method percent calculation_interval block_lan exceedance_action throttle_dl throttle_ul exceedance_scope live_counters; do
 					val=$(printf '%s' "$input" | jsonfilter -q -e "@.${field}")
