@@ -58,6 +58,26 @@ end
 
 local IP_BIN = "/sbin/ip"
 
+-- The VPS to trace to: the master server of the openmptcprouter config,
+-- else the server of the proxy in use. shadowsocks-libev's sss0 alone was
+-- read before, a stale or placeholder address with shadowsocks-rust or any
+-- other proxy.
+local function trace_server()
+	local server
+	uci:foreach("openmptcprouter", "server", function(s)
+		if server or s.disabled == "1" or s.master ~= "1" then return end
+		local ip = s.ip
+		if type(ip) == "table" then ip = ip[1] end
+		if ip and ip ~= "" then server = ip end
+	end)
+	if server then return server end
+	local proxy = uci:get("openmptcprouter", "settings", "proxy") or ""
+	if proxy:match("^shadowsocks%-rust") then
+		return uci:get("shadowsocks-rust", "sss0", "server") or ""
+	end
+	return uci:get("shadowsocks-libev", "sss0", "server") or ""
+end
+
 local function trim(s)
 	return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
@@ -935,7 +955,7 @@ local methods = {
 		call = function(args)
 			local iface     = args.iface or ""
 			local interface = get_device(iface)
-			local server    = uci:get("shadowsocks-libev", "sss0", "server") or ""
+			local server    = trace_server()
 			-- Placeholders the shadowsocks config ships until a VPS is set
 			-- (127.0.0.1 now, 192.168.1.3 in older releases): tracing to them
 			-- would report a path that has nothing to do with the proxy.
