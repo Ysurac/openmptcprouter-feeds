@@ -141,13 +141,13 @@ return L.view.extend({
 
 		return m.render().finally(function() {
 			L.Poll.add(function() {
-				return L.resolveDefault(callServiceList(conf), {})
+				return L.resolveDefault(callServiceList(conf), null)
 				.then(function(res) {
-					var instances = null;
-					try {
-						instances = res[conf]['instances'];
-					} catch (e) {}
-					if (!instances) return;
+					/* only a failed call leaves the column as it is: a
+					 * service with no instance running (none
+					 * registered, or not even the service) is an answer */
+					if (!res) return;
+					var instances = (res[conf] && res[conf]['instances']) || {};
 					uci.sections(conf)
 					.filter(function(s) { return cfgtypes.indexOf(s['.type']) !== -1; })
 					.forEach(function(s) {
