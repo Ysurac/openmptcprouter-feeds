@@ -66,7 +66,8 @@ OMR_TRACKER_PROBE_ROUTE="proto 199 metric 4242"
 # never keeps running next to the tracker started after this one.
 _omr_exit() {
 	jobs -p | xargs -r kill 2>/dev/null
-	rm -f "$_probe_out"
+	# a probe is a process substitution, which "jobs" doesn't list
+	[ -n "$_probe_pid" ] && kill "$_probe_pid" 2>/dev/null
 	# A probe cut short by the signal never deleted its host route
 	if [ -n "$_probe_route" ] && [ -n "$OMR_TRACKER_DEVICE" ]; then
 		ip route flush dev "$OMR_TRACKER_DEVICE" $OMR_TRACKER_PROBE_ROUTE > /dev/null 2>&1
@@ -445,15 +446,20 @@ _apply_httping_metrics() {
 	OMR_TRACKER_LOSS="$HTTPING_LOSS"
 }
 
-# A probe runs in the background and is waited for, with its output in $ret:
+# A probe runs in the background, its output read from a pipe into $ret:
 # bash runs a trap only once the command it runs in the foreground is done,
 # so on TERM the tracker went on with the ping up to its deadline (20 s for
-# omrvpn), while "wait" returns at once and _omr_exit kills the probe.
-_probe_out="/tmp/omr-tracker-${OMR_TRACKER_INTERFACE}.probe"
+# omrvpn), while "read" and "wait" return at once and _omr_exit kills the
+# probe. A pipe, not a file in /tmp: with /tmp full, the file stayed empty
+# and the probe of a WAN that answered failed.
 _probe() {
-	"$@" >"$_probe_out" 2>&1 &
-	wait $!
-	IFS= read -r -d '' ret <"$_probe_out"
+	local _fd
+	exec {_fd}< <("$@" 2>&1)
+	_probe_pid=$!
+	IFS= read -r -d '' -u "$_fd" ret
+	wait "$_probe_pid"
+	exec {_fd}<&-
+	_probe_pid=""
 }
 
 _ping() {
