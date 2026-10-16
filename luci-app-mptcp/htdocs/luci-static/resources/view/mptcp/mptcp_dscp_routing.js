@@ -179,8 +179,10 @@ return L.view.extend({
 			o = s.option(form.Value, 'multipath_weight', _('Weight'),
 				_('A weight >100 makes a WAN more attractive, a weight <100 makes it less attractive. Max 256.'));
 			o.datatype = 'uinteger';
-			o.rmempty = false;
-			o.default = 100;
+			// a placeholder, not a default: a default made every Save write
+			// multipath_weight='100' on each WAN that had none (unset is 100)
+			o.placeholder = '100';
+			o.rmempty = true;
 		}
 
 		return m.render();
