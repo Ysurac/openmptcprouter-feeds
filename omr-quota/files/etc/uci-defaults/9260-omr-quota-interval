@@ -1,0 +1,19 @@
+#!/bin/sh
+# omr-quota shipped interval '2' while the quota page validates 5 to 86400 s
+# (and the daemon runs at least every 5 s anyway): with one such field the
+# page refused every Save and every "Add interface". Raise any interval
+# below 5 s to 5 s, in one commit. Runs after 9250-omr-wan-names, which
+# creates the sections of extra WANs.
+
+changed=""
+for key in $(uci -q show omr-quota 2>/dev/null | sed -n 's/^\(omr-quota\.[^.=]*\.interval\)=.*/\1/p'); do
+	val=$(uci -q get "$key")
+	case "$val" in
+		''|*[!0-9]*) continue ;;
+	esac
+	[ "$val" -lt 5 ] || continue
+	uci -q set "$key=5"
+	changed=1
+done
+[ -n "$changed" ] && uci -q commit omr-quota
+exit 0
