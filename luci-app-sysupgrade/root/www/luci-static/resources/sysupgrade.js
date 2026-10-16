@@ -165,9 +165,32 @@ function set_status(type, message, loading, show_log) {
     show("#status_box")
 }
 
+// "v0.64.2-6.18" -> { nums: [0, 64, 2], pre: false }, "v0.64-snapshot-6.18"
+// -> { nums: [0, 64], pre: true }: OMR versions carry a kernel suffix, so
+// a version string is never equal to the bare release a branch lists
+function parse_version(v) {
+    v = String(v || "").trim().replace(/^v/i, "");
+    var base = v.match(/^[0-9]+(\.[0-9]+)*/);
+    return {
+        nums: base ? base[0].split(".").map(Number) : [],
+        pre: /snapshot|rc|beta|alpha/i.test(v)
+    };
+}
+
+// > 0 when a is newer than b; a pre-release is older than its release
+function compare_versions(a, b) {
+    var va = parse_version(a), vb = parse_version(b);
+    for (var i = 0; i < Math.max(va.nums.length, vb.nums.length); i++) {
+        var d = (va.nums[i] || 0) - (vb.nums[i] || 0);
+        if (d != 0)
+            return d;
+    }
+    return (vb.pre ? 1 : 0) - (va.pre ? 1 : 0);
+}
+
 function upgrade_check() {
     var current_version = data.release.version.toLowerCase();
-    var current_branch = current_version.split('-')[0].split('.').slice(0, 2).join('.')
+    var current_branch = parse_version(current_version).nums.slice(0, 2).join('.')
     var candidates = []
     hide("#status_box");
     hide("#server_div");
@@ -183,22 +206,21 @@ function upgrade_check() {
             for (var i in branches) {
                 // handle snapshots in a special way - as always
                 if (current_version == "snapshot" && branches[i]["latest"] == "snapshot") {
-                    candidates.unshift(branches[i])
+                    candidates = [branches[i]]
                     break
                 }
-
-                if (current_version == branches[i]["latest"]) {
-                    break
-                }
-                if (current_branch != branches[i]["name"]) {
-                    branches[i]["warn_branch_jump"] = true
-                }
-                candidates.unshift(branches[i])
-                if (current_branch == branches[i]["name"]) {
-                    // don't offer branches older than the current
-                    break
-                }
+                if (branches[i]["enabled"] === false)
+                    continue
+                // only offer a release strictly newer than the installed one
+                if (compare_versions(branches[i]["latest"], current_version) <= 0)
+                    continue
+                branches[i]["warn_branch_jump"] =
+                    parse_version(branches[i]["name"]).nums.slice(0, 2).join('.') != current_branch
+                candidates.push(branches[i])
             }
+            // an update within the installed branch first, else the newest
+            candidates.sort((a, b) => (a.warn_branch_jump - b.warn_branch_jump) ||
+                compare_versions(b.latest, a.latest))
 
             if (candidates.length > 0) {
                 var info_output = "<h3>New release <b>" + esc(candidates[0].latest) + "</b> available</h3>"
