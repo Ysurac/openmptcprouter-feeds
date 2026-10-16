@@ -51,6 +51,31 @@ var methods = [
 	'2022-blake3-chacha20-poly1305',
 ];
 
+/* Key size in bytes of the 2022 ciphers. Their password is that key in
+ * Base64; the AES ones also take identity keys (Extensible Identity
+ * Headers) before it, "iPSK:uPSK", which is what openmptcprouter-vps writes
+ * for a server reached through the VPS's xray. */
+var keylen_2022 = {
+	'2022-blake3-aes-128-gcm': 16,
+	'2022-blake3-aes-256-gcm': 32,
+	'2022-blake3-chacha8-poly1305': 32,
+	'2022-blake3-chacha20-poly1305': 32,
+};
+
+/* Bytes in standard Base64 `s` as sslocal decodes it (padding optional but
+ * complete if there, no stray bits in the last character), -1 if invalid. */
+function base64_bytes(s) {
+	var m = /^([A-Za-z0-9+\/]*)(={0,2})$/.exec(s);
+	if (!m || !m[1].length)
+		return -1;
+	var n = m[1].length, rest = n % 4,
+		last = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'.indexOf(m[1].charAt(n - 1));
+	if (rest === 1 || (m[2] && (n + m[2].length) % 4) ||
+	    (rest === 2 && (last & 15)) || (rest === 3 && (last & 3)))
+		return -1;
+	return Math.floor(n * 3 / 4);
+}
+
 function ucival_to_bool(val) {
 	return val === 'true' || val === '1' || val === 'yes' || val === 'on';
 }
@@ -150,9 +175,15 @@ return L.Class.extend({
 			var opt = this.map.lookupOption('method', section_id),
 				method = opt ? opt[0].formvalue(opt[1]) : uci.get('shadowsocks-rust', section_id, 'method');
 			// 2022 ciphers take a Base64 key, the older ones a plain password
-			if (value && method && method.indexOf('2022-') === 0 &&
-			    !/^[A-Za-z0-9+\/]+={0,2}$/.test(value))
-				return _('2022 ciphers need a Base64 encoded key');
+			var len = keylen_2022[method];
+			if (!value || !len)
+				return true;
+			var keys = value.split(':');
+			if (keys.length > 1 && method.indexOf('2022-blake3-aes-') !== 0)
+				return _('Only the 2022 AES ciphers take identity keys (iPSK:uPSK)');
+			for (var i = 0; i < keys.length; i++)
+				if (base64_bytes(keys[i]) !== len)
+					return _('This cipher needs Base64 encoded keys of %d bytes').format(len);
 			return true;
 		};
 
