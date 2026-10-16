@@ -91,13 +91,14 @@ if [ -z "$(uci -q get xray.main)" ]; then
 		set xray.omr6.ss_sockopt_tcp_fast_open='1'
 		set xray.omr6.s_dokodemo_door_follow_redirect='1'
 		set xray.omrtest=inbound
+		set xray.omrtest.tag='omrtest'
 		set xray.omrtest.port='1111'
 		set xray.omrtest.protocol='socks'
 		set xray.omrtest.listen='127.0.0.1'
 		set xray.omrtest.s_socks_auth='noauth'
 		set xray.omrtest.s_socks_udp='1'
 		set xray.omrtest.s_socks_ip='127.0.0.1'
-		set xray.omrtest.s_socks_userlevel='0'
+		set xray.omrtest.s_socks_user_level='0'
 		commit xray
 	EOF
 fi
@@ -227,6 +228,19 @@ if [ "$(uci -q get xray.omr.port)" = "1897" ]; then
 		set xray.main_transparent_proxy.redirect_port='1100'
 		commit xray
 	EOF
+fi
+
+# omrtest was created without a tag, which the LuCI Inbounds page requires
+# (no inbound on it could be saved), and with its user level under a name
+# neither the page nor the init read
+if [ "$(uci -q get xray.omrtest)" = "inbound" ]; then
+	[ -z "$(uci -q get xray.omrtest.tag)" ] && uci -q set xray.omrtest.tag='omrtest'
+	userlevel="$(uci -q get xray.omrtest.s_socks_userlevel)"
+	if [ -n "$userlevel" ]; then
+		[ -z "$(uci -q get xray.omrtest.s_socks_user_level)" ] && uci -q set xray.omrtest.s_socks_user_level="$userlevel"
+		uci -q delete xray.omrtest.s_socks_userlevel
+	fi
+	[ -n "$(uci -q changes xray)" ] && uci -q commit xray
 fi
 
 exit 0
