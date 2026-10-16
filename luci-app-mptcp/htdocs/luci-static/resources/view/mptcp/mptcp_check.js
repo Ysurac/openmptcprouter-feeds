@@ -12,12 +12,10 @@ var callMptcpCheckTrace = rpc.declare({
 
 return view.extend({
 	load: function() {
-		return Promise.all([
-			uci.load('network'),
-			// only for the old copy of the mode below: the ACL doesn't
-			// give this config (VPS passwords and tokens) to non-root users
-			L.resolveDefault(uci.load('openmptcprouter'), null)
-		]);
+		// network only: the old openmptcprouter.<iface>.multipath copy is
+		// left out, the ACL does not grant that config (VPS password and
+		// token)
+		return uci.load('network');
 	},
 
 	render: function() {
@@ -25,8 +23,7 @@ return view.extend({
 		uci.sections('network', 'interface', function(s) {
 			var name = s['.name'];
 			if (name === 'loopback') return;
-			var multipath = s.multipath ||
-				uci.get('openmptcprouter', name, 'multipath') || 'off';
+			var multipath = s.multipath || 'off';
 			if (multipath !== 'off')
 				ifaces.push(name);
 		});
