@@ -4,6 +4,10 @@
 'require ui';
 
 return L.view.extend({
+	load: function() {
+		return uci.changes();
+	},
+
 	render: function(changes) {
 		var body = E([
 		    E('h2', _('Shutdown')),
