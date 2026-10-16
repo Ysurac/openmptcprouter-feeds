@@ -48,6 +48,7 @@ ss_bindir=/usr/bin
 
 ssrules_uc="/usr/share/ssr-rules/ss-rules.uc"
 ssrules_nft="/etc/nftables.d/90-proxy-ssr-rules.nft"
+ssrules_refused="/var/run/shadowsocks-rust-rules.refused"
 
 ss_mkjson_server_conf() {
 	local cfgserver
@@ -317,6 +318,17 @@ ss_rules_extra_json() {
 	json_close_array
 }
 
+# nftables refused the rules generated from the config (an extra match or a
+# bypass file it can't parse): they were dropped without a word, so the
+# redirect never came and omr-tracker-ss restarted the proxy on each check
+# with nothing saying why. Logged once per refused ruleset, as the tracker
+# asks for the rules again on every check.
+ss_rules_refused() {
+	cmp -s "$1.nft" "$ssrules_refused" && return
+	cp "$1.nft" "$ssrules_refused"
+	logger -t shadowsocks-rust -p daemon.err "nftables refused the transparent proxy rules, they are not applied: $(grep -v '^[[:space:]]*$' "$1.err" | head -n 3 | tr '\n' ' ')"
+}
+
 ss_rules_nft_gen() {
 	local cfg="ss_rules"
 	local cfgtype
@@ -395,9 +407,12 @@ ss_rules_nft_gen() {
 		grep -q tproxy "$tmp.nft" || ss_tproxy_route_del
 		if ! cmp -s "$tmp.nft" "$ssrules_nft"; then
 			echo "table inet chk {include \"$tmp.nft\";}" >"$tmp.nft.chk"
-			if nft -f "$tmp.nft.chk" -c; then
+			if nft -f "$tmp.nft.chk" -c 2>"$tmp.err"; then
+				rm -f "$ssrules_refused"
 				mv "$tmp.nft" "$ssrules_nft"
 				fw4 -q restart
+			else
+				ss_rules_refused "$tmp"
 			fi
 		fi
 	fi
