@@ -14,6 +14,45 @@ function toArray(v) {
 	return v == null ? [] : (Array.isArray(v) ? v : [v]);
 }
 
+/* Take a section name out of a list option of another section, unset the
+ * option when nothing is left in it. */
+function dropFromList(section_id, listName, name) {
+	var list = toArray(uci.get(conf, section_id, listName));
+	var idx = list.indexOf(name);
+	if (idx === -1)
+		return;
+	list = list.slice();
+	list.splice(idx, 1);
+	if (list.length)
+		uci.set(conf, section_id, listName, list);
+	else
+		uci.unset(conf, section_id, listName);
+}
+
+function sameList(a, b) {
+	if (a.length !== b.length)
+		return false;
+	for (var i = 0; i < a.length; i++)
+		if (a[i] !== b[i])
+			return false;
+	return true;
+}
+
+/* A ListValue without an empty choice shows its default for an unset
+ * option, and saved it into every section that did not have it. Only for
+ * options the init already reads unset as that default: they stay unset
+ * until changed. rmempty would instead delete a stored value equal to the
+ * default. */
+function writeUnlessUnsetDefault(o, def) {
+	o.default = def;
+	o.rmempty = false;
+	o.write = function(section_id, value) {
+		if (value === def && uci.get(conf, section_id, this.ucioption || this.option) == null)
+			return;
+		return form.ListValue.prototype.write.apply(this, arguments);
+	};
+}
+
 /* The TLS pins of the running configuration by outbound tag, or null when
  * the service has written none. An empty pin field means the init script pins
  * the VPS certificate when it starts: the result is only in the generated
@@ -74,22 +113,30 @@ return L.Class.extend({
 			return (list.indexOf(section_id) !== -1) ? '1' : '0';
 		};
 		o.write = function(section_id, value) {
-			var list = toArray(uci.get(conf, ownerSection, listName)).slice();
+			var current = toArray(uci.get(conf, ownerSection, listName));
+			var list = current.slice();
 			var idx = list.indexOf(section_id);
 			if (value === '1') {
 				if (idx === -1) list.push(section_id);
 			} else if (idx !== -1) {
 				list.splice(idx, 1);
 			}
-			uci.set(conf, ownerSection, listName, list);
+			/* every row writes the whole list: set unchanged, it was
+			 * still staged as a remove and re-add of each name */
+			if (!sameList(list, current))
+				uci.set(conf, ownerSection, listName, list);
 		};
 		o.remove = function(section_id) {
-			var list = toArray(uci.get(conf, ownerSection, listName)).slice();
-			var idx = list.indexOf(section_id);
-			if (idx !== -1) {
-				list.splice(idx, 1);
-				uci.set(conf, ownerSection, listName, list);
-			}
+			dropFromList(ownerSection, listName, section_id);
+		};
+		/* Delete removes the section without parsing its options, so the
+		 * remove() above never runs: the name would stay in the list and
+		 * the init, which checks every name of it against the sections,
+		 * would refuse the whole config. */
+		var handleRemove = s.handleRemove;
+		s.handleRemove = function(section_id /*, ev */) {
+			dropFromList(ownerSection, listName, section_id);
+			return handleRemove.apply(this, arguments);
 		};
 		return o;
 	},
@@ -119,13 +166,14 @@ return L.Class.extend({
 		o.value('http', _('HTTP/2'));
 		o.value('domainsocket', _('Domain socket'));
 		o.value('quic', _('QUIC'));
-		o.default = 'tcp';
-		o.rmempty = false;
+		/* the init leaves network out when unset: tcp in the core */
+		writeUnlessUnsetDefault(o, 'tcp');
 
 		/* tcp header */
 		o = s.taboption('transport', form.ListValue, 'ss_tcp_header_type', _('TCP header obfuscation'));
 		o.value('none', _('None'));
 		o.value('http', _('HTTP')); o.depends('ss_network', 'tcp');
+		writeUnlessUnsetDefault(o, 'none');
 		o = s.taboption('transport', form.Value, 'ss_tcp_header_request_version', _('HTTP request version'));
 		o.depends({ ss_network: 'tcp', ss_tcp_header_type: 'http' });
 		o = s.taboption('transport', form.Value, 'ss_tcp_header_request_method', _('HTTP request method'));
@@ -199,8 +247,7 @@ return L.Class.extend({
 		o = s.taboption('tls', form.ListValue, 'ss_security', _('Security'));
 		o.value('none', _('None'));
 		o.value('tls', 'TLS');
-		o.default = 'none';
-		o.rmempty = false;
+		writeUnlessUnsetDefault(o, 'none');
 
 		o = s.taboption('tls', form.Value, 'ss_tls_server_name', _('TLS server name (SNI)'));
 		o.datatype = 'host'; o.depends('ss_security', 'tls');
@@ -254,11 +301,20 @@ return L.Class.extend({
 		o.value('', _('Default')); o.value('1', _('Enable')); o.value('0', _('Disable'));
 		if (sockopt === 'tproxy') {
 			o = s.taboption('sockopt', form.ListValue, 'ss_sockopt_tproxy', _('TPROXY mode'));
+			o.value('', _('Default'));
 			o.value('redirect', _('Redirect')); o.value('tproxy', 'TPROXY'); o.value('off', _('Off'));
-			o.default = 'redirect';
-			/* the init has no default: without it a redirect inbound
-			 * never learns the original destination */
-			o.rmempty = false;
+			o.description = _('A dokodemo-door inbound that follows redirects needs Redirect or TPROXY: left on Default, it is saved as Redirect.');
+			/* No default: it was written into every inbound saved, a
+			 * socks or http one included. The init has none either, and
+			 * without it a dokodemo-door inbound following redirects
+			 * never learns the original destination: only there is an
+			 * unset mode saved as redirect. */
+			o.remove = function(section_id) {
+				if (this.section.formvalue(section_id, 'protocol') === 'dokodemo-door' &&
+				    this.section.formvalue(section_id, 's_dokodemo_door_follow_redirect') === '1')
+					return uci.set(conf, section_id, this.ucioption || this.option, 'redirect');
+				return form.ListValue.prototype.remove.apply(this, arguments);
+			};
 		} else {
 			o = s.taboption('sockopt', form.Value, 'ss_sockopt_mark', _('Firewall mark'));
 			o.datatype = 'uinteger';
@@ -380,6 +436,7 @@ return L.Class.extend({
 		o = s.taboption('protocol', form.ListValue, 's_freedom_domain_strategy', _('Domain strategy'));
 		o.value('AsIs', 'AsIs'); o.value('UseIP', 'UseIP'); o.value('UseIPv4', 'UseIPv4'); o.value('UseIPv6', 'UseIPv6');
 		o.depends('protocol', 'freedom');
+		writeUnlessUnsetDefault(o, 'AsIs');
 		o = s.taboption('protocol', form.Value, 's_freedom_redirect', _('Redirect to'));
 		o.depends('protocol', 'freedom');
 		o = s.taboption('protocol', form.Value, 's_freedom_user_level', _('User level'));

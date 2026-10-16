@@ -73,6 +73,9 @@ return L.view.extend({
 		o.description = _('Must match the dokodemo-door inbound(s) handling redirected traffic');
 
 		o = s.option(form.Flag, 'redirect_udp', _('Redirect UDP'));
+		/* uci-defaults, the wizard and the Settings page all store it, '0'
+		 * included: left to rmempty, a no-op save deleted that '0' */
+		o.rmempty = false;
 		o = s.option(form.Flag, 'redirect_dns', _('Redirect DNS'));
 		o = s.option(form.Flag, 'use_tproxy', _('Use TPROXY'));
 		o.description = _('Use TPROXY instead of REDIRECT for transparent proxying');
