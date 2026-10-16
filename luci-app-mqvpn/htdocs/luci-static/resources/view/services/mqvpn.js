@@ -247,7 +247,7 @@ return L.view.extend({
 		s.addremove = false;
 
 		o = s.option(form.Flag, 'enabled', _('Enable reorder buffer'));
-		o.description = _('Enable reorder buffer for inner UDP (off by default)');
+		o.description = _('Reorder the inner UDP datagrams that arrive out of order over different paths (on by default, also applied on the server)');
 		o.default = o.disabled;
 		o.rmempty = false;
 

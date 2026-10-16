@@ -425,6 +425,40 @@ _mqvpn_vps_pin() {
 	_omr_vps_pin_valid "$pin" && echo "$pin"
 }
 
+# The router's reorder rules as the members of the JSON array the server takes
+# (at most 16, the server's limit), in uci order. A rule the server would
+# refuse is left out: it refuses the whole request, scheduler included.
+_mqvpn_reorder_rules_json() {
+	local i=0 n=0 proto port profile out=""
+	while [ "$n" -lt 16 ] && [ -n "$(uci -q get "mqvpn.@reorder_rule[$i]")" ]; do
+		proto="$(uci -q get "mqvpn.@reorder_rule[$i].proto")"
+		port="$(uci -q get "mqvpn.@reorder_rule[$i].port")"
+		profile="$(uci -q get "mqvpn.@reorder_rule[$i].profile")"
+		i=$((i + 1))
+		case "$proto" in udp|tcp) ;; *) continue ;; esac
+		case "$port" in ''|*[!0-9]*) continue ;; esac
+		[ "${#port}" -le 5 ] && [ "$port" -le 65535 ] || continue
+		case "$profile" in cellular_bond|fiber_lte|quic_bulk|low_latency|default_udp) ;; *) continue ;; esac
+		out="${out:+$out, }{\"proto\": \"$proto\", \"port\": $port, \"profile\": \"$profile\"}"
+		n=$((n + 1))
+	done
+	echo "$out"
+}
+
+# The reorder rules of VPS config $1, written as _mqvpn_reorder_rules_json does
+_mqvpn_vps_reorder_rules() {
+	local i=0 proto port profile out=""
+	while [ "$i" -lt 16 ]; do
+		proto="$(echo "$1" | jsonfilter -q -e "@.mqvpn.reorder_rules[$i].proto")"
+		[ -z "$proto" ] && break
+		port="$(echo "$1" | jsonfilter -q -e "@.mqvpn.reorder_rules[$i].port")"
+		profile="$(echo "$1" | jsonfilter -q -e "@.mqvpn.reorder_rules[$i].profile")"
+		out="${out:+$out, }{\"proto\": \"$proto\", \"port\": $port, \"profile\": \"$profile\"}"
+		i=$((i + 1))
+	done
+	echo "$out"
+}
+
 _set_mqvpn_vps() {
 	local enabled port key scheduler cc fec_enable fec_scheme reinjection_control reinjection_mode
 	local current_port current_scheduler current_cc current_fec_enable current_fec_scheme
@@ -485,6 +519,42 @@ _set_mqvpn_vps() {
 		*) reinjection_mode="default" ;;
 	esac
 
+	# The reorder buffer only works when both ends enable it: the client
+	# stamps its packets only once the server echoed the reorder header, and
+	# the server's own setting decides that. Never sent before, it stayed off
+	# on the server (omr-admin's default) whatever the MQVPN page said.
+	local reorder_enabled reorder_max_wait_ms reorder_cap_packets reorder_rules
+	local current_reorder_enabled current_reorder_max_wait_ms current_reorder_cap_packets current_reorder_rules
+	current_reorder_enabled="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reorder.enabled')"
+	[ "$current_reorder_enabled" = "auto" ] && current_reorder_enabled="on"
+	current_reorder_max_wait_ms="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reorder.max_wait_ms')"
+	current_reorder_cap_packets="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reorder.cap_packets')"
+	case "$(uci -q get mqvpn.reorder.enabled)" in
+		1|on|true|yes) reorder_enabled="on" ;;
+		0|off|false|no) reorder_enabled="off" ;;
+		*) reorder_enabled="$current_reorder_enabled" ;;
+	esac
+	reorder_max_wait_ms="$(uci -q get mqvpn.reorder.max_wait_ms)"
+	[ -z "$reorder_max_wait_ms" ] && reorder_max_wait_ms="$current_reorder_max_wait_ms"
+	case "$reorder_max_wait_ms" in
+		''|*[!0-9]*) reorder_max_wait_ms="30" ;;
+	esac
+	[ "${#reorder_max_wait_ms}" -gt 9 ] && reorder_max_wait_ms="30"
+	reorder_cap_packets="$(uci -q get mqvpn.reorder.cap_packets)"
+	[ -z "$reorder_cap_packets" ] && reorder_cap_packets="$current_reorder_cap_packets"
+	# the server refuses the whole request when it is not a power of two
+	case "$reorder_cap_packets" in
+		''|*[!0-9]*) reorder_cap_packets="1024" ;;
+	esac
+	if [ "${#reorder_cap_packets}" -gt 10 ] || [ "$reorder_cap_packets" -lt 1 ] || \
+	   [ "$reorder_cap_packets" -gt 2147483648 ] || [ $((reorder_cap_packets & (reorder_cap_packets - 1))) -ne 0 ]; then
+		reorder_cap_packets="1024"
+	fi
+	# The rules go only when the router has some: without, the config pull
+	# adopts the server's.
+	reorder_rules="$(_mqvpn_reorder_rules_json)"
+	current_reorder_rules="$(_mqvpn_vps_reorder_rules "$vps_config")"
+
 	local push=0
 	[ "$current_port" != "$port" ] && push=1
 	[ -n "$current_scheduler" ] && [ "$current_scheduler" != "$scheduler" ] && push=1
@@ -493,9 +563,21 @@ _set_mqvpn_vps() {
 	[ -n "$current_fec_scheme" ] && [ "$current_fec_scheme" != "$fec_scheme" ] && push=1
 	[ -n "$current_reinjection_control" ] && [ "$current_reinjection_control" != "$reinjection_control" ] && push=1
 	[ -n "$current_reinjection_mode" ] && [ "$current_reinjection_mode" != "$reinjection_mode" ] && push=1
+	# a server without reorder support has no reorder in its config: comparing
+	# with nothing would push on every sync
+	if [ -n "$current_reorder_enabled" ] && [ -n "$reorder_enabled" ]; then
+		[ "$current_reorder_enabled" != "$reorder_enabled" ] && push=1
+		[ "$current_reorder_max_wait_ms" != "$reorder_max_wait_ms" ] && push=1
+		[ "$current_reorder_cap_packets" != "$reorder_cap_packets" ] && push=1
+		[ -n "$reorder_rules" ] && [ "$current_reorder_rules" != "$reorder_rules" ] && push=1
+	fi
 	if [ "$push" = "1" ]; then
 		local settings result
-		settings='{"key": "'$key'", "port": '$port', "scheduler": "'$scheduler'", "cc": "'$cc'", "fec_enable": '$fec_enable', "fec_scheme": "'$fec_scheme'", "reinjection_control": '$reinjection_control', "reinjection_mode": "'$reinjection_mode'"}'
+		settings='{"key": "'$key'", "port": '$port', "scheduler": "'$scheduler'", "cc": "'$cc'", "fec_enable": '$fec_enable', "fec_scheme": "'$fec_scheme'", "reinjection_control": '$reinjection_control', "reinjection_mode": "'$reinjection_mode'"'
+		[ -n "$reorder_enabled" ] && \
+			settings="$settings"', "reorder": {"enabled": "'$reorder_enabled'", "max_wait_ms": '$reorder_max_wait_ms', "cap_packets": '$reorder_cap_packets'}'
+		[ -n "$reorder_rules" ] && settings="$settings"', "reorder_rules": ['$reorder_rules']'
+		settings="$settings}"
 		result=$(_set_json "mqvpn" "$settings")
 		[ -n "$result" ] && _want_config
 		[ -n "$result" ] && [ "$current_port" != "$port" ] && /etc/init.d/mqvpn restart >/dev/null 2>&1
