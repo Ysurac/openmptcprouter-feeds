@@ -23,15 +23,31 @@ _getremoteip() {
 	}
 }
 
+# The server in use is runtime state: none is marked before omr-tracker's
+# first check (at boot) or while every server is down. Take the master's
+# address then, as mptcp_over_vpn_restore does, rather than an empty one.
+_getmasterip() {
+	[ -z "$remoteip" ] && [ "$(uci -q get "openmptcprouter.$1.master")" = "1" ] && {
+		remoteip=$(uci -q get "openmptcprouter.$1.ip" | awk '{print $1}')
+		wg_server_key=$(uci -q get "openmptcprouter.$1.wgkey")
+	}
+}
+
+_getserverip() {
+	remoteip=""
+	wg_server_key=""
+	config_load openmptcprouter
+	config_foreach _getremoteip server
+	[ -n "$remoteip" ] || config_foreach _getmasterip server
+}
+
 mptcp_over_vpn() {
 	local interface=$1
 	case " $(uci -q get firewall.zone_wan.network) " in
 		*" $interface "*) nbintf=$(($nbintf+1)) ;;
 	esac
 	if [ "$(uci -q get openmptcprouter.${interface}.multipathvpn)" = "1" ]; then
-		remoteip=""
-		config_load openmptcprouter
-		config_foreach _getremoteip server
+		_getserverip
 
 		if [ "$(uci -q get network.${interface})" = "" ]; then
 			uci -q batch <<-EOF >/dev/null
@@ -53,6 +69,8 @@ mptcp_over_vpn() {
 			return
 		fi
 		nbintfvpn=$(($nbintfvpn+1))
+		# No address to point the tunnel at: keep the current one
+		[ -n "$remoteip" ] || return
 		if ([ "$(uci -q get network.ovpn${interface})" = "" ] || [ "$(uci -q get openvpn.${interface}.remote)" != "${remoteip}" ]) && [ "$vpn" = "openvpn" ]; then
 			logger -t "MPTCPoverVPN" "Enable MPTCP over VPN for ${interface}"
 			id=$(uci -q get network.${interface}.metric)
@@ -109,10 +127,6 @@ mptcp_over_vpn() {
 		elif ([ "$(uci -q get network.wg${interface})" = "" ] || [ "$(uci -q get network.@wireguard_wg${interface}[0].endpoint_host)" != "$remoteip" ]) && [ "$vpn" = "wireguard" ]; then
 			logger -t "MPTCPoverVPN" "Enable MPTCP over VPN for ${interface}"
 			id=$(uci -q get network.${interface}.metric)
-			remoteip=""
-			wg_server_key=""
-			config_load openmptcprouter
-			config_foreach _getremoteip server
 			metric=$(uci -q get network.${interface}.metric)
 			[ -z "$(uci -q get openmptcprouter.wg${interface}.multipath)" ] && multipath=$(uci -q get network.${interface}.multipath)
 			[ -n "$(uci -q get openmptcprouter.wg${interface}.multipath)" ] && multipath=$(uci -q get openmptcprouter.wg${interface}.multipath)
