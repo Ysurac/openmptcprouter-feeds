@@ -37,6 +37,56 @@ if _omr_quota_cut_active "$OMR_TRACKER_INTERFACE"; then
 	quota_cut="true"
 fi
 
+# The down mail and script alerts, also sent in monitor only mode
+_alert_down() {
+	mail_alert=""
+	if [ -n "$OMR_TRACKER_INTERFACE" ]; then
+		mail_alert="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.mail_alert)"
+	fi
+	[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
+	mail_to="$(uci -q get mail.default.to | tr -d '\r\n')"
+	case "$mail_to" in
+		-*|*[[:space:]]*) mail_to="" ;;
+	esac
+	[ "$mail_alert" = "1" ] && [ -n "$mail_to" ] && {
+		OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
+		if [ "$(uci -q get omr-tracker.defaults.mail_down_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_down_message)" != "" ]; then
+			mail_subject="$(uci -q get omr-tracker.defaults.mail_down_subject)"
+			mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/$OMR_TRACKER_INTERFACE/g" -e "s/%DEVICE%/$OMR_TRACKER_DEVICE/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+			mail_subject="$(printf '%s' "$mail_subject" | tr -d '\r\n')"
+			mail_message="$(uci -q get omr-tracker.defaults.mail_down_message)"
+			mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/$OMR_TRACKER_INTERFACE/g" -e "s/%DEVICE%/$OMR_TRACKER_DEVICE/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
+			printf 'Subject: %s\n\n%s\n' "$mail_subject" "$mail_message" | sendmail "$mail_to"
+		else
+			mail_subject="$(printf '%s' "$OMR_SYSNAME: $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) is down" | tr -d '\r\n')"
+			printf 'Subject: %s\n\nConnection failure of %s (%s) detected. The reason is "%s".\n' "$mail_subject" "$OMR_TRACKER_INTERFACE" "$OMR_TRACKER_DEVICE" "$OMR_TRACKER_STATUS_MSG" | sendmail "$mail_to"
+		fi
+	}
+	script_alert_down=""
+	if [ -n "$OMR_TRACKER_INTERFACE" ]; then
+		script_alert_down="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.script_alert_down)"
+	fi
+	[ -n "$script_alert_down" ] && eval $script_alert_down
+}
+
+# Monitor only: the interface state is reported (log, mail and script
+# alerts, status page) and nothing is changed. The failure doesn't go in
+# "state", which mptcp, omr-bypass, omr-quota and keepalived-ha act on,
+# but in "monitor_state", only read by the status page.
+if [ "$OMR_TRACKER_MONITOR_ONLY" = "1" ]; then
+	if [ "$OMR_TRACKER_STATUS" = "ERROR" ]; then
+		[ "$(omr_state_get "openmptcprouter.$OMR_TRACKER_INTERFACE.monitor_state")" = "down" ] || \
+			omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" monitor_state 'down'
+		if [ "$OMR_TRACKER_PREV_STATUS" != "ERROR" ]; then
+			_log "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) is down${OMR_TRACKER_STATUS_MSG:+ because $OMR_TRACKER_STATUS_MSG}, nothing changed (monitor only)"
+			_alert_down
+		fi
+	elif [ "$OMR_TRACKER_PREV_STATUS" != "OK" ]; then
+		omr_state_del openmptcprouter "$OMR_TRACKER_INTERFACE" monitor_state
+	fi
+	exit 0
+fi
+
 if [ "$OMR_TRACKER_STATUS" = "ERROR" ] && [ "$(omr_state_get openmptcprouter.$OMR_TRACKER_INTERFACE.state)" != "down" ]; then
 	omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE state 'down'
 fi
@@ -360,34 +410,7 @@ if [ "$OMR_TRACKER_STATUS" = "ERROR" ] || { [ "$OMR_TRACKER_INTERFACE" != "omrvp
 		[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && _log "Set server routes done (new: $(ip r) )"
 	fi
 	
-	mail_alert=""
-	if [ -n "$OMR_TRACKER_INTERFACE" ]; then
-		mail_alert="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.mail_alert)"
-	fi
-		[ -z "$mail_alert" ] && mail_alert="$(uci -q get omr-tracker.defaults.mail_alert)"
-		mail_to="$(uci -q get mail.default.to | tr -d '\r\n')"
-		case "$mail_to" in
-			-*|*[[:space:]]*) mail_to="" ;;
-		esac
-		[ "$mail_alert" = "1" ] && [ -n "$mail_to" ] && {
-			OMR_SYSNAME="$(uci -q get system.@system[0].hostname)"
-			if [ "$(uci -q get omr-tracker.defaults.mail_down_subject)" != "" ] && [ "$(uci -q get omr-tracker.defaults.mail_down_message)" != "" ]; then
-				mail_subject="$(uci -q get omr-tracker.defaults.mail_down_subject)"
-				mail_subject=`echo $mail_subject | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/$OMR_TRACKER_INTERFACE/g" -e "s/%DEVICE%/$OMR_TRACKER_DEVICE/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
-				mail_subject="$(printf '%s' "$mail_subject" | tr -d '\r\n')"
-				mail_message="$(uci -q get omr-tracker.defaults.mail_down_message)"
-				mail_message=`echo $mail_message | sed -e "s/%SYSNAME%/$OMR_SYSNAME/g" -e "s/%INTERFACE%/$OMR_TRACKER_INTERFACE/g" -e "s/%DEVICE%/$OMR_TRACKER_DEVICE/g" -e "s/%MESSAGE%/$OMR_TRACKER_STATUS_MSG/g"`
-				printf 'Subject: %s\n\n%s\n' "$mail_subject" "$mail_message" | sendmail "$mail_to"
-			else
-				mail_subject="$(printf '%s' "$OMR_SYSNAME: $OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) is down" | tr -d '\r\n')"
-				printf 'Subject: %s\n\nConnection failure of %s (%s) detected. The reason is "%s".\n' "$mail_subject" "$OMR_TRACKER_INTERFACE" "$OMR_TRACKER_DEVICE" "$OMR_TRACKER_STATUS_MSG" | sendmail "$mail_to"
-			fi
-		}
-	script_alert_down=""
-	if [ -n "$OMR_TRACKER_INTERFACE" ]; then
-		script_alert_down="$(uci -q get omr-tracker.$OMR_TRACKER_INTERFACE.script_alert_down)"
-	fi
-	[ -n "$script_alert_down" ] && eval $script_alert_down
+	_alert_down
 
 	if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] || [ "$OMR_TRACKER_INTERFACE" = "omr6in4" ]; then
 		vpn_disabled_by_user=0

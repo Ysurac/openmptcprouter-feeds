@@ -20,7 +20,7 @@
 _validate_section() {
 	local tmp_timeout=$timeout tmp_count=$count tmp_tries=$tries tmp_size=$size tmp_max_ttl=$max_ttl tmp_failure_loss=$failure_loss tmp_failure_latency=$failure_latency tmp_recovery_loss=$recovery_loss tmp_recovery_latency=$recovery_latency tmp_failure_congestion=$failure_congestion tmp_recovery_congestion=$recovery_congestion tmp_reliability=$reliability tmp_country=$country
 	local tmp_interval=$interval tmp_interval_tries=$interval_tries tmp_options=$options tmp_type=$type tmp_enabled=$enabled tmp_wait_test=$wait_test tmp_server_http_test=$server_http_test tmp_server_test=$server_test tmp_check_quality=$check_quality tmp_failure_interval=$failure_interval tmp_tries_up=$tries_up tmp_family=$family tmp_post_interval=$post_interval tmp_post_interval_down=$post_interval_down
-	local tmp_latency_ip=$latency_ip tmp_latency_ip6=$latency_ip6
+	local tmp_latency_ip=$latency_ip tmp_latency_ip6=$latency_ip6 tmp_monitor_only=$monitor_only
 
 	# No default value here for an option the defaults section can set:
 	# validate_data gives the default of an option a section doesn't set, so
@@ -55,7 +55,8 @@ _validate_section() {
 		'options:string'  \
 		'country:string'  \
 		'latency_ip:host' \
-		'latency_ip6:host'
+		'latency_ip6:host' \
+		'monitor_only:bool'
 
 	[ -z "$timeout"  ] && timeout=$tmp_timeout
 	[ -z "$count"  ] && count=$tmp_count
@@ -86,6 +87,7 @@ _validate_section() {
 	[ -z "$country"  ] && country=$tmp_country
 	[ -z "$latency_ip"  ] && latency_ip=$tmp_latency_ip
 	[ -z "$latency_ip6"  ] && latency_ip6=$tmp_latency_ip6
+	[ -z "$monitor_only"  ] && monitor_only=$tmp_monitor_only
 }
 
 _validate_section_hosts() {
@@ -117,9 +119,12 @@ _launch_tracker() {
 	# Every option _validate_section reads: one left global leaked from an
 	# interface into the next ones (check_quality, country...) and into the
 	# proxy trackers
-	local hosts hosts6 timeout count tries tries_up interval interval_tries post_interval post_interval_down options type enabled wait_test ipv6 proto server_http_test server_test check_quality country size max_ttl failure_loss failure_interval failure_latency recovery_loss recovery_latency failure_congestion recovery_congestion family reliability latency_ip latency_ip6
+	local hosts hosts6 timeout count tries tries_up interval interval_tries post_interval post_interval_down options type enabled wait_test ipv6 proto server_http_test server_test check_quality country size max_ttl failure_loss failure_interval failure_latency recovery_loss recovery_latency failure_congestion recovery_congestion family reliability latency_ip latency_ip6 monitor_only
 	_validate_section "defaults" "defaults"
 	_validate_section "interface" "$1"
+	# The failure a monitor only tracker reported (see 002-error), left
+	# behind once the interface is tracked normally again
+	[ "$monitor_only" = "1" ] || omr_state_del openmptcprouter "$1" monitor_state
 	[ -z "$country" ] && country="world"
 	_validate_section_hosts "hosts_defaults" "$country"
 
@@ -217,6 +222,7 @@ _launch_tracker() {
 	procd_append_param env "OMR_TRACKER_WAIT_TEST=$wait_test"
 	procd_append_param env "OMR_TRACKER_SERVER_HTTP_TEST=$server_http_test"
 	procd_append_param env "OMR_TRACKER_SERVER_TEST=$server_test"
+	procd_append_param env "OMR_TRACKER_MONITOR_ONLY=${monitor_only:-0}"
 	procd_set_param limits nofile="51200 51200"
 	procd_set_param respawn 0 10 0
 	# A tracker stopped while it runs a post-tracking hook exits once the

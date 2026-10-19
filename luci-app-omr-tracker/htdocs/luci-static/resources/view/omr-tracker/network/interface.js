@@ -495,6 +495,11 @@ return view.extend({
 		inheritFlag(o, '0');
 		o.modalonly = true;
 
+		o = s.option(form.Flag, 'monitor_only', _('Monitor only'),
+			_('Only report the connection state (status page, logs, mail alert) and never act on a failure: the interface stays in use and is never restarted.'));
+		inheritFlag(o, '0');
+		o.modalonly = true;
+
 
 		/*
 		o = s.option(form.DynamicList, 'flush_conntrack', _('Flush conntrack table'),
