@@ -296,6 +296,19 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 		#fi
 	fi
 	[ -n "$_omr_cfg_changed" ] && uci -q commit openmptcprouter
+	# The VPS DNATs the port forwards to the router's tunnel address. The
+	# omrvpn hotplug sends a new one once, on ifup; when the VPS API didn't
+	# answer then (the VPS had just restarted), or the address changed with
+	# no ifup, the forwards went to the old one until the hourly refresh.
+	# set_vpn_ip records what every server accepted; retried once a minute.
+	if [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] && [ -n "$OMR_TRACKER_DEVICE_IP" ] && [ "$(_omr_uci_get openmptcprouter.settings.vpn)" != "none" ]; then
+		_omr_uci_get_var _vpnip_sent "openmptcprouter.omr.vpnip_sent"
+		_omr_uci_get_var _vpnip_try "openmptcprouter.omr.vpnip_try"
+		if [ "$_vpnip_sent" != "$OMR_TRACKER_DEVICE_IP" ] && [ $((_omr_now - ${_vpnip_try:-0})) -ge 60 ] && [ -z "$(pgrep -f openmptcprouter-vps)" ]; then
+			omr_state_set openmptcprouter omr vpnip_try "$_omr_now"
+			_omr_detach /etc/init.d/openmptcprouter-vps set_vpn_ip
+		fi
+	fi
 	nbserver=0
 	piholeenabled=0
 	# Only for the VPNs openmptcprouter-vps' _get_pihole can point dnsmasq
