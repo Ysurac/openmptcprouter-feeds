@@ -57,6 +57,18 @@ case "$_speedtest_tried" in
 	''|*[!0-9]*) _speedtest_tried=0 ;;
 esac
 if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$(pgrep -f omr-test-speed-server)" = "" ] && [ -z "$(uci -q get openmptcprouter.${OMR_TRACKER_INTERFACE}.testspeed_lc)" ] && [ $((_speedtest_now - _speedtest_tried)) -ge 3600 ]; then
+	# One interface at a time. The pgrep above claims nothing: the
+	# trackers of two WANs could both see no test running, before the
+	# first transfer or between two of the six, and measure together, each
+	# getting a part of the shared path (a 25 Mbit/s link read 6.2 Mbit/s).
+	# mkdir is atomic; a lock left by a killed tracker goes after 10 min.
+	_speedtest_lock=/var/run/omr-speedtest.lock
+	if [ -d "$_speedtest_lock" ] && [ $((_speedtest_now - $(date -r "$_speedtest_lock" +%s 2>/dev/null || echo 0))) -gt 600 ]; then
+		rmdir "$_speedtest_lock" 2>/dev/null
+	fi
+	mkdir "$_speedtest_lock" 2>/dev/null || exit 0
+	trap 'rmdir "$_speedtest_lock" 2>/dev/null' EXIT
+
 	speedtest_bin="/bin/omr-test-speed-server"
 	[ -x "$speedtest_bin" ] || speedtest_bin="omr-test-speed-server"
 	_speedtest_done=""
