@@ -802,20 +802,35 @@ return view.extend({
 				var cDn = st.combinedDn, cUp = st.combinedUp;
 
 				/* Align all series to globalStamp:
-				   1. Right-pad lagging interfaces with their last known value.
-				   2. Left-pad shorter histories with 0 so all start at the same x. */
+				   1. Right-pad lagging interfaces with their last known value
+				      for ALIGN_HOLD samples, then with 0.
+				   2. Left-pad shorter histories with 0 so all start at the same x.
+				   A lag of a sample or two is collection jitter. A device that
+				   is gone (an unplugged USB modem) sends no new sample at all:
+				   its lag grows without end, and padding with its last value
+				   showed its last rate for as long as it stayed unplugged. */
 				var globalStamp = st.stamp;
+				var ALIGN_HOLD = 2;
 				function alignSeries(s, itfStamp) {
 					var lag = (itfStamp > 0) ? Math.max(0, Math.round(globalStamp - itfStamp)) : 0;
 					if (lag === 0) return s;
 					var lastVal = s.length > 0 ? s[s.length - 1] : 0;
 					var out = s.slice();
-					for (var _p = 0; _p < Math.min(lag, st.wanted); _p++) out.push(lastVal);
+					for (var _p = 0; _p < Math.min(lag, st.wanted); _p++)
+						out.push(_p < ALIGN_HOLD ? lastVal : 0);
 					return out;
 				}
 				var alignedDn = {}, alignedUp = {};
 				var refLen = 0;
 				st.ifaces.forEach(function(itf) {
+					/* the moving average of a series padded with 0 still holds
+					   the rates from before: clear it, or the device shows them
+					   again for 15 samples when it comes back */
+					var itfStamp = st.stampIface[itf] || 0;
+					if (itfStamp > 0 && Math.round(globalStamp - itfStamp) > ALIGN_HOLD) {
+						delete self._smaState['dn_' + itf];
+						delete self._smaState['up_' + itf];
+					}
 					var aDn = alignSeries(st.dndata[itf] || [], st.stampIface[itf] || 0);
 					var aUp = alignSeries(st.updata[itf] || [], st.stampIface[itf] || 0);
 					alignedDn[itf] = aDn;
@@ -919,21 +934,39 @@ return view.extend({
 
 		return callIfaceBandwidth(st.device).then(function(data) {
 			if (!st || st.mode !== 'iface') return;
-			if (!Array.isArray(data) || !data.length) return;
 
-			for (var i = (st.stamp ? 0 : 1); i < data.length; i++) {
-				if (data[i][0] <= st.stamp) continue;
-				if (i > 0) {
-					var dt = data[i][0] - data[i-1][0];
-					if (dt) {
-						st.dataRx.push((data[i][1] - data[i-1][1]) / dt);
-						st.dataTx.push((data[i][3] - data[i-1][3]) / dt);
+			/* For a device that is gone (an unplugged USB modem), luci-bwc
+			   replays its last rows with their old timestamps, or returns
+			   nothing once it has no archive: no sample is added and the
+			   graph and readouts kept its last rate. After two polls without
+			   a new sample, which jitter can give, add zeros. */
+			var count = st.dataRx.length;
+
+			if (Array.isArray(data) && data.length) {
+				for (var i = (st.stamp ? 0 : 1); i < data.length; i++) {
+					if (data[i][0] <= st.stamp) continue;
+					if (i > 0) {
+						var dt = data[i][0] - data[i-1][0];
+						if (dt) {
+							st.dataRx.push((data[i][1] - data[i-1][1]) / dt);
+							st.dataTx.push((data[i][3] - data[i-1][3]) / dt);
+						}
 					}
 				}
+				st.stamp = data[data.length-1][0];
+			}
+
+			if (st.dataRx.length === count) {
+				st.stall = (st.stall || 0) + 1;
+				if (st.stall > 2) {
+					st.dataRx.push(0);
+					st.dataTx.push(0);
+				}
+			} else {
+				st.stall = 0;
 			}
 			st.dataRx = st.dataRx.slice(-st.wanted);
 			st.dataTx = st.dataTx.slice(-st.wanted);
-			st.stamp  = data[data.length-1][0];
 
 			var rxStats = self._seriesStats(st.dataRx);
 			var txStats = self._seriesStats(st.dataTx);
