@@ -14,6 +14,8 @@
 # defaults launcher.sh uses, and for the same reason).
 CONFIG_DIR="${SQM_AUTORATE_DIR:-/usr/share/sqm-autorate}"
 RUN_DIR="${SQM_AUTORATE_RUN_DIR:-/var/run/sqm-autorate}"
+SQM_RUN="${SQM_RUN_SH:-/usr/lib/sqm/run.sh}"
+AUTORATE_INIT="${SQM_AUTORATE_INIT:-/etc/init.d/sqm-autorate}"
 
 # UCI options readable via get_config / settable via set_config -- mirrors
 # what luci-app-sqm-autorate's sqm.js form exposes, plus the autorate-only
@@ -112,6 +114,23 @@ _metrics_json() {
 		"$(_json_str "$base_ul")" "$(_json_str "$min_ul")" "$(_json_str "$max_ul")" "$(_iface_metrics_json "$ul_if")"
 }
 
+# Re-apply sqm-scripts on the section's device. "uci commit" from a shell
+# fires no procd reload trigger, and run.sh start returns early while the
+# device's state file exists, so without a stop+start the qdisc kept its
+# old setup: CAKE stayed on after enabled=0, or never came up after
+# enabled=1. The previous device is stopped too when the section moved.
+_apply_sqm() {
+	local old_if="$1" new_if="$2"
+
+	[ -x "$SQM_RUN" ] || return 1
+	if [ -n "$old_if" ] && [ "$old_if" != "$new_if" ]; then
+		"$SQM_RUN" stop "$old_if" >/dev/null 2>&1
+	fi
+	[ -n "$new_if" ] || return 0
+	"$SQM_RUN" stop "$new_if" >/dev/null 2>&1
+	"$SQM_RUN" start "$new_if" >/dev/null 2>&1
+	return 0
+}
 
 # Ask launcher.sh to kill+respawn only this section's cake-autorate.sh
 # instance, leaving every other WAN's warm state untouched (see
@@ -152,8 +171,9 @@ case "$1" in
 		# get_config/get_metrics: omit "section" to get every sqm queue section.
 		# set_config: pass any subset of the known sqm option names alongside
 		# "section" (e.g. download, max_download, delay_thr_ms, ...); only
-		# recognised options are applied. restart=true bounces the whole
-		# sqm-autorate service afterwards (regenerates and relaunches every
+		# recognised options are applied. restart=true re-applies the
+		# section's SQM qdisc on its device, then bounces the whole
+		# sqm-autorate service (regenerates and relaunches every
 		# instance). For a config change scoped to one WAN, prefer applying
 		# it with restart:false and then calling restart_instance for just
 		# that section instead -- it leaves every other WAN's cake-autorate
@@ -198,6 +218,7 @@ case "$1" in
 					exit 1
 				fi
 
+				old_if=$(uci -q get "sqm.${section}.interface" 2>/dev/null)
 				applied=""
 				for opt in $VALID_OPTIONS; do
 					val=$(echo "$input" | jsonfilter -q -e "@.${opt}" 2>/dev/null)
@@ -226,12 +247,17 @@ case "$1" in
 
 				uci -q commit sqm
 
+				sqm_applied=false
 				if [ "$restart" = "true" ]; then
-					/etc/init.d/sqm-autorate restart >/dev/null 2>&1 &
+					# Synchronous, so the qdisc matches the config when
+					# the call returns; the autorate instances restart
+					# after it, on the new qdisc.
+					_apply_sqm "$old_if" "$(uci -q get "sqm.${section}.interface" 2>/dev/null)" && sqm_applied=true
+					"$AUTORATE_INIT" restart >/dev/null 2>&1 &
 				fi
 
-				printf '{"result":"ok","section":"%s","applied":[%s],"restarted":%s}' \
-					"$(_json_str "$section")" "$applied" "$([ "$restart" = "true" ] && echo true || echo false)"
+				printf '{"result":"ok","section":"%s","applied":[%s],"restarted":%s,"sqm_applied":%s}' \
+					"$(_json_str "$section")" "$applied" "$([ "$restart" = "true" ] && echo true || echo false)" "$sqm_applied"
 				;;
 
 			get_metrics)
