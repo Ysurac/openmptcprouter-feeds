@@ -74,6 +74,17 @@ return L.view.extend({
 		o = s.option(form.Value, 'user', _('User'));
 		o.description = _('Optional: identifies this client on the server (shown in status/logs)');
 		o.rmempty = true;
+		/* mqvpn refuses to start on a name it would not accept from a
+		 * server-side user, and in the generated INI a ' #' or ' ;' starts a
+		 * comment, which would silently cut the name. */
+		o.validate = function(section_id, value) {
+			if (!value)
+				return true;
+			if (/["\\\x00-\x1f]/.test(value) || /\s[#;]/.test(value) ||
+			    unescape(encodeURIComponent(value)).length > 63)
+				return _('Expecting at most 63 bytes, without ", \\, control characters, or # or ; after a space');
+			return true;
+		};
 
 		o = s.option(form.Value, 'key', _('Key'));
 		o.rmempty = false;
@@ -112,7 +123,7 @@ return L.view.extend({
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'reconnect_interval', _('Reconnect interval'));
-		o.description = _('Seconds between reconnection attempts');
+		o.description = _('Seconds before the first reconnection attempt; the wait doubles after each failed attempt, up to 60 seconds');
 		o.datatype = 'uinteger';
 		o.default = '5';
 		/* rmempty = false for the same reason as the flags above: the stored
@@ -130,7 +141,7 @@ return L.view.extend({
 		o.depends('reconnect', '1');
 
 		o = s.option(form.Flag, 'route_via_server', _('Route via server'));
-		o.description = _('Add a host route to the server IP before setting the default route');
+		o.description = _('Send all traffic to the server\'s tunnel address as gateway (0.0.0.0/1 and 128.0.0.0/1 routes); the default route is left as it is');
 		o.default = o.disabled;
 
 		o = s.option(form.Flag, 'no_routes', _('No automatic routes'));
@@ -247,7 +258,7 @@ return L.view.extend({
 		s.addremove = false;
 
 		o = s.option(form.Flag, 'enabled', _('Enable reorder buffer'));
-		o.description = _('Reorder the inner UDP datagrams that arrive out of order over different paths (on by default, also applied on the server)');
+		o.description = _('Reorder the inner UDP datagrams that arrive out of order over different paths (off by default, also applied on the server)');
 		o.default = o.disabled;
 		o.rmempty = false;
 
@@ -260,9 +271,16 @@ return L.view.extend({
 		o.depends('enabled', '1');
 
 		o = s.option(form.Value, 'cap_packets', _('Cap packets'));
-		o.description = _('Max buffered datagrams per flow (power of two)');
+		o.description = _('Max buffered datagrams per flow (power of two, at most 65536)');
 		o.datatype = 'uinteger';
 		o.placeholder = '1024';
+		/* mqvpn ignores any other value with a warning and keeps 1024 */
+		o.validate = function(section_id, value) {
+			var n = +value;
+			if (!value || (n >= 1 && n <= 65536 && (n & (n - 1)) == 0))
+				return true;
+			return _('Expecting a power of two from 1 to 65536');
+		};
 		o.rmempty = true;
 		o.retain = true;
 		o.depends('enabled', '1');

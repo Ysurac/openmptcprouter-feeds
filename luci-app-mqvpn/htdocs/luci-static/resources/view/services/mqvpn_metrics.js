@@ -298,7 +298,6 @@ return view.extend({
 				[ _('Gap resets'), ro.gap_reset_count ],
 				[ _('Ack demotions'), ro.ack_demote_count ],
 				[ _('Dropped: too late'), ro.too_late_drop_count ],
-				[ _('Dropped: too far ahead'), ro.too_far_ahead_drop_count ],
 				[ _('Dropped: duplicate'), ro.duplicate_drop_count ],
 				[ _('Dropped: pool exhausted'), ro.pool_drop_count ],
 				[ _('Dropped: per-flow limit'), ro.per_flow_limit_drop_count ],
