@@ -75,9 +75,11 @@ HOST_CONFIGURE_ARGS = \
 	--dist-compression-formats=gz \
 	--disable-sanitizers \
 	--release-channel=stable \
+	--set=rust.omit-git-hash=true \
 	--enable-cargo-native-static \
 	--bootstrap-cache-path=$(DL_DIR)/rustc \
 	--set=llvm.download-ci-llvm=false \
+	--set=llvm.build-config.LLVM_APPEND_VC_REV=OFF \
 	$(TARGET_CONFIGURE_ARGS)
 
 define Host/Uninstall
