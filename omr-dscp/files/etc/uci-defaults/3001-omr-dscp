@@ -54,7 +54,13 @@ if [ "$(uci -q get firewall.omr_dst_videochat_v4.name)" = "omr_dst_videochatv4" 
 	fi
 fi
 
-if [ -z "$(grep videochat /etc/crontabs/root 2>/dev/null)" ]; then
-	echo '0 1 * * * /usr/bin/wget -O /etc/luci-uploads/videochatipv4.list https://files-update.openmptcprouter.com/videochatipv4.list' >> /etc/crontabs/root
-	echo '1 1 * * * /usr/bin/wget -O /etc/luci-uploads/videochatipv6.list https://files-update.openmptcprouter.com/videochatipv6.list && /etc/init.d/firewall reload' >> /etc/crontabs/root
+# The lists used to be fetched straight into /etc (flash) every day, an
+# empty file or an error page included, and the firewall reloaded each
+# time: omr-dscp-videochat-update only does it when needed
+if grep -q 'videochatipv[46]\.list' /etc/crontabs/root 2>/dev/null; then
+	sed -i '/videochatipv[46]\.list/d' /etc/crontabs/root
+fi
+if ! grep -q omr-dscp-videochat-update /etc/crontabs/root 2>/dev/null; then
+	# One minute after omr-banudpip-update, so the two reloads don't overlap
+	echo '1 1 * * * /usr/bin/omr-dscp-videochat-update' >> /etc/crontabs/root
 fi
