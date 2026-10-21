@@ -143,6 +143,27 @@ _vxlan_backing_off() {
 	return 1
 }
 
+# _proxy_restart <init script> <name>: restart a proxy procd gave up on. One
+# that dies again at once (a port in use, a config it refuses) was restarted
+# every minute, and each restart runs fw4 three times, which empties the sets
+# dnsmasq fills for the bypassed domains. The delay doubles from 1 minute to
+# 30, and starts over once the proxy is seen running.
+_proxy_restart() {
+	local state="/tmp/omr-$1-restart" last="" delay="" now
+	now=$(date +%s)
+	[ -f "$state" ] && read -r last delay < "$state" 2>/dev/null
+	case "$last$delay" in
+		''|*[!0-9]*) last=0 delay=30 ;;
+	esac
+	[ $((now - last)) -lt $((delay - 5)) ] && return 0
+	delay=$((delay * 2))
+	[ "$delay" -gt 1800 ] && delay=1800
+	echo "$now $delay" > "$state"
+	_log "Can't find $2, restart it (if it dies again, next try in $((delay / 60)) min)..."
+	"/etc/init.d/$1" restart >/dev/null 2>&1
+	sleep 5
+}
+
 # Token retry, openmptcprouter-vps restart and firewall push, from the flags
 # of the enabled servers only
 _vps_watchdog() {
@@ -333,15 +354,15 @@ if [ -n "$(printf '%s\n' "$_omr_snapshot" | awk -F= '/password/ { gsub("\047",""
 	# children): the dead-daemon branch could never fire. -x matches the
 	# process name alone, which procd takes from v2ray.main.v2ray_file.
 	if [ "$(pgrep -x "$(_prog_name v2ray.main.v2ray_file v2ray)")" = "" ] && [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ -f /etc/init.d/v2ray ]; then
-		_log "Can't find V2Ray, restart it..."
-		/etc/init.d/v2ray restart >/dev/null 2>&1
-		sleep 5
+		_proxy_restart v2ray V2Ray
+	else
+		rm -f /tmp/omr-v2ray-restart
 	fi
 	# Same as V2Ray above: -f "xray" also matches omr-tracker-xray.
 	if [ "$(pgrep -x "$(_prog_name xray.main.xray_file xray)")" = "" ] && [ "$(uci -q get xray.main.enabled)" = "1" ] && [ -f /etc/init.d/xray ]; then
-		_log "Can't find XRay, restart it..."
-		/etc/init.d/xray restart >/dev/null 2>&1
-		sleep 5
+		_proxy_restart xray XRay
+	else
+		rm -f /tmp/omr-xray-restart
 	fi
 	if [ "$(uci -q get v2ray.main.enabled)" = "1" ] && [ -f /etc/init.d/v2ray ] && [ "$(pgrep -f omr-tracker-v2ray)" = "" ] && [ "$(pgrep -f '/etc/init.d/omr-tracker')" = "" ]; then
 		_log "Can't find omr-tracker-v2ray, start it (procd keeps running trackers)..."
