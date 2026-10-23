@@ -4294,7 +4294,7 @@ _backup_get_and_apply() {
 	backup_data="$(echo "$vps_backup" | jsonfilter -q -e '@.data')"
 	backup_sha256sum="$(echo "$vps_backup" | jsonfilter -q -e '@.sha256sum' | tr 'A-F' 'a-f')"
 	[ -n "$backup_data" ] || return
-	local backup_file
+	local backup_file rc
 	backup_file="$(mktemp /tmp/omr-backup.XXXXXX)" || return
 	echo $backup_data | base64 -d > "$backup_file" 2>/dev/null
 	# sysupgrade -r unpacks over / whatever it is handed: a truncated or
@@ -4314,8 +4314,12 @@ _backup_get_and_apply() {
 		rm -f "$backup_file"
 		return 1
 	fi
+	# its status, not rm's: a restore that failed half-way (a full overlay)
+	# was reported to the Backup page as restored
 	sysupgrade -r "$backup_file"
+	rc=$?
 	rm -f "$backup_file"
+	return $rc
 }
 
 backup_get() {
