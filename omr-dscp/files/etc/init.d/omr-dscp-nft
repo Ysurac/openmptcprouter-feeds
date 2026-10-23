@@ -130,32 +130,163 @@ _valid_rule_hosts() {
 	done
 }
 
+# Collects the domains for _add_dscp_dnsmasq_ipsets, one "D <class> <domain>"
+# line each. The name went to dnsmasq as is: a "/" or a space in it broke
+# the nftset= line, and dnsmasq refused to start.
 _add_dscp_domain() {
-	domain=""; config_get domain "$1" name ""
-	class=""; config_get class "$1" class ""
-	# exact match: "grep $domain" skipped example.com once www.example.com
-	# was in the list (and read the dots as any character)
-	[ -n "$domain" ] && [ -n "$class" ] && ! uci -q get dhcp.omr_dscp_$class.domain | tr ' ' '\n' | grep -qxF -- "$domain" && [ "$(uci -q get dhcp.dnsmasq1.filter_aaaa)" != "1" ]&& {
-		uci -q batch <<-EOF
-			add_list dhcp.omr_dscp_$class.domain="$domain"
-			commit dhcp
-		EOF
-	}
+	local domain class
+	config_get domain "$1" name ""
+	config_get class "$1" class ""
+	domain="${domain#.}"
+	domain="${domain%.}"
+	[ -n "$domain" ] && [ -n "$class" ] || return 0
+	case "$class" in
+		cs[0-7]|ef) ;;
+		*)
+			logger -t "omr-dscp" "Domain $domain: unknown class '$class', ignored"
+			return 0
+			;;
+	esac
+	case "$domain" in
+		*[!A-Za-z0-9._-]*|.*|*..*)
+			logger -t "omr-dscp" "Invalid domain '$domain', ignored"
+			return 0
+			;;
+	esac
+	_dscp_domains="${_dscp_domains}D $class $domain
+"
 }
 
+# Budget for one dnsmasq nftset= line, counted as omr-bypass does (see its
+# _BYPASS_MAX_DNSIPSET_LINE_BYTES): "nftset=", "/<domain>" per domain and
+# ",4#inet#fw4#<set>" per set name. dnsmasq 2.90 read its config lines
+# into a 1025-byte buffer and refused the rest of a longer one as a bad
+# option, then exited: no DNS and no DHCP on the LAN. All the domains of a
+# class were on one line, about 30 more in one class were enough.
+_DSCP_MAX_DNSIPSET_LINE_BYTES=900
+
+# dnsmasq fills the sets of one ipset entry per name: the longest domain
+# that matches, and of two entries with the same domain the one of the
+# first line. A domain omr-bypass routes through a WAN (the YouTube or
+# Netflix hosts of its protocol lists are in the default DSCP list) was
+# then either bypassed or marked, never both, and which one depended on
+# which of the two ran last. So a DSCP domain gets an entry that also
+# names the sets of the omr-bypass entry dnsmasq would pick for it, and so
+# does a domain omr-bypass lists under a DSCP domain (more specific, its
+# entry would win). These entries are put before every other ipset
+# section, so that they win over the omr-bypass ones. omr-bypass runs
+# omr-dscp again when its entries changed.
+# Sections: omr_dscp_<class> for the domains omr-bypass does not list,
+# omr_dscp_<class>_b<n> for those it does (one per omr-bypass set list),
+# and each split in _d1, _d2... under the line budget.
+_add_dscp_dnsmasq_ipsets() {
+	local filter_aaaa c n
+	# dnsmasq answers no AAAA query then, nothing would fill the IPv6 sets.
+	# Only the IPv6 set: this skipped the whole domain, and omr-6in4 sets
+	# filter_aaaa when IPv6 is disabled, so no domain was marked at all.
+	filter_aaaa="$(uci -q get dhcp.dnsmasq1.filter_aaaa)"
+	[ -n "$_dscp_domains" ] || return 0
+	{
+		for c in cs0 cs1 cs2 cs3 cs4 cs5 cs6 cs7 ef; do
+			n="omr_dscp_${c}_4"
+			[ "$disableipv6" = "0" ] && [ "$filter_aaaa" != "1" ] && n="$n omr_dscp_${c}_6"
+			echo "N $c $n"
+		done
+		printf '%s' "$_dscp_domains"
+		uci -q -X show dhcp | sed 's/^/U /'
+	} | awk -v max="$_DSCP_MAX_DNSIPSET_LINE_BYTES" -v q="'" '
+		# the longest DSCP domain, and omr-bypass domain, that k is or is under
+		function dlong(k,  i) {
+			while (!(k in dcls)) {
+				i = index(k, ".")
+				if (!i) return ""
+				k = substr(k, i + 1)
+			}
+			return k
+		}
+		function blong(k,  i) {
+			while (!(k in bsec)) {
+				i = index(k, ".")
+				if (!i) return ""
+				k = substr(k, i + 1)
+			}
+			return k
+		}
+		function slot(g, n,  a, i, m) {
+			sec = gbase[g]
+			if (n > 0) sec = sec "_d" n
+			print "set dhcp." sec "=ipset"
+			m = split(gnames[g], a, " ")
+			for (i = 1; i <= m; i++)
+				print "add_list dhcp." sec ".name=" q a[i] q
+			secs[++ns] = sec
+			gsec[g] = sec; gslot[g] = n; gbytes[g] = ghead[g]; gcnt[g] = 0
+		}
+		function addkey(k, orig,  cls, bw, bn, g, a, i, m, add) {
+			cls = dcls[dlong(k)]
+			bw = blong(k)
+			bn = (bw == "") ? "" : bnames[bsec[bw]]
+			g = cls SUBSEP bn
+			if (!(g in gbase)) {
+				gbase[g] = "omr_dscp_" cls
+				if (bn != "") gbase[g] = gbase[g] "_b" (++nb[cls])
+				gnames[g] = cnames[cls] ((bn == "") ? "" : " " bn)
+				ghead[g] = 7
+				m = split(gnames[g], a, " ")
+				for (i = 1; i <= m; i++) ghead[g] += length(a[i]) + 12
+				slot(g, 0)
+			}
+			add = length(orig) + 1
+			if (gcnt[g] > 0 && gbytes[g] + add > max) slot(g, gslot[g] + 1)
+			print "add_list dhcp." gsec[g] ".domain=" q orig q
+			gbytes[g] += add; gcnt[g]++
+		}
+		$1 == "N" { s = $3; for (i = 4; i <= NF; i++) s = s " " $i; cnames[$2] = s; next }
+		$1 == "D" {
+			d = tolower($3)
+			if (!(d in dcls)) { dcls[d] = $2; dorig[d] = $3; dorder[++nd] = d }
+			next
+		}
+		$1 == "U" {
+			l = substr($0, 3); eq = index(l, "=")
+			v = substr(l, eq + 1)
+			if (split(substr(l, 1, eq - 1), p, ".") == 2) {
+				if (v == "ipset" && first == "") first = nsec
+				nsec++
+				type[p[2]] = v
+				next
+			}
+			if (type[p[2]] != "ipset" || p[2] !~ /^omr_dst_bypass_/) next
+			gsub(q, "", v)
+			m = split(v, a, " ")
+			if (p[3] == "name") {
+				s = ""
+				for (i = 1; i <= m; i++)
+					if (a[i] ~ /^[A-Za-z0-9_.-]+$/) s = s ((s == "") ? "" : " ") a[i]
+				bnames[p[2]] = s
+			} else if (p[3] == "domain") {
+				for (i = 1; i <= m; i++) {
+					d = tolower(a[i]); sub(/^\.+/, "", d)
+					if (d !~ /^[a-z0-9_.-]+$/ || (d in bsec)) continue
+					bsec[d] = p[2]; borig[d] = a[i]; border[++nbd] = d
+				}
+			}
+		}
+		END {
+			for (i = 1; i <= nd; i++) addkey(dorder[i], dorig[dorder[i]])
+			for (i = 1; i <= nbd; i++) {
+				d = border[i]
+				if (!(d in dcls) && dlong(d) != "") addkey(d, borig[d])
+			}
+			if (first != "")
+				for (i = 1; i <= ns; i++) print "reorder dhcp." secs[i] "=" (first + i - 1)
+		}
+	' | uci -q batch
+}
+
+# No commit here: start_service commits each config once, at the end
 _add_dscp_domains_rules() {
 	for class in cs0 cs1 cs2 cs3 cs4 cs5 cs6 cs7 ef; do
-		uci -q batch <<-EOF
-			set dhcp.omr_dscp_${class}=ipset
-			add_list dhcp.omr_dscp_${class}.name="omr_dscp_${class}_4"
-			commit dhcp
-		EOF
-		if [ "$disableipv6" = "0" ]; then
-			uci -q batch <<-EOF
-				add_list dhcp.omr_dscp_${class}.name="omr_dscp_${class}_6"
-				commit dhcp
-			EOF
-		fi
 		uci batch <<-EOF
 			set firewall.omr_dscp_${class}_4=ipset
 			set firewall.omr_dscp_${class}_4.name="omr_dscp_${class}_4"
@@ -178,13 +309,8 @@ _add_dscp_domains_rules() {
 			set firewall.omr_dscp_rule_${class}_4.enabled='1'
 			set firewall.omr_dscp_rule_${class}_4.src='*'
 			set firewall.omr_dscp_rule_${class}_4.dest='*'
+			set firewall.omr_dscp_rule_${class}_4.counter='${dscp_counter:-0}'
 		EOF
-		if [ "$(uci -q get openmptcprouter.settings.debug)" = "true" ]; then
-			uci -q set firewall.omr_dscp_rule_${class}_4.counter='1'
-		else
-			uci -q set firewall.omr_dscp_rule_${class}_4.counter='0'
-		fi
-		uci -q commit firewall
 		if [ "$disableipv6" = "0" ]; then
 			uci -q batch <<-EOF
 				set firewall.omr_dscp_rule_${class}_6=rule
@@ -196,13 +322,8 @@ _add_dscp_domains_rules() {
 				set firewall.omr_dscp_rule_${class}_6.enabled='1'
 				set firewall.omr_dscp_rule_${class}_6.src='*'
 				set firewall.omr_dscp_rule_${class}_6.dest='*'
+				set firewall.omr_dscp_rule_${class}_6.counter='${dscp_counter:-0}'
 			EOF
-			if [ "$(uci -q get openmptcprouter.settings.debug)" = "true" ]; then
-				uci -q set firewall.omr_dscp_rule_${class}_6.counter='1'
-			else
-				uci -q set firewall.omr_dscp_rule_${class}_6.counter='0'
-			fi
-			uci -q commit firewall
 		fi
 	done
 }
@@ -226,6 +347,7 @@ _apply_dscp_rule_fields() {
 		set firewall.${rulename}.dest_ip="$dest_ip"
 		set firewall.${rulename}.proto="$proto"
 		set firewall.${rulename}.enabled='1'
+		set firewall.${rulename}.counter='${dscp_counter:-0}'
 	EOF
 	if [ -n "$rsrc" ]; then
 		uci -q set firewall.${rulename}.src="$rsrc"
@@ -235,11 +357,6 @@ _apply_dscp_rule_fields() {
 		# router's OWN locally-generated traffic, when the section has
 		# no src option at all. Confirmed live on the bench.
 		uci -q delete firewall.${rulename}.src 2>/dev/null
-	fi
-	if [ "$(uci -q get openmptcprouter.settings.debug)" = "true" ]; then
-		uci -q set firewall.${rulename}.counter='1'
-	else
-		uci -q set firewall.${rulename}.counter='0'
 	fi
 	rule_src_ports="$(echo $src_port | sed 's/,/ /g')"
 	rule_dest_ports="$(echo $dest_port | sed 's/,/ /g')"
@@ -321,7 +438,6 @@ _add_dscp_rules() {
 	esac
 	_apply_dscp_rule_fields "omr_dscp_rule$count" "$src" "$dst"
 	[ "$add_output_rule" = "1" ] && _apply_dscp_rule_fields "omr_dscp_rule${count}_output" "" "wan"
-	uci -q commit firewall
 
 }
 
@@ -361,12 +477,14 @@ _remove_old_ipset_dnsmasq() {
 	esac
 	[ -n "$(uci -q get dhcp.${1}.name | grep omr)" ] && uci -q delete dhcp.$1
 }
+# A case, not "echo | grep": these run for every ipset or firewall section,
+# two processes each, under omr-bypass' lock
 _remove_ipset_dnsmasq() {
-	[ -n "$(echo $1 | grep omr_dscp)" ] && uci -q delete dhcp.$1
+	case "$1" in *omr_dscp*) uci -q delete dhcp.$1 ;; esac
 }
 
 _remove_rules() {
-	([ -n "$(echo $1 | grep omr_dscp)" ] || [ -n "$(echo $1 | grep omr6_dscp)" ]) && uci -q delete firewall.$1
+	case "$1" in *omr_dscp*|*omr6_dscp*) uci -q delete firewall.$1 ;; esac
 }
 
 _setup_tunnel() {
@@ -387,8 +505,6 @@ _cleanup() {
 	config_foreach _remove_old_ipset_dnsmasq ipset
 	config_load firewall
 	config_foreach _remove_rules
-	uci -q commit dhcp
-	uci -q commit firewall
 }
 
 # omr-bypass builds its firewall and dhcp sections under this lock, as
@@ -426,18 +542,46 @@ _uci_unlock() {
 _dscp_fw_state() {
 	uci -q -X show firewall | grep -E '^firewall\.omr6?_dscp'
 }
+# the order of the ipset sections too: of two entries for a domain, dnsmasq
+# fills the sets of the first one
 _dscp_dhcp_state() {
-	uci -q -X show dhcp | grep -E '^dhcp\.(omr_dscp|cfg[0-9a-f]+\.(ipset|name)=.*omr)'
+	uci -q -X show dhcp | grep -E '^dhcp\.([^.]+=ipset$|omr_dscp|cfg[0-9a-f]+\.(ipset|name)=.*omr)'
+}
+
+# _uci_commit_changed <config> <md5 of its "uci show" before the run>
+# <its pending changes before the run>: a run rebuilds every section it
+# owns, and committing that wrote the same config to flash again on each
+# commit of the openmptcprouter config. What it staged is dropped when the
+# result is the same; someone else's pending changes cannot be told apart
+# from this run's, they are committed along as before.
+_uci_commit_changed() {
+	if [ -n "$3" ] || [ "$(uci -q -X show "$1" | md5sum)" != "$2" ]; then
+		uci -q commit "$1"
+	else
+		uci -q revert "$1"
+	fi
 }
 
 start_service() {
-	local fw_before dhcp_before
+	local fw_before dhcp_before fw_all dhcp_all fw_pending dhcp_pending
 	fw_before="$(_dscp_fw_state | md5sum)"
-	dhcp_before="$(_dscp_dhcp_state | md5sum)"
 	_uci_lock
+	# under the lock: it covers the omr-bypass sections, which a run of
+	# omr-bypass changes
+	dhcp_before="$(_dscp_dhcp_state | md5sum)"
+	# Everything is staged and each config committed once, at the end: a
+	# commit per section rewrote dhcp and firewall on flash 70 to 90 times
+	# under omr-bypass' lock, and an omr-bypass run waiting for it gave up
+	# after 15 s and dropped its reload.
+	fw_all="$(uci -q -X show firewall | md5sum)"
+	dhcp_all="$(uci -q -X show dhcp | md5sum)"
+	fw_pending="$(uci -q changes firewall)"
+	dhcp_pending="$(uci -q changes dhcp)"
 	# Cleanup
 	_cleanup
 	disableipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
+	dscp_counter=0
+	[ "$(uci -q get openmptcprouter.settings.debug)" = "true" ] && dscp_counter=1
 	config_load dscp
 	# Add chains
 	_add_dscp_domains_rules
@@ -448,9 +592,11 @@ start_service() {
 	# Add rules base on the user configuration
 	count=0
 	config_foreach _add_dscp_rules classify
+	_dscp_domains=""
 	config_foreach _add_dscp_domain domains
-	uci -q commit dhcp
-	uci -q commit firewall
+	_add_dscp_dnsmasq_ipsets
+	_uci_commit_changed dhcp "$dhcp_all" "$dhcp_pending"
+	_uci_commit_changed firewall "$fw_all" "$fw_pending"
 	_uci_unlock
 	# Every commit of the openmptcprouter config gets here (reload trigger),
 	# and this ran an fw4 reload then an fw4 restart: the restart deletes the
@@ -460,13 +606,17 @@ start_service() {
 	# Nothing changed: no fw4 run at all, unless the sets are not loaded.
 	if [ "$(_dscp_fw_state | md5sum)" != "$fw_before" ] || \
 	   ! nft -t list set inet fw4 omr_dscp_cs0_4 >/dev/null 2>&1; then
-		# A set whose type changed cannot be redeclared by a reload. fw4
-		# returns the status of its includes, not of the nft load, so such
-		# a refused ruleset (the running one stays) never got here: its
-		# check mode tries the same ruleset against the running one.
-		if ! fw4 -q reload || ! fw4 -q check; then
+		# fw4 reload returns the status of its includes (or 1 when fw4 is
+		# not loaded), not of the nft load: a ruleset nft refused (a set
+		# whose type changed cannot be redeclared, the running one stays)
+		# is told by its check mode, which tries the same ruleset against
+		# the running one. No restart then: fw4 restart runs that same
+		# check first and refuses to go on.
+		if ! fw4 -q reload; then
 			logger -t "omr-dscp" "fw4 reload failed, restarting it"
 			fw4 -q restart || logger -t "omr-dscp" "fw4 restart refused: the firewall ruleset has errors"
+		elif ! fw4 -q check; then
+			logger -t "omr-dscp" "fw4 refused the firewall ruleset: it has errors"
 		fi
 	fi
 	# dnsmasq builds its nftset lines from the dhcp config when it starts
@@ -476,6 +626,8 @@ start_service() {
 stop_service() {
 	_uci_lock
 	_cleanup
+	uci -q commit dhcp
+	uci -q commit firewall
 	_uci_unlock
 	fw4 -q reload
 }

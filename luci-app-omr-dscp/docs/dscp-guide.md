@@ -102,10 +102,9 @@ landing in that ipset. Practically that means:
   `openmptcprouter.settings.disable_ipv6` is exactly `0` — unset/empty
   counts as skip too, same as `1`. On the bench used for the screenshot
   above (`disable_ipv6='1'`), only the IPv4 ipsets exist.
-- **A domain added here is silently ignored if
-  `dhcp.dnsmasq1.filter_aaaa` is `1`** — the hook that appends the domain
-  to its class's ipset explicitly requires AAAA filtering to be off. If
-  entries you add don't seem to take effect, check that setting first.
+- When `dhcp.dnsmasq1.filter_aaaa` is `1` (set by omr-6in4 when IPv6 is
+  disabled), dnsmasq answers no AAAA query, so it is not given the `_6`
+  ipsets: domains are only marked over IPv4 then.
 
 ### Not on this page: video-chat traffic
 

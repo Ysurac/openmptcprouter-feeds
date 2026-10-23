@@ -911,6 +911,25 @@ _dscp_ip() {
 	fi
 }
 
+# The dnsmasq ipset sections as dnsmasq sees them: their domains, sets and
+# order
+_dnsipset_state() {
+	uci -q -X show dhcp | grep -E '^dhcp\.omr_dst_bypass_[^.]*(=|\.(name|domain)=)'
+}
+
+# dnsmasq fills the sets of one ipset entry per domain, so omr-dscp gives a
+# domain it marks and omr-bypass routes an entry of its own that also names
+# the omr-bypass sets dnsmasq would have used (see its init). It has to look
+# at them again when they changed, or a domain stays routed through a WAN
+# after its rule is removed. Only when omr-dscp runs (its firewall sections
+# exist) and has domains.
+_omr_dscp_resync() {
+	[ -x /etc/init.d/omr-dscp ] || return 0
+	uci -q get firewall.omr_dscp_rule_cs0_4 >/dev/null || return 0
+	uci -q show dscp 2>/dev/null | grep -q '=domains$' || return 0
+	/etc/init.d/omr-dscp reload
+}
+
 # _dnsipset_open <family> <section> <set name>...: make <section> a dnsmasq
 # ipset that names exactly these sets, and load the size of its nftset= line
 # into the family's counters. A plain start keeps the domains an earlier run
@@ -2704,6 +2723,7 @@ start_service() {
 	done
 	echo "$$" > "$_lock/pid"
 	trap "rm -rf '$_lock'" EXIT HUP INT TERM
+	_dnsipset_md5="$(_dnsipset_state | md5sum)"
 	# A reload clears the per-entry state only now that it holds the lock:
 	# cleared before, by a call that then gave up waiting, it was gone for
 	# good once the running instance committed its own changes.
@@ -3049,6 +3069,7 @@ start_service() {
 
 	rm -rf "$_lock"
 	trap - EXIT HUP INT TERM
+	[ "$(_dnsipset_state | md5sum)" != "$_dnsipset_md5" ] && _omr_dscp_resync
 }
 
 stop_service() {
@@ -3078,6 +3099,7 @@ stop_service() {
 	[ -n "$_fw_delete_batch" ] && printf '%s' "$_fw_delete_batch" | _uci_batch
 	uci -q commit firewall
 	[ -z "$RELOAD" ] && { fw4 restart || logger -t "omr-bypass" "ERROR: fw4 restart failed"; }
+	_omr_dscp_resync
 }
 
 service_triggers() {
