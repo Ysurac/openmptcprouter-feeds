@@ -590,12 +590,27 @@ _set_mqvpn_vps() {
 _set_wireguard_vps() {
 	local enabled port key
 	ipskey=""
+	# Only the tunnels mptcpovervpn makes to the VPS (wg<wan>, a
+	# 10.255.247.x address, its public key kept next to the private one):
+	# one the user made in LuCI has no public_key option, and its empty
+	# key made the VPS refuse the whole list, those peers with it
 	_get_wg_ipskey() {
-		local interface=$1
+		local interface=$1 addr
 		proto=$(uci -q get network.${interface}.proto)
 		if [ "$proto" = "wireguard" ]; then
-			ip="$(uci -q get network.${interface}.addresses | cut -d/ -f1)"
+			ip=""
+			for addr in $(uci -q get network.${interface}.addresses); do
+				case "${addr%%/*}" in
+					10.255.247.|10.255.247.*[!0-9]*) ;;
+					10.255.247.*) ip="${addr%%/*}"; break ;;
+				esac
+			done
 			key="$(uci -q get network.${interface}.public_key)"
+			# a WireGuard key is 32 bytes in base64: 44 characters
+			case "$key" in
+				*[!A-Za-z0-9+/=]*) key="" ;;
+			esac
+			[ -n "$ip" ] && [ "${#key}" = 44 ] || return 0
 			if [ -z "$ipskey" ]; then
 				ipskey='{"ip": "'$ip'", "key": "'$key'"}'
 			else
