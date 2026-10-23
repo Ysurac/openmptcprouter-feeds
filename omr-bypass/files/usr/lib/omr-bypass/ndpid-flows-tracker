@@ -9,38 +9,113 @@ SOCK="/var/run/ndpid/distributor.sock"
 FLOWS_DIR="/tmp/ndpid-flows"
 PIDFILE="/var/run/omr-bypass-ndpid-flows.pid"
 MAX_FLOWS=2000
+# events between two sweeps of stale flow files, and while the directory is full
+SWEEP_EVERY=512
+SWEEP_AT_CAP=64
+NL='
+'
 
 TCP_HOST=$(uci -q get ndpid.distributor.tcp_address 2>/dev/null)
 TCP_PORT=$(uci -q get ndpid.distributor.tcp_port 2>/dev/null)
 TCP_HOST=${TCP_HOST:-127.0.0.1}
 TCP_PORT=${TCP_PORT:-7000}
 
+# _idle_s <option> <default>: an nDPId tuning time (microseconds) in seconds,
+# with the defaults ndpid.init uses
+_idle_s() {
+	local v
+	v=$(uci -q get "ndpid.tuning.$1" 2>/dev/null)
+	case "$v" in ""|*[!0-9]*|???????????????????*) v="$2" ;; esac
+	case "$v" in
+		???????*) echo "${v%??????}" ;;
+		*) echo 0 ;;
+	esac
+}
+
+# nDPId sends an "update" for a live flow at least once per idle time, and
+# every event of a flow rewrites or touches its file. A file older than the
+# longest idle time is a flow whose end or idle event was missed (nc was
+# reconnecting, ndpisrvd restarted): without a sweep these piled up to
+# MAX_FLOWS and the view stopped taking any new flow.
+_stale=$(_idle_s tcp_max_idle_time 7440000000)
+_v=$(_idle_s tcp_max_post_end_flow_time 120000000); _stale=$((_stale + _v))
+for _o in udp_max_idle_time:180000000 generic_max_idle_time:600000000 icmp_max_idle_time:120000000; do
+	_v=$(_idle_s "${_o%%:*}" "${_o#*:}")
+	[ "$_v" -gt "$_stale" ] && _stale=$_v
+done
+_v=$(_idle_s flow_scan_interval 10000000)
+STALE_MIN=$(( (_stale + 2 * _v) / 60 + 2 ))
+
+# The files are written as root from what the nobody-owned nDPId sends: the
+# directory must be root's own, not a link someone else left in /tmp.
+if [ -L "$FLOWS_DIR" ] || { [ -e "$FLOWS_DIR" ] && ! { [ -d "$FLOWS_DIR" ] && [ -O "$FLOWS_DIR" ]; }; }; then
+	rm -rf "$FLOWS_DIR"
+fi
 mkdir -p "$FLOWS_DIR"
+if [ -L "$FLOWS_DIR" ] || [ ! -d "$FLOWS_DIR" ] || [ ! -O "$FLOWS_DIR" ]; then
+	logger -t omr-bypass-ndpid-flows "$FLOWS_DIR is not a directory of its own, not tracking flows"
+	exit 1
+fi
 echo $$ > "$PIDFILE"
 
-_get_json_field() {
-	echo "$1" | jsonfilter -q -e "@.$2" 2>/dev/null
+_sweep() {
+	_since_sweep=0
+	find "$FLOWS_DIR" -maxdepth 1 -type f -name '*.json' -mmin +"$STALE_MIN" -print0 2>/dev/null | xargs -0 rm -f
+}
+
+# _flow_count: the number of flow files, in _n
+_flow_count() {
+	set -- "$FLOWS_DIR"/*.json
+	if [ -e "$1" ]; then _n=$#; else _n=0; fi
 }
 
 while true; do
+	_sweep
 	[ ! -S "$SOCK" ] && sleep 5 && continue
 	nc "$TCP_HOST" "$TCP_PORT" 2>/dev/null | while IFS= read -r line; do
+		# Most lines are packet, analyse or daemon events: skip them
+		# before forking jsonfilter
+		case "$line" in
+			*'"flow_event_name":"new"'*|*'"flow_event_name":"detected"'*|\
+			*'"flow_event_name":"detection-update"'*|*'"flow_event_name":"guessed"'*|\
+			*'"flow_event_name":"update"'*|*'"flow_event_name":"end"'*|\
+			*'"flow_event_name":"idle"'*|*'"flow_event_name":"not-detected"'*) ;;
+			*) continue ;;
+		esac
 		json="${line:5}"
 		[ -z "$json" ] && continue
 
-		event=$(_get_json_field "$json" "flow_event_name")
-		fid=$(_get_json_field "$json" "flow_id")
-		[ -z "$fid" ] && continue
+		_since_sweep=$((_since_sweep + 1))
+		[ "$_since_sweep" -ge "$SWEEP_EVERY" ] && _sweep
+
+		# one line per field, so both must be there
+		out=$(printf '%s' "$json" | jsonfilter -q -e '@.flow_event_name' -e '@.flow_id' 2>/dev/null)
+		case "$out" in *"$NL"*) ;; *) continue ;; esac
+		event="${out%%"$NL"*}"
+		fid="${out#*"$NL"}"
+		# The flow id names a file root writes: "../../etc/hotplug.d/iface/x"
+		# was a root-owned file with nDPId's content anywhere
+		case "$fid" in ""|*[!0-9]*) continue ;; esac
+		f="${FLOWS_DIR}/${fid}.json"
 
 		case "$event" in
 			end|idle|not-detected)
-				rm -f "${FLOWS_DIR}/${fid}.json"
+				rm -f "$f"
+				;;
+			update)
+				# the flow is still alive: keep its detection, not stale
+				[ -f "$f" ] && touch "$f"
 				;;
 			new|detected|detection-update|guessed)
-				count=$(ls "$FLOWS_DIR" 2>/dev/null | wc -l)
-				if [ "$count" -lt "$MAX_FLOWS" ] || [ -f "${FLOWS_DIR}/${fid}.json" ]; then
-					printf '%s' "$json" > "${FLOWS_DIR}/${fid}.json"
+				if [ ! -f "$f" ]; then
+					_flow_count
+					if [ "$_n" -ge "$MAX_FLOWS" ] && [ "$_since_sweep" -ge "$SWEEP_AT_CAP" ]; then
+						_sweep
+						_flow_count
+					fi
+					[ "$_n" -lt "$MAX_FLOWS" ] || continue
 				fi
+				printf '%s' "$json" > "$f"
 				;;
 		esac
 	done
