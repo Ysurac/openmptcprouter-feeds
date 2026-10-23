@@ -21,6 +21,72 @@ SOCK="/var/run/ndpid/distributor.sock"
 proto_list="$1"
 [ -z "$proto_list" ] && exit 1
 
+# Everything below comes from the stream nobody-owned nDPId feeds, or goes
+# into an nft command line: no globbing of either
+set -f
+
+# _valid_ip4 / _valid_ip6 <address>: as in omr-bypass-nft. nft joins its
+# arguments into one command, so a dst_ip "1.2.3.4 }; flush ruleset" sent
+# by nDPId was run as root.
+_valid_ip4() {
+	local IFS=. __o
+	case "$1" in ""|*[!0-9.]*|.*|*.|*..*) return 1 ;; esac
+	set -- $1
+	[ $# -eq 4 ] || return 1
+	for __o in "$@"; do
+		case "$__o" in ????*|0?*) return 1 ;; esac
+		[ "$__o" -le 255 ] || return 1
+	done
+}
+
+_valid_ip6() {
+	local __a="$1" __g __n=0 IFS=:
+	case "$__a" in *:*) ;; *) return 1 ;; esac
+	case "$__a" in *[!0-9A-Fa-f:.]*|*:::*|*::*::*|:[!:]*|*[!:]:) return 1 ;; esac
+	# an embedded IPv4 address counts as two groups
+	case "$__a" in
+		*.*)
+			_valid_ip4 "${__a##*:}" || return 1
+			__a="${__a%:*}:0:0"
+			;;
+	esac
+	set -- $__a
+	for __g in "$@"; do
+		[ -n "$__g" ] || continue
+		case "$__g" in *.*|?????*) return 1 ;; esac
+		__n=$((__n + 1))
+	done
+	case "$__a" in
+		*::*) [ "$__n" -le 7 ] ;;
+		*) [ "$__n" -eq 8 ] ;;
+	esac
+}
+
+# The set names are made of the proto, interface and DSCP class of each
+# entry. The proto keeps what omr-bypass-nft's _rule_proto allows, as
+# nDPI names have dashes (JSON-RPC, NAT-PMP) and so do nft set names.
+_list=""
+for entry in $proto_list; do
+	_f="${entry}::::"
+	bp="${_f%%:*}"; _f="${_f#*:}"
+	intf="${_f%%:*}"; _f="${_f#*:}"
+	_f="${_f#*:}"
+	dscp="${_f%%:*}"
+	case "$bp" in
+		""|*[!A-Za-z0-9_.-]*) entry="" ;;
+	esac
+	case "$intf$dscp" in
+		*[!A-Za-z0-9_]*) entry="" ;;
+	esac
+	if [ -z "$entry" ]; then
+		logger -t omr-bypass "nDPId consumer: invalid entry '$bp:$intf:$dscp' ignored"
+		continue
+	fi
+	_list="$_list $entry"
+done
+proto_list="${_list# }"
+[ -z "$proto_list" ] && exit 1
+
 echo $$ > "$PIDFILE"
 
 # ndpisrvd exposes two distributor endpoints:
@@ -72,12 +138,16 @@ while true; do
 		proto_str=$(echo "$json" | jsonfilter -q -e '@.ndpi.proto' 2>/dev/null)
 		[ -z "$proto_str" ] && continue
 
-		# ndpisrvd uses "dst_ip" (not "l3_dst4"/"l3_dst6") and "l3_proto" ("ip4"/"ip6")
+		# ndpisrvd uses "dst_ip" (not "l3_dst4"/"l3_dst6"); the address
+		# itself tells its family
 		dst_ip=$(echo "$json" | jsonfilter -q -e '@.dst_ip' 2>/dev/null)
-		[ -z "$dst_ip" ] && continue
-		l3_proto=$(echo "$json" | jsonfilter -q -e '@.l3_proto' 2>/dev/null)
-		is_v6=0
-		[ "$l3_proto" = "ip6" ] && is_v6=1
+		if _valid_ip4 "$dst_ip"; then
+			is_v6=0
+		elif _valid_ip6 "$dst_ip"; then
+			is_v6=1
+		else
+			continue
+		fi
 
 		# Normalize nDPI proto string (e.g. "TLS.Google" -> app="google", base="tls")
 		app=$(echo "$proto_str" | tr '.' '\n' | tail -1 | tr '[:upper:]' '[:lower:]')
