@@ -110,6 +110,54 @@ _proxy_country() {
 	esac
 }
 
+# The failure a monitor only tracker reported (see 002-error): nothing
+# clears it once the interface is tracked normally again or not tracked at
+# all, and the status page kept showing the interface in error
+_clear_monitor_state() {
+	omr_state_del openmptcprouter "$1" monitor_state
+}
+
+# _release_down <interface> [<device>]: the interface is no longer tracked
+# while its tracker had it down. "state" down then stayed until a reboot,
+# nothing else clears it, and mptcp, omr-bypass, omr-quota and keepalived-ha
+# kept the interface out of use. Its tracker, when there was one, only stops
+# once procd has the new instances: wait for it, its last post-tracking run
+# could set the state down again.
+_release_down() {
+	local _wait=0 _dev="$2"
+	while _tracker_running "$1" && [ "$_wait" -lt 35 ]; do
+		sleep 1
+		_wait=$((_wait + 1))
+	done
+	# Still running: tracked again meanwhile
+	_tracker_running "$1" && return 0
+	[ "$(omr_state_get "openmptcprouter.$1.state")" = "down" ] || return 0
+	omr_state_del openmptcprouter "$1" state
+	logger -t "omr-tracker" "$1 is no longer tracked, it is not kept down any more"
+	# omr-bypass's copy of the last tracker status (its 025 hook), then its
+	# output WAN lists and source policies, which only avoid a down WAN
+	rm -f "/var/run/omr-bypass-failover/track.$1"
+	[ -x /usr/lib/omr-bypass/wan-failover ] && /usr/lib/omr-bypass/wan-failover hotplug "$1" >/dev/null 2>&1 </dev/null
+	# Back in MPTCP as configured: what 003-up does on a recovery. The mptcp
+	# init skipped it while the state was down.
+	if [ -z "$_dev" ]; then
+		_dev=$(ifstatus "$1" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
+		case "$_dev" in
+			*@*) _dev=$(ifstatus "$1" 2>/dev/null | jsonfilter -q -e '@["device"]') ;;
+		esac
+	fi
+	[ -n "$_dev" ] && [ -x /etc/init.d/mptcp ] && /etc/init.d/mptcp reload "$_dev" >/dev/null 2>&1
+	return 0
+}
+
+# _untracked <interface> [<device>]: no tracker is launched for the interface
+_untracked() {
+	_clear_monitor_state "$1"
+	[ "$(omr_state_get "openmptcprouter.$1.state")" = "down" ] || return 0
+	# Detached: it waits for the tracker to stop, which this script must not
+	( _release_down "$1" "$2" </dev/null >/dev/null 2>&1 & )
+}
+
 _launch_tracker() {
 	# *_6: DHCPv6 companion interfaces are tracked through their parent
 	case "$1" in
@@ -122,9 +170,6 @@ _launch_tracker() {
 	local hosts hosts6 timeout count tries tries_up interval interval_tries post_interval post_interval_down options type enabled wait_test ipv6 proto server_http_test server_test check_quality country size max_ttl failure_loss failure_interval failure_latency recovery_loss recovery_latency failure_congestion recovery_congestion family reliability latency_ip latency_ip6 monitor_only
 	_validate_section "defaults" "defaults"
 	_validate_section "interface" "$1"
-	# The failure a monitor only tracker reported (see 002-error), left
-	# behind once the interface is tracked normally again
-	[ "$monitor_only" = "1" ] || omr_state_del openmptcprouter "$1" monitor_state
 	[ -z "$country" ] && country="world"
 	_validate_section_hosts "hosts_defaults" "$country"
 
@@ -145,12 +190,13 @@ _launch_tracker() {
 	config_get disabled "$1" disabled
 
 	#[ -z "$ifname" ] || [ -z "$multipath" ] || [ "$multipath" = "off" ] && [ "$1" != "glorytun" ] && [ "$1" != "omrvpn" ] && [ "$( uci -q get openmptcprouter.$1.multipathvpn)" != "1" ] && return
-	([ -z "$multipath" ] || [ "$multipath" = "off" ]) && [ "$1" != "glorytun" ] && [ "$1" != "omrvpn" ] && [ "$( uci -q get openmptcprouter.$1.multipathvpn)" != "1" ] && return
-	[ "$1" = "omrvpn" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" = "none" ] && return
-	[ "${ifenabled}" = "0" ] && return
-	[ "${enabled}" = "0" ] && return
-	[ "${disabled}" = "1" ] && return
-	[ -z "${hosts}" ] && [ -z "${latency_ip}" ] && [ "$type" != "none" ] && return
+	([ -z "$multipath" ] || [ "$multipath" = "off" ]) && [ "$1" != "glorytun" ] && [ "$1" != "omrvpn" ] && [ "$( uci -q get openmptcprouter.$1.multipathvpn)" != "1" ] && { _untracked "$1" "$ifname"; return; }
+	[ "$1" = "omrvpn" ] && [ "$(uci -q get openmptcprouter.settings.vpn)" = "none" ] && { _untracked "$1" "$ifname"; return; }
+	[ "${ifenabled}" = "0" ] && { _untracked "$1" "$ifname"; return; }
+	[ "${enabled}" = "0" ] && { _untracked "$1" "$ifname"; return; }
+	[ "${disabled}" = "1" ] && { _untracked "$1" "$ifname"; return; }
+	[ -z "${hosts}" ] && [ -z "${latency_ip}" ] && [ "$type" != "none" ] && { _untracked "$1" "$ifname"; return; }
+	[ "$monitor_only" = "1" ] || _clear_monitor_state "$1"
 	ifstatus=$(ifstatus "$1" | jsonfilter -q -e '@["up"]')
 	ifdevice=$(ifstatus "$1" | jsonfilter -q -e '@["device"]')
 	#[ "${ifstatus}" = "false" ] && [ -z "${ifdevice}" ] && return
@@ -685,6 +731,14 @@ start_service() {
 stop_service() {
 	# Trackers are going down: any lock left behind would be stale.
 	_cleanup_locks "$1"
+	# Stopped for good, the service being disabled: no tracker comes back
+	# before a reboot to clear a "down" (see _release_down). Not on a plain
+	# stop, mostly half of a stop and start (wizard, proxy change, restart),
+	# where putting a WAN in error back in MPTCP until the start only churns.
+	if [ -z "$1" ] && [ -z "$_omr_restarting" ] && ! enabled; then
+		config_load network
+		config_foreach _untracked interface
+	fi
 }
 
 service_triggers() {
@@ -725,7 +779,9 @@ restart() {
 			*"/services/omr-tracker/"*) echo "$$" 2>/dev/null >/sys/fs/cgroup/cgroup.procs ;;
 		esac
 		trap '' TERM
+		_omr_restarting=1
 		stop
+		_omr_restarting=""
 		trap - TERM
 		# stop_service removed the locks before the trackers got the TERM, and
 		# a tracker finishes the post-tracking hook it runs first: its 003-up

@@ -81,6 +81,29 @@ if [ "$OMR_TRACKER_MONITOR_ONLY" = "1" ]; then
 			_log "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) is down${OMR_TRACKER_STATUS_MSG:+ because $OMR_TRACKER_STATUS_MSG}, nothing changed (monitor only)"
 			_alert_down
 		fi
+		# Monitor only turned on while the interface was down in normal
+		# mode: it stayed marked down, without MPTCP, out of the default
+		# routes and of the VPN paths, while the help says it stays in use.
+		# 003-up only puts it back on an OK, so run once what a recovery
+		# does. Not while netifd has it down: there is nothing to use yet,
+		# the next cycle checks again.
+		if [ "$interface_up" = "true" ] && [ "$(omr_state_get "openmptcprouter.$OMR_TRACKER_INTERFACE.state")" = "down" ]; then
+			_log "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) was set down before monitor only, put it back in use"
+			# No previous status: a recovery without the up mail and alert,
+			# the interface still fails its checks. 025 (omr-bypass, another
+			# package) puts the interface back in the output WAN lists and
+			# source policies, which kept avoiding it on the ERROR it saw.
+			for _omr_hook in 003-up 004-glorytun-udp-path 005-mqvpn-path 025-omr-bypass-failover; do
+				[ -x "${OMR_LIB_DIR:-/usr/share/omr/lib}/../post-tracking.d/$_omr_hook" ] || continue
+				(
+					OMR_TRACKER_STATUS="OK"
+					OMR_TRACKER_PREV_STATUS=""
+					# shellcheck source=/dev/null
+					. "${OMR_LIB_DIR:-/usr/share/omr/lib}/../post-tracking.d/$_omr_hook"
+				)
+			done
+			env -i ACTION="connecting" INTERFACE="$OMR_TRACKER_INTERFACE" DEVICE="$OMR_TRACKER_DEVICE" /sbin/hotplug-call iface >/dev/null 2>&1
+		fi
 	elif [ "$OMR_TRACKER_PREV_STATUS" != "OK" ]; then
 		omr_state_del openmptcprouter "$OMR_TRACKER_INTERFACE" monitor_state
 	fi
