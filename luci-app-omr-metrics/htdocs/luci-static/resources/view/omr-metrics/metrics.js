@@ -639,7 +639,7 @@ return view.extend({
 	 *  collecting this session (subflows[], mptcp_endpoint, rwnd/swnd).  *
 	 * ------------------------------------------------------------------ */
 
-	_limitFactors: function(iface, isVpn) {
+	_limitFactors: function(iface, isVpn, mptcpInUse) {
 		var factors  = [];
 		var tc       = iface.tc             || {};
 		var bbr      = iface.bbr            || {};
@@ -658,16 +658,21 @@ return view.extend({
 					label: _('No MPTCP endpoint'),
 					detail: _('No MPTCP endpoint is registered for this WAN -- it cannot carry a subflow at all, ' +
 					          'regardless of how healthy the link itself is. Usually fixed by an interface restart.') });
-			} else if (iface.status === 'up' && !subflows.length) {
-				factors.push({ severity: 'warning', scope: 'aggregation',
-					label: _('No active subflow'),
-					detail: _('An MPTCP endpoint is registered for this WAN but no subflow is currently established ' +
-					          'on it, so it is not contributing to aggregation right now.') });
 			} else if (mep.backup) {
+				/* Before the subflow check: a backup WAN without a subflow
+				 * is what backup means, not a fault */
 				factors.push({ severity: 'info', scope: 'aggregation',
 					label: _('Backup only'),
 					detail: _('This WAN is marked backup -- it only takes over if active paths fail, it is not ' +
 					          'combined with them for extra bandwidth while they are healthy.') });
+			} else if (mptcpInUse && (iface.status === 'up' || iface.status === 'online') && !subflows.length) {
+				/* Only while another WAN carries a subflow: with a UDP VPN
+				 * and no proxy, or no traffic at all, no WAN has one and
+				 * every WAN was flagged */
+				factors.push({ severity: 'warning', scope: 'aggregation',
+					label: _('No active subflow'),
+					detail: _('An MPTCP endpoint is registered for this WAN but no subflow is currently established ' +
+					          'on it, so it is not contributing to aggregation right now.') });
 			}
 		}
 
@@ -818,7 +823,7 @@ return view.extend({
 	 *  Render one interface card                                           *
 	 * ------------------------------------------------------------------ */
 
-	_renderCard: function(iface, forecast, decision, isVpn) {
+	_renderCard: function(iface, forecast, decision, isVpn, mptcpInUse) {
 		var self   = this;
 		var name   = iface.interface || '?';
 		var sig    = iface.signal      || {};
@@ -1013,7 +1018,7 @@ return view.extend({
 				E('div', {}, title),
 				E('span',   { style: 'font-size:0.8em;color:#888' }, [ _('Updated: ') + tsStr ])
 			]),
-			self._renderLimitFactors(self._limitFactors(iface, isVpn)),
+			self._renderLimitFactors(self._limitFactors(iface, isVpn, mptcpInUse)),
 			E('div', { style: 'display:flex;flex-wrap:wrap;gap:10px' }, cols)
 		];
 
@@ -1077,9 +1082,15 @@ return view.extend({
 			(self._isVpnIface(iface.interface) ? vpns : wans).push(iface);
 		});
 
+		/* MPTCP carries traffic through the router right now: some WAN has
+		 * a subflow (a proxy or a TCP VPN in use, and connections open) */
+		var mptcpInUse = wans.some(function(iface) {
+			return (iface.subflows || []).length > 0;
+		});
+
 		wans.forEach(function(iface) {
 			var ifaceFc = (forecast && forecast[iface.interface]) || null;
-			container.appendChild(self._renderCard(iface, ifaceFc, decision || null, false));
+			container.appendChild(self._renderCard(iface, ifaceFc, decision || null, false, mptcpInUse));
 		});
 
 		if (vpns.length) {
