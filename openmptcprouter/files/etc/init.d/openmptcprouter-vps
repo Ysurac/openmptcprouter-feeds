@@ -2202,7 +2202,11 @@ set_mptcp_dscp_vps() {
 
 _get_weight_vps_pin() {
 	local iface="$1" weight remote_id id ids _mw
+	# Unset is 100, as in the router's map (the MPTCP page leaves it unset
+	# when its Weight field is emptied). The WAN was left out of the pins,
+	# which is 100 only on a VPS that drops the ids it no longer gets.
 	weight="$(uci -q get network.${iface}.multipath_weight)"
+	weight="${weight:-100}"
 	# The VPS model's weight, kept in /var/state by omr-weight-sync while it
 	# runs with decision weights on, is the one in the router's map: send that
 	_mw="$(uci -q -P /var/state get openmptcprouter.${iface}.decision_weight)"
@@ -2214,7 +2218,9 @@ _get_weight_vps_pin() {
 	   [ "$(uci -q get omr-metrics.settings.enable_decision_weights)" != "0" ]; then
 		weight="$_mw"
 	fi
-	[ -z "$weight" ] && return
+	case "$weight" in
+		''|*[!0-9]*) return ;;
+	esac
 	_vps_pin_wan "$iface" || return
 	remote_id="$(uci -q get network.${iface}.ip4table)"
 	case "$remote_id" in

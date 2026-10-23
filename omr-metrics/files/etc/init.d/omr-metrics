@@ -6,6 +6,18 @@
 START=91
 USE_PROCD=1
 
+# The model's weights are only kept up to date, or dropped, by
+# omr-weight-sync: without it they stayed in the router's and the VPS's
+# weight maps (040-multipath-weight, 006-mqvpn-weight, VPS pins)
+clear_decision_weights() {
+	. /usr/share/omr/lib/omr-state.sh
+	uci -q -P /var/state show openmptcprouter 2>/dev/null | \
+		sed -n 's/^openmptcprouter\.\([^.=][^.=]*\)\.decision_weight=.*/\1/p' | \
+		while read -r iface; do
+			omr_state_del openmptcprouter "$iface" decision_weight
+		done
+}
+
 start_service() {
 	local enabled interval
 
@@ -14,7 +26,12 @@ start_service() {
 	. /usr/share/omr/lib/omr-state.sh
 	omr_state_migrate omr-metrics settings token
 
+	local weight_sync_enabled
+	weight_sync_enabled=$(uci -q get omr-metrics.settings.enable_weight_sync)
 	enabled=$(uci -q get omr-metrics.settings.send_to_vps)
+	if [ "$enabled" = "0" ] || [ "$weight_sync_enabled" = "0" ]; then
+		clear_decision_weights
+	fi
 	[ "$enabled" = "0" ] && return
 
 	interval=$(uci -q get omr-metrics.settings.interval)
@@ -26,8 +43,6 @@ start_service() {
 	procd_set_param stderr 1
 	procd_close_instance
 
-	local weight_sync_enabled
-	weight_sync_enabled=$(uci -q get omr-metrics.settings.enable_weight_sync)
 	[ "${weight_sync_enabled:-1}" != "0" ] && {
 		procd_open_instance weight_sync
 		procd_set_param command /usr/bin/omr-weight-sync
@@ -35,6 +50,12 @@ start_service() {
 		procd_set_param stderr 1
 		procd_close_instance
 	}
+}
+
+# After procd_kill: omr-weight-sync drops them on TERM too, but a fetch still
+# running when procd gives up and kills it could leave one behind
+service_stopped() {
+	clear_decision_weights
 }
 
 service_triggers() {

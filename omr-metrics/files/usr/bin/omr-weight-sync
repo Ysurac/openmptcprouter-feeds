@@ -21,13 +21,62 @@ _log() {
 	logger -t "omr-weight-sync" "$@"
 }
 
+# bpf_weight_rr reads the same endpoint_weights map (040-multipath-weight
+# feeds it too): without it here, a switch from bpf_weight left the last
+# model weight in /var/state, and 040 kept putting it in the map
 _is_weight_scheduler() {
 	local s
 	s=$(uci -q get network.globals.mptcp_scheduler 2>/dev/null)
 	case "$s" in
-		bpf_weight|bpf_burstweight|mptcp_bpf_weight.o|mptcp_bpf_burstweight.o) return 0 ;;
+		bpf_weight|bpf_burstweight|bpf_weight_rr|mptcp_bpf_weight.o|mptcp_bpf_burstweight.o|mptcp_bpf_weight_rr.o) return 0 ;;
 	esac
 	return 1
+}
+
+# How long the model's weights are kept while no VPS answers
+DECISION_TTL="${MPTCP_DECISION_TTL:-300}"
+_decision_ok=""
+# Whether /var/state may hold model weights: unknown at start
+_decision_held=1
+
+_uptime() {
+	local _up _rest
+	read -r _up _rest < /proc/uptime
+	echo "${_up%%.*}"
+}
+
+# _weight_bound <weight>: 1 to 256, as "ip route" takes it and LuCI asks;
+# nothing for a value that is no number. The schedulers read 0 as no weight
+# (neutral 100) and add the weight to a signed counter: a weight set by hand
+# outside that range did not do what it said.
+_weight_bound() {
+	local _w="$1"
+	case "$_w" in
+		''|*[!0-9]*) return 0 ;;
+	esac
+	_w="${_w#"${_w%%[!0]*}"}"
+	if [ -z "$_w" ]; then
+		_w=1
+	elif [ "${#_w}" -gt 3 ] || [ "$_w" -gt 256 ]; then
+		_w=256
+	fi
+	echo "$_w"
+}
+
+# _clear_decision_weights [<interface> ...]: drop the model's weight of these
+# interfaces, of all of them when none is given. 040-multipath-weight,
+# 006-mqvpn-weight and the VPS pins read it as long as weight sync and
+# decision weights are on: a weight the VPS no longer sends, or one left from
+# another scheduler, stayed in use until a reboot.
+_clear_decision_weights() {
+	local _iface
+	# shellcheck disable=SC2046 # one uci section name per word
+	[ $# -eq 0 ] && set -- $(uci -q -P "${OMR_STATE_DIR:-/var/state}" show openmptcprouter 2>/dev/null | \
+		sed -n 's/^openmptcprouter\.\([^.=][^.=]*\)\.decision_weight=.*/\1/p')
+	for _iface in "$@"; do
+		omr_state_del openmptcprouter "$_iface" decision_weight
+	done
+	return 0
 }
 
 # _is_ip6, _server_creds, _login (with the login backoff omr-metrics-send and
@@ -107,14 +156,18 @@ _differs() {
 _apply_decision() {
 	local response="$1" iface_list="$2" _iface _weight _cur
 	for _iface in $iface_list; do
+		_cur=$(omr_state_get "openmptcprouter.${_iface}.decision_weight")
 		_weight=$(jsonfilter -s "$response" -e "@.weights['${_iface}']" 2>/dev/null)
 		case "$_weight" in
-			''|*[!0-9]*) continue ;;
+			''|*[!0-9]*) _weight=0 ;;
 		esac
-		[ "$_weight" -lt 1 ] && continue
+		# No weight for this interface in the answer: the user's applies
+		if [ "$_weight" -lt 1 ]; then
+			[ -n "$_cur" ] && _clear_decision_weights "$_iface"
+			continue
+		fi
 		[ "$_weight" -gt 255 ] && _weight=255
 
-		_cur=$(omr_state_get "openmptcprouter.${_iface}.decision_weight")
 		_differs "$_cur" "$_weight" && \
 			omr_state_set openmptcprouter "$_iface" decision_weight "$_weight"
 	done
@@ -191,7 +244,7 @@ _apply_weights() {
 	[ -e "$MAP_PATH" ] || return 0
 	[ -x "$WEIGHT_SCRIPT" ] || return 0
 
-	local _tmpfile _changed _iface _dev _weight _uweight _cur _decision=0
+	local _tmpfile _changed _iface _dev _weight _mweight _uweight _cur _decision=0
 	_tmpfile=$(mktemp /tmp/omr-weight.XXXXXX 2>/dev/null) || return 1
 	_changed=0
 	_decision_enabled && _decision=1
@@ -212,10 +265,11 @@ _apply_weights() {
 		[ -z "$_dev" ] && _dev=$(uci -q get "network.${_iface}.ifname" 2>/dev/null)
 		[ -z "$_dev" ] && continue
 
-		# The user's weight: multipath_weight, then weight, default 100
-		_uweight=$(uci -q get "network.${_iface}.multipath_weight" 2>/dev/null)
-		[ -z "$_uweight" ] && _uweight=$(uci -q get "network.${_iface}.weight" 2>/dev/null)
-		[ -z "$_uweight" ] && _uweight=100
+		# The user's weight: multipath_weight, unset is 100. Not .weight
+		# when it is unset: that is the copy made here of the weight before,
+		# and a Weight field emptied on the MPTCP page brought it back
+		_mweight=$(_weight_bound "$(uci -q get "network.${_iface}.multipath_weight" 2>/dev/null)")
+		_uweight="${_mweight:-100}"
 
 		# The model's weight, when there is one, goes to the map instead.
 		# It is runtime state (see _apply_decision), never the config.
@@ -228,24 +282,22 @@ _apply_weights() {
 		# Apply to BPF map
 		"$WEIGHT_SCRIPT" set "$_dev" "${_weight:-$_uweight}" >/dev/null 2>&1 || true
 
-		# Keep weight and multipath_weight consistent with each other,
-		# with the user's value. Not while a model weight is in the map:
-		# 040-multipath-weight puts the user's weight back in the map and
-		# drops .weight of a backup WAN, and setting it again here made
-		# the two commit network to flash in turn.
+		# Not while a model weight is in the map: 040-multipath-weight
+		# leaves .weight alone then too, and the two committed network to
+		# flash in turn when they did not
 		[ -n "$_weight" ] && continue
 
-		# Sync network.<iface>.weight (ip route semantics)
+		# Sync network.<iface>.weight (ip route semantics) with the
+		# MPTCP weight the user set, as 040 does. Only a set one: .weight
+		# is also the Weight of the Interfaces page, which the balancing
+		# route reads (unset: 100 on the master, 1 on the others), and an
+		# unset multipath_weight reset it to 100 every 5 s.
+		# multipath_weight stays unset when it is: LuCI shows 100 for it
+		# and leaves it unset on save
+		[ -z "$_mweight" ] && continue
 		_cur=$(uci -q get "network.${_iface}.weight" 2>/dev/null)
-		if [ "$_cur" != "$_uweight" ]; then
-			uci -q set "network.${_iface}.weight=$_uweight"
-			_changed=1
-		fi
-
-		# Sync network.<iface>.multipath_weight
-		_cur=$(uci -q get "network.${_iface}.multipath_weight" 2>/dev/null)
-		if [ "$_cur" != "$_uweight" ]; then
-			uci -q set "network.${_iface}.multipath_weight=$_uweight"
+		if [ "$_cur" != "$_mweight" ]; then
+			uci -q set "network.${_iface}.weight=$_mweight"
 			_changed=1
 		fi
 	done < "$_tmpfile"
@@ -260,10 +312,46 @@ _decision_enabled() {
 	[ "${v:-1}" != "0" ]
 }
 
-while true; do
-	if _decision_enabled; then
-		_fetch_decision_weights
+# _sync_decision: fetch the model's weights while they are wanted, and drop
+# them when they are not (decision weights off, no weight scheduler) or when
+# no VPS has answered for DECISION_TTL seconds
+_sync_decision() {
+	local _now
+	if _decision_enabled && _is_weight_scheduler; then
+		_now=$(_uptime)
+		if _fetch_decision_weights; then
+			_decision_ok="$_now"
+			_decision_held=1
+			return 0
+		fi
+		[ -z "$_decision_ok" ] && _decision_ok="$_now"
+		[ "$((_now - _decision_ok))" -lt "$DECISION_TTL" ] && return 0
 	fi
+	_decision_ok=""
+	[ "$_decision_held" = "1" ] || return 0
+	_clear_decision_weights
+	_decision_held=0
+}
+
+# Stopped (service stop, weight sync turned off): the model's weights go
+# with it. 040-multipath-weight, 006-mqvpn-weight and the VPS pins read them
+# as long as the settings ask for them, and kept the last ones until a reboot.
+_on_term() {
+	trap - TERM INT
+	[ -n "$_sleep_pid" ] && kill "$_sleep_pid" 2>/dev/null
+	_clear_decision_weights
+	exit 0
+}
+_sleep_pid=""
+trap _on_term TERM INT
+
+while true; do
+	_sync_decision
 	_apply_weights
-	sleep "$POLL_INTERVAL"
+	# In the background: the shell runs the trap only once a foreground
+	# sleep is over, and procd may have killed it by then
+	sleep "$POLL_INTERVAL" &
+	_sleep_pid=$!
+	wait "$_sleep_pid"
+	_sleep_pid=""
 done

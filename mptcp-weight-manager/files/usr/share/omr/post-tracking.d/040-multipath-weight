@@ -20,7 +20,23 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && \
 	{ [ "$scheduler" = "mptcp_bpf_weight.o" ] || [ "$scheduler" = "mptcp_bpf_burstweight.o" ] || [ "$scheduler" = "mptcp_bpf_weight_rr.o" ] || \
 	  [ "$scheduler" = "bpf_weight" ] || [ "$scheduler" = "bpf_burstweight" ] || [ "$scheduler" = "bpf_weight_rr" ]; } && \
 	{ [ "$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath)" = "on" ] || [ "$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath)" = "master" ] || [ "$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath)" = "backup" ]; }; then
-	weight="$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath_weight)"
+	# Unset is 100: the Weight field of the MPTCP page leaves it unset when
+	# emptied, and the old weight stayed in the map until a reboot
+	user_weight="$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath_weight)"
+	# 1 to 256, as "ip route" takes it and LuCI asks: the schedulers read 0
+	# as no weight (neutral 100) and add the weight to a signed counter
+	case "$user_weight" in
+		''|*[!0-9]*) user_weight="" ;;
+		*)
+			user_weight="${user_weight#"${user_weight%%[!0]*}"}"
+			if [ -z "$user_weight" ]; then
+				user_weight=1
+			elif [ "${#user_weight}" -gt 3 ] || [ "$user_weight" -gt 256 ]; then
+				user_weight=256
+			fi
+			;;
+	esac
+	weight="${user_weight:-100}"
 	# omr-weight-sync keeps the VPS model's weight in /var/state, not in the
 	# config: while it runs with decision weights on, the map holds that
 	# weight, and putting the user's back here made the two alternate
@@ -42,14 +58,18 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && \
 		if [ -z "$current_weights" ] || printf '%s\n' "$current_weights" | grep -qvx "$model_weight"; then
 			/usr/sbin/mptcp-scheduler-weight.sh set "${OMR_TRACKER_DEVICE}" "$model_weight" >/dev/null 2>&1
 		fi
-	elif [ -n "$weight" ] && { [ -z "$current_weights" ] || printf '%s\n' "$current_weights" | grep -qvx "$weight"; }; then
+	elif [ -z "$current_weights" ] || printf '%s\n' "$current_weights" | grep -qvx "$weight"; then
 		/usr/sbin/mptcp-scheduler-weight.sh set "${OMR_TRACKER_DEVICE}" "$weight" >/dev/null 2>&1
-		if [ "$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath)" = "on" ] || [ "$(uci -q get network."${OMR_TRACKER_INTERFACE}".multipath)" = "master" ]; then
-			uci -q set network."${OMR_TRACKER_INTERFACE}".weight="$weight"
-		else
-			uci -q del network."${OMR_TRACKER_INTERFACE}".weight
+		# The balancing route's nexthop weight follows, on a backup WAN
+		# too, as omr-weight-sync sets it: deleting it there made the two
+		# commit network to flash in turn. Committed only when it changed.
+		# Only a weight the user set: .weight is also the Weight of the
+		# Interfaces page (unset: 100 on the master, 1 on the others), and
+		# an unset multipath_weight reset it to 100.
+		if [ -n "$user_weight" ] && [ "$(uci -q get network."${OMR_TRACKER_INTERFACE}".weight)" != "$user_weight" ]; then
+			uci -q set network."${OMR_TRACKER_INTERFACE}".weight="$user_weight"
+			uci -q commit network
 		fi
-		[ -n "$(uci -q changes network)" ] && uci -q commit network
 	fi
 	# Keep the VPS's own weight_remote_id map in sync so the weighting
 	# also holds for traffic the VPS sends (downloads) -- see

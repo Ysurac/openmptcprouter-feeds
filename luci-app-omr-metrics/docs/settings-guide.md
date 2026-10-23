@@ -46,17 +46,18 @@ the server address, port, username or password changes, so a token
 issued by one server is never sent to another. **Save** stores and
 applies the settings at once.
 
-## A gap worth knowing about if you use a BPF weight scheduler
+## Which schedulers get the weights
 
 Both **Enable weight sync**'s `omr-weight-sync` daemon and the separate
-`mptcp-weight-manager` package's post-tracking hook decide whether to push
-weights based on the currently selected `network.globals.mptcp_scheduler`
-value — and in both places, that check currently matches
-`bpf_weight`/`bpf_burstweight`/`mptcp_bpf_weight.o`/`mptcp_bpf_burstweight.o`
-but **not** `bpf_weight_rr`/`mptcp_bpf_weight_rr.o`. So if you've selected
-the weighted-round-robin scheduler (`mptcp-bpf-weight-rr`), neither this
-package's weight sync nor the wizard's per-interface **Weight** field will
-currently reach it automatically — including VPS model-assigned weights
-from **Enable model-assigned weights**. Set weights for that scheduler
-manually with `mptcp-scheduler-weight.sh set <iface> <weight>` instead
-(see `mptcp-bpf-weight-rr`'s own README for details).
+`mptcp-weight-manager` package's post-tracking hook push weights only while
+`network.globals.mptcp_scheduler` is a BPF weight scheduler:
+`bpf_weight`, `bpf_burstweight` or `bpf_weight_rr` (or their
+`mptcp_bpf_*.o` names). An interface whose **Weight** field is empty counts
+as 100.
+
+The VPS model's weights (**Enable model-assigned weights**) are runtime
+state, kept in `/var/state` and never written to the network config. They
+are dropped, and the weights you set apply again, when model-assigned
+weights or weight sync are turned off, when another scheduler is selected,
+when the VPS answer has no weight for an interface, or when no VPS has
+answered for 5 minutes.

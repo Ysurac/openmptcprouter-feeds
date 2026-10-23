@@ -44,7 +44,11 @@ if [ "$multipath_config" != "on" ] && [ "$multipath_config" != "master" ] && [ "
 	exit 0
 fi
 
+# Unset is 100, as for the MPTCP weight schedulers: the Weight field of the
+# MPTCP page leaves it unset when emptied. mqvpn's own default is 1, and the
+# old weight stayed on the path until mqvpn restarted.
 weight="$(uci -q get "network.$OMR_TRACKER_INTERFACE.multipath_weight")"
+weight="${weight:-100}"
 # The VPS model's weight, kept in /var/state by omr-weight-sync while it
 # runs with decision weights on, is the one in the router's map: use that
 _mw="$(uci -q -P /var/state get openmptcprouter.$OMR_TRACKER_INTERFACE.decision_weight)"
@@ -56,7 +60,6 @@ if [ -n "$_mw" ] && [ -n "$(uci -q get omr-metrics.settings)" ] && \
    [ "$(uci -q get omr-metrics.settings.enable_decision_weights)" != "0" ]; then
 	weight="$_mw"
 fi
-[ -z "$weight" ] && exit 0
 
 # openmptcprouter.<iface>.mqvpn_weight is the weight last applied to this
 # path, as "<mqvpn pid>:<weight>". mqvpn keeps per-path weights in RAM
