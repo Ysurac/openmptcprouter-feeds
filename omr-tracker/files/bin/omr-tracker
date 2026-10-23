@@ -313,13 +313,37 @@ count_server() {
 	fi
 }
 
+# The WANs in default and in backup mode, for the server test. `multipath`
+# is a shell script whose listing forks per network device, and it ran twice
+# per cycle (default, then backup) for as long as the VPS dropped this WAN's
+# probes: one listing gives both, kept 30 s as in omr-tracker-server. A WAN
+# switched since is seen up to 30 s late, a stale one only fails its probe.
+_mp_default_intfs=""
+_mp_backup_intfs=""
+_mp_intfs_ts=""
+_server_mp_intfs() {
+	local _now _lists
+	printf -v _now '%(%s)T' -1
+	[ -n "$_mp_intfs_ts" ] && [ $((_now - _mp_intfs_ts)) -lt 30 ] && [ $((_now - _mp_intfs_ts)) -ge 0 ] && return
+	_lists="$(multipath 2>/dev/null | awk '/ is in default mode/ { d = d " " $1 } / is in backup mode/ { b = b " " $1 } END { print d "|" b }')"
+	_mp_default_intfs="${_lists%%|*}"
+	_mp_backup_intfs="${_lists#*|}"
+	_mp_intfs_ts="$_now"
+}
+
 # _server_all_intfs <probe function> <default|backup>: probe the servers
 # through the other WANs of that mode until one answers. Their address is
 # given for httping, which binds to it (-y), their device for ping. Done
 # from here, a WAN without a bind address set NO_BIND for this tracker.
 _server_all_intfs() {
-	local _fn="$1" _mode="$2" _intf _ip _ignore _no_bind="$OMR_TRACKER_NO_BIND"
-	for _intf in $(multipath 2>/dev/null | awk -v m="$_mode" '$0 ~ " is in " m " mode" { print $1 }'); do
+	local _fn="$1" _mode="$2" _intf _intfs _ip _ignore _no_bind="$OMR_TRACKER_NO_BIND"
+	_server_mp_intfs
+	if [ "$_mode" = "backup" ]; then
+		_intfs="$_mp_backup_intfs"
+	else
+		_intfs="$_mp_default_intfs"
+	fi
+	for _intf in $_intfs; do
 		# this WAN's own probe has just failed
 		[ "$_intf" = "$OMR_TRACKER_DEVICE" ] && continue
 		if [ "$_fn" = "_httping_server" ]; then
