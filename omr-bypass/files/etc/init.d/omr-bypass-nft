@@ -1610,42 +1610,44 @@ _bypass_proto_core() {
 	if [ -n "$static" ]; then
 		ALLIPS="$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select ip from ipproto where proto=\"$proto\";" ".exit") $cips"
 		if [ -n "${ALLIPS# }" ]; then
+			local _psec
+			_proto_section_id _psec "$proto"
 			cat >> "$_fw_uci_batch" <<-EOF
-				set firewall.bypass_${proto}=ipset
-				set firewall.bypass_${proto}.name="bypass_${proto}"
-				set firewall.bypass_${proto}.match='dest_net'
-				set firewall.bypass_${proto}.family='ipv4'
-				set firewall.bypass_${proto}.enabled='1'
-				set firewall.bypass6_${proto}=ipset
-				set firewall.bypass6_${proto}.name="bypass6_${proto}"
-				set firewall.bypass6_${proto}.match='dest_net'
-				set firewall.bypass6_${proto}.family='ipv6'
-				set firewall.bypass6_${proto}.enabled='1'
+				set firewall.bypass_${_psec}=ipset
+				set firewall.bypass_${_psec}.name="bypass_${proto}"
+				set firewall.bypass_${_psec}.match='dest_net'
+				set firewall.bypass_${_psec}.family='ipv4'
+				set firewall.bypass_${_psec}.enabled='1'
+				set firewall.bypass6_${_psec}=ipset
+				set firewall.bypass6_${_psec}.name="bypass6_${proto}"
+				set firewall.bypass6_${_psec}.match='dest_net'
+				set firewall.bypass6_${_psec}.family='ipv6'
+				set firewall.bypass6_${_psec}.enabled='1'
 			EOF
 
 			if [ "$vpn" != "1" ]; then
 				for zone in $(_get_firewall_zones); do
 					cat >> "$_fw_uci_batch" <<-EOF
-					set firewall.bypass_${proto}_${zone}_rule=rule
-					set firewall.bypass_${proto}_${zone}_rule.name="bypass_${proto}_${zone}_rule"
-					set firewall.bypass_${proto}_${zone}_rule.src="${zone}"
-					set firewall.bypass_${proto}_${zone}_rule.proto="${tcpudp}"
-					set firewall.bypass_${proto}_${zone}_rule.dest='*'
-					set firewall.bypass_${proto}_${zone}_rule.family='ipv4'
-					set firewall.bypass_${proto}_${zone}_rule.target='MARK'
-					set firewall.bypass_${proto}_${zone}_rule.ipset="bypass_${proto}"
-					set firewall.bypass_${proto}_${zone}_rule.enabled='1'
-					set firewall.bypass_${proto}_${zone}_rule.set_mark="0x4539${intfid}"
-					set firewall.bypass6_${proto}_${zone}_rule=rule
-					set firewall.bypass6_${proto}_${zone}_rule.name="bypass6_${proto}_${zone}_rule"
-					set firewall.bypass6_${proto}_${zone}_rule.src="${zone}"
-					set firewall.bypass6_${proto}_${zone}_rule.family='ipv6'
-					set firewall.bypass6_${proto}_${zone}_rule.dest='*'
-					set firewall.bypass6_${proto}_${zone}_rule.proto="${tcpudp}"
-					set firewall.bypass6_${proto}_${zone}_rule.target='MARK'
-					set firewall.bypass6_${proto}_${zone}_rule.set_mark="0x6539${intfid}"
-					set firewall.bypass6_${proto}_${zone}_rule.ipset="bypass6_${proto}"
-					set firewall.bypass6_${proto}_${zone}_rule.enabled='1'
+					set firewall.bypass_${_psec}_${zone}_rule=rule
+					set firewall.bypass_${_psec}_${zone}_rule.name="bypass_${proto}_${zone}_rule"
+					set firewall.bypass_${_psec}_${zone}_rule.src="${zone}"
+					set firewall.bypass_${_psec}_${zone}_rule.proto="${tcpudp}"
+					set firewall.bypass_${_psec}_${zone}_rule.dest='*'
+					set firewall.bypass_${_psec}_${zone}_rule.family='ipv4'
+					set firewall.bypass_${_psec}_${zone}_rule.target='MARK'
+					set firewall.bypass_${_psec}_${zone}_rule.ipset="bypass_${proto}"
+					set firewall.bypass_${_psec}_${zone}_rule.enabled='1'
+					set firewall.bypass_${_psec}_${zone}_rule.set_mark="0x4539${intfid}"
+					set firewall.bypass6_${_psec}_${zone}_rule=rule
+					set firewall.bypass6_${_psec}_${zone}_rule.name="bypass6_${proto}_${zone}_rule"
+					set firewall.bypass6_${_psec}_${zone}_rule.src="${zone}"
+					set firewall.bypass6_${_psec}_${zone}_rule.family='ipv6'
+					set firewall.bypass6_${_psec}_${zone}_rule.dest='*'
+					set firewall.bypass6_${_psec}_${zone}_rule.proto="${tcpudp}"
+					set firewall.bypass6_${_psec}_${zone}_rule.target='MARK'
+					set firewall.bypass6_${_psec}_${zone}_rule.set_mark="0x6539${intfid}"
+					set firewall.bypass6_${_psec}_${zone}_rule.ipset="bypass6_${proto}"
+					set firewall.bypass6_${_psec}_${zone}_rule.enabled='1'
 					EOF
 				done
 				_intf_rules_all_rules ${proto} ${intfid} ${tcpudp}
@@ -2465,50 +2467,65 @@ _delete_network_rules() {
 
 _bypass_proto_ndpid_list=""
 
+# _proto_section_id <var> <proto>: the uci section id for the sets and rules
+# of an nDPI protocol. 13 protocol names have a dash (JSON-RPC, NAT-PMP,
+# OPC-UA...), which uci refuses in a section id: their sets were never
+# created, so ndpid-consumer could not add the addresses it detected, and
+# the whole firewall batch fell back to the slow "uci batch". The set keeps
+# the protocol name ("name" option, nft takes a dash), which is how the
+# consumer and /etc/firewall.omr-bypass refer to it.
+_proto_section_id() {
+	case "$2" in
+		*[-.]*) eval "$1=\"\$(printf '%s' \"\$2\" | tr '.-' '__')\"" ;;
+		*) eval "$1=\"\$2\"" ;;
+	esac
+}
+
 # Shared by _bypass_proto_collect_ndpid (dpis) and _bypass_category_collect_ndpid
 # (categories): registers one proto for nDPId watching and, for interface=all,
 # ensures the nftables sets/rules used to receive detected IPs exist.
 _bypass_ndpid_collect_proto() {
-	local proto="$1" intf="$2" intfid="$3" tcpudp="$4" dscp="$5" family="$6"
+	local proto="$1" intf="$2" intfid="$3" tcpudp="$4" dscp="$5" family="$6" _psec
 
 	# Ensure nftables sets and rules exist for this protocol (even if DB is empty)
 	if [ "$intf" = "all" ]; then
+		_proto_section_id _psec "$proto"
 		# Flag if the nft set is absent — used by start_service to force fw4
 		nft list set inet fw4 "bypass_${proto}" >/dev/null 2>&1 || _ndpid_fw_needed=1
 		cat >> "$_fw_uci_batch" <<-EOF
-			set firewall.bypass_${proto}=ipset
-			set firewall.bypass_${proto}.name="bypass_${proto}"
-			set firewall.bypass_${proto}.match='dest_net'
-			set firewall.bypass_${proto}.family='ipv4'
-			set firewall.bypass_${proto}.enabled='1'
-			set firewall.bypass6_${proto}=ipset
-			set firewall.bypass6_${proto}.name="bypass6_${proto}"
-			set firewall.bypass6_${proto}.match='dest_net'
-			set firewall.bypass6_${proto}.family='ipv6'
-			set firewall.bypass6_${proto}.enabled='1'
+			set firewall.bypass_${_psec}=ipset
+			set firewall.bypass_${_psec}.name="bypass_${proto}"
+			set firewall.bypass_${_psec}.match='dest_net'
+			set firewall.bypass_${_psec}.family='ipv4'
+			set firewall.bypass_${_psec}.enabled='1'
+			set firewall.bypass6_${_psec}=ipset
+			set firewall.bypass6_${_psec}.name="bypass6_${proto}"
+			set firewall.bypass6_${_psec}.match='dest_net'
+			set firewall.bypass6_${_psec}.family='ipv6'
+			set firewall.bypass6_${_psec}.enabled='1'
 		EOF
 		for zone in $(_get_firewall_zones); do
 			cat >> "$_fw_uci_batch" <<-EOF
-				set firewall.bypass_${proto}_${zone}_rule=rule
-				set firewall.bypass_${proto}_${zone}_rule.name="bypass_${proto}_${zone}_rule"
-				set firewall.bypass_${proto}_${zone}_rule.src="${zone}"
-				set firewall.bypass_${proto}_${zone}_rule.proto="${tcpudp}"
-				set firewall.bypass_${proto}_${zone}_rule.dest='*'
-				set firewall.bypass_${proto}_${zone}_rule.family='ipv4'
-				set firewall.bypass_${proto}_${zone}_rule.target='MARK'
-				set firewall.bypass_${proto}_${zone}_rule.ipset="bypass_${proto}"
-				set firewall.bypass_${proto}_${zone}_rule.enabled='1'
-				set firewall.bypass_${proto}_${zone}_rule.set_mark="0x4539${intfid}"
-				set firewall.bypass6_${proto}_${zone}_rule=rule
-				set firewall.bypass6_${proto}_${zone}_rule.name="bypass6_${proto}_${zone}_rule"
-				set firewall.bypass6_${proto}_${zone}_rule.src="${zone}"
-				set firewall.bypass6_${proto}_${zone}_rule.family='ipv6'
-				set firewall.bypass6_${proto}_${zone}_rule.dest='*'
-				set firewall.bypass6_${proto}_${zone}_rule.proto="${tcpudp}"
-				set firewall.bypass6_${proto}_${zone}_rule.target='MARK'
-				set firewall.bypass6_${proto}_${zone}_rule.set_mark="0x6539${intfid}"
-				set firewall.bypass6_${proto}_${zone}_rule.ipset="bypass6_${proto}"
-				set firewall.bypass6_${proto}_${zone}_rule.enabled='1'
+				set firewall.bypass_${_psec}_${zone}_rule=rule
+				set firewall.bypass_${_psec}_${zone}_rule.name="bypass_${proto}_${zone}_rule"
+				set firewall.bypass_${_psec}_${zone}_rule.src="${zone}"
+				set firewall.bypass_${_psec}_${zone}_rule.proto="${tcpudp}"
+				set firewall.bypass_${_psec}_${zone}_rule.dest='*'
+				set firewall.bypass_${_psec}_${zone}_rule.family='ipv4'
+				set firewall.bypass_${_psec}_${zone}_rule.target='MARK'
+				set firewall.bypass_${_psec}_${zone}_rule.ipset="bypass_${proto}"
+				set firewall.bypass_${_psec}_${zone}_rule.enabled='1'
+				set firewall.bypass_${_psec}_${zone}_rule.set_mark="0x4539${intfid}"
+				set firewall.bypass6_${_psec}_${zone}_rule=rule
+				set firewall.bypass6_${_psec}_${zone}_rule.name="bypass6_${proto}_${zone}_rule"
+				set firewall.bypass6_${_psec}_${zone}_rule.src="${zone}"
+				set firewall.bypass6_${_psec}_${zone}_rule.family='ipv6'
+				set firewall.bypass6_${_psec}_${zone}_rule.dest='*'
+				set firewall.bypass6_${_psec}_${zone}_rule.proto="${tcpudp}"
+				set firewall.bypass6_${_psec}_${zone}_rule.target='MARK'
+				set firewall.bypass6_${_psec}_${zone}_rule.set_mark="0x6539${intfid}"
+				set firewall.bypass6_${_psec}_${zone}_rule.ipset="bypass6_${proto}"
+				set firewall.bypass6_${_psec}_${zone}_rule.enabled='1'
 			EOF
 		done
 		_intf_rules_all_rules "${proto}" "${intfid}" "${tcpudp}"
