@@ -4,7 +4,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI support for sysupgrades
-LUCI_DEPENDS:=+luci-base +uhttpd-mod-ubus +rpcd +rpcd-mod-rpcsys +cgi-io
+LUCI_DEPENDS:=+luci-base +luci-lua-runtime +uhttpd-mod-ubus +rpcd +rpcd-mod-rpcsys +cgi-io
 
 include $(TOPDIR)/feeds/luci/luci.mk
 

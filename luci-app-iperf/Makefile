@@ -6,7 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI Support for iPerf3
-LUCI_DEPENDS:=+iperf3-ssl
+LUCI_DEPENDS:=+iperf3-ssl +luci-lua-runtime
 
 PKG_LICENSE:=GPLv3
 

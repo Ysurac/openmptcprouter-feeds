@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=OpenMPTCProuter Theme (default)
-LUCI_DEPENDS:=
+LUCI_DEPENDS:=+luci-lua-runtime
 
 #include ../luci/luci.mk
 include $(TOPDIR)/feeds/luci/luci.mk

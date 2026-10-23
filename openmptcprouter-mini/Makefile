@@ -66,6 +66,7 @@ MY_DEPENDS := \
     libimobiledevice \
     comgt \
     kmod-random-core \
+    kmod-netem \
     ca-bundle openssl-util \
     dejavu-fonts-ttf-DejaVuSerif dejavu-fonts-ttf-DejaVuSerif-Bold dejavu-fonts-ttf-DejaVuSerif-Italic dejavu-fonts-ttf-DejaVuSerif-BoldItalic \
     iputils-tracepath netcat adb-enablemodem \

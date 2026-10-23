@@ -19,7 +19,7 @@ PKG_MAINTAINER:=Yannick Chabanois <yannick.chabanois@openmptcprouter.com>
 PKG_LICENSE:=GPL-2.0-only
 
 LUCI_TITLE:=Jam Monitor – LuCI status dashboard
-LUCI_DEPENDS:=+luci-base +luci-mod-admin-full
+LUCI_DEPENDS:=+luci-base +luci-mod-admin-full +luci-lua-runtime
 
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 
