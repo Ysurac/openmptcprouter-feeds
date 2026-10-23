@@ -59,6 +59,15 @@ download="$(uci -q get network.$OMR_TRACKER_INTERFACE.downloadspeed)"
 upload="$(uci -q get network.$OMR_TRACKER_INTERFACE.uploadspeed)"
 [ -z "$upload" ] && upload="$(uci -q get sqm.$OMR_TRACKER_INTERFACE.upload)"
 
+# Whether glorytun-udp has a running path from the local address $1. The
+# address is compared whole ("path  <local>  <remote>.<port>  <status> ..."):
+# a grep for 100.64.12.3 also matched a running 100.64.12.34 path, or that
+# address in another path's remote column, and this WAN's path was then
+# never added
+_gtudp_path_running() {
+	glorytun-udp path 2>/dev/null | awk -v a="$1" '$1 == "path" && $2 == a && $4 == "running" { f = 1 } END { exit !f }'
+}
+
 glorytunudppath() {
 	gtudp_port="$(uci -q get glorytun-udp.vpn.port)"
 	gtudp_dev="$(uci -q get glorytun-udp.vpn.dev)"
@@ -75,11 +84,11 @@ glorytunudppath() {
 			rate_tx=12500000
 			rate_rx=12500000
 		fi
-		if [ "$OMR_TRACKER_DEVICE_IP" != "" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep -f glorytun-udp)" != "" ] && [ "$(glorytun-udp path | grep $OMR_TRACKER_DEVICE_IP | grep running)" = "" ] && [ -n "$(resolveip -4 -t 5 $serverip)" ]; then
+		if [ "$OMR_TRACKER_DEVICE_IP" != "" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep -f glorytun-udp)" != "" ] && ! _gtudp_path_running "$OMR_TRACKER_DEVICE_IP" && [ -n "$(resolveip -4 -t 5 $serverip)" ]; then
 			serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
 			glorytun-udp path addr $OMR_TRACKER_DEVICE_IP to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set up rate $rate_mode tx $rate_tx rx $rate_rx pref 1 > /dev/null 2>&1
 		fi
-		if [ "$OMR_TRACKER_DEVICE_IP6" != "" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep -f glorytun-udp)" != "" ] && [ "$(glorytun-udp path | grep $OMR_TRACKER_DEVICE_IP6 | grep running)" = "" ] && [ -n "$(resolveip -6 -t 5 $serverip)" ]; then
+		if [ "$OMR_TRACKER_DEVICE_IP6" != "" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep -f glorytun-udp)" != "" ] && ! _gtudp_path_running "$OMR_TRACKER_DEVICE_IP6" && [ -n "$(resolveip -6 -t 5 $serverip)" ]; then
 			serverip="$(resolveip -6 -t 5 $serverip | head -n 1 | tr -d '\n')"
 			glorytun-udp path addr "$OMR_TRACKER_DEVICE_IP6" to addr "$serverip" port ${gtudp_port} dev ${gtudp_dev} set up rate $rate_mode tx $rate_tx rx $rate_rx pref 1 > /dev/null 2>&1
 		fi
