@@ -392,7 +392,9 @@ return L.view.extend({
 	o.rmempty = false;
 
 	o = s.option(form.Value, "multipath_weight", _("Weight"), _("Only used by *weight schedulers/path managers. Ignored if no weight scheduler is selected.") + '<br />' + _("A weight >100 make it more attractive, a weight <100 make it less attractive. Max 256"));
-	o.datatype = "uinteger";
+	// 1 to 256, as "ip route" takes it: the schedulers read 0 as no weight
+	// (neutral 100) and add the weight to a signed counter
+	o.datatype = "and(uinteger,range(1,256))";
 	// 100 shown as a placeholder, not a default: with a default every Save
 	// of this page wrote multipath_weight='100' on each interface that had
 	// none. Unset means 100 for every reader (omr-weight-sync, mqvpn).

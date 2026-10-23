@@ -178,7 +178,9 @@ return L.view.extend({
 
 			o = s.option(form.Value, 'multipath_weight', _('Weight'),
 				_('A weight >100 makes a WAN more attractive, a weight <100 makes it less attractive. Max 256.'));
-			o.datatype = 'uinteger';
+			// 1 to 256, as "ip route" takes it: the schedulers read 0 as no
+			// weight (neutral 100) and add the weight to a signed counter
+			o.datatype = 'and(uinteger,range(1,256))';
 			// a placeholder, not a default: a default made every Save write
 			// multipath_weight='100' on each WAN that had none (unset is 100)
 			o.placeholder = '100';
