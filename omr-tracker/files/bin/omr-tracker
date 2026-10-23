@@ -570,6 +570,18 @@ case "$OMR_TRACKER_INTERFACE_PROTO" in
 	*) _probe_route="" ;;
 esac
 OMR_TRACKER_PREV_STATUS=""
+# A tracker (re)started while its WAN is still marked down (omr-tracker
+# restart, a reload for a settings change) has no previous status: its first
+# good probe made it OK at once, without the tries_up streak or the recovery
+# thresholds. Its first cycle is taken as following an ERROR for those only:
+# the hooks still get no previous status, so that 002-error applies the
+# failure again when the WAN still fails. Monitor only never sets it down.
+_was_down_at_start() {
+	[ "$OMR_TRACKER_MONITOR_ONLY" != "1" ] && \
+		[ "$(uci -q -P /var/state get "openmptcprouter.${OMR_TRACKER_INTERFACE}.state")" = "down" ]
+}
+_started_down=""
+_was_down_at_start && _started_down=1
 # The modem may still be initializing: wait for netifd to report the
 # interface up instead of sleeping blindly, with the configured delay
 # (default 120s) as the cap. Tracking — and with it MPTCP endpoint setup —
@@ -1180,7 +1192,7 @@ while true; do
 				OMR_TRACKER_STATUS="ERROR"
 				OMR_TRACKER_STATUS_MSG="Congestion score is $OMR_TRACKER_CONGESTION_SCORE this is more than failure limit defined at $OMR_TRACKER_FAILURE_CONGESTION"
 			fi
-		elif [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ] && [ "$OMR_TRACKER_STATUS" = "OK" ]; then
+		elif { [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ] || [ -n "$_started_down" ]; } && [ "$OMR_TRACKER_STATUS" = "OK" ]; then
 			if [ -n "$OMR_TRACKER_LOSS" ] && [ -n "$OMR_TRACKER_RECOVERY_LOSS" ] && [ "$OMR_TRACKER_LOSS" -ge "$OMR_TRACKER_RECOVERY_LOSS" ]; then
 				OMR_TRACKER_STATUS="ERROR"
 				OMR_TRACKER_STATUS_MSG="Packet loss is $OMR_TRACKER_LOSS this is more than recovery limit defined at $OMR_TRACKER_RECOVERY_LOSS"
@@ -1206,12 +1218,15 @@ while true; do
 	# streak's: the probe answered, so 002-error must not reset a modem that
 	# works again.
 	OMR_TRACKER_RECOVERING=""
-	if [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ]; then
+	if [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ] || [ -n "$_started_down" ]; then
 		if [ "$OMR_TRACKER_STATUS" = "OK" ]; then
 			OMR_TRACKER_UP_STREAK=$((OMR_TRACKER_UP_STREAK + 1))
 			if [ "$OMR_TRACKER_UP_STREAK" -lt "${OMR_TRACKER_TRIES_UP:-1}" ]; then
 				logger -t "omr-tracker" "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) reachable again, waiting for stable recovery ($OMR_TRACKER_UP_STREAK/${OMR_TRACKER_TRIES_UP:-1})"
 				OMR_TRACKER_STATUS="ERROR"
+				# The probe answered, so no failure message is set: after a
+				# restart while down, omr-events logged this as "down: unknown"
+				[ -z "$OMR_TRACKER_STATUS_MSG" ] && OMR_TRACKER_STATUS_MSG="waiting for stable recovery"
 				OMR_TRACKER_RECOVERING=1
 			fi
 		else
@@ -1248,6 +1263,7 @@ while true; do
 	fi
 	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && sleep $wait_test
 	OMR_TRACKER_PREV_STATUS="$OMR_TRACKER_STATUS"
+	_started_down=""
 	OMR_TRACKER_PREV_DEVICE_IP="$OMR_TRACKER_DEVICE_IP"
 	OMR_TRACKER_PREV_DEVICE_IP6="$OMR_TRACKER_DEVICE_IP6"
 	OMR_TRACKER_PREV_GATEWAY="$OMR_TRACKER_DEVICE_GATEWAY"
