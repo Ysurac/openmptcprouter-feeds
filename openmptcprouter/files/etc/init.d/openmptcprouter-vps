@@ -578,9 +578,21 @@ _set_mqvpn_vps() {
 			settings="$settings"', "reorder": {"enabled": "'$reorder_enabled'", "max_wait_ms": '$reorder_max_wait_ms', "cap_packets": '$reorder_cap_packets'}'
 		[ -n "$reorder_rules" ] && settings="$settings"', "reorder_rules": ['$reorder_rules']'
 		settings="$settings}"
+		# Only what the server applied is pulled back and restarted for: a
+		# refusal (a read only user, a server-wide setting the router may
+		# not change, MQVPN not installed) is an answer too, and every sync
+		# asked for the whole config again and omr-schedule restarted the
+		# services for it. The same refusal is sent again hourly only.
+		local cache="/tmp/.mqvpn-vps-push-${servername}" desired
+		desired="$(printf '%s' "${server}|$settings" | md5sum | cut -d' ' -f1)"
+		_vps_push_wait "$cache" "$desired" && { echo 1; return; }
 		result=$(_set_json "mqvpn" "$settings")
-		[ -n "$result" ] && _want_config
-		[ -n "$result" ] && [ "$current_port" != "$port" ] && /etc/init.d/mqvpn restart >/dev/null 2>&1
+		# no answer at all: tried again on the next sync, as before
+		[ -n "$result" ] && _vps_push_done "$cache" "$desired" "$result"
+		if [ "$(_parse_result "$result")" = "done" ]; then
+			_want_config
+			[ "$current_port" != "$port" ] && /etc/init.d/mqvpn restart >/dev/null 2>&1
+		fi
 		echo $result
 	else
 		echo 1
