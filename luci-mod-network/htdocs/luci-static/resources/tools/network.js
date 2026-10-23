@@ -1151,23 +1151,38 @@ return baseclass.extend({
 		o.value('noqueue', 'noqueue');
 		o.rmempty = true;
 
+		/* Unset means "leave the device as it is" to netifd and the mptcp
+		 * init, which act only on an explicit 1 or 0. With rmempty, ticking
+		 * a box again after a 0 equalled the default and deleted the
+		 * option: the feature stayed off until a reboot. Keep an unset
+		 * option unset, but write 1 over a stored 0. */
+		var keepExplicit = function(o) {
+			o.default = o.enabled;
+			o.rmempty = false;
+			o.write = function(section_id, value) {
+				if (value === this.enabled && uci.get('network', section_id, this.option) == null)
+					return;
+				return form.Flag.prototype.write.apply(this, arguments);
+			};
+		};
+
 		o = this.replaceOption(s, 'devadvanced', form.Flag, 'autoneg', _('Autonegociation'));
-		o.default = o.enabled;
+		keepExplicit(o);
 
 		o = this.replaceOption(s, 'devadvanced', form.Flag, 'gro', _('Generic Receive Offload (GRO)'));
-		o.default = o.enabled;
+		keepExplicit(o);
 
 		o = this.replaceOption(s, 'devadvanced', form.Flag, 'gso', _('Generic Segmentation Offload (GSO)'));
-		o.default = o.enabled;
+		keepExplicit(o);
 
 		o = this.replaceOption(s, 'devadvanced', form.Flag, 'tso', _('TCP Segmentation Offload (TSO)'));
-		o.default = o.enabled;
+		keepExplicit(o);
 
 		o = this.replaceOption(s, 'devadvanced', form.Flag, 'lro', _('Large Receive Offload (LRO)'));
-		o.default = o.enabled;
+		keepExplicit(o);
 
 		o = this.replaceOption(s, 'devadvanced', form.Flag, 'ufo', _('UDP Fragmentation Offload (UFO)'));
-		o.default = o.enabled;
+		keepExplicit(o);
 
 		o = this.replaceOption(s, 'devadvanced', form.Value, 'speed', _('Speed'));
 		o.placeholder = dev ? dev.getSpeed() : '';
