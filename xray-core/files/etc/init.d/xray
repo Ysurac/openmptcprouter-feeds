@@ -14,6 +14,8 @@ CONFIG_FOLDER=/var/etc/$NAME
 TLS_PIN_DIR=/etc/$NAME/tls-pins
 TLS_PIN_PENDING=/var/run/$NAME-tls-pending
 TLS_RETRY_PID=/var/run/$NAME-tls-retry.pid
+# The certificate each server was pinned with by the last start
+TLS_PIN_STARTED=/var/run/$NAME-tls-pinned
 # The last start ended with no transparent proxy rules: see rules_up
 NORULES=/var/run/$NAME-norules
 
@@ -96,11 +98,14 @@ _tls_vps_live() {
 # Within a start (TLS_PROBE_MEMO set), each server is probed once: the
 # outbounds, the reverse bridge and the tunnels of the other public IPs often
 # name the same one, and an unreachable VPS costs 10 s per probe.
+# The verified certificate is remembered in the memo (tmpfs), not only in the
+# cache: when /etc can't be written (overlay full or read-only), the other
+# outbounds to that server must still get it.
 # hex: xray's pinnedPeerCertSha256, chain: v2ray's
 # pinnedPeerCertificateChainSha256 (base64, the VPS sends no chain)
 _tls_vps_pin() {
 	local format="$1" addr="$2" port="$3" sni="$4" ca="/etc/luci-uploads/ca.crt"
-	local peer="" cache memo="" state=""
+	local peer="" cache memo="" state="" pem
 	[ -s "$ca" ] && [ -n "$addr" ] && [ -n "$port" ] || return 1
 	command -v openssl >/dev/null 2>&1 || return 1
 	cache="$(_tls_pin_cache "$addr" "$port")"
@@ -112,31 +117,50 @@ _tls_vps_pin() {
 		peer="$(mktemp /tmp/$NAME-peer.XXXXXX)" || return 1
 		if _tls_vps_live "$addr" "$port" "$sni" "$peer" ; then
 			state=live
-			cmp -s "$peer" "$cache" || {
-				mkdir -p "$TLS_PIN_DIR" && cp "$peer" "$cache.new" && mv -f "$cache.new" "$cache"
-			}
+			cmp -s "$peer" "$cache" || _tls_pin_keep "$peer" "$cache" "$addr" "$port"
 		else
 			state=down
 			rm -f "$peer"
 			peer=""
 		fi
-		[ -n "$memo" ] && mkdir -p "$TLS_PROBE_MEMO" && echo "$state" >"$memo"
+		# live is only remembered with the certificate next to it
+		if [ -n "$memo" ] && mkdir -p "$TLS_PROBE_MEMO" ; then
+			if [ "$state" = "down" ] || cp "$peer" "$memo.pem" ; then
+				echo "$state" >"$memo"
+			fi
+		fi
 	fi
-	if [ -n "$peer" ] || { [ "$state" = "live" ] && [ -s "$cache" ] ; } ; then
-		:
+	if [ -n "$peer" ] ; then
+		pem="$peer"
+	elif [ "$state" = "live" ] && [ -s "$memo.pem" ] ; then
+		pem="$memo.pem"
 	elif [ -s "$cache" ] && openssl verify -no_check_time -purpose sslserver \
 		-CAfile "$ca" "$cache" >/dev/null 2>&1 ; then
 		_info "${addr}:${port} certificate not received, pinning the one verified earlier"
 		_tls_pin_pending "$addr" "$port" "$sni"
+		pem="$cache"
 	else
 		return 1
 	fi
+	# for tls_pin_retry: this server needs a restart only for another one
+	mkdir -p "$TLS_PIN_STARTED" && cp "$pem" "$TLS_PIN_STARTED/${cache##*/}"
 	if [ "$format" = "chain" ] ; then
-		openssl x509 -in "${peer:-$cache}" -outform DER | openssl dgst -sha256 -binary | base64
+		openssl x509 -in "$pem" -outform DER | openssl dgst -sha256 -binary | base64
 	else
-		openssl x509 -in "${peer:-$cache}" -outform DER | openssl dgst -sha256 | awk '{print $NF}'
+		openssl x509 -in "$pem" -outform DER | openssl dgst -sha256 | awk '{print $NF}'
 	fi
 	[ -z "$peer" ] || rm -f "$peer"
+}
+
+# _tls_pin_keep <file> <cache> <address> <port>
+# Keeps a verified certificate for the next starts. Failing that (overlay full
+# or read-only) only costs the fallback when the VPS can't be reached at start
+_tls_pin_keep() {
+	mkdir -p "$TLS_PIN_DIR" 2>/dev/null && cp "$1" "$2.new" 2>/dev/null \
+		&& mv -f "$2.new" "$2" 2>/dev/null && return 0
+	rm -f "$2.new"
+	_err "${3}:${4} certificate verified but could not be kept in $TLS_PIN_DIR"
+	return 1
 }
 
 # _tls_pin_pending <address> <port> [<server name>]
@@ -148,17 +172,21 @@ _tls_pin_pending() {
 }
 
 # _tls_pin_changed <address> <port> [<server name>]
-# 0: the server presents a CA-verified certificate other than the kept one,
-# which it replaces; 2: it presents the kept one; 1: nothing verified
+# 0: the server presents a CA-verified certificate other than the one the
+# last start pinned for it, or that start pinned none (the CA file empty then,
+# as openmptcprouter-vps rewrites it); 2: it presents the one pinned; 1:
+# nothing verified. Compared with what was pinned, not with the cache: a cache
+# that can't be written must not make every probe a change, and a restart.
+# The cache is still updated
 _tls_pin_changed() {
 	local cache peer rc=1
 	cache="$(_tls_pin_cache "$1" "$2")"
 	peer="$(mktemp /tmp/$NAME-peer.XXXXXX)" || return 1
 	if _tls_vps_live "$1" "$2" "$3" "$peer" ; then
-		if cmp -s "$peer" "$cache" ; then
+		cmp -s "$peer" "$cache" || _tls_pin_keep "$peer" "$cache" "$1" "$2"
+		if cmp -s "$peer" "$TLS_PIN_STARTED/${cache##*/}" ; then
 			rc=2
 		else
-			mkdir -p "$TLS_PIN_DIR" && cp "$peer" "$cache.new" && mv -f "$cache.new" "$cache"
 			rc=0
 		fi
 	fi
@@ -185,11 +213,12 @@ _tls_retry_schedule() {
 _tls_retry_stop() {
 	_tls_retry_running && kill "$(cat "$TLS_RETRY_PID")" 2>/dev/null
 	rm -f "$TLS_RETRY_PID" "$TLS_PIN_PENDING"
+	rm -rf "$TLS_PIN_STARTED"
 }
 
 # Restarts the proxy once a pending server presents a verified certificate
 # other than the one pinned at start (none, or the kept one). A server back
-# with the kept certificate needs nothing more
+# with the certificate it was pinned with needs nothing more
 tls_pin_retry() {
 	local delay=15 try=0 addr port sni found left rc
 	# rc.common took the service lock on load: held while this sleeps, it
@@ -2841,6 +2870,7 @@ rules_down() {
 
 start_service() {
 	rm -f "$TLS_PIN_PENDING"
+	rm -rf "$TLS_PIN_STARTED"
 	TLS_PROBE_MEMO="/var/run/$NAME-tls-probe"
 	rm -rf "$TLS_PROBE_MEMO"
 	clear_transparent_proxy
