@@ -84,8 +84,16 @@ start_instance() {
 		uci -q commit network
 	fi
 
-	ip addr flush $dev
-	sleep 2
+	# dsvpn adds the tun address once, on its first connection, and procd
+	# keeps an unchanged instance across a reload: flushing on every reload
+	# left the running tunnel without an address. Only the tun of an
+	# instance that is going away (restart) needs it. procd_running would
+	# reset the jshn message start_service is building, ask ubus directly.
+	if [ -d "/sys/class/net/$dev" ] &&
+	   [ "$(ubus call service list "{\"name\":\"${PROG_NAME}\"}" 2>/dev/null | jsonfilter -q -l 1 -e "@['${PROG_NAME}'].instances[*].running")" != "true" ]; then
+		ip addr flush dev "$dev"
+		sleep 2
+	fi
 
 	_log "starting ${PROG_NAME} ${1} instance $*"
 
