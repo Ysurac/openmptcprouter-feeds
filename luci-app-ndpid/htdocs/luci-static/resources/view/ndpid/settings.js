@@ -2,6 +2,48 @@
 'require view';
 'require form';
 
+var idleTimes = [ 'generic_max_idle_time', 'icmp_max_idle_time',
+	'tcp_max_idle_time', 'udp_max_idle_time' ];
+
+// nDPId takes its times in microseconds: the page shows seconds and
+// stores microseconds, so the uci values keep nDPId's unit
+function secondsOption(s, name, title, description, def) {
+	var o = s.option(form.Value, name, title, description);
+	o.datatype = 'ufloat';
+	o.default = def;
+	o.rmempty = false;
+	o.load = function(section_id) {
+		var v = form.Value.prototype.load.apply(this, [section_id]);
+		return (v != null && /^[0-9]+$/.test(v)) ? String(+v / 1e6) : v;
+	};
+	o.write = function(section_id, value) {
+		return form.Value.prototype.write.apply(this,
+			[section_id, String(Math.round(+value * 1e6))]);
+	};
+	return o;
+}
+
+// nDPId refuses to start unless the flow scan interval is below every
+// idle time
+function validateIdleTime(section_id, value) {
+	var scan = this.section.formvalue(section_id, 'flow_scan_interval');
+
+	if (value === '' || isNaN(+value) || scan == null || scan === '' || isNaN(+scan))
+		return true;
+	return (+value > +scan) ? true : _('Must be above the flow scan interval');
+}
+
+// A field's error depends on its siblings: recheck them when it changes,
+// or a fixed conflict keeps blocking the save
+function revalidateScanAndIdle(ev, section_id) {
+	var names = [ 'flow_scan_interval' ].concat(idleTimes);
+
+	this.section.children.forEach(function(c) {
+		if (c !== this && names.indexOf(c.option) >= 0)
+			c.triggerValidation(section_id);
+	}, this);
+}
+
 return view.extend({
 	render: function() {
 		var m, s, o;
@@ -147,78 +189,74 @@ return view.extend({
 		o.placeholder = '/path/to/ca.pem';
 
 		// ── Performance Tuning ────────────────────────────────────────────
+		// The limits are the ones nDPId's validate_options() enforces: it
+		// refuses to start on a value outside them.
 		s = m.section(form.NamedSection, 'tuning', 'tuning', _('Performance Tuning'));
 		s.addremove = false;
 		s.anonymous = true;
 
 		o = s.option(form.Value, 'max_flows_per_thread', _('Max flows per thread'));
-		o.datatype = 'uinteger';
+		o.datatype = 'and(uinteger,range(128,65536))';
 		o.default = '32768';
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'max_idle_flows_per_thread', _('Max idle flows per thread'));
-		o.datatype = 'uinteger';
+		o.datatype = 'and(uinteger,range(64,2048))';
 		o.default = '1024';
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'max_reader_threads', _('Max reader threads'));
-		o.datatype = 'uinteger';
+		o.datatype = 'and(uinteger,range(1,32))';
 		o.default = '2';
 		o.rmempty = false;
 
-		o = s.option(form.Value, 'daemon_status_interval', _('Daemon status interval'),
-			_('Interval between daemon status events (nanoseconds)'));
-		o.datatype = 'uinteger';
-		o.default = '600000000';
-		o.rmempty = false;
+		secondsOption(s, 'daemon_status_interval', _('Daemon status interval'),
+			_('Interval between daemon status events (seconds)'), '600');
 
-		o = s.option(form.Value, 'flow_scan_interval', _('Flow scan interval'),
-			_('Interval between idle flow scans (nanoseconds)'));
-		o.datatype = 'uinteger';
-		o.default = '10000000';
-		o.rmempty = false;
+		o = secondsOption(s, 'flow_scan_interval', _('Flow scan interval'),
+			_('Interval between idle flow scans (seconds), at least 5 and below every idle time'), '10');
+		o.validate = function(section_id, value) {
+			if (value === '' || isNaN(+value))
+				return true;
+			if (+value < 5)
+				return _('Must be at least 5 seconds');
+			for (var i = 0; i < idleTimes.length; i++) {
+				var t = this.section.formvalue(section_id, idleTimes[i]);
+				if (t != null && t !== '' && !isNaN(+t) && +value >= +t)
+					return _('Must be below every idle time');
+			}
+			return true;
+		};
+		o.onchange = revalidateScanAndIdle;
 
-		o = s.option(form.Value, 'generic_max_idle_time', _('Generic max idle time'),
-			_('Generic flow idle timeout (nanoseconds)'));
-		o.datatype = 'uinteger';
-		o.default = '600000000';
-		o.rmempty = false;
+		o = secondsOption(s, 'generic_max_idle_time', _('Generic max idle time'),
+			_('Generic flow idle timeout (seconds)'), '600');
+		o.validate = validateIdleTime;
+		o.onchange = revalidateScanAndIdle;
 
-		o = s.option(form.Value, 'icmp_max_idle_time', _('ICMP max idle time'),
-			_('ICMP flow idle timeout (nanoseconds)'));
-		o.datatype = 'uinteger';
-		o.default = '120000000';
-		o.rmempty = false;
+		o = secondsOption(s, 'icmp_max_idle_time', _('ICMP max idle time'),
+			_('ICMP flow idle timeout (seconds)'), '120');
+		o.validate = validateIdleTime;
+		o.onchange = revalidateScanAndIdle;
 
-		o = s.option(form.Value, 'tcp_max_idle_time', _('TCP max idle time'),
-			_('TCP flow idle timeout (nanoseconds)'));
-		o.datatype = 'uinteger';
-		o.default = '7440000000';
-		o.rmempty = false;
+		o = secondsOption(s, 'tcp_max_idle_time', _('TCP max idle time'),
+			_('TCP flow idle timeout (seconds)'), '7440');
+		o.validate = validateIdleTime;
+		o.onchange = revalidateScanAndIdle;
 
-		o = s.option(form.Value, 'udp_max_idle_time', _('UDP max idle time'),
-			_('UDP flow idle timeout (nanoseconds)'));
-		o.datatype = 'uinteger';
-		o.default = '180000000';
-		o.rmempty = false;
+		o = secondsOption(s, 'udp_max_idle_time', _('UDP max idle time'),
+			_('UDP flow idle timeout (seconds)'), '180');
+		o.validate = validateIdleTime;
+		o.onchange = revalidateScanAndIdle;
 
-		o = s.option(form.Value, 'tcp_max_post_end_flow_time', _('TCP post-end flow time'),
-			_('Extra time to keep TCP flows after FIN/RST (nanoseconds)'));
-		o.datatype = 'uinteger';
-		o.default = '120000000';
-		o.rmempty = false;
+		secondsOption(s, 'tcp_max_post_end_flow_time', _('TCP post-end flow time'),
+			_('Extra time to keep TCP flows after FIN/RST (seconds)'), '120');
 
-		o = s.option(form.Value, 'compression_scan_interval', _('Compression scan interval'),
-			_('Interval between compression eligibility scans (nanoseconds)'));
-		o.datatype = 'uinteger';
-		o.default = '20000000';
-		o.rmempty = false;
+		secondsOption(s, 'compression_scan_interval', _('Compression scan interval'),
+			_('Interval between compression eligibility scans (seconds)'), '20');
 
-		o = s.option(form.Value, 'compression_flow_inactivity', _('Compression flow inactivity'),
-			_('Inactivity threshold before compressing a flow (nanoseconds)'));
-		o.datatype = 'uinteger';
-		o.default = '30000000';
-		o.rmempty = false;
+		secondsOption(s, 'compression_flow_inactivity', _('Compression flow inactivity'),
+			_('Inactivity threshold before compressing a flow (seconds)'), '30');
 
 		o = s.option(form.Value, 'max_packets_per_flow_to_send', _('Max packets to send per flow'),
 			_('Maximum packets forwarded to collector per flow'));
@@ -228,13 +266,13 @@ return view.extend({
 
 		o = s.option(form.Value, 'max_packets_per_flow_to_process', _('Max packets to process per flow'),
 			_('Maximum packets processed by nDPI per flow'));
-		o.datatype = 'uinteger';
+		o.datatype = 'and(uinteger,range(1,65535))';
 		o.default = '32';
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'max_packets_per_flow_to_analyse', _('Max packets to analyse per flow'),
 			_('Maximum packets used for statistical analysis per flow'));
-		o.datatype = 'uinteger';
+		o.datatype = 'and(uinteger,range(2,65535))';
 		o.default = '32';
 		o.rmempty = false;
 
@@ -244,11 +282,8 @@ return view.extend({
 		o.default = '16';
 		o.rmempty = false;
 
-		o = s.option(form.Value, 'error_event_threshold_time', _('Error event threshold (window)'),
-			_('Time window for error event threshold (nanoseconds)'));
-		o.datatype = 'uinteger';
-		o.default = '10000000';
-		o.rmempty = false;
+		secondsOption(s, 'error_event_threshold_time', _('Error event threshold (window)'),
+			_('Time window for error event threshold (seconds)'), '10');
 
 		// ── nDPI Library ──────────────────────────────────────────────────
 		s = m.section(form.NamedSection, 'ndpi', 'ndpi', _('nDPI Library'));

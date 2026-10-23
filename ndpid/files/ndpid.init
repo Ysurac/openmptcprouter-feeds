@@ -28,6 +28,30 @@ resolve_interfaces() {
 	echo "$valid"
 }
 
+# Print tuning option $1, or its default $2 when nDPId would refuse it:
+# with a value it cannot parse or that validate_options() rejects nDPId
+# exits, and procd gives up after a few respawns. $3/$4 are nDPId's
+# bounds. 18 digits stay below 2^63 for the 64-bit shell arithmetic.
+ndpid_tuning() {
+	local raw val
+	config_get raw tuning "$1" "$2"
+	case "$raw" in
+	''|*[!0-9]*) val="" ;;
+	*)
+		# leading zeros do not count against the length limit
+		val="${raw#"${raw%%[!0]*}"}"
+		val="${val:-0}"
+		[ "${#val}" -le 18 ] || val=""
+		;;
+	esac
+	if [ -n "$val" ] && [ "$val" -ge "${3:-0}" ] && { [ -z "$4" ] || [ "$val" -le "$4" ]; }; then
+		echo "$val"
+	else
+		logger -t ndpid "Ignoring tuning $1 '$raw' (nDPId accepts ${3:-0}..${4:-}), using $2"
+		echo "$2"
+	fi
+}
+
 generate_config() {
 	config_load ndpid
 
@@ -53,6 +77,11 @@ generate_config() {
 	config_get uuid main uuid ''
 	config_get_bool internal main internal 0
 	config_get_bool external main external 0
+	# nDPId refuses both together: processing both directions is its default
+	if [ "$internal" = "1" ] && [ "$external" = "1" ]; then
+		logger -t ndpid "Both internal and external are set, using neither"
+		internal=0 external=0
+	fi
 	config_get_bool compression main compression 1
 	config_get_bool analysis main analysis 0
 	config_get_bool poll main poll 0
@@ -66,23 +95,38 @@ generate_config() {
 	local max_packets_per_flow_to_send max_packets_per_flow_to_process
 	local max_packets_per_flow_to_analyse error_event_threshold_n error_event_threshold_time
 
-	config_get max_flows_per_thread tuning max_flows_per_thread 32768
-	config_get max_idle_flows_per_thread tuning max_idle_flows_per_thread 1024
-	config_get max_reader_threads tuning max_reader_threads 2
-	config_get daemon_status_interval tuning daemon_status_interval 600000000
-	config_get compression_scan_interval tuning compression_scan_interval 20000000
-	config_get compression_flow_inactivity tuning compression_flow_inactivity 30000000
-	config_get flow_scan_interval tuning flow_scan_interval 10000000
-	config_get generic_max_idle_time tuning generic_max_idle_time 600000000
-	config_get icmp_max_idle_time tuning icmp_max_idle_time 120000000
-	config_get tcp_max_idle_time tuning tcp_max_idle_time 7440000000
-	config_get udp_max_idle_time tuning udp_max_idle_time 180000000
-	config_get tcp_max_post_end_flow_time tuning tcp_max_post_end_flow_time 120000000
-	config_get max_packets_per_flow_to_send tuning max_packets_per_flow_to_send 15
-	config_get max_packets_per_flow_to_process tuning max_packets_per_flow_to_process 32
-	config_get max_packets_per_flow_to_analyse tuning max_packets_per_flow_to_analyse 32
-	config_get error_event_threshold_n tuning error_event_threshold_n 16
-	config_get error_event_threshold_time tuning error_event_threshold_time 10000000
+	max_flows_per_thread=$(ndpid_tuning max_flows_per_thread 32768 128 65536)
+	max_idle_flows_per_thread=$(ndpid_tuning max_idle_flows_per_thread 1024 64 2048)
+	max_reader_threads=$(ndpid_tuning max_reader_threads 2 1 32)
+	daemon_status_interval=$(ndpid_tuning daemon_status_interval 600000000)
+	compression_scan_interval=$(ndpid_tuning compression_scan_interval 20000000)
+	compression_flow_inactivity=$(ndpid_tuning compression_flow_inactivity 30000000)
+	flow_scan_interval=$(ndpid_tuning flow_scan_interval 10000000 5000000)
+	generic_max_idle_time=$(ndpid_tuning generic_max_idle_time 600000000)
+	icmp_max_idle_time=$(ndpid_tuning icmp_max_idle_time 120000000)
+	tcp_max_idle_time=$(ndpid_tuning tcp_max_idle_time 7440000000)
+	udp_max_idle_time=$(ndpid_tuning udp_max_idle_time 180000000)
+	tcp_max_post_end_flow_time=$(ndpid_tuning tcp_max_post_end_flow_time 120000000)
+	max_packets_per_flow_to_send=$(ndpid_tuning max_packets_per_flow_to_send 15)
+	max_packets_per_flow_to_process=$(ndpid_tuning max_packets_per_flow_to_process 32 1 65535)
+	max_packets_per_flow_to_analyse=$(ndpid_tuning max_packets_per_flow_to_analyse 32 2 65535)
+	error_event_threshold_n=$(ndpid_tuning error_event_threshold_n 16)
+	error_event_threshold_time=$(ndpid_tuning error_event_threshold_time 10000000)
+
+	# nDPId also wants the flow scan interval below every idle time. Which
+	# side is wrong is a guess: go back to the default scan interval, then
+	# to the default of any idle time still not above it (all are > 10 s).
+	if [ "$flow_scan_interval" -ge "$generic_max_idle_time" ] || \
+	   [ "$flow_scan_interval" -ge "$icmp_max_idle_time" ] || \
+	   [ "$flow_scan_interval" -ge "$tcp_max_idle_time" ] || \
+	   [ "$flow_scan_interval" -ge "$udp_max_idle_time" ]; then
+		logger -t ndpid "Tuning flow_scan_interval $flow_scan_interval is not below every idle time, using nDPId's defaults"
+		flow_scan_interval=10000000
+		[ "$generic_max_idle_time" -gt "$flow_scan_interval" ] || generic_max_idle_time=600000000
+		[ "$icmp_max_idle_time" -gt "$flow_scan_interval" ] || icmp_max_idle_time=120000000
+		[ "$tcp_max_idle_time" -gt "$flow_scan_interval" ] || tcp_max_idle_time=7440000000
+		[ "$udp_max_idle_time" -gt "$flow_scan_interval" ] || udp_max_idle_time=180000000
+	fi
 
 	# [ndpi] settings. nDPId refuses to start on a key libnDPI does not know,
 	# and the bundled libnDPI 5 has no flow.direction_detection any more:

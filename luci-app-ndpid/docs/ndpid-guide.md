@@ -114,8 +114,13 @@ local UNIX socket. Generate a matching cert/key/CA set with the
 
 ### Performance Tuning
 
-All fields here are `uinteger`s; the `*_time`/`*_interval` ones are in
-**nanoseconds**.
+The `*_time`/`*_interval` fields are entered in **seconds** (decimals
+allowed); they are stored in uci in microseconds, nDPId's unit. The page
+enforces the limits nDPId checks at start: 128 to 65536 flows and 64 to
+2048 idle flows per thread, 1 to 32 reader threads, at least 2 packets to
+analyse per flow, and a flow scan interval of at least 5 s that is below
+every idle time. A value outside them set with `uci` is replaced by
+nDPId's default when the service starts, and logged.
 
 | Field | Meaning |
 |---|---|
