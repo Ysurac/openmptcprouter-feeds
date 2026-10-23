@@ -109,7 +109,7 @@ static __always_inline int red_schedule(struct sock *sk, bool backup)
 		 *    retransmit storm.
 		 */
 		usable = mptcp_subflow_active(subflow) &&
-			 !subflow->stale &&
+			 !mptcp_subflow_stale(subflow) &&
 			 bpf_sk_stream_memory_free(ssk);
 		if (!usable)
 			continue;

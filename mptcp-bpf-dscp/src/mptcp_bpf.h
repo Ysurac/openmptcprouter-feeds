@@ -39,6 +39,13 @@ mptcp_subflow_tcp_sock(const struct mptcp_subflow_context *subflow)
 	return subflow->tcp_sock;
 }
 
+/* stale is a u8 since 6.18.55, a 1-bit field before: a plain
+ * subflow->stale was compiled for the bitfield of vmlinux.h and libbpf
+ * refused to relocate it, so the scheduler did not load. Read it through
+ * the CO-RE bitfield relocations, which fit both layouts.
+ */
+#define mptcp_subflow_stale(subflow) BPF_CORE_READ_BITFIELD(subflow, stale)
+
 /* ksym */
 extern struct mptcp_subflow_context *
 bpf_mptcp_subflow_ctx(const struct sock *sk) __ksym;

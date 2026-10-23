@@ -328,7 +328,7 @@ int BPF_PROG(bpf_dscp_get_send, struct mptcp_sock *msk)
 		 * whenever it is saturated. A stale one is screened like the
 		 * others, so a class still fails over off a dead path.
 		 */
-		if (subflow->stale ||
+		if (mptcp_subflow_stale(subflow) ||
 		    (!is_pin_target && !bpf_sk_stream_memory_free(cur)))
 			continue;
 

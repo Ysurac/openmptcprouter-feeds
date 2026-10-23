@@ -28,7 +28,7 @@ void BPF_PROG(mptcp_sched_first_release, struct mptcp_sock *msk)
 static __always_inline bool first_usable(struct mptcp_subflow_context *subflow,
 					 struct sock *ssk)
 {
-	return ssk && mptcp_subflow_active(subflow) && !subflow->stale &&
+	return ssk && mptcp_subflow_active(subflow) && !mptcp_subflow_stale(subflow) &&
 	       bpf_sk_stream_memory_free(ssk);
 }
 

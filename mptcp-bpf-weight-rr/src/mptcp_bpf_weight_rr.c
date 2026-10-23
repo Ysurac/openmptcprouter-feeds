@@ -234,7 +234,7 @@ int BPF_PROG(bpf_weight_rr_get_send, struct mptcp_sock *msk)
 		 * can actually send, so a turn is only spent when it is used,
 		 * and a momentarily blocked endpoint costs itself nothing.
 		 */
-		if (subflow->stale || !bpf_sk_stream_memory_free(ssk))
+		if (mptcp_subflow_stale(subflow) || !bpf_sk_stream_memory_free(ssk))
 			continue;
 
 		pace = subflow->avg_pacing_rate;

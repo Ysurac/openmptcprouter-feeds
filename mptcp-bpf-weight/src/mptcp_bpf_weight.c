@@ -169,7 +169,7 @@ int BPF_PROG(bpf_weight_get_send, struct mptcp_sock *msk)
 		 * instead of stalling. Same fix as bpf_weight_rr, where the
 		 * late check also cost the heavy endpoint its SWRR turn.
 		 */
-		if (subflow->stale || !bpf_sk_stream_memory_free(ssk))
+		if (mptcp_subflow_stale(subflow) || !bpf_sk_stream_memory_free(ssk))
 			continue;
 
 		nr_active += !backup;
