@@ -19,12 +19,16 @@ case "$proxy" in
 	shadowsocks)
 		pidof ss-redir >/dev/null 2>&1 || pidof ss-local >/dev/null 2>&1 || exit 1
 		;;
-	shadowsocks-rust)
+	shadowsocks-rust | shadowsocks-go)
+		# shadowsocks-go is the VPS side only: the router runs shadowsocks-rust
 		pidof sslocal >/dev/null 2>&1 || pidof ssservice >/dev/null 2>&1 || exit 1
 		;;
-	v2ray | xray)
-		pidof "$proxy" >/dev/null 2>&1 || exit 1
-		[ "$(uci -q -P /var/state get "openmptcprouter.omr.$proxy")" = "down" ] && exit 1
+	v2ray | v2ray-* | xray | xray-*)
+		# every v2ray-*/xray-* protocol runs the same daemon and the tracker
+		# keeps a single omr.v2ray/omr.xray verdict for it
+		daemon="${proxy%%-*}"
+		pidof "$daemon" >/dev/null 2>&1 || exit 1
+		[ "$(uci -q -P /var/state get "openmptcprouter.omr.$daemon")" = "down" ] && exit 1
 		exit 0
 		;;
 	*)
