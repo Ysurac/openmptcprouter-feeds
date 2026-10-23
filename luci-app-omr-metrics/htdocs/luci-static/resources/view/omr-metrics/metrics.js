@@ -162,8 +162,8 @@ return view.extend({
 
 	_statusBadge: function(status) {
 		var color = '#aaa', label = status || '—';
-		if (status === 'up')      { color = '#4caf50'; label = _('Up'); }
-		else if (status === 'down') { color = '#f44336'; label = _('Down'); }
+		if (status === 'up' || status === 'online')      { color = '#4caf50'; label = _('Up'); }
+		else if (status === 'down' || status === 'offline') { color = '#f44336'; label = _('Down'); }
 		var span = E('span', {
 			style: 'display:inline-block;padding:2px 8px;border-radius:4px;' +
 			       'background:' + color + ';color:#fff;font-size:0.85em;font-weight:bold'
