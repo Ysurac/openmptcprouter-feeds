@@ -42,6 +42,17 @@ _tracker_down() {
 	logger -t "mptcp" "$DEVICE tracker state is down, not adding it back to MPTCP"
 }
 
+# netifd exports DEVICE on ifup/ifupdate only: on iflink "mptcp reload" got
+# no device and reloaded every interface, on each carrier-up of any WAN.
+# Resolve it as the init script matches its argument to an interface, and
+# leave it to the ifup that follows when the interface has no device yet.
+if [ -z "$DEVICE" ] && { [ "$ACTION" = iflink ] || [ "$ACTION" = link-up ]; }; then
+	. /lib/functions/network.sh
+	network_get_device DEVICE "$MP_INTERFACE"
+	[ -n "$DEVICE" ] || network_get_physdev DEVICE "$MP_INTERFACE"
+	[ -n "$DEVICE" ] || exit 0
+fi
+
 if [ "$ACTION" = ifupdate -a -n "$IFUPDATE_ADDRESSES" ] && [ -n "$MULTIPATH" ] && [ "$MULTIPATH" != "off" ]; then
 	logger -t "mptcp" "New IP ($IFUPDATE_ADDRESSES) for $INTERFACE ($DEVICE)"
 	multipath $DEVICE off >/dev/null 2>&1 || exit 0
@@ -52,7 +63,7 @@ elif [ "$ACTION" = ifupdate ] && [ -n "$MULTIPATH" ] && [ "$MULTIPATH" != "off" 
 	multipath $DEVICE off >/dev/null 2>&1 || exit 0
 	_tracker_down && exit 0
 	multipath $DEVICE $MULTIPATH_MODE $MULTIPATH_ID >/dev/null 2>&1 || exit 0
-elif [ "$ACTION" = ifup -o "$ACTION" = iflink  -o "$ACTION" = link-up ] && [ -z "$(echo $DEVICE | grep oip | grep gre)" ] && [ -n "$MULTIPATH" ] && [ "$MULTIPATH" != "off" ]; then
+elif [ "$ACTION" = ifup -o "$ACTION" = iflink  -o "$ACTION" = link-up ] && [ -n "$DEVICE" ] && [ -z "$(echo $DEVICE | grep oip | grep gre)" ] && [ -n "$MULTIPATH" ] && [ "$MULTIPATH" != "off" ]; then
 	logger -t "mptcp" "Reloading mptcp config due to $ACTION of $INTERFACE ($DEVICE)"
 	/etc/init.d/mptcp reload "$DEVICE" >/dev/null || exit 0
 elif [ "$ACTION" = ifdown -o "$ACTION" = link-down ]; then
