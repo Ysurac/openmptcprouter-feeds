@@ -3,10 +3,19 @@
 'require form';
 'require rpc';
 'require ui';
+'require dom';
 
 var callBackupList = rpc.declare({
 	object: 'openmptcprouter',
 	method: 'backuplist',
+	expect: { '': {} }
+});
+
+/* What the last listing found, without asking the servers again */
+var callBackupListCached = rpc.declare({
+	object: 'openmptcprouter',
+	method: 'backuplist',
+	params: ['refresh'],
 	expect: { '': {} }
 });
 
@@ -23,15 +32,65 @@ var callBackupSend = rpc.declare({
 	expect: { '': {} }
 });
 
+var callBackupJob = rpc.declare({
+	object: 'openmptcprouter',
+	method: 'backupjob',
+	params: ['job'],
+	expect: { '': {} }
+});
+
+/* A server that doesn't answer keeps the job going past the RPC timeout:
+ * the call then answers { running: true } and the job is polled until it
+ * ends, for 10 minutes at most */
+function waitJob(job, res, tries) {
+	tries = tries || 0;
+	if (!res || !res.running)
+		return Promise.resolve(res);
+	if (tries >= 200)
+		return Promise.resolve({ result: false, error: _('the server did not answer in time') });
+	return new Promise(function(resolve) { window.setTimeout(resolve, 3000); }).then(function() {
+		return callBackupJob(job);
+	}).then(function(r) {
+		return waitJob(job, r, tries + 1);
+	});
+}
+
 return view.extend({
+	/* backuplist is in the ACL's write section (it asks the servers): a
+	 * read-only login is refused it, and the page then spun forever */
 	load: function() {
-		return callBackupList();
+		return callBackupList().catch(function(err) {
+			if (/-32002|Access denied|Permission denied/.test(String(err && err.message)))
+				return null;
+			throw err;
+		});
 	},
 
 	render: function(backupdata) {
-		var m, s, o;
+		if (backupdata === null)
+			return E('div', { 'class': 'cbi-map' }, [
+				E('h2', {}, _('Backup on server')),
+				E('div', { 'class': 'cbi-map-descr' },
+					_('The backups on the server need a login with write access to this page.'))
+			]);
 
-		m = new form.Map('openmptcprouter', _('Backup on server'));
+		var container = E('div');
+		return this.renderList(container, backupdata).then(function() {
+			return container;
+		});
+	},
+
+	/* While the servers are still asked, the previous listing is shown and
+	 * the page is drawn again once they all answered */
+	renderList: function(container, backupdata) {
+		var self = this;
+		var m, s, o;
+		var pending = Object.keys(backupdata || {}).some(function(name) {
+			return backupdata[name] && backupdata[name].pending;
+		});
+
+		m = new form.Map('openmptcprouter', _('Backup on server'),
+			pending ? _('Asking the servers for their backups...') : null);
 
 		/* The picked backups are read from the widgets: nothing on this page
 		 * is ever saved to uci */
@@ -68,22 +127,25 @@ return view.extend({
 		o.inputtitle = _('Restore backup');
 		o.inputstyle = 'action important';
 		o.onclick = function() {
-			var promises = [];
-
-			Object.keys(selects).forEach(function(name) {
-				var sel = selects[name].formvalue(name);
-				if (sel)
-					promises.push(callBackupGet(name, sel));
+			var picked = Object.keys(selects).filter(function(name) {
+				return selects[name].formvalue(name);
 			});
 
-			if (!promises.length)
-				promises.push(callBackupGet('', ''));
+			/* Two restores at once unpack over each other */
+			if (picked.length > 1) {
+				ui.addNotification(null, _('Pick a backup on one server only.'), 'error');
+				return;
+			}
 
-			return Promise.all(promises).then(function(res) {
-				res.forEach(function(r) {
-					if (!r || r.result !== true)
-						throw new Error((r && r.error) || _('the server sent no valid backup'));
-				});
+			var call = picked.length
+				? callBackupGet(picked[0], selects[picked[0]].formvalue(picked[0]))
+				: callBackupGet('', '');
+
+			return call.then(function(r) {
+				return waitJob('get', r);
+			}).then(function(r) {
+				if (!r || r.result !== true)
+					throw new Error((r && r.error) || _('the server sent no valid backup'));
 				ui.addNotification(null, _('Backup restored successfully.'), 'info');
 			}).catch(function(err) {
 				ui.addNotification(null, _('Failed to restore backup: ') + ((err && err.message) || String(err)), 'error');
@@ -95,15 +157,35 @@ return view.extend({
 		o.inputstyle = 'action important';
 		o.onclick = function() {
 			return callBackupSend().then(function(r) {
+				return waitJob('send', r);
+			}).then(function(r) {
 				if (!r || r.result !== true)
-					throw new Error(_('no server took it'));
+					throw new Error((r && r.error) || _('no server took it'));
 				ui.addNotification(null, _('Backup sent successfully.'), 'info');
 			}).catch(function(err) {
 				ui.addNotification(null, _('Failed to send backup: ') + ((err && err.message) || String(err)), 'error');
 			});
 		};
 
-		return m.render();
+		return m.render().then(function(node) {
+			dom.content(container, node);
+			if (pending)
+				self.pollList(container);
+		});
+	},
+
+	pollList: function(container) {
+		var self = this;
+		window.setTimeout(function() {
+			callBackupListCached(false).then(function(data) {
+				var still = Object.keys(data || {}).some(function(name) {
+					return data[name] && data[name].pending;
+				});
+				return still ? self.pollList(container) : self.renderList(container, data);
+			}).catch(function() {
+				self.pollList(container);
+			});
+		}, 5000);
 	},
 
 	handleSaveApply: null,

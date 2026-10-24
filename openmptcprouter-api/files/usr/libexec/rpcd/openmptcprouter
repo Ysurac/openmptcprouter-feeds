@@ -2177,28 +2177,6 @@ function force_stop_proxy(proxy)
 	end
 end
 
-function restart_all()
-	-- Restart all
-	sys.exec("/etc/init.d/macvlan restart >/dev/null 2>/dev/null")
-	sys.exec("(env -i /bin/ubus call network reload) >/dev/null 2>/dev/null")
-	sys.exec("/etc/init.d/omr-tracker stop >/dev/null 2>/dev/null")
-	sys.exec("/etc/init.d/mptcp restart >/dev/null 2>/dev/null")
-	sys.exec("/etc/init.d/shadowsocks-libev restart >/dev/null 2>/dev/null")
-	sys.exec("/etc/init.d/glorytun restart >/dev/null 2>/dev/null")
-	sys.exec("/etc/init.d/glorytun-udp restart >/dev/null 2>/dev/null")
-	sys.exec("/etc/init.d/mlvpn restart >/dev/null 2>/dev/null")
-	sys.exec("/etc/init.d/openvpn restart >/dev/null 2>/dev/null")
-	sys.exec("/etc/init.d/openvpnbonding restart >/dev/null 2>/dev/null")
-	sys.exec("/etc/init.d/dsvpn restart >/dev/null 2>/dev/null")
-	sys.exec("/etc/init.d/omr-tracker start >/dev/null 2>/dev/null")
-	sys.exec("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
-	sys.exec("/etc/init.d/mptcpovervpn restart >/dev/null 2>/dev/null")
-	sys.exec("/etc/init.d/vnstat restart >/dev/null 2>/dev/null")
-	sys.exec("/etc/init.d/v2ray restart >/dev/null 2>/dev/null")
-	sys.exec("/etc/init.d/xray restart >/dev/null 2>/dev/null")
-	sys.exec("/etc/init.d/mqvpn restart >/dev/null 2>/dev/null")
-end
-
 function restart_all_async()
 	sys.exec("sh -c '(sleep 1; /etc/init.d/macvlan restart; /bin/ubus call network reload; /etc/init.d/omr-tracker stop; /etc/init.d/mptcp restart; /etc/init.d/shadowsocks-libev restart; /etc/init.d/glorytun restart; /etc/init.d/glorytun-udp restart; /etc/init.d/mlvpn restart; /etc/init.d/openvpn restart; /etc/init.d/openvpnbonding restart; /etc/init.d/dsvpn restart; /etc/init.d/mqvpn restart; /etc/init.d/omr-tracker start; /etc/init.d/omr-6in4 restart; /etc/init.d/mptcpovervpn restart; /etc/init.d/vnstat restart; /etc/init.d/v2ray restart; /etc/init.d/xray restart; /etc/init.d/shadowsocks-rust restart; sleep 60; /etc/init.d/v2ray rules_up; /etc/init.d/xray rules_up; /etc/init.d/omr-bypass restart) >/dev/null 2>/dev/null &'")
 end
@@ -2312,11 +2290,6 @@ function cpuscalinggovernor(scaling_governor)
 	ucic:commit("openmptcprouter")
 end
 
--- Exit status of a command run through sys.exec, which only gives stdout
-local function exec_status(cmd)
-	return tonumber((sys.exec(cmd .. " >/dev/null 2>&1; echo $?") or ""):match("%d+")) or 1
-end
-
 local function _backup_server(name)
 	return type(name) == "string" and name:match("^[%w_]+$") ~= nil
 		and ucic:get("openmptcprouter", name) == "server"
@@ -2355,8 +2328,87 @@ function update_vps(server)
 	return { status = "started" }
 end
 
-function backup_list()
-	sys.exec("/etc/init.d/openmptcprouter-vps backup_list >/dev/null 2>/dev/null")
+-- The backup calls log in to each server: one that doesn't answer costs
+-- 10 s per address and per WAN, beyond LuCI's 20 s and rpcd's 30 s. rpcd
+-- then killed the plugin but not the script, so the page never showed, and
+-- a restore was reported failed while it went on. Each call now starts its
+-- job in the background and waits for it a while (enough for servers that
+-- answer); past that it says the job is running, and the page polls
+-- backupjob. The job's pid and "<pid> <exit status>" are kept in /var/state
+-- as settings.backup_<job>_pid and settings.backup_<job>_rc.
+local BACKUP_WAIT = 12
+
+-- A fresh view at each read: the job writes it from another process
+local function backup_state_get(option)
+	local state = require "uci".cursor(nil, "/var/state")
+	state:add_delta("/var/state")
+	return _as_string(state:get("openmptcprouter", "settings", option), "")
+end
+
+-- nil when it never ran, "running", or the job's exit status
+local function backup_job_status(job, pid)
+	pid = pid or tonumber(backup_state_get("backup_" .. job .. "_pid"))
+	if not pid then return nil end
+	local function done()
+		local rpid, rc = backup_state_get("backup_" .. job .. "_rc"):match("^(%d+) (%d+)$")
+		if tonumber(rpid) == pid then return tonumber(rc) end
+	end
+	local rc = done()
+	if rc then return rc end
+	-- its own sh -c, not a process that took the pid of a killed one; or the
+	-- uci that writes its status, should a shell exec that last command
+	local cmdline = fs.readfile("/proc/" .. pid .. "/cmdline")
+	if cmdline and (cmdline:find("openmptcprouter-vps", 1, true) or
+	    cmdline:find("backup_" .. job .. "_rc=", 1, true)) then
+		return "running"
+	end
+	-- it wrote its status before it ended; none means it was killed
+	return done() or 1
+end
+
+local function backup_job_start(job, cmd)
+	local script = cmd .. " >/dev/null 2>&1; rc=$?; " ..
+		"uci -q -P /var/state revert openmptcprouter.settings.backup_" .. job .. "_rc; " ..
+		"uci -q -P /var/state set openmptcprouter.settings.backup_" .. job .. "_rc=\"$$ $rc\"; " ..
+		-- ash execs a last command: the job's pid would then be that uci,
+		-- seen as gone before it wrote the status
+		"exit $rc"
+	local pid = tonumber((sys.exec("sh -c " .. shell_quote(script) .. " </dev/null >/dev/null 2>&1 & echo $!") or ""):match("%d+"))
+	if pid then
+		sys.exec("uci -q -P /var/state revert openmptcprouter.settings.backup_" .. job .. "_pid; " ..
+			"uci -q -P /var/state set openmptcprouter.settings.backup_" .. job .. "_pid=" .. pid)
+	end
+	return pid
+end
+
+local function backup_job_wait(job, pid)
+	local status = backup_job_status(job, pid)
+	local waited = 0
+	while status == "running" and waited < BACKUP_WAIT do
+		sys.exec("sleep 1")
+		waited = waited + 1
+		status = backup_job_status(job, pid)
+	end
+	return status
+end
+
+local function backup_job_result(status)
+	if status == "running" then
+		return { running = true }
+	end
+	return { result = status == 0 }
+end
+
+-- refresh false: what the last listing found, without asking the servers
+function backup_list(refresh)
+	local status = backup_job_status("list")
+	if refresh ~= false then
+		local pid
+		if status ~= "running" then
+			pid = backup_job_start("list", "/etc/init.d/openmptcprouter-vps backup_list")
+		end
+		status = backup_job_wait("list", pid)
+	end
 	-- The list was just written to /var/state by another process: read it
 	-- through a cursor that has not loaded the package yet
 	local state = require "uci".cursor(nil, "/var/state")
@@ -2365,6 +2417,8 @@ function backup_list()
 	ucic:foreach("openmptcprouter", "server", function(section)
 		local name = section[".name"]
 		local entry = { backups = {} }
+		-- still asking the servers: what is shown is the previous listing
+		if status == "running" then entry.pending = true end
 		entry.lastbackup = tonumber(_as_string(state:get("openmptcprouter", name, "lastbackup"), ""))
 		local lasttime
 		for _, backup in ipairs(_as_string_list(state:get("openmptcprouter", name, "allbackup"))) do
@@ -2384,22 +2438,47 @@ end
 function backup_get(server, backupfile)
 	server = _as_string(server, "")
 	backupfile = _as_string(backupfile, "")
-	if server == "" and backupfile == "" then
-		-- No backup picked: the latest one of all servers
-		return { result = exec_status("/etc/init.d/openmptcprouter-vps backup_get") == 0 }
+	local cmd = "/etc/init.d/openmptcprouter-vps backup_get"
+	-- No backup picked: the latest one of all servers
+	if server ~= "" or backupfile ~= "" then
+		if not _backup_server(server) then
+			return { result = false, error = "Unknown server" }
+		end
+		-- The name goes into the backupget URL as is
+		if not backupfile:match("^[%w][%w._-]*$") then
+			return { result = false, error = "Invalid backup name" }
+		end
+		cmd = cmd .. " " .. shell_quote(server) .. " " .. shell_quote(backupfile)
 	end
-	if not _backup_server(server) then
-		return { result = false, error = "Unknown server" }
+	-- Two sysupgrade -r at once unpack over each other
+	if backup_job_status("get") == "running" then
+		return { result = false, error = "A restore is already running" }
 	end
-	-- The name goes into the backupget URL as is
-	if not backupfile:match("^[%w][%w._-]*$") then
-		return { result = false, error = "Invalid backup name" }
-	end
-	return { result = exec_status("/etc/init.d/openmptcprouter-vps backup_get " .. shell_quote(server) .. " " .. shell_quote(backupfile)) == 0 }
+	local pid = backup_job_start("get", cmd)
+	if not pid then return { result = false } end
+	return backup_job_result(backup_job_wait("get", pid))
 end
 
+-- A send already running is waited for, not started again
 function backup_send()
-	return { result = exec_status("/etc/init.d/openmptcprouter-vps backup_send") == 0 }
+	local pid
+	if backup_job_status("send") ~= "running" then
+		pid = backup_job_start("send", "/etc/init.d/openmptcprouter-vps backup_send")
+		if not pid then return { result = false } end
+	end
+	return backup_job_result(backup_job_wait("send", pid))
+end
+
+-- What the page polls while a call above answered { running = true }
+function backup_job(job)
+	if job ~= "list" and job ~= "get" and job ~= "send" then
+		return { result = false, error = "Unknown job" }
+	end
+	local status = backup_job_status(job)
+	if status == nil then
+		return { result = false, error = "Not started" }
+	end
+	return backup_job_result(status)
 end
 
 function get_mptcp_config(interface)
@@ -3906,11 +3985,14 @@ local methods = {
 		args = { server = "" },
 		call = function(args) return update_vps(args.server) end
 	},
+	-- ~19 restarts in a row ran past rpcd's timeout, and a kill between
+	-- "omr-tracker stop" and "start" left failover off: in the background
 	restartall = {
-		call = function() restart_all() end
+		call = function() restart_all_async() end
 	},
 	backuplist = {
-		call = function() return backup_list() end
+		args = { refresh = true },
+		call = function(args) return backup_list(args.refresh) end
 	},
 	backupget = {
 		args = { server = "", backupfile = "" },
@@ -3918,6 +4000,10 @@ local methods = {
 	},
 	backupsend = {
 		call = function() return backup_send() end
+	},
+	backupjob = {
+		args = { job = "" },
+		call = function(args) return backup_job(args.job) end
 	},
 	redirectports = {
 		args = { server = "", redirect_ports = 0 },
