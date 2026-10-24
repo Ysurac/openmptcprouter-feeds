@@ -43,12 +43,45 @@ _omr_wan_networks=""
 
 # TLD list for wildcard domain expansion: fetch it from IANA at most once
 # per run — callers need it once per wildcard domain, and each failed
-# attempt costs the full curl timeout when the WAN is not up yet.
+# attempt costs the full curl timeout when the WAN is not up yet. The last
+# list fetched is kept for a run that cannot get it: without it a wildcard
+# rule expanded to nothing, which looked like a removed rule and flushed
+# its sets (see _omr_fed_lost).
 _omr_tlds_tried=""
+_OMR_TLDS="/var/run/omr-bypass-tlds"
 _fetch_tlds() {
 	[ -n "$_omr_tlds_tried" ] && return
 	_omr_tlds_tried=1
 	tlds=$(curl --max-time 4 -s https://data.iana.org/TLD/tlds-alpha-by-domain.txt)
+	if printf '%s\n' "$tlds" | grep -q -i -x 'com'; then
+		printf '%s\n' "$tlds" > "$_OMR_TLDS" 2>/dev/null
+	else
+		tlds="$(cat "$_OMR_TLDS" 2>/dev/null)"
+	fi
+}
+
+# _wildcard_merge <name.> <domain>...: the domains given plus the ones the
+# earlier expansions of <name.> found, kept for the next run. One dig per
+# TLD with a one second timeout: a run on a busy link, or with no WAN up,
+# lost some or all of them, and each lost domain's set was flushed (see
+# _omr_fed_lost). With nothing now nor kept (no DNS since the boot), the
+# <name.><tld> the dnsmasq sections had before this run.
+_OMR_WILDCARDS="/var/run/omr-bypass-wildcards"
+_wildcard_merge() {
+	local prefix="$1" cached
+	shift
+	cached="$(awk -v p="$prefix" '$1 == p { $1 = ""; print; exit }' "$_OMR_WILDCARDS" 2>/dev/null)"
+	set -- $(printf '%s\n' "$@" $cached | awk 'NF && !s[$0]++')
+	if [ "$#" -eq 0 ]; then
+		awk -v p="$prefix" 'index($1, p) == 1 && substr($1, length(p) + 1) !~ /[.]/ && !s[$1]++ { printf "%s%s", sep, $1; sep = " " }' \
+			/tmp/omr-bypass-fed.before 2>/dev/null
+		return 0
+	fi
+	{
+		awk -v p="$prefix" '$1 != p' "$_OMR_WILDCARDS" 2>/dev/null
+		echo "$prefix $*"
+	} > "$_OMR_WILDCARDS.new" 2>/dev/null && mv -f "$_OMR_WILDCARDS.new" "$_OMR_WILDCARDS"
+	echo "$*"
 }
 
 # _expand_wildcard_domain <name.>: the <name.><tld> that resolve, for the
@@ -127,12 +160,6 @@ _add_proto() {
 			echo "$protoname:$ip" >/proc/net/xt_ndpi/ip_proto
 		fi
 	done
-}
-
-_add_proto_without_ndpi() {
-	protoname=$1
-	[ -z "$protoname" ] && return
-	echo "$protoname" >> /usr/share/omr-bypass/omr-bypass-proto.lst
 }
 
 _uci_add_list_unique() {
@@ -757,6 +784,25 @@ _bypass_ip() {
 # logged instead of discarded.
 _REPLY_INCLUDE="/etc/firewall.omr-bypass-reply"
 _REPLY_NFT="/etc/firewall.omr-bypass-reply.nft"
+# Where the include files are written. start_service writes them to /tmp
+# and _omr_install_include puts each in place only when it changed: they
+# were deleted and written again on flash at every start and reload.
+_fw_include="/etc/firewall.omr-bypass"
+_reply_nft_out="$_REPLY_NFT"
+_reply_include_out="$_REPLY_INCLUDE"
+
+# _omr_install_include <new> <file>: <file> becomes <new>, or goes away
+# when this run wrote nothing
+_omr_install_include() {
+	if [ ! -f "$1" ]; then
+		rm -f "$2"
+	elif cmp -s "$1" "$2"; then
+		rm -f "$1"
+	else
+		cp "$1" "$2.new" && mv -f "$2.new" "$2"
+		rm -f "$1"
+	fi
+}
 _reply_chain_written=""
 _reply_marks=""
 _reply_wan_marks=""
@@ -768,7 +814,7 @@ _reply_ensure_chain() {
 	# declaration creates the chain when fw4 has just rebuilt the table
 	# (and is a no-op when it is still there), and the flush is what keeps
 	# a re-run from stacking duplicate rules.
-	cat > "$_REPLY_NFT" <<-'EOF'
+	cat > "$_reply_nft_out" <<-'EOF'
 		table inet fw4 {
 			chain omr_bypass_reply {
 				type filter hook prerouting priority mangle + 5; policy accept;
@@ -778,7 +824,7 @@ _reply_ensure_chain() {
 		table inet fw4 {
 			chain omr_bypass_reply {
 	EOF
-	cat > "$_REPLY_INCLUDE" <<-EOF
+	cat > "$_reply_include_out" <<-EOF
 		[ -f $_REPLY_NFT ] || exit 0
 		nft -f $_REPLY_NFT || logger -t "omr-bypass" "omr_bypass_reply: reply-path rules not applied (see $_REPLY_NFT)"
 		exit 0
@@ -815,7 +861,7 @@ _reply_wan_rule() {
 	[ -z "$dev" ] && return
 	_reply_ensure_chain
 	_reply_add_wan_mark "0x4539${count}" "0x6539${count}"
-	cat >> "$_REPLY_NFT" <<-EOF
+	cat >> "$_reply_nft_out" <<-EOF
 		iifname "$dev" meta nfproto ipv4 ct direction original ct mark 0x0 counter ct mark set 0x4539${count} comment "omr_bypass_reply_save_${dev}_4"
 		iifname "$dev" meta nfproto ipv6 ct direction original ct mark 0x0 counter ct mark set 0x6539${count} comment "omr_bypass_reply_save_${dev}_6"
 	EOF
@@ -839,16 +885,16 @@ _reply_finish() {
 	local notstored=""
 	if [ -n "$wanmarkset" ]; then
 		notstored="ct mark != { $wanmarkset } "
-		cat >> "$_REPLY_NFT" <<-EOF
+		cat >> "$_reply_nft_out" <<-EOF
 			ct direction reply ct mark { $wanmarkset } counter meta mark set ct mark comment "omr_bypass_reply_restore"
 		EOF
 	fi
 	# Neutralise: a reply of a connection that came in somewhere we did not
 	# remember (omrvpn above all) keeps its own ingress route.
-	[ -n "$markset" ] && cat >> "$_REPLY_NFT" <<-EOF
+	[ -n "$markset" ] && cat >> "$_reply_nft_out" <<-EOF
 		ct direction reply ${notstored}meta mark { $markset } counter meta mark set 0x0 comment "omr_bypass_reply_unhijack"
 	EOF
-	cat >> "$_REPLY_NFT" <<-'EOF'
+	cat >> "$_reply_nft_out" <<-'EOF'
 		}
 		}
 	EOF
@@ -860,7 +906,7 @@ _dscp_ipset_vals=""
 _dscp_ensure_chain() {
 	[ -n "$_dscp_chain_written" ] && return
 	_dscp_chain_written=1
-	cat >> /etc/firewall.omr-bypass <<-'EOF'
+	cat >> "$_fw_include" <<-'EOF'
 		nft add chain inet fw4 omr_dscp_pre "{ type filter hook prerouting priority filter - 2; policy accept; }" 2>/dev/null || true
 	EOF
 }
@@ -887,7 +933,7 @@ _dscp_ensure_ipset() {
 		set firewall.omr_dst_bypass_dscp_${dscp}_6.family='ipv6'
 		set firewall.omr_dst_bypass_dscp_${dscp}_6.enabled='1'
 	EOF
-	cat >> /etc/firewall.omr-bypass <<-EOF
+	cat >> "$_fw_include" <<-EOF
 		nft add rule inet fw4 omr_dscp_pre ip daddr @omr_dst_bypass_dscp_${dscp}_4 ip dscp set ${dscp} 2>/dev/null || true
 		nft add rule inet fw4 omr_dscp_pre ip6 daddr @omr_dst_bypass_dscp_${dscp}_6 ip6 dscp set ${dscp} 2>/dev/null || true
 	EOF
@@ -916,6 +962,81 @@ _dscp_ip() {
 _dnsipset_state() {
 	uci -q -X show dhcp | grep -E '^dhcp\.omr_dst_bypass_[^.]*(=|\.(name|domain)=)'
 }
+
+# What start_service writes to dhcp: the generated sections, every option,
+# and the noipv6 list
+_omr_dhcp_state() {
+	uci -q -X show dhcp | grep -E '^dhcp\.omr_dst_bypass_'
+	uci -q get dhcp.@dnsmasq[0].noipv6
+}
+
+# The addresses dnsmasq (for a domain) and the nDPId consumer (for a
+# protocol) add to the sets are in no .entry list: nothing took them out
+# when the domain or the rule went away or moved to another interface, and
+# fw4's light reload keeps them. A domain moved to another WAN was in both
+# sets and the last MARK rule won. Those feeds are written as "<domain or
+# protocol> <set>" pairs, before and after a run: a set that lost a pair is
+# flushed before the reload adds back what it declares (_omr_fed_lost). A
+# run that changes nothing flushes nothing: flushing also takes out what
+# dnsmasq added for the other domains, until they are resolved again.
+_NDPID_LIST="/var/run/omr-bypass-ndpid.list"
+
+_dnsipset_pairs() {
+	uci -q show dhcp 2>/dev/null | awk '
+		/^dhcp\.omr_dst_bypass_[^.]*\.(name|domain)=/ {
+			eq = index($0, "=")
+			k = substr($0, 6, eq - 6)
+			o = k; sub(/^[^.]*\./, "", o); sub(/\..*$/, "", k)
+			v = substr($0, eq + 1); gsub(/\047/, "", v)
+			if (!(k in sec)) { sec[k] = 1; order[++ns] = k }
+			if (o == "name") names[k] = names[k] " " v
+			else doms[k] = doms[k] " " v
+		}
+		END {
+			for (i = 1; i <= ns; i++) {
+				k = order[i]
+				nd = split(doms[k], d, " "); nn = split(names[k], n, " ")
+				for (a = 1; a <= nd; a++)
+					for (b = 1; b <= nn; b++)
+						print d[a], n[b]
+			}
+		}'
+}
+
+# _ndpid_list_pairs <consumer list>: the sets ndpid-consumer adds the
+# addresses of each protocol to (it decides them the same way)
+_ndpid_list_pairs() {
+	printf '%s\n' $1 | awk -F: '
+		NF {
+			bp = $1; intf = $2; dscp = $4; fam = $5; p = $6
+			v4 = (fam != "ipv6"); v6 = (fam != "ipv4")
+			if (p != "tcp" && p != "udp") p = ""
+			if (intf == "srv_vpn1") p = ""
+			if (p != "") p = "_" p
+			if (intf == "all") {
+				if (v4) print bp, "bypass_" bp
+				if (v6) print bp, "bypass6_" bp
+			} else if (intf != "") {
+				if (v4) print bp, "omr_dst_bypass_" intf "_4" p
+				if (v6) print bp, "omr_dst_bypass_" intf "_6" p
+			}
+			if (dscp != "") {
+				if (v4) print bp, "omr_dst_bypass_dscp_" dscp "_4"
+				if (v6) print bp, "omr_dst_bypass_dscp_" dscp "_6"
+			}
+		}'
+}
+
+# _omr_fed_lost <before> <after>: the sets of the pairs <before> has and
+# <after> has not, on one line
+_omr_fed_lost() {
+	awk 'FILENAME == ARGV[1] { n[$0] = 1; next } NF == 2 && !($0 in n) && !($2 in s) { s[$2] = 1; printf "%s%s", sep, $2; sep = " " }' "$2" "$1"
+}
+
+# Set when rules want nDPId and it is not up: the protocols of the last
+# consumer list are not taken for removed. Flushing their sets took out
+# every address dnsmasq had added for the domains too.
+_omr_ndpid_unsure=""
 
 # dnsmasq fills the sets of one ipset entry per domain, so omr-dscp gives a
 # domain it marks and omr-bypass routes an entry of its own that also names
@@ -1013,6 +1134,98 @@ _dnsipset_add() {
 	return 0
 }
 
+# The addresses dig gives the domains at a start, and what they went to.
+# A reload does not run dig (one query per domain and per database host,
+# minutes on small boards with the lock held), so the .entry lists it
+# rebuilt lacked them all: the first reload after a start deleted them from
+# the sets as stale. A start keeps "<domain> <address>" here, a reload
+# writes what each domain goes to this time ("<domain> <interface> <v4>
+# <v6> <tcpudp> <dscp>") and _bypass_resolved_replay adds the kept
+# addresses back from these, in one uci batch. A domain whose rule is
+# gone is not asked for and loses them; one moved to another interface
+# takes them along.
+_BYPASS_RESOLVED="/var/run/omr-bypass-resolved"
+_bypass_resolved_new=""
+_bypass_resolved_want=""
+
+# _bypass_resolved_keep <domain> <address>: remember an address dig gave,
+# when it is one _bypass_ip and _dscp_ip take
+_bypass_resolved_keep() {
+	[ -n "$_bypass_resolved_new" ] || return 0
+	if _valid_ip4net "$2"; then
+		[ "$(valid_subnet4 "$2")" = "ok" ] || return 0
+	elif _valid_ip6net "$2"; then
+		[ "$(valid_subnet6 "$2")" = "ok" ] || return 0
+	else
+		return 0
+	fi
+	echo "$1 $2" >> "$_bypass_resolved_new"
+}
+
+_bypass_resolved_replay() {
+	[ -n "$_bypass_resolved_want" ] && [ -s "$_bypass_resolved_want" ] && [ -s "$_BYPASS_RESOLVED" ] || return 0
+	# only sections this run has (a set or rule that is not there was a
+	# silent no-op for "uci -q set" too), and only entries not there yet
+	uci -q show firewall 2>/dev/null | grep -E '^firewall\.omr_dst_bypass_' | \
+		awk -v zones="$(_get_firewall_zones)" -v res="$_BYPASS_RESOLVED" -v want="$_bypass_resolved_want" '
+		function typed(s) {
+			if (!(s in type)) return 0
+			if (!(s in said)) { said[s] = 1; print "set firewall." s "=" type[s] }
+			return 1
+		}
+		function entry(s, v) {
+			if ((s, v) in have || !typed(s)) return
+			have[s, v] = 1
+			print "add_list firewall." s ".entry=\047" v "\047"
+		}
+		function enable(s) {
+			if ((s in on) || !typed(s)) return
+			on[s] = 1
+			print "set firewall." s ".enabled=\0471\047"
+		}
+		{
+			eq = index($0, "=")
+			k = substr($0, 10, eq - 10)
+			v = substr($0, eq + 1)
+			if (k !~ /\./) { type[k] = v; next }
+			if (k !~ /\.entry$/) next
+			sub(/\.entry$/, "", k)
+			n = split(v, vals, " ")
+			for (i = 1; i <= n; i++) { gsub(/\047/, "", vals[i]); have[k, vals[i]] = 1 }
+		}
+		END {
+			nz = split(zones, zone, " ")
+			while ((getline l < res) > 0) {
+				split(l, f, " ")
+				if (f[2] != "" && !((f[1], f[2]) in seen)) { seen[f[1], f[2]] = 1; ips[f[1]] = ips[f[1]] " " f[2] }
+			}
+			while ((getline l < want) > 0) {
+				split(l, w, " ")
+				if (!(w[1] in ips)) continue
+				t = w[2]; p = w[5]
+				# as _bypass_ip: only tcp and udp have sets of their own,
+				# and none and srv_vpn1 have none
+				if (p != "tcp" && p != "udp") p = ""
+				if (t == "none" || t == "srv_vpn1") p = ""
+				if (p != "") p = "_" p
+				n = split(ips[w[1]], a, " ")
+				for (i = 1; i <= n; i++) {
+					fam = index(a[i], ":") ? 6 : 4
+					if ((fam == 4 && w[3] != "1") || (fam == 6 && w[4] != "1")) continue
+					if (t != "-") {
+						entry("omr_dst_bypass_" t "_" fam p, a[i])
+						enable("omr_dst_bypass_" t "_" fam p)
+						for (z = 1; z <= nz; z++) {
+							enable("omr_dst_bypass_" t "_dstip_" fam "_" zone[z] p)
+							enable("omr_dst_bypass_" t "_dstip_" fam "_" zone[z] "_accept")
+						}
+					}
+					if (w[6] != "-") entry("omr_dst_bypass_dscp_" w[6] "_" fam, a[i])
+				}
+			}
+		}' | _uci_batch
+}
+
 # _valid_domain <name>: a domain dnsmasq and dig can take, in the forms the
 # Domains table accepts: a host name, optionally with a leading "." or "*."
 # and a trailing "." or ".*" (TLD wildcard). Anything else went to dnsmasq
@@ -1073,7 +1286,7 @@ _bypass_domains() {
 		# the single quotes made this the literal text "$domain" (quotes
 		# included): a wildcard rule expanded to nothing at all
 		domain="$(echo "$domain" | sed 's:*::')"
-		domainlist="$(_expand_wildcard_domain "$domain")"
+		domainlist="$(_wildcard_merge "$domain" $(_expand_wildcard_domain "$domain"))"
 		for validdomain in $domainlist; do
 			_bypass_domain "$validdomain" "$intf" "$family" "$noipv6" "$tcpudp" "$dscp"
 		done
@@ -1113,6 +1326,7 @@ _bypass_domain() {
 				for ip in $resolve; do
 					[ -n "$intf" ] && _bypass_ip $ip $intf $tcpudp
 					[ -n "$dscp" ] && _dscp_ip $ip $dscp
+					_bypass_resolved_keep "$domain" "$ip"
 				done
 			fi
 			if [ -n "$_v6" ] && [ "$disableipv6" = "0" ]; then
@@ -1120,8 +1334,15 @@ _bypass_domain() {
 				for ip in $resolve; do
 					[ -n "$intf" ] && _bypass_ip $ip $intf $tcpudp
 					[ -n "$dscp" ] && _dscp_ip $ip $dscp
+					_bypass_resolved_keep "$domain" "$ip"
 				done
 			fi
+		elif [ -n "$_bypass_resolved_want" ]; then
+			# see _bypass_resolved_replay
+			local _w4=0 _w6=0
+			[ -n "$_v4" ] && _w4=1
+			[ -n "$_v6" ] && [ "$disableipv6" = "0" ] && _w6=1
+			echo "$domain ${intf:--} $_w4 $_w6 $tcpudp ${dscp:--}" >> "$_bypass_resolved_want"
 		fi
 		# One dnsmasq ipset family per destination: the interface alone,
 		# the interface and a DSCP class, or a DSCP class alone (no
@@ -1280,7 +1501,7 @@ _bypass_mac() {
 	if [ -n "$dscp" ]; then
 		_dscp_ensure_chain
 		for mac_addr in $mac; do
-			cat >> /etc/firewall.omr-bypass <<-EOF
+			cat >> "$_fw_include" <<-EOF
 				nft add rule inet fw4 omr_dscp_pre ether saddr $mac_addr ip dscp set $dscp 2>/dev/null || true
 				nft add rule inet fw4 omr_dscp_pre ether saddr $mac_addr ip6 dscp set $dscp 2>/dev/null || true
 			EOF
@@ -1349,11 +1570,11 @@ _bypass_lan_ip() {
 		valid_ip4=$(valid_subnet4 $ip)
 		valid_ip6=$(valid_subnet6 $ip)
 		if [ "$valid_ip4" = "ok" ]; then
-			cat >> /etc/firewall.omr-bypass <<-EOF
+			cat >> "$_fw_include" <<-EOF
 				nft add rule inet fw4 omr_dscp_pre ip saddr $ip ip dscp set $dscp 2>/dev/null || true
 			EOF
 		elif [ "$valid_ip6" = "ok" ] && [ "$disableipv6" = "0" ]; then
-			cat >> /etc/firewall.omr-bypass <<-EOF
+			cat >> "$_fw_include" <<-EOF
 				nft add rule inet fw4 omr_dscp_pre ip6 saddr $ip ip6 dscp set $dscp 2>/dev/null || true
 			EOF
 		fi
@@ -1419,10 +1640,10 @@ _bypass_dest_port() {
 		[ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ] && _nft_proto="${_nft_proto}tcp "
 		[ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ] && _nft_proto="${_nft_proto}udp "
 		for _p in $_nft_proto; do
-			cat >> /etc/firewall.omr-bypass <<-EOF
+			cat >> "$_fw_include" <<-EOF
 				nft add rule inet fw4 omr_dscp_pre meta nfproto ipv4 ${_p} dport $(_nft_ports "$dport") ip dscp set $dscp 2>/dev/null || true
 			EOF
-			[ "$disableipv6" = "0" ] && cat >> /etc/firewall.omr-bypass <<-EOF
+			[ "$disableipv6" = "0" ] && cat >> "$_fw_include" <<-EOF
 				nft add rule inet fw4 omr_dscp_pre meta nfproto ipv6 ${_p} dport $(_nft_ports "$dport") ip6 dscp set $dscp 2>/dev/null || true
 			EOF
 		done
@@ -1488,10 +1709,10 @@ _bypass_src_port() {
 		[ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ] && _nft_proto="${_nft_proto}tcp "
 		[ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ] && _nft_proto="${_nft_proto}udp "
 		for _p in $_nft_proto; do
-			cat >> /etc/firewall.omr-bypass <<-EOF
+			cat >> "$_fw_include" <<-EOF
 				nft add rule inet fw4 omr_dscp_pre meta nfproto ipv4 ${_p} sport $(_nft_ports "$sport") ip dscp set $dscp 2>/dev/null || true
 			EOF
-			[ "$disableipv6" = "0" ] && cat >> /etc/firewall.omr-bypass <<-EOF
+			[ "$disableipv6" = "0" ] && cat >> "$_fw_include" <<-EOF
 				nft add rule inet fw4 omr_dscp_pre meta nfproto ipv6 ${_p} sport $(_nft_ports "$sport") ip6 dscp set $dscp 2>/dev/null || true
 			EOF
 		done
@@ -1668,7 +1889,7 @@ _bypass_proto_core() {
 						_nft4="${_nft4:+$_nft4, }$ip"
 						_nft4n=$((_nft4n + 1))
 						if [ "$_nft4n" -ge 64 ]; then
-							printf 'nft add element inet fw4 bypass_%s { %s } 2>/dev/null || true\n' "$proto" "$_nft4" >> /etc/firewall.omr-bypass
+							printf 'nft add element inet fw4 bypass_%s { %s } 2>/dev/null || true\n' "$proto" "$_nft4" >> "$_fw_include"
 							_nft4="" _nft4n=0
 						fi
 					else
@@ -1679,7 +1900,7 @@ _bypass_proto_core() {
 						_nft6="${_nft6:+$_nft6, }$ip"
 						_nft6n=$((_nft6n + 1))
 						if [ "$_nft6n" -ge 64 ]; then
-							printf 'nft add element inet fw4 bypass6_%s { %s } 2>/dev/null || true\n' "$proto" "$_nft6" >> /etc/firewall.omr-bypass
+							printf 'nft add element inet fw4 bypass6_%s { %s } 2>/dev/null || true\n' "$proto" "$_nft6" >> "$_fw_include"
 							_nft6="" _nft6n=0
 						fi
 					else
@@ -1687,8 +1908,8 @@ _bypass_proto_core() {
 					fi
 				fi
 			done
-			[ -n "$_nft4" ] && printf 'nft add element inet fw4 bypass_%s { %s } 2>/dev/null || true\n' "$proto" "$_nft4" >> /etc/firewall.omr-bypass
-			[ -n "$_nft6" ] && printf 'nft add element inet fw4 bypass6_%s { %s } 2>/dev/null || true\n' "$proto" "$_nft6" >> /etc/firewall.omr-bypass
+			[ -n "$_nft4" ] && printf 'nft add element inet fw4 bypass_%s { %s } 2>/dev/null || true\n' "$proto" "$_nft4" >> "$_fw_include"
+			[ -n "$_nft6" ] && printf 'nft add element inet fw4 bypass6_%s { %s } 2>/dev/null || true\n' "$proto" "$_nft6" >> "$_fw_include"
 		fi
 	fi
 	# Use dnsmasq ipset to bypass domains of the proto. The database holds
@@ -1762,7 +1983,7 @@ _intf_rules_all_rules() {
 	[ -z "$proxyproto" ] && proxyproto="noproxy"
 	local _pnft=nft
 	[ "$proxyproto" = "ss_rules" ] && _pnft='$ssnft'
-	cat >> /etc/firewall.omr-bypass <<-EOF
+	cat >> "$_fw_include" <<-EOF
 		${_pnft} insert rule inet fw4 ${proxyproto}_local_out ip daddr @bypass_${service} accept >/dev/null 2>&1 || true
 		${_pnft} insert rule inet fw4 ${proxyproto}_local_out meta mark 0x4539${count} accept >/dev/null 2>&1 || true
 		${_pnft} insert rule inet fw4 ${proxyproto}_local_out ip6 daddr @bypass6_${service} accept >/dev/null 2>&1 || true
@@ -1774,35 +1995,35 @@ _intf_rules_all_rules() {
 	# reloads and makes the next reload that loads them fail. Inserting into
 	# a missing chain just does nothing, like every line of this include.
 	if [ "$proxyproto" = "noproxy" ]; then
-		cat >> /etc/firewall.omr-bypass <<-EOF
+		cat >> "$_fw_include" <<-EOF
 			nft add chain inet fw4 noproxy_local_out "{ type nat hook output priority filter - 1; policy accept; }" >/dev/null 2>&1 || true
 			nft add chain inet fw4 noproxy_pre_tcp "{ type nat hook prerouting priority filter - 1; policy accept; }" >/dev/null 2>&1 || true
 		EOF
 	fi
 	if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
-		cat >> /etc/firewall.omr-bypass <<-EOF
+		cat >> "$_fw_include" <<-EOF
 			${_pnft} insert rule inet fw4 ${proxyproto}_pre_tcp ip daddr @bypass_${service} accept >/dev/null 2>&1 || true
 			${_pnft} insert rule inet fw4 ${proxyproto}_pre_tcp meta mark 0x4539${count} accept >/dev/null 2>&1 || true
 		EOF
 		if [ "$disableipv6" = "0" ]; then
-			cat >> /etc/firewall.omr-bypass <<-EOF
+			cat >> "$_fw_include" <<-EOF
 				${_pnft} insert rule inet fw4 ${proxyproto}_pre_tcp ip6 daddr @bypass6_${service} accept >/dev/null 2>&1 || true
 				${_pnft} insert rule inet fw4 ${proxyproto}_pre_tcp meta mark 0x6539${count} accept >/dev/null 2>&1 || true
 			EOF
 		fi
 	fi
 	if [ "$proxyproto" = "noproxy" ]; then
-		cat >> /etc/firewall.omr-bypass <<-EOF
+		cat >> "$_fw_include" <<-EOF
 			nft add chain inet fw4 noproxy_pre_udp "{ type nat hook prerouting priority filter + 1; policy accept; }" >/dev/null 2>&1 || true
 		EOF
 	fi
 	if [ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ]; then
-		cat >> /etc/firewall.omr-bypass <<-EOF
+		cat >> "$_fw_include" <<-EOF
 			${_pnft} insert rule inet fw4 ${proxyproto}_pre_udp ip daddr @bypass_${service} accept >/dev/null 2>&1 || true
 			${_pnft} insert rule inet fw4 ${proxyproto}_pre_udp meta mark 0x4539${count} accept >/dev/null 2>&1 || true
 		EOF
 		if [ "$disableipv6" = "0" ]; then
-			cat >> /etc/firewall.omr-bypass <<-EOF
+			cat >> "$_fw_include" <<-EOF
 				${_pnft} insert rule inet fw4 ${proxyproto}_pre_udp ip6 daddr @bypass6_${service} accept >/dev/null 2>&1 || true
 				${_pnft} insert rule inet fw4 ${proxyproto}_pre_udp meta mark 0x6539${count} accept >/dev/null 2>&1 || true
 			EOF
@@ -1812,14 +2033,14 @@ _intf_rules_all_rules() {
 }
 
 _intf_rule_ss_rules() {
-	cat >> /etc/firewall.omr-bypass <<-EOF
+	cat >> "$_fw_include" <<-EOF
 		\$ssnft insert rule inet fw4 ss_rules_pre_tcp ip daddr @omr_dst_bypass_${intf}_4 accept >/dev/null 2>&1 || true
 		\$ssnft insert rule inet fw4 ss_rules_pre_tcp meta mark 0x4539${count} accept >/dev/null 2>&1 || true
 		\$ssnft insert rule inet fw4 ss_rules_local_out ip daddr @omr_dst_bypass_${intf}_4 accept >/dev/null 2>&1 || true
 		\$ssnft insert rule inet fw4 ss_rules_local_out meta mark 0x4539${count} accept >/dev/null 2>&1 || true
 	EOF
 	if [ "$disableipv6" = "0" ]; then
-		cat >> /etc/firewall.omr-bypass <<-EOF
+		cat >> "$_fw_include" <<-EOF
 			\$ssnft insert rule inet fw4 ss_rules_pre_tcp ip6 daddr @omr_dst_bypass_${intf}_6 accept >/dev/null 2>&1 || true
 			\$ssnft insert rule inet fw4 ss_rules_pre_tcp meta mark 0x6539${count} accept >/dev/null 2>&1 || true
 			\$ssnft insert rule inet fw4 ss_rules_local_out ip6 daddr @omr_dst_bypass_${intf}_6 accept >/dev/null 2>&1 || true
@@ -1831,35 +2052,35 @@ _intf_rule_ss_rules() {
 _intf_rule_v2ray_rules() {
 	proto=$1
 	[ -z "$proto" ] && proto="tcp udp"
-	cat >> /etc/firewall.omr-bypass <<-EOF
+	cat >> "$_fw_include" <<-EOF
 		nft insert rule inet fw4 v2r_rules_local_out ip daddr @omr_dst_bypass_${intf}_4 accept >/dev/null 2>&1 || true
 		nft insert rule inet fw4 v2r_rules_local_out meta mark 0x4539${count} accept >/dev/null 2>&1 || true
 	EOF
 	if [ "$disableipv6" = "0" ]; then
-		cat >> /etc/firewall.omr-bypass <<-EOF
+		cat >> "$_fw_include" <<-EOF
 			nft insert rule inet fw4 v2r_rules_local_out ip6 daddr @omr_dst_bypass_${intf}_6 accept >/dev/null 2>&1 || true
 			nft insert rule inet fw4 v2r_rules_local_out meta mark 0x6539${count} accept >/dev/null 2>&1 || true
 		EOF
 	fi
 	if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
-		cat >> /etc/firewall.omr-bypass <<-EOF
+		cat >> "$_fw_include" <<-EOF
 			nft insert rule inet fw4 v2r_rules_pre_tcp ip daddr @omr_dst_bypass_${intf}_4 accept >/dev/null 2>&1 || true
 			nft insert rule inet fw4 v2r_rules_pre_tcp meta mark 0x4539${count} accept >/dev/null 2>&1 || true
 		EOF
 		if [ "$disableipv6" = "0" ]; then
-			cat >> /etc/firewall.omr-bypass <<-EOF
+			cat >> "$_fw_include" <<-EOF
 				nft insert rule inet fw4 v2r_rules_pre_tcp ip6 daddr @omr_dst_bypass_${intf}_6 accept >/dev/null 2>&1 || true
 				nft insert rule inet fw4 v2r_rules_pre_tcp meta mark 0x6539${count} accept >/dev/null 2>&1 || true
 			EOF
 		fi
 	fi
 	if [ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ]; then
-		cat >> /etc/firewall.omr-bypass <<-EOF
+		cat >> "$_fw_include" <<-EOF
 			nft insert rule inet fw4 v2r_rules_pre_udp ip daddr @omr_dst_bypass_${intf}_4 accept >/dev/null 2>&1 || true
 			nft insert rule inet fw4 v2r_rules_pre_udp meta mark 0x4539${count} accept >/dev/null 2>&1 || true
 		EOF
 		if [ "$disableipv6" = "0" ]; then
-			cat >> /etc/firewall.omr-bypass <<-EOF
+			cat >> "$_fw_include" <<-EOF
 				nft insert rule inet fw4 v2r_rules_pre_udp ip6 daddr @omr_dst_bypass_${intf}_6 accept >/dev/null 2>&1 || true
 				nft insert rule inet fw4 v2r_rules_pre_udp meta mark 0x6539${count} accept >/dev/null 2>&1 || true
 			EOF
@@ -1870,35 +2091,35 @@ _intf_rule_v2ray_rules() {
 _intf_rule_xray_rules() {
 	proto=$1
 	[ -z "$proto" ] && proto="tcp udp"
-	cat >> /etc/firewall.omr-bypass <<-EOF
+	cat >> "$_fw_include" <<-EOF
 		nft insert rule inet fw4 xr_rules_local_out ip daddr @omr_dst_bypass_${intf}_4 accept >/dev/null 2>&1 || true
 		nft insert rule inet fw4 xr_rules_local_out meta mark 0x4539${count} accept >/dev/null 2>&1 || true
 	EOF
 	if [ "$disableipv6" = "0" ]; then
-		cat >> /etc/firewall.omr-bypass <<-EOF
+		cat >> "$_fw_include" <<-EOF
 			nft insert rule inet fw4 xr_rules_local_out ip6 daddr @omr_dst_bypass_${intf}_6 accept >/dev/null 2>&1 || true
 			nft insert rule inet fw4 xr_rules_local_out meta mark 0x6539${count} accept >/dev/null 2>&1 || true
 		EOF
 	fi
 	if [ "$proto" = "tcp" ] || [ "$proto" = "tcp udp" ]; then
-		cat >> /etc/firewall.omr-bypass <<-EOF
+		cat >> "$_fw_include" <<-EOF
 			nft insert rule inet fw4 xr_rules_pre_tcp ip daddr @omr_dst_bypass_${intf}_4 accept >/dev/null 2>&1 || true
 			nft insert rule inet fw4 xr_rules_pre_tcp meta mark 0x4539${count} accept >/dev/null 2>&1 || true
 		EOF
 		if [ "$disableipv6" = "0" ]; then
-			cat >> /etc/firewall.omr-bypass <<-EOF
+			cat >> "$_fw_include" <<-EOF
 				nft insert rule inet fw4 xr_rules_pre_tcp ip6 daddr @omr_dst_bypass_${intf}_6 accept >/dev/null 2>&1 || true
 				nft insert rule inet fw4 xr_rules_pre_tcp meta mark 0x6539${count} accept >/dev/null 2>&1 || true
 			EOF
 		fi
 	fi
 	if [ "$proto" = "udp" ] || [ "$proto" = "tcp udp" ]; then
-		cat >> /etc/firewall.omr-bypass <<-EOF
+		cat >> "$_fw_include" <<-EOF
 			nft insert rule inet fw4 xr_rules_pre_udp ip daddr @omr_dst_bypass_${intf}_4 accept >/dev/null 2>&1 || true
 			nft insert rule inet fw4 xr_rules_pre_udp meta mark 0x4539${count} accept >/dev/null 2>&1 || true
 		EOF
 		if [ "$disableipv6" = "0" ]; then
-			cat >> /etc/firewall.omr-bypass <<-EOF
+			cat >> "$_fw_include" <<-EOF
 				nft insert rule inet fw4 xr_rules_pre_udp ip6 daddr @omr_dst_bypass_${intf}_6 accept >/dev/null 2>&1 || true
 				nft insert rule inet fw4 xr_rules_pre_udp meta mark 0x6539${count} accept >/dev/null 2>&1 || true
 			EOF
@@ -2224,7 +2445,10 @@ _intf_rule_none() {
 			EOF
 		done
 	done
-	uci -q batch <<-EOF
+	# in the gated batch like the other interfaces: applied directly, its
+	# delete and set left a dhcp change on every run, so every start
+	# committed dhcp and restarted dnsmasq
+	cat >> "$_dhcp_uci_batch" <<-EOF
 		delete dhcp.omr_dst_bypass_none
 		set dhcp.omr_dst_bypass_none=ipset
 		set dhcp.omr_dst_bypass_none.table='fw4'
@@ -2397,7 +2621,7 @@ _ss_rules_config() {
 	# exit the whole script, so whenever Shadowsocks was down (or only
 	# configured) the DSCP marking chain and every other rule after it
 	# were never installed.
-	cat >> /etc/firewall.omr-bypass <<-EOF
+	cat >> "$_fw_include" <<-EOF
 		if nft list chains inet 2>/dev/null | grep -q 'chain ss_rules'; then ssnft=nft; else ssnft=:; fi
 		#nft insert rule inet fw4 ss_rules_dst_tcp ip daddr @omr_dst_bypass_all_4 meta mark set 0x00004539 accept
 		#nft insert rule inet fw4 ss_rules_local_out ip daddr @omr_dst_bypass_all_4 meta mark set 0x00004539 accept
@@ -2413,7 +2637,7 @@ _ss_rules_config() {
 }
 
 _v2ray_rules_config() {
-	cat >> /etc/firewall.omr-bypass <<-EOF
+	cat >> "$_fw_include" <<-EOF
 		#nft insert rule inet fw4 v2r_rules_dst_tcp ip daddr @omr_dst_bypass_all_4 accept
 		#nft insert rule inet fw4 v2r_rules_local_out ip daddr @omr_dst_bypass_all_4 accept
 	EOF
@@ -2426,7 +2650,7 @@ _v2ray_rules_config() {
 }
 
 _xray_rules_config() {
-	cat >> /etc/firewall.omr-bypass <<-EOF
+	cat >> "$_fw_include" <<-EOF
 		#nft insert rule inet fw4 xr_rules_dst_tcp ip daddr @omr_dst_bypass_all_4 accept
 		#nft insert rule inet fw4 xr_rules_local_out ip daddr @omr_dst_bypass_all_4 accept
 	EOF
@@ -2730,8 +2954,53 @@ _ensure_ndpid_running() {
 	done
 }
 
+# The lock start_service and stop_service hold while they change the
+# generated sections
+_OMR_LOCK="/var/run/omr-bypass.lock"
+_omr_locked=""
+
+# _omr_lock <seconds>: take the lock, waiting at most <seconds> for the
+# instance that holds it; 1 when it never freed
+_omr_lock() {
+	local _lock_wait=0 _lock_pid
+	while ! mkdir "$_OMR_LOCK" 2>/dev/null; do
+		# A holder killed before its trap could run left the lock, and
+		# every later run gave up here until a reboot.
+		_lock_pid="$(cat "$_OMR_LOCK/pid" 2>/dev/null)"
+		if [ -n "$_lock_pid" ] && ! kill -0 "$_lock_pid" 2>/dev/null; then
+			logger -t "omr-bypass" "Removing the lock of pid $_lock_pid, which is gone"
+			rm -rf "$_OMR_LOCK"
+			continue
+		fi
+		_lock_wait=$((_lock_wait + 1))
+		[ "$_lock_wait" -ge "$1" ] && return 1
+		sleep 1
+	done
+	echo "$$" > "$_OMR_LOCK/pid"
+	_omr_locked=1
+	trap "rm -rf '$_OMR_LOCK'" EXIT HUP INT TERM
+}
+
+_omr_unlock() {
+	[ -n "$_omr_locked" ] || return 0
+	rm -rf "$_OMR_LOCK"
+	_omr_locked=""
+	trap - EXIT HUP INT TERM
+}
+
 boot() {
 	BOOT=1
+	start "$@"
+}
+
+# rc.common's restart is stop then start, and procd's rc.common does not
+# call a restart_service: stop deleted every generated section without the
+# lock and restarted fw4 and dnsmasq, start wrote them all again and
+# restarted both a second time, with no bypass in between, while a
+# reload_rules could be running. A restart is a start that writes every
+# generated section again, under the lock, with one fw4 restart.
+restart() {
+	FORCE=1
 	start "$@"
 }
 
@@ -2747,28 +3016,25 @@ start_service() {
 	# (issue #4340). Retry for a bounded window (a normal run finishes in a few seconds, see the
 	# hash-gate above) so a losing invocation waits for the winner instead of no-op'ing; still
 	# degrades to the old skip-and-log behavior if the lock never frees.
-	local _lock="/var/run/omr-bypass.lock"
-	local _lock_wait=0
-	local _lock_pid
-	while ! mkdir "$_lock" 2>/dev/null; do
-		# A holder killed before its trap could run left the lock, and
-		# every later run gave up here until a reboot.
-		_lock_pid="$(cat "$_lock/pid" 2>/dev/null)"
-		if [ -n "$_lock_pid" ] && ! kill -0 "$_lock_pid" 2>/dev/null; then
-			logger -t "omr-bypass" "Removing the lock of pid $_lock_pid, which is gone"
-			rm -rf "$_lock"
-			continue
-		fi
-		_lock_wait=$((_lock_wait + 1))
-		if [ "$_lock_wait" -ge 15 ]; then
-			logger -t "omr-bypass" "Another instance still running after ${_lock_wait}s, skipping concurrent call"
-			return
-		fi
-		sleep 1
-	done
-	echo "$$" > "$_lock/pid"
-	trap "rm -rf '$_lock'" EXIT HUP INT TERM
+	if ! _omr_lock 15; then
+		logger -t "omr-bypass" "Another instance still running after 15s, skipping concurrent call"
+		return
+	fi
 	_dnsipset_md5="$(_dnsipset_state | md5sum)"
+	_omr_dhcp_md5="$(_omr_dhcp_state | md5sum)"
+	# what dnsmasq and the nDPId consumer fed the sets for, see _omr_fed_lost
+	_dnsipset_pairs > /tmp/omr-bypass-fed.before
+	_ndpid_list_pairs "$(cat "$_NDPID_LIST" 2>/dev/null)" > /tmp/omr-bypass-fed.before-ndpid
+	_omr_ndpid_unsure=""
+	if [ -n "$RELOAD" ]; then
+		_bypass_resolved_new=""
+		_bypass_resolved_want="${_BYPASS_RESOLVED}.want"
+		: > "$_bypass_resolved_want"
+	else
+		_bypass_resolved_want=""
+		_bypass_resolved_new="${_BYPASS_RESOLVED}.new"
+		: > "$_bypass_resolved_new"
+	fi
 	# A reload clears the per-entry state only now that it holds the lock:
 	# cleared before, by a call that then gave up waiting, it was gone for
 	# good once the running instance committed its own changes.
@@ -2779,6 +3045,9 @@ start_service() {
 		_stop_ndpid_consumer
 		_soft_wipe_dynamic
 	}
+	# a restart writes every section again, which drops the per-entry
+	# state; the consumer is started again below with the current list
+	[ -n "$FORCE" ] && _stop_ndpid_consumer
 
 	#local count
 	logger -t "omr-bypass" "Starting OMR-ByPass..."
@@ -2832,10 +3101,14 @@ start_service() {
 	# but not for a category. Reading a missing option as 1 dropped the
 	# list of those rules on upgrade and started nDPId for every category.
 	_omr_ndpid=0
+	_ndpid_wanted=0
 	if [ -x /usr/sbin/ndpid ]; then
 		_ensure_ndpid_running
 		pidof ndpisrvd >/dev/null 2>&1 && _omr_ndpid=1
 	fi
+	# rules want nDPId but it is not up (yet): the consumer list of the
+	# last run is kept, and what it fed is not taken for removed
+	[ "$_ndpid_wanted" = "1" ] && [ "$_omr_ndpid" != "1" ] && _omr_ndpid_unsure=1
 	_ss_libev_disabled=$(uci -q get shadowsocks-libev.sss0.disabled)
 	_ss_rust_disabled=$(uci -q get shadowsocks-rust.sss0.disabled)
 	_v2ray_enabled=$(uci -q get v2ray.main.enabled)
@@ -2852,7 +3125,10 @@ start_service() {
 	# light reload deletes the prefixes a set lost (_asn_stale) and adds the
 	# new ones from the files.
 	_asnmd5="$(_asn_files_md5)"
-	rm -f /etc/firewall.omr-bypass "$_REPLY_INCLUDE" "$_REPLY_NFT"
+	_fw_include="/tmp/omr-bypass-include.new"
+	_reply_nft_out="/tmp/omr-bypass-reply-nft.new"
+	_reply_include_out="/tmp/omr-bypass-reply-include.new"
+	rm -f "$_fw_include" "$_reply_nft_out" "$_reply_include_out"
 	#cat > /etc/firewall.omr-bypass <<-EOF
 	##!/bin/sh
 	##nft insert rule inet fw4 ss_rules_dst_tcp ip daddr @omr_dst_bypass_all accept
@@ -2935,15 +3211,22 @@ start_service() {
 		config_foreach _bypass_category_collect_ndpid categories
 		_start_ndpid_consumer
 	fi
+	# the list the running consumer has, read back by the next run
+	if [ "$_omr_ndpid" = "1" ] && [ -n "$_bypass_proto_ndpid_list" ]; then
+		echo "$_bypass_proto_ndpid_list" > "$_NDPID_LIST"
+	elif [ -z "$_omr_ndpid_unsure" ]; then
+		rm -f "$_NDPID_LIST"
+	fi
 	# Apply the generated sections in one shot per config, skipping entirely
 	# when the desired state is identical to what the previous run generated
 	# and committed (hash match + sentinel section still present). On a normal
 	# boot nothing changed, so all the uci/fw4/dnsmasq work is skipped.
+	# <force> (a restart) applies it anyway.
 	_omr_hash_gate() {
-		local name="$1" file="$2" sentinel="$3" delete_batch="$4"
+		local name="$1" file="$2" sentinel="$3" delete_batch="$4" force="$5"
 		local hash
 		hash="$(md5sum "$file" | awk '{print $1}')"
-		if [ "$hash" = "$(uci -q get omr-bypass.global.${name}_hash)" ] && [ -n "$sentinel" ]; then
+		if [ -z "$force" ] && [ "$hash" = "$(uci -q get omr-bypass.global.${name}_hash)" ] && [ -n "$sentinel" ]; then
 			return 1
 		fi
 		{ printf '%s' "$delete_batch"; cat "$file"; } | _uci_batch
@@ -2952,9 +3235,9 @@ start_service() {
 		return 0
 	}
 	_dhcp_regen=""
-	_omr_hash_gate fw "$_fw_uci_batch" "$([ "$(uci -q get firewall.omr_bypass.enabled)" = "1" ] && uci -q get firewall.omr_dst_bypass_all_4)" "$_fw_delete_batch" \
+	_omr_hash_gate fw "$_fw_uci_batch" "$([ "$(uci -q get firewall.omr_bypass.enabled)" = "1" ] && uci -q get firewall.omr_dst_bypass_all_4)" "$_fw_delete_batch" "$FORCE" \
 		&& logger -t "omr-bypass" "Firewall bypass rules regenerated"
-	_omr_hash_gate dhcp "$_dhcp_uci_batch" "$(uci -q get dhcp.omr_dst_bypass_all)" "$_dhcp_delete_batch" && _dhcp_regen=1
+	_omr_hash_gate dhcp "$_dhcp_uci_batch" "$(uci -q get dhcp.omr_dst_bypass_all)" "$_dhcp_delete_batch" "$FORCE" && _dhcp_regen=1
 	_omr_hash_gate net "$_net_uci_batch" "$(uci -q get network.all_fw_rule)" "$_net_delete_batch"
 	rm -f "$_fw_uci_batch" "$_dhcp_uci_batch" "$_net_uci_batch"
 	# domain lists, IPs and DSCP sets of the dpis/category rules, on top of
@@ -2981,14 +3264,42 @@ start_service() {
 	config_foreach _bypass_domains domains
 	#echo "bypass asn"
 	_bypass_asns
+	if [ -n "$_bypass_resolved_want" ]; then
+		_bypass_resolved_replay
+		rm -f "$_bypass_resolved_want"
+		_bypass_resolved_want=""
+	elif [ -n "$_bypass_resolved_new" ]; then
+		sort -u "$_bypass_resolved_new" > "$_BYPASS_RESOLVED"
+		rm -f "$_bypass_resolved_new"
+		_bypass_resolved_new=""
+	fi
 
 	[ -n "$(uci -q changes network)" ] && {
 		uci -q commit network
 		/etc/init.d/network reload
 	}
 	uci -q commit omr-bypass
-	_dhcp_changed="$(uci -q changes dhcp)"
-	uci -q commit dhcp
+	# The domains and noipv6 list deleted above (and by a reload's wipe)
+	# and added back the same are still a change for uci: every start, and
+	# every reload with domains, committed dhcp (a flash write) and could
+	# restart dnsmasq. What the generated sections hold decides; when it
+	# did not change, their uci changes are dropped.
+	_dhcp_changed=""
+	if [ "$(_omr_dhcp_state | md5sum)" = "$_omr_dhcp_md5" ]; then
+		for _ob_sec in $(uci -q changes dhcp | sed -n 's/^-\{0,1\}dhcp\.\(omr_dst_bypass_[^.=]*\).*/\1/p' | sort -u); do
+			uci -q revert "dhcp.$_ob_sec"
+		done
+		uci -q revert dhcp.@dnsmasq[0].noipv6
+	else
+		_dhcp_changed=1
+		uci -q commit dhcp
+	fi
+	_omr_install_include "$_fw_include" /etc/firewall.omr-bypass
+	_omr_install_include "$_reply_nft_out" "$_REPLY_NFT"
+	_omr_install_include "$_reply_include_out" "$_REPLY_INCLUDE"
+	_fw_include="/etc/firewall.omr-bypass"
+	_reply_nft_out="$_REPLY_NFT"
+	_reply_include_out="$_REPLY_INCLUDE"
 	fwfilechangemd5check=""
 	[ -f /etc/firewall.omr-bypass ] && fwfilechangemd5check="$(md5sum /etc/firewall.omr-bypass)"
 	[ -f "$_REPLY_NFT" ] && fwfilechangemd5check="${fwfilechangemd5check} $(md5sum "$_REPLY_NFT")"
@@ -3012,6 +3323,16 @@ start_service() {
 	# added for its domains and their subdomains, which then went through
 	# the VPN or the proxy until dnsmasq resolved them upstream again.
 	_omr_stale="$_asn_stale"
+	_omr_fed_flush=""
+	if [ -f /tmp/omr-bypass-fed.before ]; then
+		{
+			_dnsipset_pairs
+			[ "$_omr_ndpid" = "1" ] && _ndpid_list_pairs "$_bypass_proto_ndpid_list"
+		} > /tmp/omr-bypass-fed.after
+		[ -z "$_omr_ndpid_unsure" ] && cat /tmp/omr-bypass-fed.before-ndpid >> /tmp/omr-bypass-fed.before 2>/dev/null
+		_omr_fed_flush="$(_omr_fed_lost /tmp/omr-bypass-fed.before /tmp/omr-bypass-fed.after)"
+		rm -f /tmp/omr-bypass-fed.before /tmp/omr-bypass-fed.before-ndpid /tmp/omr-bypass-fed.after
+	fi
 	if [ -f /tmp/omr-bypass-entries.before ]; then
 		for _ob_sec in $(cut -d' ' -f1 /tmp/omr-bypass-entries.before | sort -u); do
 			_ob_after=" $(uci -q get "firewall.${_ob_sec}.entry") "
@@ -3049,7 +3370,7 @@ start_service() {
 		mv -f "$_proxy_nft_down" "${_proxy_nft_down%.down}"
 		_proxy_down_restored=1
 	done
-	if [ -n "$(uci -q changes firewall)" ] || [ "$fwfilechangemd5" != "$fwfilechangemd5check" ] || [ "$_asnmd5" != "$_asnmd5check" ] || [ "${_ndpid_fw_needed:-0}" = "1" ] || [ -n "$_proxy_down_restored" ]; then
+	if [ -n "$(uci -q changes firewall)" ] || [ "$fwfilechangemd5" != "$fwfilechangemd5check" ] || [ "$_asnmd5" != "$_asnmd5check" ] || [ "${_ndpid_fw_needed:-0}" = "1" ] || [ -n "$_proxy_down_restored" ] || [ -n "$_omr_fed_flush" ] || [ -n "$FORCE" ]; then
 		uci -q commit firewall
 		[ -z "$RELOAD" ] && {
 			fw4 restart || logger -t "omr-bypass" "ERROR: fw4 restart failed"
@@ -3060,8 +3381,14 @@ start_service() {
 			# its elements is not in the set (deleting part of a merged
 			# range works): that set is flushed as before.
 			_ob_deleted="" _ob_flushed=""
+			for _ob_set in $_omr_fed_flush; do
+				nft flush set inet fw4 "$_ob_set" >/dev/null 2>&1
+			done
+			[ -n "$_omr_fed_flush" ] && logger -t "omr-bypass" "Flushed the set(s) of removed or moved domains and protocols: $_omr_fed_flush"
 			for _ob_sec in $(printf '%s' "$_omr_stale" | cut -d' ' -f1 | sort -u); do
 				_ob_set="$(uci -q get "firewall.${_ob_sec}.name")"
+				# flushed just above, the reload adds back what it declares
+				case " $_omr_fed_flush " in *" ${_ob_set:-$_ob_sec} "*) continue ;; esac
 				_ob_elems="$(printf '%s' "$_omr_stale" | awk -v s="$_ob_sec" '$1 == s && NF == 2 && !seen[$2]++ { printf "%s%s", sep, $2; sep = ", " }')"
 				[ -n "$_ob_elems" ] || continue
 				if nft delete element inet fw4 "${_ob_set:-$_ob_sec}" "{ $_ob_elems }" >/dev/null 2>&1; then
@@ -3095,14 +3422,10 @@ start_service() {
 		logger -t "omr-bypass" "Reload dnsmasq..."
 		/etc/init.d/dnsmasq reload
 	}
-	# Create a protocol list for UI from a sqlite DB when NDPI is not available
-	sqlite3 /usr/share/omr-bypass/omr-bypass.db "select distinct(proto) from (select proto from hostproto union all select proto from ipproto) a order by proto;" ".exit" > /usr/share/omr-bypass/omr-bypass-proto.lst
-	config_load omr-bypass
-	config_foreach _add_proto_without_ndpi proto
-	uci -q commit dhcp
+	# omr-bypass-proto.lst, the protocol list LuCI read before it took
+	# omr-bypass-proto.json, is not written again at every start: nothing
+	# reads it any more
 	uci -q commit firewall
-	sort < /usr/share/omr-bypass/omr-bypass-proto.lst > /usr/share/omr-bypass/omr-bypass-proto.lst.new
-	mv /usr/share/omr-bypass/omr-bypass-proto.lst.new /usr/share/omr-bypass/omr-bypass-proto.lst
 	# Output WAN lists and source interface policies: need the per-WAN
 	# marks and ip rules generated above, and re-check which WAN each uses.
 	/usr/lib/omr-bypass/wan-failover apply
@@ -3112,13 +3435,17 @@ start_service() {
 	procd_set_param command /bin/true
 	procd_close_instance
 
-	rm -rf "$_lock"
-	trap - EXIT HUP INT TERM
+	_omr_unlock
 	[ "$(_dnsipset_state | md5sum)" != "$_dnsipset_md5" ] && _omr_dscp_resync
 }
 
 stop_service() {
+	# A start or reload_rules writing the sections at the same time put
+	# back what this deletes. Stop goes on without the lock when it never
+	# frees: it is also what disable and the package removal run.
+	_omr_lock 60 || logger -t "omr-bypass" "Another instance still running after 60s, stopping anyway"
 	_stop_ndpid_consumer
+	rm -f "$_NDPID_LIST"
 	# Rules for ndpi
 #	$IPTABLESSAVE --counters 2>/dev/null | grep -v omr-bypass | $IPTABLESRESTORE -w --counters 2>/dev/null
 #	$IP6TABLESSAVE --counters 2>/dev/null | grep -v omr-bypass6 | $IP6TABLESRESTORE -w --counters 2>/dev/null
@@ -3144,6 +3471,7 @@ stop_service() {
 	[ -n "$_fw_delete_batch" ] && printf '%s' "$_fw_delete_batch" | _uci_batch
 	uci -q commit firewall
 	[ -z "$RELOAD" ] && { fw4 restart || logger -t "omr-bypass" "ERROR: fw4 restart failed"; }
+	_omr_unlock
 	_omr_dscp_resync
 }
 
@@ -3160,11 +3488,6 @@ reload_service() {
 	# run manually or the hourly cron fires (issue #4340). start_service
 	# clears it once it holds its lock.
 	RELOAD=1
-	#stop
-	start
-}
-restart_service() {
-	#RELOAD=1
 	#stop
 	start
 }
