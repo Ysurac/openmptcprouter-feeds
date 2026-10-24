@@ -1397,6 +1397,17 @@ _gre_zone_vpn_add() {
 	done
 }
 
+# _gre_redir_outdated <package> <i>: the redir of public IP <i> has the
+# options of the main one, hi1. A tunnel made while they were copied from
+# "hi" (gone) kept the init's defaults: compared, it is rewritten once.
+_gre_redir_outdated() {
+	local opt
+	for opt in local_address timeout fast_open no_delay; do
+		[ "$(uci -q get "$1.oip$2.$opt")" != "$(uci -q get "$1.hi1.$opt")" ] && return 0
+	done
+	return 1
+}
+
 # True when the sections of public IP <i> differ from what the VPS sent
 # (peeraddr, ipaddr, publicaddr, ssport, ssrust_password of _get_gre_tunnel)
 _gre_tunnel_outdated() {
@@ -1411,10 +1422,12 @@ _gre_tunnel_outdated() {
 		[ "$(uci -q get shadowsocks-libev.oip${i}server.server_port)" != "$ssport" ] && return 0
 		[ "$(uci -q get shadowsocks-libev.oip${i}server.server)" != "$(uci -q get shadowsocks-libev.sss0.server)" ] && return 0
 		[ "$(uci -q get shadowsocks-libev.oip${i}server.key)" != "$(uci -q get shadowsocks-libev.sss0.key)" ] && return 0
+		_gre_redir_outdated shadowsocks-libev "$i" && return 0
 	fi
 	if _gre_uci_pkg shadowsocks-rust && [ -n "$ssrust_password" ]; then
 		[ "$(uci -q get shadowsocks-rust.oip${i}server.password)" != "$ssrust_password" ] && return 0
 		[ "$(uci -q get shadowsocks-rust.oip${i}server.server)" != "$(uci -q get shadowsocks-rust.sss0.server)" ] && return 0
+		_gre_redir_outdated shadowsocks-rust "$i" && return 0
 	fi
 	# The outbound is a copy of the main one: any change of it (protocol,
 	# address, TLS pin, Reality key...) has to reach the copy
@@ -1524,9 +1537,11 @@ _get_gre_tunnel() {
 			EOF
 			_gre_zone_vpn_add "oip${i}gre"
 			_gre_zone_vpn_add "oip${i}"
+			# hi1 for both: 1930-omr-shadowsocks renamed libev's "hi" to hi1,
+			# and the redirs of the public IPs had the init's defaults
 			if _gre_uci_pkg shadowsocks-libev && [ -n "$ssport" ]; then
 				_gre_ss_sections shadowsocks-libev "$i" "$publicaddr" "$ssport" \
-					"$(uci -q get shadowsocks-libev.sss0.method)" key "$(uci -q get shadowsocks-libev.sss0.key)" hi
+					"$(uci -q get shadowsocks-libev.sss0.method)" key "$(uci -q get shadowsocks-libev.sss0.key)" hi1
 			fi
 			if _gre_uci_pkg shadowsocks-rust && [ -n "$ssrust_password" ]; then
 				_gre_ss_sections shadowsocks-rust "$i" "$publicaddr" 65252 \
