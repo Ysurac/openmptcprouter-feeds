@@ -34,6 +34,8 @@ SRV_TOKEN=""
 SRV_TOKEN_KEY=""
 SRV_USERNAME=""
 SRV_PASSWORD=""
+# Set by _post_metrics when the address did not answer at all (HTTP 000)
+SRV_NO_ANSWER=0
 
 _log() {
 	logger -t "omr-metrics-send" "$@"
@@ -81,6 +83,10 @@ _post_metrics() {
 			-X POST --data-binary "@${json_file}" "$url" 2>/dev/null)
 	fi
 
+	# No answer (connect timeout, unreachable): the address is dead for the
+	# whole batch, not for this one file.
+	case "$http_code" in ''|000) SRV_NO_ANSWER=1; return 1 ;; esac
+
 	if [ "$http_code" = "200" ]; then
 		# The stored token still works: whatever tripped an earlier
 		# backoff is over.
@@ -113,23 +119,28 @@ _no_metrics() {
 }
 
 # Ship every payload of this cycle to one server address, logging in at most
-# once for the whole batch.
+# once for the whole batch. Returns 0 when the server accepted any of it.
 _send_to_server() {
 	local servername="$1" server="$2" serverport="$3" files="$4"
-	local json_file
+	local json_file sent=1
 
+	SRV_NO_ANSWER=0
 	_server_creds "$servername"
 	[ -z "$SRV_TOKEN" ] && { _login "$servername" "$server" "$serverport" || return 1; }
 
 	for json_file in $files; do
 		[ -s "$json_file" ] || continue
-		_post_metrics "$servername" "$server" "$serverport" "$json_file"
-		# A lost token or a server without the metrics module applies to
-		# the whole batch: stop instead of replaying it file by file.
+		_post_metrics "$servername" "$server" "$serverport" "$json_file" && sent=0
+		# A lost token, a server without the metrics module or an address
+		# that does not answer applies to the whole batch: stop instead of
+		# replaying it file by file. A dead first address cost 10 s per
+		# file before the next one was tried, 40 s with 4 WANs, longer
+		# than the 30 s interval.
 		[ -z "$SRV_TOKEN" ] && return 1
 		_no_metrics "$servername" && return 1
+		[ "$SRV_NO_ANSWER" = "1" ] && return 1
 	done
-	return 0
+	return "$sent"
 }
 
 # One send cycle: read all JSON files and dispatch to every configured server.
@@ -186,7 +197,7 @@ _send_cycle() {
 
 	local servername
 	for servername in $server_names; do
-		local disabled serverport server_ips server
+		local disabled serverport server_ips server last_ok
 		disabled=$(uci -q get "openmptcprouter.${servername}.disabled" 2>/dev/null)
 		[ "$disabled" = "1" ] && continue
 
@@ -199,9 +210,24 @@ _send_cycle() {
 		server_ips=$(uci -q get "openmptcprouter.${servername}.ip" 2>/dev/null)
 		[ -z "$server_ips" ] && continue
 
+		# The address that took the last batch goes first, so a dead
+		# first address does not cost a timeout on every cycle.
+		last_ok=$(cat "${STATE_DIR}/${servername}.last_ok" 2>/dev/null)
+		case " $server_ips " in
+			*" $last_ok "*)
+				[ -n "$last_ok" ] && server_ips="$last_ok $(printf '%s\n' $server_ips | grep -vxF -- "$last_ok")"
+				;;
+		esac
+
+		# One address that took the batch is enough: they are the same VPS,
+		# and every other one stored the same samples once more (IPv4 and
+		# IPv6 twice). The next address only when this one did not take it.
 		for server in $server_ips; do
-			[ -n "$server" ] && \
-				_send_to_server "$servername" "$server" "$serverport" "$payload_files"
+			[ -n "$server" ] || continue
+			if _send_to_server "$servername" "$server" "$serverport" "$payload_files"; then
+				[ "$server" = "$last_ok" ] || printf '%s\n' "$server" > "${STATE_DIR}/${servername}.last_ok"
+				break
+			fi
 		done
 	done
 }
