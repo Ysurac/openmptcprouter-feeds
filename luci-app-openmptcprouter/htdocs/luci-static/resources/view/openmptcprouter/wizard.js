@@ -191,6 +191,28 @@ function ttlOf(sid) {
 	return sec ? (uci.get('network', sec, 'ttl') || '') : '';
 }
 
+/* ipaddr is a list once LuCI's interface page has saved it (one CIDR per
+ * address): one Value showed it as one invalid text, and that invalid field
+ * blocked every save of the wizard. Read as an array, so an unchanged
+ * address is not rewritten; one address is written back as an option. */
+function ipaddrOption(s) {
+	var o = s.option(form.DynamicList, 'ipaddr', _('IPv4 address'));
+	o.rmempty = true;
+	o.datatype = 'ip4addr';
+	o.cfgvalue = function(sid) {
+		var v = uci.get('network', sid, 'ipaddr');
+		return (v == null || v === '') ? null : L.toArray(v);
+	};
+	o.write = function(sid, val) {
+		var a = uniqueValues(val);
+		if (!a.length)
+			uci.unset('network', sid, 'ipaddr');
+		else
+			uci.set('network', sid, 'ipaddr', a.length === 1 ? a[0] : a);
+	};
+	return o;
+}
+
 function ensureWizardCSSLoaded() {
 	if (document.getElementById('omr-wizard-css'))
 		return;
@@ -968,9 +990,7 @@ return view.extend({
 		physDevs.forEach(function(d) { o.value(d); });
 		addCurrentChoices(o, zoneLan, function(sid) { return uci.get('network', sid, 'device'); });
 
-		o = s.option(form.Value, 'ipaddr', _('IPv4 address'));
-		o.rmempty = true;
-		o.datatype = 'ip4addr';
+		o = ipaddrOption(s);
 		o.depends('proto', 'static');
 
 		o = s.option(form.Value, 'netmask', _('IPv4 netmask'));
@@ -1112,9 +1132,7 @@ return view.extend({
 		o.write = function() {};
 
 		// IPv4 — proto=static OR type=macvlan
-		o = s.option(form.Value, 'ipaddr', _('IPv4 address'));
-		o.rmempty = true;
-		o.datatype = 'ip4addr';
+		o = ipaddrOption(s);
 		o.depends('proto', 'static');
 		o.depends('_type', 'macvlan');
 		keepForOtherProto(o);
