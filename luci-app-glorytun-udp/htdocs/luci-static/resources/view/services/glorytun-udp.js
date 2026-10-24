@@ -8,13 +8,6 @@
 
 var callHostHints;
 
-var callServiceList = rpc.declare({
-	object: 'service',
-	method: 'list',
-	params: [ 'name' ],
-	expect: { '': {} }
-});
-
 return L.view.extend({
 	callHostHints: rpc.declare({
 		object: 'luci-rpc',
