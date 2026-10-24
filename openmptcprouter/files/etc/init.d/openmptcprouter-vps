@@ -2693,7 +2693,18 @@ _set_bypass_ips() {
 	[ -z "$bypassipv4s$bypassipv6s" ] && [ "$bypass_sent" != "1" ] && return
 	settings='{"ipv4s" : ['$bypassipv4s'],"ipv6s" : ['$bypassipv6s'],"intf" : "vpn1"}'
 	result=$(_set_json "bypass" "$settings")
+	# No answer with the stored token: its address may be the one down, a
+	# login goes through the others
+	[ -z "$result" ] && [ "$bypass_stored_token" = "1" ] && \
+		result=$(token=""; _set_json "bypass" "$settings")
 	[ "$(_parse_result "$result")" = "done" ] || return
+	# That this push went through, for omr-schedule's 030-bypass: runtime,
+	# in /var/state. bypass_sent is committed on a change only (none from
+	# a list to another one): it went to flash on every push.
+	uci -q -P /var/state batch <<-EOF >/dev/null
+		revert openmptcprouter.${servername}.bypass_pushed
+		set openmptcprouter.${servername}.bypass_pushed=1
+	EOF
 	if [ -n "$bypassipv4s$bypassipv6s" ]; then
 		[ "$bypass_sent" = "1" ] && return
 		uci -q set openmptcprouter.${servername}.bypass_sent=1
@@ -2704,15 +2715,23 @@ _set_bypass_ips() {
 }
 
 # Each server with its own token: _set_json logs in to $servername's VPS only
-# when $token is empty.
+# when $token is empty, or when the VPS refuses it. The stored one is used,
+# with the server's first address: a login on each push saved a new token,
+# a flash write every time the list changed (030-bypass, every 10 minutes).
 _set_bypass_ips_server() {
 	servername=$1
 	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
 	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return
-	token=""
+	token="$(uci -q get openmptcprouter.${servername}.token)"
+	server="$(uci -q get openmptcprouter.${servername}.ip | awk '{print $1}')"
+	serverport="$(uci -q get openmptcprouter.${servername}.port)"
+	[ -z "$server" ] && token=""
+	bypass_stored_token=""
+	[ -n "$token" ] && bypass_stored_token=1
 	_set_bypass_ips
+	bypass_stored_token=""
 }
 
 set_bypass_ips() {
