@@ -14,7 +14,6 @@ return view.extend({
 			L.resolveDefault(fs.stat('/usr/sbin/glorytun-udp'), {}),
 //			L.resolveDefault(fs.stat('/usr/bin/nping'), {}),
 //			L.resolveDefault(fs.stat('/usr/bin/arping'), {}),
-			uci.load('network'),
 			uci.load('omr-tracker')
 		]);
 	},

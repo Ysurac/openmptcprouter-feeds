@@ -37,7 +37,6 @@ return view.extend({
 			L.resolveDefault(fs.stat('/usr/bin/dig'), {}),
 //			L.resolveDefault(fs.stat('/usr/bin/nping'), {}),
 //			L.resolveDefault(fs.stat('/usr/bin/arping'), {}),
-			uci.load('network'),
 			getFailbackHold()
 		]);
 	},
@@ -74,7 +73,7 @@ return view.extend({
 		var m, s, o;
 		var holdNode = E('div', { 'class': 'cbi-section', 'style': 'display:none' });
 
-		this.renderFailbackHold(holdNode, stats[3]);
+		this.renderFailbackHold(holdNode, stats[2]);
 		poll.add(L.bind(function() {
 			return getFailbackHold().then(L.bind(this.renderFailbackHold, this, holdNode));
 		}, this), 10);

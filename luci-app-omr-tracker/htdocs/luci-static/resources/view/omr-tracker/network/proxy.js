@@ -13,7 +13,6 @@ return view.extend({
 			L.resolveDefault(fs.stat('/usr/bin/dig'), {}),
 //			L.resolveDefault(fs.stat('/usr/bin/nping'), {}),
 //			L.resolveDefault(fs.stat('/usr/bin/arping'), {}),
-			uci.load('network'),
 			uci.load('omr-tracker')
 		]);
 	},
