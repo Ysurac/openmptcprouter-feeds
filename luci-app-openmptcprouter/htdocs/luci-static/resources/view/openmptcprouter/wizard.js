@@ -394,7 +394,11 @@ return view.extend({
 					sqmenabled: uci.get('sqm', intf, 'enabled') || '0',
 					sqmautorate: uci.get('sqm', intf, 'autorate') || '0',
 					qosenabled: uci.get('qos', intf, 'enabled') || '0',
-					multipath: uci.get('network', intf, 'multipath') || 'on',
+					/* a LAN has no multipath field: 'on' turned MPTCP on
+					 * for a LAN that had no value (the mptcp init takes
+					 * none as off) */
+					multipath: uci.get('network', intf, 'multipath') ||
+						(zoneLan.indexOf(intf) !== -1 ? 'off' : 'on'),
 					lan: zoneLan.indexOf(intf) !== -1 ? '1' : '0',
 					ttl: ttlValues.hasOwnProperty(intf) ? ttlValues[intf] : ttlOf(intf),
 					downloadspeed: uci.get('network', intf, 'downloadspeed') || '0',
