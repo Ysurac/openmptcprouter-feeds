@@ -74,6 +74,20 @@ _token_ok() { # <server>
 	return 0
 }
 
+# The token is shared with omr-metrics and the status page, which read it
+# with "uci get": it stays in the config. Left staged, the next "uci commit
+# openmptcprouter" of any other process (mptcp's on each interface event)
+# wrote it to flash with its own changes. Committed here, but only when it
+# is the only change pending: a commit flushes every other process's too.
+# Otherwise it goes with the commit that follows them (start_service's).
+_token_save() {
+	[ "$(uci -q get openmptcprouter.${servername}.token)" = "$token" ] && return 0
+	uci -q set openmptcprouter.${servername}.token="$token"
+	[ -z "$(uci -q changes openmptcprouter | grep -v -E "^-?openmptcprouter\.${servername}\.token(=|\$)")" ] && \
+		uci -q commit openmptcprouter
+	return 0
+}
+
 _login() {
 	local username password auth
 	#server="$(uci -q get openmptcprouter.${servername}.ip)"
@@ -117,7 +131,7 @@ _login() {
 			fi
 			[ -n "$auth" ] && {
 				token="$(echo "$auth" | jsonfilter -q -e '@.access_token')"
-				uci -q set openmptcprouter.${servername}.token="$token"
+				_token_save
 			}
 		}
 		config_load openmptcprouter

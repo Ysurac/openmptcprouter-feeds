@@ -239,7 +239,11 @@ _login_ok() {
 _token_store() {
 	case "$1" in
 		omr-metrics.settings.token) omr_state_set omr-metrics settings token "$2" ;;
-		*) uci -q set "${1}=${2}" ;;
+		*)
+			[ "$(uci -q get "$1")" = "$2" ] && return 0
+			uci -q set "${1}=${2}"
+			_token_commit_alone "$1"
+			;;
 	esac
 }
 
@@ -248,8 +252,21 @@ _token_store() {
 _token_drop() {
 	case "$1" in
 		omr-metrics.settings.token) omr_state_del omr-metrics settings token ;;
-		*) uci -q delete "$1" ;;
+		*)
+			[ -z "$(uci -q get "$1")" ] && return 0
+			uci -q delete "$1"
+			_token_commit_alone "$1"
+			;;
 	esac
+}
+
+# Left staged, the token went to flash with whatever the next
+# "uci commit openmptcprouter" of another process committed. Commit it
+# only when it is the package's sole pending change, as openmptcprouter-vps
+# does: otherwise that commit is not ours to make.
+_token_commit_alone() {
+	uci -q changes "${1%%.*}" | awk -v k="$1" '$0 != "-" k && index($0, k "=") != 1 { other = 1 } END { exit other }' && \
+		uci -q commit "${1%%.*}"
 }
 
 # Load the credentials and any stored token for one server into SRV_*.
