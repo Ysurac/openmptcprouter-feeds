@@ -612,6 +612,52 @@ local function valid_name(v)
 	return v:match("^[%w_]+$") ~= nil
 end
 
+-- set_settings / set_interface_settings committed without applying: nothing
+-- changed until the next reload, and a second master was dropped by it (the
+-- init script keeps the first one in config order). As setmptcpconfig of
+-- the openmptcprouter object does: the other masters are demoted here, and
+-- mptcp reloads in the background.
+local function mptcp_reload(device)
+	local cmd = "/etc/init.d/mptcp reload"
+	-- embedded bare inside the sh -c single quotes
+	if device and device:match("^[%w_%.%-]+$") then cmd = cmd .. " " .. device end
+	os.execute("sh -c '(sleep 1; " .. cmd .. ") >/dev/null 2>/dev/null &'")
+end
+
+local function set_multipath(iface, mp)
+	local previous = uci:get("network", iface, "multipath") or ""
+	if previous == "" then
+		-- /etc/init.d/mptcp falls back to the openmptcprouter copy
+		previous = uci:get("openmptcprouter", iface, "multipath") or ""
+	end
+	local demoted = 0
+	if mp == "master" then
+		uci:foreach("network", "interface", function(s)
+			if s[".name"] ~= iface and s["multipath"] == "master" then
+				uci:set("network", s[".name"], "multipath", "on")
+				if uci:get("openmptcprouter", s[".name"]) ~= nil then
+					uci:set("openmptcprouter", s[".name"], "multipath", "on")
+				end
+				demoted = demoted + 1
+			end
+		end)
+	end
+	uci:set("network", iface, "multipath", mp)
+	-- what omr-tracker puts back on a WAN it brings up again
+	if uci:get("openmptcprouter", iface) == nil then
+		uci:set("openmptcprouter", iface, "interface")
+	end
+	uci:set("openmptcprouter", iface, "multipath", mp)
+	uci:save("openmptcprouter")
+	uci:commit("openmptcprouter")
+	if previous == mp and demoted == 0 then return nil end
+	-- master changes need the unscoped pass, which alone enforces one master
+	if demoted > 0 or (previous == "master") ~= (mp == "master") then
+		return ""
+	end
+	return get_device(iface)
+end
+
 local setting_checks = {
 	mptcp_checksum = function(v) return v == "0" or v == "1" end,
 	mptcp_debug = function(v) return v == "0" or v == "1" end,
@@ -751,18 +797,22 @@ local methods = {
 					end
 				end
 			end
+			local changed = false
 			for _, field in ipairs(string_fields) do
 				if args[field] ~= nil and args[field] ~= "" then
+					changed = changed or uci:get("network", "globals", field) ~= args[field]
 					uci:set("network", "globals", field, args[field])
 				end
 			end
 			for _, field in ipairs(list_fields) do
 				if args[field] ~= nil and type(args[field]) == "table" then
+					changed = true
 					uci:set_list("network", "globals", field, args[field])
 				end
 			end
 			uci:save("network")
 			uci:commit("network")
+			if changed then mptcp_reload() end
 			return { result = "ok" }
 		end
 	},
@@ -822,14 +872,17 @@ local methods = {
 			   not valid_weight(args.multipath_weight) then
 				return { error = "Invalid value for multipath_weight" }
 			end
+			-- the weight needs no reload: the post-tracking hooks apply it
+			local reload
 			if mp ~= "" then
-				uci:set("network", iface, "multipath", mp)
+				reload = set_multipath(iface, mp)
 			end
 			if args.multipath_weight ~= nil and args.multipath_weight ~= "" then
 				uci:set("network", iface, "multipath_weight", args.multipath_weight)
 			end
 			uci:save("network")
 			uci:commit("network")
+			if reload then mptcp_reload(reload) end
 			return { result = "ok" }
 		end
 	},
