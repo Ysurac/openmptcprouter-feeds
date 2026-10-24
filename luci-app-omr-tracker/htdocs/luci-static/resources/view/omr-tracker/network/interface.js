@@ -197,6 +197,8 @@ return view.extend({
 
 		o = s.option(form.ListValue, 'count', _('Ping count'),
 			_('Number of probes sent during each test cycle.'));
+		// none pings the gateway this many times too
+		o.depends('type', 'none');
 		o.depends('type', 'ping');
 		o.depends('type', 'httping');
 		o.depends('type', 'dns');
