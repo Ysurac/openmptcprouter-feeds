@@ -58,21 +58,37 @@ get_mptcpv0_from_website6() {
 	}
 }
 
+# The router's own connection to the test site must not go through the
+# transparent proxy: its output chain (ss_rules_local_out, or the xr_/v2r_
+# one) lets through what is in the proxy's dst_bypass set, and omr-bypass's
+# omr_dst_bypass_all_4/6 when it has one. The ipsets used before don't exist
+# with fw4. Only what was added is removed afterwards: an address the user
+# already bypasses stays.
+_proxy_bypass_added=""
+_proxy_bypass_add() {
+	local fam="$1" ip set
+	shift
+	for ip in "$@"; do
+		case "$ip" in ""|*[!0-9a-fA-F.:]*) continue ;; esac
+		for set in ss_rules${fam}_dst_bypass v2r_rules${fam}_dst_bypass xr_rules${fam}_dst_bypass omr_dst_bypass_all_${fam:-4}; do
+			nft get element inet fw4 "$set" "{ $ip }" >/dev/null 2>&1 && continue
+			nft add element inet fw4 "$set" "{ $ip }" >/dev/null 2>&1 && _proxy_bypass_added="$_proxy_bypass_added $set,$ip"
+		done
+	done
+}
+_proxy_bypass_del() {
+	local e
+	for e in $_proxy_bypass_added; do
+		nft delete element inet fw4 "${e%%,*}" "{ ${e#*,} }" >/dev/null 2>&1
+	done
+	_proxy_bypass_added=""
+}
+
 get_mptcpv1_from_website() {
-	multipathip=$(dig +short A check.mptcp.dev | tr -d "\n")
-	if [ -n "$(ipset list 2>/dev/null | grep ss_rules)" ]; then
-		ipset add ss_rules_dst_bypass_all $multipathip > /dev/null 2>&1
-	fi
-	if [ -n "$(nft list set inet fw4 omr_dst_bypass_all_4 2>/dev/null)" ]; then
-		nft add element inet fw4 omr_dst_bypass_all_4 { $multipathip } >/dev/null 2>&1
-	fi
+	# One address per line, CNAMEs (ending with a dot) left out
+	_proxy_bypass_add "" $(dig +short A check.mptcp.dev | grep -v '\.$')
 	support="$(mptcpize run curl -s -4 -m ${timeout} --interface $intf https://check.mptcp.dev)"
-	if [ -n "$(ipset list 2>/dev/null | grep ss_rules)" ]; then
-		ipset del ss_rules_dst_bypass_all $multipathip > /dev/null 2>&1
-	fi
-	if [ -n "$(nft list set inet fw4 omr_dst_bypass_all_4 2>/dev/null)" ]; then
-		nft delete element inet fw4 omr_dst_bypass_all_4 { $multipathip } >/dev/null 2>&1
-	fi
+	_proxy_bypass_del
 	[ -n "$support" ] && {
 		if [ "$support" = "You are using MPTCP." ]; then
 			support="working"
@@ -83,20 +99,9 @@ get_mptcpv1_from_website() {
 }
 
 get_mptcpv1_from_website6() {
-	multipathip=$(dig +short AAAA check.mptcp.dev | tr -d "\n")
-	if [ -n "$(ipset list 2>/dev/null | grep ss_rules)" ]; then
-		ipset add ss_rules_dst_bypass_all $multipathip > /dev/null 2>&1
-	fi
-	if [ -n "$(nft list set inet fw4 omr_dst_bypass_all_4 2>/dev/null)" ]; then
-		nft add element inet fw4 omr_dst_bypass_all_4 { $multipathip } >/dev/null 2>&1
-	fi
+	_proxy_bypass_add 6 $(dig +short AAAA check.mptcp.dev | grep -v '\.$')
 	support="$(mptcpize run curl -s -6 -m ${timeout} --interface $intf https://check.mptcp.dev)"
-	if [ -n "$(ipset list 2>/dev/null | grep ss_rules)" ]; then
-		ipset del ss_rules_dst_bypass_all $multipathip > /dev/null 2>&1
-	fi
-	if [ -n "$(nft list set inet fw4 omr_dst_bypass_all_4 2>/dev/null)" ]; then
-		nft delete element inet fw4 omr_dst_bypass_all_4 { $multipathip } >/dev/null 2>&1
-	fi
+	_proxy_bypass_del
 	[ -n "$support" ] && {
 		if [ "$support" = "You are using MPTCP." ]; then
 			support="working"

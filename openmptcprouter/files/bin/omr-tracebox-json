@@ -1,10 +1,36 @@
 #!/bin/sh
 INTERFACE="$1"
-multipathip=$(dig +short A multipath-tcp.org | tr -d "\n")
-ipset add ss_rules_dst_bypass_all $multipathip > /dev/null 2>&1
+
+# tracebox's probes must not go through the transparent proxy: its output
+# chain (ss_rules_local_out, or the xr_/v2r_ one) lets through what is in
+# the proxy's dst_bypass set, and omr-bypass's omr_dst_bypass_all_4/6 when
+# it has one. The ipsets used before don't exist with fw4. Only what was
+# added is removed afterwards: an address the user already bypasses stays.
+_proxy_bypass_added=""
+_proxy_bypass_add() {
+	local fam="$1" ip set
+	shift
+	for ip in "$@"; do
+		case "$ip" in ""|*[!0-9a-fA-F.:]*) continue ;; esac
+		for set in ss_rules${fam}_dst_bypass v2r_rules${fam}_dst_bypass xr_rules${fam}_dst_bypass omr_dst_bypass_all_${fam:-4}; do
+			nft get element inet fw4 "$set" "{ $ip }" >/dev/null 2>&1 && continue
+			nft add element inet fw4 "$set" "{ $ip }" >/dev/null 2>&1 && _proxy_bypass_added="$_proxy_bypass_added $set,$ip"
+		done
+	done
+}
+_proxy_bypass_del() {
+	local e
+	for e in $_proxy_bypass_added; do
+		nft delete element inet fw4 "${e%%,*}" "{ ${e#*,} }" >/dev/null 2>&1
+	done
+	_proxy_bypass_added=""
+}
+
+# One address per line, CNAMEs (ending with a dot) left out
+_proxy_bypass_add "" $(dig +short A multipath-tcp.org | grep -v '\.$')
 if [ -z "$INTERFACE" ]; then
 	tracebox -v -j -m 10 -p IP/TCP/MSS/MPCAPABLE/WSCALE multipath-tcp.org
 else
 	tracebox -v -j -m 10 -i $INTERFACE -p IP/TCP/MSS/MPCAPABLE/WSCALE multipath-tcp.org
 fi
-ipset del ss_rules_dst_bypass_all $multipathip > /dev/null 2>&1
+_proxy_bypass_del
