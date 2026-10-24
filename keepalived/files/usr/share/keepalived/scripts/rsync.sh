@@ -82,6 +82,9 @@ ha_sync_send() {
 	fi
 
 	for sync_file in $sync_list $(sysupgrade -l); do
+		# rsync exits 23 on a missing source and then nothing at all is
+		# synced (e.g. /tmp/dhcp.leases on a router without dnsmasq)
+		[ -e "$sync_file" ] || continue
 		[ -f "$sync_file" ] && dir="${sync_file%/*}"
 		[ -d "$sync_file" ] && dir="${sync_file}"
 

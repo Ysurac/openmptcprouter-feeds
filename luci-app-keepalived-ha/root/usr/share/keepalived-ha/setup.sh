@@ -370,6 +370,10 @@ kaha_apply() {
 				# preferred master pushes config to every backup
 				kaha_uci set "keepalived.$sname.sync=1"
 				kaha_uci set "keepalived.$sname.sync_mode=send"
+				# rsync.sh only sends sync_list and sysupgrade -l: without
+				# this the leases never left the master, and clients lost
+				# their address on a failover. 551-dnsmasq installs them.
+				kaha_uci add_list "keepalived.$sname.sync_list=/tmp/dhcp.leases"
 			elif [ "$j" = "0" ]; then
 				# backups receive from the preferred master only
 				kaha_uci set "keepalived.$sname.sync=1"
