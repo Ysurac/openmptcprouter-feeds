@@ -607,7 +607,7 @@ _set_wireguard_vps() {
 	# one the user made in LuCI has no public_key option, and its empty
 	# key made the VPS refuse the whole list, those peers with it
 	_get_wg_ipskey() {
-		local interface=$1 addr
+		local interface=$1 addr endpoint
 		proto=$(uci -q get network.${interface}.proto)
 		if [ "$proto" = "wireguard" ]; then
 			ip=""
@@ -623,6 +623,17 @@ _set_wireguard_vps() {
 				*[!A-Za-z0-9+/=]*) key="" ;;
 			esac
 			[ -n "$ip" ] && [ "${#key}" = 44 ] || return 0
+			# A tunnel to another server isn't a peer of this one: every
+			# server's VPN is 10.255.247.0/24, so its address alone doesn't
+			# tell, and this server refused the list when another user of
+			# it had that address
+			endpoint="$(uci -q get network.@wireguard_${interface}[0].endpoint_host)"
+			if [ -n "$endpoint" ]; then
+				case " $(uci -q get openmptcprouter.${servername}.ip) " in
+					*" $endpoint "*) ;;
+					*) return 0 ;;
+				esac
+			fi
 			if [ -z "$ipskey" ]; then
 				ipskey='{"ip": "'$ip'", "key": "'$key'"}'
 			else
