@@ -882,7 +882,7 @@ fi
 
 _calculate_budget_limit() {
 	local tt="$1"
-	local now today midnight end_ts today_ts rd rv dv mm seconds_left percent threshold ci
+	local now today eod end_ts today_ts rd rv dv seconds_left percent threshold ci
 
 	[ -n "$OMR_QUOTA_TT" ] && [ "$OMR_QUOTA_TT" -gt 0 ] || return
 	[ -n "$OMR_QUOTA_ENDDATE" ] || return
@@ -891,21 +891,29 @@ _calculate_budget_limit() {
 	threshold="${OMR_QUOTA_PERCENT:-80}"
 	[ "$percent" -gt "$threshold" ] || return
 
+	# A local day is 23 or 25 hours long on a DST change: counting 1440
+	# minutes from midnight gave the spring day an hour it does not have
+	# (a third of the budget rate in its last hours) and left the autumn
+	# one with an hour past the clamp (method 2 at full rate, method 1
+	# never tripping). The day's length is read from the clock instead:
+	# what is left is up to the next midnight, one second past 23:59:59,
+	# which exists on every day. "today" is the day of "now", not of a
+	# second date call that may already be past midnight.
+	now="$(date +%s)"
+	today="$(date -d "@$now" +%F 2>/dev/null)" || return
+	today_ts="$(date -d "$today 0" +%s 2>/dev/null)" || return
+	eod="$(date -d "$today 23:59:59" +%s 2>/dev/null)" || return
+	seconds_left=$(( eod + 1 - now ))
+	[ "$seconds_left" -lt 60 ] && seconds_left=60
+
 	end_ts="$(date -d "$OMR_QUOTA_ENDDATE" +%s 2>/dev/null)" || return
-	today_ts="$(date -d "00:00" +%s 2>/dev/null)" || return
-	rd=$(( (end_ts - today_ts) / 86400 + 1 ))
+	# rounded: a DST change in between makes the span an hour short or long
+	rd=$(( (end_ts - today_ts + 43200) / 86400 + 1 ))
 	[ "$rd" -gt 0 ] || rd=1
 
 	rv=$(( OMR_QUOTA_TT - tt ))
 	[ "$rv" -lt 0 ] && rv=0
 	dv=$(( rv / rd ))
-
-	now="$(date +%s)"
-	today="$(date +%F)"
-	midnight="$(date -d "$today 0" +%s 2>/dev/null)" || return
-	mm=$(( (now - midnight) / 60 ))
-	[ "$mm" -lt 0 ] && mm=0
-	[ "$mm" -ge 1439 ] && mm=1439
 
 	if [ "${OMR_QUOTA_METHOD:-0}" = "1" ]; then
 		# The checkpoint (last_tt) has to survive at least one poll: the main
@@ -926,13 +934,18 @@ _calculate_budget_limit() {
 			ci=$(( ${OMR_QUOTA_INTERVAL:-60} * 2 ))
 		fi
 		if [ "$(( now - last_calculation ))" -gt "$ci" ]; then
-			cv=$(( dv / (1440 - mm + 1) ))
+			# The growth checked against cv is measured over one
+			# calculation window, so cv is the share of today's budget
+			# that falls in one window. It used to be a per-minute share
+			# (dv / minutes left), which cut at a half (120 s window) to a
+			# tenth (600 s) of the daily budget. seconds_left is at least
+			# 60, and KiB * seconds stays far inside 64 bits.
+			cv=$(( dv * ci / seconds_left ))
+			[ "$cv" -lt 1 ] && cv=1
 			last_tt=$tt
 			last_calculation=$now
 		fi
 	elif [ "${OMR_QUOTA_METHOD:-0}" = "2" ]; then
-		seconds_left=$(( (1440 - mm) * 60 ))
-		[ "$seconds_left" -le 0 ] && seconds_left=60
 		cb=$(( dv * 8 / seconds_left ))
 		[ "$cb" -lt 1 ] && cb=1
 	fi
