@@ -1,10 +1,21 @@
 {%
+// xr_rules_local_out (hook output, the router's own connections) makes the
+// checks of xr_rules_dst inline and goes to xr_rules_local_forward, the
+// redirect without the jump to omr_proxy_fw_<proto>: that firewall check of
+// the LAN clients matches "fib daddr . mark oifname", which the kernel
+// refuses in a chain the output hook reaches, and the whole check failed to
+// load.
 function get_local_verdict() {
 	let v = o_local_default;
+	let fwd = "goto xr_rules_local_forward_" + proto;
 	if (v == "checkdst") {
-		return "goto xr_rules_dst_" + proto;
+		return [
+			"ip daddr @xr_rules_dst_forward " + fwd,
+			"ip6 daddr @xr_rules6_dst_forward " + fwd,
+			(o_dst_default == "forward") ? fwd : "accept"
+		];
 	} else if (v == "forward") {
-		return "goto xr_rules_forward_" + proto;
+		return [ fwd ];
 	} else {
 		return null;
 	}
@@ -160,8 +171,12 @@ chain xr_rules_dst_{{ proto }} {
 chain omr_proxy_fw_{{ proto }} {
 }
 
-chain xr_rules_forward_{{ proto }} {
+{%   let local_verdict = get_local_verdict(); if (o_tproxy == "1") local_verdict = null; %}
+{%   for (let c in (local_verdict ? [ "forward", "local_forward" ] : [ "forward" ])): %}
+chain xr_rules_{{ c }}_{{ proto }} {
+{%	if (c == "forward"): %}
 	jump omr_proxy_fw_{{ proto }};
+{%	endif %}
 {%	for (let r in extra_rules()): %}
 {%		if (o_tproxy == "1"): %}
 	meta l4proto tcp {{ o_nft_tcp_extra }} {{ r.match }} meta mark set 1 tproxy ip to :{{ r.port }} accept;
@@ -175,7 +190,8 @@ chain xr_rules_forward_{{ proto }} {
 	meta l4proto tcp {{ o_nft_tcp_extra }} redirect to :{{ redir_port }};
 {%	endif %}
 }
-{%	let local_verdict = get_local_verdict(); if (local_verdict): %}
+{%   endfor %}
+{%   if (get_local_verdict()): %}
 chain xr_rules_local_out {
 	type {{ type }} hook output priority -1;
 	meta l4proto != tcp accept;
@@ -185,9 +201,9 @@ chain xr_rules_local_out {
 	ip6 daddr @xr_rules6_remote_servers accept;
 	ip6 daddr @xr_rules6_dst_bypass_ accept;
 	ip6 daddr @xr_rules6_dst_bypass accept;
-{%		if (o_tproxy != "1"): %}
-	{{ local_verdict }};
-{%		endif %}
+{%	for (let v in local_verdict): %}
+	{{ v }};
+{%	endfor %}
 }
 {%	endif %}
 {%   elif (proto == "udp"): %}

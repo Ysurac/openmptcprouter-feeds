@@ -1,10 +1,21 @@
 {%
+// ss_rules_local_out (hook output, the router's own connections) makes the
+// checks of ss_rules_dst inline and goes to ss_rules_local_forward, the
+// redirect without the jump to omr_proxy_fw_<proto>: that firewall check of
+// the LAN clients matches "fib daddr . mark oifname", which the kernel
+// refuses in a chain the output hook reaches, and the whole check failed to
+// load.
 function get_local_verdict() {
 	let v = o_local_default;
+	let fwd = "goto ss_rules_local_forward_" + proto;
 	if (v == "checkdst") {
-		return "goto ss_rules_dst_" + proto;
+		return [
+			"ip daddr @ss_rules_dst_forward " + fwd,
+			"ip6 daddr @ss_rules6_dst_forward " + fwd,
+			(o_dst_default == "forward") ? fwd : "accept"
+		];
 	} else if (v == "forward") {
-		return "goto ss_rules_forward_" + proto;
+		return [ fwd ];
 	} else {
 		return null;
 	}
@@ -157,14 +168,19 @@ chain ss_rules_dst_{{ proto }} {
 chain omr_proxy_fw_{{ proto }} {
 }
 
-chain ss_rules_forward_{{ proto }} {
+{%	let local_verdict = get_local_verdict(); %}
+{%	for (let c in (local_verdict ? [ "forward", "local_forward" ] : [ "forward" ])): %}
+chain ss_rules_{{ c }}_{{ proto }} {
+{%		if (c == "forward"): %}
 	jump omr_proxy_fw_{{ proto }};
-{%	for (let r in extra_rules(false)): %}
+{%		endif %}
+{%		for (let r in extra_rules(false)): %}
 	meta l4proto tcp {{ o_nft_tcp_extra }} {{ r.match }} redirect to :{{ r.port }};
-{%	endfor %}
+{%		endfor %}
 	meta l4proto tcp {{ o_nft_tcp_extra }} redirect to :{{ redir_target(redir_port) }};
 }
-{%	let local_verdict = get_local_verdict(); if (local_verdict): %}
+{%	endfor %}
+{%	if (local_verdict): %}
 chain ss_rules_local_out {
 	type {{ type }} hook output priority -1;
 	meta l4proto != tcp accept;
@@ -174,7 +190,9 @@ chain ss_rules_local_out {
 	ip6 daddr @ss_rules6_remote_servers accept;
 	ip6 daddr @ss_rules6_dst_bypass_ accept;
 	ip6 daddr @ss_rules6_dst_bypass accept;
-	{{ local_verdict }};
+{%		for (let v in local_verdict): %}
+	{{ v }};
+{%		endfor %}
 }
 {%	endif %}
 {%   elif (proto == "udp"): %}
