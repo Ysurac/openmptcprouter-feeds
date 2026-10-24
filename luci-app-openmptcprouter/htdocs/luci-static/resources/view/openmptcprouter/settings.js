@@ -255,6 +255,9 @@ return view.extend({
 		o.value('l2', _('Layer 2 (bridged into LAN)'));
 		o.default = 'l3';
 		o.depends('vxlan', '1');
+		/* hidden with VXLAN off: removed, a save sent '' and the backend
+		 * forgot L2 and the bridge interface (#4350, as in the wizard) */
+		o.retain = true;
 
 		o = s.taboption('network', form.ListValue, 'vxlan_bridge_if', _('VXLAN bridge interface'),
 			_('Interface the VXLAN tunnel is bridged into.'));
@@ -266,6 +269,7 @@ return view.extend({
 		});
 		o.default = 'lan';
 		o.depends({ 'vxlan': '1', 'vxlan_mode': 'l2' });
+		o.retain = true;
 
 		/* ── Other tab ─────────────────────────────────────────────── */
 		o = s.taboption('other', form.Flag, 'vnstat_backup',
