@@ -229,10 +229,17 @@ local function removable_interface(name)
 	return not other_zone
 end
 
+-- A name a server section can take: ucic:set(..., name, "server") on a
+-- section of another type (settings, a WAN...) retyped it
+local function server_name_free(name)
+	if type(name) ~= "string" or not name:match("^[%w_]+$") then return false end
+	local stype = ucic:get("openmptcprouter", name)
+	return stype == nil or stype == "server"
+end
+
 function add_server(add_server_name)
 	local name = (type(add_server_name) == "string" and add_server_name or ""):gsub("[^%w_]+","_")
-	local stype = ucic:get("openmptcprouter", name)
-	if name == "" or (stype ~= nil and stype ~= "server") then
+	if not server_name_free(name) then
 		return { error = "Invalid server name" }
 	end
 	ucic:set("openmptcprouter",name,"server")
@@ -863,6 +870,9 @@ end
 
 function server_settings(server,server_ip,openmptcprouter_vps_key,openmptcprouter_vps_username,server_ip6)
 	-- OpenMPTCProuter VPS
+	if not server_name_free(server) then
+		return { error = "Invalid server name" }
+	end
 	if openmptcprouter_vps_username == nil or tostring(openmptcprouter_vps_username) == "" then
 		openmptcprouter_vps_username = "openmptcprouter"
 	else
@@ -1337,6 +1347,15 @@ function wizard_add(args)
 			return { status = "error",
 				error = "Invalid API certificate pin for server " .. _sanitize_name(srv.name) ..
 					": expecting a base64 SHA-256 (44 characters ending with \"=\"), optionally prefixed by sha256//" }
+		end
+	end
+	-- A server named after another section (settings, a WAN...) retyped it
+	for _, srv in ipairs(servers) do
+		if type(srv) == "table" then
+			local sid = _sanitize_name(srv.name)
+			if sid ~= "" and not server_name_free(sid) then
+				return { status = "error", error = "Invalid server name " .. sid }
+			end
 		end
 	end
 
@@ -4184,7 +4203,7 @@ local methods = {
 	setserver = {
 		args = { server = "vps", server_ip = "", openmptcprouter_vps_key = "" },
 		call = function(args)
-			server_settings(args.server, args.server_ip, args.openmptcprouter_vps_key)
+			return server_settings(args.server, args.server_ip, args.openmptcprouter_vps_key)
 		end
 	},
 	setshadowsocks = {
