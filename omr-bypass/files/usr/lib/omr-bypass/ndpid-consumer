@@ -8,7 +8,7 @@
 #
 # Usage: ndpid-consumer <proto_list>
 #   proto_list: space-separated entries of the form
-#               proto:intf:intfid:dscp:family as written by
+#               proto:intf:intfid:dscp:family:tcpudp as written by
 #               _bypass_ndpid_collect_proto in omr-bypass-nft.
 #               intf and dscp are independent and either may be empty: intf
 #               drives the routing-bypass fwmark set, dscp drives the
@@ -67,19 +67,25 @@ _valid_ip6() {
 # nDPI names have dashes (JSON-RPC, NAT-PMP) and so do nft set names.
 _list=""
 for entry in $proto_list; do
-	_f="${entry}::::"
+	_f="${entry}:::::"
 	bp="${_f%%:*}"; _f="${_f#*:}"
 	intf="${_f%%:*}"; _f="${_f#*:}"
 	_f="${_f#*:}"
-	dscp="${_f%%:*}"
+	dscp="${_f%%:*}"; _f="${_f#*:}"
+	_f="${_f#*:}"
+	tcpudp="${_f%%:*}"
 	case "$bp" in
 		""|*[!A-Za-z0-9_.-]*) entry="" ;;
 	esac
 	case "$intf$dscp" in
 		*[!A-Za-z0-9_]*) entry="" ;;
 	esac
+	case "$tcpudp" in
+		""|tcp|udp) ;;
+		*) entry="" ;;
+	esac
 	if [ -z "$entry" ]; then
-		logger -t omr-bypass "nDPId consumer: invalid entry '$bp:$intf:$dscp' ignored"
+		logger -t omr-bypass "nDPId consumer: invalid entry '$bp:$intf:$dscp:$tcpudp' ignored"
 		continue
 	fi
 	_list="$_list $entry"
@@ -154,16 +160,26 @@ while true; do
 		base=$(echo "$proto_str" | tr '.' '\n' | head -1 | tr '[:upper:]' '[:lower:]')
 
 		for entry in $proto_list; do
-			# proto:intf:intfid:dscp:family, any field but proto may be
-			# empty and an older list has fewer fields: pad, then split
-			_f="${entry}::::"
+			# proto:intf:intfid:dscp:family:tcpudp, any field but proto
+			# may be empty and an older list has fewer fields: pad, then
+			# split
+			_f="${entry}:::::"
 			bp="${_f%%:*}"; _f="${_f#*:}"
 			intf="${_f%%:*}"; _f="${_f#*:}"
 			_f="${_f#*:}"
 			dscp="${_f%%:*}"; _f="${_f#*:}"
-			family="${_f%%:*}"
+			family="${_f%%:*}"; _f="${_f#*:}"
+			tcpudp="${_f%%:*}"
 			case "$family:$is_v6" in
 				ipv4:1|ipv6:0) continue ;;
+			esac
+			# a TCP or UDP only rule: the interface's set of that
+			# protocol, the one its MARK rule matches ("all" has a set
+			# per protocol already, the server VPN none per protocol)
+			_p=""
+			case "$intf:$tcpudp" in
+				all:*|srv_vpn1:*) ;;
+				*:tcp|*:udp) _p="_$tcpudp" ;;
 			esac
 			bp_lower=$(echo "$bp" | tr '[:upper:]' '[:lower:]')
 			if [ "$bp_lower" = "$app" ] || [ "$bp_lower" = "$base" ] || \
@@ -177,14 +193,14 @@ while true; do
 					if [ "$intf" = "all" ]; then
 						nft add element inet fw4 bypass6_${bp} { "$dst_ip" } 2>/dev/null
 					elif [ -n "$intf" ]; then
-						nft add element inet fw4 omr_dst_bypass_${intf}_6 { "$dst_ip" } 2>/dev/null
+						nft add element inet fw4 omr_dst_bypass_${intf}_6${_p} { "$dst_ip" } 2>/dev/null
 					fi
 					[ -n "$dscp" ] && nft add element inet fw4 omr_dst_bypass_dscp_${dscp}_6 { "$dst_ip" } 2>/dev/null
 				else
 					if [ "$intf" = "all" ]; then
 						nft add element inet fw4 bypass_${bp} { "$dst_ip" } 2>/dev/null
 					elif [ -n "$intf" ]; then
-						nft add element inet fw4 omr_dst_bypass_${intf}_4 { "$dst_ip" } 2>/dev/null
+						nft add element inet fw4 omr_dst_bypass_${intf}_4${_p} { "$dst_ip" } 2>/dev/null
 					fi
 					[ -n "$dscp" ] && nft add element inet fw4 omr_dst_bypass_dscp_${dscp}_4 { "$dst_ip" } 2>/dev/null
 				fi

@@ -2535,9 +2535,37 @@ _bypass_ndpid_collect_proto() {
 	# exist even when no domain or IP of the rule created it.
 	[ -n "$dscp" ] && _omr_defer _dscp_ensure_ipset "$dscp"
 	# a 5th field for "IPv4 only" / "IPv6 only": the consumer skips the
-	# addresses of the other family
-	case "$family" in ipv4|ipv6) dscp="${dscp}:${family}" ;; esac
+	# addresses of the other family. A 6th for "TCP only" / "UDP only": the
+	# addresses went to the interface's set for every protocol, whose rule
+	# such a rule never enables, so they bypassed nothing (or, with another
+	# rule enabling it, bypassed the other protocol too).
+	local _fam="" _p=""
+	case "$family" in ipv4|ipv6) _fam="$family" ;; esac
+	case "$tcpudp" in tcp|udp) _p="$tcpudp" ;; esac
+	[ -n "$_fam$_p" ] && dscp="${dscp}:${_fam}"
+	[ -n "$_p" ] && dscp="${dscp}:${_p}"
 	_bypass_proto_ndpid_list="${_bypass_proto_ndpid_list} ${proto}:${intf}:${intfid}:${dscp}"
+	# a protocol with no host in the database left the rules of the
+	# interface's sets disabled (the domains enable them)
+	case "$intf" in
+		""|all|srv_vpn1) ;;
+		*) _omr_defer _bypass_ndpid_enable "$intf" "$family" "$_p" ;;
+	esac
+}
+
+# _bypass_ndpid_enable <interface key> <family> <tcp|udp|>: enable the MARK
+# rules of the interface's set the consumer adds to, as _bypass_ip does
+_bypass_ndpid_enable() {
+	local f zone p="${3:+_$3}"
+	for f in 4 6; do
+		[ "$f" = "4" ] && [ "$2" = "ipv6" ] && continue
+		[ "$f" = "6" ] && [ "$2" = "ipv4" ] && continue
+		[ "$f" = "6" ] && [ "$disableipv6" != "0" ] && continue
+		for zone in $(_get_firewall_zones); do
+			uci -q set "firewall.omr_dst_bypass_${1}_dstip_${f}_${zone}${p}.enabled=1"
+			uci -q set "firewall.omr_dst_bypass_${1}_dstip_${f}_${zone}_accept.enabled=1"
+		done
+	done
 }
 
 _bypass_proto_collect_ndpid() {
