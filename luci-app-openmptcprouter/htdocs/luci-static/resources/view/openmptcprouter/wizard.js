@@ -311,6 +311,24 @@ return view.extend({
 		 * the value is kept here and the backend creates the section */
 		var ttlValues = {};
 
+		/* Same for the per-WAN options kept in openmptcprouter.<intf>,
+		 * sqm.<intf> and qos.<intf>: on a WAN added here, or one these
+		 * sections were never made for, what was ticked was lost and '0'
+		 * sent. The sections are only made in the local cache, the backend
+		 * creates them. */
+		function ensureWanSections(sid) {
+			if (!uci.get('openmptcprouter', sid))
+				uci.add('openmptcprouter', 'interface', sid);
+			if (has.sqm && !uci.get('sqm', sid))
+				uci.add('sqm', 'queue', sid);
+			if (has.qos && !uci.get('qos', sid))
+				uci.add('qos', 'interface', sid);
+		}
+		zoneWan.forEach(function(i) {
+			if (uci.get('network', i))
+				ensureWanSections(i);
+		});
+
 		function buildWizardPayload() {
 			var allIntfs = {};
 			zoneLan.forEach(function(i) { allIntfs[i] = true; });
@@ -969,6 +987,7 @@ return view.extend({
 			uci.add('network', 'interface', name);
 			uci.set('network', name, 'proto', 'static');
 			uci.set('network', name, 'multipath', 'on');
+			ensureWanSections(name);
 			var w = L.toArray(uci.get('firewall', 'zone_wan', 'network'));
 			w.push(name);
 			uci.set('firewall', 'zone_wan', 'network', w);
