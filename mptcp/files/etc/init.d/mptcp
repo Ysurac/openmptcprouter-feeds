@@ -265,28 +265,43 @@ interface_macaddr_count() {
 	[ "$macaddr" = "$dmacaddr" ] && [ "${intf%.*}" = "$intf" ] && nbmac=$((nbmac+1))
 }
 
+# procd reloads this init on every interface event. A "uci commit" writes
+# the whole pending delta of the config, other processes' staged changes
+# included (openmptcprouter-vps's uncommitted token went to flash on each
+# reload), so an option is only set when it differs, and a config is only
+# committed when this run changed it.
+_mptcp_uci_set() {
+	[ "$(uci -q get "$1")" = "$2" ] && return 0
+	uci -q set "$1=$2"
+	_mptcp_uci_changed="$_mptcp_uci_changed ${1%%.*}"
+}
+
+_mptcp_uci_delete() {
+	uci -q get "$1" >/dev/null || return 0
+	uci -q delete "$1"
+	_mptcp_uci_changed="$_mptcp_uci_changed ${1%%.*}"
+}
+
+_mptcp_uci_commit() {
+	case " $_mptcp_uci_changed " in
+		*" $1 "*) uci -q commit "$1" ;;
+	esac
+}
+
 interface_max_metric() {
 	local config="$1"
 	case "$1" in
 		omrvpn)
-			uci -q batch <<-EOF >/dev/null
-				set network.${config}.metric=1500
-				set network.${config}.ip4table=1500
-				set network.${config}.ip6table=61500
-				commit network
-				set openmptcprouter.${config}.metric=1500
-				commit openmptcprouter
-			EOF
+			_mptcp_uci_set network.${config}.metric 1500
+			_mptcp_uci_set network.${config}.ip4table 1500
+			_mptcp_uci_set network.${config}.ip6table 61500
+			_mptcp_uci_set openmptcprouter.${config}.metric 1500
 			;;
 		omr6in4)
-			uci -q batch <<-EOF >/dev/null
-				set network.${config}.metric=1201
-				set network.${config}.ip4table=1201
-				set network.${config}.ip6table=61201
-				commit network
-				set openmptcprouter.${config}.metric=1201
-				commit openmptcprouter
-			EOF
+			_mptcp_uci_set network.${config}.metric 1201
+			_mptcp_uci_set network.${config}.ip4table 1201
+			_mptcp_uci_set network.${config}.ip6table 61201
+			_mptcp_uci_set openmptcprouter.${config}.metric 1201
 			;;
 		lan)
 			# only when needed: this runs on every reload, sed -i writes flash
@@ -477,10 +492,10 @@ interface_multipath_settings() {
 #		metric="9998"
 	fi
 	config_set "$config" metric $metric
-	uci -q set network.${config}.metric=$metric
-	uci -q set network.${config}.ip4table=$metric
-	uci -q set network.${config}.ip6table=6$metric
-	uci -q set openmptcprouter.${config}.metric=$metric
+	_mptcp_uci_set network.${config}.metric "$metric"
+	_mptcp_uci_set network.${config}.ip4table "$metric"
+	_mptcp_uci_set network.${config}.ip6table "6$metric"
+	_mptcp_uci_set openmptcprouter.${config}.metric "$metric"
 	config_get mode "$config" multipath
 	config_get disabled "$config" disabled
 	[ "$disabled" = "1" ] && mode="off"
@@ -504,7 +519,7 @@ interface_multipath_settings() {
 		mode="$(uci -q get openmptcprouter.${config}.multipath)"
 		[ -n "$mode" ] && {
 			logger -t "MPTCP" "No multipath setting for $config, restoring $mode from openmptcprouter config"
-			uci -q set network.${config}.multipath="$mode"
+			_mptcp_uci_set network.${config}.multipath "$mode"
 		}
 	}
 	[ "$mode" = "" ] && {
@@ -513,8 +528,8 @@ interface_multipath_settings() {
 		[ "$config" = "omr6in4" ] && mode="off"
 		[ "$mode" = "" ] && mode="off"
 		logger -t "MPTCP" "Multipath not defined for $config set to $mode"
-		uci -q set network.${config}.multipath="$mode"
-		uci -q set openmptcprouter.${config}.multipath="$mode"
+		_mptcp_uci_set network.${config}.multipath "$mode"
+		_mptcp_uci_set openmptcprouter.${config}.multipath "$mode"
 	}
 	[ "$mode" != "off" ] && {
 		# LRO, TSO and UFO break MPTCP packets scheduling, always disable them on multipath interfaces
@@ -526,9 +541,9 @@ interface_multipath_settings() {
 		[ -n "$mptcpintf" ] && mptcpintf="$mptcpintf $iface"
 		[ -z "$mptcpintf" ] && mptcpintf="$iface"
 		[ -z "$mptcpmintf" ] && mptcpmintf="$config"
-		uci -q set network.${config}.defaultroute=0
-		uci -q set network.${config}.peerdns=0
-		uci -q delete network.${config}.dns
+		_mptcp_uci_set network.${config}.defaultroute 0
+		_mptcp_uci_set network.${config}.peerdns 0
+		_mptcp_uci_delete network.${config}.dns
 		echo '' > /etc/resolv.conf >/dev/null 2>&1
 	}
 	[ "$mode" = "master" ] && {
@@ -537,14 +552,14 @@ interface_multipath_settings() {
 			logger -t "MPTCP" "Multipath master already set, disable master for $config"
 			mode="on"
 			config_set "$config" multipath "on"
-			uci -q set network.${config}.multipath="on"
-			uci -q set openmptcprouter.${config}.multipath="on"
+			_mptcp_uci_set network.${config}.multipath "on"
+			_mptcp_uci_set openmptcprouter.${config}.multipath "on"
 		else
 			master="$config"
 		fi
 	}
-	uci -q set openmptcprouter.${config}="interface"
-	uci -q set openmptcprouter.${config}.multipath="$mode"
+	_mptcp_uci_set openmptcprouter.${config} "interface"
+	_mptcp_uci_set openmptcprouter.${config}.multipath "$mode"
 
 	config_get macaddr "$config" macaddr ""
 	[ -n "$macaddr" ] && {
@@ -552,7 +567,7 @@ interface_multipath_settings() {
 		config_foreach interface_macaddr_count interface $macaddr
 		[ "$nbmac" != "1" ] && {
 			logger -t "MPTCP" "Duplicate MAC saved, removing"
-			uci -q delete network.${config}.macaddr
+			_mptcp_uci_delete network.${config}.macaddr
 		}
 	}
 
@@ -970,6 +985,7 @@ start_service() {
 	mptcpmintf=""
 	master=""
 	count=0
+	_mptcp_uci_changed=""
 	config_load openmptcprouter
 	config_foreach interface_max_metric interface
 	
@@ -1000,13 +1016,13 @@ start_service() {
 			intfmaster="$mptcpmintf"
 			[ "$intfmaster" != "" ] && mptcp_has_master_multipath && {
 				logger -t "MPTCP" "Master multipath interface disabled, setting it to $intfmaster"
-				uci -q set network.${intfmaster}.multipath="master"
-				uci -q set openmptcprouter.${intfmaster}.multipath="master"
+				_mptcp_uci_set network.${intfmaster}.multipath "master"
+				_mptcp_uci_set openmptcprouter.${intfmaster}.multipath "master"
 			}
 		fi
 	fi
-	[ -n "$(uci -q changes network)" ] && uci -q commit network
-	[ -n "$(uci -q changes openmptcprouter)" ] && uci -q commit openmptcprouter
+	_mptcp_uci_commit network
+	_mptcp_uci_commit openmptcprouter
 	case "$board_name" in
 		*raspberry*) case "$board_name" in *4-model-b*|*5*) ;; *)
 			ethtool --offload eth0 rx off tx off > /dev/null 2>&1
