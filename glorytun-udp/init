@@ -31,12 +31,14 @@ validate_section() {
 		'kxtimeout:string:7d'      \
 		'timetolerance:string:10m' \
 		'keepalive:string:25s'     \
+		'localip:string'           \
+		'remoteip:string'          \
 		'dev:string'
 }
 
 start_instance() {
 	local enable key host port listener proto mtuauto chacha dev mode
-	local persist kxtimeout timetolerance keepalive
+	local persist kxtimeout timetolerance keepalive localip remoteip
 	local key_dir="/var/run/${PROG_NAME}"
 	local key_file="${key_dir}/${1}.key"
 
@@ -106,10 +108,11 @@ start_instance() {
 
 	procd_close_instance
 
-	# kxtimeout, timetolerance and keepalive are not bind arguments: only
-	# the ifup hotplug set them, and a restart that keeps the device raises
-	# no ifup, nor does a change of them alone (procd keeps the instance).
-	# Set them once the tunnel answers; the delay leaves procd the time to
+	# kxtimeout, timetolerance, keepalive and the tunnel addresses are not
+	# bind arguments: only the ifup hotplug set them, and a restart that
+	# keeps the device raises no ifup, nor does a change of them alone
+	# (procd keeps the instance). Set them once the tunnel answers (ifconfig
+	# leaves unchanged addresses alone); the delay leaves procd the time to
 	# replace an instance it restarts. fd 1000 is procd.sh's service lock:
 	# kept open, it would block every other glorytun-udp init call meanwhile
 	(
@@ -120,6 +123,8 @@ start_instance() {
 			[ "$count" -gt 10 ] && exit 0
 			sleep 1
 		done
+		[ -n "$localip" ] && [ -n "$remoteip" ] &&
+			ifconfig "$dev" "$localip" pointopoint "$remoteip" up
 		${PROG} set dev "$dev" kxtimeout "$kxtimeout" timetolerance "$timetolerance" keepalive "$keepalive"
 	) </dev/null >/dev/null 2>&1 1000>&- &
 
@@ -153,8 +158,8 @@ start_service() {
 
 # No reload_service: stop;start there restarted the tunnel on every network
 # config change. The default (start) lets procd restart only an instance whose
-# command or key file changed; kxtimeout, timetolerance and keepalive are
-# applied by start_instance either way.
+# command or key file changed; kxtimeout, timetolerance, keepalive and the
+# tunnel addresses are applied by start_instance either way.
 service_triggers() {
 	procd_add_reload_trigger glorytun-udp network
 }
