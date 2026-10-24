@@ -470,10 +470,7 @@ function remove_interface(intf)
 	ucic:commit("firewall")
 end
 
-function enable_interface(intf, enable)
-	if intf == nil or intf == "" then return end
-	intf = intf:gsub("[^%w_-]+", "")
-	if intf == "" then return end
+local function set_interface_enabled(intf, enable)
 	local disabled = (tostring(enable) == "1") and "0" or "1"
 	ucic:set("network", intf, "disabled", disabled)
 	ucic:save("network")
@@ -485,8 +482,18 @@ function enable_interface(intf, enable)
 	end
 end
 
-function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspeed,uploadspeed)
+-- The ubus method: "-a" made it "ifdown -a" (every interface), and "lan"
+-- took the LAN down. set_vps_disabled() is what turns omrvpn on and off.
+function enable_interface(intf, enable)
+	if not section_is("network", intf, "interface") or protected_interfaces[intf] then
+		return { error = "Invalid interface" }
+	end
+	set_interface_enabled(intf, enable)
+end
+
+function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspeed,uploadspeed,lan)
 	-- Set interfaces settings
+	-- lan: no SQM/QoS sections or rates, they shape WANs only
 	-- nil: speed not given, kept; 0 (what the wizard sends for an emptied
 	-- field): cleared
 	local dl = downloadspeed ~= nil and (tonumber(downloadspeed) or 0) or nil
@@ -549,7 +556,7 @@ function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspee
 	ucis:delete("openmptcprouter",intf,"lc")
 	ucis:save("openmptcprouter")
 
-	if ucic:get("qos",intf) == nil then
+	if not lan and ucic:get("qos",intf) == nil then
 		ucic:set("qos",intf,"interface")
 		ucic:set("qos",intf,"classgroup","Default")
 		ucic:set("qos",intf,"enabled","0")
@@ -557,7 +564,7 @@ function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspee
 		ucic:set("qos",intf,"download","100000")
 	end
 
-	if ucic:get("sqm",intf) == nil then
+	if not lan and ucic:get("sqm",intf) == nil then
 		local defif = get_device(intf)
 		if defif == "" or defif == nil then
 			defif = ucic:get("network",intf,"device") or ""
@@ -594,7 +601,7 @@ function set_interface(intf,proto,ipaddr,netmask,gateway,sqmenabled,downloadspee
 			ucic:delete("network",intf,"uploadspeed")
 		end
 	end
-	if dl ~= nil and ul ~= nil and dl > 0 and ul > 0 then
+	if not lan and dl ~= nil and ul ~= nil and dl > 0 and ul > 0 then
 		ucic:set("sqm",intf,"download",tostring(math.ceil(dl*95/100)))
 		ucic:set("sqm",intf,"upload",tostring(math.ceil(ul*95/100)))
 		ucic:set("sqm",intf,"enabled", sqm_on and "1" or "0")
@@ -957,11 +964,15 @@ function disable_shadowsocks(shadowsocks_disable)
 	ucic:commit("shadowsocks-libev")
 end
 
-function set_glorytun(glorytun_key)
+-- keep_cipher: chacha20 is the wizard's encryption choice, set when that
+-- choice changes only
+function set_glorytun(glorytun_key, keep_cipher)
 	ucic:set("glorytun","vpn","port","65001")
 	ucic:set("glorytun","vpn","key",glorytun_key)
 	ucic:set("glorytun","vpn","mptcp",1)
-	ucic:set("glorytun","vpn","chacha20",1)
+	if not keep_cipher then
+		ucic:set("glorytun","vpn","chacha20",1)
+	end
 	ucic:set("glorytun-udp","vpn","port","65001")
 	ucic:set("glorytun-udp","vpn","key",glorytun_key)
 	ucic:save("glorytun")
@@ -1091,6 +1102,17 @@ local function _set_flag_if_given(option, value)
 	end
 end
 
+-- An off flag the wizard sends (it sends '0' for an unset one) leaves an
+-- unset option unset: a save of the untouched page wrote "0" to every
+-- such option. Blank or missing: untouched.
+local function _set_flag_keep_unset(config, section, option, value)
+	local v = _to_optional_flag(value)
+	if v == "" or (v == "0" and ucic:get(config, section, option) == nil) then
+		return
+	end
+	ucic:set(config, section, option, v)
+end
+
 local function _unique_string_list(values)
 	local list = {}
 	local seen = {}
@@ -1137,6 +1159,35 @@ local function _as_string_list(value)
 		return {}
 	end
 	return { item }
+end
+
+-- wanted in the order of current: the items kept where they are, the new
+-- ones after them. A wizard save rewrote reordered lists (zone networks,
+-- server addresses) for nothing.
+local function _keep_order(current, wanted)
+	local want, seen, out = {}, {}, {}
+	for _, item in ipairs(wanted) do want[item] = true end
+	for _, item in ipairs(_unique_string_list(current)) do
+		if want[item] and not seen[item] then
+			seen[item] = true
+			out[#out + 1] = item
+		end
+	end
+	for _, item in ipairs(wanted) do
+		if not seen[item] then
+			seen[item] = true
+			out[#out + 1] = item
+		end
+	end
+	return out
+end
+
+local function _same_list(a, b)
+	if #a ~= #b then return false end
+	for i = 1, #a do
+		if a[i] ~= b[i] then return false end
+	end
+	return true
 end
 
 local function valid_ipv4(ip)
@@ -1258,7 +1309,7 @@ end
 local function set_vps_disabled(disable)
 	local want = disable and "1" or "0"
 	if (ucic:get("network","omrvpn","disabled") or "0") == want then return end
-	enable_interface("omrvpn", disable and "0" or "1")
+	set_interface_enabled("omrvpn", disable and "0" or "1")
 	if disable then
 		force_stop_vpn("all")
 		set_proxy_disabled(true)
@@ -1358,8 +1409,11 @@ function wizard_add(args)
 		set_shadowsocks(_as_string(args.shadowsocks_key, ""))
 	end
 
+	-- The wizard sends the key back on every save: turning chacha20 on here
+	-- left AES users with a ChaCha20 Glorytun once the untouched encryption
+	-- no longer set every backend's cipher again
 	if _as_string(args.glorytun_key, "") ~= "" then
-		set_glorytun(_as_string(args.glorytun_key, ""))
+		set_glorytun(_as_string(args.glorytun_key, ""), true)
 	end
 
 	if _as_string(args.dsvpn_key, "") ~= "" then
@@ -1394,7 +1448,7 @@ function wizard_add(args)
 	_set_or_delete("openmptcprouter", "settings", "mptcpovervpn", _as_string(args.mptcpovervpn_vpn, ""))
 	local country = _as_string(args.country, "")
 	_set_or_delete("openmptcprouter", "settings", "country", country)
-	_set_or_delete("openmptcprouter", "settings", "dns64", _to_flag(args.dns64))
+	_set_flag_keep_unset("openmptcprouter", "settings", "dns64", args.dns64)
 	-- What the Country and DNS64 choices act on, as the Lua wizard did:
 	-- since the move to rpcd only the openmptcprouter copy was written.
 	-- omr-tracker is restarted by restart_all_async() below.
@@ -1428,10 +1482,26 @@ function wizard_add(args)
 	_set_or_delete("openmptcprouter", "settings", "vxlan_mode", wizard_vxlan_mode)
 	local wizard_vxlan_bridge_if = _as_string(args.vxlan_bridge_if, ""):match("^[%w_%-]+$") or ""
 	_set_or_delete("openmptcprouter", "settings", "vxlan_bridge_if", wizard_vxlan_bridge_if)
-	_set_or_delete("openmptcprouter", "settings", "forceretrieve", _to_flag(args.forceretrieve))
+	-- One-shot, deleted by the VPS sync once done: the wizard sends '1' to
+	-- ask for it, '' otherwise, which leaves a pending one alone
+	local forceretrieve = _to_optional_flag(args.forceretrieve)
+	if forceretrieve == "1" then
+		ucic:set("openmptcprouter", "settings", "forceretrieve", "1")
+	elseif forceretrieve == "0" then
+		ucic:delete("openmptcprouter", "settings", "forceretrieve")
+	end
 
+	-- Each backend's cipher is set when the choice changes only: every save
+	-- of the untouched wizard set them all again, overwriting one changed
+	-- on a backend's own page (V2Ray/XRay user security...). Left out: no
+	-- change, it was taken for "other".
 	local encryption = _as_string(args.encryption, "")
-	if encryption == "none" then
+	local function enc_key(e)
+		return e == "chacha20-ietf-poly1305" and "chacha20" or e
+	end
+	if encryption == "" or enc_key(encryption) == (ucic:get("openmptcprouter", "settings", "encryption") or "") then
+		-- unchanged
+	elseif encryption == "none" then
 		ucic:set("openmptcprouter","settings","encryption","none")
 		ucic:set("shadowsocks-libev","sss0","method","none")
 		ucic:set("shadowsocks-libev","sss1","method","none")
@@ -1557,8 +1627,8 @@ function wizard_add(args)
 		ucic:set("xray","omrout","s_socks_user_id",xray_user)
 	end
 	_set_or_delete("xray", "omrout", "ss_network", _as_string(args.xray_transport, "tcp"))
-	_set_or_delete("v2ray", "main_transparent_proxy", "redirect_udp", _to_flag(args.v2rayudp))
-	_set_or_delete("xray", "main_transparent_proxy", "redirect_udp", _to_flag(args.v2rayudp))
+	_set_flag_keep_unset("v2ray", "main_transparent_proxy", "redirect_udp", args.v2rayudp)
+	_set_flag_keep_unset("xray", "main_transparent_proxy", "redirect_udp", args.v2rayudp)
 
 	local lan_networks = {}
 	local wan_networks = {}
@@ -1579,6 +1649,9 @@ function wizard_add(args)
 	for _, itf in ipairs(interfaces) do
 		if type(itf) == "table" then
 			local name = _sanitize_name(itf.name)
+			-- a LAN gets no speed test, MPTCP over VPN, SQM or QoS: the
+			-- wizard's defaults for them created sqm.lan and set them to 0
+			local is_lan = _to_flag(itf.lan) == "1"
 			if name ~= "" then
 				if ucic:get("network", name) == nil then
 					ucic:set("network", name, "interface")
@@ -1605,7 +1678,8 @@ function wizard_add(args)
 					_as_string(itf.gateway, ""),
 					_to_flag(itf.sqmenabled),
 					speed(itf.downloadspeed),
-					speed(itf.uploadspeed)
+					speed(itf.uploadspeed),
+					is_lan
 				)
 
 				_set_or_delete("network", name, "type", _as_string(itf.type, ""))
@@ -1665,8 +1739,10 @@ function wizard_add(args)
 				_set_or_delete("network", name, "label", _as_string(itf.label, ""))
 				_set_or_delete("network", name, "multipath", _as_string(itf.multipath, "on"))
 				_set_or_delete("openmptcprouter", name, "multipath", _as_string(itf.multipath, "on"))
-				_set_or_delete("openmptcprouter", name, "testspeed", _as_string(itf.testspeed, "0"))
-				_set_or_delete("openmptcprouter", name, "multipathvpn", _to_flag(itf.multipathvpn))
+				if not is_lan then
+					_set_or_delete("openmptcprouter", name, "testspeed", _as_string(itf.testspeed, "0"))
+					_set_or_delete("openmptcprouter", name, "multipathvpn", _to_flag(itf.multipathvpn))
+				end
 
 				-- Force TTL: /etc/firewall.ttl sets a device section's ttl on
 				-- the device that section names, so it goes on the section
@@ -1716,17 +1792,19 @@ function wizard_add(args)
 					end
 				end
 
-				if ucic:get("qos", name) == nil then
-					ucic:set("qos", name, "interface")
+				if not is_lan then
+					if ucic:get("qos", name) == nil then
+						ucic:set("qos", name, "interface")
+					end
+					if ucic:get("sqm", name) == nil then
+						ucic:set("sqm", name, "queue")
+					end
+					_set_or_delete("qos", name, "enabled", _to_flag(itf.qosenabled))
+					_set_or_delete("sqm", name, "enabled", _to_flag(itf.sqmenabled))
+					_set_or_delete("sqm", name, "autorate", _to_flag(itf.sqmautorate))
 				end
-				if ucic:get("sqm", name) == nil then
-					ucic:set("sqm", name, "queue")
-				end
-				_set_or_delete("qos", name, "enabled", _to_flag(itf.qosenabled))
-				_set_or_delete("sqm", name, "enabled", _to_flag(itf.sqmenabled))
-				_set_or_delete("sqm", name, "autorate", _to_flag(itf.sqmautorate))
 
-				if _to_flag(itf.lan) == "1" then
+				if is_lan then
 					table.insert(lan_networks, name)
 				else
 					table.insert(wan_networks, name)
@@ -1740,11 +1818,14 @@ function wizard_add(args)
 	-- in master_lcintf (the v0.63 wizard cleared it too)
 	ucic:delete("openmptcprouter", "settings", "master_lcintf")
 
-	if #lan_networks > 0 then
-		ucic:set("firewall", "zone_lan", "network", lan_networks)
-	end
-	if #wan_networks > 0 then
-		ucic:set("firewall", "zone_wan", "network", wan_networks)
+	for zone, networks in pairs({ zone_lan = lan_networks, zone_wan = wan_networks }) do
+		if #networks > 0 then
+			local current = _unique_string_list(ucic:get("firewall", zone, "network"))
+			networks = _keep_order(current, networks)
+			if not _same_list(current, networks) then
+				ucic:set("firewall", zone, "network", networks)
+			end
+		end
 	end
 
 	ucic:foreach("openmptcprouter", "server", function(s)
@@ -4083,7 +4164,7 @@ local methods = {
 	},
 	enableinterface = {
 		args = { intf = "", enable = 0 },
-		call = function(args) enable_interface(args.intf, args.enable) end
+		call = function(args) return enable_interface(args.intf, args.enable) end
 	},
 	setinterface = {
 		args = { intf = "", proto = "dhcp", ipaddr = "", netmask = "", gateway = "", sqmenabled = 0, downloadspeed = 0, uploadspeed = 0 },
