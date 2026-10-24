@@ -481,21 +481,61 @@ _shape_device() {
 	printf '%s' "$want" > "$shaped"
 }
 
-# _unshape_device <dev>: undo _shape_device, including the IFB device, and
-# give the device back to SQM if that is what shapes it normally
+# _default_root_qdisc <dev> [iface]: the root qdisc mptcp's init puts on a
+# WAN device (interface_multipath_settings): the qdisc of the device's
+# "config device" section, else the interface's, else fq.
+_default_root_qdisc() {
+	local dev="$1" iface="$2" qdisc="" sec v
+	[ -n "$iface" ] && qdisc="$(uci -q get "network.${iface}.qdisc")"
+	# the last device section named after the device, as config_foreach finds
+	sec="$(uci -q show network 2>/dev/null | awk -v dev="$dev" -v q="'" '{
+		eq = index($0, "="); k = substr($0, 1, eq - 1); v = substr($0, eq + 1)
+		gsub(q, "", v)
+		n = split(k, p, ".")
+		if (n == 2) type[p[2]] = v
+		else if (n == 3 && p[3] == "name" && v == dev && type[p[2]] == "device") s = p[2]
+	} END { print s }')"
+	if [ -n "$sec" ]; then
+		v="$(uci -q get "network.${sec}.qdisc")"
+		[ -n "$v" ] && qdisc="$v"
+	fi
+	printf '%s' "${qdisc:-fq}"
+}
+
+# _unshape_device <dev> [iface]: undo _shape_device, including the IFB
+# device, and give the device back to SQM if that is what shapes it
+# normally, else to the root qdisc mptcp sets (deleting the tbf left the
+# kernel default in place until the next "mptcp reload").
+#
+# Only what is still ours is undone. A device can be listed by two markers
+# (.throttled and .downstream, and _undo_enforcement walks both), and the
+# second pass deleted the cake root qdisc the first had just handed back to
+# SQM, while "sqm start" then did nothing since its state file existed: SQM
+# reported running with no shaper on the WAN (the #4329 failure). The root
+# qdisc goes only while it is a tbf, the ingress qdisc only while its filter
+# redirects to our IFB (SQM's own ingress redirects to ifb4<dev>).
 _unshape_device() {
-	local dev="$1"
+	local dev="$1" iface="$2"
 	local ifb_dev="ifb-$(echo "$dev" | tr '/' '-')"
-	rm -f "$(_shaped_file "$dev")"
-	tc qdisc del dev "$dev" root 2>/dev/null || true
-	tc qdisc del dev "$dev" ingress 2>/dev/null || true
+	local shaped root_tbf=0
+	shaped="$(_shaped_file "$dev")"
+	tc qdisc show dev "$dev" root 2>/dev/null | grep -q '^qdisc tbf ' && root_tbf=1
+	[ -f "$shaped" ] || [ "$root_tbf" = "1" ] || return 0
+	rm -f "$shaped"
+	if tc filter show dev "$dev" parent ffff: 2>/dev/null | grep -q "Redirect to device $ifb_dev)"; then
+		tc qdisc del dev "$dev" ingress 2>/dev/null || true
+	fi
 	if ip link show "$ifb_dev" > /dev/null 2>&1; then
 		tc qdisc del dev "$ifb_dev" root 2>/dev/null || true
 		ip link del "$ifb_dev" 2>/dev/null || true
 	fi
+	[ "$root_tbf" = "1" ] && tc qdisc del dev "$dev" root 2>/dev/null
 	if _sqm_manages "$dev"; then
 		logger -t "OMR-QUOTA" "Restoring the SQM shaper on $dev"
 		"$_SQM_RUN" start "$dev" >/dev/null 2>&1
+	elif [ "$root_tbf" = "1" ] && [ "$(uci -q get "qos.${iface:-$dev}.enabled")" != "1" ]; then
+		# a qos-scripts device is left alone, as mptcp's init does
+		tc qdisc replace dev "$dev" root "$(_default_root_qdisc "$dev" "$iface")" 2>/dev/null
 	fi
 }
 
@@ -507,7 +547,7 @@ _apply_throttle() {
 }
 
 _remove_throttle() {
-	_unshape_device "$1"
+	_unshape_device "$1" "$2"
 }
 
 # _wait_iface_up <iface> [seconds]: after ifup, wait (bounded) for netifd to
@@ -527,9 +567,19 @@ _wait_iface_up() {
 	return 1
 }
 
+# _throttled_dev <dev>: the exceedance throttle shapes this device on the
+# current poll (the main loop's _throttle_devs). Both shapers use the same
+# root tbf and IFB, so while the quota is exceeded the throttle alone owns
+# the device: the budget limit (method 2) used to replace it right back,
+# twice per poll, each time stopping SQM again.
+_throttled_dev() {
+	case " ${_throttle_devs:-} " in *" $1 "*) return 0 ;; esac
+	return 1
+}
+
 _apply_downstream_limit() {
 	local rate_kbit="$1"
-	local iface dev list prev
+	local iface dev list prev rec devs
 	[ -z "$rate_kbit" ] && return
 	list="${OMR_QUOTA_DOWN_INTERFACES:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}"
 	# down_interfaces can be edited while a daily-budget limit is active (the
@@ -542,15 +592,30 @@ _apply_downstream_limit() {
 		for iface in $prev; do
 			case " $list " in *" $iface "*) continue ;; esac
 			dev="$(_get_real_interface "$iface")"
-			[ -n "$dev" ] && _unshape_device "$dev"
+			[ -n "$dev" ] && ! _throttled_dev "$dev" && _unshape_device "$dev" "$iface"
 		done
 	fi
-	mkdir -p "$_TSTATE_DIR"
-	printf '%s' "$list" > "$_downstream_file"
+	# A device the throttle shapes is the throttle's: listed here as well,
+	# lifting the throttle unshaped it twice (_lift_throttle, then
+	# _remove_downstream_limit or _undo_enforcement). Written before the
+	# shaping, so nothing is ever shaped without a record.
+	devs=""
+	rec=""
 	for iface in $list; do
 		dev="$(_get_real_interface "$iface")"
+		[ -n "$dev" ] && _throttled_dev "$dev" && continue
+		rec="${rec:+$rec }$iface"
+		[ -n "$dev" ] && devs="$devs $dev"
+	done
+	mkdir -p "$_TSTATE_DIR"
+	if [ -n "$rec" ]; then
+		printf '%s' "$rec" > "$_downstream_file"
+	else
+		rm -f "$_downstream_file"
+	fi
+	for dev in $devs; do
 		# the derived rate is a volume budget, so it caps both directions
-		[ -n "$dev" ] && _shape_device "$dev" "$rate_kbit" "$rate_kbit" 5k 200ms
+		_shape_device "$dev" "$rate_kbit" "$rate_kbit" 5k 200ms
 	done
 }
 
@@ -562,7 +627,7 @@ _remove_downstream_limit() {
 	list="$(cat "$_downstream_file")"
 	for iface in ${list:-${OMR_QUOTA_DOWN_INTERFACES:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}}; do
 		dev="$(_get_real_interface "$iface")"
-		[ -n "$dev" ] && _unshape_device "$dev"
+		[ -n "$dev" ] && ! _throttled_dev "$dev" && _unshape_device "$dev" "$iface"
 	done
 	rm -f "$_downstream_file"
 }
@@ -767,7 +832,7 @@ _undo_enforcement() {
 		list="$(cat "$_tstate_file")"
 		for iface in ${list:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}; do
 			dev="$(_get_real_interface "$iface")"
-			[ -n "$dev" ] && _remove_throttle "$dev"
+			[ -n "$dev" ] && _remove_throttle "$dev" "$iface"
 		done
 		rm -f "$_tstate_file"
 		undone=1
@@ -776,7 +841,7 @@ _undo_enforcement() {
 		list="$(cat "$_downstream_file")"
 		for iface in ${list:-${OMR_QUOTA_DOWN_INTERFACES:-${OMR_QUOTA_INTERFACES:-$OMR_QUOTA_INTERFACE}}}; do
 			dev="$(_get_real_interface "$iface")"
-			[ -n "$dev" ] && _unshape_device "$dev"
+			[ -n "$dev" ] && _unshape_device "$dev" "$iface"
 		done
 		rm -f "$_downstream_file"
 		undone=1
@@ -919,7 +984,7 @@ _lift_throttle() {
 	logger -t "OMR-QUOTA" "Removing throttle from $1"
 	for iface in $1; do
 		real_iface="$(_get_real_interface "$iface")"
-		[ -n "$real_iface" ] && _remove_throttle "$real_iface"
+		[ -n "$real_iface" ] && _remove_throttle "$real_iface" "$iface"
 	done
 	rm -f "$_tstate_file"
 }
@@ -1008,12 +1073,17 @@ while true; do
 
 	exceeded=0
 	reason=""
+	# quota_reached: a volume quota itself was crossed. Only that may set
+	# the persistent marker below: a daily-budget trip or an unreadable
+	# sample are transient, and once recorded as persistent they kept the
+	# WAN cut for good, until a manual reset.
+	quota_reached=0
 	if [ -n "$OMR_QUOTA_RX" ] && [ "$OMR_QUOTA_RX" -gt 0 ] && [ -n "$rx" ] && [ "$OMR_QUOTA_RX" -le "$rx" ]; then
-		exceeded=1; reason="RX quota"
+		exceeded=1; quota_reached=1; reason="RX quota"
 	elif [ -n "$OMR_QUOTA_TX" ] && [ "$OMR_QUOTA_TX" -gt 0 ] && [ -n "$tx" ] && [ "$OMR_QUOTA_TX" -le "$tx" ]; then
-		exceeded=1; reason="TX quota"
+		exceeded=1; quota_reached=1; reason="TX quota"
 	elif [ -n "$OMR_QUOTA_TT" ] && [ "$OMR_QUOTA_TT" -gt 0 ] && [ -n "$tt" ] && [ "$OMR_QUOTA_TT" -le "$tt" ]; then
-		exceeded=1; reason="RX+TX quota"
+		exceeded=1; quota_reached=1; reason="RX+TX quota"
 	fi
 	# Once enforcement is active, an unreadable/incomplete vnstat sample must
 	# not be interpreted as a usage reset. Keep the current cut/throttle until
@@ -1034,15 +1104,10 @@ while true; do
 		[ -z "$reason" ] && reason="persistent exceeded state"
 	fi
 
-	if [ -n "$cb" ]; then
-		_apply_downstream_limit "$cb"
-	else
-		_remove_downstream_limit
-	fi
-
+	_throttle_devs=""
 	if [ "$exceeded" = "1" ]; then
 		# Record persistent exceeded state on first detection
-		if [ "${OMR_QUOTA_SCOPE:-month_only}" = "persistent" ] && [ ! -f "$_persist_file" ]; then
+		if [ "$quota_reached" = "1" ] && [ "${OMR_QUOTA_SCOPE:-month_only}" = "persistent" ] && [ ! -f "$_persist_file" ]; then
 			mkdir -p "$_PERSIST_DIR"
 			touch "$_persist_file"
 		fi
@@ -1083,6 +1148,7 @@ while true; do
 				fi
 				real_iface="$(_get_real_interface "$iface")"
 				[ -n "$real_iface" ] && _apply_throttle "$real_iface"
+				_throttle_devs="$_throttle_devs $real_iface"
 			done
 			# a cut quota switched to throttle: its interfaces are up again,
 			# so nothing is owed an ifup any more, nor a LAN block
@@ -1130,6 +1196,15 @@ while true; do
 		_lift_throttle "$target_interfaces"
 		_raise_cut_interfaces
 		_release_lan_block
+	fi
+
+	# After the enforcement above, not before: a throttle lifted this poll
+	# unshapes its devices, and the budget limit then goes back on them in
+	# the same poll instead of one interval later.
+	if [ -n "$cb" ]; then
+		_apply_downstream_limit "$cb"
+	else
+		_remove_downstream_limit
 	fi
 
 	_prev_exceeded=$exceeded
