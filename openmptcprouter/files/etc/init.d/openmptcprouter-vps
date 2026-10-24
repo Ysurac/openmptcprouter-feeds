@@ -6,7 +6,7 @@ START=85
 
 USE_PROCD=1
 
-EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key set_gre_tunnel set_vxlan token set_bypass_ips set_vpn_ip set_mptcp_dscp_vps set_mptcp_weight_vps set_mptcp_pins_vps set_dscp_classify_vps"
+EXTRA_COMMANDS="set_pihole backup_send backup_get backup_list set_vps_firewall get_openvpn_key set_gre_tunnel set_vxlan token set_bypass_ips set_vpn_ip set_mptcp_dscp_vps set_mptcp_weight_vps set_mptcp_pins_vps set_dscp_classify_vps set_wireguard"
 
 . /usr/lib/unbound/iptools.sh
 # omr_vps_curl: curl with the VPS API certificate public key pinned
@@ -652,6 +652,68 @@ _set_wireguard_vps() {
 	fi
 }
 
+# set_wireguard <server>: the router's WireGuard peers, to that server only.
+# A server only gets the tunnels pointed at it (_get_wg_ipskey), so a backup
+# that mptcpovervpn moved them to on failover refused them until its next
+# full sync, up to an hour later: mptcpovervpn calls this then. With the
+# stored token (a login only when it is refused), and not within 10 minutes
+# of a failed login to that server.
+set_wireguard() {
+	local now first last count seen
+	servername=$1
+	case "$servername" in
+		''|*[!A-Za-z0-9_]*) return 1 ;;
+	esac
+	[ "$(uci -q get openmptcprouter.${servername})" = "server" ] || return 1
+	[ "$(uci -q get openmptcprouter.${servername}.disabled)" = "1" ] && return 0
+	[ -z "$(uci -q get openmptcprouter.${servername}.username)" ] && return 0
+	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return 0
+	[ -z "$(uci -q get openmptcprouter.${servername}.port)" ] && return 0
+	if [ -f "/tmp/.omr-vps-tokenfail-${servername}" ]; then
+		read -r first last count seen < "/tmp/.omr-vps-tokenfail-${servername}"
+		now="$(date +%s)"
+		case "$seen" in
+			''|*[!0-9]*) ;;
+			*) [ "$((now - seen))" -lt 600 ] && return 1 ;;
+		esac
+	fi
+	# One at a time: mptcpovervpn can be restarted twice in a row (the
+	# tracker, then a network change), and a run that waited sends the
+	# peers as they are by then
+	if command -v flock >/dev/null 2>&1 && [ -d /var/lock ] && [ -w /var/lock ]; then
+		exec 9>/var/lock/omr-set-wireguard.lock
+		flock 9
+	fi
+	_get_config_stored_token
+	if [ -z "$token" ]; then
+		_token_failed "$servername" "Can't get ${servername} token, WireGuard peers not sent"
+		return 1
+	fi
+	[ -n "$vps_config" ] || return 1
+	[ "$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')" = "ro" ] && return 0
+	[ -n "$(_set_wireguard_vps)" ] || {
+		logger -t "OMR-VPS" "WireGuard peers not set on server ${servername}, sent again at its next sync"
+		return 1
+	}
+	return 0
+}
+
+# The server's WireGuard public key, for mptcpovervpn's peer. It was only
+# kept from the config server's config: a backup's stayed unknown, and the
+# tunnels re-pointed at it on failover had an empty peer key. Returns 0 when
+# the key changed.
+_set_wgkey_from_vps() {
+	local wgkey
+	wgkey="$(echo "$vps_config" | jsonfilter -q -e '@.wireguard.key')"
+	# a WireGuard key is 32 bytes in base64: 44 characters
+	case "$wgkey" in
+		*[!A-Za-z0-9+/=]*) return 1 ;;
+	esac
+	[ "${#wgkey}" = 44 ] || return 1
+	[ "$(uci -q get openmptcprouter.${servername}.wgkey)" != "$wgkey" ] || return 1
+	uci -q set openmptcprouter.${servername}.wgkey="$wgkey"
+}
+
 # get_openvpn_key <server>: rc.common passes the server as $1 (it read $2, always
 # empty, so no key was ever fetched and _login logged an empty server name)
 get_openvpn_key() {
@@ -661,6 +723,9 @@ get_openvpn_key() {
 	[ -z "$(uci -q get openmptcprouter.${servername}.password)" ] && return
 	_get_config_stored_token
 	[ -z "$vps_config" ] && return
+	# omr-tracker-server calls this when it makes the server current, just
+	# before it restarts mptcpovervpn
+	_set_wgkey_from_vps && uci -q commit openmptcprouter
 	openvpn_client_key="$(echo "$vps_config" | jsonfilter -q -e '@.openvpn.client_key')"
 	[ -n "$openvpn_client_key" ] && {
 		# 0600, also for a key written 0644 by an older version
@@ -4539,6 +4604,8 @@ _config_service() {
 	kernel="$(echo "$vps_config" | jsonfilter -q -e '@.vps.kernel')"
 	[ -z "$kernel" ] && return
 	_vps_reboot_check
+	# every server's, not only the config server's (start_service commits)
+	_set_wgkey_from_vps && wgkey_changed=1
 	user_permission="$(echo "$vps_config" | jsonfilter -q -e '@.user.permission')"
 	vps_config_applied=""
 	[ "$(uci -q get openmptcprouter.${servername}.get_config)" = "1" ] && _is_config_server "$servername" && {
@@ -4741,6 +4808,7 @@ _fix_server() {
 start_service() {
 	serversnb=0
 	wanips=""
+	wgkey_changed=""
 	serial=$(cat /proc/cpuinfo | grep Serial | awk '{print $3}')
 	[ -z "$serial" ] && [ -f "/usr/sbin/dmidecode" ] && serial=$(/usr/sbin/dmidecode -t 1 | egrep 'Serial' | awk '{print $3}')
 	uci -q set openmptcprouter.settings.serial=${serial}
@@ -4753,6 +4821,12 @@ start_service() {
 	uci -q batch <<-EOF >/dev/null
 		commit openmptcprouter
 	EOF
+	# A server key learned or changed here (the first sync, a reinstalled
+	# VPS) only reaches the WireGuard peers of MPTCP over VPN when
+	# mptcpovervpn runs: they had none until the next network change.
+	# In the background: it reloads the network.
+	[ -n "$wgkey_changed" ] && [ "$(uci -q get openmptcprouter.settings.mptcpovervpn)" = "wireguard" ] && \
+		( /etc/init.d/mptcpovervpn restart >/dev/null 2>&1 </dev/null & )
 	# [s]: the grep matched itself, so it was never restarted. Only with a
 	# package list left to reinstall.
 	if [ -f /etc/backup/installed_packages.txt ] && ! ps w | grep -q '[s]ysupgrade'; then

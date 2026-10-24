@@ -18,6 +18,7 @@ wireguard_restart() {
 
 _getremoteip() {
 	[ "$(uci -q -P /var/state get openmptcprouter.$1.current)" = "1" ] && {
+		remoteserver=$1
 		remoteip=$(uci -q get openmptcprouter.$1.ip | awk '{print $1}')
 		wg_server_key=$(uci -q get openmptcprouter.$1.wgkey)
 	}
@@ -28,6 +29,7 @@ _getremoteip() {
 # address then, as mptcp_over_vpn_restore does, rather than an empty one.
 _getmasterip() {
 	[ -z "$remoteip" ] && [ "$(uci -q get "openmptcprouter.$1.master")" = "1" ] && {
+		remoteserver=$1
 		remoteip=$(uci -q get "openmptcprouter.$1.ip" | awk '{print $1}')
 		wg_server_key=$(uci -q get "openmptcprouter.$1.wgkey")
 	}
@@ -35,10 +37,52 @@ _getmasterip() {
 
 _getserverip() {
 	remoteip=""
+	remoteserver=""
 	wg_server_key=""
 	config_load openmptcprouter
 	config_foreach _getremoteip server
 	[ -n "$remoteip" ] || config_foreach _getmasterip server
+}
+
+# The peer is the server's WireGuard key: a backup's is only known once
+# openmptcprouter-vps fetched it, after the tunnel was pointed at it
+_wg_peer_key_outdated() {
+	[ -n "$wg_server_key" ] && [ "$(uci -q get network.@wireguard_wg$1[0].public_key)" != "$wg_server_key" ]
+}
+
+# _tunnel_gone <tunnel interface>: before its network section is deleted.
+# netifd removes the interface on the reload, not what other services put
+# around it: its tracker instance, the rules of its table (pref 0, set by
+# the mptcp init) and its place in the dnsmasq and unbound lists of WANs.
+_tunnel_gone() {
+	[ -n "$(uci -q get "network.$1")" ] || return 0
+	gone_tunnels="$gone_tunnels $1:$(uci -q get "network.$1.ip4table")"
+	case " $(uci -q get dhcp.@dnsmasq[0].notinterface) " in
+		*" $1 "*) uci -q del_list dhcp.@dnsmasq[0].notinterface="$1" && gone_lists=1 ;;
+	esac
+	case " $(uci -q get unbound.ub_main.iface_wan) " in
+		*" $1 "*) uci -q del_list unbound.ub_main.iface_wan="$1" && gone_lists=1 ;;
+	esac
+	return 0
+}
+
+_tunnels_cleanup() {
+	local tunnel table
+	if [ "$gone_lists" = "1" ]; then
+		uci -q commit dhcp
+		uci -q commit unbound
+	fi
+	for tunnel in $gone_tunnels; do
+		table="${tunnel#*:}"
+		tunnel="${tunnel%%:*}"
+		/etc/init.d/omr-tracker stop "$tunnel" >/dev/null 2>&1
+		case "$table" in
+			''|*[!0-9]*) continue ;;
+		esac
+		while ip rule del pref 0 table "$table" 2>/dev/null; do :; done
+		while ip -6 rule del pref 0 table "6$table" 2>/dev/null; do :; done
+		ip route flush table "$table" >/dev/null 2>&1
+	done
 }
 
 mptcp_over_vpn() {
@@ -121,18 +165,31 @@ mptcp_over_vpn() {
 					set openmptcprouter.ovpn${interface}.vpn="1"
 					set openmptcprouter.ovpn${interface}.baseintf="${interface}"
 					commit openmptcprouter
+					del_list firewall.zone_vpn.network="ovpn${interface}"
 					add_list firewall.zone_vpn.network="ovpn${interface}"
 					commit firewall
 				EOF
-		elif ([ "$(uci -q get network.wg${interface})" = "" ] || [ "$(uci -q get network.@wireguard_wg${interface}[0].endpoint_host)" != "$remoteip" ]) && [ "$vpn" = "wireguard" ]; then
+			need_reload=1
+		elif ([ "$(uci -q get network.wg${interface})" = "" ] || [ "$(uci -q get network.@wireguard_wg${interface}[0].endpoint_host)" != "$remoteip" ] || _wg_peer_key_outdated "$interface") && [ "$vpn" = "wireguard" ]; then
 			logger -t "MPTCPoverVPN" "Enable MPTCP over VPN for ${interface}"
 			id=$(uci -q get network.${interface}.metric)
 			metric=$(uci -q get network.${interface}.metric)
 			[ -z "$(uci -q get openmptcprouter.wg${interface}.multipath)" ] && multipath=$(uci -q get network.${interface}.multipath)
 			[ -n "$(uci -q get openmptcprouter.wg${interface}.multipath)" ] && multipath=$(uci -q get openmptcprouter.wg${interface}.multipath)
 			[ -z "$multipath" ] && multipath="on"
+			# The router's keypair is kept across a change of server: every
+			# server got this public key from openmptcprouter-vps, a new one
+			# on each failover left the one we came back to with a stale peer
+			private_key=$(uci -q get network.wg${interface}.private_key)
+			public_key=$(uci -q get network.wg${interface}.public_key)
+			if [ "${#private_key}" != 44 ] || [ "${#public_key}" != 44 ]; then
 				private_key=$(wg genkey | tr -d "\n")
 				public_key=$(echo $private_key | wg pubkey | tr -d "\n")
+			fi
+			# One peer section: "add" on each change of server piled them up
+			while [ -n "$(uci -q get network.@wireguard_wg${interface}[0])" ]; do
+				uci -q delete network.@wireguard_wg${interface}[0] || break
+			done
 			uci -q batch <<-EOF >/dev/null
 				delete network.ovpn${interface}
 				delete openvpn.${interface}
@@ -174,10 +231,19 @@ mptcp_over_vpn() {
 					set openmptcprouter.wg${interface}.vpn="1"
 					set openmptcprouter.wg${interface}.baseintf="${interface}"
 					commit openmptcprouter
+					del_list firewall.zone_vpn.network="wg${interface}"
 					add_list firewall.zone_vpn.network="wg${interface}"
 					commit firewall
 				EOF
 			ubus call network reload 2>&1 >/dev/null
+			# netifd only compares the interface section: a peer change
+			# alone (the server's key, the endpoint) isn't applied by a reload
+			ifup wg${interface} >/dev/null 2>&1
+			need_reload=1
+			# The server only has the peers of the tunnels pointed at it
+			# (openmptcprouter-vps): one the tunnels just moved to, a backup
+			# on failover, refused them until its next full sync
+			wg_peers_server="$remoteserver"
 		else
 			uci -q batch <<-EOF >/dev/null
 				set network.${interface}.multipath='off'
@@ -188,8 +254,13 @@ mptcp_over_vpn() {
 		fi
 	elif [ "$(uci -q get openmptcprouter.ovpn${interface})" != "" ] || [ "$(uci -q get network.wg${interface})" != "" ]; then
 		logger -t "MPTCPoverVPN" "Disable MPTCP over VPN for ${interface}"
+		# The WAN's mode is kept in ovpn<wan> or wg<wan>, as the tunnel was
+		# made: from wg<wan>, a master or backup WAN became "on"
 		multipath=$(uci -q get openmptcprouter.ovpn${interface}.multipath)
+		[ -z "$multipath" ] && multipath=$(uci -q get openmptcprouter.wg${interface}.multipath)
 		[ -z "$multipath" ] && multipath="on"
+		_tunnel_gone "wg${interface}"
+		_tunnel_gone "ovpn${interface}"
 		uci -q batch <<-EOF >/dev/null
 			delete network.wg${interface}
 			delete network.@wireguard_wg${interface}[0]
@@ -207,10 +278,12 @@ mptcp_over_vpn() {
 			del_list firewall.zone_vpn.network="wg${interface}"
 			commit firewall
 		EOF
+		need_reload=1
 	elif [ "$(uci -q get openmptcprouter.${interface}.vpn)" = "1" ]; then
 		intf="$(echo ${interface} | sed 's/ovpn//g')"
 		[ "$intf" = "$interface" ] && intf="$(echo ${interface} | sed 's/wg//g')"
 		if [ -n "$intf" ] && [ "$intf" != "$interface" ] && [ "$(uci -q get network.${intf})" = "" ]; then
+			_tunnel_gone "${interface}"
 			uci -q batch <<-EOF >/dev/null
 				delete network.${interface}
 				delete network.@wireguard_${interface}[0]
@@ -224,6 +297,7 @@ mptcp_over_vpn() {
 				del_list firewall.zone_vpn.network="${interface}"
 				commit firewall
 			EOF
+			need_reload=1
 		fi
 	fi
 }
@@ -304,6 +378,10 @@ start_service()
 	local openvpn_sum="$(_config_sum openvpn)"
 	nbintf=0
 	nbintfvpn=0
+	need_reload=""
+	gone_tunnels=""
+	gone_lists=""
+	wg_peers_server=""
 	vpn="$(uci -q get openmptcprouter.settings.mptcpovervpn)"
 	[ -z "$vpn" ] && vpn="openvpn"
 	config_load openmptcprouter
@@ -410,7 +488,7 @@ start_service()
 			commit shadowsocks-libev
 		EOF
 		[ "$(_config_sum shadowsocks-libev)" != "$libev_sum" ] && /etc/init.d/shadowsocks-libev restart
-		[ "$(_config_sum openvpn)" != "$openvpn_sum" ] && /etc/init.d/openvpn restart
+		[ "$(_config_sum openvpn)" != "$openvpn_sum" ] && /etc/init.d/openvpn restart && openvpn_sum="$(_config_sum openvpn)"
 	elif [ "$nbintfvpn" != 0 ] && [ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks-rust" ]; then
 		if [ "$vpn" = "openvpn" ]; then
 			uci -q batch <<-EOF >/dev/null
@@ -450,8 +528,10 @@ start_service()
 			commit shadowsocks-rust
 		EOF
 		[ "$(_config_sum shadowsocks-rust)" != "$rust_sum" ] && /etc/init.d/shadowsocks-rust restart
-		[ "$(_config_sum openvpn)" != "$openvpn_sum" ] && /etc/init.d/openvpn restart
-	elif [ "$(uci -q get shadowsocks-libev.hivpn1)" != "" ]; then
+		[ "$(_config_sum openvpn)" != "$openvpn_sum" ] && /etc/init.d/openvpn restart && openvpn_sum="$(_config_sum openvpn)"
+	elif [ "$(uci -q get shadowsocks-libev.hivpn1)" != "" ] || [ "$(uci -q get shadowsocks-rust.hivpn)" != "" ]; then
+		# shadowsocks-rust has only hivpn: without shadowsocks-libev's, its
+		# redir to the tunnel stayed and took part of the proxied traffic
 		for c in $(seq 1 $NBCPU); do
 			uci -q batch <<-EOF >/dev/null
 				delete shadowsocks-libev.hivpn$c
@@ -477,7 +557,27 @@ start_service()
 			delete shadowsocks-rust.mptcpovervpn
 			commit shadowsocks-rust
 		EOF
+		# the proxy in use only, as above: its redirs to the tunnel are gone
+		case "$(uci -q get openmptcprouter.settings.proxy)" in
+			shadowsocks) [ "$(_config_sum shadowsocks-libev)" != "$libev_sum" ] && /etc/init.d/shadowsocks-libev restart ;;
+			shadowsocks-rust) [ "$(_config_sum shadowsocks-rust)" != "$rust_sum" ] && /etc/init.d/shadowsocks-rust restart ;;
+		esac
 	fi
+	# The tunnels made, re-pointed or removed above were only committed:
+	# a WAN back from MPTCP over VPN kept its wg<wan> up with its tracker,
+	# routes and zone, and an OpenVPN one waited for an unrelated reload.
+	# Once, after every WAN. None of these is a config.change of network,
+	# this service's reload trigger.
+	if [ "$need_reload" = "1" ]; then
+		[ "$(_config_sum openvpn)" != "$openvpn_sum" ] && /etc/init.d/openvpn reload >/dev/null 2>&1
+		ubus call network reload >/dev/null 2>&1
+		/etc/init.d/firewall reload >/dev/null 2>&1
+		_tunnels_cleanup
+	fi
+	# In the background: it asks the VPS API, and omr-tracker-server waits
+	# for this restart on a failover
+	[ -n "$wg_peers_server" ] && \
+		( /etc/init.d/openmptcprouter-vps set_wireguard "$wg_peers_server" >/dev/null 2>&1 </dev/null & )
 	if [ "$BOOT" = "1" ]; then
 		config_load network
 		config_foreach wireguard_restart interface
