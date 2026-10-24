@@ -133,6 +133,15 @@ PKG_CONFIG_DEPENDS:= \
 	$(patsubst %,CONFIG_LCD4LINUX_CUSTOM_PLUGIN_%,$(LCD4LINUX_PLUGINS)) \
 
 include $(INCLUDE_DIR)/package.mk
+
+# OMR fork: "10000." in front of the packaged version sorts it above the
+# OpenWrt package of the same name, so apk upgrade never replaces it.
+# PKG_VERSION stays: it also names the source. The blank first line keeps
+# the assignment off the last line of Package/Default (+= joins by a space)
+define Package/Default +=
+
+  VERSION:=10000.$(PKG_VERSION)-r$(PKG_RELEASE)
+endef
 include $(INCLUDE_DIR)/nls.mk
 
 define Package/lcd4linux/Default

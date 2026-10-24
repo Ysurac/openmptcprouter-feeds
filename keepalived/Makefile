@@ -42,6 +42,15 @@ PKG_INSTALL:=1
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/kernel.mk
 
+# OMR fork: "10000." in front of the packaged version sorts it above the
+# OpenWrt package of the same name, so apk upgrade never replaces it.
+# PKG_VERSION stays: it also names the source. The blank first line keeps
+# the assignment off the last line of Package/Default (+= joins by a space)
+define Package/Default +=
+
+  VERSION:=10000.$(PKG_VERSION)-r$(PKG_RELEASE)
+endef
+
 define Package/keepalived/config
 	source "$(SOURCE)/Config.in"
 endef
