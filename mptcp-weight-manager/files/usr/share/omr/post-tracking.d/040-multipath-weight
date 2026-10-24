@@ -74,16 +74,53 @@ if [ -n "$OMR_TRACKER_INTERFACE" ] && [ -n "$OMR_TRACKER_DEVICE" ] && \
 	# Keep the VPS's own weight_remote_id map in sync so the weighting
 	# also holds for traffic the VPS sends (downloads) -- see
 	# openmptcprouter-vps's _set_mptcp_weight_vps for details.
-	# Backgrounded and called unconditionally (not gated on the local
-	# "did it change" check above): the function's own cache makes
-	# repeat, no-op calls cheap, and this also catches the case where
-	# only ip4table (the id) changed, not multipath_weight itself.
+	# Backgrounded, and not gated on the local "did it change" check above:
+	# the ids sent come from ip4table, and remote id 0 goes to the WAN the
+	# route to the VPS uses, which a failover changes.
 	# network.globals.mptcp_dscp_weight_vps_sync: unset/anything but "0"
 	# means enabled (same shared toggle as 041-multipath-dscp) -- explicit
 	# opt-out for anyone who doesn't want this HTTPS round trip / VPS-side
 	# state at all.
 	if [ "$(uci -q get network.globals.mptcp_dscp_weight_vps_sync)" != "0" ]; then
-		( /etc/init.d/openmptcprouter-vps set_mptcp_weight_vps >/dev/null 2>&1 & )
+		# Only started when it has something to do, as in
+		# 042-dscp-classify-vps-sync: getting to its cache through rc.common
+		# and the init script took about 20 processes on every cycle of every
+		# tracker. Something to do: what is sent for this WAN changed since
+		# the last start (weight, ip4table, the routes to the VPSs, kept in
+		# /var/state), a server has no cache (never synced, or rebooted), or
+		# the retry of a failed push is due.
+		. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
+		_weight_vps_due=""
+		_weight_vps_now=$(date +%s)
+		_weight_vps_sig="${model_weight:-$weight} $(uci -q get network."${OMR_TRACKER_INTERFACE}".ip4table)"
+		_weight_vps_check() {
+			local disabled username password port vpsip last wait _rest cache="/tmp/.mptcp_weight_vps_pins-$1"
+			config_get disabled "$1" disabled
+			config_get username "$1" username
+			config_get password "$1" password
+			config_get port "$1" port
+			if [ "$disabled" = "1" ] || [ -z "$username" ] || [ -z "$password" ] || [ -z "$port" ]; then
+				return
+			fi
+			config_get vpsip "$1" ip
+			vpsip="${vpsip%% *}"
+			[ -n "$vpsip" ] && _weight_vps_sig="$_weight_vps_sig $1:$(ip -4 route show "$vpsip" 2>/dev/null | tr -s ' \n' '  ')"
+			if [ -f "${cache}.retry" ]; then
+				read -r last wait _rest < "${cache}.retry"
+				case "$last" in ''|*[!0-9]*) last=0 ;; esac
+				case "$wait" in ''|*[!0-9]*) wait=0 ;; esac
+				[ $((_weight_vps_now - last)) -ge "$wait" ] && _weight_vps_due=1
+			elif [ ! -f "$cache" ]; then
+				_weight_vps_due=1
+			fi
+		}
+		config_load openmptcprouter
+		config_foreach _weight_vps_check server
+		if [ -n "$_weight_vps_due" ] || \
+		   [ "$(omr_state_get "openmptcprouter.${OMR_TRACKER_INTERFACE}.weight_vps_sync")" != "$_weight_vps_sig" ]; then
+			omr_state_set openmptcprouter "${OMR_TRACKER_INTERFACE}" weight_vps_sync "$_weight_vps_sig"
+			( /etc/init.d/openmptcprouter-vps set_mptcp_weight_vps >/dev/null 2>&1 & )
+		fi
 	fi
 fi
 
