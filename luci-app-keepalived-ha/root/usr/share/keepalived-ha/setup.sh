@@ -608,7 +608,7 @@ kaha_check_peer() { # <ip> <user> <pass>  -> echoes remote status json
 kaha_push_peer() { # <ip> <user> <pass>
 	kaha_jshn
 	local ip="$1" user="${2:-root}" pass="$3"
-	local routers args resp r found
+	local routers args resp r found first pubkey
 
 	routers=$(kaha_routers)
 	found=0
@@ -620,13 +620,30 @@ kaha_push_peer() { # <ip> <user> <pass>
 		return 1
 	}
 
-	kaha_genkey || return 1
+	# the key sent is the one the backups accept syncs from: the first
+	# router's. Sending this node's own key from a backup left the other
+	# backups trusting a key the primary doesn't have, sync then failed.
+	first=$(kaha_first_router)
+	if [ "$(kaha_detect_my_ip)" = "$first" ]; then
+		kaha_genkey || return 1
+		pubkey=$(kaha_pubkey)
+		[ -n "$pubkey" ] || {
+			KAHA_ERROR="cannot read the sync key $(kaha_keyfile)"
+			return 1
+		}
+	else
+		pubkey=$(kaha_get keepalived.ha.pubkey '')
+		[ -n "$pubkey" ] || {
+			KAHA_ERROR="this router has no sync key from the first router: deploy from $first"
+			return 1
+		}
+	fi
 
 	kaha_login "$ip" "$user" "$pass" || return 1
 
 	json_init
 	json_add_string vip "$(kaha_get keepalived.ha.vip '')"
-	json_add_string interface "$(kaha_get keepalived.ha.interface br-lan)"
+	json_add_string interface "$(kaha_get keepalived.ha.interface lan)"
 	json_add_string vrid "$(kaha_get keepalived.ha.vrid 51)"
 	json_add_string advert_int "$(kaha_get keepalived.ha.advert_int 1)"
 	json_add_string track_omrvpn "$(kaha_get keepalived.ha.track_omrvpn 1)"
@@ -635,7 +652,7 @@ kaha_push_peer() { # <ip> <user> <pass>
 	json_add_string manage_dhcp "$(kaha_get keepalived.ha.manage_dhcp 1)"
 	json_add_string routers "$routers"
 	json_add_string my_ip "$ip"
-	json_add_string pubkey "$(kaha_pubkey)"
+	json_add_string pubkey "$pubkey"
 	args=$(json_dump)
 
 	resp=$(kaha_call_remote "$KAHA_SCHEME" "$ip" "$KAHA_TOKEN" "luci.keepalived-ha" "setup_remote" "$args")
