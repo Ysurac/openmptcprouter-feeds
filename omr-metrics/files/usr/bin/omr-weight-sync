@@ -14,6 +14,12 @@
 POLL_INTERVAL="${MPTCP_WEIGHT_INTERVAL:-5}"
 WEIGHT_SCRIPT="/usr/sbin/mptcp-scheduler-weight.sh"
 MAP_PATH="/sys/fs/bpf/endpoint_weights"
+# The IPv6 endpoint-id map "set" fills too (absent with an older scheduler)
+MAP6_PATH="/sys/fs/bpf/weight_local_id"
+# Shared with omr-metrics-send (and its login backoff): the .no_decision
+# marks and the weights last applied per device live here
+SYNC_STATE_DIR="$(_omr_metrics_login_dir)"
+APPLIED_DIR="${SYNC_STATE_DIR}/weight-applied"
 
 # _login logged through it, but it was never defined: "_log: not found" on
 # stderr and nothing in syslog
@@ -88,6 +94,22 @@ SRV_TOKEN_KEY=""
 SRV_USERNAME=""
 SRV_PASSWORD=""
 
+# _no_decision <servername>: the server answered 404 (no omr_metrics module)
+# or 501 (no decision engine, PyTorch missing) to /metrics/decision less than
+# an hour ago. Without this mark the loop asked it again every 5 s, for good.
+# Its own mark, not omr-metrics-send's .no_metrics: a VPS without the decision
+# engine still stores the metrics. An hour, like that one: the module can be
+# installed on the VPS later.
+_no_decision() {
+	local f="${SYNC_STATE_DIR}/${1}.no_decision" since
+	[ -f "$f" ] || return 1
+	since=$(date -r "$f" +%s 2>/dev/null)
+	case "$since" in ''|*[!0-9]*) since=0 ;; esac
+	[ $(($(date +%s) - since)) -lt 3600 ] && return 0
+	rm -f "$f"
+	return 1
+}
+
 # GET /metrics/decision from one VPS server.
 # Args: servername server serverport predict(true|false) horizon(seconds)
 # Prints the raw JSON response on stdout; returns 1 on failure.
@@ -95,6 +117,7 @@ _get_decision() {
 	local servername="$1" server="$2" serverport="$3" predict="$4" horizon="$5"
 	local url http_code tmpfile
 
+	_no_decision "$servername" && return 1
 	# The omr-metrics credentials are the custom server's only: the VPS
 	# rejected them once the custom server was turned off
 	_server_creds "$servername"
@@ -129,6 +152,10 @@ _get_decision() {
 		cat "$tmpfile"
 		# The stored token works: whatever armed a backoff is over
 		_login_ok "$(_state_key "$servername" "$server")"
+	elif [ "$http_code" = "404" ] || [ "$http_code" = "501" ]; then
+		_log "no decision engine on ${server} (HTTP ${http_code}), not asked again for an hour"
+		mkdir -p "$SYNC_STATE_DIR" 2>/dev/null
+		touch "${SYNC_STATE_DIR}/${servername}.no_decision" 2>/dev/null
 	fi
 	rm -f "$tmpfile"
 	[ "$http_code" = "200" ]
@@ -239,15 +266,40 @@ _fetch_decision_weights() {
 	return 1
 }
 
+# _dev_endpoints <device>: _dev_eps = the MPTCP endpoints of <device> on one
+# line, from the list _apply_weights read once for the whole cycle (no
+# subshell: this runs for every WAN every 5 s)
+_dev_endpoints() {
+	local _line
+	_dev_eps=""
+	while IFS= read -r _line; do
+		case "$_line " in *" dev $1 "*) _dev_eps="$_dev_eps$_line;" ;; esac
+	done <<-EOF
+	$_eps
+	EOF
+}
+
+# "set" runs bpftool several times per endpoint, and the loop ran it on
+# every WAN every 5 s with the same weight. It is called when the weight, the
+# device's endpoints ("set" keys the map by endpoint address and id: a new
+# DHCP lease needs it again) or the maps themselves (a scheduler reload pins
+# new ones) changed since it last succeeded. 040-multipath-weight still
+# compares the map itself on every tracker cycle.
 _apply_weights() {
-	_is_weight_scheduler || return 0
-	[ -e "$MAP_PATH" ] || return 0
-	[ -x "$WEIGHT_SCRIPT" ] || return 0
+	_is_weight_scheduler && [ -e "$MAP_PATH" ] && [ -x "$WEIGHT_SCRIPT" ] || {
+		# switched back later, the maps start empty
+		[ -d "$APPLIED_DIR" ] && rm -rf "$APPLIED_DIR"
+		return 0
+	}
 
 	local _tmpfile _changed _iface _dev _weight _mweight _uweight _cur _decision=0
+	local _eps _maps _key _applied _afile _dev_eps
 	_tmpfile=$(mktemp /tmp/omr-weight.XXXXXX 2>/dev/null) || return 1
 	_changed=0
 	_decision_enabled && _decision=1
+	_eps=$(ip mptcp endpoint show 2>/dev/null)
+	_maps=$(ls -di "$MAP_PATH" "$MAP6_PATH" 2>/dev/null | awk '{ printf "%s ", $1 }')
+	mkdir -p "$APPLIED_DIR" 2>/dev/null
 
 	uci show network 2>/dev/null \
 		| grep -E "multipath='(on|master|backup)'" \
@@ -279,8 +331,20 @@ _apply_weights() {
 			''|*[!0-9]*) _weight="" ;;
 		esac
 
-		# Apply to BPF map
-		"$WEIGHT_SCRIPT" set "$_dev" "${_weight:-$_uweight}" >/dev/null 2>&1 || true
+		# Apply to BPF map, when anything it depends on changed
+		_dev_endpoints "$_dev"
+		_key="${_weight:-$_uweight}|${_maps}|${_dev_eps}"
+		# a netdev name has no "/"
+		_afile="${APPLIED_DIR}/${_dev}"
+		_applied=""
+		[ -f "$_afile" ] && read -r _applied < "$_afile"
+		if [ "$_applied" != "$_key" ]; then
+			if "$WEIGHT_SCRIPT" set "$_dev" "${_weight:-$_uweight}" >/dev/null 2>&1; then
+				printf '%s\n' "$_key" > "$_afile"
+			else
+				rm -f "$_afile"
+			fi
+		fi
 
 		# Not while a model weight is in the map: 040-multipath-weight
 		# leaves .weight alone then too, and the two committed network to
@@ -344,6 +408,10 @@ _on_term() {
 }
 _sleep_pid=""
 trap _on_term TERM INT
+# A restart is the way to retry a server marked without a decision engine,
+# and to put every weight in the map again
+rm -f "${SYNC_STATE_DIR}"/*.no_decision 2>/dev/null
+rm -rf "$APPLIED_DIR" 2>/dev/null
 
 while true; do
 	_sync_decision
