@@ -166,11 +166,11 @@ var MM_DEVICES_CMD = 'timeout 1 /usr/bin/mmcli -L 2>/dev/null | awk -F/ \'NF > 5
 /* Adds the value each section has in uci to a ListValue's choices when it
  * is not one of them: a ListValue shows the first choice for a value it does
  * not have, and the next save wrote that choice over the real one */
-function addCurrentChoices(o, sids, get) {
+function addCurrentChoices(o, sids, get, label) {
 	sids.forEach(function(sid) {
 		var v = get(sid);
 		if (v && (o.keylist || []).indexOf(String(v)) === -1)
-			o.value(v);
+			o.value(v, label ? label(v) : null);
 	});
 }
 
@@ -737,6 +737,10 @@ return view.extend({
 			if (d && d[1] && serverHas) o.value(p, d[0]);
 		});
 		o.value('none', _('None'));
+		/* a proxy this list leaves out (package or server without it) was
+		 * shown as the first choice, which the next save wrote */
+		addCurrentChoices(o, ['settings'], function() { return uci.get('openmptcprouter', 'settings', 'proxy'); },
+			function(v) { return proxyDefs[v] ? proxyDefs[v][0] : v; });
 		o.default = 'shadowsocks-rust';
 
 		if (has.ssLibev) {
@@ -793,6 +797,8 @@ return view.extend({
 			o.value('tcp', 'TCP');
 			o.value('grpc', 'gRPC');
 			o.value('xhttp', 'XHTTP');
+			/* ws, kcp... set elsewhere: written as tcp, the proxy broke */
+			addCurrentChoices(o, ['omrout'], function() { return uci.get('xray', 'omrout', 'ss_network'); });
 			o.depends('_show_adv', '1');
 			o.cfgvalue = function() { return uci.get('xray', 'omrout', 'ss_network') || 'tcp'; };
 			o.write = function(sid, val) { uci.set('xray', 'omrout', 'ss_network', val); };
@@ -852,6 +858,9 @@ return view.extend({
 			if (d && d[1]) o.value(v, d[0]);
 		});
 		o.value('none', _('None'));
+		/* see the proxy above */
+		addCurrentChoices(o, ['settings'], function() { return uci.get('openmptcprouter', 'settings', 'vpn'); },
+			function(v) { return vpnDefs[v] ? vpnDefs[v][0] : v; });
 
 		if (has.mqvpn) {
 			o = s.taboption('vpn', form.ListValue, '_mqvpn_scheduler', _('MQVPN scheduler'));
@@ -920,6 +929,8 @@ return view.extend({
 		o.depends('_show_adv', '1');
 		if (has.openvpn) o.value('openvpn', 'OpenVPN');
 		if (has.wg)      o.value('wireguard', 'WireGuard');
+		/* see the proxy above */
+		addCurrentChoices(o, ['settings'], function() { return uci.get('openmptcprouter', 'settings', 'mptcpovervpn'); });
 		o.default = 'wireguard';
 		o.retain = true; /* see 'vpn' option's comment above (#4350) */
 
