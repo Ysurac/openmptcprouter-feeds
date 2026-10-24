@@ -83,33 +83,27 @@ if [ "$(uci -q get network.globals.congestion)" = "bbr2" ] && [ -z "$(uname -a |
 	commit network
 	EOF
 fi
-if [ "$(uci -q get network.globals.mptcp_syn_retries)" = "1" ]; then
+# The old defaults (syn_retries 1, add_addr_accepted 1) are moved once:
+# this script runs again on every sysupgrade, and a 1 the user chose
+# afterwards was reset each time, as were the checksum and the debug level.
+# mptcp_defaults_version records which of these migrations already ran.
+if [ "$(uci -q get network.globals.mptcp_defaults_version)" != "1" ]; then
+	if [ "$(uci -q get network.globals.mptcp_syn_retries)" = "1" ]; then
+		uci -q set network.globals.mptcp_syn_retries=4
+	fi
+	if [ "$(uci -q get network.globals.mptcp_add_addr_accepted)" = "1" ]; then
+		uci -q set network.globals.mptcp_add_addr_accepted=8
+	fi
 	uci -q batch <<-EOF >/dev/null
-	set network.globals.mptcp_syn_retries=4
+	set network.globals.mptcp_defaults_version=1
 	commit network
 	EOF
 fi
-if [ "$(uci -q get network.globals.mptcp_checksum)" != "0" ]; then
-	uci -q batch <<-EOF >/dev/null
-	set network.globals.mptcp_checksum=0
-	commit network
-	EOF
-fi
-if [ "$(uci -q get network.globals.mptcp_checksum)" = "enable" ]; then
-	uci -q batch <<-EOF >/dev/null
-	set network.globals.mptcp_checksum=1
-	EOF
-fi
-if [ "$(uci -q get network.globals.mptcp_checksum)" = "disable" ]; then
-	uci -q batch <<-EOF >/dev/null
-	set network.globals.mptcp_checksum=0
-	EOF
-fi
-if [ "$(uci -q get network.globals.mptcp_debug)" != "0" ]; then
-	uci -q batch <<-EOF >/dev/null
-	set network.globals.mptcp_debug=0
-	EOF
-fi
+# enable/disable were written by an older release: the sysctl takes 1/0
+case "$(uci -q get network.globals.mptcp_checksum)" in
+	enable) uci -q set network.globals.mptcp_checksum=1; uci -q commit network ;;
+	disable) uci -q set network.globals.mptcp_checksum=0; uci -q commit network ;;
+esac
 
 if [ "$(uci -q show network.globals | grep mptcp_fullmesh)" = "" ]; then
 	uci -q batch <<-EOF >/dev/null
@@ -127,12 +121,33 @@ if [ "$(uci -q get network.globals.mptcp_subflows)" = "" ]; then
 	commit network
 	EOF
 fi
-if [ "$(uci -q get network.globals.mptcp_add_addr_accepted)" = "1" ]; then
-	uci -q batch <<-EOF >/dev/null
-	set network.globals.mptcp_add_addr_accepted=8
-	commit network
-	EOF
-fi
+# A multipath_weight out of 1-256 (0, 300, set by hand or by an older
+# release) failed the datatype of the MPTCP pages and blocked every save
+# there. Stored as 040-multipath-weight reads it: not a number is unset
+# (100), leading zeros dropped, 0 is 1, over 256 is 256.
+_weight_changed=""
+for _sec in $(uci -q show network | sed -n "s/^network\.\([^.]*\)\.multipath_weight=.*/\1/p"); do
+	_weight="$(uci -q get "network.${_sec}.multipath_weight")"
+	case "$_weight" in
+		''|*[!0-9]*) _new_weight="" ;;
+		*)
+			_new_weight="${_weight#"${_weight%%[!0]*}"}"
+			if [ -z "$_new_weight" ]; then
+				_new_weight=1
+			elif [ "${#_new_weight}" -gt 3 ] || [ "$_new_weight" -gt 256 ]; then
+				_new_weight=256
+			fi
+			;;
+	esac
+	[ "$_new_weight" = "$_weight" ] && continue
+	if [ -z "$_new_weight" ]; then
+		uci -q delete "network.${_sec}.multipath_weight"
+	else
+		uci -q set "network.${_sec}.multipath_weight=${_new_weight}"
+	fi
+	_weight_changed=1
+done
+[ -n "$_weight_changed" ] && uci -q commit network
 
 # The pre-procd config-change registration was dropped from here: OMR images
 # ship no /etc/config/ucitrack, so it failed silently anyway, and the init

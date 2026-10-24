@@ -185,6 +185,19 @@ return L.view.extend({
 			// multipath_weight='100' on each WAN that had none (unset is 100)
 			o.placeholder = '100';
 			o.rmempty = true;
+			// A weight stored out of range (0, 300) failed the datatype
+			// and blocked every save: shown as 040-multipath-weight reads
+			// it (not a number: unset, 0: 1, over 256: 256). A save that
+			// doesn't change the field leaves a number unwritten
+			o.cfgvalue = function(section_id) {
+				var value = uci.get('network', section_id, 'multipath_weight');
+				if (value == null || value === '')
+					return value;
+				if (!/^[0-9]+$/.test(value))
+					return null;
+				value = +value;
+				return String(value < 1 ? 1 : (value > 256 ? 256 : value));
+			};
 		}
 
 		return m.render();

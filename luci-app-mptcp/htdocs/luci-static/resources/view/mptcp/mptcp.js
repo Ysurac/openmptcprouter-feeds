@@ -17,6 +17,17 @@ var callSystemBoard = rpc.declare({
 });
 
 
+// 040-multipath-weight's reading of network.<iface>.multipath_weight:
+// not a number is unset (100), 0 is 1, over 256 is 256
+function normalizeWeightValue(value) {
+	if (value == null || value === '')
+		return value;
+	if (!/^[0-9]+$/.test(value))
+		return null;
+	value = +value;
+	return String(value < 1 ? 1 : (value > 256 ? 256 : value));
+}
+
 return L.view.extend({
     load: function() {
 	return Promise.all([
@@ -400,6 +411,13 @@ return L.view.extend({
 	// none. Unset means 100 for every reader (omr-weight-sync, mqvpn).
 	o.placeholder = "100";
 	o.rmempty = true;
+	// A weight stored out of range (0, 300) failed the datatype and
+	// blocked every save of this page: shown as 040-multipath-weight reads
+	// it. A save that doesn't change the field leaves a number unwritten
+	// and drops what is not one
+	o.cfgvalue = function(section_id) {
+		return normalizeWeightValue(uci.get('network', section_id, 'multipath_weight'));
+	};
 
 	return m.render();
     }
