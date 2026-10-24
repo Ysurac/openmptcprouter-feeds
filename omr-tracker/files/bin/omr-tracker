@@ -573,9 +573,10 @@ OMR_TRACKER_PREV_STATUS=""
 # A tracker (re)started while its WAN is still marked down (omr-tracker
 # restart, a reload for a settings change) has no previous status: its first
 # good probe made it OK at once, without the tries_up streak or the recovery
-# thresholds. Its first cycle is taken as following an ERROR for those only:
-# the hooks still get no previous status, so that 002-error applies the
-# failure again when the WAN still fails. Monitor only never sets it down.
+# thresholds. Its first cycle is taken as following an ERROR for those, and
+# for the hooks while the streak holds it or it recovers (see the streak
+# gate): on a failure they get no previous status, so that 002-error applies
+# it again. Monitor only never sets it down.
 _was_down_at_start() {
 	[ "$OMR_TRACKER_MONITOR_ONLY" != "1" ] && \
 		[ "$(uci -q -P /var/state get "openmptcprouter.${OMR_TRACKER_INTERFACE}.state")" = "down" ]
@@ -1235,6 +1236,21 @@ while true; do
 	else
 		OMR_TRACKER_UP_STREAK=0
 	fi
+	# Started while the WAN was down: it already went through the down
+	# transition. A cycle the streak holds, or the recovery ending it, is
+	# shown to the hooks after an ERROR, as for a tracker that saw the
+	# failure: with no previous status, 002-error ran the whole transition
+	# on each held start (down mail, VPN restart, restart_down's ifdown and
+	# ifup, whose hotplug restarted this tracker, held again). A failure has
+	# no previous status, so the hooks apply it again: an ifup meanwhile
+	# can have put the WAN's routes and endpoints back.
+	if [ -n "$_started_down" ]; then
+		if [ "$OMR_TRACKER_STATUS" = "OK" ] || [ -n "$OMR_TRACKER_RECOVERING" ]; then
+			OMR_TRACKER_PREV_STATUS="ERROR"
+		else
+			OMR_TRACKER_PREV_STATUS=""
+		fi
+	fi
 
 	#[ "$OMR_TRACKER_HOSTS" = "$initial_hosts" ] || [ "$OMR_TRACKER_STATUS" = "OK" ] && _post_tracking
 	#[ "$OMR_TRACKER_STATUS" = "ERROR" ] && _restart
@@ -1263,7 +1279,8 @@ while true; do
 	fi
 	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && sleep $wait_test
 	OMR_TRACKER_PREV_STATUS="$OMR_TRACKER_STATUS"
-	_started_down=""
+	# Until a cycle the streak doesn't hold
+	[ -n "$OMR_TRACKER_RECOVERING" ] || _started_down=""
 	OMR_TRACKER_PREV_DEVICE_IP="$OMR_TRACKER_DEVICE_IP"
 	OMR_TRACKER_PREV_DEVICE_IP6="$OMR_TRACKER_DEVICE_IP6"
 	OMR_TRACKER_PREV_GATEWAY="$OMR_TRACKER_DEVICE_GATEWAY"
