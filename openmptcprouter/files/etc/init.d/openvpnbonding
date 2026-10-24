@@ -8,17 +8,39 @@
 	USE_PROCD=1
 }
 
+EXTRA_COMMANDS="enslave"
+EXTRA_HELP="	enslave	Add an omr_bonding_* tap to bonding-omrvpn (the clients' up hook)"
+
+# The server in use, as omr-tracker marks it in /var/state: with the master
+# only, bonding stayed on a dead master after a failover. None is marked
+# before the tracker's first check or while every server is down: the
+# master then, as mptcpovervpn does.
 _getremoteip() {
-	[ "$(uci -q get openmptcprouter.$1.master)" = "1" ] && remoteip=$(uci -q get openmptcprouter.$1.ip | awk '{print $1}')
+	[ -z "$remoteip" ] && [ "$(uci -q -P /var/state get openmptcprouter.$1.current)" = "1" ] && remoteip=$(uci -q get openmptcprouter.$1.ip | awk '{print $1}')
+}
+
+_getmasterip() {
+	[ -z "$remoteip" ] && [ "$(uci -q get openmptcprouter.$1.master)" = "1" ] && remoteip=$(uci -q get openmptcprouter.$1.ip | awk '{print $1}')
 }
 
 _openvpnbonding() {
 	local interface=$1
 	if [ "$(uci -q get openmptcprouter.${interface}.multipath)" = "master" ] || [ "$(uci -q get openmptcprouter.${interface}.multipath)" = "on" ]; then
 		nbintf=$(($nbintf+1))
+		# The VPS has 8 bonding servers, ports 65351 to 65358: "6535${nbintf}"
+		# was no port from the 10th WAN, and no server answers a 9th
+		if [ "$nbintf" -gt 8 ]; then
+			logger -t "OpenVPN-bonding" "Only 8 WANs can be bonded, ${interface} left out"
+			[ -n "$(uci -q get openvpn.omr_bonding_${interface})" ] && {
+				uci -q set openvpn.omr_bonding_${interface}.enabled='0'
+				uci -q commit openvpn
+			}
+			return
+		fi
 		remoteip=""
 		config_load openmptcprouter
 		config_foreach _getremoteip server
+		[ -n "$remoteip" ] || config_foreach _getmasterip server
 		if [ -n "$remoteip" ]; then
 			localip=$(ubus call network.interface.$interface status | jsonfilter -e '@["ipv4-address"][0].address' | tr -d "\n")
 			uci -q batch <<-EOF >/dev/null
@@ -26,7 +48,7 @@ _openvpnbonding() {
 				set openvpn.omr_bonding_${interface}.dev="bond${interface}"
 				set openvpn.omr_bonding_${interface}.dev_type="tap"
 				set openvpn.omr_bonding_${interface}.cipher='AES-256-CBC'
-				set openvpn.omr_bonding_${interface}.port="6535${nbintf}"
+				set openvpn.omr_bonding_${interface}.port="$((65350 + nbintf))"
 				set openvpn.omr_bonding_${interface}.remote="${remoteip}"
 				set openvpn.omr_bonding_${interface}.local="${localip}"
 				set openvpn.omr_bonding_${interface}.lport='0'
@@ -39,15 +61,34 @@ _openvpnbonding() {
 				set openvpn.omr_bonding_${interface}.key='/etc/luci-uploads/client.key'
 				set openvpn.omr_bonding_${interface}.cert='/etc/luci-uploads/client.crt'
 				set openvpn.omr_bonding_${interface}.ca='/etc/luci-uploads/ca.crt'
+				set openvpn.omr_bonding_${interface}.up='/etc/init.d/openvpnbonding enslave'
 				commit openvpn
 			EOF
 			if [ "$(uci -q get network.omrvpn.slaves | grep bond${interface})" = "" ]; then
 				uci -q add_list network.omrvpn.slaves="bond${interface}"
 			fi
 			/etc/init.d/openvpn start omr_bonding_${interface}
-			ip link set bond${interface} master bonding-omrvpn
+			# Only an unchanged client keeps its tap: procd restarts a changed
+			# one (a new server, a new WAN address) after this returns, and
+			# its new tap is put in the bond by the up hook above (also after
+			# a respawn), not here
+			ip link set bond${interface} master bonding-omrvpn 2>/dev/null
 		fi
 	fi
+}
+
+# enslave <tap> ...: openvpn's up script of an omr_bonding_* client
+# (openvpn-hotplug passes the tap first, then its MTU and addresses)
+enslave() {
+	case "$1" in
+		bond*) ;;
+		*) return 1 ;;
+	esac
+	case "$1" in
+		*[!A-Za-z0-9_.-]*) return 1 ;;
+	esac
+	[ -d /sys/class/net/bonding-omrvpn ] || return 0
+	ip link set "$1" master bonding-omrvpn
 }
 
 _disable_openvpnbonding()
