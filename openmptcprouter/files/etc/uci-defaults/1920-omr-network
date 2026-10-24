@@ -81,24 +81,74 @@ config_load network
 #config_foreach _setup_macvlan_update interface
 config_foreach _setup_mptcp_handover_to_on interface
 
+# An imported backup can hold metrics (the routing table and MPTCP endpoint
+# id of each WAN) that two interfaces share, or that network and
+# openmptcprouter disagree on: those are dropped, and /etc/init.d/mptcp
+# allocates a free one. Every metric used to be dropped on each run (every
+# sysupgrade), which renumbered the tables and endpoint ids, and with
+# mptcp_disable_initial_config=1 nothing set them again.
 _fix_metrics() {
+	local metric netmetric
+	case "$1" in lan|loopback|omrvpn|omr6in4) return ;; esac
+	[ "$(uci -q get "network.$1")" = "interface" ] || return
+	metric="$(uci -q get "openmptcprouter.$1.metric")"
+	netmetric="$(uci -q get "network.$1.metric")"
+	case "$metric" in
+		'') return ;;
+		0|*[!0-9]*) ;;
+		*)
+			# /etc/init.d/mptcp gives network the metric minus 1000
+			[ "$metric" -gt 1000 ] && metric=$((metric-1000))
+			case " $_metrics_used " in
+				*" $metric "*) ;;
+				*)
+					if [ -z "$netmetric" ] || [ "$netmetric" = "$metric" ]; then
+						_metrics_used="$_metrics_used $metric"
+						return
+					fi
+					;;
+			esac
+			;;
+	esac
 	uci -q batch <<-EOF
 	delete openmptcprouter.$1.metric
 	delete network.$1.metric
+	EOF
+	_metrics_fixed=1
+}
+
+_metrics_used=""
+_metrics_fixed=""
+if [ "$(uci -q get network.globals.mptcp_disable_initial_config)" != "1" ]; then
+	config_load openmptcprouter
+	config_foreach _fix_metrics interface
+	[ -n "$_metrics_fixed" ] && uci -q batch <<-EOF
 	commit openmptcprouter
 	commit network
 	EOF
-}
+fi
 
-config_load openmptcprouter
-config_foreach _fix_metrics interface
-
-if [ -z "$(uci -q get network.globals.packet_steering)" ]; then
+# netifd's packet_steering service runs on every interface event and owns the
+# RPS of the physical devices: 0 writes 0 to their rps_cpus, which undid
+# hotplug.d/net/20-rps-xps after each ifup, and unset pins each device to a
+# single CPU. 2 spreads RPS over all the CPUs, as 20-rps-xps does.
+# An upgraded router holds the 0 this script used to set. A 0 chosen by hand
+# looks just the same, so it is turned to 2 only once: packet_steering_migrated
+# keeps a later choice of 0 from being undone by the next sysupgrade, which
+# runs the uci-defaults again.
+_packet_steering="$(uci -q get network.globals.packet_steering)"
+if [ -z "$_packet_steering" ] || { [ "$_packet_steering" = "0" ] && [ "$(uci -q get openmptcprouter.settings.packet_steering_migrated)" != "1" ]; }; then
 	uci -q batch <<-EOF
-		set network.globals.packet_steering="0"
+		set network.globals.packet_steering="2"
 		commit network
 	EOF
+	[ "$_packet_steering" = "0" ] && logger -t "omr-uci-defaults" "Packet steering set to all CPUs (network.globals.packet_steering=2): an older release disabled it, which also cleared the RPS set by OpenMPTCProuter. Set it back in Network > Interfaces > Global network options if it was off on purpose."
 fi
+uci -q batch <<-EOF >/dev/null
+	set openmptcprouter.settings=settings
+	set openmptcprouter.settings.packet_steering_migrated='1'
+	commit openmptcprouter
+EOF
 
 # The public IPs of the VPS (GRE tunnels oip<i>, see openmptcprouter-vps
 # _get_gre_tunnel): their policy routing as a netifd rule and route, set
