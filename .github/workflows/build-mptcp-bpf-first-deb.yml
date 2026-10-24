@@ -44,10 +44,28 @@ jobs:
     name: Create release
     needs: build-deb
     runs-on: ubuntu-24.04
-    if: startsWith(github.ref, 'refs/tags/mptcp-bpf-first-v')
+    # Every change of the package is released under its debian/changelog
+    # version: the same version gets its .deb files replaced, a bumped
+    # changelog makes a new release
+    if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/master'
+    concurrency:
+      group: ${{ github.workflow }}-release
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: mptcp-bpf-first/debian/changelog
+          sparse-checkout-cone-mode: false
+
+      - name: Read the package version
+        id: version
+        run: |
+          version="$(sed -n '1s/^[^(]*(\([^)]*\)).*/\1/p' mptcp-bpf-first/debian/changelog)"
+          [ -n "$version" ] || { echo "no version in mptcp-bpf-first/debian/changelog" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: mptcp-bpf-first_*
@@ -55,4 +73,7 @@ jobs:
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
+          tag_name: mptcp-bpf-first-v${{ steps.version.outputs.version }}
+          name: mptcp-bpf-first ${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
           files: "*.deb"
