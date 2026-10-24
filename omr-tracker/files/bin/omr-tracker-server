@@ -139,8 +139,13 @@ _get_server_name() {
 	fi
 }
 
+# _disable_current <server> <server in use>: the one in use is skipped. It
+# was cleared too, right after set_ip marked it, so the restarts of
+# _apply_server_config found no current server and mptcpovervpn and
+# openvpnbonding went back to the master that had just failed.
 _disable_current() {
 	local serv=$1
+	[ "$serv" = "$2" ] && return
 	omr_state_set openmptcprouter "${serv}" current 0
 }
 
@@ -460,7 +465,7 @@ _check_master() {
 						uci -q add_list openvpn.omr.remote="$ip"
 					if [ "$count" -eq "0" ]; then
 						config_load openmptcprouter
-						config_foreach _disable_current server
+						config_foreach _disable_current server "$name"
 						_apply_server_config "$ip" "$name"
 					fi
 				fi
@@ -585,7 +590,7 @@ _check_backup() {
 					omr_state_del openmptcprouter omr detected_public_ipv6
 					if [ "$count" -eq "0" ]; then
 						config_load openmptcprouter
-						config_foreach _disable_current server
+						config_foreach _disable_current server "$name"
 						_apply_server_config "$ip" "$name"
 					fi
 					sleep "$waittest"
