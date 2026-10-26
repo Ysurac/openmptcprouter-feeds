@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2020-2023 Tony Ambardar <itugrok@yahoo.com>
+# Copyright (C) 2020-2024 Tony Ambardar <itugrok@yahoo.com>
 #
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
@@ -8,15 +8,17 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=libbpf
-PKG_VERSION:=1.6.3
+PKG_VERSION:=1.8.0
 PKG_RELEASE:=1
 
 PKG_SOURCE_URL:=https://github.com/libbpf/libbpf
+PKG_MIRROR_HASH:=35da9d3914234b82f80dd4da55325631ac9f3243b726b3a1c3e9437e716a33f0
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_VERSION:=v1.6.3
+PKG_SOURCE_VERSION:=v$(PKG_VERSION)
 PKG_ABI_VERSION:=$(firstword $(subst .,$(space),$(PKG_VERSION)))
 
 PKG_MAINTAINER:=Tony Ambardar <itugrok@yahoo.com>
+PKG_CPE_ID:=cpe:/a:libbpf_project:libbpf
 
 PKG_BUILD_FLAGS:=no-mips16 no-gc-sections no-lto
 PKG_BUILD_PARALLEL:=1
@@ -40,7 +42,7 @@ define Package/libbpf
   TITLE:=libbpf - eBPF helper library
   LICENSE:=LGPL-2.1 OR BSD-2-Clause
   ABI_VERSION:=$(PKG_ABI_VERSION)
-  URL:=http://www.kernel.org
+  URL:=https://www.kernel.org
   DEPENDS:=+libelf
 endef
 
