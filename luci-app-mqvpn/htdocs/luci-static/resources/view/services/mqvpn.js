@@ -112,6 +112,25 @@ return L.view.extend({
 		o.placeholder = 'auto';
 		o.rmempty = true;
 
+		/* Both ends must agree: openmptcprouter-vps sends these two to the
+		 * server, where they apply to every client of it */
+		o = s.option(form.Value, 'path_mtu', _('Path MTU'));
+		o.description = _('Largest IP packet the networks to the server carry without fragmenting (1280–9000): mqvpn sizes its QUIC packets to fit, 1500 gives a tunnel MTU of 1418. Leave empty to use the server\'s value, 0 for 1400-byte packets. Also set on the server, for all its clients.');
+		o.datatype = 'uinteger';
+		o.placeholder = '0';
+		o.validate = function(section_id, value) {
+			var n = +value;
+			if (!value || n == 0 || (n >= 1280 && n <= 9000))
+				return true;
+			return _('Expecting 0 or a value from 1280 to 9000');
+		};
+		o.rmempty = true;
+
+		o = s.option(form.Flag, 'pmtud', _('Path MTU discovery'));
+		o.description = _('Probe the size of packets the networks to the server carry instead of using a fixed one, up to the Path MTU when set. Also set on the server, for all its clients.');
+		o.default = o.disabled;
+		o.rmempty = false;
+
 		o = s.option(form.Flag, 'kill_switch', _('Kill switch'));
 		o.description = _('Block all traffic if the VPN tunnel goes down');
 		o.default = o.disabled;
@@ -342,12 +361,12 @@ return L.view.extend({
 		o.rmempty = true;
 
 		o = s.option(form.Flag, 'tun_offload', _('Tunnel offload'));
-		o.description = _('Read large batches of traffic from the tunnel interface at once, lowering CPU use at high throughput');
+		o.description = _('Read large batches of traffic from the tunnel interface at once, lowering CPU use at high throughput. Also set on the server, for all its clients.');
 		o.default = o.enabled;
 		o.rmempty = false;
 
 		o = s.option(form.Flag, 'tun_gro', _('Tunnel GRO'));
-		o.description = _('Merge consecutive TCP packets, and same-size UDP datagrams, written to the tunnel interface');
+		o.description = _('Merge consecutive TCP packets, and same-size UDP datagrams, written to the tunnel interface. Also set on the server, for all its clients.');
 		o.default = o.enabled;
 		o.rmempty = false;
 		o.retain = true;

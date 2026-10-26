@@ -569,6 +569,39 @@ _set_mqvpn_vps() {
 	reorder_rules="$(_mqvpn_reorder_rules_json)"
 	current_reorder_rules="$(_mqvpn_vps_reorder_rules "$vps_config")"
 
+	# mqvpn 0.18.0: PathMTU and PMTUD have to match on both ends, the TUN
+	# batching follows the router's choice. Only a server that reports them
+	# (omr-admin 0.18+20261026) takes them; without a local value the
+	# server's stays, as the config pull then adopts it.
+	local path_mtu pmtud tun_offload tun_gro
+	local current_path_mtu current_pmtud current_tun_offload current_tun_gro
+	current_path_mtu="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.path_mtu')"
+	current_pmtud="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.pmtud')"
+	current_tun_offload="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.tun_offload')"
+	current_tun_gro="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.tun_gro')"
+	# they go back into the request: anything else counts as not reported
+	case "$current_path_mtu" in *[!0-9]*|?????*) current_path_mtu="" ;; esac
+	case "$current_pmtud" in true|false) ;; *) current_pmtud="" ;; esac
+	case "$current_tun_offload" in true|false) ;; *) current_tun_offload="" ;; esac
+	case "$current_tun_gro" in true|false) ;; *) current_tun_gro="" ;; esac
+	path_mtu="$(uci -q get mqvpn.interface.path_mtu)"
+	# the server refuses the whole request on any other value
+	case "$path_mtu" in
+		''|*[!0-9]*|?????*) path_mtu="$current_path_mtu" ;;
+		0) ;;
+		*) [ "$path_mtu" -ge 1280 ] && [ "$path_mtu" -le 9000 ] || path_mtu="$current_path_mtu" ;;
+	esac
+	_mqvpn_bool() {
+		case "$(uci -q get "$1")" in
+			1|on|true|yes) echo "true" ;;
+			0|off|false|no) echo "false" ;;
+			*) echo "$2" ;;
+		esac
+	}
+	pmtud="$(_mqvpn_bool mqvpn.interface.pmtud "$current_pmtud")"
+	tun_offload="$(_mqvpn_bool mqvpn.advanced.tun_offload "$current_tun_offload")"
+	tun_gro="$(_mqvpn_bool mqvpn.advanced.tun_gro "$current_tun_gro")"
+
 	local push=0
 	[ "$current_port" != "$port" ] && push=1
 	[ -n "$current_scheduler" ] && [ "$current_scheduler" != "$scheduler" ] && push=1
@@ -585,12 +618,20 @@ _set_mqvpn_vps() {
 		[ "$current_reorder_cap_packets" != "$reorder_cap_packets" ] && push=1
 		[ -n "$reorder_rules" ] && [ "$current_reorder_rules" != "$reorder_rules" ] && push=1
 	fi
+	[ -n "$current_path_mtu" ] && [ "$current_path_mtu" != "$path_mtu" ] && push=1
+	[ -n "$current_pmtud" ] && [ "$current_pmtud" != "$pmtud" ] && push=1
+	[ -n "$current_tun_offload" ] && [ "$current_tun_offload" != "$tun_offload" ] && push=1
+	[ -n "$current_tun_gro" ] && [ "$current_tun_gro" != "$tun_gro" ] && push=1
 	if [ "$push" = "1" ]; then
 		local settings result
 		settings='{"key": "'$key'", "port": '$port', "scheduler": "'$scheduler'", "cc": "'$cc'", "fec_enable": '$fec_enable', "fec_scheme": "'$fec_scheme'", "reinjection_control": '$reinjection_control', "reinjection_mode": "'$reinjection_mode'"'
 		[ -n "$reorder_enabled" ] && \
 			settings="$settings"', "reorder": {"enabled": "'$reorder_enabled'", "max_wait_ms": '$reorder_max_wait_ms', "cap_packets": '$reorder_cap_packets'}'
 		[ -n "$reorder_rules" ] && settings="$settings"', "reorder_rules": ['$reorder_rules']'
+		[ -n "$current_path_mtu" ] && settings="$settings"', "path_mtu": '$path_mtu
+		[ -n "$current_pmtud" ] && settings="$settings"', "pmtud": '$pmtud
+		[ -n "$current_tun_offload" ] && settings="$settings"', "tun_offload": '$tun_offload
+		[ -n "$current_tun_gro" ] && settings="$settings"', "tun_gro": '$tun_gro
 		settings="$settings}"
 		# Only what the server applied is pulled back and restarted for: a
 		# refusal (a read only user, a server-wide setting the router may
@@ -4091,9 +4132,19 @@ _set_config_from_vps() {
 	mqvpn_reorder_max_wait_ms="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reorder.max_wait_ms')"
 	mqvpn_reorder_cap_packets="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reorder.cap_packets')"
 	mqvpn_reorder_rules_json="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.reorder_rules')"
+	# mqvpn 0.18.0, both ends must agree (omr-admin 0.18+20261026)
+	mqvpn_path_mtu="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.path_mtu')"
+	case "$mqvpn_path_mtu" in
+		0) ;;
+		''|*[!0-9]*|?????*) mqvpn_path_mtu="" ;;
+		*) [ "$mqvpn_path_mtu" -ge 1280 ] && [ "$mqvpn_path_mtu" -le 9000 ] || mqvpn_path_mtu="" ;;
+	esac
+	mqvpn_pmtud_raw="$(echo "$vps_config" | jsonfilter -q -e '@.mqvpn.pmtud')"
+	case "$mqvpn_pmtud_raw" in true|false) ;; *) mqvpn_pmtud_raw="" ;; esac
 	mqvpn_pinned_pubkey="$(_mqvpn_vps_pin "$vps_config")"
 	[ "$mqvpn_fec_enable_raw" = "true" ] && mqvpn_fec_enable="1" || mqvpn_fec_enable="0"
 	[ "$mqvpn_reinjection_control_raw" = "true" ] && mqvpn_reinjection_control="1" || mqvpn_reinjection_control="0"
+	[ "$mqvpn_pmtud_raw" = "true" ] && mqvpn_pmtud="1" || mqvpn_pmtud="0"
 	case "$mqvpn_reorder_enabled_raw" in
 		on|auto) mqvpn_reorder_enabled="1" ;;
 		off) mqvpn_reorder_enabled="0" ;;
@@ -4117,6 +4168,8 @@ _set_config_from_vps() {
 	mqvpn_reorder_max_wait_ms="$(_mqvpn_local_wins mqvpn.reorder.max_wait_ms "$mqvpn_reorder_max_wait_ms")"
 	mqvpn_reorder_cap_packets="$(_mqvpn_local_wins mqvpn.reorder.cap_packets "$mqvpn_reorder_cap_packets")"
 	mqvpn_reorder_rules_json="$(_mqvpn_local_wins "mqvpn.@reorder_rule[0]" "$mqvpn_reorder_rules_json")"
+	mqvpn_path_mtu="$(_mqvpn_local_wins mqvpn.interface.path_mtu "$mqvpn_path_mtu")"
+	mqvpn_pmtud_raw="$(_mqvpn_local_wins mqvpn.interface.pmtud "$mqvpn_pmtud_raw")"
 	mqvpn_user="$(uci -q get openmptcprouter.${servername}.username)"
 	if [ -f /etc/init.d/mqvpn ] && [ -n "$(uci -q get mqvpn.auth)" ] && [ -n "$mqvpn_key" ] && \
 	   ( [ "$mqvpn_key" != "$(uci -q get mqvpn.auth.key)" ] || \
@@ -4132,6 +4185,8 @@ _set_config_from_vps() {
 	     ( [ -n "$mqvpn_reinjection_control_raw" ] && [ "$mqvpn_reinjection_control" != "$(uci -q get mqvpn.multipath.reinjection_control)" ] ) || \
 	     ( [ -n "$mqvpn_reinjection_mode" ] && [ "$mqvpn_reinjection_mode" != "$(uci -q get mqvpn.multipath.reinjection_mode)" ] ) || \
 	     ( [ -n "$mqvpn_reorder_enabled" ] && [ "$mqvpn_reorder_enabled" != "$(uci -q get mqvpn.reorder.enabled)" ] ) || \
+	     ( [ -n "$mqvpn_path_mtu" ] && [ "$mqvpn_path_mtu" != "$(uci -q get mqvpn.interface.path_mtu)" ] ) || \
+	     ( [ -n "$mqvpn_pmtud_raw" ] && [ "$mqvpn_pmtud" != "$(uci -q get mqvpn.interface.pmtud)" ] ) || \
 	     ( [ "$(uci -q get openmptcprouter.settings.vpn)" = "mqvpn" ] && [ "$(uci -q get mqvpn.settings.enable)" != "1" ] ) ); then
 		mqvpn_state=0
 		vpn="$(uci -q get openmptcprouter.settings.vpn)"
@@ -4156,6 +4211,8 @@ _set_config_from_vps() {
 			$([ -n "$mqvpn_reorder_enabled" ] && echo "set mqvpn.reorder.enabled=$mqvpn_reorder_enabled")
 			$([ -n "$mqvpn_reorder_max_wait_ms" ] && echo "set mqvpn.reorder.max_wait_ms=$mqvpn_reorder_max_wait_ms")
 			$([ -n "$mqvpn_reorder_cap_packets" ] && echo "set mqvpn.reorder.cap_packets=$mqvpn_reorder_cap_packets")
+			$([ -n "$mqvpn_path_mtu" ] && echo "set mqvpn.interface.path_mtu=$mqvpn_path_mtu")
+			$([ -n "$mqvpn_pmtud_raw" ] && echo "set mqvpn.interface.pmtud=$mqvpn_pmtud")
 		EOF
 		if [ -n "$mqvpn_reorder_rules_json" ]; then
 			while uci -q delete mqvpn.@reorder_rule[0] 2>/dev/null; do :; done

@@ -25,6 +25,7 @@ _bool() { [ "$1" = "1" ] && echo "true" || echo "false"; }
 generate_config() {
 	local enable address ip port server_address server_name insecure pinned_pubkey key user
 	local tun_name log_level mtu kill_switch reconnect reconnect_interval route_via_server no_routes
+	local path_mtu path_mtu_ok=1 pmtud
 	local cipher
 	local control_port control_addr
 	local scheduler cc auto_wan reinjection_control reinjection_mode fec_enable fec_scheme sync_path_labels init_max_path_id
@@ -87,6 +88,8 @@ generate_config() {
 	config_get reconnect_interval interface reconnect_interval 5
 	config_get_bool route_via_server interface route_via_server 0
 	config_get_bool no_routes interface no_routes 0
+	config_get path_mtu interface path_mtu ''
+	config_get_bool pmtud interface pmtud 0
 
 	config_get control_port control control_port ''
 	config_get control_addr control control_addr '127.0.0.1'
@@ -138,6 +141,13 @@ generate_config() {
 			*[!0-9,\ ]*) logger -t mqvpn "redundant_ports '$redundant_ports' is not a comma-separated port list. Not starting."; return 1 ;;
 		esac
 	fi
+	# mqvpn refuses the whole config on a PathMTU other than 0 or 1280-9000
+	case "$path_mtu" in
+		''|0) ;;
+		*[!0-9]*|?????*) path_mtu_ok=0 ;;
+		*) [ "$path_mtu" -ge 1280 ] && [ "$path_mtu" -le 9000 ] || path_mtu_ok=0 ;;
+	esac
+	[ "$path_mtu_ok" = "1" ] || { logger -t mqvpn "path_mtu '$path_mtu' is not 0 or 1280-9000. Not starting."; return 1; }
 
 	mkdir -p /var/run
 	# The config holds the auth key: created 0600, the redirection below
@@ -173,6 +183,8 @@ generate_config() {
 		echo "LogLevel = $log_level"
 		[ -n "$dns_csv" ] && echo "DNS = $dns_csv"
 		[ -n "$mtu" ] && echo "MTU = $mtu"
+		[ -n "$path_mtu" ] && [ "$path_mtu" != "0" ] && echo "PathMTU = $path_mtu"
+		echo "PMTUD = $(_bool "$pmtud")"
 		echo "KillSwitch = $(_bool "$kill_switch")"
 		echo "Reconnect = $(_bool "$reconnect")"
 		echo "ReconnectInterval = $reconnect_interval"
