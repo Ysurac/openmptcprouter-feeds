@@ -212,7 +212,6 @@ return L.view.extend({
 		o = s.option(form.ListValue, 'reinjection_mode', _('Reinjection mode'));
 		o.value('default', _('Default'));
 		o.value('deadline', _('Deadline'));
-		o.value('dgram', _('Datagram'));
 		o.default = 'default';
 		o.rmempty = false;
 		o.retain = true;
@@ -241,6 +240,33 @@ return L.view.extend({
 		o.description = _('draft-21 initial_max_path_id transport parameter. Lower it (e.g. 2) to force PATHS_BLOCKED for testing; leave empty for the default');
 		o.datatype = 'uinteger';
 		o.rmempty = true;
+
+		o = s.option(form.Flag, 'redundant', _('Redundant mode'));
+		o.description = _('Upload only: send a copy of each outgoing UDP packet over every usable path, so a live stream keeps going when one connection drops. mqvpn does not remove the copies, the receiving application must discard them (SRT does). Uses up to twice the data with two paths, three times with three: every connection should be able to carry the stream on its own. No effect with the "Backup with FEC" scheduler.');
+		o.default = o.disabled;
+		o.rmempty = false;
+
+		o = s.option(form.Value, 'redundant_ports', _('Redundant ports'));
+		o.description = _('Comma-separated destination UDP ports to copy, at most 16 (leave empty for all UDP)');
+		o.placeholder = '5004,5005';
+		/* mqvpn refuses to start on a list it cannot parse rather than copy
+		 * all UDP */
+		o.validate = function(section_id, value) {
+			if (!value)
+				return true;
+			var ports = value.split(',');
+			if (ports.length > 16)
+				return _('Expecting at most 16 ports');
+			for (var i = 0; i < ports.length; i++) {
+				var p = ports[i].trim();
+				if (!/^[0-9]+$/.test(p) || +p < 1 || +p > 65535)
+					return _('Expecting a comma-separated list of ports');
+			}
+			return true;
+		};
+		o.rmempty = true;
+		o.retain = true;
+		o.depends('redundant', '1');
 
 		o = s.option(form.DynamicList, 'path', _('Paths'));
 		o.description = _('Network interfaces to use as multipath paths');
@@ -314,6 +340,18 @@ return L.view.extend({
 		o.datatype = 'uinteger';
 		o.placeholder = '0';
 		o.rmempty = true;
+
+		o = s.option(form.Flag, 'tun_offload', _('Tunnel offload'));
+		o.description = _('Read large batches of traffic from the tunnel interface at once, lowering CPU use at high throughput');
+		o.default = o.enabled;
+		o.rmempty = false;
+
+		o = s.option(form.Flag, 'tun_gro', _('Tunnel GRO'));
+		o.description = _('Merge consecutive TCP packets, and same-size UDP datagrams, written to the tunnel interface');
+		o.default = o.enabled;
+		o.rmempty = false;
+		o.retain = true;
+		o.depends('tun_offload', '1');
 
 		return m.render();
 	}

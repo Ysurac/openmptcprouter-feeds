@@ -28,8 +28,9 @@ generate_config() {
 	local cipher
 	local control_port control_addr
 	local scheduler cc auto_wan reinjection_control reinjection_mode fec_enable fec_scheme sync_path_labels init_max_path_id
+	local redundant redundant_ports
 	local reorder_enabled reorder_max_wait_ms reorder_cap_packets
-	local recv_rate_limit
+	local recv_rate_limit tun_offload tun_gro
 	local dns_csv
 
 	config_get_bool enable settings enable 0
@@ -99,12 +100,16 @@ generate_config() {
 	config_get fec_scheme multipath fec_scheme ''
 	config_get_bool sync_path_labels multipath sync_path_labels 1
 	config_get init_max_path_id multipath init_max_path_id ''
+	config_get_bool redundant multipath redundant 0
+	config_get redundant_ports multipath redundant_ports ''
 
 	config_get_bool reorder_enabled reorder enabled 0
 	config_get reorder_max_wait_ms reorder max_wait_ms ''
 	config_get reorder_cap_packets reorder cap_packets ''
 
 	config_get recv_rate_limit advanced recv_rate_limit ''
+	config_get_bool tun_offload advanced tun_offload 1
+	config_get_bool tun_gro advanced tun_gro 1
 
 	dns_csv=''
 	config_list_foreach interface dns _append_dns_csv
@@ -125,6 +130,14 @@ generate_config() {
 	case "$pinned_pubkey" in
 		*[!A-Za-z0-9+/=\;\ ]*) logger -t mqvpn "pinned_pubkey '$pinned_pubkey' is not a base64 SHA-256 pin list. Not starting."; return 1 ;;
 	esac
+	# Same for the port list, written only with Redundant on; mqvpn checks
+	# the ports and their number, and stops on a bad list rather than copy
+	# all UDP.
+	if [ "$redundant" = "1" ]; then
+		case "$redundant_ports" in
+			*[!0-9,\ ]*) logger -t mqvpn "redundant_ports '$redundant_ports' is not a comma-separated port list. Not starting."; return 1 ;;
+		esac
+	fi
 
 	mkdir -p /var/run
 	# The config holds the auth key: created 0600, the redirection below
@@ -183,6 +196,10 @@ generate_config() {
 		[ -n "$fec_scheme" ] && echo "FecScheme = $fec_scheme"
 		echo "SyncPathLabels = $(_bool "$sync_path_labels")"
 		[ -n "$init_max_path_id" ] && echo "InitMaxPathId = $init_max_path_id"
+		if [ "$redundant" = "1" ]; then
+			echo "Redundant = on"
+			[ -n "$redundant_ports" ] && echo "RedundantPorts = $redundant_ports"
+		fi
 
 		if [ "$auto_wan" = "1" ]; then
 			config_load network
@@ -203,11 +220,12 @@ generate_config() {
 		config_load mqvpn
 		config_foreach _write_reorder_rule reorder_rule
 
-		if [ -n "$recv_rate_limit" ] && [ "$recv_rate_limit" != "0" ]; then
-			echo ''
-			echo '[Advanced]'
+		echo ''
+		echo '[Advanced]'
+		[ -n "$recv_rate_limit" ] && [ "$recv_rate_limit" != "0" ] && \
 			echo "RecvRateLimit = $recv_rate_limit"
-		fi
+		echo "TunOffload = $(_bool "$tun_offload")"
+		echo "TunGro = $(_bool "$tun_gro")"
 	} > "$CONF"
 
 	return 0

@@ -8,14 +8,14 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mqvpn
-PKG_VERSION:=0.17.0
-PKG_RELEASE:=2
+PKG_VERSION:=0.18.0
+PKG_RELEASE:=1
 PKG_LICENSE:=Apache-2.0
 PKG_LICENSE_FILES:=LICENSE
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/Ysurac/mqvpn.git
-PKG_SOURCE_VERSION:=d60524aa367bc26a3181c7caa493cd218cb640d9
+PKG_SOURCE_VERSION:=4f71eabcc26bd90c7fd14c9a9e311782d7d9959a
 # The commit is in the name: with the version alone, a builder that has an
 # older tarball of this version in dl/ (no hash to check) builds that one
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION)-$(PKG_SOURCE_VERSION).tar.zst
