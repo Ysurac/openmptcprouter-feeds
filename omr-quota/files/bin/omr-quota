@@ -95,22 +95,28 @@ _get_real_interface() {
 	printf '%s' "$real"
 }
 
-# _vnstat_bucket_is_current <vnstat json>: does traffic.month[-1] belong to
-# the month vnstat counts in right now? vnstat dates the month bucket of
-# "now - (MonthRotate - 1) days" (dbsql.c), so a MonthRotate set in
-# vnstat.conf moves the boundary the same way here. A bucket without a
-# readable date is trusted, as before.
+# _vnstat_month_now <date format>: the month vnstat counts in right now.
+# vnstat dates the month bucket of "now - (MonthRotate - 1) days" (dbsql.c),
+# so a MonthRotate set in vnstat.conf moves the boundary the same way here.
 _VNSTAT_CONF="${OMR_QUOTA_VNSTAT_CONF:-/etc/vnstat.conf}"
-_vnstat_bucket_is_current() {
-	local y m rot now cur
-	y="$(printf '%s' "$1" | jsonfilter -q -e '@.interfaces[0].traffic.month[-1].date.year' | tr -d "\n")"
-	m="$(printf '%s' "$1" | jsonfilter -q -e '@.interfaces[0].traffic.month[-1].date.month' | tr -d "\n")"
-	case "$y$m" in ''|*[!0-9]*) return 0 ;; esac
+_vnstat_month_now() {
+	local rot now
 	rot="$(awk '$1 == "MonthRotate" { v = $2 } END { print v }' "$_VNSTAT_CONF" 2>/dev/null)"
 	case "$rot" in ''|*[!0-9]*) rot=1 ;; esac
 	[ "$rot" -ge 1 ] && [ "$rot" -le 28 ] || rot=1
 	now="$(date +%s)"
-	cur="$(date -d "@$(( now - (rot - 1) * 86400 ))" '+%Y %m' 2>/dev/null)"
+	date -d "@$(( now - (rot - 1) * 86400 ))" "$1" 2>/dev/null
+}
+
+# _vnstat_bucket_is_current <vnstat json>: does traffic.month[-1] belong to
+# the month vnstat counts in right now? A bucket without a readable date is
+# trusted, as before.
+_vnstat_bucket_is_current() {
+	local y m cur
+	y="$(printf '%s' "$1" | jsonfilter -q -e '@.interfaces[0].traffic.month[-1].date.year' | tr -d "\n")"
+	m="$(printf '%s' "$1" | jsonfilter -q -e '@.interfaces[0].traffic.month[-1].date.month' | tr -d "\n")"
+	case "$y$m" in ''|*[!0-9]*) return 0 ;; esac
+	cur="$(_vnstat_month_now '+%Y %m')"
 	case "$cur" in [0-9]*" "[0-9]*) ;; *) return 0 ;; esac
 	[ "${cur% *}" = "$y" ] && [ "${cur#* }" -eq "$m" ] 2>/dev/null
 }
@@ -973,21 +979,76 @@ _calculate_budget_limit() {
 # calendar month rolls over. Recording a baseline (usage-so-far, subtracted
 # from every future reading) makes reset_exceeded actually un-exceed a
 # month_only quota immediately, without waiting for vnstat's own month
-# bucket to roll over. Tagged with the calendar month it was taken in, so a
-# real month rollover (vnstat's own bucket resetting to 0) isn't permanently
-# masked by a stale baseline from a previous month.
+# bucket to roll over. Tagged with the metering period it was taken in, so
+# the start of a new period (usage counted from 0 again) isn't permanently
+# masked by a stale baseline from the previous one.
+#
+# The period is the one the usage is actually read from, not the calendar
+# month: "since:<begindate>" for a begindate window, which never rolls on
+# its own (it only changes with the begindate), else vnstat's month, which a
+# MonthRotate moves off the 1st. A calendar-month tag dropped a reset on the
+# 1st while the usage it offset was still counted -- begindate 2026-10-15,
+# reset on Oct 25, and on Nov 1 the WAN was cut again with no new traffic.
 _baseline_file="${_PERSIST_DIR}/${OMR_QUOTA_INTERFACE}.baseline"
 
+# _baseline_period: the tag of the current metering period. Keep in sync
+# with the rpcd plugin.
+_baseline_period() {
+	local p
+	if [ -n "$OMR_QUOTA_BEGINDATE" ]; then
+		printf 'since:%s' "$(printf '%s' "$OMR_QUOTA_BEGINDATE" | tr -cd '0-9-')"
+		return
+	fi
+	p="$(_vnstat_month_now '+%Y-%m')"
+	case "$p" in [0-9][0-9][0-9][0-9]-[0-9][0-9]) ;; *) p="$(date +%Y-%m)" ;; esac
+	printf '%s' "$p"
+}
+
+# _baseline_legacy_tag_holds <tag> <period>: a baseline written before the
+# period tags, with the calendar month of the reset, still belongs to the
+# current period. Under a begindate: when the reset was not before the
+# window's month. Without one: when that month is the current one, already
+# matched, or the next one -- a reset in the first MonthRotate-1 days of a
+# month belongs to the period that started in the previous month, and a
+# real tag is never ahead of the current period. Keep in sync with the rpcd
+# plugin.
+_baseline_legacy_tag_holds() {
+	local tag="$1" period="$2" y m
+	case "$tag" in [0-9][0-9][0-9][0-9]-[0-9][0-9]) ;; *) return 1 ;; esac
+	case "$period" in
+		since:[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])
+			y="${period#since:}"
+			[ "$(printf '%s' "$tag" | tr -d '-')" -ge "$(printf '%s' "${y%-*}" | tr -d '-')" ]
+			;;
+		[0-9][0-9][0-9][0-9]-[0-9][0-9])
+			y="${period%-*}"; m="${period#*-}"; m="${m#0}"
+			if [ "$m" -ge 12 ]; then
+				y=$(( y + 1 )); m=1
+			else
+				m=$(( m + 1 ))
+			fi
+			[ "$tag" = "$(printf '%04d-%02d' "$y" "$m")" ]
+			;;
+		*) return 1 ;;
+	esac
+}
+
 _read_baseline() {
-	local tag rx0 tx0
+	local tag rx0 tx0 period
 	[ -f "$_baseline_file" ] || { printf '0 0'; return; }
 	read -r tag rx0 tx0 < "$_baseline_file"
-	if [ "$tag" != "$(date +%Y-%m)" ]; then
-		rm -f "$_baseline_file"
-		printf '0 0'
-	else
-		printf '%s %s' "${rx0:-0}" "${tx0:-0}"
+	period="$(_baseline_period)"
+	if [ "$tag" != "$period" ]; then
+		if ! _baseline_legacy_tag_holds "$tag" "$period"; then
+			rm -f "$_baseline_file"
+			printf '0 0'
+			return
+		fi
+		# retagged once, so it ends with the period and not with a month
+		printf '%s %s %s' "$period" "${rx0:-0}" "${tx0:-0}" > "${_baseline_file}.new" && \
+			mv "${_baseline_file}.new" "$_baseline_file"
 	fi
+	printf '%s %s' "${rx0:-0}" "${tx0:-0}"
 }
 
 if [ "${OMR_QUOTA_RESET_BASELINE:-0}" = "1" ]; then
@@ -1001,7 +1062,7 @@ if [ "${OMR_QUOTA_RESET_BASELINE:-0}" = "1" ]; then
 		_tx0=$(( _tx0 + ${_usage_rest%% *} ))
 	done
 	mkdir -p "$_PERSIST_DIR"
-	printf '%s %s %s' "$(date +%Y-%m)" "$_rx0" "$_tx0" > "$_baseline_file"
+	printf '%s %s %s' "$(_baseline_period)" "$_rx0" "$_tx0" > "$_baseline_file"
 	logger -t "OMR-QUOTA" "Reset quota baseline for $OMR_QUOTA_INTERFACE (rx=${_rx0}KB tx=${_tx0}KB)"
 fi
 
