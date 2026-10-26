@@ -1051,6 +1051,20 @@ _omr_dscp_resync() {
 	/etc/init.d/omr-dscp reload
 }
 
+# An fw4 restart creates table inet fw4 again, empty: the addresses dnsmasq
+# added to the sets of an ipset section with domains (omr-bypass's,
+# omr-dscp's, the user's) are gone, and dnsmasq adds them again only from
+# an upstream answer, not from its cache.
+_dnsmasq_feeds_sets() {
+	uci -q show dhcp 2>/dev/null | awk -F= '
+		/^dhcp\.[^.=]+=ipset$/ { s[substr($1, 6)] = 1; next }
+		/^dhcp\.[^.=]+\.domain=/ {
+			k = substr($1, 6); sub(/\..*$/, "", k)
+			if (k in s) { f = 1; exit }
+		}
+		END { exit !f }'
+}
+
 # _dnsipset_open <family> <section> <set name>...: make <section> a dnsmasq
 # ipset that names exactly these sets, and load the size of its nftset= line
 # into the family's counters. A plain start keeps the domains an earlier run
@@ -3370,10 +3384,12 @@ start_service() {
 		mv -f "$_proxy_nft_down" "${_proxy_nft_down%.down}"
 		_proxy_down_restored=1
 	done
+	_fw4_restarted=""
 	if [ -n "$(uci -q changes firewall)" ] || [ "$fwfilechangemd5" != "$fwfilechangemd5check" ] || [ "$_asnmd5" != "$_asnmd5check" ] || [ "${_ndpid_fw_needed:-0}" = "1" ] || [ -n "$_proxy_down_restored" ] || [ -n "$_omr_fed_flush" ] || [ -n "$FORCE" ]; then
 		uci -q commit firewall
 		[ -z "$RELOAD" ] && {
 			fw4 restart || logger -t "omr-bypass" "ERROR: fw4 restart failed"
+			_fw4_restarted=1
 			sleep 1
 		}
 		[ -n "$RELOAD" ] && {
@@ -3418,7 +3434,14 @@ start_service() {
 	}
 	# also when the last domain went away: dnsmasq kept filling the sets for
 	# it until its next restart
-	[ -z "$_dnsmasq_restart" ] && [ -n "$RELOAD" ] && { [ "$add_domains" = "true" ] || [ -n "${_dhcp_had_domains:-}" ]; } && {
+	_dnsmasq_reload=""
+	[ -n "$RELOAD" ] && { [ "$add_domains" = "true" ] || [ -n "${_dhcp_had_domains:-}" ]; } && _dnsmasq_reload=1
+	# The fw4 restart emptied the sets dnsmasq fills (see
+	# _dnsmasq_feeds_sets): a reload clears its cache, so the next query of
+	# each domain goes upstream and adds its addresses again. Its dhcp
+	# sections unchanged, nothing else restarts or reloads dnsmasq.
+	[ -n "$_fw4_restarted" ] && _dnsmasq_feeds_sets && _dnsmasq_reload=1
+	[ -z "$_dnsmasq_restart" ] && [ -n "$_dnsmasq_reload" ] && {
 		logger -t "omr-bypass" "Reload dnsmasq..."
 		/etc/init.d/dnsmasq reload
 	}
