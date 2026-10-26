@@ -9,6 +9,7 @@
 
 RSYNC_USER=$(get_rsync_user)
 RSYNC_HOME=$(get_rsync_user_home)
+KEYS_DIR=/etc/keepalived/keys
 
 utc_timestamp() {
 	date -u +%s
@@ -17,6 +18,16 @@ utc_timestamp() {
 update_last_sync_time() {
 	uci_revert_state keepalived "$1" last_sync_time
 	uci_set_state keepalived "$1" last_sync_time "$(utc_timestamp)"
+}
+
+# The SSH client keys must never reach the peers. /etc/keepalived/keys is
+# kept across sysupgrade, which puts it in sysupgrade -l like any config
+# file, and every peer would then hold the key that logs into all of them.
+sync_skip() { # <path> <ssh key>
+	case "$1" in
+		"$KEYS_DIR" | "$KEYS_DIR"/* | "$2") return 0 ;;
+	esac
+	return 1
 }
 
 update_last_sync_status() {
@@ -31,7 +42,7 @@ update_last_sync_status() {
 ha_sync_send() {
 	local cfg=$1
 	local address ssh_key ssh_port sync_list sync_dir sync_file count
-	local ssh_options ssh_remote dirs_list files_list
+	local ssh_options ssh_remote dirs_list files_list excludes
 	local changelog="/tmp/changelog"
 	local stamp need_sync
 
@@ -64,6 +75,7 @@ ha_sync_send() {
 		[ -n "$(echo "$watch_list" | tr -d '[:space:]')" ] || watch_list="$sync_list $(sysupgrade -l)"
 		need_sync=0
 		for sync_file in $watch_list; do
+			sync_skip "$sync_file" "$ssh_key" && continue
 			if [ -d "$sync_file" ]; then
 				# A directory's mtime only moves when an entry is added
 				# or removed, not when a file inside it is edited
@@ -85,6 +97,7 @@ ha_sync_send() {
 		# rsync exits 23 on a missing source and then nothing at all is
 		# synced (e.g. /tmp/dhcp.leases on a router without dnsmasq)
 		[ -e "$sync_file" ] || continue
+		sync_skip "$sync_file" "$ssh_key" && continue
 		[ -f "$sync_file" ] && dir="${sync_file%/*}"
 		[ -d "$sync_file" ] && dir="${sync_file}"
 
@@ -94,6 +107,9 @@ ha_sync_send() {
 
 	ssh_options="-y -y -i $ssh_key -p $ssh_port"
 	ssh_remote="$RSYNC_USER@$address"
+	# a listed parent directory (e.g. /etc/keepalived) would still carry
+	# the keys: anchored with --relative, these match the full path
+	excludes="--exclude=$KEYS_DIR/ --exclude=$ssh_key"
 
 	# shellcheck disable=SC2086
 	timeout 10 ssh $ssh_options $ssh_remote mkdir -m 755 -p "$dirs_list /tmp" || {
@@ -105,7 +121,7 @@ ha_sync_send() {
 	}
 
 	# shellcheck disable=SC2086
-	if rsync --out-format='%n' --dry-run -a --relative ${files_list} -e "ssh $ssh_options" --rsync-path="sudo rsync" "$ssh_remote":"$sync_dir" > "$changelog"; then
+	if rsync --out-format='%n' --dry-run -a --relative ${excludes} ${files_list} -e "ssh $ssh_options" --rsync-path="sudo rsync" "$ssh_remote":"$sync_dir" > "$changelog"; then
 		count=$(wc -l "$changelog")
 		if [ "${count%% *}" = "0" ]; then
 			log_debug "all files are up to date"
@@ -123,7 +139,7 @@ ha_sync_send() {
 	fi
 
 	# shellcheck disable=SC2086
-	rsync -a --relative ${files_list} ${changelog} -e "ssh $ssh_options" --rsync-path="sudo rsync" "$ssh_remote":"$sync_dir" || {
+	rsync -a --relative ${excludes} ${files_list} ${changelog} -e "ssh $ssh_options" --rsync-path="sudo rsync" "$ssh_remote":"$sync_dir" || {
 		log_err "rsync transfer failed for $address"
 		rm -f "$stamp"
 		update_last_sync_time "$cfg"

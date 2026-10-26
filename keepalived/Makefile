@@ -347,6 +347,12 @@ define Package/keepalived-sync/install
 		$(1)/etc/hotplug.d/keepalived
 	$(CP) ./files/etc/hotplug.d/keepalived/810-files \
 		$(1)/etc/hotplug.d/keepalived
+
+	# conffiles only keeps files the package ships, and /etc/keepalived/keys
+	# is not shipped: the sync keys created there were lost on sysupgrade.
+	# rsync.sh never sends this directory to the peers.
+	$(INSTALL_DIR) $(1)/lib/upgrade/keep.d
+	echo "/etc/keepalived/keys/" > $(1)/lib/upgrade/keep.d/keepalived-sync
 endef
 
 USER=keepalived

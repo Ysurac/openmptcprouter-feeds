@@ -60,17 +60,47 @@ kaha_home() {
 	echo "$h"
 }
 
-# keepalived-sync's rsync.sh defaults to <sync_dir>/.ssh/id_rsa as client key
+# The sync key used to be rsync.sh's default client key, <sync_dir>/.ssh/id_rsa
+# in the keepalived user's home. sysupgrade doesn't keep that home, so after a
+# keep-settings upgrade of the first router every sync failed until the peers
+# were deployed again with their root password. /etc/keepalived/keys is kept
+# (keep.d of keepalived-sync) and never sent to the peers by rsync.sh; the send
+# peers name the key with ssh_key.
 kaha_keyfile() {
+	echo "${KAHA_KEYDIR:-/etc/keepalived/keys}/omr_ha_sync"
+}
+
+kaha_old_keyfile() {
 	echo "$(kaha_home)/.ssh/id_rsa"
+}
+
+# Copy a key from the old location so the backups keep trusting it. Copied,
+# not moved: a send peer set up by hand may still use rsync.sh's default.
+kaha_migrate_key() {
+	local key old dir
+	key=$(kaha_keyfile)
+	old=$(kaha_old_keyfile)
+	[ -f "$key" ] && return 0
+	[ -s "$old" ] || return 0
+	dir="${key%/*}"
+	mkdir -p "$dir" || return 1
+	# never readable by others, not even for the time of the copy
+	(umask 077 && cp "$old" "$key") || {
+		rm -f "$key"
+		return 1
+	}
+	chmod 600 "$key"
+	chown keepalived:keepalived "$key" 2>/dev/null
+	return 0
 }
 
 kaha_genkey() {
 	local key dir
 	key=$(kaha_keyfile)
 	dir="${key%/*}"
+	kaha_migrate_key
 	[ -f "$key" ] && return 0
-	if ! mkdir -p "$dir" || ! chmod 700 "$dir"; then
+	if ! mkdir -p "$dir"; then
 		KAHA_ERROR="cannot create $dir"
 		return 1
 	fi
@@ -79,8 +109,18 @@ kaha_genkey() {
 		return 1
 	}
 	chmod 600 "$key"
-	chown -R keepalived:keepalived "$(kaha_home)/.ssh" 2>/dev/null
+	chown keepalived:keepalived "$key" 2>/dev/null
 	return 0
+}
+
+# Point the generated send peers at the sync key: rsync.sh would otherwise
+# look for it at its default path in the keepalived user's home
+kaha_set_peer_keys() {
+	local s
+	for s in $(kaha_uci -q show keepalived 2>/dev/null |
+		sed -n "s/^keepalived\.\(omr_ha_peer_[0-9]*\)\.sync_mode='send'$/\1/p"); do
+		kaha_uci set "keepalived.$s.ssh_key=$(kaha_keyfile)"
+	done
 }
 
 kaha_pubkey() {
@@ -370,6 +410,7 @@ kaha_apply() {
 				# preferred master pushes config to every backup
 				kaha_uci set "keepalived.$sname.sync=1"
 				kaha_uci set "keepalived.$sname.sync_mode=send"
+				kaha_uci set "keepalived.$sname.ssh_key=$(kaha_keyfile)"
 				# rsync.sh only sends sync_list and sysupgrade -l: without
 				# this the leases never left the master, and clients lost
 				# their address on a failover. 551-dnsmasq installs them.
