@@ -94,6 +94,11 @@ mptcp_over_vpn() {
 		_getserverip
 
 		if [ "$(uci -q get network.${interface})" = "" ]; then
+			# The WAN itself was deleted: its tunnels go with it, and
+			# need the same cleanup and reload as when MPTCP over VPN is
+			# turned off for a WAN that stays
+			_tunnel_gone "wg${interface}"
+			_tunnel_gone "ovpn${interface}"
 			uci -q batch <<-EOF >/dev/null
 				delete openmptcprouter.${interface}
 				delete network.ovpn${interface}
@@ -110,6 +115,7 @@ mptcp_over_vpn() {
 				del_list firewall.zone_vpn.network="wg${interface}"
 				commit firewall
 			EOF
+			need_reload=1
 			return
 		fi
 		nbintfvpn=$(($nbintfvpn+1))
@@ -287,7 +293,7 @@ mptcp_over_vpn() {
 			uci -q batch <<-EOF >/dev/null
 				delete network.${interface}
 				delete network.@wireguard_${interface}[0]
-				delete openvpn.ovpn${intf}
+				delete openvpn.${intf}
 				commit openvpn
 				delete openmptcprouter.${intf}
 				delete openmptcprouter.ovpn${intf}
