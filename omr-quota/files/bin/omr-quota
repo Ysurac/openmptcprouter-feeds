@@ -221,9 +221,17 @@ _vnstat_usage() {
 # this mechanism exists to remove (tests/test_004, case 079b).
 #
 # Resolution goes from SaveInterval (5 min) down to the poll interval, without
-# touching vnstat's own configuration. Where the counters cannot be read (no
-# such device -- notably an interface this daemon has cut) the delta is 0 and
-# metering falls back to plain vnstat, which is what it used to be.
+# touching vnstat's own configuration.
+#
+# A device can vanish with traffic vnstat has not flushed yet: a PPPoE or 3G
+# WAN has no device at all once this daemon cuts it. Its last reading then
+# stands -- a device that is gone counts nothing more -- so the delta it had
+# is kept until vnstatd flushes (the sample changes, the anchor moves onto
+# that last reading and the delta drops to 0, vnstat holding it all now).
+# Dropping it to 0 at once read the cut WAN back below its quota from the
+# stale vnstat sample, and raised it on the next poll: over-quota traffic
+# flowed again and the WAN flapped until the flush. Without a usable state
+# there is nothing to keep, and metering is plain vnstat, as it used to be.
 _SYSFS_NET="${OMR_QUOTA_SYSFS_DIR:-/sys/class/net}"
 
 # How long a live state stays usable without a refresh. Past it the state is
@@ -269,9 +277,9 @@ _live_state_file() {
 
 # _live_delta <dev> <vnstat rx KiB> <vnstat tx KiB>: "<rx KiB> <tx KiB>" of
 # traffic the kernel has counted since that vnstat sample, updating this
-# quota's live state for the device. "0 0" when the feature is off or the
-# counters are unreadable. Keep in sync with the read-only twin in the rpcd
-# plugin.
+# quota's live state for the device. "0 0" when the feature is off, or when
+# the counters are unreadable and there is no usable state to hold on to.
+# Keep in sync with the read-only twin in the rpcd plugin.
 _live_delta() {
 	local dev="$1" vrx="$2" vtx="$3"
 	local now kernel krx ktx file ok n
@@ -279,8 +287,6 @@ _live_delta() {
 
 	[ "${OMR_QUOTA_LIVE_COUNTERS:-1}" = "0" ] && { printf '0 0'; return; }
 	now="$(_uptime)"                || { printf '0 0'; return; }
-	kernel="$(_kernel_counters "$dev")" || { printf '0 0'; return; }
-	krx="${kernel%% *}"; ktx="${kernel##* }"
 
 	file="$(_live_state_file "$OMR_QUOTA_INTERFACE" "$dev")"
 	ok=0
@@ -291,6 +297,15 @@ _live_delta() {
 			case "$n" in ''|*[!0-9]*) ok=0 ;; esac
 		done
 		[ "$ok" = "1" ] && [ "$now" -gt "$exp" ] && ok=0
+	fi
+
+	if kernel="$(_kernel_counters "$dev")"; then
+		krx="${kernel%% *}"; ktx="${kernel##* }"
+	elif [ "$ok" = "1" ]; then
+		# device gone: its last reading stands, see above
+		krx="$lrx"; ktx="$ltx"
+	else
+		printf '0 0'; return
 	fi
 
 	if [ "$ok" != "1" ]; then

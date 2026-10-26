@@ -139,11 +139,6 @@ _live_delta() {
 	file="${_TSTATE_DIR}/live.${state_id}.$(echo "$dev" | tr '/' '-')"
 	[ -f "$file" ] || { printf '0 0'; return; }
 	now="$(_uptime)" || { printf '0 0'; return; }
-	rx="$(cat "${_SYSFS_NET}/${dev}/statistics/rx_bytes" 2>/dev/null)"
-	tx="$(cat "${_SYSFS_NET}/${dev}/statistics/tx_bytes" 2>/dev/null)"
-	case "$rx" in ''|*[!0-9]*) printf '0 0'; return ;; esac
-	case "$tx" in ''|*[!0-9]*) printf '0 0'; return ;; esac
-	krx=$(( rx / 1024 )); ktx=$(( tx / 1024 ))
 
 	read -r exp pvrx pvtx arx atx lrx ltx < "$file"
 	ok=1
@@ -152,6 +147,19 @@ _live_delta() {
 	done
 	[ "$ok" = "1" ] || { printf '0 0'; return; }
 	[ "$now" -gt "$exp" ] && { printf '0 0'; return; }
+
+	rx="$(cat "${_SYSFS_NET}/${dev}/statistics/rx_bytes" 2>/dev/null)"
+	tx="$(cat "${_SYSFS_NET}/${dev}/statistics/tx_bytes" 2>/dev/null)"
+	case "$rx$tx" in
+		''|*[!0-9]*)
+			# Device gone (a cut PPPoE/3G WAN): its last reading stands until
+			# vnstatd flushes, as in the daemon, which enforces on that sum.
+			krx="$lrx"; ktx="$ltx"
+			;;
+		*)
+			krx=$(( rx / 1024 )); ktx=$(( tx / 1024 ))
+			;;
+	esac
 
 	# vnstatd has flushed since the daemon's last poll: its anchor predates
 	# that flush and would count the flushed traffic twice -- use the same
