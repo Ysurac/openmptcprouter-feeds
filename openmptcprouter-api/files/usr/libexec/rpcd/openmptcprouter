@@ -1466,28 +1466,47 @@ function wizard_add(args)
 	end
 	_set_or_delete("openmptcprouter", "settings", "mptcpovervpn", _as_string(args.mptcpovervpn_vpn, ""))
 	local country = _as_string(args.country, "")
+	local dns64 = _to_optional_flag(args.dns64)
+	-- Pushed to omr-tracker and unbound only when the wizard's own choice
+	-- changes: the wizard sends 'world' and '0' for unset ones, so every
+	-- save reset a country chosen on the OMR-Tracker page and turned off
+	-- DNS64 turned on on the unbound page
+	local country_changed = country ~= ""
+		and country ~= (ucic:get("openmptcprouter", "settings", "country") or "world")
+	local dns64_changed = dns64 ~= ""
+		and dns64 ~= _to_flag(ucic:get("openmptcprouter", "settings", "dns64"))
 	_set_or_delete("openmptcprouter", "settings", "country", country)
 	_set_flag_keep_unset("openmptcprouter", "settings", "dns64", args.dns64)
 	-- What the Country and DNS64 choices act on, as the Lua wizard did:
 	-- since the move to rpcd only the openmptcprouter copy was written.
 	-- omr-tracker is restarted by restart_all_async() below.
-	if country ~= "" and ucic:get("omr-tracker", "defaults") ~= nil
+	if country_changed and ucic:get("omr-tracker", "defaults") ~= nil
 	   and ucic:get("omr-tracker", "defaults", "country") ~= country then
 		ucic:set("omr-tracker", "defaults", "country", country)
 		ucic:save("omr-tracker")
 		ucic:commit("omr-tracker")
 	end
-	if _as_string(args.dns64, "") ~= "" and ucic:get("unbound", "ub_main") ~= nil then
-		local dns64 = _to_flag(args.dns64)
+	if dns64_changed and ucic:get("unbound", "ub_main") ~= nil then
 		local unbound_changed = false
 		if (ucic:get("unbound", "ub_main", "dns64") or "0") ~= dns64 then
 			ucic:set("unbound", "ub_main", "dns64", dns64)
 			unbound_changed = true
 		end
-		-- the synthesized AAAA answers fail DNSSEC validation
-		if dns64 == "1" and ucic:get("unbound", "ub_main", "validator") ~= "0" then
+		-- the synthesized AAAA answers fail DNSSEC validation. Unset is
+		-- off in unbound. dns64_validator_off records that the wizard
+		-- turned it off, so that turning DNS64 off turns it back on, and
+		-- only then.
+		local validator = ucic:get("unbound", "ub_main", "validator")
+		if dns64 == "1" and _to_flag(validator) == "1" then
 			ucic:set("unbound", "ub_main", "validator", "0")
+			ucic:set("openmptcprouter", "settings", "dns64_validator_off", "1")
 			unbound_changed = true
+		elseif dns64 == "0" and ucic:get("openmptcprouter", "settings", "dns64_validator_off") ~= nil then
+			ucic:delete("openmptcprouter", "settings", "dns64_validator_off")
+			if validator == "0" then
+				ucic:set("unbound", "ub_main", "validator", "1")
+				unbound_changed = true
+			end
 		end
 		if unbound_changed then
 			ucic:save("unbound")
