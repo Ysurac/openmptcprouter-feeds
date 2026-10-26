@@ -177,9 +177,15 @@ return view.extend({
 				if (!res.ok)
 					throw new Error(res.error || _('local configuration failed'));
 
+				// the peers get the same switch: a deploy with HA off
+				// disables it on them too
+				const disabled = (res.enabled === '0');
+
 				this.deployLog(E('span', {}, [
 					'✓ ',
-					_('This router configured as %s (%s)').format(res.role, res.my_ip)
+					disabled
+						? _('HA disabled on this router')
+						: _('This router configured as %s (%s)').format(res.role, res.my_ip)
 				]));
 
 				const routers = L.toArray(uci.get('keepalived', 'ha', 'router'));
@@ -192,11 +198,14 @@ return view.extend({
 					this.deployLog(E('em', {}, _('No password given, trying the peers with an empty password…')));
 
 				return peers.reduce((chain, ip) => chain.then(() => {
-					this.deployLog(E('span', {}, [ _('Configuring %s…').format(ip) ]));
+					this.deployLog(E('span', {}, [
+						(disabled ? _('Disabling HA on %s…') : _('Configuring %s…')).format(ip)
+					]));
 
 					return callPushPeer(ip, user, pass).then((r) => {
 						if (r.ok)
-							this.deployLog(E('span', {}, [ '✓ ' + _('%s configured').format(ip) ]));
+							this.deployLog(E('span', {}, [ '✓ ' +
+								(disabled ? _('HA disabled on %s') : _('%s configured')).format(ip) ]));
 						else
 							this.deployLog(E('span', { 'style': 'color:red' },
 								[ '✗ ' + _('%s failed: %s').format(ip, r.error || '?') ]));
@@ -275,7 +284,7 @@ return view.extend({
 			_('Requirement: luci-app-keepalived-ha must be installed on every router.'));
 
 		o = s.option(form.Flag, 'enabled', _('Enable HA'),
-			_('Disabling removes the generated keepalived and DHCP settings on deploy.'));
+			_('Disabling removes the generated keepalived and DHCP settings from this router and from the peers on deploy.'));
 		o.default = '1';
 		o.rmempty = false;
 

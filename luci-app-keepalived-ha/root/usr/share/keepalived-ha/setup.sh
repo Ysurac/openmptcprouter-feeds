@@ -653,7 +653,7 @@ kaha_check_peer() { # <ip> <user> <pass>  -> echoes remote status json
 kaha_push_peer() { # <ip> <user> <pass>
 	kaha_jshn
 	local ip="$1" user="${2:-root}" pass="$3"
-	local routers args resp r found first pubkey
+	local routers args resp r found first pubkey enabled
 
 	routers=$(kaha_routers)
 	found=0
@@ -665,11 +665,26 @@ kaha_push_peer() { # <ip> <user> <pass>
 		return 1
 	}
 
+	# the peers take the same disable path as this node: before, enabled
+	# wasn't sent and every peer came back up with the VIP, one of them
+	# handing out the VIP as gateway next to this router's own dnsmasq
+	enabled=$(kaha_get keepalived.ha.enabled 1)
+	[ "$enabled" = "0" ] || enabled=1
+
 	# the key sent is the one the backups accept syncs from: the first
 	# router's. Sending this node's own key from a backup left the other
 	# backups trusting a key the primary doesn't have, sync then failed.
 	first=$(kaha_first_router)
-	if [ "$(kaha_detect_my_ip)" = "$first" ]; then
+	if [ "$enabled" = "0" ]; then
+		# no sync to set up: pass on a known key, so that a later deploy
+		# from a backup still has it, but don't create one
+		if [ "$(kaha_detect_my_ip)" = "$first" ]; then
+			kaha_migrate_key
+			pubkey=$(kaha_pubkey)
+		else
+			pubkey=$(kaha_get keepalived.ha.pubkey '')
+		fi
+	elif [ "$(kaha_detect_my_ip)" = "$first" ]; then
 		kaha_genkey || return 1
 		pubkey=$(kaha_pubkey)
 		[ -n "$pubkey" ] || {
@@ -687,6 +702,7 @@ kaha_push_peer() { # <ip> <user> <pass>
 	kaha_login "$ip" "$user" "$pass" || return 1
 
 	json_init
+	json_add_string enabled "$enabled"
 	json_add_string vip "$(kaha_get keepalived.ha.vip '')"
 	json_add_string interface "$(kaha_get keepalived.ha.interface lan)"
 	json_add_string vrid "$(kaha_get keepalived.ha.vrid 51)"
@@ -701,16 +717,27 @@ kaha_push_peer() { # <ip> <user> <pass>
 	args=$(json_dump)
 
 	resp=$(kaha_call_remote "$KAHA_SCHEME" "$ip" "$KAHA_TOKEN" "luci.keepalived-ha" "setup_remote" "$args")
-	kaha_remote_result "$resp" "$ip" >/dev/null
+	kaha_remote_result "$resp" "$ip" >/dev/null || return 1
+	# an older peer ignores enabled and turns HA on: say so instead of
+	# reporting the peer as disabled
+	if [ "$enabled" = "0" ] &&
+		[ "$(echo "$resp" | jsonfilter -q -e '@.result[1].enabled')" != "0" ]; then
+		KAHA_ERROR="peer $ip runs an older luci-app-keepalived-ha that can't be disabled remotely and has enabled HA: update it and deploy again, or disable HA on it"
+		return 1
+	fi
+	return 0
 }
 
 # kaha_setup_remote_settings: store settings received from the configuring
 # node into keepalived.ha on this node (called by the rpcd setup_remote method)
-kaha_setup_remote_settings() { # <vip> <iface> <vrid> <adv> <track> <dhcp> <routers> <pubkey> <track_proxy> <track_wans>
-	local r
+# Only enabled '0' disables: a sender without the field predates it and
+# always meant to enable.
+kaha_setup_remote_settings() { # <vip> <iface> <vrid> <adv> <track> <dhcp> <routers> <pubkey> <track_proxy> <track_wans> [enabled]
+	local r enabled='1'
+	[ "${11:-}" = "0" ] && enabled='0'
 	kaha_uci -q delete keepalived.ha
 	kaha_uci set keepalived.ha=ha
-	kaha_uci set keepalived.ha.enabled='1'
+	kaha_uci set keepalived.ha.enabled="$enabled"
 	kaha_uci set keepalived.ha.vip="$1"
 	kaha_uci set keepalived.ha.interface="${2:-lan}"
 	kaha_uci set keepalived.ha.vrid="${3:-51}"

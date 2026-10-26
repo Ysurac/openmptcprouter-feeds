@@ -29,20 +29,22 @@ result_err() {
 }
 
 do_apply_local() {
-	local my_ip pk role first
+	local my_ip pk role first enabled
 
+	enabled=$(kaha_get keepalived.ha.enabled 1)
+	[ "$enabled" = "0" ] || enabled=1
 	my_ip=$(kaha_detect_my_ip)
 	first=$(kaha_first_router)
 	pk=''
 	role='backup'
 	if [ -n "$my_ip" ] && [ "$my_ip" = "$first" ]; then
 		role='primary'
-		kaha_genkey >/dev/null 2>&1
+		[ "$enabled" = "1" ] && kaha_genkey >/dev/null 2>&1
 		pk=$(kaha_pubkey)
 	fi
 
 	if kaha_apply "$my_ip" "$pk"; then
-		result_ok role "$role" my_ip "${my_ip:-}" pubkey "${pk:-}"
+		result_ok role "$role" my_ip "${my_ip:-}" pubkey "${pk:-}" enabled "$enabled"
 	else
 		result_err
 	fi
@@ -50,9 +52,10 @@ do_apply_local() {
 
 do_setup_remote() {
 	local vip interface vrid advert_int track_omrvpn track_proxy track_wans manage_dhcp
-	local routers my_ip pubkey
+	local routers my_ip pubkey enabled
 
 	json_load "$1"
+	json_get_var enabled enabled
 	json_get_var vip vip
 	json_get_var interface interface
 	json_get_var vrid vrid
@@ -65,25 +68,33 @@ do_setup_remote() {
 	json_get_var my_ip my_ip
 	json_get_var pubkey pubkey
 
-	[ -n "$vip" ] || {
-		result_err "missing vip"
-		return
-	}
-	[ -n "$routers" ] || {
-		result_err "missing routers"
-		return
-	}
-	[ -n "$my_ip" ] || {
-		result_err "missing my_ip"
-		return
-	}
+	# a sender without the field predates it and always enabled HA
+	[ "$enabled" = "0" ] || enabled=1
+
+	# disabling only clears the generated config, it needs none of these
+	if [ "$enabled" = "1" ]; then
+		[ -n "$vip" ] || {
+			result_err "missing vip"
+			return
+		}
+		[ -n "$routers" ] || {
+			result_err "missing routers"
+			return
+		}
+		[ -n "$my_ip" ] || {
+			result_err "missing my_ip"
+			return
+		}
+	fi
 
 	kaha_setup_remote_settings "$vip" "$interface" "$vrid" "$advert_int" \
 		"$track_omrvpn" "$manage_dhcp" "$routers" "$pubkey" "$track_proxy" \
-		"$track_wans"
+		"$track_wans" "$enabled"
 
+	# enabled tells the sender this node honoured it: an older one ignores
+	# the field and enables HA
 	if kaha_apply "$my_ip" "$pubkey"; then
-		result_ok my_ip "$my_ip"
+		result_ok my_ip "$my_ip" enabled "$enabled"
 	else
 		result_err
 	fi
@@ -173,6 +184,7 @@ case "$1" in
 		json_add_string password "password"
 		json_close_object
 		json_add_object setup_remote
+		json_add_string enabled "enabled"
 		json_add_string vip "vip"
 		json_add_string interface "interface"
 		json_add_string vrid "vrid"
