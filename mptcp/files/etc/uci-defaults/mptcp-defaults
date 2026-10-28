@@ -51,10 +51,19 @@ esac
 # Legacy v0.9x scheduler names carried over to a 6.x kernel: only the names
 # that never exist upstream are migrated (BPF schedulers are not listed in
 # available_schedulers until their object is registered, so they must not be
-# touched here).
+# touched here). BLEST and ECF have a BPF port: when its object is
+# installed, the choice is kept on it instead of going back to 'default'.
 if [ -f /proc/sys/net/mptcp/available_schedulers ]; then
 	case "$(uci -q get network.globals.mptcp_scheduler)" in
-		blest|roundrobin|redundant|ecf)
+		blest|ecf)
+			_sched="bpf_$(uci -q get network.globals.mptcp_scheduler)"
+			[ -f "/usr/share/bpf/scheduler/mptcp_${_sched}.o" ] || _sched='default'
+			uci -q batch <<-EOF >/dev/null
+			set network.globals.mptcp_scheduler='${_sched}'
+			commit network
+			EOF
+			;;
+		roundrobin|redundant)
 			uci -q batch <<-EOF >/dev/null
 			set network.globals.mptcp_scheduler='default'
 			commit network
