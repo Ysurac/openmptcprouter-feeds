@@ -1,0 +1,45 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+
+ARCH := $(shell dpkg-architecture -qDEB_BUILD_ARCH)
+
+# Map Debian arch to BPF target arch
+ifeq ($(ARCH),amd64)
+  BPF_ARCH := x86
+else ifeq ($(ARCH),arm64)
+  BPF_ARCH := arm64
+else ifeq ($(ARCH),armhf)
+  BPF_ARCH := arm
+else
+  BPF_ARCH := $(ARCH)
+endif
+
+# llvm-strip is shipped by the "llvm" package (an llvm-defaults alias);
+# fall back to the versioned binaries when only llvm-N is installed.
+LLVM_STRIP := $(shell command -v llvm-strip 2>/dev/null || \
+	ls -1 /usr/bin/llvm-strip-* /usr/lib/llvm-*/bin/llvm-strip 2>/dev/null | sort -V | tail -n1)
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	clang -g -O2 -target bpf \
+		-D__TARGET_ARCH_$(BPF_ARCH) \
+		-I src \
+		-c src/mptcp_bpf_blest.c \
+		-o mptcp_bpf_blest.o
+	[ -n "$(LLVM_STRIP)" ] || { echo "E: llvm-strip not found, install the llvm package" >&2; exit 1; }
+	$(LLVM_STRIP) -g mptcp_bpf_blest.o
+
+override_dh_auto_install:
+	install -D -m 0644 mptcp_bpf_blest.o \
+		debian/mptcp-bpf-blest/usr/share/bpf/scheduler/mptcp_bpf_blest.o
+
+override_dh_auto_test:
+
+override_dh_auto_clean:
+	rm -f mptcp_bpf_blest.o
+
+override_dh_builddeb:
+	dh_builddeb -- -Zxz
