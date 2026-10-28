@@ -96,7 +96,8 @@ MY_DEPENDS := \
     (TARGET_x86||TARGET_x86_64):kmod-r8169 \
     !(TARGET_mt7623||TARGET_ipq806x):luci-app-smartdns logd TARGET_x86_64:kmod-i40e \
     omr-banudpip luci-app-upnp kmod-inet-diag (TARGET_x86||TARGET_x86_64):luci-app-bpftune luci-app-mqvpn luci-app-omr-metrics luci-app-irqbalance !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-weight !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-weight-manager \
-    !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-weight-rr !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-dscp !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-dscp-manager (TARGET_x86||TARGET_x86_64):luci-app-ndpid luci-app-omr-events omr-sockdiag luci-app-keepalived-ha
+    !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-weight-rr !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-dscp !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-dscp-manager \
+    !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-ecf !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-blest !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-overflow (TARGET_x86||TARGET_x86_64):luci-app-ndpid luci-app-omr-events omr-sockdiag luci-app-keepalived-ha
 
 # kmod-ovpn-dco-v2
 # kmod-swconfig swconfig
