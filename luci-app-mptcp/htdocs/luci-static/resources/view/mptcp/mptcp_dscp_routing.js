@@ -96,7 +96,7 @@ return L.view.extend({
 
 		var mptcpScheduler = normalizeSchedulerValue(uci.get('network', 'globals', 'mptcp_scheduler'));
 		var mptcpHasDscpScheduler = (mptcpScheduler === 'bpf_dscp');
-		var mptcpHasWeightScheduler = (mptcpScheduler === 'bpf_weight' || mptcpScheduler === 'bpf_weight_rr' || mptcpScheduler === 'bpf_burstweight');
+		var mptcpHasWeightScheduler = (mptcpScheduler === 'bpf_weight' || mptcpScheduler === 'bpf_weight_rr' || mptcpScheduler === 'bpf_burstweight' || mptcpScheduler === 'bpf_overflow');
 
 		var mqvpnEnabled = (mqvpn.enabled === true);
 		var mqvpnScheduler = mqvpn.scheduler;
@@ -115,10 +115,10 @@ return L.view.extend({
 		var showWeight = mptcpHasWeightScheduler || mqvpnHasWeightScheduler;
 
 		m = new form.Map('network', _('DSCP / Weight Routing'),
-			_('Choose which WAN carries each DSCP-tagged traffic class -- for the MPTCP bpf_dscp scheduler and for mqvpn -- and review the per-WAN weight used by the *weight schedulers on both. This page only edits the pins/weights; pick the scheduler that actually uses them on the MPTCP and MQVPN pages themselves.'));
+			_('Choose which WAN carries each DSCP-tagged traffic class -- for the MPTCP bpf_dscp scheduler and for mqvpn -- and review the per-WAN weight used by the weight schedulers on both. This page only edits the pins/weights; pick the scheduler that actually uses them on the MPTCP and MQVPN pages themselves.'));
 
 		if (!showDscp && !showWeight) {
-			m.description += '<br /><br />' + _('Nothing to show yet: no DSCP scheduler (bpf_dscp) or weight scheduler (bpf_weight/bpf_weight_rr/bpf_burstweight, or mqvpn’s Weighted RTT/Weighted Round Robin) is currently selected on the MPTCP or MQVPN pages.');
+			m.description += '<br /><br />' + _('Nothing to show yet: no DSCP scheduler (bpf_dscp) or weight scheduler (bpf_weight/bpf_weight_rr/bpf_burstweight/bpf_overflow, or mqvpn’s Weighted RTT/Weighted Round Robin) is currently selected on the MPTCP or MQVPN pages.');
 			return m.render();
 		}
 
@@ -170,7 +170,7 @@ return L.view.extend({
 
 		if (showWeight) {
 			s = m.section(form.TypedSection, 'interface', _('WAN weight'),
-				_('Used by the *weight MPTCP schedulers (bpf_weight/bpf_weight_rr) and by mqvpn’s "Weighted RTT"/"Weighted Round Robin" schedulers -- same value, applies to both upload and download (mirrored to the gateway automatically). Unlike the DSCP pins above, weight is a single value per WAN, not per traffic class.') + ' ' +
+				_('Used by the weight MPTCP schedulers (bpf_weight/bpf_weight_rr/bpf_overflow) and by mqvpn’s "Weighted RTT"/"Weighted Round Robin" schedulers -- same value, applies to both upload and download (mirrored to the gateway automatically). Unlike the DSCP pins above, weight is a single value per WAN, not per traffic class.') + ' ' +
 				_('Only WANs with Multipath TCP enabled (the “Multipath TCP” option on the MPTCP page’s Interfaces Settings) are listed below.'));
 			s.filter = function(section) {
 				return isEligibleIface(section) && isMultipathEnabledIface(section);

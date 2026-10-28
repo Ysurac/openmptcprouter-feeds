@@ -146,7 +146,10 @@ return L.view.extend({
 		_('bpf_burst => same as the default scheduler') + '<br />' +
 		_('bpf_red => sends all packets redundantly on all available subflows') + '<br />' +
 		_('bpf_first => always picks the first subflow to send data')  + '<br />' +
-		_('bpf_rr => always picks the next available subflow to send data (round-robin)')
+		_('bpf_rr => always picks the next available subflow to send data (round-robin)') + '<br />' +
+		_('bpf_ecf => sends on the lowest-latency subflow, and on a slower one only when that does not delay the data') + '<br />' +
+		_('bpf_blest => sends on the lowest-latency subflow, and on a slower one only when that does not block the fastest one') + '<br />' +
+		_('bpf_overflow => uses the subflows by weight: a lower weight only carries what the higher ones cannot')
 
 	);
 	scheduler.value("default", _("default"));
@@ -178,6 +181,9 @@ return L.view.extend({
 	    // bpf_red => sends all packets redundantly on all available subflows
 	    // bpf_first => always picks the first subflow to send data
 	    // bpf_rr => always picks the next available subflow to send data (round-robin)
+	    // bpf_ecf => sends on the lowest-latency subflow, and on a slower one only when that does not delay the data
+	    // bpf_blest => sends on the lowest-latency subflow, and on a slower one only when that does not block the fastest one
+	    // bpf_overflow => uses the subflows by weight: a lower weight only carries what the higher ones cannot
 	}
 
 	scheduler.onchange = function(ev, section_id, value) {
@@ -203,6 +209,7 @@ return L.view.extend({
 	o.depends("mptcp_scheduler", "bpf_weight");
 	o.depends("mptcp_scheduler", "bpf_weight_rr");
 	o.depends("mptcp_scheduler", "bpf_burstweight");
+	o.depends("mptcp_scheduler", "bpf_overflow");
 	/* Every option below that depends() on another field keeps its stored
 	 * value while hidden: form.js otherwise removes it on any save, so a
 	 * save made with another scheduler or with mptcp_pm_type=0 silently
@@ -402,7 +409,7 @@ return L.view.extend({
 	// (discussion #4368).
 	o.rmempty = false;
 
-	o = s.option(form.Value, "multipath_weight", _("Weight"), _("Only used by *weight schedulers/path managers. Ignored if no weight scheduler is selected.") + '<br />' + _("A weight >100 make it more attractive, a weight <100 make it less attractive. Max 256"));
+	o = s.option(form.Value, "multipath_weight", _("Weight"), _("Only used by the weight schedulers (bpf_weight, bpf_weight_rr, bpf_burstweight, bpf_overflow) and path managers. Ignored if no weight scheduler is selected.") + '<br />' + _("A weight >100 make it more attractive, a weight <100 make it less attractive. Max 256"));
 	// 1 to 256, as "ip route" takes it: the schedulers read 0 as no weight
 	// (neutral 100) and add the weight to a signed counter
 	o.datatype = "and(uinteger,range(1,256))";
