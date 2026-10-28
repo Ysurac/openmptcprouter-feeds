@@ -12,10 +12,9 @@ proportionally to weight (smooth weighted round-robin) - every active
 WAN still carries some traffic, just not equally. For the alternative
 that always sends on the single highest-weight active subflow instead,
 install mptcp-bpf-weight (a separate source/binary package) rather than
-this one - installing both is harmless, but only enable (systemctl
-enable) whichever one matches the router's
-network.globals.mptcp_scheduler setting, since both ultimately write
-the same net.mptcp.scheduler sysctl.
+this one - installing and enabling both is harmless, neither one
+changes net.mptcp.scheduler: the router's
+network.globals.mptcp_scheduler setting picks the scheduler.
 
 Configuration
 -------------
@@ -52,11 +51,14 @@ Service
 -------
 
 mptcp-bpf-weight-rr.service loads
-/usr/share/bpf/scheduler/mptcp_bpf_weight_rr.o, pins it (and its maps)
-under /sys/fs/bpf/mptcp, and sets it as net.mptcp.scheduler at boot.
-This changes the *system-wide* default MPTCP scheduler on this host -
-only install/enable this on a VPS dedicated to terminating
-OpenMPTCProuter multipath connections.
+/usr/share/bpf/scheduler/mptcp_bpf_weight_rr.o and pins it (and its maps)
+under /sys/fs/bpf/mptcp. It does not change
+net.mptcp.scheduler: the router chooses the scheduler and omradmin
+writes it to /etc/sysctl.d/90-shadowsocks.conf. At start the service
+only re-applies that configured value when it names this scheduler
+(systemd-sysctl may have tried before the scheduler was registered).
+Installing every mptcp-bpf-* package, as the VPS installer does, is
+harmless.
 
 After building/installing a new .o (e.g. after editing the scheduler),
 run:
@@ -64,8 +66,9 @@ run:
     systemctl restart mptcp-bpf-weight-rr
 
 Stopping the service switches net.mptcp.scheduler back to "default"
-before unpinning, so it doesn't leave the sysctl pointed at a scheduler
-name the kernel no longer has registered.
+before unpinning when it currently names this scheduler, so it doesn't
+leave the sysctl pointed at a scheduler name the kernel no longer has
+registered. Any other scheduler is left alone.
 
 Requirements
 ------------

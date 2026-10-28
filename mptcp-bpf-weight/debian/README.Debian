@@ -45,21 +45,23 @@ bursts across ALL active subflows proportionally to weight (every
 active WAN still carries some traffic, just not equally), install
 mptcp-bpf-weight-rr - a separate source/binary package, see its own
 debian/README.Debian. Install whichever matches the router's
-network.globals.mptcp_scheduler setting; installing both is harmless,
-but only enable (systemctl enable) the one matching that setting, since
-both ultimately write the same net.mptcp.scheduler sysctl. Either way,
+network.globals.mptcp_scheduler setting; installing and enabling both
+is harmless, neither one changes net.mptcp.scheduler. Either way,
 this package's mptcp-weight-manager is what configures weights - it
 works against both schedulers' shared BPF maps.
 
 Service
 -------
 
-mptcp-bpf-weight.service loads /usr/share/bpf/scheduler/mptcp_bpf_weight.o,
-pins it (and its maps) under /sys/fs/bpf/mptcp, and sets it as
-net.mptcp.scheduler at boot. This changes the *system-wide* default
-MPTCP scheduler on this host - only install/enable this (or
-mptcp-bpf-weight-rr, not both) on a VPS dedicated to terminating
-OpenMPTCProuter multipath connections.
+mptcp-bpf-weight.service loads
+/usr/share/bpf/scheduler/mptcp_bpf_weight.o and pins it (and its maps)
+under /sys/fs/bpf/mptcp. It does not change
+net.mptcp.scheduler: the router chooses the scheduler and omradmin
+writes it to /etc/sysctl.d/90-shadowsocks.conf. At start the service
+only re-applies that configured value when it names this scheduler
+(systemd-sysctl may have tried before the scheduler was registered).
+Installing every mptcp-bpf-* package, as the VPS installer does, is
+harmless.
 
 After building/installing a new .o (e.g. after editing the scheduler),
 run:
@@ -67,8 +69,9 @@ run:
     systemctl restart mptcp-bpf-weight
 
 Stopping the service switches net.mptcp.scheduler back to "default"
-before unpinning, so it doesn't leave the sysctl pointed at a scheduler
-name the kernel no longer has registered.
+before unpinning when it currently names this scheduler, so it doesn't
+leave the sysctl pointed at a scheduler name the kernel no longer has
+registered. Any other scheduler is left alone.
 
 Requirements
 ------------
