@@ -917,6 +917,28 @@ init_rules_for_listfile() {
 
 }
 
+# rules_up/rules_down restart fw4 instead of reloading it: a reload keeps the
+# chains of an include it no longer loads, and the next include declaring
+# one of them with another type (TPROXY switched on or off) fails the whole
+# reload. A restart creates table inet fw4 again, empty: the addresses
+# dnsmasq added to the sets of a dhcp ipset section with domains
+# (omr-bypass's, omr-dscp's, the user's) are gone, and dnsmasq adds them
+# again only from an upstream answer, not from its cache. Its reload clears
+# the cache, so the next query of each domain fills the sets again.
+_fw4_restart() {
+	fw4 -q restart
+	[ -x /etc/init.d/dnsmasq ] || return 0
+	uci -q show dhcp 2>/dev/null | awk -F= '
+		/^dhcp\.[^.=]+=ipset$/ { s[substr($1, 6)] = 1; next }
+		/^dhcp\.[^.=]+\.domain=/ {
+			k = substr($1, 6); sub(/\..*$/, "", k)
+			if (k in s) { f = 1; exit }
+		}
+		END { exit !f }' || return 0
+	_info "Reloading dnsmasq to refill its sets"
+	/etc/init.d/dnsmasq reload >/dev/null 2>&1
+}
+
 gracefully_restart_dnsmasq() {
 	if [ "x$DNSMASQ_RESTART_EXPECTED" = "x1" ] && [ -x "/etc/init.d/dnsmasq" ] ; then
 		_info "Restarting dnsmasq..."
@@ -2657,7 +2679,7 @@ rules_up() {
 
 	if [ -f "${v2rrules_nft}.down" ]; then
 		mv -f "${v2rrules_nft}.down" "$v2rrules_nft"
-		fw4 -q restart
+		_fw4_restart
 		conntrack -F 2>/dev/null || true
 	elif [ ! -f "$v2rrules_nft" ]; then
 		# The last start made no rules (transparent proxy off, a config
@@ -2690,7 +2712,7 @@ rules_up() {
 rules_down() {
 	if [ -f "${v2rrules_nft}" ]; then
 		mv -f "$v2rrules_nft" "${v2rrules_nft}.down"
-		fw4 -q restart
+		_fw4_restart
 	fi
 }
 

@@ -3477,6 +3477,10 @@ stop_service() {
 	uci -q set firewall.omr_bypass_reply.enabled='0'
 	uci -q set firewall.omr_bypass_srcif.enabled='0'
 	/usr/lib/omr-bypass/wan-failover stop
+	# before its own sections go: dnsmasq keeps their nftset lines until
+	# it reads its config again
+	_stop_fed_sets=""
+	_dnsmasq_feeds_sets && _stop_fed_sets=1
 	_dhcp_delete_batch=""
 	config_load dhcp
 	config_foreach _delete_dhcp_ipset ipset
@@ -3493,7 +3497,15 @@ stop_service() {
 	config_foreach _delete_firewall_rules ipset
 	[ -n "$_fw_delete_batch" ] && printf '%s' "$_fw_delete_batch" | _uci_batch
 	uci -q commit firewall
-	[ -z "$RELOAD" ] && { fw4 restart || logger -t "omr-bypass" "ERROR: fw4 restart failed"; }
+	[ -z "$RELOAD" ] && {
+		fw4 restart || logger -t "omr-bypass" "ERROR: fw4 restart failed"
+		# the restart emptied the sets of the user's and omr-dscp's
+		# domains too (see _dnsmasq_feeds_sets)
+		[ -n "$_stop_fed_sets" ] && {
+			logger -t "omr-bypass" "Reload dnsmasq..."
+			/etc/init.d/dnsmasq reload
+		}
+	}
 	_omr_unlock
 	_omr_dscp_resync
 }

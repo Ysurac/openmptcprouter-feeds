@@ -548,6 +548,20 @@ _dscp_dhcp_state() {
 	uci -q -X show dhcp | grep -E '^dhcp\.([^.]+=ipset$|omr_dscp|cfg[0-9a-f]+\.(ipset|name)=.*omr)'
 }
 
+# An fw4 restart creates table inet fw4 again, empty: the addresses dnsmasq
+# added to the sets of an ipset section with domains (omr-dscp's,
+# omr-bypass's, the user's) are gone, and dnsmasq adds them again only from
+# an upstream answer, not from its cache. As omr-bypass's.
+_dnsmasq_feeds_sets() {
+	uci -q show dhcp 2>/dev/null | awk -F= '
+		/^dhcp\.[^.=]+=ipset$/ { s[substr($1, 6)] = 1; next }
+		/^dhcp\.[^.=]+\.domain=/ {
+			k = substr($1, 6); sub(/\..*$/, "", k)
+			if (k in s) { f = 1; exit }
+		}
+		END { exit !f }'
+}
+
 # _uci_commit_changed <config> <md5 of its "uci show" before the run>
 # <its pending changes before the run>: a run rebuilds every section it
 # owns, and committing that wrote the same config to flash again on each
@@ -563,7 +577,7 @@ _uci_commit_changed() {
 }
 
 start_service() {
-	local fw_before dhcp_before fw_all dhcp_all fw_pending dhcp_pending
+	local fw_before dhcp_before fw_all dhcp_all fw_pending dhcp_pending fw_restarted=""
 	fw_before="$(_dscp_fw_state | md5sum)"
 	_uci_lock
 	# under the lock: it covers the omr-bypass sections, which a run of
@@ -615,12 +629,18 @@ start_service() {
 		if ! fw4 -q reload; then
 			logger -t "omr-dscp" "fw4 reload failed, restarting it"
 			fw4 -q restart || logger -t "omr-dscp" "fw4 restart refused: the firewall ruleset has errors"
+			fw_restarted=1
 		elif ! fw4 -q check; then
 			logger -t "omr-dscp" "fw4 refused the firewall ruleset: it has errors"
 		fi
 	fi
-	# dnsmasq builds its nftset lines from the dhcp config when it starts
-	[ "$(_dscp_dhcp_state | md5sum)" != "$dhcp_before" ] && /etc/init.d/dnsmasq reload
+	# dnsmasq builds its nftset lines from the dhcp config when it starts.
+	# A reload also clears its cache: after the restart, the next query of
+	# each domain goes upstream and adds its addresses to the sets again.
+	if [ "$(_dscp_dhcp_state | md5sum)" != "$dhcp_before" ] || \
+	   { [ -n "$fw_restarted" ] && _dnsmasq_feeds_sets; }; then
+		/etc/init.d/dnsmasq reload
+	fi
 }
 
 stop_service() {

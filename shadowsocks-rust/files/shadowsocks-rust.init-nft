@@ -397,11 +397,31 @@ ss_rules_nft_gen() {
 			echo "table inet chk {include \"$tmp.nft\";}" >"$tmp.nft.chk"
 			if nft -f "$tmp.nft.chk" -c; then
 				mv "$tmp.nft" "$ssrules_nft"
+				# Not a reload: fw4's reload only adds set elements, an
+				# address dropped from ss_rules_* would stay in its set.
 				fw4 -q restart
+				# The restart created table inet fw4 again, empty: the
+				# addresses dnsmasq added to the sets of its domains
+				# (omr-bypass, omr-dscp, the user's) are gone, and it adds
+				# them again only from an upstream answer. A reload clears
+				# its cache.
+				ss_dnsmasq_feeds_sets && /etc/init.d/dnsmasq reload
 			fi
 		fi
 	fi
 	rm -rf "$tmpdir"
+}
+
+# A dnsmasq ipset section with domains: dnsmasq fills its sets (as
+# omr-bypass's _dnsmasq_feeds_sets)
+ss_dnsmasq_feeds_sets() {
+	uci -q show dhcp 2>/dev/null | awk -F= '
+		/^dhcp\.[^.=]+=ipset$/ { s[substr($1, 6)] = 1; next }
+		/^dhcp\.[^.=]+\.domain=/ {
+			k = substr($1, 6); sub(/\..*$/, "", k)
+			if (k in s) { f = 1; exit }
+		}
+		END { exit !f }'
 }
 
 # The template adds "fwmark 1 lookup 100" (local delivery of what tproxy
