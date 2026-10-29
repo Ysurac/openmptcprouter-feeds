@@ -198,9 +198,10 @@ _state_id() {
 
 # Twins of _baseline_period and _baseline_legacy_tag_holds in /bin/omr-quota:
 # a baseline is tagged with the metering period it was taken in --
-# "since:<begindate>" for a begindate window, else vnstat's (MonthRotate)
-# month -- and holds until that period ends, not until the calendar month
-# does.
+# "since:<begindate>" for a begindate window, else "month:<YYYY-MM>" for
+# vnstat's (MonthRotate) month -- and holds until that period ends, not
+# until the calendar month does. A bare YYYY-MM is a tag from before the
+# period tags.
 _baseline_period() {
 	local begindate="$1" p
 	if [ -n "$begindate" ]; then
@@ -209,7 +210,7 @@ _baseline_period() {
 	fi
 	p=$(_vnstat_month_now '+%Y-%m')
 	case "$p" in [0-9][0-9][0-9][0-9]-[0-9][0-9]) ;; *) p=$(date +%Y-%m) ;; esac
-	printf '%s' "$p"
+	printf 'month:%s' "$p"
 }
 
 _baseline_legacy_tag_holds() {
@@ -220,7 +221,9 @@ _baseline_legacy_tag_holds() {
 			y="${period#since:}"
 			[ "$(printf '%s' "$tag" | tr -d '-')" -ge "$(printf '%s' "${y%-*}" | tr -d '-')" ]
 			;;
-		[0-9][0-9][0-9][0-9]-[0-9][0-9])
+		month:[0-9][0-9][0-9][0-9]-[0-9][0-9])
+			period="${period#month:}"
+			[ "$tag" = "$period" ] && return 0
 			y="${period%-*}"; m="${period#*-}"; m="${m#0}"
 			if [ "$m" -ge 12 ]; then
 				y=$(( y + 1 )); m=1

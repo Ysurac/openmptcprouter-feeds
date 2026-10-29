@@ -992,7 +992,11 @@ _calculate_budget_limit() {
 _baseline_file="${_PERSIST_DIR}/${OMR_QUOTA_INTERFACE}.baseline"
 
 # _baseline_period: the tag of the current metering period. Keep in sync
-# with the rpcd plugin.
+# with the rpcd plugin. The vnstat month is "month:YYYY-MM", not a bare
+# YYYY-MM: that is the form of the calendar-month tags written before the
+# period tags, which a begindate window still honours (see below), so a
+# reset taken in month mode was carried into a begindate window set later
+# and offset it for as long as that window lasted.
 _baseline_period() {
 	local p
 	if [ -n "$OMR_QUOTA_BEGINDATE" ]; then
@@ -1001,17 +1005,16 @@ _baseline_period() {
 	fi
 	p="$(_vnstat_month_now '+%Y-%m')"
 	case "$p" in [0-9][0-9][0-9][0-9]-[0-9][0-9]) ;; *) p="$(date +%Y-%m)" ;; esac
-	printf '%s' "$p"
+	printf 'month:%s' "$p"
 }
 
 # _baseline_legacy_tag_holds <tag> <period>: a baseline written before the
-# period tags, with the calendar month of the reset, still belongs to the
-# current period. Under a begindate: when the reset was not before the
-# window's month. Without one: when that month is the current one, already
-# matched, or the next one -- a reset in the first MonthRotate-1 days of a
-# month belongs to the period that started in the previous month, and a
-# real tag is never ahead of the current period. Keep in sync with the rpcd
-# plugin.
+# period tags, with the calendar month of the reset (a bare YYYY-MM), still
+# belongs to the current period. Under a begindate: when the reset was not
+# before the window's month. Without one: when that month is the current
+# one or the next one -- a reset in the first MonthRotate-1 days of a month
+# belongs to the period that started in the previous month, and a real tag
+# is never ahead of the current period. Keep in sync with the rpcd plugin.
 _baseline_legacy_tag_holds() {
 	local tag="$1" period="$2" y m
 	case "$tag" in [0-9][0-9][0-9][0-9]-[0-9][0-9]) ;; *) return 1 ;; esac
@@ -1020,7 +1023,9 @@ _baseline_legacy_tag_holds() {
 			y="${period#since:}"
 			[ "$(printf '%s' "$tag" | tr -d '-')" -ge "$(printf '%s' "${y%-*}" | tr -d '-')" ]
 			;;
-		[0-9][0-9][0-9][0-9]-[0-9][0-9])
+		month:[0-9][0-9][0-9][0-9]-[0-9][0-9])
+			period="${period#month:}"
+			[ "$tag" = "$period" ] && return 0
 			y="${period%-*}"; m="${period#*-}"; m="${m#0}"
 			if [ "$m" -ge 12 ]; then
 				y=$(( y + 1 )); m=1
