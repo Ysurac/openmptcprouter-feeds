@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=xray
-PKG_VERSION:=26.7.11
+PKG_VERSION:=26.10.29
 PKG_RELEASE:=1
 
 PKG_LICENSE:=MPLv2
@@ -16,9 +16,9 @@ PKG_LICENSE_FILES:=LICENSE
 PKG_MAINTAINER:=Yannick Chabanois <contact@openmptcprouter.com>
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/XTLS/Xray-core.git
-PKG_SOURCE_VERSION:=50231eaff98ccc31b5cbd247a721c16e97fe5ec1
+PKG_SOURCE_VERSION:=0afec66085a85191e9dd2a4a6646c7c9a94688d1
 
-PKG_BUILD_DEPENDS:=golang/host
+PKG_BUILD_DEPENDS:=golang1.27/host
 PKG_BUILD_PARALLEL:=1
 
 GO_PKG:=github.com/XTLS/Xray-core
