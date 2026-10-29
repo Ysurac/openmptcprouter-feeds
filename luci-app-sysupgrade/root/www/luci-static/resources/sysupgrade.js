@@ -310,11 +310,38 @@ function upgrade_request_callback(response) {
 function flash_image() {
     // Flash image via rpc-sys upgrade_start
     set_status("warning", _("Flashing firmware. Don't unpower device"), true)
-    ubus_call("rpc-sys", "upgrade_start", {
-        "keep": $("#keep").checked
-    }, 'message');
-    ping_max = 3600; // in seconds
-    setTimeout(ping_ubus, 10000)
+    // ubus_call() drops a non-zero ubus status: read it here, a refused
+    // call must not end up reported as a successful flash
+    var request = new XMLHttpRequest();
+    request.open("POST", ubus_url, true);
+    request.setRequestHeader("Content-type", "application/json");
+    request.onload = function() {
+        var res = null;
+        try {
+            res = JSON.parse(request.responseText);
+        } catch (e) {}
+        if (request.status !== 200 || !res || res.error || !Array.isArray(res.result) || res.result[0] !== 0) {
+            var why = (res && res.error && res.error.message) ||
+                (res && Array.isArray(res.result) ? "ubus status " + res.result[0] : "HTTP " + request.status);
+            set_status("danger", _("Flashing failed:") + " " + esc(why));
+            return;
+        }
+        // upgrade_start only forks sysupgrade: an answer from the device
+        // means success only once it went away and came back
+        data.device_went_down = false;
+        ping_max = 720; // tries, 5 s apart: one hour
+        ping_up_max = 120; // ten minutes still answering: sysupgrade never ran
+        setTimeout(ping_ubus, 10000)
+    };
+    request.onerror = function() {
+        set_status("danger", _("Flashing failed:") + " " + _("network error"));
+    };
+    request.send(JSON.stringify({
+        "jsonrpc": "2.0",
+        "id": ubus_counter++,
+        "method": "call",
+        "params": [data.ubus_rpc_session, "rpc-sys", "upgrade_start", { "keep": $("#keep").checked }]
+    }));
 }
 
 function ping_ubus() {
@@ -325,10 +352,21 @@ function ping_ubus() {
         var request = new XMLHttpRequest();
         request.open("GET", ubus_url, true);
         request.addEventListener('error', function(event) {
+            data.device_went_down = true;
             set_status("warning", _("Rebooting device - please wait!"), true);
             setTimeout(ping_ubus, 5000)
         });
         request.addEventListener('load', function(event) {
+            if (!data.device_went_down) {
+                // still up: sysupgrade is checking or writing the image,
+                // or it refused it and the device will never reboot
+                if (--ping_up_max > 0) {
+                    setTimeout(ping_ubus, 5000);
+                } else {
+                    set_status("danger", _("The device did not restart: the firmware was probably not flashed. Check the system log."));
+                }
+                return;
+            }
             set_status("success", _("Success! Please reload web interface"));
             $("#upgrade_button").value = "Reload page";
             show("#upgrade_button");
