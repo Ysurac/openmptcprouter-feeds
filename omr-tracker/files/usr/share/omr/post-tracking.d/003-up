@@ -155,6 +155,22 @@ EOF
 	[ -z "$_w" ] || [ "$_w" = "$_want" ]
 }
 
+# Is the metric 1 route a resilient group or a plain route, as
+# multipath_resilient asks (see _omr_balanced_route_replace)? With every
+# device in it and the right weights nothing rebuilt it, so an upgrade or
+# a change of the setting left the other form in place.
+_omr_default_m1_form_ok() {
+	if [ -z "$_omr_def_m1_loaded" ]; then
+		_omr_def_m1="$(ip route show default metric 1 2>/dev/null)"
+		_omr_def_m1_loaded=1
+	fi
+	[ -n "$_omr_def_m1" ] || return 0
+	case " $_omr_def_m1 " in
+		*[[:space:]]nhid[[:space:]]*) _omr_balanced_resilient ;;
+		*) ! _omr_balanced_resilient ;;
+	esac
+}
+
 # Set in the persistent config only when the value differs, and remember
 # it: the commits below are for this script's own edits, not for whatever
 # other processes have pending in the shared /tmp/.uci (the runtime values
@@ -443,20 +459,20 @@ if [ "$multipath_config" = "master" ]; then
 		fi
 	fi
 	if [ "$master_setting" = "balancing" ]; then
-		if { { [ -n "$OMR_TRACKER_DEVICE_IP" ] && ! _omr_default_m1_has_device "$OMR_TRACKER_DEVICE"; } || { [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ "$(ip -6 route show default metric 1 | grep "$OMR_TRACKER_DEVICE")" = "" ]; }; } && [ "$defaultgw_setting" != "0" ]; then
+		if { { [ -n "$OMR_TRACKER_DEVICE_IP" ] && { ! _omr_default_m1_has_device "$OMR_TRACKER_DEVICE" || ! _omr_default_m1_form_ok; }; } || { [ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ "$(ip -6 route show default metric 1 | grep "$OMR_TRACKER_DEVICE")" = "" ]; }; } && [ "$defaultgw_setting" != "0" ]; then
 			if [ -n "$omrvpn_intf" ] && [ -n "$OMR_TRACKER_DEVICE_IP" ] && _omr_up_balancing_diff; then
 				_omr_balancing_lock
 				_omr_up_balancing_diff
 				[ -n "$_omr_bal_m1" ] && {
 					_log "Change in routes, set ip route replace default scope global $routesbalancing (omrvpn_intf: $omrvpn_intf)"
 					[ "$debug" = "true" ] && _log "Current route: $(ip r)"
-					ip route replace default scope global metric 1 $routesbalancing >/dev/null 2>&1
+					_omr_balanced_route_replace 1 "$routesbalancing"
 					_omr_def_m1_loaded=""
 					[ "$debug" = "true" ] && _log "New route: $(ip r)"
 				}
 				[ -n "$_omr_bal_m999" ] && {
 					_log "Set backup ip route replace default scope global metric 999 $routesbalancingbackup"
-					ip route replace default scope global metric 999 $routesbalancingbackup >/dev/null 2>&1
+					_omr_balanced_route_replace 999 "$routesbalancingbackup"
 				}
 				_omr_balancing_unlock
 			fi
@@ -516,16 +532,16 @@ if [ "$master_setting" = "balancing" ] && { [ "$multipath_config" = "on" ] || [ 
 	# the metric-1 route, so the device grep replaced and logged an
 	# already correct route on every tracker cycle (issue #4358). So is a
 	# device whose weight is no longer its interface's.
-	if [ -n "$omrvpn_intf" ] && [ -n "$OMR_TRACKER_DEVICE_IP" ] && { ! _omr_default_m1_has_device "$OMR_TRACKER_DEVICE" || [ "$multipath_config" = "backup" ] || ! _omr_default_m1_weight_ok "$OMR_TRACKER_DEVICE"; } && _omr_up_balancing_diff; then
+	if [ -n "$omrvpn_intf" ] && [ -n "$OMR_TRACKER_DEVICE_IP" ] && { ! _omr_default_m1_has_device "$OMR_TRACKER_DEVICE" || [ "$multipath_config" = "backup" ] || ! _omr_default_m1_weight_ok "$OMR_TRACKER_DEVICE" || ! _omr_default_m1_form_ok; } && _omr_up_balancing_diff; then
 		_omr_balancing_lock
 		_omr_up_balancing_diff
 		[ -n "$_omr_bal_m1" ] && {
 			_log "Change in routes (non-master), set ip route replace default scope global metric 1 $routesbalancing"
-			ip route replace default scope global metric 1 $routesbalancing >/dev/null 2>&1
+			_omr_balanced_route_replace 1 "$routesbalancing"
 		}
 		[ -n "$_omr_bal_m999" ] && {
 			_log "Set backup ip route replace default scope global metric 999 $routesbalancingbackup"
-			ip route replace default scope global metric 999 $routesbalancingbackup >/dev/null 2>&1
+			_omr_balanced_route_replace 999 "$routesbalancingbackup"
 		}
 		_omr_balancing_unlock
 	fi

@@ -748,6 +748,89 @@ set_route_balancing6() {
 	_set_route_balancing_common "$1" true
 }
 
+# The IPv4 balanced default routes go through a resilient nexthop group.
+# With a plain multipath route, adding or removing a nexthop moves the hash
+# ranges of the others: part of the flows of the WANs still up changed WAN,
+# and the kernel kills a masqueraded connection whose output interface
+# changes (nf_nat_oif_changed), so each WAN going down or up also cut
+# connections on the healthy WANs. A resilient group only reassigns the
+# buckets of a removed nexthop, and gives a new one the buckets idle for
+# idle_timer seconds. One nexthop object per device (1000000 + ifindex),
+# one group per metric (991001, 991999). IPv6 keeps plain routes: no NAT
+# there, and a delete by gateway (_omr_del_wan_default_routes) takes a whole
+# nhid route. network.globals.multipath_resilient=0 goes back to plain
+# routes; so does a router whose ip or kernel has no nexthop objects.
+_OMR_NH_GROUP_OPTS="type resilient buckets 512 idle_timer 120 unbalanced_timer 0"
+
+# Checked once per boot: the BusyBox ip applet has no "nexthop", and a
+# route rebuilt on every cycle because the form never matched is #4358 again
+_omr_balanced_resilient() {
+	local _res _dir="${OMR_TRACKER_LOCK_DIR:-/var/run/omr-tracker}"
+	_omr_uci_get_var _res network.globals.multipath_resilient "1"
+	[ "$_res" != "0" ] || return 1
+	[ -e "$_dir/nexthop-ok" ] && return 0
+	[ -e "$_dir/nexthop-no" ] && return 1
+	mkdir -p "$_dir" >/dev/null 2>&1
+	if ip nexthop show >/dev/null 2>&1; then
+		: > "$_dir/nexthop-ok" 2>/dev/null
+		return 0
+	fi
+	: > "$_dir/nexthop-no" 2>/dev/null
+	return 1
+}
+
+# _omr_balanced_route_replace <metric> <nexthop fragments>: install the IPv4
+# default route at metric 1 or 999 from set_route_balancing's fragments
+# ("nexthop via <gw> dev <if> weight <w> ..."), as a plain route when the
+# group can't be set up
+_omr_balanced_route_replace() {
+	local _metric="$1" _routes="$2" _gid="" _group="" _key="" _via="" _dev="" _w=1 _idx _tok _ok=1
+	local _sys="${OMR_SYS_CLASS_NET_DIR:-/sys/class/net}"
+	if _omr_balanced_resilient; then
+		case "$_metric" in
+			1) _gid=991001 ;;
+			999) _gid=991999 ;;
+		esac
+	fi
+	if [ -n "$_gid" ]; then
+		for _tok in $_routes nexthop; do
+			if [ -n "$_key" ]; then
+				case "$_key" in
+					via) _via="$_tok" ;;
+					dev) _dev="$_tok" ;;
+					weight) _w="$_tok" ;;
+				esac
+				_key=""
+				continue
+			fi
+			case "$_tok" in
+				via|dev|weight) _key="$_tok" ;;
+				nexthop)
+					[ -n "$_dev" ] || continue
+					_idx=""
+					[ -n "$_via" ] && [ -r "$_sys/$_dev/ifindex" ] && read -r _idx < "$_sys/$_dev/ifindex"
+					case "$_idx" in
+						""|*[!0-9]*) _ok=""; break ;;
+					esac
+					# replace also moves an existing object to a new gateway
+					ip nexthop replace id $((1000000 + _idx)) via "$_via" dev "$_dev" >/dev/null 2>&1 || { _ok=""; break; }
+					_group="${_group:+$_group/}$((1000000 + _idx)),$_w"
+					_via=""; _dev=""; _w=1
+					;;
+			esac
+		done
+		if [ -n "$_ok" ] && [ -n "$_group" ]; then
+			# A group can't be replaced by one of another type: start over
+			# when it was left by something else
+			if ip nexthop replace id "$_gid" group "$_group" $_OMR_NH_GROUP_OPTS >/dev/null 2>&1 || \
+			   { ip nexthop del id "$_gid" >/dev/null 2>&1; ip nexthop add id "$_gid" group "$_group" $_OMR_NH_GROUP_OPTS >/dev/null 2>&1; }; then
+				ip route replace default scope global metric "$_metric" nhid "$_gid" >/dev/null 2>&1 && return 0
+			fi
+		fi
+	fi
+	ip route replace default scope global metric "$_metric" $_routes >/dev/null 2>&1
+}
+
 # Compare the kernel's default route at a given metric against the nexthop
 # fragments we want installed ("nexthop via <gw> dev <if> weight <w> ...").
 # Returns 0 when the route already carries exactly the expected gateway/device
@@ -758,15 +841,25 @@ set_route_balancing6() {
 # With a single nexthop the kernel flattens the group and drops
 # "nexthop"/"weight" from its output, so weights are ignored there or the
 # route would look different on every cycle.
+# An IPv4 balanced route also has to be in the form _omr_balanced_route_replace
+# installs, a resilient group or a plain route: nothing else converted it
+# after the setting changed.
 _default_route_matches() {
 	local metric="$1"
 	local expected_routes="$2"
 	local nb="${3:-0}"
 	local ipv6="${4:-false}"
 	local ip_cmd="ip"
-	local existing_gws expected_gws
+	local existing existing_gws expected_gws
 	[ "$ipv6" = "true" ] && ip_cmd="ip -6"
-	existing_gws=$($ip_cmd route show default metric "$metric" 2>/dev/null | grep -oE 'via [^ ]+ dev [^ ]+( weight [0-9]+)?' | sort | tr '\n' ' ')
+	existing=$($ip_cmd route show default metric "$metric" 2>/dev/null)
+	if [ "$ipv6" != "true" ] && [ -n "$existing" ] && { [ "$metric" = 1 ] || [ "$metric" = 999 ]; }; then
+		case " $existing " in
+			*[[:space:]]nhid[[:space:]]*) _omr_balanced_resilient || return 1 ;;
+			*) ! _omr_balanced_resilient || return 1 ;;
+		esac
+	fi
+	existing_gws=$(printf '%s\n' "$existing" | grep -oE 'via [^ ]+ dev [^ ]+( weight [0-9]+)?' | sort | tr '\n' ' ')
 	expected_gws=$(echo "$expected_routes" | grep -oE 'via [^ ]+ dev [^ ]+( weight [0-9]+)?' | sort | tr '\n' ' ')
 	if [ "${nb:-0}" -le 1 ] 2>/dev/null; then
 		existing_gws=$(echo "$existing_gws" | sed 's/ weight [0-9]*//g')
@@ -1048,6 +1141,9 @@ purge_wan_default_routes() {
 # routes are left to the balancing rebuild. IPv6 keeps each nexthop of a
 # multipath route as a route of its own, so a delete with the gateway and
 # the metric drops this interface's nexthop alone, as it always did.
+# A route through a nexthop group (_omr_balanced_route_replace) matches no
+# delete by gateway or device: when its only nexthop is this interface's,
+# it goes by its group id, as the plain route did.
 _omr_del_wan_default_routes() {
 	local _v6="$1" _dev="$2" _gw="$3" _ip_cmd="ip" _routes _m
 	[ -n "$_dev" ] || return 0
@@ -1056,23 +1152,30 @@ _omr_del_wan_default_routes() {
 	[ -n "$_routes" ] || return 0
 	for _m in $(printf '%s\n' "$_routes" | awk -v dev="$_dev" -v gw="$_gw" -v v6="$_v6" '
 		function fields(from) {
-			via = ""; d = ""
+			via = ""; d = ""; nh = ""
 			for (i = from; i < NF; i++) {
 				if ($i == "via") via = $(i + 1)
 				else if ($i == "dev") d = $(i + 1)
+				else if ($i == "nhid" && from == 2) nh = $(i + 1)
 				else if ($i == "metric" && from == 2) m = $(i + 1)
 			}
 		}
 		/^default/ {
 			m = 0
 			fields(2)
-			if (d == dev && (gw == "" || via == gw)) print m
+			if (d == dev && (gw == "" || via == gw)) print (nh == "" ? m : m ":" nh)
 			next
 		}
 		$1 == "nexthop" && v6 == "true" && gw != "" {
 			fields(1)
 			if (d == dev && via == gw) print m
 		}'); do
+		case "$_m" in
+			*:*)
+				$_ip_cmd route del default nhid "${_m#*:}" metric "${_m%%:*}" >/dev/null 2>&1
+				continue
+				;;
+		esac
 		if [ -n "$_gw" ]; then
 			$_ip_cmd route del default via "$_gw" dev "$_dev" metric "$_m" >/dev/null 2>&1
 		else
