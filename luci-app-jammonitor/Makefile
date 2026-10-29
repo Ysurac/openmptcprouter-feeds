@@ -41,7 +41,7 @@ define Package/$(PKG_NAME)/description
   LuCI-based dashboard for monitoring OpenMPTCProuter / OpenWrt systems.
   Provides real-time system stats, MPTCP status, WAN policy management,
   client tracking, Wi-Fi AP overview, diagnostics bundle generation,
-  VPN/tunnel status, vnstat traffic data and self-update support.
+  VPN/tunnel status and vnstat traffic data.
 endef
 
 define Build/Compile
@@ -51,6 +51,18 @@ define Package/$(PKG_NAME)/install
 	# LuCI controller
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/jammonitor.lua \
+		$(1)/usr/lib/lua/luci/controller/jammonitor.lua
+	# No in-app update: it ran a root job that downloaded the upstream main
+	# branch over the packaged files, with nothing checking what it got.
+	# Updates come with a PKG_SOURCE_VERSION bump. Fail the build when an
+	# upstream change makes these edits miss.
+	$(SED) '/"jammonitor", "update_start"}/d' \
+		-e '/"jammonitor", "update_status"}/d' \
+		-e 's/if check_remote == "1" then/if false then -- OMR: no update check/' \
+		$(1)/usr/lib/lua/luci/controller/jammonitor.lua
+	grep -q 'if false then -- OMR: no update check' \
+		$(1)/usr/lib/lua/luci/controller/jammonitor.lua
+	! grep -q 'call("action_update_' \
 		$(1)/usr/lib/lua/luci/controller/jammonitor.lua
 
 	# LuCI view template
@@ -65,7 +77,7 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/jammonitor-i18n.js \
 		$(1)/www/luci-static/resources/jammonitor-i18n.js
 
-	# Version file (short git hash) used for the in-app update checker
+	# Version file (git hash): the page shows it as the installed version
 	echo "$(PKG_SOURCE_VERSION)" > $(1)/www/luci-static/resources/jammonitor.version
 endef
 
