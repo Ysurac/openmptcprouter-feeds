@@ -1040,13 +1040,6 @@ return view.extend({
 					o.default = '1';
 				}
 
-				o = ss.taboption('advanced', form.Flag, 'rxldpc', _('Rx LDPC'), _('Low-Density Parity-Check'));
-				o.default = '1';
-
-				o = ss.taboption('advanced', form.Flag, 'ldpc', _('Tx LDPC'));
-				o.depends({'rxldpc': '1'});
-				o.default = '1';
-
 				o = s.option(form.SectionValue, '_device', form.NamedSection, radioNet.getName(), 'wifi-iface', _('Interface Configuration'));
 				o.modalonly = true;
 
