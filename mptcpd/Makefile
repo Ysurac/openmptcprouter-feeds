@@ -34,10 +34,14 @@ define Package/Default +=
   VERSION:=10000.$(PKG_VERSION)-r$(PKG_RELEASE)
 endef
 
+# PROVIDES: this package ships /usr/bin/mptcpize and libmptcpwrap, which
+# OpenWrt splits into its own mptcpize package. Owning the name keeps apk
+# from installing both (file conflict) or pulling it in for a dependency.
 define Package/$(PKG_NAME)
 SECTION:=net
 CATEGORY:=Network
 DEPENDS:=+libell @!(LINUX_5_4)
+PROVIDES:=mptcpize
 TITLE:=mptcpd
 URL:=https://github.com/intel/mptcpd
 endef
