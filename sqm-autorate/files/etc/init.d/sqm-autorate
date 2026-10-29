@@ -13,6 +13,8 @@
 
 . /lib/functions/network.sh
 
+AUTORATE_DIR="${SQM_AUTORATE_DIR:-/usr/share/sqm-autorate}"
+
 _config_autorate() {
 	config_get enabled "$1" enabled
 	[ "${enabled}" != "1" ] && return
@@ -30,7 +32,12 @@ _config_autorate() {
 	[ "${max_upload}" == "0" ] || [ "${upload}" == "0" ] && return
 #	config_get interface "$1" interface
 #	cp /usr/share/sqm-autorate/cake-autorate_template.sh /usr/share/sqm-autorate/cake-autorate_config.${interface}.sh
-	cp /usr/share/sqm-autorate/config_template.sh /usr/share/sqm-autorate/config.$1.sh
+	# The instance config is a copy of the template (it reads uci at run
+	# time) on the overlay: write it only when it differs, not on every
+	# boot and sqm commit.
+	cmp -s "${AUTORATE_DIR}/config_template.sh" "${AUTORATE_DIR}/config.$1.sh" ||
+		cp "${AUTORATE_DIR}/config_template.sh" "${AUTORATE_DIR}/config.$1.sh"
+	AUTORATE_SECTIONS="${AUTORATE_SECTIONS} $1"
 }
 
 _launch_autorate() {
@@ -54,10 +61,21 @@ _launch_autorate() {
 }
 
 start_service() {
-	rm -f /usr/share/sqm-autorate/config.*.sh
+	local f sec
+	AUTORATE_SECTIONS=""
 	config_load sqm
 	config_foreach _config_autorate queue
-	[ -n "$(ls /usr/share/sqm-autorate/config.*.sh 2>/dev/null)" ] && _launch_autorate
+	# drop the configs of queues no longer autorated
+	for f in "${AUTORATE_DIR}"/config.*.sh; do
+		[ -e "$f" ] || continue
+		sec="${f#"${AUTORATE_DIR}"/config.}"
+		sec="${sec%.sh}"
+		case " ${AUTORATE_SECTIONS} " in
+			*" ${sec} "*) ;;
+			*) rm -f "$f" ;;
+		esac
+	done
+	[ -n "$(ls "${AUTORATE_DIR}"/config.*.sh 2>/dev/null)" ] && _launch_autorate
 }
 
 reload_service() {
