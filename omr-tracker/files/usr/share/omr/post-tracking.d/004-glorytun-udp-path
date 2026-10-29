@@ -87,17 +87,30 @@ glorytunudppath() {
 			rate_tx=12500000
 			rate_rx=12500000
 		fi
-		if [ "$OMR_TRACKER_DEVICE_IP" != "" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep -f glorytun-udp)" != "" ] && ! _gtudp_path_running "$OMR_TRACKER_DEVICE_IP" && [ -n "$(resolveip -4 -t 5 $serverip)" ]; then
-			serverip="$(resolveip -4 -t 5 $serverip | head -n 1 | tr -d '\n')"
-			glorytun-udp path addr $OMR_TRACKER_DEVICE_IP to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set up rate $rate_mode tx $rate_tx rx $rate_rx pref 1 > /dev/null 2>&1
+		# One resolved address per family: serverip was overwritten with the
+		# IPv4 address, so for a server given by name "resolveip -6" then got
+		# an IPv4 literal and the IPv6 path was never added, and the backup
+		# pref below looked up each family from the other's address. Only
+		# resolved when needed: a running path must not wait on DNS
+		serverip4=""
+		serverip6=""
+		if [ "$OMR_TRACKER_DEVICE_IP" != "" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep -f glorytun-udp)" != "" ] && ! _gtudp_path_running "$OMR_TRACKER_DEVICE_IP"; then
+			serverip4="$(resolveip -4 -t 5 "$serverip" | head -n 1 | tr -d '\n')"
+			[ -n "$serverip4" ] && glorytun-udp path addr $OMR_TRACKER_DEVICE_IP to addr "$serverip4" port ${gtudp_port} dev ${gtudp_dev} set up rate $rate_mode tx $rate_tx rx $rate_rx pref 1 > /dev/null 2>&1
 		fi
-		if [ "$OMR_TRACKER_DEVICE_IP6" != "" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep -f glorytun-udp)" != "" ] && ! _gtudp_path_running "$OMR_TRACKER_DEVICE_IP6" && [ -n "$(resolveip -6 -t 5 $serverip)" ]; then
-			serverip="$(resolveip -6 -t 5 $serverip | head -n 1 | tr -d '\n')"
-			glorytun-udp path addr "$OMR_TRACKER_DEVICE_IP6" to addr "$serverip" port ${gtudp_port} dev ${gtudp_dev} set up rate $rate_mode tx $rate_tx rx $rate_rx pref 1 > /dev/null 2>&1
+		if [ "$OMR_TRACKER_DEVICE_IP6" != "" ] && [ "$(uci -q get openmptcprouter.$OMR_TRACKER_INTERFACE.vpn)" != "1" ] && [ "$(pgrep -f glorytun-udp)" != "" ] && ! _gtudp_path_running "$OMR_TRACKER_DEVICE_IP6"; then
+			serverip6="$(resolveip -6 -t 5 "$serverip" | head -n 1 | tr -d '\n')"
+			[ -n "$serverip6" ] && glorytun-udp path addr "$OMR_TRACKER_DEVICE_IP6" to addr "$serverip6" port ${gtudp_port} dev ${gtudp_dev} set up rate $rate_mode tx $rate_tx rx $rate_rx pref 1 > /dev/null 2>&1
 		fi
 		[ "$multipath_config" = "backup" ] && [ "$(pgrep -f glorytun-udp)" != "" ] && {
-			[ -n "$OMR_TRACKER_DEVICE_IP" ] && [ -n "$(resolveip -4 -t 5 $serverip)" ] && glorytun-udp path addr $OMR_TRACKER_DEVICE_IP to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set pref 125 > /dev/null 2>&1
-			[ -n "$OMR_TRACKER_DEVICE_IP6" ] && [ -n "$(resolveip -6 -t 5 $serverip)" ] && glorytun-udp path addr $OMR_TRACKER_DEVICE_IP6 to addr $serverip port ${gtudp_port} dev ${gtudp_dev} set pref 125 > /dev/null 2>&1
+			if [ -n "$OMR_TRACKER_DEVICE_IP" ]; then
+				[ -z "$serverip4" ] && serverip4="$(resolveip -4 -t 5 "$serverip" | head -n 1 | tr -d '\n')"
+				[ -n "$serverip4" ] && glorytun-udp path addr $OMR_TRACKER_DEVICE_IP to addr "$serverip4" port ${gtudp_port} dev ${gtudp_dev} set pref 125 > /dev/null 2>&1
+			fi
+			if [ -n "$OMR_TRACKER_DEVICE_IP6" ]; then
+				[ -z "$serverip6" ] && serverip6="$(resolveip -6 -t 5 "$serverip" | head -n 1 | tr -d '\n')"
+				[ -n "$serverip6" ] && glorytun-udp path addr "$OMR_TRACKER_DEVICE_IP6" to addr "$serverip6" port ${gtudp_port} dev ${gtudp_dev} set pref 125 > /dev/null 2>&1
+			fi
 		}
 	}
 	config_list_foreach $1 ip addpath
