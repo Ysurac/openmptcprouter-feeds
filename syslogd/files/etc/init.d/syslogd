@@ -6,21 +6,40 @@ USE_PROCD=1
 NAME=syslogd
 PROG=/sbin/syslogd
 
+# BusyBox syslogd binds /dev/log like logd does: whichever starts last
+# owns it, so keep logd disabled when this one is used.
 start_service() {
 	local log_size=$(uci -q get system.@system[0].log_size)
 	local log_ip=$(uci -q get system.@system[0].log_ip)
 	local log_port=$(uci -q get system.@system[0].log_port || echo '514')
+	local log_remote=$(uci -q get system.@system[0].log_remote || echo '1')
+	local log_proto=$(uci -q get system.@system[0].log_proto)
 	local log_file=$(uci -q get system.@system[0].log_file)
 	local conloglevel=$(uci -q get system.@system[0].conloglevel)
+	local remote=""
+
+	if [ -n "$log_ip" ] && [ "$log_remote" != "0" ]; then
+		# BusyBox only logs over UDP
+		[ "$log_proto" = "tcp" ] && logger -t syslogd -p daemon.warn "log_proto tcp is not supported by BusyBox syslogd, using UDP"
+		# an IPv6 address needs brackets, or the port is read as its last group
+		case "$log_ip" in
+			*:*) remote="[$log_ip]:$log_port" ;;
+			*) remote="$log_ip:$log_port" ;;
+		esac
+	fi
 
 	procd_open_instance
-	procd_set_param command "$PROG" -n ${log_size:+-C"$log_size"} ${log_ip:+-R"$log_ip":"$log_port"} ${log_file:+-O "$log_file"} ${conloglevel:+-l "$conloglevel"}
+	# -L: with -R, BusyBox stops logging locally (logread, log_file) unless asked
+	procd_set_param command "$PROG" -n ${log_size:+-C"$log_size"} ${remote:+-R "$remote" -L} ${log_file:+-O "$log_file"} ${conloglevel:+-l "$conloglevel"}
 	procd_set_param respawn
 	procd_close_instance
 }
 
-reload_service() {
-	procd_send_signal syslogd
+# No reload_service: BusyBox syslogd ignores SIGHUP and reads its settings
+# only from the command line, so a reload runs start_service again and procd
+# restarts the instance when the command line changed.
+service_triggers() {
+	procd_add_reload_trigger system
 }
 
 service_data() {
