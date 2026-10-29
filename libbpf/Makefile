@@ -50,10 +50,6 @@ define Package/libbpf/description
   libbpf is a library for loading eBPF programs and reading and manipulating eBPF objects from user-space.
 endef
 
-MAKE_VARS = \
-	EXTRA_CFLAGS="$(TARGET_CFLAGS) $(TARGET_CPPFLAGS)" \
-	LDFLAGS="$(TARGET_LDFLAGS)"
-
 MAKE_FLAGS += \
 	$(if $(findstring c,$(OPENWRT_VERBOSE)),V=1,V='') \
 	LIBSUBDIR=lib
