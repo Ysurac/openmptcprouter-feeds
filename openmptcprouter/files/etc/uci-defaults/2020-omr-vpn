@@ -112,8 +112,22 @@ if [ "$(uci -q get glorytun-udp.vpn.key)" = "" ] && [ "$(uci -q get glorytun.vpn
 	uci -q commit glorytun-udp
 fi
 
+# The default VPN is MQVPN, or the first of the others that is installed
+# when it is not (openmptcprouter-mini images do not ship it): a VPN that
+# is not there left them without any tunnel
 _omr_vpn="$(uci -q get openmptcprouter.settings.vpn)"
-if [ -z "$_omr_vpn" ] || [ "$_omr_vpn" = "mqvpn" ]; then
+_omr_vpn_default=""
+if [ -z "$_omr_vpn" ]; then
+	if [ -f /etc/init.d/mqvpn ]; then
+		_omr_vpn_default="mqvpn"
+	elif [ -f /etc/init.d/glorytun ]; then
+		_omr_vpn_default="glorytun_tcp"
+	elif [ -f /etc/init.d/openvpn ]; then
+		_omr_vpn_default="openvpn"
+	fi
+	_omr_vpn="$_omr_vpn_default"
+fi
+if [ "$_omr_vpn" = "mqvpn" ]; then
 	if [ -z "$(uci -q get network.tun0)" ]; then
 		uci -q batch <<-EOF >/dev/null
 			set network.tun0=device
@@ -137,9 +151,9 @@ elif [ "$(uci -q get network.tun0.mtu)" = "1200" ] || [ -z "$(uci -q get network
 fi
 
 # Set the default VPN
-if [ "$(uci -q get openmptcprouter.settings.vpn)" = "" ]; then
+if [ "$(uci -q get openmptcprouter.settings.vpn)" = "" ] && [ -n "$_omr_vpn_default" ]; then
 	uci -q batch <<-EOF >/dev/null
-		set openmptcprouter.settings.vpn='mqvpn'
+		set openmptcprouter.settings.vpn='$_omr_vpn_default'
 		commit openmptcprouter
 	EOF
 fi
