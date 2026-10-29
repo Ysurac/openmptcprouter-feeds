@@ -148,11 +148,13 @@ generate_config() {
 
 	# [protos] settings
 	local tls_cert_expire_threshold tls_app_blocks_tracking stun_max_packets_extra_dissection
+	local conf_tmp
 
 	config_get tls_cert_expire_threshold protos tls_cert_expire_threshold 7
 	config_get tls_app_blocks_tracking protos tls_app_blocks_tracking 'enable'
 	config_get stun_max_packets_extra_dissection protos stun_max_packets_extra_dissection 8
 
+	conf_tmp="$RUNTIME_DIR/ndpid.conf.new"
 	{
 		printf '%s\n' "# Auto-generated from UCI - do not edit manually"
 		printf '\n'
@@ -212,7 +214,11 @@ generate_config() {
 		printf 'tls.certificate_expiration_threshold = %s\n' "$tls_cert_expire_threshold"
 		printf 'tls.application_blocks_tracking      = %s\n' "$tls_app_blocks_tracking"
 		printf 'stun.max_packets_extra_dissection    = %s\n' "$stun_max_packets_extra_dissection"
-	} > /etc/ndpid.conf
+	} > "$conf_tmp"
+	# /etc is on flash: every start and reload rewrote it, unchanged, and
+	# omr-bypass starts nDPId on each of its runs while it is not up
+	cmp -s "$conf_tmp" /etc/ndpid.conf || cp "$conf_tmp" /etc/ndpid.conf
+	rm -f "$conf_tmp"
 }
 
 start_service() {
