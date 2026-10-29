@@ -126,7 +126,6 @@ if [ "$(uci -q get v2ray.omrrouting)" = "" ]; then
 		set v2ray.omrexit=outbound
 		set v2ray.omrexit.protocol='freedom'
 		set v2ray.omrexit.tag='out'
-		add_list v2ray.main.outbounds=omrexit
 		set v2ray.omrrouting=routing_rule
 		set v2ray.omrrouting.type='field'
 		set v2ray.omrrouting.inbound_tag='omrbridge'
@@ -138,13 +137,20 @@ if [ "$(uci -q get v2ray.omrrouting)" = "" ]; then
 		set v2ray.omrroutingo.outbound_tag='out'
 		set v2ray.main_routing=routing
 		set v2ray.main_routing.enabled=1
-		set v2ray.main_routing.rules='omrrouting'
-		add_list v2ray.main_routing.rules='omrroutingo'
-		commit v2ray
 	EOF
+	# Added to the user's lists, once: omrrouting deleted by the user but
+	# omrexit kept, omrexit was listed twice, two outbounds tagged "out"
+	# that v2ray refuses, and the routing rules were replaced
+	uci -q get v2ray.main.outbounds | grep -qw omrexit || uci -q add_list v2ray.main.outbounds=omrexit
+	for rule in omrrouting omrroutingo; do
+		uci -q get v2ray.main_routing.rules | grep -qw "$rule" || uci -q add_list v2ray.main_routing.rules="$rule"
+	done
+	uci -q commit v2ray
 fi
 
-if [ "$(uci -q get v2ray.main.error_log)" != "/dev/null" ]; then
+# the error log the first releases set: only that one, a log the user set
+# is kept
+if [ "$(uci -q get v2ray.main.error_log)" = "/var/log/v2ray-error.log" ]; then
 	uci -q batch <<-EOF >/dev/null
 		set v2ray.main.error_log='/dev/null'
 		commit v2ray

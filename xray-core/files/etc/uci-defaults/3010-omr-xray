@@ -128,7 +128,6 @@ if [ "$(uci -q get xray.omrrouting)" = "" ]; then
 		set xray.omrexit=outbound
 		set xray.omrexit.protocol='freedom'
 		set xray.omrexit.tag='out'
-		add_list xray.main.outbounds=omrexit
 		set xray.omrrouting=routing_rule
 		set xray.omrrouting.type='field'
 		set xray.omrrouting.inbound_tag='omrbridge'
@@ -140,18 +139,17 @@ if [ "$(uci -q get xray.omrrouting)" = "" ]; then
 		set xray.omrroutingo.outbound_tag='out'
 		set xray.main_routing=routing
 		set xray.main_routing.enabled=1
-		set xray.main_routing.rules='omrrouting'
-		add_list xray.main_routing.rules='omrroutingo'
-		commit xray
 	EOF
+	# Added to the user's lists, once: omrrouting deleted by the user but
+	# omrexit kept, omrexit was listed twice, two outbounds tagged "out"
+	# that xray refuses, and the routing rules were replaced
+	uci -q get xray.main.outbounds | grep -qw omrexit || uci -q add_list xray.main.outbounds=omrexit
+	for rule in omrrouting omrroutingo; do
+		uci -q get xray.main_routing.rules | grep -qw "$rule" || uci -q add_list xray.main_routing.rules="$rule"
+	done
+	uci -q commit xray
 fi
 
-if [ "$(uci -q get xray.main.error_log)" != "/dev/null" ]; then
-	uci -q batch <<-EOF >/dev/null
-		set xray.main.error_log='/dev/null'
-		commit xray
-	EOF
-fi
 #if [ "$(uci -q get xray.main.mem_percentage)" = "0" ]; then
 #	uci -q batch <<-EOF >/dev/null
 #		set xray.main.mem_percentage='80'
