@@ -90,14 +90,14 @@ function validateServerSpec(sid, s) {
 }
 
 return view.extend({
-	load: function() {
+	load() {
 		return Promise.all([
 			callHostHints(),
 			uci.load('firewall')
 		]);
 	},
 
-	render: function([hosts]) {
+	render([hosts]) {
 		let m, s, o, ss, so, dnss;
 
 		let noi18nstrings = {
@@ -242,15 +242,6 @@ return view.extend({
 		);
 		o.optional = true;
 		o.placeholder = '/router.local/router.lan/192.168.0.1';
-
-		o = s.taboption('general', form.DynamicList, 'ipset',
-			_('IP sets'),
-			_('List of IP sets to populate with the IPs of DNS lookup results of the FQDNs also specified here.'));
-		o.filter = function(section_id, name) {
-			return (section_id.startsWith('omr_dscp') == false);
-		};
-		o.optional = true;
-		o.placeholder = '/example.org/ipset,ipset6';
 
 		o = s.taboption('general', form.Flag, 'allservers',
 			_('All servers'),
@@ -527,6 +518,7 @@ return view.extend({
 			let target = this.section.formvalue(section_id, '_svc_target') || '.';
 			let params = value.trim().split('\n').map(l => l.trim()).filter(Boolean);
 
+			// eslint-disable-next-line no-undef
 			const hex = drh.buildSvcbHex(priority, target, params);	
 			uci.set('dhcp', section_id, 'hexdata', hex);
 		};
@@ -536,6 +528,7 @@ return view.extend({
 			if (rrnum !== '65') return null;
 
 			let hexdata = uci.get('dhcp', section_id, 'hexdata');
+			// eslint-disable-next-line no-undef
 			return drh.parseSvcbHex(hexdata);
 		};
 

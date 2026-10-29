@@ -295,6 +295,30 @@ function add_dependency_permutations(o, deps) {
 	res.forEach(dep => o.depends(dep));
 }
 
+// Default gcmp256/sae_ext_key like the wifi-scripts backend: on only for
+// WPA3-Personal Compatibility Mode (sae-compat) on an EHT (Wi-Fi 7) radio, off
+// otherwise. htmode is a radio property, not a wifi-iface one, so it cannot be a
+// same-section o.defaults dependency. Read the currently selected htmode from the
+// radio's frequency/width widget so the default reacts to changes made in the
+// same modal, and only fall back to the saved config if that widget is not
+// available. On EHT the base updateDefaultValue picks the default from the
+// encryption mode (sae-compat -> on, sae/sae-mixed -> off); otherwise force off.
+// Both paths go through the base method so the checkbox is updated reactively.
+function eht_compat_default(section_id) {
+	const dev = uci.get('wireless', section_id, 'device');
+	let htmode = dev ? uci.get('wireless', dev, 'htmode') : null;
+
+	const freq = dev ? this.map.lookupOption('_freq', dev) : null;
+	if (freq)
+		htmode = freq[0].formvalue(dev)?.[0] ?? htmode;
+
+	this.defaults = (htmode && htmode.match(/^EHT/))
+		? { '1': [{ encryption: 'sae-compat' }], '0': [{ encryption: 'sae' }, { encryption: 'sae-mixed' }] }
+		: { '0': [] };
+
+	return form.Flag.prototype.updateDefaultValue.call(this, section_id);
+}
+
 // Define a class CBIWifiFrequencyValue that extends form.Value
 var CBIWifiFrequencyValue = form.Value.extend({
 	// Declare an RPC method to get the frequency list for a given device
@@ -325,7 +349,7 @@ var CBIWifiFrequencyValue = form.Value.extend({
 					return;
 
 				const band = '%dg'.format(freq.band);
-				const available = (freq.restricted && freq.no_ir) ? false: true;
+				const available = !(freq.restricted && freq.flags.includes("no_ir"));
 
 				this.channels[band].push(
 					freq.channel,
@@ -679,6 +703,7 @@ return view.extend({
 			const badge = row.querySelector('[data-name="_badge"] > div');
 			const stat = row.querySelector('[data-name="_stat"]');
 			const btns = row.querySelectorAll('.cbi-section-actions button');
+			if (btns.length < 3) return;
 			const busy = btns[0].classList.contains('spinning') || btns[1].classList.contains('spinning') || btns[2].classList.contains('spinning');
 
 			if (radioDev) {
@@ -866,7 +891,7 @@ return view.extend({
 		s.load = function() {
 			return network.getWifiDevices().then(L.bind(function(radios) {
 				this.radios = radios.sort(function(a, b) {
-					return a.getName() > b.getName();
+					return a.getName().localeCompare(b.getName());
 				});
 
 				const tasks = [];
@@ -1048,7 +1073,7 @@ return view.extend({
 				ss.tab('encryption', _('Wireless Security'));
 				ss.tab('macfilter', _('MAC-Filter'));
 				ss.tab('advanced', _('Advanced Settings'));
-				ss.tab('roaming', _('WLAN roaming'), _('Settings for assisting wireless clients in roaming between multiple APs: 802.11r, 802.11k and 802.11v'));
+				ss.tab('roaming', _('WLAN Roaming'), _('Settings for assisting wireless clients in roaming between multiple APs: 802.11r, 802.11k and 802.11v'));
 
 				o = ss.taboption('general', form.ListValue, 'mode', _('Mode') , !have_mesh ? '<a id="installmesh" href="%s" target="_blank" rel="noreferrer">%s</a>'
 						.format(L.url('admin/system/package-manager') + '?query=wpad-mesh', _('802.11s? Install mesh wpad') ) : '');
@@ -1307,6 +1332,7 @@ return view.extend({
 				o.depends('encryption', 'wpa3-mixed');
 				o.depends('encryption', 'wpa3-192');
 				o.depends('encryption', 'psk');
+				o.depends('encryption', 'sae');
 				o.depends('encryption', 'psk2');
 				o.depends('encryption', 'wpa-mixed');
 				o.depends('encryption', 'psk-mixed');
@@ -1333,6 +1359,7 @@ return view.extend({
 
 
 				const crypto_modes = [];
+				const is_6ghz = uci.get('wireless', radioNet.getWifiDeviceName(), 'band') == '6g';
 
 				if (hwtype == 'mac80211') {
 					const has_supplicant = L.hasSystemFeature('wpasupplicant');
@@ -1359,9 +1386,11 @@ return view.extend({
 					const has_sta_wep = L.hasSystemFeature('wpasupplicant', 'wep');
 
 					if (has_hostapd || has_supplicant) {
-						crypto_modes.push(['psk2',      'WPA2-PSK',                    35]);
-						crypto_modes.push(['psk-mixed', 'WPA-PSK/WPA2-PSK Mixed Mode', 22]);
-						crypto_modes.push(['psk',       'WPA-PSK',                     12]);
+						if (!is_6ghz) {
+							crypto_modes.push(['psk2',      'WPA2-PSK',                    35]);
+							crypto_modes.push(['psk-mixed', 'WPA-PSK/WPA2-PSK Mixed Mode', 22]);
+							crypto_modes.push(['psk',       'WPA-PSK',                     12]);
+						}
 					}
 					else {
 						encr.description = _('WPA-Encryption requires wpa_supplicant (for client mode) or hostapd (for AP and ad-hoc mode) to be installed.');
@@ -1369,10 +1398,15 @@ return view.extend({
 
 					if (has_ap_sae || has_sta_sae) {
 						crypto_modes.push(['sae',       'WPA3-SAE',                     31]);
-						crypto_modes.push(['sae-mixed', 'WPA2-PSK/WPA3-SAE Mixed Mode', 30]);
+						if (!is_6ghz)
+							crypto_modes.push(['sae-mixed', 'WPA2-PSK/WPA3-SAE Mixed Mode', 30]);
 					}
 
-					if (has_ap_wep || has_sta_wep) {
+					// WPA3-Personal Compatibility Mode uses RSN overriding, which is an AP-only feature
+					if (has_ap_sae && !is_6ghz)
+						crypto_modes.push(['sae-compat', 'WPA2-PSK/WPA3-SAE Compatibility Mode', 30]);
+
+					if (!is_6ghz && (has_ap_wep || has_sta_wep)) {
 						crypto_modes.push(['wep-open',   _('WEP Open System'), 11]);
 						crypto_modes.push(['wep-shared', _('WEP Shared Key'),  10]);
 					}
@@ -1380,12 +1414,15 @@ return view.extend({
 					if (has_ap_eap || has_sta_eap) {
 						if (has_ap_eap192 || has_sta_eap192) {
 							crypto_modes.push(['wpa3', 'WPA3-EAP', 33]);
-							crypto_modes.push(['wpa3-mixed', 'WPA2-EAP/WPA3-EAP Mixed Mode', 32]);
+							if (!is_6ghz)
+								crypto_modes.push(['wpa3-mixed', 'WPA2-EAP/WPA3-EAP Mixed Mode', 32]);
 							crypto_modes.push(['wpa3-192', 'WPA3-EAP 192-bit Mode', 36]);
 						}
 
-						crypto_modes.push(['wpa2', 'WPA2-EAP', 34]);
-						crypto_modes.push(['wpa',  'WPA-EAP',  20]);
+						if (!is_6ghz) {
+							crypto_modes.push(['wpa2', 'WPA2-EAP', 34]);
+							crypto_modes.push(['wpa',  'WPA-EAP',  20]);
+						}
 					}
 
 					if (has_ap_owe || has_sta_owe) {
@@ -1401,6 +1438,7 @@ return view.extend({
 							'psk-mixed': has_hostapd || _('Requires hostapd'),
 							'sae': has_ap_sae || _('Requires hostapd with SAE support'),
 							'sae-mixed': has_ap_sae || _('Requires hostapd with SAE support'),
+							'sae-compat': has_ap_sae || _('Requires hostapd with SAE support'),
 							'wpa': has_ap_eap || _('Requires hostapd with EAP support'),
 							'wpa2': has_ap_eap || _('Requires hostapd with EAP support'),
 							'wpa3': has_ap_eap192 || _('Requires hostapd with EAP Suite-B support'),
@@ -1469,7 +1507,8 @@ return view.extend({
 					crypto_modes.push(['wep-shared', _('WEP Shared Key'),         10]);
 				}
 
-				crypto_modes.push(['none',       _('No Encryption'),   0]);
+				if (!is_6ghz)
+					crypto_modes.push(['none',       _('No Encryption'),   0]);
 
 				crypto_modes.sort(function(a, b) { return b[2] - a[2]; });
 
@@ -1810,6 +1849,7 @@ return view.extend({
 				add_dependency_permutations(o, { mode: ['sta', 'adhoc', 'mesh', 'sta-wds'], encryption: ['psk', 'psk2', 'psk+psk2', 'psk-mixed'] });
 				o.depends('encryption', 'sae');
 				o.depends('encryption', 'sae-mixed');
+				o.depends('encryption', 'sae-compat');
 				o.datatype = 'wpakey';
 				o.rmempty = true;
 				o.password = true;
@@ -1866,9 +1906,9 @@ return view.extend({
 					const has_80211r = L.hasSystemFeature('hostapd', '11r') || L.hasSystemFeature('hostapd', 'eap');
 
 					o = ss.taboption('roaming', form.Flag, 'ieee80211r', _('802.11r Fast Transition'), _('Enables fast roaming among access points that belong to the same Mobility Domain'));
-					add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa2', 'wpa3', 'wpa3-mixed', , 'wpa3-192'] });
+					add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['wpa2', 'wpa3', 'wpa3-mixed', 'wpa3-192'] });
 					if (has_80211r)
-						add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['psk2', 'psk-mixed', 'sae', 'sae-mixed'] });
+						add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['psk2', 'psk-mixed', 'sae', 'sae-mixed', 'sae-compat'] });
 					o.rmempty = true;
 
 					o = ss.taboption('roaming', form.Value, 'nasid', _('NAS ID'), _('Used for two different purposes: RADIUS NAS ID and 802.11r R0KH-ID. Not needed with normal WPA(2)-PSK.'));
@@ -2013,10 +2053,10 @@ return view.extend({
 					o = ss.taboption('encryption', form.FileUpload, 'client_cert', _('Path to Client-Certificate'));
 					add_dependency_permutations(o, { mode: ['sta', 'sta-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed', 'wpa3-192'], eap_type: ['tls'] });
 
-					o = ss.taboption('encryption', form.FileUpload, 'priv_key', _('Path to Private Key'));
+					o = ss.taboption('encryption', form.FileUpload, 'private_key', _('Path to Private Key'));
 					add_dependency_permutations(o, { mode: ['sta', 'sta-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed', 'wpa3-192'], eap_type: ['tls'] });
 
-					o = ss.taboption('encryption', form.Value, 'priv_key_pwd', _('Password of Private Key'));
+					o = ss.taboption('encryption', form.Value, 'private_key_passwd', _('Password of Private Key'));
 					add_dependency_permutations(o, { mode: ['sta', 'sta-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed', 'wpa3-192'], eap_type: ['tls'] });
 					o.password = true;
 
@@ -2071,10 +2111,10 @@ return view.extend({
 					o = ss.taboption('encryption', form.FileUpload, 'client_cert2', _('Path to inner Client-Certificate'));
 					add_dependency_permutations(o, { mode: ['sta', 'sta-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed', 'wpa3-192'], auth: ['EAP-TLS'] });
 
-					o = ss.taboption('encryption', form.FileUpload, 'priv_key2', _('Path to inner Private Key'));
+					o = ss.taboption('encryption', form.FileUpload, 'private_key2', _('Path to inner Private Key'));
 					add_dependency_permutations(o, { mode: ['sta', 'sta-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed', 'wpa3-192'], auth: ['EAP-TLS'] });
 
-					o = ss.taboption('encryption', form.Value, 'priv_key2_pwd', _('Password of inner Private Key'));
+					o = ss.taboption('encryption', form.Value, 'private_key2_passwd', _('Password of inner Private Key'));
 					add_dependency_permutations(o, { mode: ['sta', 'sta-wds'], encryption: ['wpa', 'wpa2', 'wpa3', 'wpa3-mixed', 'wpa3-192'], auth: ['EAP-TLS'] });
 					o.password = true;
 
@@ -2146,7 +2186,23 @@ return view.extend({
 						}
 
 						o = ss.taboption('encryption', form.Flag, 'wpa_disable_eapol_key_retries', _('Enable key reinstallation (KRACK) countermeasures'), _('Complicates key reinstallation attacks on the client side by disabling retransmission of EAPOL-Key frames that are used to install keys. This workaround might cause interoperability issues and reduced robustness of key negotiation especially in environments with heavy traffic load.'));
-						add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['psk2', 'psk-mixed', 'sae', 'sae-mixed', 'wpa2', 'wpa3', 'wpa3-mixed'] });
+						add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['psk2', 'psk-mixed', 'sae', 'sae-mixed', 'sae-compat', 'wpa2', 'wpa3', 'wpa3-mixed'] });
+
+						o = ss.taboption('encryption', form.Flag, 'gcmp256', _('GCMP-256 pairwise cipher'), _('Advertise the GCMP-256 pairwise cipher. Mandatory for Wi-Fi 7 (EHT) and recommended otherwise, but some clients and chipsets fail to associate when it is offered. Enabled by default only in Compatibility Mode on a Wi-Fi 7 (EHT) radio, disabled otherwise.'));
+						add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['sae', 'sae-mixed', 'sae-compat'] });
+						o.updateDefaultValue = eht_compat_default;
+
+						o = ss.taboption('encryption', form.Flag, 'sae_ext_key', _('SAE-EXT-KEY (SAE-GDH)'), _('Advertise the SAE-EXT-KEY AKM (SAE using a group-dependent hash). Mandatory for Wi-Fi 7 (EHT) and recommended otherwise, but some clients misbehave when it is offered, in particular together with 802.11r Fast Transition. Enabled by default only in Compatibility Mode on a Wi-Fi 7 (EHT) radio, disabled otherwise.'));
+						add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['sae', 'sae-mixed', 'sae-compat'] });
+						o.updateDefaultValue = eht_compat_default;
+
+						o = ss.taboption('encryption', form.Flag, 'transition_disable', _('Transition Disable'), _('Signal Transition Disable (WPA3 Specification v3.5 section 13) so that a client which has connected once no longer downgrades to a weaker security mode for this SSID. The advertised bitmap is derived from the encryption mode.'));
+						o.enabled = 'on';
+						add_dependency_permutations(o, { mode: ['ap', 'ap-wds'], encryption: ['sae', 'wpa3', 'wpa3-192', 'owe'] });
+						o.cfgvalue = function(section_id) {
+							const v = L.toArray(uci.get('wireless', section_id, 'transition_disable'))[0];
+							return (v && v != 'off' && v != '0') ? 'on' : '0';
+						};
 
 						if (L.hasSystemFeature('hostapd', 'wps') && L.hasSystemFeature('wpasupplicant')) {
 							o = ss.taboption('encryption', form.Flag, 'wps_pushbutton', _('Enable WPS pushbutton, requires WPA(2)-PSK/WPA3-SAE'));
@@ -2158,6 +2214,7 @@ return view.extend({
 							o.depends('encryption', 'psk-mixed');
 							o.depends('encryption', 'sae');
 							o.depends('encryption', 'sae-mixed');
+							o.depends('encryption', 'sae-compat');
 						}
 					}
 				}
@@ -2192,7 +2249,9 @@ return view.extend({
 			cbi_update_table(table, [], E('em', { class: 'spinning' }, _('Starting wireless scan...')));
 
 			const md = ui.showModal(_('Join Network: Wireless Scan'), [
-				table,
+				E('div', {
+					'style': 'max-height:60vh;overflow:auto'
+				}, table),
 				E('div', { 'class': 'right' }, [
 					stop,
 					' ',
@@ -2246,10 +2305,11 @@ return view.extend({
 					const qm = res?.quality_max ?? 0;
 					const q = (qv > 0 && qm > 0) ? Math.floor((100 / qm) * qv) : 0;
 					const s = res.stale ? 'opacity:0.5' : '';
+					const ssid = (typeof res.ssid === 'string' && res.ssid.length > 0) ? document.createTextNode(`${res?.ssid}`) : null;
 
 					rows.push([
 						E('span', { 'style': s }, render_signal_badge(q, res?.signal, res?.noise)),
-						E('span', { 'style': s }, (typeof res.ssid === 'string' && res.ssid.length > 0) ? document.createTextNode(`${res?.ssid}`) : E('em', _('hidden'))),
+						E('span', { 'style': s }, ssid ?? E('em', _('hidden'))),
 						E('span', { 'style': s }, `${res?.channel}`),
 						E('span', { 'style': s }, `${res?.mode}`),
 						E('span', { 'style': s }, `${res?.bssid}`),
@@ -2356,7 +2416,7 @@ return view.extend({
 					uci.set('wireless', radioDev.getName(), 'htmode', 'HT'+w);
 				}
 				else {
-					uci.remove('wireless', radioDev.getName(), 'htmode');
+					uci.unset('wireless', radioDev.getName(), 'htmode');
 				}
 
 				uci.set('wireless', radioDev.getName(), 'channel', bss.channel);
@@ -2625,7 +2685,10 @@ return view.extend({
 
 			cbi_update_table(table, [], E('em', { 'class': 'spinning' }, _('Collecting data...')));
 
-			return E([ nodes, E('h3', _('Associated Stations')), table ]);
+			return E([ nodes, E('div', { 'class': 'cbi-section' }, [
+				E('h3', _('Associated Stations')),
+				table
+			]) ]);
 		}, this, m));
 	},
 
