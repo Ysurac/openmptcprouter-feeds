@@ -47,9 +47,6 @@ return L.view.extend({
 		o = s.taboption('general', form.Flag, 'mux_enabled', _('Mux'));
 		o = s.taboption('general', form.Value, 'mux_concurrency', _('Mux concurrency'));
 		o.datatype = 'uinteger'; o.placeholder = '8'; o.depends('mux_enabled', '1');
-		o = s.taboption('transport', form.Value, 'stream_settings', _('Raw stream settings override'));
-		o.rows = 8;
-		o.description = _('Raw JSON, replaces the whole "streamSettings" object built from the fields below when set');
 
 		v2.addOutboundProtocolFields(s);
 		v2.addStreamSettings(s, 'mark');

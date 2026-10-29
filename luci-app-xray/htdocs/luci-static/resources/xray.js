@@ -155,7 +155,9 @@ return L.Class.extend({
 
 	/* stream transport + TLS + sockopt, shared by inbound & outbound sections.
 	 * sockopt: 'tproxy' (inbound: redirect/tproxy/off) or 'mark' (outbound: uinteger)
-	 * reality: true on xray outbound sections only (adds the "reality" security choice)
+	 * reality: true on xray outbound sections. REALITY is the vless-reality
+	 * protocol, not a Security choice: the init refused "reality" there and
+	 * dropped the whole outbound.
 	 */
 	addStreamSettings: function(s, sockopt, reality) {
 		var o;
@@ -171,7 +173,7 @@ return L.Class.extend({
 		o.value('xhttp', _('XHTTP'));
 		/* the init leaves network out when unset: tcp in the core */
 		writeUnlessUnsetDefault(o, 'tcp');
-		o.description = _('gRPC and XHTTP are accepted here but this xray init script does not yet build a grpcSettings/xhttpSettings block for them -- use "Raw stream settings override" below if you need one now.');
+		o.description = _('gRPC and XHTTP are sent without a grpcSettings or xhttpSettings block: only a server that uses the default service name and path is reached.');
 
 		/* tcp header */
 		o = s.taboption('transport', form.ListValue, 'ss_tcp_header_type', _('TCP header obfuscation'));
@@ -251,17 +253,14 @@ return L.Class.extend({
 		o = s.taboption('tls', form.ListValue, 'ss_security', _('Security'));
 		o.value('none', _('None'));
 		o.value('tls', 'TLS');
-		if (reality) o.value('reality', 'REALITY (set protocol to "vless-reality" below, not here)');
 		writeUnlessUnsetDefault(o, 'none');
 
 		o = s.taboption('tls', form.Value, 'ss_tls_server_name', _('TLS server name (SNI)'));
 		o.datatype = 'host'; o.depends('ss_security', 'tls');
 		o = s.taboption('tls', form.Value, 'ss_tls_alpn', _('TLS ALPN'));
 		o.placeholder = 'h2,http/1.1'; o.depends('ss_security', 'tls');
-		o = s.taboption('tls', form.Flag, 'ss_tls_allow_insecure', _('Allow insecure'));
-		o.description = _('Skip certificate verification'); o.depends('ss_security', 'tls');
-		o = s.taboption('tls', form.Flag, 'ss_tls_allow_insecure_ciphers', _('Allow insecure ciphers'));
-		o.depends('ss_security', 'tls');
+		/* No "Allow insecure": xray dropped allowInsecure and the init never
+		 * wrote it. A self-signed server is accepted through its pin. */
 		o = s.taboption('tls', form.Flag, 'ss_tls_disable_system_root', _('Disable system root CAs'));
 		o.depends('ss_security', 'tls');
 		o = s.taboption('tls', form.ListValue, 'ss_tls_cert_usage', _('Certificate usage'));
@@ -271,18 +270,22 @@ return L.Class.extend({
 		o.depends('ss_security', 'tls');
 		o = s.taboption('tls', form.Value, 'ss_tls_key_file', _('Certificate key file'));
 		o.depends('ss_security', 'tls');
-		o = s.taboption('tls', form.Value, 'ss_tls_pinned_sha256', _('Pinned peer certificate SHA-256'));
-		o.placeholder = _('Automatic: VPS certificate');
-		o.description = _('SHA-256 of the server certificate, in hex or base64; several are separated by commas. Accepted instead of the CA and name checks. Leave empty to auto-pin the VPS certificate.');
-		o.validate = function(section_id, value) {
-			var pins = (value || '').split(/[\s,]+/).filter(function(p) { return p; });
-			for (var i = 0; i < pins.length; i++)
-				if (!/^[0-9a-fA-F]{64}$/.test(pins[i]) && !/^[A-Za-z0-9+\/]{43}=$/.test(pins[i]))
-					return _('Expecting SHA-256 digests, 64 hex or 44 base64 characters each, separated by commas');
-			return true;
-		};
-		o.depends('ss_security', 'tls');
+		/* The pin is the client's check of the server: outbounds only. On an
+		 * inbound the init skipped the certificates for it, and xray refused
+		 * the config. */
 		if (sockopt === 'mark') {
+			o = s.taboption('tls', form.Value, 'ss_tls_pinned_sha256', _('Pinned peer certificate SHA-256'));
+			o.placeholder = _('Automatic: VPS certificate');
+			o.description = _('SHA-256 of the server certificate, in hex or base64; several are separated by commas. Accepted instead of the CA and name checks. Leave empty to auto-pin the VPS certificate.');
+			o.validate = function(section_id, value) {
+				var pins = (value || '').split(/[\s,]+/).filter(function(p) { return p; });
+				for (var i = 0; i < pins.length; i++)
+					if (!/^[0-9a-fA-F]{64}$/.test(pins[i]) && !/^[A-Za-z0-9+\/]{43}=$/.test(pins[i]))
+						return _('Expecting SHA-256 digests, 64 hex or 44 base64 characters each, separated by commas');
+				return true;
+			};
+			o.depends('ss_security', 'tls');
+
 			o = s.taboption('tls', form.DummyValue, '_tls_pinned_active', _('Pinned certificate in use'));
 			o.cfgvalue = function(section_id) {
 				var tag = uci.get(conf, section_id, 'tag');
@@ -322,6 +325,7 @@ return L.Class.extend({
 		} else {
 			o = s.taboption('sockopt', form.Value, 'ss_sockopt_mark', _('Firewall mark'));
 			o.datatype = 'uinteger';
+			o.description = _('Not used while the transparent proxy has a redirect port: every outbound then gets mark 255, which keeps its traffic out of the redirect.');
 		}
 
 		/* sniffing (inbound only in practice, harmless if present on outbound) */
@@ -495,12 +499,12 @@ return L.Class.extend({
 			o = s.taboption('protocol', form.Value, 's_' + p + '_user_level', _('User level'));
 			o.datatype = 'uinteger'; o.depends('protocol', p);
 		});
+		/* VLESS takes "none" only: "Auto" was the first choice of a new
+		 * outbound and xray refused the config */
 		o = s.taboption('protocol', form.ListValue, 's_vless_user_encryption', _('Encryption'));
-		o.value('auto', _('Auto')); o.value('none', _('None')); o.depends('protocol', 'vless');
+		o.value('none', _('None')); o.default = 'none'; o.depends('protocol', 'vless');
 		o = s.taboption('protocol', form.Value, 's_vless_flow', _('Flow'));
 		o.placeholder = 'xtls-rprx-vision'; o.depends('protocol', 'vless');
-		o = s.taboption('protocol', form.Value, 's_vless_decryption', _('Decryption'));
-		o.depends('protocol', 'vless');
 
 		o = s.taboption('protocol', form.Value, 's_trojan_address', _('Server address'));
 		o.datatype = 'host'; o.depends('protocol', 'trojan');
@@ -522,7 +526,7 @@ return L.Class.extend({
 			o.value('auto', _('Auto')); o.value('aes-128-gcm', 'AES-128-GCM'); o.value('chacha20-poly1305', 'ChaCha20-Poly1305'); o.value('none', _('None'));
 			o.depends('protocol', 'vless-reality');
 			o = s.taboption('protocol', form.ListValue, 's_vless_reality_user_encryption', _('Encryption'));
-			o.value('auto', _('Auto')); o.value('none', _('None')); o.depends('protocol', 'vless-reality');
+			o.value('none', _('None')); o.default = 'none'; o.depends('protocol', 'vless-reality');
 			o = s.taboption('protocol', form.Value, 's_vless_reality_user_level', _('User level'));
 			o.datatype = 'uinteger'; o.depends('protocol', 'vless-reality');
 			o = s.taboption('protocol', form.Value, 's_vless_reality_flow', _('Flow'));

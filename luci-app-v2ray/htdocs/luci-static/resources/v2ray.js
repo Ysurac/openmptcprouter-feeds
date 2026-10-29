@@ -318,6 +318,7 @@ return L.Class.extend({
 		} else {
 			o = s.taboption('sockopt', form.Value, 'ss_sockopt_mark', _('Firewall mark'));
 			o.datatype = 'uinteger';
+			o.description = _('Not used while the transparent proxy has a redirect port: every outbound then gets mark 255, which keeps its traffic out of the redirect.');
 		}
 
 		/* sniffing (inbound only in practice, harmless if present on outbound) */
@@ -490,8 +491,10 @@ return L.Class.extend({
 			o = s.taboption('protocol', form.Value, 's_' + p + '_user_level', _('User level'));
 			o.datatype = 'uinteger'; o.depends('protocol', p);
 		});
+		/* VLESS takes "none" only: "Auto" was the first choice of a new
+		 * outbound and v2ray refused the config */
 		o = s.taboption('protocol', form.ListValue, 's_vless_user_encryption', _('Encryption'));
-		o.value('auto', _('Auto')); o.value('none', _('None')); o.depends('protocol', 'vless');
+		o.value('none', _('None')); o.default = 'none'; o.depends('protocol', 'vless');
 
 		o = s.taboption('protocol', form.Value, 's_trojan_address', _('Server address'));
 		o.datatype = 'host'; o.depends('protocol', 'trojan');

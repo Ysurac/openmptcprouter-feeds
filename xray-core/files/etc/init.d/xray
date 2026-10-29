@@ -435,7 +435,7 @@ xray_section_validate() {
 		'enabled:bool:0' \
 		'xray_file:string' \
 		'asset_location:directory' \
-		'mem_percentage:and(uinteger, max(100)):80' \
+		'mem_percentage:and(uinteger, max(100)):0' \
 		'config_file:file' \
 		'loglevel:or("debug", "info", "warning", "error", "none")' \
 		'access_log:string' \
@@ -576,7 +576,7 @@ inbound_section_validate() {
 		's_trojan_detour_to:string' \
 		's_trojan_disable_insecure_encryption:bool:0' \
 		's_socks_client_id:string' \
-		's_socks_client_email:string:"openmptcprouter"' \
+		's_socks_client_email:string:openmptcprouter' \
 		'ss_network:or("tcp", "kcp", "ws", "http", "domainsocket", "quic", "grpc", "xhttp")' \
 		'ss_security:or("none", "tls")' \
 		'ss_tls_server_name:host' \
@@ -665,7 +665,6 @@ outbound_section_validate() {
 		's_vless_user_security:or("auto", "aes-128-gcm", "chacha20-poly1305", "none")' \
 		's_vless_user_encryption:or("auto", "none")' \
 		's_vless_flow:string' \
-		's_vless_decryption:string' \
 		's_vless_user_level:uinteger' \
 		's_vless_reality_address:host' \
 		's_vless_reality_port:port' \
@@ -691,7 +690,7 @@ outbound_section_validate() {
 		's_socks_user_id:string' \
 		's_socks_email:string:openmptcprouter' \
 		'ss_network:or("tcp", "kcp", "ws", "http", "domainsocket", "quic", "grpc", "xhttp")' \
-		'ss_security:or("none", "tls")' \
+		'ss_security:or("none", "tls", "reality")' \
 		'ss_tls_server_name:host' \
 		'ss_tls_alpn:string' \
 		'ss_tls_allow_insecure:bool:0' \
@@ -1455,7 +1454,7 @@ add_inbound_setting() {
 			if [ -n "$s_socks_client_id" ] ; then
 				json_add_array "accounts"
 				json_add_object ""
-				json_add_string "user" "$s_socks_email"
+				json_add_string "user" "$s_socks_client_email"
 				json_add_string "pass" "$s_socks_client_id"
 				json_close_object
 				json_close_array # accounts
@@ -1609,27 +1608,24 @@ add_inbound_setting() {
 			json_close_array # alpn
 		fi
 
-		ss_tls_pinned_sha256="$(_tls_pin_list hex "$ss_tls_pinned_sha256" | tr '\n' ',')"
-		ss_tls_pinned_sha256="${ss_tls_pinned_sha256%,}"
-		test -n "$ss_tls_pinned_sha256" && \
-			json_add_string "pinnedPeerCertSha256" "$ss_tls_pinned_sha256"
+		# The server side: a pin (ss_tls_pinned_sha256, which an earlier
+		# LuCI page showed on inbounds too) is the client's check of the
+		# server, and skipping the certificates for it left xray refusing
+		# the config
+		json_add_boolean "disableSystemRoot" "$ss_tls_disable_system_root"
 
-		if [ -z "$ss_tls_pinned_sha256" ] ; then
-			json_add_boolean "disableSystemRoot" "$ss_tls_disable_system_root"
+		json_add_array "certificates"
+		if [ -n "$ss_tls_cert_file" ] ; then
+			json_add_object ""
 
-			json_add_array "certificates"
-			if [ -n "$ss_tls_cert_file" ] ; then
-				json_add_object ""
+			json_add_string "certificateFile" "$ss_tls_cert_file"
+			json_add_string "keyFile" "$ss_tls_key_file"
+			test -n "$ss_tls_cert_usage" && \
+				json_add_string "usage" "$ss_tls_cert_usage"
 
-				json_add_string "certificateFile" "$ss_tls_cert_file"
-				json_add_string "keyFile" "$ss_tls_key_file"
-				test -n "$ss_tls_cert_usage" && \
-					json_add_string "usage" "$ss_tls_cert_usage"
-
-				json_close_object
-			fi
-			json_close_array # certificates
+			json_close_object
 		fi
+		json_close_array # certificates
 
 		json_close_object # tlsSettings
 	fi
@@ -1867,6 +1863,12 @@ add_outbound_setting() {
 		_err "Invalid outbound section: $section"
 		return 1
 	fi
+	# Earlier LuCI pages offered "reality" as Security: only the
+	# vless-reality protocol uses it, and sets it itself with its
+	# realitySettings. Refused, it dropped the whole outbound, omrout
+	# included, and the redirected LAN traffic left through the next
+	# outbound (freedom) instead of the VPS
+	[ "$ss_security" = "reality" ] && ss_security="none"
 
 	json_add_object ""
 
@@ -2022,8 +2024,6 @@ add_outbound_setting() {
 			append_server_address "$s_vless_address"
 
 			json_add_int "port" "$s_vless_port"
-			test -n "$ss_vless_decryption" && \
-				json_add_string "decryption" "$ss_vless_decryption"
 
 			json_add_array "users"
 			json_add_object ""
@@ -2031,8 +2031,9 @@ add_outbound_setting() {
 			json_add_int "alterId" "$s_vless_user_alter_id"
 			test -n "$s_vless_user_security" && \
 				json_add_string "security" "$s_vless_user_security"
-			test -n "$s_vless_user_encryption" && \
-				json_add_string "encryption" "$s_vless_user_encryption"
+			# "none" is the only value the validator allows that xray
+			# takes for VLESS: "auto" or no encryption refuses the config
+			json_add_string "encryption" "none"
 			test -n "$s_vless_user_level" && \
 				json_add_int "level" "$s_vless_user_level"
 			test -n "$s_vless_flow" && \
@@ -2062,8 +2063,7 @@ add_outbound_setting() {
 			json_add_int "alterId" "$s_vless_reality_user_alter_id"
 			test -n "$s_vless_reality_user_security" && \
 				json_add_string "security" "$s_vless_reality_user_security"
-			test -n "$s_vless_reality_user_encryption" && \
-				json_add_string "encryption" "$s_vless_reality_user_encryption"
+			json_add_string "encryption" "none"
 			test -n "$s_vless_reality_user_level" && \
 				json_add_int "level" "$s_vless_reality_user_level"
 			test -n "$s_vless_reality_flow" && \
@@ -2124,9 +2124,6 @@ add_outbound_setting() {
 		json_add_string "network" "$ss_network"
 
 	if [ "x$protocol" != "xshadowsocks" ]; then
-		test -n "$ss_decryption" && \
-			json_add_string "decryption" "$ss_decryption"
-
 		test -n "$ss_security" && \
 			json_add_string "security" "$ss_security"
 
@@ -2703,7 +2700,8 @@ start_instance() {
 			return 1
 		fi
 
-		if ! "$xray_file" test -config "$config_file" >/dev/null 2>&1 ; then
+		# xray has no "test" command (v2ray has): it is "run -test"
+		if ! "$xray_file" run -test -config "$config_file" >/dev/null 2>&1 ; then
 			_err "Validate config file failed: $config_file"
 			return 1
 		fi

@@ -13,7 +13,7 @@ return L.view.extend({
 		var m, s, o;
 
 		m = new form.Map(conf, _('XRay - Reverse'),
-			_('Legacy xray "reverse" proxy (bridge/portal). Only used by xray < 24; on newer xray this section is skipped in favour of a VLESS Reverse Proxy outbound/inbound pair, configured on the Outbounds/Inbounds pages instead.'));
+			_('Legacy xray "reverse" proxy (bridge/portal). The bridges and portals are only used by xray < 24. On newer xray, "Enabled" turns on the VLESS reverse bridge to the VPS instead, which carries the port forwards from the VPS to the LAN: unticked, they stop.'));
 
 		s = m.section(form.NamedSection, 'main_reverse', 'reverse', _('Reverse'));
 		s.addremove = false;
