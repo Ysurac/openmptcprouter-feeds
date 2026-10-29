@@ -137,6 +137,13 @@ return view.extend({
 		if (st.pubkey)
 			rows.push(statusRow(_('Sync public key'),
 				E('code', { 'style': 'word-break:break-all' }, [ st.pubkey ])));
+		/* A keep-settings sysupgrade from an image that did not keep the key
+		 * leaves the primary without it: every sync then fails until the
+		 * key is generated again and pushed to the backups. */
+		else if (st.configured && st.enabled !== false && st.role === 'primary' && st.key_present === false)
+			rows.push(statusRow(_('Sync public key'),
+				E('strong', { 'style': 'color:red' },
+					[ _('missing: the config sync cannot reach the backups, run "Save & Deploy HA" again') ])));
 
 		return E('table', { 'class': 'table' }, rows);
 	},

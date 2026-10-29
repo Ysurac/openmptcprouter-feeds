@@ -138,8 +138,12 @@ tabs of the keepalived app.
 - **DHCP options** `3,<vip>` and `6,<vip>` on the `lan` pool, when
   *Advertise VIP via DHCP* is on. dnsmasq is then restarted.
 - **The sync cron line** `* * * * * /etc/keepalived/scripts/rsync.sh`.
-- **The config-sync SSH key** (ed25519, in the `keepalived` user's home),
-  on the preferred master, with the public key pushed to the backups.
+- **The config-sync SSH key** (ed25519, `/etc/keepalived/keys/omr_ha_sync`),
+  on the preferred master, with the public key pushed to the backups. It
+  is kept across a keep-settings sysupgrade and never synced to the peers.
+  A sysupgrade from an image older than this change still loses it once:
+  the status page then shows the sync key as missing, run *Save & Deploy
+  HA* again from the preferred master.
 - **Peer sections** carrying the sync roles: `send` on the preferred
   master, `receive` plus the master's public key on the backups.
 
