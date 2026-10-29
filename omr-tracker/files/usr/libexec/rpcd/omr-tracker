@@ -1,0 +1,1089 @@
+#!/bin/sh
+# /usr/libexec/rpcd/omr-tracker
+# rpcd plugin exposing the omr-tracker daemons and what they see via ubus
+#
+# Usage:
+#   ubus call omr-tracker status
+#   ubus call omr-tracker status '{"interface":"wan1"}'
+#   ubus call omr-tracker servers
+#   ubus call omr-tracker restart '{"interface":"wan1"}'
+#   ubus call omr-tracker restart
+#   ubus call omr-tracker failback
+#   ubus call omr-tracker get_schema
+#   ubus call omr-tracker get_config '{"section":"wan1"}'
+#   ubus call omr-tracker get_config '{"type":"hosts_defaults"}'
+#   ubus call omr-tracker set_config '{"section":"wan1","type":"interface","values":{"interval":5,"check_quality":true,"failure_loss":null}}'
+#   ubus call omr-tracker set_config '{"section":"world","values":{"hosts":["1.1.1.1","9.9.9.9"]},"apply":false}'
+#   ubus call omr-tracker delete_config '{"section":"wan1"}'
+#   ubus call omr-tracker reload
+#   ubus call omr-tracker get_scripts
+#   ubus call omr-tracker set_scripts '{"section":"wan1","values":{"script_alert_down":"logger wan1 down"}}'
+#
+# status: one entry per interface tracker, with what procd knows of it
+# (running, pid, and under "settings" the values it was started with: the
+# defaults section merged in, so what the running tracker uses, not the uci
+# config, which may have been edited since) and the runtime state the
+# tracker and its post-tracking hooks wrote. A monitor only interface stays
+# "up" in "state" and reports its failures in "monitor_state". Then the
+# proxy, server and GRE trackers under "trackers", and the global vpn,
+# server and proxy states. A value that is not known is left out.
+# servers: the VPS servers as omr-tracker-server sees them, and whether a
+# backup is kept in use by the failback setting (failback.held).
+# restart, failback: the init script commands. restart returns at once: a
+# tracker restart waits up to 35 s for the post-tracking hook it runs.
+# get_schema: the sections and options set_config takes, from SCHEMA below.
+# get_config: the omr-tracker config, values typed as in the schema.
+# set_config: creates or changes one section. Every value is checked before
+# anything is written; null or "" removes an option (an interface then takes
+# the defaults section's). It is refused while omr-tracker has uncommitted
+# uci changes ("uci changes omr-tracker"; LuCI keeps its own per session,
+# apart), as the commit would take them along. Then the change is applied
+# (unless "apply" is false) the way LuCI does: a
+# config.change event, on which procd reloads omr-tracker and restarts the
+# trackers whose settings changed. The options the post-tracking hooks read
+# (mail, restart_down, switch_operator_*...) count from the next cycle.
+# delete_config: removes an interface, gre or host group section.
+# get_scripts, set_scripts: script_alert_up/down, which the hooks run with
+# eval, as root: their own methods, for an ACL of their own
+# (omr-tracker-scripts), and not in get_config, as they can hold the token
+# of a web hook.
+
+OMR_TRACKER_INIT="${OMR_TRACKER_INIT:-/etc/init.d/omr-tracker}"
+
+# The options set_config takes: <option> <section types> <kind>.
+# Section types: d defaults, i interface, p proxy, s server, g gre,
+# h hosts_defaults, q hosts_proxy. An option is listed for a section only
+# when something reads it there: the init script gives every section the
+# defaults section's value of an option it does not set, the trackers take
+# their settings from the init script, the post-tracking hooks read theirs
+# from the interface section, then from defaults. Options that nothing reads
+# (reliability, keep_failure_interval, recovery_interval, httping_ssl,
+# initial_state, hosts of an interface section...) are not taken.
+SCHEMA="enabled dipsg bool
+type di enum:none,ping,httping,dns,glorytun-udp
+type s enum:apiping,api,ping,none
+country di group:hosts_defaults
+country p group:hosts_proxy
+family di enum:ipv4,ipv6,ipv4ipv6
+count di int:1:100
+timeout dipsg int:1:3600
+interval dipsg int:1:86400
+interval_tries dis int:1:3600
+failure_interval di int:1:86400
+post_interval di int:0:86400
+post_interval_down di int:0:86400
+tries dipsg int:1:100
+tries_up di int:1:100
+wait_test dips int:0:3600
+size di int:1:65507
+max_ttl di int:1:255
+check_quality di bool
+failure_latency di int:1:60000
+recovery_latency di int:1:60000
+failure_loss di int:0:100
+recovery_loss di int:0:100
+failure_congestion di int:0:100
+recovery_congestion di int:0:100
+latency_ip di host
+latency_ip6 di host
+server_test di bool
+server_http_test di bool
+monitor_only di bool
+mail_alert dips bool
+restart_down di bool
+switch_operator_on_no_traffic di bool
+switch_operator_tries di int:1:100
+switch_operator_plmn di plmn
+disable_multipath_off di bool
+mail_up_subject d line
+mail_up_message d line
+mail_down_subject d line
+mail_down_message d line
+failback s enum:immediate,delayed,manual
+failback_delay s int:0:86400
+backup_check_interval s int:0:86400
+hosts hq hostlist
+hosts6 hq hostlist"
+
+# The options of get_scripts and set_scripts
+SCRIPT_SCHEMA="script_alert_up ip script
+script_alert_down ip script"
+
+# The tracker settings status reports: OMR_TRACKER_<NAME> in the
+# environment procd starts an interface tracker with
+SETTINGS_NUM="interval failure_interval interval_tries post_interval post_interval_down timeout tries tries_up count size max_ttl wait_test failure_latency failure_loss failure_congestion recovery_latency recovery_loss recovery_congestion"
+SETTINGS_STR="type family latency_ip latency_ip6"
+SETTINGS_FLAG="check_quality monitor_only server_test server_http_test"
+SETTINGS_LIST="hosts hosts6"
+
+_error() {
+	json_init
+	json_add_string error "$1"
+	json_dump
+	exit 1
+}
+
+# Interface and section names end up in variable names and uci paths
+_valid_name() {
+	case "$1" in
+		''|*[!A-Za-z0-9_]*) return 1 ;;
+	esac
+	return 0
+}
+
+_json_add_str() {
+	[ -n "$2" ] && json_add_string "$1" "$2"
+	return 0
+}
+
+# A uci flag, "1" for true
+_json_add_flag() {
+	case "$2" in
+		1) json_add_boolean "$1" 1 ;;
+		*) json_add_boolean "$1" 0 ;;
+	esac
+}
+
+# Left out when the value is not a number
+_json_add_num() {
+	case "$2" in
+		''|.*|*.|*.*.*|*[!0-9.]*) ;;
+		*.*) json_add_double "$1" "$2" ;;
+		*) json_add_int "$1" "$2" ;;
+	esac
+	return 0
+}
+
+# _json_add_list <name> <space separated words>
+_json_add_list() {
+	local _w
+	json_add_array "$1"
+	for _w in $2; do
+		json_add_string "" "$_w"
+	done
+	json_close_array
+}
+
+# _st <section> <option>: the state value in $_v
+_st() {
+	eval "_v=\${_st_${1}__${2}}"
+}
+
+# _in <instance> <field>: the instance value in $_v
+_in() {
+	eval "_v=\${_in_${1}__${2}}"
+}
+
+# The omr-tracker instances procd runs, as _in_<instance>__<field>
+# variables. $_ifaces: the interface trackers (their instance is named
+# after the interface), $_others: the proxy, server and GRE ones.
+_load_instances() {
+	local svc instances inst running pid cmd arg name val
+	_ifaces=""
+	_others=""
+	_any_running=0
+	svc=$(ubus call service list '{"name":"omr-tracker"}' 2>/dev/null)
+	[ -n "$svc" ] || return 0
+	json_load "$svc" 2>/dev/null || return 0
+	if ! json_select omr-tracker 2>/dev/null || ! json_select instances 2>/dev/null; then
+		json_cleanup
+		return 0
+	fi
+	json_get_keys instances
+	for inst in $instances; do
+		_valid_name "$inst" || continue
+		json_select "$inst" 2>/dev/null || continue
+		running=""
+		pid=""
+		cmd=""
+		arg=""
+		json_get_var running running
+		json_get_var pid pid
+		if json_select command 2>/dev/null; then
+			json_get_var cmd 1
+			json_get_var arg 2
+			json_select ..
+		fi
+		[ "$running" = "1" ] && _any_running=1
+		eval "_in_${inst}__running=\$running _in_${inst}__pid=\$pid _in_${inst}__arg=\$arg"
+		if [ "${cmd##*/}" = "omr-tracker" ]; then
+			# The init script names the instance after the interface
+			if [ "$arg" = "$inst" ]; then
+				_ifaces="$_ifaces $inst"
+				if json_select env 2>/dev/null; then
+					for name in DEVICE $_settings_env; do
+						val=""
+						json_get_var val "OMR_TRACKER_${name}"
+						eval "_in_${inst}__${name}=\$val"
+					done
+					json_select ..
+				fi
+			fi
+		else
+			# ss, v2ray, xray, server or gre
+			eval "_in_${inst}__kind=\${cmd##*/omr-tracker-}"
+			_others="$_others $inst"
+			if json_select env 2>/dev/null; then
+				for name in SERVER SS_TYPE; do
+					val=""
+					json_get_var val "OMR_TRACKER_${name}"
+					eval "_in_${inst}__${name}=\$val"
+				done
+				json_select ..
+			fi
+		fi
+		json_select ..
+	done
+	json_cleanup
+}
+
+# The runtime state the trackers write, and the server sections, from one
+# uci run, as _st_<section>__<option> variables (_type: the section type).
+# Only the options listed here are kept: the openmptcprouter config also
+# holds the VPS passwords and API tokens.
+_load_state() {
+	local lines sec opt val
+	_servers=""
+	lines=$(uci -q -P "$OMR_STATE_DIR" show openmptcprouter 2>/dev/null | awk -v q="'" '
+		BEGIN {
+			n = split("state latency latency_previous mptcp_status loop monitor_state current reachable master backup disabled ip vpn server proxy v2ray xray failback_hold", w, " ")
+			for (i = 1; i <= n; i++)
+				keep[w[i]] = 1
+		}
+		# uci show puts a value between quotes, and a quote in it as q\qq
+		function unquote(v,   out, p, esc) {
+			esc = q "\\" q q
+			out = ""
+			while ((p = index(v, esc)) > 0) {
+				out = out substr(v, 1, p - 1) "\001"
+				v = substr(v, p + length(esc))
+			}
+			v = out v
+			gsub(q, "", v)
+			gsub(/\001/, q, v)
+			gsub(/[\t\r]/, " ", v)
+			return v
+		}
+		{
+			eq = index($0, "=")
+			if (eq == 0)
+				next
+			n = split(substr($0, 1, eq - 1), k, ".")
+			if (k[1] != "openmptcprouter" || k[2] !~ /^[A-Za-z0-9_]+$/)
+				next
+			if (n == 2)
+				opt = "_type"
+			else if (n == 3 && (k[3] in keep || k[3] ~ /^ss_[A-Za-z0-9_]+$/))
+				opt = k[3]
+			else
+				next
+			print k[2], opt, unquote(substr($0, eq + 1))
+		}')
+	while read -r sec opt val; do
+		[ -n "$opt" ] || continue
+		eval "_st_${sec}__${opt}=\$val"
+		[ "$opt" = "_type" ] && [ "$val" = "server" ] && _servers="$_servers $sec"
+	done <<-EOF
+	$lines
+	EOF
+}
+
+_add_interface() {
+	local iface="$1" name
+	json_add_object "$iface"
+	_in "$iface" running
+	_json_add_flag running "$_v"
+	_in "$iface" pid
+	_json_add_num pid "$_v"
+	_in "$iface" DEVICE
+	_json_add_str device "$_v"
+	_st "$iface" state
+	_json_add_str state "$_v"
+	_st "$iface" monitor_state
+	_json_add_str monitor_state "$_v"
+	_st "$iface" latency
+	_json_add_num latency "$_v"
+	_st "$iface" latency_previous
+	_json_add_num latency_previous "$_v"
+	_st "$iface" mptcp_status
+	_json_add_str mptcp_status "$_v"
+	_st "$iface" loop
+	_json_add_flag routing_loop "$_v"
+	case " $_ifaces " in
+		*" $iface "*)
+			json_add_object settings
+			# shellcheck disable=SC2086
+			set -- $_settings_env
+			for name in $SETTINGS_NUM; do
+				_in "$iface" "$1"
+				_json_add_num "$name" "$_v"
+				shift
+			done
+			for name in $SETTINGS_STR; do
+				_in "$iface" "$1"
+				_json_add_str "$name" "$_v"
+				shift
+			done
+			for name in $SETTINGS_FLAG; do
+				_in "$iface" "$1"
+				_json_add_flag "$name" "$_v"
+				shift
+			done
+			for name in $SETTINGS_LIST; do
+				_in "$iface" "$1"
+				_json_add_list "$name" "$_v"
+				shift
+			done
+			json_close_object
+			;;
+	esac
+	json_close_object
+}
+
+_status() {
+	local filter="$1" iface inst kind
+	if [ -n "$filter" ]; then
+		_valid_name "$filter" || _error "invalid interface name"
+		[ "$(uci -q get "network.${filter}")" = "interface" ] || _error "unknown interface"
+	fi
+	# The env names of the settings, in the same order
+	# shellcheck disable=SC2018,SC2019
+	_settings_env=$(echo $SETTINGS_NUM $SETTINGS_STR $SETTINGS_FLAG $SETTINGS_LIST | tr 'a-z' 'A-Z')
+	_load_instances
+	_load_state
+
+	json_init
+	_json_add_flag running "$_any_running"
+	_st omr vpn
+	_json_add_str vpn "$_v"
+	_st omr server
+	_json_add_str server "$_v"
+	_st omr proxy
+	_json_add_str proxy "$_v"
+	json_add_object interfaces
+	if [ -n "$filter" ]; then
+		# Also when no tracker runs for it: its last state is still there
+		_add_interface "$filter"
+	else
+		for iface in $_ifaces; do
+			_add_interface "$iface"
+		done
+	fi
+	json_close_object
+	json_add_array trackers
+	for inst in $_others; do
+		_in "$inst" kind
+		kind="$_v"
+		json_add_object ""
+		json_add_string kind "$kind"
+		json_add_string instance "$inst"
+		_in "$inst" running
+		_json_add_flag running "$_v"
+		_in "$inst" pid
+		_json_add_num pid "$_v"
+		case "$kind" in
+			ss)
+				_in "$inst" arg
+				_json_add_str section "$_v"
+				_in "$inst" SS_TYPE
+				_json_add_str variant "$_v"
+				_in "$inst" SERVER
+				_json_add_str server "$_v"
+				if _valid_name "$_v"; then
+					_st omr "ss_$_v"
+					_json_add_str state "$_v"
+				fi
+				;;
+			v2ray|xray|server)
+				_st omr "$kind"
+				_json_add_str state "$_v"
+				;;
+		esac
+		json_close_object
+	done
+	json_close_array
+	json_dump
+}
+
+_servers() {
+	local name inst failback failback_delay running=0 master="" backup=""
+	local is_master is_backup disabled current
+	_load_instances
+	_load_state
+	for inst in $_others; do
+		_in "$inst" kind
+		[ "$_v" = "server" ] || continue
+		_in "$inst" running
+		[ "$_v" = "1" ] && running=1
+	done
+	failback=$(uci -q get omr-tracker.server.failback)
+	# omr-tracker-server's default
+	failback_delay=$(uci -q get omr-tracker.server.failback_delay)
+	case "$failback_delay" in
+		''|*[!0-9]*) failback_delay=300 ;;
+	esac
+
+	json_init
+	_json_add_flag running "$running"
+	_st omr server
+	_json_add_str state "$_v"
+	json_add_object servers
+	for name in $_servers; do
+		_st "$name" master
+		is_master="$_v"
+		_st "$name" backup
+		is_backup="$_v"
+		_st "$name" disabled
+		disabled="$_v"
+		_st "$name" current
+		current="$_v"
+		# The servers named by the init script's failback_status
+		if [ "$disabled" != "1" ]; then
+			[ "$is_master" = "1" ] && [ -z "$master" ] && master="$name"
+			[ "$is_backup" = "1" ] && [ "$current" = "1" ] && [ -z "$backup" ] && backup="$name"
+		fi
+		json_add_object "$name"
+		_json_add_flag master "$is_master"
+		_json_add_flag backup "$is_backup"
+		_json_add_flag disabled "$disabled"
+		_json_add_flag current "$current"
+		# Only known for the servers checked lately
+		_st "$name" reachable
+		case "$_v" in
+			0|1) _json_add_flag reachable "$_v" ;;
+		esac
+		_st "$name" ip
+		_json_add_list ip "$_v"
+		json_close_object
+	done
+	json_close_object
+	json_add_object failback
+	json_add_string mode "${failback:-immediate}"
+	json_add_int delay "$failback_delay"
+	_st omr failback_hold
+	_json_add_flag held "$_v"
+	if [ "$_v" = "1" ]; then
+		_json_add_str master "$master"
+		_json_add_str backup "$backup"
+	fi
+	json_close_object
+	json_dump
+}
+
+_restart() {
+	local iface="$1"
+	if [ -n "$iface" ]; then
+		_valid_name "$iface" || _error "invalid interface name"
+		[ "$(uci -q get "network.${iface}")" = "interface" ] || _error "unknown interface"
+	fi
+	# In the background: the init script waits for the old tracker to end
+	# the post-tracking hook it runs, which is longer than LuCI waits
+	( "$OMR_TRACKER_INIT" restart ${iface:+"$iface"} ) </dev/null >/dev/null 2>&1 &
+	json_init
+	json_add_boolean result 1
+	_json_add_str interface "$iface"
+	json_dump
+}
+
+_failback() {
+	local out
+	out=$("$OMR_TRACKER_INIT" failback 2>&1) || _error "${out:-failback failed}"
+	json_init
+	json_add_boolean result 1
+	json_dump
+}
+
+# The schema code of a section type, in $_code
+_type_code() {
+	case "$1" in
+		defaults) _code=d ;;
+		interface) _code=i ;;
+		proxy) _code=p ;;
+		server) _code=s ;;
+		gre) _code=g ;;
+		hosts_defaults) _code=h ;;
+		hosts_proxy) _code=q ;;
+		*) return 1 ;;
+	esac
+	return 0
+}
+
+# _rule <schema> <option> <section code>: the kind of the option in $_kind
+_rule() {
+	local opt codes kind
+	_kind=""
+	while read -r opt codes kind; do
+		[ "$opt" = "$2" ] || continue
+		case "$codes" in
+			*"$3"*)
+				_kind="$kind"
+				return 0
+				;;
+		esac
+	done <<-EOF
+	$1
+	EOF
+	return 1
+}
+
+# An IPv4 or IPv6 address or a host name, as uci's "host" datatype
+_valid_host() {
+	[ "${#1}" -le 253 ] || return 1
+	case "$1" in
+		*:*)
+			case "$1" in
+				*[!0-9A-Fa-f:.]*|*:::*) return 1 ;;
+			esac
+			;;
+		''|*[!A-Za-z0-9.-]*|.*|*.|*..*|-*) return 1 ;;
+	esac
+	return 0
+}
+
+# _check_value <kind> <json type> <value>: the value to write in $_val, or
+# what the value should be in $_why
+_check_value() {
+	local kind="$1" jtype="$2" v="$3" min max
+	_val=""
+	_why=""
+	case "$kind" in
+		bool)
+			case "$jtype:$v" in
+				boolean:1|int:1|string:1|string:true|string:on|string:yes) _val=1 ;;
+				boolean:0|int:0|string:0|string:false|string:off|string:no) _val=0 ;;
+				*) _why="a boolean" ;;
+			esac
+			;;
+		int:*)
+			min="${kind#int:}"
+			max="${min#*:}"
+			min="${min%%:*}"
+			_why="an integer from ${min} to ${max}"
+			case "$jtype" in
+				int|string) ;;
+				*) return 1 ;;
+			esac
+			# No leading zero: ash reads 010 as octal
+			case "$v" in
+				''|*[!0-9]*|0?*|??????????*) return 1 ;;
+			esac
+			[ "$v" -ge "$min" ] && [ "$v" -le "$max" ] || return 1
+			_why=""
+			_val="$v"
+			;;
+		enum:*)
+			_why="one of ${kind#enum:}"
+			[ "$jtype" = "string" ] || return 1
+			case ",${kind#enum:}," in
+				*",${v},"*) _why="" ; _val="$v" ;;
+			esac
+			;;
+		group:*)
+			_why="the name of a ${kind#group:} section"
+			[ "$jtype" = "string" ] && _valid_name "$v" && \
+				[ "$(uci -q get "omr-tracker.${v}")" = "${kind#group:}" ] && { _why=""; _val="$v"; }
+			;;
+		host)
+			_why="an IP address or a host name"
+			[ "$jtype" = "string" ] && _valid_host "$v" && { _why=""; _val="$v"; }
+			;;
+		plmn)
+			# In an AT command (002-error)
+			_why="a PLMN, 5 or 6 digits"
+			case "$jtype:$v" in
+				int:[0-9][0-9][0-9][0-9][0-9]|int:[0-9][0-9][0-9][0-9][0-9][0-9]|\
+				string:[0-9][0-9][0-9][0-9][0-9]|string:[0-9][0-9][0-9][0-9][0-9][0-9]) _why="" ; _val="$v" ;;
+			esac
+			;;
+		line)
+			_why="text of up to 1024 characters, on one line"
+			[ "$jtype" = "string" ] && [ "${#v}" -le 1024 ] || return 1
+			case "$v" in
+				*[[:cntrl:]]*) return 1 ;;
+			esac
+			_why=""
+			_val="$v"
+			;;
+		script)
+			_why="a command of up to 4096 characters"
+			[ "$jtype" = "string" ] && [ "${#v}" -le 4096 ] && { _why=""; _val="$v"; }
+			;;
+	esac
+	[ -z "$_why" ]
+}
+
+# A section set_config is about to create
+_check_new_section() {
+	case "$2" in
+		defaults|proxy|server|gre)
+			# The init script reads them under these names only
+			[ "$1" = "$2" ] || _error "a $2 section is named $2"
+			;;
+		interface)
+			case "$1" in
+				loopback|lan*|if0*|*_6) _error "omr-tracker does not track ${1}" ;;
+			esac
+			[ "$(uci -q get "network.${1}")" = "interface" ] || _error "unknown interface"
+			;;
+	esac
+}
+
+# What LuCI's apply does for a changed config: procd runs the init
+# script's reload on it (service_triggers), which restarts the trackers
+# whose settings changed and only those
+_reload() {
+	ubus call service event '{"type":"config.change","data":{"package":"omr-tracker"}}' >/dev/null 2>&1
+}
+
+# The uncommitted changes of other processes would be committed with ours:
+# uci reads the deltas of its default savedir (/tmp/.uci) whatever the -t,
+# which only adds a savedir
+_no_pending_changes() {
+	[ -z "$(uci -q changes omr-tracker 2>/dev/null)" ] || \
+		_error "omr-tracker has uncommitted uci changes: commit or revert them first"
+}
+
+# _commit <savedir>: the changes made in <savedir>
+_commit() {
+	local rc=0
+	uci -q -t "$1" commit omr-tracker || rc=1
+	rm -rf "$1"
+	return "$rc"
+}
+
+# _set_section <schema>: set_config and set_scripts, the input json_load'ed
+_set_section() {
+	local schema="$1" section stype apply cur keys opt jtype v n=0 i a item idx items applied=0 sd fail=""
+	json_get_var section section
+	json_get_var stype type
+	json_get_var apply apply
+	_valid_name "$section" || _error "invalid section name"
+	cur=$(uci -q get "omr-tracker.${section}")
+	if [ -n "$cur" ]; then
+		[ -z "$stype" ] || [ "$stype" = "$cur" ] || _error "${section} is of type ${cur}"
+		stype="$cur"
+		_type_code "$stype" || _error "${stype} sections are not handled"
+	else
+		[ -n "$stype" ] || _error "no ${section} section: give its type to create it"
+		_type_code "$stype" || _error "unknown section type"
+		_check_new_section "$section" "$stype"
+	fi
+
+	# Everything is checked before anything is written
+	json_get_type jtype values
+	case "$jtype" in
+		'') ;;
+		object)
+			json_select values
+			json_get_keys keys
+			for opt in $keys; do
+				_valid_name "$opt" || _error "invalid option name"
+				_rule "$schema" "$opt" "$_code" || _error "${stype} sections have no option ${opt}"
+				json_get_type jtype "$opt"
+				v=""
+				a="set"
+				if [ "$jtype" = "null" ]; then
+					a="del"
+				elif [ "$_kind" = "hostlist" ]; then
+					[ "$jtype" = "array" ] || _error "${opt}: a list of hosts"
+					json_select "$opt"
+					json_get_keys idx
+					items=""
+					for i in $idx; do
+						json_get_type jtype "$i"
+						json_get_var item "$i"
+						[ "$jtype" = "string" ] && _valid_host "$item" || _error "${opt}: invalid host"
+						items="${items:+$items }$item"
+					done
+					json_select ..
+					# shellcheck disable=SC2086
+					set -- $items
+					[ "$#" -le 64 ] || _error "${opt}: 64 hosts at most"
+					a="list"
+					[ -n "$items" ] || a="del"
+					v="$items"
+				else
+					json_get_var v "$opt"
+					if [ "$jtype" = "string" ] && [ -z "$v" ]; then
+						a="del"
+					else
+						_check_value "$_kind" "$jtype" "$v" || _error "${opt}: ${_why}"
+						v="$_val"
+					fi
+				fi
+				n=$((n + 1))
+				eval "_op${n}_o=\$opt _op${n}_a=\$a _op${n}_v=\$v"
+			done
+			json_select ..
+			;;
+		*)
+			_error "values: an object"
+			;;
+	esac
+
+	_no_pending_changes
+	sd=$(mktemp -d /tmp/omr-tracker-rpcd.XXXXXX) || _error "no temporary directory"
+	[ -n "$cur" ] || uci -q -t "$sd" set "omr-tracker.${section}=${stype}" || fail=1
+	i=0
+	while [ -z "$fail" ] && [ "$i" -lt "$n" ]; do
+		i=$((i + 1))
+		eval "opt=\$_op${i}_o a=\$_op${i}_a v=\$_op${i}_v"
+		case "$a" in
+			del)
+				# Not there: nothing to do
+				uci -q -t "$sd" delete "omr-tracker.${section}.${opt}"
+				;;
+			set)
+				uci -q -t "$sd" set "omr-tracker.${section}.${opt}=${v}" || fail=1
+				;;
+			list)
+				uci -q -t "$sd" delete "omr-tracker.${section}.${opt}"
+				for item in $v; do
+					uci -q -t "$sd" add_list "omr-tracker.${section}.${opt}=${item}" || fail=1
+				done
+				;;
+		esac
+	done
+	if [ -n "$fail" ]; then
+		rm -rf "$sd"
+		_error "uci did not take the change"
+	fi
+	_commit "$sd" || _error "uci did not commit the change"
+	case "$apply" in
+		0|false) ;;
+		*) _reload && applied=1 ;;
+	esac
+	json_init
+	json_add_boolean result 1
+	json_add_string section "$section"
+	json_add_string type "$stype"
+	json_add_boolean applied "$applied"
+	json_dump
+}
+
+_delete_section() {
+	local section apply cur sd applied=0
+	json_get_var section section
+	json_get_var apply apply
+	_valid_name "$section" || _error "invalid section name"
+	cur=$(uci -q get "omr-tracker.${section}")
+	[ -n "$cur" ] || _error "no ${section} section"
+	case "$cur" in
+		interface)
+			# The tunnel's tracker runs with its own settings (type none)
+			[ "$section" != "omrvpn" ] || _error "the omrvpn section is needed by the tunnel tracker"
+			;;
+		gre)
+			;;
+		hosts_defaults|hosts_proxy)
+			case "$section" in
+				world|world_proxy) _error "${section} is the host group used when none is set" ;;
+			esac
+			uci -q show omr-tracker 2>/dev/null | grep -q "\.country='${section}'\$" && \
+				_error "the host group ${section} is in use"
+			;;
+		*)
+			_error "a ${cur} section cannot be deleted"
+			;;
+	esac
+	_no_pending_changes
+	sd=$(mktemp -d /tmp/omr-tracker-rpcd.XXXXXX) || _error "no temporary directory"
+	if ! uci -q -t "$sd" delete "omr-tracker.${section}"; then
+		rm -rf "$sd"
+		_error "uci did not take the change"
+	fi
+	_commit "$sd" || _error "uci did not commit the change"
+	case "$apply" in
+		0|false) ;;
+		*) _reload && applied=1 ;;
+	esac
+	json_init
+	json_add_boolean result 1
+	json_add_string section "$section"
+	json_add_boolean applied "$applied"
+	json_dump
+}
+
+# _get_config <section> <type> <scripts>: the config as JSON, one section
+# or the sections of one type when asked. With <scripts> 1 the
+# script_alert_* options only, and the sections that have one, else
+# everything but them. Values typed as in SCHEMA (unknown options as
+# strings), lists as arrays.
+_get_config() {
+	uci -q -X show omr-tracker 2>/dev/null | SCHEMA="$SCHEMA" awk -v q="'" -v fsec="$1" -v ftype="$2" -v scripts="$3" '
+		BEGIN {
+			n = split(ENVIRON["SCHEMA"], rows, "\n")
+			for (i = 1; i <= n; i++) {
+				split(rows[i], f, " ")
+				if (f[3] == "bool")
+					cls[f[1]] = "bool"
+				else if (f[3] ~ /^int:/)
+					cls[f[1]] = "int"
+				else if (f[3] == "hostlist")
+					cls[f[1]] = "list"
+			}
+			# uci show writes a quote in a value as q\qq
+			esc = q "\\" q q
+			listre = "^" q "[^" q "]*" q "( " q "[^" q "]*" q ")+$"
+			printf "{ \"sections\": { "
+		}
+		# Not gsub: a backslash in its replacement escapes the next
+		# character, in BusyBox awk, "\\n" wrote an n
+		function replace(s, from, to,   out, p) {
+			out = ""
+			while ((p = index(s, from)) > 0) {
+				out = out substr(s, 1, p - 1) to
+				s = substr(s, p + length(from))
+			}
+			return out s
+		}
+		function jstr(s) {
+			s = replace(s, "\\", "\\\\")
+			s = replace(s, "\"", "\\\"")
+			s = replace(s, "\n", "\\n")
+			s = replace(s, "\r", "\\r")
+			s = replace(s, "\t", "\\t")
+			gsub(/[\001-\037]/, "", s)
+			return "\"" s "\""
+		}
+		function unesc(v,   out, p) {
+			out = ""
+			while ((p = index(v, esc)) > 0) {
+				out = out substr(v, 1, p - 1) "\001"
+				v = substr(v, p + length(esc))
+			}
+			return out v
+		}
+		function restore(v) {
+			gsub(/\001/, q, v)
+			return v
+		}
+		function value(opt, v,   items, m, i, out) {
+			v = unesc(v)
+			if (cls[opt] == "list" || v ~ listre) {
+				m = split(substr(v, 2, length(v) - 2), items, q " " q)
+				out = "["
+				for (i = 1; i <= m; i++)
+					out = out (i > 1 ? ", " : " ") jstr(restore(items[i]))
+				return out " ]"
+			}
+			if (substr(v, 1, 1) == q)
+				v = substr(v, 2, length(v) - 2)
+			v = restore(v)
+			if (cls[opt] == "bool") {
+				if (v ~ /^(1|true|on|yes)$/)
+					return "true"
+				if (v ~ /^(0|false|off|no)$/)
+					return "false"
+			}
+			if (cls[opt] == "int" && v ~ /^(0|[1-9][0-9]?[0-9]?[0-9]?[0-9]?[0-9]?[0-9]?[0-9]?[0-9]?)$/)
+				return v
+			return jstr(v)
+		}
+		function opensec() {
+			printf "%s%s: { \".type\": %s", (nsec++ ? ", " : ""), jstr(cursec), jstr(curtype)
+			open = 1
+		}
+		function flush(   eq, key, val, m, k, isscript) {
+			if (rec == "")
+				return
+			eq = index(rec, "=")
+			key = substr(rec, 1, eq - 1)
+			val = substr(rec, eq + 1)
+			rec = ""
+			m = split(key, k, ".")
+			if (m == 2) {
+				if (open)
+					printf " }"
+				open = 0
+				cursec = k[2]
+				curtype = val
+				keep = (fsec == "" || fsec == cursec) && (ftype == "" || ftype == curtype)
+				if (keep && scripts != "1")
+					opensec()
+			} else if (m == 3 && keep) {
+				isscript = (k[3] ~ /^script_alert_/)
+				if ((scripts == "1") != isscript)
+					return
+				if (!open)
+					opensec()
+				printf ", %s: %s", jstr(k[3]), value(k[3], val)
+			}
+		}
+		/^omr-tracker\.[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)?=/ {
+			flush()
+			rec = $0
+			next
+		}
+		# The next line of a value with a newline in it
+		rec != "" {
+			rec = rec "\n" $0
+		}
+		END {
+			flush()
+			if (open)
+				printf " }"
+			print " } }"
+		}'
+}
+
+# The section types and the options set_config takes, from SCHEMA
+_get_schema() {
+	SCHEMA="$SCHEMA" SCRIPT_SCHEMA="$SCRIPT_SCHEMA" awk '
+		function desc(kind,   a, m, i, out) {
+			if (kind == "bool")
+				return "{ \"type\": \"boolean\" }"
+			if (kind ~ /^int:/) {
+				split(kind, a, ":")
+				return "{ \"type\": \"integer\", \"min\": " a[2] ", \"max\": " a[3] " }"
+			}
+			if (kind ~ /^enum:/) {
+				m = split(substr(kind, 6), a, ",")
+				out = "{ \"type\": \"enum\", \"values\": ["
+				for (i = 1; i <= m; i++)
+					out = out (i > 1 ? ", " : " ") "\"" a[i] "\""
+				return out " ] }"
+			}
+			if (kind ~ /^group:/)
+				return "{ \"type\": \"section\", \"section_type\": \"" substr(kind, 7) "\" }"
+			if (kind == "hostlist")
+				return "{ \"type\": \"list\", \"items\": \"host\", \"max_items\": 64 }"
+			if (kind == "line")
+				return "{ \"type\": \"string\", \"max_length\": 1024, \"multiline\": false }"
+			if (kind == "script")
+				return "{ \"type\": \"string\", \"max_length\": 4096, \"multiline\": true }"
+			# host, plmn
+			return "{ \"type\": \"" kind "\" }"
+		}
+		function options(name, rows, n, code,   i, f, out, c) {
+			out = ""
+			c = 0
+			for (i = 1; i <= n; i++) {
+				split(rows[i], f, " ")
+				if (index(f[2], code))
+					out = out (c++ ? ", " : " ") "\"" f[1] "\": " desc(f[3])
+			}
+			return ", \"" name "\": {" out (c ? " " : "") "}"
+		}
+		BEGIN {
+			n = split(ENVIRON["SCHEMA"], rows, "\n")
+			ns = split(ENVIRON["SCRIPT_SCHEMA"], srows, "\n")
+			split("defaults interface proxy server gre hosts_defaults hosts_proxy", types, " ")
+			split("d i p s g h q", codes, " ")
+			printf "{ \"sections\": { "
+			for (t = 1; t <= 7; t++) {
+				printf "%s\"%s\": { ", (t > 1 ? ", " : ""), types[t]
+				if (types[t] ~ /^(defaults|proxy|server|gre)$/)
+					printf "\"name\": \"%s\", \"deletable\": %s", types[t], (types[t] == "gre" ? "true" : "false")
+				else if (types[t] == "interface")
+					printf "\"name\": \"a network interface\", \"deletable\": true"
+				else
+					printf "\"deletable\": true"
+				printf "%s", options("options", rows, n, codes[t])
+				printf "%s", options("script_options", srows, ns, codes[t])
+				printf " }"
+			}
+			print " } }"
+		}'
+}
+
+# The input of a method, json_load'ed
+_input_load() {
+	local input
+	input=$(cat)
+	[ -n "$input" ] || input='{}'
+	# json_load takes anything, invalid JSON as an empty object
+	[ "$(jsonfilter -s "$input" -t '@' 2>/dev/null)" = "object" ] || _error "invalid JSON input"
+	json_load "$input"
+}
+
+# The interface argument, in $_iface
+_input_interface() {
+	local input
+	input=$(cat)
+	_iface=""
+	[ -n "$input" ] || return 0
+	json_load "$input" 2>/dev/null && json_get_var _iface interface
+	json_cleanup
+}
+
+case "$1" in
+	list)
+		echo '{'
+		echo '  "status":   { "interface": "str" },'
+		echo '  "servers":  {},'
+		echo '  "restart":  { "interface": "str" },'
+		echo '  "failback": {},'
+		echo '  "get_schema": {},'
+		echo '  "get_config": { "section": "str", "type": "str" },'
+		echo '  "set_config": { "section": "str", "type": "str", "values": {}, "apply": true },'
+		echo '  "delete_config": { "section": "str", "apply": true },'
+		echo '  "reload": {},'
+		echo '  "get_scripts": { "section": "str" },'
+		echo '  "set_scripts": { "section": "str", "type": "str", "values": {}, "apply": true }'
+		echo '}'
+		;;
+	call)
+		. /usr/share/libubox/jshn.sh
+		. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
+		case "$2" in
+			status)
+				_input_interface
+				_status "$_iface"
+				;;
+			servers)
+				_servers
+				;;
+			restart)
+				_input_interface
+				_restart "$_iface"
+				;;
+			failback)
+				_failback
+				;;
+			get_schema)
+				_get_schema
+				;;
+			get_config|get_scripts)
+				_input_load
+				_section=""
+				_type=""
+				json_get_var _section section
+				json_get_var _type type
+				json_cleanup
+				if [ -n "$_section" ]; then
+					_valid_name "$_section" || _error "invalid section name"
+					uci -q get "omr-tracker.${_section}" >/dev/null || _error "no ${_section} section"
+				fi
+				[ -z "$_type" ] || _type_code "$_type" || _error "unknown section type"
+				if [ "$2" = "get_scripts" ]; then
+					_get_config "$_section" "$_type" 1
+				else
+					_get_config "$_section" "$_type" 0
+				fi
+				;;
+			set_config)
+				_input_load
+				_set_section "$SCHEMA"
+				;;
+			set_scripts)
+				_input_load
+				_set_section "$SCRIPT_SCHEMA"
+				;;
+			delete_config)
+				_input_load
+				_delete_section
+				;;
+			reload)
+				_reload || _error "procd did not take the reload"
+				json_init
+				json_add_boolean result 1
+				json_dump
+				;;
+			*)
+				echo '{"error": "unknown method"}'
+				exit 1
+				;;
+		esac
+		;;
+esac
