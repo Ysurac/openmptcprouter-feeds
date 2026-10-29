@@ -251,6 +251,23 @@ _read_baseline() {
 	fi
 }
 
+# Read-only twin of the high-water mark in /bin/omr-quota (_hwm_*): while a
+# quota is enforced the daemon checks it against the highest usage of the
+# period, which vnstat can read lower once a cut PPPoE/3G device is gone.
+# _hwm_usage <state id> <period> <baseline rx> <baseline tx> <interfaces>:
+# "<rx KiB> <tx KiB>" of the mark, nothing when there is none for this
+# period, baseline and member list (the daemon drops such a file).
+_hwm_usage() {
+	local file="${_TSTATE_DIR}/${1}.hwm" tag hrx htx ifs
+	[ -f "$file" ] || return 0
+	read -r tag hrx htx < "$file"
+	case "${hrx:-x}${htx:-x}" in *[!0-9]*) return 0 ;; esac
+	# shellcheck disable=SC2086
+	ifs=$(echo $5 | tr ' ' ',')
+	[ "$tag" = "${2};${3};${4};${ifs}" ] || return 0
+	printf '%s %s' "$hrx" "$htx"
+}
+
 _all_sections() {
 	uci -q show omr-quota 2>/dev/null | \
 		sed -n 's/^omr-quota\.\([^.]*\)=\(interface\|global\)$/\1/p'
@@ -344,7 +361,7 @@ _quota_status_json() {
 		rx_kib=$(( rx_kib + iface_rx + ${delta%% *} ))
 		tx_kib=$(( tx_kib + iface_tx + ${delta##* } ))
 	done
-	local baseline rx_base tx_base
+	local baseline rx_base tx_base hwm
 	baseline=$(_read_baseline "$state_id" "$begindate")
 	rx_base=$(printf '%s' "$baseline" | awk '{print $1}')
 	tx_base=$(printf '%s' "$baseline" | awk '{print $2}')
@@ -352,6 +369,11 @@ _quota_status_json() {
 	tx_kib=$(( tx_kib - ${tx_base:-0} ))
 	[ "$rx_kib" -lt 0 ] && rx_kib=0
 	[ "$tx_kib" -lt 0 ] && tx_kib=0
+	hwm=$(_hwm_usage "$state_id" "$(_baseline_period "$begindate")" "${rx_base:-0}" "${tx_base:-0}" "$interfaces")
+	if [ -n "$hwm" ]; then
+		[ "$rx_kib" -lt "${hwm% *}" ] && rx_kib=${hwm% *}
+		[ "$tx_kib" -lt "${hwm#* }" ] && tx_kib=${hwm#* }
+	fi
 	tt_kib=$(( rx_kib + tx_kib ))
 
 	# Exceeded / throttled / cut state (markers kept by the daemon, see

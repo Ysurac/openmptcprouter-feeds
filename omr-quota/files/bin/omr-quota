@@ -58,6 +58,8 @@ _ifdown_file="${_TSTATE_DIR}/${OMR_QUOTA_INTERFACE}.ifdown"
 _tstate_file="${_TSTATE_DIR}/${OMR_QUOTA_INTERFACE}.throttled"
 _downstream_file="${_TSTATE_DIR}/${OMR_QUOTA_INTERFACE}.downstream"
 _blocklan_file="${_TSTATE_DIR}/${OMR_QUOTA_INTERFACE}.blocklan"
+# High-water mark of an enforced quota's usage, see _hwm_* below
+_hwm_file="${_TSTATE_DIR}/${OMR_QUOTA_INTERFACE}.hwm"
 # persistent scope: once exceeded, stay exceeded even across month boundaries
 _persist_file="${_PERSIST_DIR}/${OMR_QUOTA_INTERFACE}.exceeded"
 
@@ -892,6 +894,7 @@ _undo_enforcement() {
 		rm -f "$_cut_file" "$_ifdown_file"
 		undone=1
 	fi
+	rm -f "$_hwm_file"
 	[ "$undone" = "1" ] && logger -t "OMR-QUOTA" "Quota enforcement for $OMR_QUOTA_INTERFACE lifted"
 	return 0
 }
@@ -1068,8 +1071,60 @@ if [ "${OMR_QUOTA_RESET_BASELINE:-0}" = "1" ]; then
 	done
 	mkdir -p "$_PERSIST_DIR"
 	printf '%s %s %s' "$(_baseline_period)" "$_rx0" "$_tx0" > "$_baseline_file"
+	rm -f "$_hwm_file"
 	logger -t "OMR-QUOTA" "Reset quota baseline for $OMR_QUOTA_INTERFACE (rx=${_rx0}KB tx=${_tx0}KB)"
 fi
+
+# Within one metering period, the usage of an enforced quota must not go
+# down. It does when a cut PPPoE/3G WAN loses its device: vnstatd drops the
+# traffic it counted since its last read (up to an UpdateInterval) and
+# flushes the rest, the held live delta (_live_delta) is re-anchored on that
+# flush, and usage reads quota + overshoot - loss, often below the quota on
+# a busy link: raised, crossed again within a poll, cut again, over-quota
+# traffic leaking on each round. So while the quota is enforced, the highest
+# usage seen is kept here, on tmpfs, and the quota is checked against it. It
+# belongs to the period, the baseline and the interfaces it was measured
+# with: a new period, a reset or another member list starts over. Raising
+# the quota still lifts the cut, and the mark goes with the enforcement.
+# Keep in sync with the read-only twin in the rpcd plugin.
+#
+# _hwm_tag <baseline rx> <baseline tx>: what the mark belongs to.
+_hwm_tag() {
+	# word splitting on purpose: one comma-joined token, whatever the spacing
+	# shellcheck disable=SC2086
+	printf '%s;%s;%s;%s' "$(_baseline_period)" "$1" "$2" "$(echo $target_interfaces | tr ' ' ',')"
+}
+
+# _hwm_apply: raise rx/tx to the mark of this period, drop a mark of another.
+# Sets _hwm_tag_now (the tag, when computed) and _hwm_stored ("<rx> <tx>"
+# of a usable mark) for _hwm_record.
+_hwm_apply() {
+	local tag hrx htx
+	_hwm_tag_now=""
+	_hwm_stored=""
+	[ -f "$_hwm_file" ] || return 0
+	read -r tag hrx htx < "$_hwm_file"
+	_hwm_tag_now="$(_hwm_tag "$_b_rx0" "$_b_tx0")"
+	case "${hrx:-x}${htx:-x}" in
+		*[!0-9]*) tag="" ;;
+	esac
+	if [ "$tag" != "$_hwm_tag_now" ]; then
+		rm -f "$_hwm_file"
+		return 0
+	fi
+	[ "$rx" -lt "$hrx" ] && rx=$hrx
+	[ "$tx" -lt "$htx" ] && tx=$htx
+	_hwm_stored="$hrx $htx"
+}
+
+# _hwm_record: keep rx/tx as the mark (written only when it moves).
+_hwm_record() {
+	[ "$_hwm_stored" = "$rx $tx" ] && return 0
+	[ -n "$_hwm_tag_now" ] || _hwm_tag_now="$(_hwm_tag "$_b_rx0" "$_b_tx0")"
+	mkdir -p "$_TSTATE_DIR"
+	printf '%s %s %s' "$_hwm_tag_now" "$rx" "$tx" > "${_hwm_file}.new" && \
+		mv "${_hwm_file}.new" "$_hwm_file"
+}
 
 # _lift_throttle <interfaces>: remove the throttle this daemon applied, if any.
 _lift_throttle() {
@@ -1158,10 +1213,12 @@ while true; do
 		tx=$(( tx + ${txi:-0} ))
 	done
 	_baseline="$(_read_baseline)"
-	rx=$(( rx - $(printf '%s' "$_baseline" | awk '{print $1}') ))
-	tx=$(( tx - $(printf '%s' "$_baseline" | awk '{print $2}') ))
+	_b_rx0="${_baseline%% *}"; _b_tx0="${_baseline##* }"
+	rx=$(( rx - _b_rx0 ))
+	tx=$(( tx - _b_tx0 ))
 	[ "$rx" -lt 0 ] && rx=0
 	[ "$tx" -lt 0 ] && tx=0
+	_hwm_apply
 	tt=$(( rx + tx ))
 	cb=""
 
@@ -1294,6 +1351,11 @@ while true; do
 		_lift_throttle "$target_interfaces"
 		_raise_cut_interfaces
 		_release_lan_block
+	fi
+	if [ "$exceeded" = "1" ]; then
+		_hwm_record
+	elif [ -f "$_hwm_file" ]; then
+		rm -f "$_hwm_file"
 	fi
 
 	# After the enforcement above, not before: a throttle lifted this poll
