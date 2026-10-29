@@ -37,17 +37,23 @@ _save_macaddr() {
 }
 
 _delete_device() {
-	[ "$(echo $1 | grep _dev)" != "" ] && {
-		local _intfdev=$(echo $1 | sed 's/_dev//')
-		[ "$(uci -q get network.$_intfdev.type)" != "macvlan" ] && {
-			logger -t "macvlan" "$_intfdev type is not MacVLAN, remove device network.$1"
-			uci -q batch <<-EOF
-			delete network.$1
-			commit network
-			EOF
-		}
-		return
-	}
+	# Only the <intf>_dev macvlan devices created for a macvlan interface are
+	# ours. OMR names every device section <intf>_dev (1920-omr-network's
+	# wanX_dev/lan_dev, the wizard's Force TTL): leave the others alone.
+	case "$1" in
+		*_dev) ;;
+		*) return 0 ;;
+	esac
+	local _devtype _intfdev="${1%_dev}"
+	config_get _devtype "$1" type
+	[ "$_devtype" = "macvlan" ] || return 0
+	[ "$(uci -q get "network.$_intfdev.type")" = "macvlan" ] && return 0
+	[ "$(uci -q get "network.$_intfdev.proto")" = "macvlan" ] && return 0
+	logger -t "macvlan" "$_intfdev type is not MacVLAN, remove device network.$1"
+	uci -q batch <<-EOF
+	delete network.$1
+	commit network
+	EOF
 }
 
 
