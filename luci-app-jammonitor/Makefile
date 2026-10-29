@@ -7,13 +7,16 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-jammonitor
-PKG_VERSION:=1.0.0
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/madebyjamstudios/jammonitor.git
 PKG_SOURCE_VERSION:=df217f9fc4deec631c6d668606706de4dfd5b8a6
 PKG_MIRROR_HASH:=skip
+# The commit is part of the version, so of the source tarball name: with a
+# fixed version, a PKG_SOURCE_VERSION bump reused the old tarball from dl/
+# (no mirror hash to catch it) and the package version never changed
+PKG_VERSION:=1.0.0~$(call version_abbrev,$(PKG_SOURCE_VERSION))
 
 PKG_MAINTAINER:=Yannick Chabanois <yannick.chabanois@openmptcprouter.com>
 PKG_LICENSE:=GPL-2.0-only
