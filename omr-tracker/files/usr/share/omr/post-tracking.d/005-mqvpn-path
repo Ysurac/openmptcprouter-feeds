@@ -61,6 +61,51 @@ if [ "$multipath_config" != "on" ] && [ "$multipath_config" != "master" ] && [ "
 	exit 0
 fi
 
+# The other trackers run this too: a WAN added through the API while mqvpn
+# restarts below is lost, so serialize. BusyBox flock has no timeout: past
+# 30s go ahead unlocked.
+lock_dir="${OMR_TRACKER_LOCK_DIR:-/var/run/omr-tracker}"
+mkdir -p "$lock_dir" >/dev/null 2>&1
+# a failed exec redirection ends a POSIX shell: check first
+if [ -w "$lock_dir" ] && command -v flock >/dev/null 2>&1; then
+	exec 7>"$lock_dir/mqvpn-path.lock"
+	tries=0
+	until flock -n 7 2>/dev/null; do
+		tries=$((tries + 1))
+		[ "$tries" -ge 30 ] && break
+		sleep 1
+	done
+fi
+
+# mqvpn started while no multipath WAN device existed, or all were down, has
+# no Path line: it then opens one path bound to no device, which follows
+# the route to the VPS. Paths added through the API come on top of it, so
+# the WAN routing the VPS carries two paths, and when that WAN fails upstream
+# the unbound one keeps sending into it until the route moves: the tunnel
+# stays degraded for the whole outage. Restart mqvpn so that its
+# configuration names the WANs up now, this one included (003-up set it up).
+# A backup path does not replace that implicit primary path.
+mqvpn_conf="${OMR_MQVPN_CONF:-/var/run/mqvpn.conf}"
+case "$(uci -q get mqvpn.multipath.auto_wan)" in
+	0|false|off|no|disabled) auto_wan=0 ;;
+	*) auto_wan=1 ;;
+esac
+if [ "$multipath_config" != "backup" ] && [ "$auto_wan" = "1" ] && \
+	[ -f "$mqvpn_conf" ] && ! grep -q '^Path = ' "$mqvpn_conf"; then
+	_log "mqvpn: no WAN path in its configuration, restart it for $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE)"
+	# 002-error's watchdog cooldown
+	date +%s > /tmp/omr-mqvpn-last-restart
+	/etc/init.d/mqvpn restart >/dev/null 2>&1
+	# Keep the lock until the control API answers, for the next WAN's add
+	tries=0
+	until mqvpn-path list >/dev/null 2>&1; do
+		tries=$((tries + 1))
+		[ "$tries" -ge 10 ] && break
+		sleep 1
+	done
+	exit 0
+fi
+
 if ! mqvpn_path_exists; then
 	if [ "$multipath_config" = "backup" ]; then
 		_log "mqvpn: add backup path $OMR_TRACKER_DEVICE ($OMR_TRACKER_INTERFACE)"

@@ -269,13 +269,29 @@ _write_iface_path() {
 	[ "$mode" = "" ] && mode="$(uci -q get openmptcprouter."$config".multipath)"
 	[ "$mode" = "on" ] || [ "$mode" = "master" ] || [ "$mode" = "backup" ] || return 0
 
+	# Every multipath WAN, not only those a tracker marked up: at boot none
+	# is yet, and with no Path line mqvpn opens one path bound to no device,
+	# which follows the route to the VPS and keeps sending into a failed WAN
+	# until that route moves. A WAN a tracker found down is left out: no
+	# transition removes its path, 005-mqvpn-path adds it when it recovers.
 	local state
 	state="$(uci -q -P /var/state get openmptcprouter."$config".state)"
-	[ "$state" = "up" ] || return 0
+	[ "$state" = "down" ] && return 0
 
 	ifname=$(ifstatus "$config" 2>/dev/null | jsonfilter -q -e '@["l3_device"]')
 	[ -n "$(echo "$ifname" | grep '@')" ] && ifname=$(ifstatus "$config" 2>/dev/null | jsonfilter -q -e '@["device"]')
-	[ -z "$ifname" ] && return 0
+	# No l3_device before netifd brings the interface up. The device is the
+	# L3 one only for these protos: a PPPoE or modem WAN runs on another.
+	if [ -z "$ifname" ]; then
+		case "$(uci -q get network."$config".proto)" in
+			static|dhcp|dhcpv6)
+				ifname=$(ifstatus "$config" 2>/dev/null | jsonfilter -q -e '@["device"]')
+				[ -z "$ifname" ] && ifname="$(uci -q get network."$config".device)"
+				;;
+		esac
+	fi
+	# mqvpn does not start at all when a path device does not exist
+	[ -n "$ifname" ] && [ -d "/sys/class/net/$ifname" ] || return 0
 
 	if [ "$mode" = "backup" ]; then
 		echo "BackupPath = $ifname"
