@@ -11,17 +11,17 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ndpid
-PKG_VERSION:=1.7.2
-PKG_RELEASE:=2
+PKG_VERSION:=1.7.3
+PKG_RELEASE:=1
 
-# Use git dev branch for latest libndpi compatibility
+# Use git main branch for latest libndpi compatibility
 # Version 1.7 (Oct 2023) has API incompatibilities with current libndpi
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/utoni/nDPId.git
-PKG_SOURCE_VERSION:=84285ae42d8f70c976a6ee9be6ceb935aa215b18
+PKG_SOURCE_VERSION:=b1ef7a62e57b6902098053809bbeb69eb6017c99
 PKG_MIRROR_HASH:=skip
 
-NDPI_COMMIT_HASH:=0041f29ef07a578e6cd245a1845d84f179fa3d3b
+NDPI_COMMIT_HASH:=d886a5d6982a6ef430fbef3c3d8aa4d1183c0231
 export NDPI_COMMIT_HASH
 
 PKG_MAINTAINER:=CyberMind <contact@cybermind.fr>
