@@ -228,6 +228,14 @@ ss_redir_ports() {
 	mode=$(uci -q get shadowsocks-libev.$1.mode)
 	if [ "$disabled" != "1" ] && [ "$server_disabled" != "1" ] && [ "$server" = "$server_redir" ] \
 		&& ss_server_configured "$server_redir"; then
+		# UDP goes to one ss-redir that listens on UDP: the one ss_rules
+		# redir_udp names, or the lowest port for "all"
+		case "$mode" in
+			udp_only|tcp_and_udp)
+				[ "$1" = "$redir_udp" ] && ss_redir_udp_named="$port"
+				ss_redir_udp_ports="$ss_redir_udp_ports $port"
+				;;
+		esac
 		if [ "$port" -lt "$min_ss_redir_ports" ]; then
 			min_ss_redir_ports=$port
 		fi
@@ -329,6 +337,8 @@ ss_rules_nft_gen() {
 		min_ss_redir_ports="65535"
 		max_ss_redir_ports="0"
 		ss_redir_tcp_ports=""
+		ss_redir_udp_ports=""
+		ss_redir_udp_named=""
 		config_load shadowsocks-libev
 		config_foreach ss_redir_ports ss_redir $server
 		# no enabled ss_redir: the UDP redirect would be to port 65535
@@ -338,9 +348,14 @@ ss_rules_nft_gen() {
 		# disabled section in the middle would leave a dead port inside the
 		# range. The template round-robins new connections over the list.
 		local_port_tcp="$(echo $ss_redir_tcp_ports | tr ' ' '\n' | sort -nu | tr '\n' ' ' | sed 's/ *$//')"
-		if [ "$ss_rules_redir_udp_$redir_udp" = "all" ] || [ "$ss_rules_redir_udp_$redir_udp" = "hi1" ]; then
-			local_port_udp="$min_ss_redir_ports"
-		fi
+		# The lowest port of all was taken for "all" and for "hi1", that
+		# of a tcp_only ss-redir too (UDP to a port nothing listens on);
+		# any other redir_udp was ignored.
+		case "$redir_udp" in
+			"") ;;
+			all) local_port_udp="$(echo $ss_redir_udp_ports | tr ' ' '\n' | sort -n | head -n 1)" ;;
+			*) local_port_udp="$ss_redir_udp_named" ;;
+		esac
 #	else
 #		eval local_port_tcp="\$ss_rules_redir_tcp_$redir_tcp"
 #		eval local_port_udp="\$ss_rules_redir_udp_$redir_udp"

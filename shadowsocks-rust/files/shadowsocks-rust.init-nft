@@ -213,8 +213,9 @@ ss_rules_cb() {
 }
 
 ss_redir_ports() {
+	local extra=""
 	case " $ss_rules_extra_redirs " in
-		*" $1 "*) return ;;
+		*" $1 "*) extra=1 ;;
 	esac
 	port=$(uci -q get shadowsocks-rust.$1.local_port)
 	server=$(uci -q get shadowsocks-rust.$1.server)
@@ -224,6 +225,15 @@ ss_redir_ports() {
 	mode=$(uci -q get shadowsocks-rust.$1.mode)
 	if [ "$disabled" != "1" ] && [ "$server_disabled" != "1" ] && [ -n "$password" ] \
 		&& ss_server_configured "$server"; then
+		# UDP goes to one ss-redir that listens on UDP: the one ss_rules
+		# redir_udp names, or the lowest port for "all"
+		case "$mode" in
+			udp_only|tcp_and_udp)
+				[ "$1" = "$redir_udp" ] && ss_redir_udp_named="$port"
+				[ -n "$extra" ] || ss_redir_udp_ports="$ss_redir_udp_ports $port"
+				;;
+		esac
+		[ -n "$extra" ] && return
 		if [ "$port" -lt "$min_ss_redir_ports" ]; then
 			min_ss_redir_ports=$port
 		fi
@@ -336,6 +346,8 @@ ss_rules_nft_gen() {
 		min_ss_redir_ports="65535"
 		max_ss_redir_ports="0"
 		ss_redir_tcp_ports=""
+		ss_redir_udp_ports=""
+		ss_redir_udp_named=""
 		config_load shadowsocks-rust
 		config_foreach ss_redir_ports ss_redir
 		[ "$max_ss_redir_ports" = "0" ] && return 2
@@ -344,9 +356,14 @@ ss_rules_nft_gen() {
 		# disabled section in the middle would leave a dead port inside the
 		# range. The template round-robins new connections over the list.
 		local_port_tcp="$(echo $ss_redir_tcp_ports | tr ' ' '\n' | sort -nu | tr '\n' ' ' | sed 's/ *$//')"
-		if [ "$redir_udp" = "all" ] || [ "$redir_udp" = "hi1" ]; then
-			local_port_udp="$min_ss_redir_ports"
-		fi
+		# The lowest port of all was taken for "all" and for "hi1", that
+		# of a tcp_only ss-redir too (UDP to a port nothing listens on);
+		# any other redir_udp was ignored.
+		case "$redir_udp" in
+			"") ;;
+			all) local_port_udp="$(echo $ss_redir_udp_ports | tr ' ' '\n' | sort -n | head -n 1)" ;;
+			*) local_port_udp="$ss_redir_udp_named" ;;
+		esac
 	else
 		eval local_port_tcp="\$ss_rules_redir_tcp_$redir_tcp"
 		eval local_port_udp="\$ss_rules_redir_udp_$redir_udp"
