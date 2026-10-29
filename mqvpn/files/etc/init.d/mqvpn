@@ -25,6 +25,7 @@ _bool() { [ "$1" = "1" ] && echo "true" || echo "false"; }
 generate_config() {
 	local enable address ip port server_address server_name insecure pinned_pubkey key user
 	local tun_name log_level mtu kill_switch reconnect reconnect_interval route_via_server no_routes
+	local status_interval
 	local path_mtu path_mtu_ok=1 pmtud
 	local cipher
 	local control_port control_addr
@@ -86,6 +87,12 @@ generate_config() {
 	config_get_bool kill_switch interface kill_switch 0
 	config_get_bool reconnect interface reconnect 1
 	config_get reconnect_interval interface reconnect_interval 5
+	# mqvpn logs a [STATUS] block (one line plus one per path) every 30s by
+	# default, which crowds logread; LuCI and the control API have the same data
+	config_get status_interval interface status_interval 300
+	case "$status_interval" in
+		''|*[!0-9]*) status_interval=300 ;;
+	esac
 	config_get_bool route_via_server interface route_via_server 0
 	config_get_bool no_routes interface no_routes 0
 	config_get path_mtu interface path_mtu ''
@@ -196,6 +203,7 @@ generate_config() {
 		echo "KillSwitch = $(_bool "$kill_switch")"
 		echo "Reconnect = $(_bool "$reconnect")"
 		echo "ReconnectInterval = $reconnect_interval"
+		echo "StatusInterval = $status_interval"
 		echo "RouteViaServer = $(_bool "$route_via_server")"
 		echo "NoRoutes = $(_bool "$no_routes")"
 
