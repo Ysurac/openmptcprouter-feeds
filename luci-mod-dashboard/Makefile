@@ -4,16 +4,20 @@
 #
 # This is free software, licensed under the Apache License, Version 2.0 .
 #
-# Based on openwrt luci commit 03c77dafe3cfb922b995adfe9c0f8a75c98a18af
+# Based on openwrt luci commit 4bfd1102236f7f737da4257ca7f6e56146fc80f6
 #
 
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI Dashboard Pages
-LUCI_DEPENDS:=+luci-base +libiwinfo
+LUCI_DEPENDS:=+luci-base +libiwinfo +ucode-mod-uloop
 
 PKG_BUILD_DEPENDS:=iwinfo
 PKG_LICENSE:=Apache-2.0
+
+define Package/luci-mod-dashboard/conffiles
+/etc/config/dashboard
+endef
 
 # Same date scheme as luci.mk, prefixed with 1 so the fork always sorts
 # above the OpenWrt build and apk upgrade never replaces it
