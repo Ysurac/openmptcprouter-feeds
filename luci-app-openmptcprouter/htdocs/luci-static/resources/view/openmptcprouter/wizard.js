@@ -262,7 +262,9 @@ return view.extend({
 			callFileExec('/bin/sh', ['/usr/share/openmptcprouter/list-serial.sh', 'cdc-wdm']),
 			callFileExec('/bin/sh', ['-c', MM_DEVICES_CMD]),
 		uci.load('mqvpn').catch(function(){}),
-		fileExists('/usr/sbin/mqvpn')
+		fileExists('/usr/sbin/mqvpn'),
+		uci.load('omr-tracker').catch(function(){}),
+		uci.load('unbound').catch(function(){})
 		]);
 	},
 
@@ -506,6 +508,24 @@ return view.extend({
 		var srvCount = 0;
 		uci.sections('openmptcprouter', 'server', function() { srvCount++; });
 		if (srvCount === 0) uci.add('openmptcprouter', 'server', 'vps');
+
+		/* Country and DNS64 act on omr-tracker and unbound: show what is in
+		 * effect there, not the wizard's own copy, which a change on the
+		 * OMR-Tracker or unbound page leaves behind (the backend compares
+		 * with the same values). Set client-side only, like the server
+		 * above: an untouched field then sends what is in effect, and
+		 * nothing is pushed. */
+		var effCountry = uci.get('omr-tracker', 'defaults') ?
+			(uci.get('omr-tracker', 'defaults', 'country') || 'world') :
+			(uci.get('openmptcprouter', 'settings', 'country') || 'world');
+		if (effCountry !== (uci.get('openmptcprouter', 'settings', 'country') || 'world'))
+			uci.set('openmptcprouter', 'settings', 'country', effCountry);
+		var isOn = function(v) { return ['1', 'true', 'yes', 'on'].indexOf(String(v)) !== -1; };
+		var effDns64 = isOn(uci.get('unbound', 'ub_main') ?
+			uci.get('unbound', 'ub_main', 'dns64') :
+			uci.get('openmptcprouter', 'settings', 'dns64')) ? '1' : '0';
+		if (effDns64 !== (isOn(uci.get('openmptcprouter', 'settings', 'dns64')) ? '1' : '0'))
+			uci.set('openmptcprouter', 'settings', 'dns64', effDns64);
 
 		var m, s, o;
 		m = new form.Map('openmptcprouter');
@@ -969,6 +989,9 @@ return view.extend({
 		o.value('europe', _('Europe'));
 		o.value('usa', _('USA'));
 		o.value('custom', _('Custom'));
+		/* a hosts group defined on the OMR-Tracker page: shown as the
+		 * first choice, an untouched save switched the tracker to it */
+		addCurrentChoices(o, ['settings'], function() { return uci.get('openmptcprouter', 'settings', 'country'); });
 		o.default = 'world';
 		o.retain = true; /* see 'vpn' option's comment above (#4350) */
 

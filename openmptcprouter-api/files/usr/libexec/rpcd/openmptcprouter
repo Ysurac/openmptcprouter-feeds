@@ -1467,16 +1467,33 @@ function wizard_add(args)
 	_set_or_delete("openmptcprouter", "settings", "mptcpovervpn", _as_string(args.mptcpovervpn_vpn, ""))
 	local country = _as_string(args.country, "")
 	local dns64 = _to_optional_flag(args.dns64)
-	-- Pushed to omr-tracker and unbound only when the wizard's own choice
-	-- changes: the wizard sends 'world' and '0' for unset ones, so every
-	-- save reset a country chosen on the OMR-Tracker page and turned off
-	-- DNS64 turned on on the unbound page
-	local country_changed = country ~= ""
-		and country ~= (ucic:get("openmptcprouter", "settings", "country") or "world")
-	local dns64_changed = dns64 ~= ""
-		and dns64 ~= _to_flag(ucic:get("openmptcprouter", "settings", "dns64"))
-	_set_or_delete("openmptcprouter", "settings", "country", country)
-	_set_flag_keep_unset("openmptcprouter", "settings", "dns64", args.dns64)
+	-- Pushed to omr-tracker and unbound only when the choice differs from
+	-- what is in effect there, which is what the wizard shows: every save
+	-- reset a country chosen on the OMR-Tracker page and turned off DNS64
+	-- turned on on the unbound page. Compared with the wizard's own copy
+	-- instead, picking "World" back after a change on the OMR-Tracker page
+	-- did nothing. The copy is the fallback when there is no target.
+	local country_in_effect
+	if ucic:get("omr-tracker", "defaults") ~= nil then
+		country_in_effect = ucic:get("omr-tracker", "defaults", "country") or "world"
+	else
+		country_in_effect = ucic:get("openmptcprouter", "settings", "country") or "world"
+	end
+	local dns64_in_effect
+	if ucic:get("unbound", "ub_main") ~= nil then
+		dns64_in_effect = _to_flag(ucic:get("unbound", "ub_main", "dns64"))
+	else
+		dns64_in_effect = _to_flag(ucic:get("openmptcprouter", "settings", "dns64"))
+	end
+	local country_changed = country ~= "" and country ~= country_in_effect
+	local dns64_changed = dns64 ~= "" and dns64 ~= dns64_in_effect
+	-- an untouched save writes nothing
+	if country_changed then
+		_set_or_delete("openmptcprouter", "settings", "country", country)
+	end
+	if dns64_changed then
+		_set_flag_keep_unset("openmptcprouter", "settings", "dns64", args.dns64)
+	end
 	-- What the Country and DNS64 choices act on, as the Lua wizard did:
 	-- since the move to rpcd only the openmptcprouter copy was written.
 	-- omr-tracker is restarted by restart_all_async() below.
