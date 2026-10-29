@@ -6,7 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI Interface to XRay
-LUCI_DEPENDS:=+xray-core
+LUCI_DEPENDS:=+xray-core +xray-config
 
 PKG_LICENSE:=GPLv3
 

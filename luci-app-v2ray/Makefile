@@ -6,7 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI Interface to V2Ray
-LUCI_DEPENDS:=+v2ray-core
+LUCI_DEPENDS:=+v2ray-core +v2ray-config
 
 PKG_LICENSE:=GPLv3
 

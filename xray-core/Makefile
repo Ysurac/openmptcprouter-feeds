@@ -54,7 +54,7 @@ endef
 define Package/$(PKG_NAME)-config
 	$(call Package/$(PKG_NAME)/template)
 	TITLE+= (init script)
-	DEPENDS+=+firewall4 +ip +resolveip +ucode +ucode-mod-fs +kmod-nft-tproxy @!LINUX_5_4
+	DEPENDS+=+xray-core +firewall4 +ip +resolveip +ucode +ucode-mod-fs +kmod-nft-tproxy @!LINUX_5_4
 endef
 
 define Package/$(PKG_NAME)-core/description
