@@ -227,7 +227,7 @@ function upgrade_check() {
                 info_output += _('Installed version:') + " " + esc(data.release.version)
 
                 // tell server the currently installed version
-                request_dict.current_version = request_dict.version;
+                request_dict.current_version = data.release.version;
                 // tell server what version to install
                 request_dict.version = candidates[0].latest;
                 // tell server to diff the requested packages with the default packages
