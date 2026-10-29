@@ -118,9 +118,12 @@ return L.view.extend({
 		o.description = _('Largest IP packet the networks to the server carry without fragmenting (1280–9000): mqvpn sizes its QUIC packets to fit, 1500 gives a tunnel MTU of 1418. Leave empty to use the server\'s value, 0 for 1400-byte packets. Also set on the server, for all its clients.');
 		o.datatype = 'uinteger';
 		o.placeholder = '0';
+		/* Plain decimal only: +value took "01500" and "00", which the
+		 * init refuses, and the tunnel then stayed down */
 		o.validate = function(section_id, value) {
 			var n = +value;
-			if (!value || n == 0 || (n >= 1280 && n <= 9000))
+			if (!value || value === '0' ||
+			    (/^[1-9][0-9]{3}$/.test(value) && n >= 1280 && n <= 9000))
 				return true;
 			return _('Expecting 0 or a value from 1280 to 9000');
 		};
