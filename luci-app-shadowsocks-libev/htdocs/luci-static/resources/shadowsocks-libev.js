@@ -97,7 +97,7 @@ return L.Class.extend({
 				server = sdata['server'],
 				server_port = sdata['server_port'];
 			if (server && server_port) {
-				var disabled = ucival_to_bool(sdata['.disabled']) ? ' - disabled' : '',
+				var disabled = ucival_to_bool(sdata['disabled']) ? ' - disabled' : '',
 					desc = '%s - %s:%s%s'.format(sname, server, server_port, disabled);
 				o.value(sname, desc);
 			}
