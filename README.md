@@ -32,7 +32,7 @@ This is the default proxy. MPTCP and DSCP support are added, with a LuCI interfa
 MPTCP support is added in LuCI interface and init scripts. IPv6 support added.
 
 ## Shadowsocks-v2ray-plugin-bin
-*Source:* [https://github.com/teddysun/v2ray-plugin](https://github.com/teddysun/v2ray-plugin)
+*Source:* [https://github.com/shadowsocks/v2ray-plugin](https://github.com/shadowsocks/v2ray-plugin)
 
 *Description:* V2ray plugin for Shadowsocks
 
