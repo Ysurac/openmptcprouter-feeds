@@ -3,6 +3,7 @@
 #
 # This is free software, licensed under the Apache License, Version 2.0 .
 #
+# From https://github.com/openwrt/luci/commit/0e2783557642331eb0afdc92d02c1d624f44fef7
 
 include $(TOPDIR)/rules.mk
 
