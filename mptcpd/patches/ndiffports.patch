@@ -9,8 +9,8 @@ and remote IP addresses are used, but with unique port numbers for each
 subflow.
 ---
  plugins/path_managers/Makefile.am  |  17 +-
- plugins/path_managers/ndiffports.c | 647 +++++++++++++++++++++++++++++
- 2 files changed, 663 insertions(+), 1 deletion(-)
+ plugins/path_managers/ndiffports.c | 654 +++++++++++++++++++++++++++++
+ 2 files changed, 670 insertions(+), 1 deletion(-)
  create mode 100644 plugins/path_managers/ndiffports.c
 
 diff --git a/plugins/path_managers/Makefile.am b/plugins/path_managers/Makefile.am
@@ -53,7 +53,7 @@ new file mode 100644
 index 00000000..f217dbbd
 --- /dev/null
 +++ b/plugins/path_managers/ndiffports.c
-@@ -0,0 +1,647 @@
+@@ -0,0 +1,654 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/**
 + * @file ndiffports.c
@@ -401,12 +401,16 @@ index 00000000..f217dbbd
 + * @param[in] raddr       Remote address and port for the initial subflow
 + * @param[in] server_side @c true if this peer was the listener (server),
 + *                        @c false if this peer initiated the connection.
++ * @param[in] deny_join_id0 @c true if the peer refuses subflows to the
++ *                        initial address and port, the only ones this
++ *                        plugin creates.
 + * @param[in] pm          Path manager object
 + */
 +static void ndiffports_connection_established(mptcpd_token_t token,
 +                                              struct sockaddr const *laddr,
 +                                              struct sockaddr const *raddr,
 +                                              bool server_side,
++                                              bool deny_join_id0,
 +                                              struct mptcpd_pm *pm)
 +{
 +        struct ndiffports_subflow_info *first_subflow;
@@ -425,7 +429,7 @@ index 00000000..f217dbbd
 +        memcpy(&new_entry->raddr, raddr, sizeof(new_entry->raddr));
 +        new_entry->server_side = server_side;
 +        new_entry->active_subflows = 1;
-+        new_entry->max_subflows = NDIFFPORTS_LIMIT;
++        new_entry->max_subflows = deny_join_id0 ? 1 : NDIFFPORTS_LIMIT;
 +
 +        /* Zero out the port number on the local addr so it's assigned
 +         * at connect time for new subflows
@@ -569,18 +573,21 @@ index 00000000..f217dbbd
 + * @param[in] raddr   Remote address and port for new subflow
 + * @param[in] backup  @c true if this is backup subflow, @c false for
 + *                    regular priority. (not used)
++ * @param[in] error   Subflow closing error, if any. (not used)
 + * @param[in] pm      Path manager object
 + */
 +static void ndiffports_subflow_closed(mptcpd_token_t token,
 +                                      struct sockaddr const *laddr,
 +                                      struct sockaddr const *raddr,
 +                                      bool backup,
++                                      uint8_t error,
 +                                      struct mptcpd_pm *pm)
 +{
 +        struct ndiffports_connection_info *entry;
 +        struct ndiffports_subflow_info *sub;
 +
 +        (void) backup;
++        (void) error;
 +
 +        entry = l_hashmap_lookup(ndiffports_connections, L_UINT_TO_PTR(token));
 +

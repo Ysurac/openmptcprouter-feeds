@@ -10,8 +10,8 @@ include $(TOPDIR)/rules.mk
 PKG_NAME:=mptcpd
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/multipath-tcp/mptcpd.git
-PKG_SOURCE_VERSION:=68fd9a156669ca7029a101f32282706df069cb4f
-PKG_VERSION:=0.13
+PKG_SOURCE_VERSION:=16e47a32ad4f872b46f2a4aa6f7f018ce3aaa04e
+PKG_VERSION:=0.14
 PKG_RELEASE:=1
 PKG_MAINTAINER:=Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
 
