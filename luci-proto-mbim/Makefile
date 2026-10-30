@@ -3,11 +3,15 @@
 #
 # This is free software, licensed under the Apache License, Version 2.0 .
 #
+# From https://github.com/openwrt/luci/commit/bd19e6b868b25196c6a1e1f0bda1c8dad0359b4a
 
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=Support for MBIM
 LUCI_DEPENDS:=+umbim
+
+PKG_LICENSE:=Apache-2.0
+PKG_MAINTAINER:=Howard Chu <hyc@symas.com>
 
 # Same date scheme as luci.mk, prefixed with 1 so the fork always sorts
 # above the OpenWrt build and apk upgrade never replaces it
