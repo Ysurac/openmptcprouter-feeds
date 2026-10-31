@@ -1311,6 +1311,33 @@ local function _servers_in_use(servers)
 	return false
 end
 
+-- dnsmasq asks the VPS Pi-hole at its tunnel address, which is gone with
+-- the VPN. omr-tracker's disable_pihole puts the local resolver back when
+-- the VPN goes down, but the tracker of a disabled omrvpn is stopped, never
+-- down: DNS stayed on the dead address. Re-enabling a server gets the
+-- Pi-hole back through 003-up's set_pihole.
+local function pihole_dnsmasq_off()
+	if ucic:get("openmptcprouter","settings","pihole_auto_conf") == "0" then return end
+	local sec
+	ucic:foreach("dhcp", "dnsmasq", function(s) sec = sec or s[".name"] end)
+	if not sec then return end
+	local kept, found, has_local = {}, false, false
+	for _, v in ipairs(uci_get_list("dhcp", sec, "server")) do
+		if v:match("^10%.255%..*#53$") then
+			found = true
+		else
+			if v == "127.0.0.1#5353" then has_local = true end
+			table.insert(kept, v)
+		end
+	end
+	if not found then return end
+	if not has_local then table.insert(kept, "127.0.0.1#5353") end
+	ucic:set_list("dhcp", sec, "server", kept)
+	ucic:save("dhcp")
+	ucic:commit("dhcp")
+	sys.exec("/etc/init.d/dnsmasq restart >/dev/null 2>&1")
+end
+
 -- Actually stop/start the VPN tunnel (and any active proxy) when every
 -- configured server is disabled/re-enabled, instead of leaving the
 -- "Disable server" wizard option as a config-cleanup no-op (#4334): tears
@@ -1323,6 +1350,7 @@ local function set_vps_disabled(disable)
 	if disable then
 		force_stop_vpn("all")
 		set_proxy_disabled(true)
+		pihole_dnsmasq_off()
 	else
 		force_start_vpn(ucic:get("openmptcprouter","settings","vpn"))
 		set_proxy_disabled(false)
