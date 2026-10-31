@@ -438,6 +438,24 @@ ss_rules_nft_reset() {
 	ss_tproxy_route_del
 }
 
+# omr-bypass writes its accept rules for the ss_rules chains (bypassed
+# destinations, the marks of its WANs and WAN groups) into
+# /etc/firewall.omr-bypass only when it runs while this proxy is the one
+# selected and enabled. Enabling it later (wizard, VPS sync) commits only
+# shadowsocks-libev, which omr-bypass does not watch: the include kept what it
+# wrote for the proxy before, and bypassed traffic went to ss-redir until
+# the next omr-bypass reload. Those lines are no-ops while the chains are
+# gone, so it is reloaded only when they are missing, in the background:
+# the tracker waits on rules_up to bring the proxy back.
+ss_omr_bypass_sync() {
+	[ -f "$ssrules_nft" ] || return 0
+	[ -x /etc/init.d/omr-bypass ] || return 0
+	[ "$(uci -q get openmptcprouter.settings.proxy)" = "shadowsocks" ] || return 0
+	grep -qs 'ss_rules_pre_tcp ip daddr @omr_dst_bypass_all_4 ' /etc/firewall.omr-bypass && return 0
+	logger -t "shadowsocks-libev" "Reload omr-bypass rules"
+	/etc/init.d/omr-bypass reload_rules >/dev/null 2>&1 &
+}
+
 ss_rules() {
 	config_load shadowsocks-libev
 	config_foreach ss_collect_redir_info ss_redir
@@ -449,7 +467,9 @@ ss_rules() {
 	ss_rules_extra=""
 	ss_rules_extra_redirs=""
 	config_foreach ss_rules_extra_collect ss_rules
-	if ! ss_rules_nft_gen; then
+	if ss_rules_nft_gen; then
+		ss_omr_bypass_sync
+	else
 		ss_rules_nft_reset
 	fi
 	ss_rules_extra_stale_reset
@@ -472,6 +492,7 @@ rules_up() {
 			mv -f "$f" "$(echo "$f" | sed 's/.down//g')"
 		done
 		fw4 -q reload
+		ss_omr_bypass_sync
 	elif [ ! -f "$ssrules_nft" ]; then
 		ss_rules
 	fi
