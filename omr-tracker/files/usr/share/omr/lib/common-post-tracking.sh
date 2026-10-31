@@ -516,7 +516,10 @@ _set_server_default_route_common() {
 		_omr_get_multipath_config_var multipath_config_route "$OMR_TRACKER_INTERFACE"
 
 		if [ -n "$serverip" ] && [ -n "$gateway_var" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ "$multipath_config_route" != "off" ]; then
-			local existing_route=$($ip_cmd route show "$serverip" 2>/dev/null | grep "via ${gateway_var}" | grep "dev ${OMR_TRACKER_DEVICE}")
+			# Only a route at this metric: mqvpn pins the server through
+			# the WAN it started on at the lowest priority, which is no
+			# reason to leave this one out
+			local existing_route=$($ip_cmd route show "$serverip" metric 1 2>/dev/null | grep "via ${gateway_var}" | grep "dev ${OMR_TRACKER_DEVICE}")
 			if [ -z "$existing_route" ]; then
 				[ "$debug" = "true" ] && _log "Set server $server ($serverip) default route via $gateway_var"
 				$ip_cmd route replace $serverip via $gateway_var dev $OMR_TRACKER_DEVICE metric 1 $initcwrwnd >/dev/null 2>&1
@@ -1030,7 +1033,8 @@ _set_server_route_common() {
 		_omr_uci_get_var interface_current_config "openmptcprouter.${OMR_TRACKER_INTERFACE}.state" "up"
 
 		if [ -n "$serverip" ] && [ -n "$OMR_TRACKER_DEVICE" ] && [ -n "$gateway_var" ] && [ "$multipath_config_route" != "off" ] && [ "$interface_current_config" = "up" ] && [ "$interface_up" = "true" ]; then
-			local existing_route=$($ip_cmd route show "$serverip" 2>/dev/null | grep "via ${gateway_var}" | grep "dev ${OMR_TRACKER_DEVICE}")
+			# Only a route at this metric, as in set_server_default_route
+			local existing_route=$($ip_cmd route show "$serverip" metric "$metric" 2>/dev/null | grep "via ${gateway_var}" | grep "dev ${OMR_TRACKER_DEVICE}")
 			if [ -z "$existing_route" ]; then
 				[ "$debug" = "true" ] && _log "Set server $server ($serverip) route via $gateway_var metric $metric"
 				$ip_cmd route replace "$serverip" via "$gateway_var" dev "$OMR_TRACKER_DEVICE" metric "$metric" $initcwrwnd >/dev/null 2>&1
