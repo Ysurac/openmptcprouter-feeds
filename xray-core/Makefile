@@ -18,7 +18,7 @@ PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/XTLS/Xray-core.git
 PKG_SOURCE_VERSION:=0afec66085a85191e9dd2a4a6646c7c9a94688d1
 
-PKG_BUILD_DEPENDS:=golang1.27/host
+PKG_BUILD_DEPENDS:=golang/host
 PKG_BUILD_PARALLEL:=1
 
 GO_PKG:=github.com/XTLS/Xray-core

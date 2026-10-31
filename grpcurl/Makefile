@@ -32,7 +32,7 @@ GO_PKG_LDFLAGS:=-s -w
 GO_PKG_TAGS:=master
 
 include $(INCLUDE_DIR)/package.mk
-include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
+include ../golang/golang-package.mk
 
 define Package/grpcurl
   TITLE:=grpcurl is a command-line tool that lets you interact with gRPC servers
