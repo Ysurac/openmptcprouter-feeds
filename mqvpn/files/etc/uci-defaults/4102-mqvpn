@@ -34,6 +34,22 @@ if [ "$(uci -q get mqvpn.settings.log_level_default_migrated)" != "1" ]; then
 	EOF
 fi
 
+# OpenMPTCProuter routes the LAN into the tunnel and the VPS through the WANs
+# itself (omr-tracker), so mqvpn no longer sets routes: its catch-alls into the
+# tunnel took precedence over the default routes the tracker moves, and its
+# metric 0 route to the VPS through the WAN it started on kept the proxy on
+# that WAN when it failed upstream with its link up.
+#
+# One-shot, marked in mqvpn.settings: a user who turns them back on keeps them.
+if [ "$(uci -q get mqvpn.settings.no_routes_default_migrated)" != "1" ]; then
+	uci -q batch <<-EOF >/dev/null
+		set mqvpn.interface.no_routes='1'
+		set mqvpn.settings=settings
+		set mqvpn.settings.no_routes_default_migrated='1'
+		commit mqvpn
+	EOF
+fi
+
 # mqvpn 0.18.0 removed the dgram reinjection mode and runs the old
 # reinjection_mode = dgram as the default (idle) mode, which the page then
 # could not show.

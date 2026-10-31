@@ -168,7 +168,7 @@ return L.view.extend({
 
 		o = s.option(form.Flag, 'no_routes', _('No automatic routes'));
 		o.description = _('Skip all automatic route setup and manage routes manually');
-		o.default = o.disabled;
+		o.default = o.enabled;
 		o.rmempty = false;
 
 		o = s.option(form.DynamicList, 'dns', _('DNS servers'));
