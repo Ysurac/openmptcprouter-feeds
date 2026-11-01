@@ -77,7 +77,7 @@ define Package/mqvpn
   SUBMENU:=VPN
   TITLE:=mqvpn - QUIC-based VPN
   URL:=https://github.com/mp0rta/mqvpn
-  DEPENDS:=+kmod-tun +libevent2 +jsonfilter
+  DEPENDS:=+kmod-tun +libevent2 +jsonfilter +libatomic
 endef
 
 define Package/mqvpn/description
@@ -151,6 +151,7 @@ define Build/Compile
 		-DSSL_LIB="$(BSSL_BUILD)/libssl.a" \
 		-DCRYPTO_LIB="$(BSSL_BUILD)/libcrypto.a" \
 		-DBUILD_TESTING=OFF \
+		-DCMAKE_C_STANDARD_LIBRARIES="-latomic" \
 		-DCMAKE_C_FLAGS="$(TARGET_CFLAGS)" \
 		-DCMAKE_CXX_FLAGS="$(TARGET_CXXFLAGS)"
 	+$(MAKE) -C "$(MQVPN_BUILD)"
