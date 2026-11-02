@@ -15,7 +15,7 @@ PKG_LICENSE_FILES:=LICENSE
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/Ysurac/mqvpn.git
-PKG_SOURCE_VERSION:=92cb5b617f2bea2ec5174915f24729679a53661f
+PKG_SOURCE_VERSION:=2a2f4d75b0d5ef466c96cfe77897c115e366768e
 # The commit is in the name: with the version alone, a builder that has an
 # older tarball of this version in dl/ (no hash to check) builds that one
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION)-$(PKG_SOURCE_VERSION).tar.zst
