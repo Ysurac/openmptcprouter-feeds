@@ -3,8 +3,24 @@ name: openmptcprouter
 # releases (made by their own workflows) must not deploy a firmware
 on:
   push:
-    branches: ['**']
+    branches: [develop, master, 'v*']
     tags: ['v*']
+    # Not evaluated for tag pushes, so releases always build
+    paths-ignore:
+      - '*.md'
+      - 'contributors/**'
+      - 'doc/**'
+      - '*/docs/**'
+      - '.circleci/**'
+      - '.github/*.md'
+      - '.github/workflows/build-mptcp-bpf-*.yml'
+      - '.github/workflows/stale.yml'
+
+# A new push makes the running branch build obsolete; a release build is
+# never cancelled
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
   contents: read
@@ -15,11 +31,24 @@ env:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
-        OMR_TARGET: [bpi-r1, bpi-r2, bpi-r3, bpi-r4, bpi-r4-pro-8x, bpi-r4-poe, bpi-r64, rpi2, rpi4, wrt32x, espressobin, r2s, rpi3, wrt3200acm, x86, x86_64, ubnt-erx, r4s, r7800, rutx12, rutx50, r5s, qnap-301w, rpi5, z8102ax_128m, z8102ax_64m, z8102ax-emmc, gl-mt6000, gl-mt3000, gl-mt2500, r5c, z8109ax_128m, z8802be_128m, z8803be, gl-mt5000, r3s, gl-mt2500-airoha, gl-x3000, gl-xe3000, cznic_turris-omnia, gl-mt3600be]
+        # mediatek-filogic, mediatek-filogic-bpi, mvebu-cortexa9 and
+        # rockchip-armv8 build all their devices at once (config-<group> in
+        # the openmptcprouter repository)
+        OMR_TARGET: [mediatek-filogic, mediatek-filogic-bpi, rockchip-armv8, mvebu-cortexa9, bpi-r1, bpi-r2, bpi-r64, rpi2, rpi3, rpi4, rpi5, espressobin, x86, x86_64, ubnt-erx, r7800, rutx50, qnap-301w]
         OMR_KERNEL: ["6.18"]
+        # Former per-device deploy directories, kept as links to the group
+        include:
+          - OMR_TARGET: mediatek-filogic
+            OMR_LINKS: gl-mt2500 gl-mt2500-airoha gl-mt3000 gl-mt3600be gl-mt5000 gl-mt6000 gl-x3000 gl-xe3000 z8102ax_128m z8102ax_64m z8102ax-emmc z8109ax_128m z8802be_128m z8803be
+          - OMR_TARGET: mediatek-filogic-bpi
+            OMR_LINKS: bpi-r3 bpi-r4 bpi-r4-poe bpi-r4-pro-8x
+          - OMR_TARGET: rockchip-armv8
+            OMR_LINKS: r2s r3s r4s r5c r5s
+          - OMR_TARGET: mvebu-cortexa9
+            OMR_LINKS: cznic_turris-omnia wrt32x wrt3200acm
     runs-on: ubuntu-latest
-    continue-on-error: true
 
     steps:
     - name: Branch name
@@ -33,9 +62,6 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install build-essential asciidoc binutils bzip2 gawk gettext git libncurses5-dev libz-dev patch unzip zlib1g-dev lib32gcc-s1 libc6-dev-i386 subversion flex uglifyjs git-core gcc-multilib p7zip p7zip-full msmtp libssl-dev texinfo libglib2.0-dev xmlto qemu-utils upx libelf-dev autoconf automake libtool autopoint device-tree-compiler python3-pyelftools llvm clang python3-docutils
-    - name: Install LLVM
-      run: |
-        sudo apt-get install llvm clang
     - name: Free disk space
       run: |
         df -h
@@ -52,24 +78,19 @@ jobs:
         df -h
     - name: Clone source code
       working-directory: ../../
-      env: 
-        REPO_URL: https://github.com/ysurac/openmptcprouter
+      env:
         SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
-        GITHUB_WORKSPACE: ${{ steps.branch_name.outputs.WORKSPACE }}
       run: |
-        git clone $REPO_URL omr
-        if [ "$SOURCE_NAME" != "develop" ]; then
-          cd omr
-          pwd
-          git fetch
-          git checkout master
+        if [ "$SOURCE_NAME" = "develop" ]; then
+          OMR_BRANCH=develop
         else
-          cd omr
-          git checkout develop
+          OMR_BRANCH=master
         fi
-        git pull
-        pwd
-    - name: Build toolchain
+        git clone --depth 1 --branch "$OMR_BRANCH" "$REPO_URL" omr
+        # build.sh takes OMR_RELEASE from the latest tag, which a shallow
+        # clone doesn't have
+        git -C omr fetch --depth 1 origin 'refs/tags/*:refs/tags/*'
+    - name: Prepare buildroot
       working-directory: ../../omr
       env:
         # Build the pushed commit of the repository that ran the workflow,
@@ -80,8 +101,67 @@ jobs:
         OMR_KERNEL: ${{ matrix.OMR_KERNEL }}
         OMR_HOST: ${{ secrets.OMR_HOST }}
         OMR_PORT: ${{ secrets.OMR_PORT }}
+        # Per package logs, uploaded when the build fails
+        OMR_LOG: 'yes'
       run: |
-        OMR_KERNEL="${OMR_KERNEL}" OMR_FEED_SRC="${OMR_FEED_SRC}" sh build.sh prepare {tools,toolchain}/install -j$(nproc) || OMR_KERNEL="${OMR_KERNEL}" OMR_FEED_SRC="${OMR_FEED_SRC}" sh build.sh prepare {tools,toolchain}/install -j1 V=s
+        ONLY_GET_REPO=yes sh build.sh
+        ONLY_PREPARE=yes sh build.sh
+        make -C "$OMR_TARGET/$OMR_KERNEL/source" defconfig
+    - name: Tools and toolchain cache key
+      id: tt_key
+      working-directory: ../../omr/${{ matrix.OMR_TARGET }}/${{ matrix.OMR_KERNEL }}/source
+      run: |
+        # The toolchain stamps are only compared by date, so the key covers
+        # everything the tools and the toolchain are built from: a stale
+        # toolchain would be reused without any error. Package selections
+        # don't change them and are left out.
+        board=$(sed -n 's/^CONFIG_TARGET_BOARD="\(.*\)"$/\1/p' .config)
+        sum=$( {
+          git ls-files -z -co --exclude-standard -- tools toolchain include scripts rules.mk Makefile target/linux/generic "target/linux/$board" | xargs -0 sha256sum 2>/dev/null
+          grep -vE '^(# )?CONFIG_(PACKAGE|DEFAULT|MODULE|VERSION|BUSYBOX)_' .config
+        } | sha256sum | cut -c1-16)
+        echo "key=tools-toolchain-${ImageOS}-${{ matrix.OMR_TARGET }}-${{ matrix.OMR_KERNEL }}-${sum}" >> "$GITHUB_OUTPUT"
+    - name: Restore tools and toolchain
+      id: tt_cache
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+      with:
+        path: ${{ runner.temp }}/tt-cache
+        key: ${{ steps.tt_key.outputs.key }}
+    - name: Build toolchain
+      working-directory: ../../omr/${{ matrix.OMR_TARGET }}/${{ matrix.OMR_KERNEL }}/source
+      run: |
+        if [ -f "$RUNNER_TEMP/tt-cache/tt.tar" ]; then
+          tar -xf "$RUNNER_TEMP/tt-cache/tt.tar"
+          rm -f "$RUNNER_TEMP/tt-cache/tt.tar"
+          # The fresh checkout is newer than the cached stamps, which would
+          # rebuild everything: date the stamps after it, as
+          # scripts/ext-tools.sh --refresh does for the tools
+          ref=$(mktemp)
+          find staging_dir/host/stamp build_dir/host staging_dir/toolchain-*/stamp build_dir/toolchain-* -type f -empty -print0 | xargs -0 -r touch -r "$ref"
+          rm -f "$ref"
+        fi
+        make IGNORE_ERRORS=m tools/install toolchain/install -j$(nproc) || make IGNORE_ERRORS=m tools/install toolchain/install -j$(nproc)
+    - name: Pack tools and toolchain
+      if: steps.tt_cache.outputs.cache-hit != 'true'
+      working-directory: ../../omr/${{ matrix.OMR_TARGET }}/${{ matrix.OMR_KERNEL }}/source
+      run: |
+        mkdir -p "$RUNNER_TEMP/tt-cache"
+        # Of the toolchain build trees (several GB), only the stamps and the
+        # kernel headers are needed
+        tar -cf "$RUNNER_TEMP/tt-cache/tt.tar" staging_dir/host staging_dir/toolchain-* build_dir/host build_dir/toolchain-*/linux-dev \
+          $(find build_dir/toolchain-* -mindepth 1 -maxdepth 1 -type l) \
+          $(find build_dir/toolchain-* -mindepth 2 -maxdepth 2 -type f -empty -name '.*')
+    - name: Save tools and toolchain
+      if: steps.tt_cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+      with:
+        path: ${{ runner.temp }}/tt-cache
+        key: ${{ steps.tt_key.outputs.key }}
+    - name: Build kernel
+      working-directory: ../../omr/${{ matrix.OMR_TARGET }}/${{ matrix.OMR_KERNEL }}/source
+      run: |
+        rm -rf "$RUNNER_TEMP/tt-cache"
+        make IGNORE_ERRORS=m prepare -j$(nproc) || make IGNORE_ERRORS=m prepare -j$(nproc)
     - name: Install the apk keys
       working-directory: ../../omr
       env:
@@ -110,14 +190,22 @@ jobs:
         OMR_TARGET: ${{ matrix.OMR_TARGET }}
         OMR_KERNEL: ${{ matrix.OMR_KERNEL }}
       run: |
-        make IGNORE_ERRORS=m -C $OMR_TARGET/$OMR_KERNEL/source package/{compile,install,index} -j$(nproc) || make IGNORE_ERRORS=m -C $OMR_TARGET/$OMR_KERNEL/source package/{compile,install,index} -j1 V=s
+        make IGNORE_ERRORS=m -C $OMR_TARGET/$OMR_KERNEL/source package/{compile,install,index} -j$(nproc) || make IGNORE_ERRORS=m -C $OMR_TARGET/$OMR_KERNEL/source package/{compile,install,index} -j$(nproc)
     - name: Build image
       working-directory: ../../omr
       env:
         OMR_TARGET: ${{ matrix.OMR_TARGET }}
         OMR_KERNEL: ${{ matrix.OMR_KERNEL }}
       run: |
-        make IGNORE_ERRORS=m -C $OMR_TARGET/$OMR_KERNEL/source target/install -j$(nproc) || make IGNORE_ERRORS=m -C $OMR_TARGET/$OMR_KERNEL/source target/install -j1 V=s
+        make IGNORE_ERRORS=m -C $OMR_TARGET/$OMR_KERNEL/source target/install -j$(nproc) || make IGNORE_ERRORS=m -C $OMR_TARGET/$OMR_KERNEL/source target/install -j$(nproc)
+    - if: failure()
+      name: Upload build logs
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: logs-${{ matrix.OMR_TARGET }}
+        path: /home/runner/work/omr/${{ matrix.OMR_TARGET }}/${{ matrix.OMR_KERNEL }}/source/logs
+        retention-days: 7
+        if-no-files-found: ignore
     - name: Sign packages with the OMR key
       working-directory: ../../omr
       env:
@@ -161,12 +249,6 @@ jobs:
           done < "$sums" > "$sums.new"
           mv "$sums.new" "$sums"
         done
-    - name: Upload artifacts
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-      with:
-        name: ${{ matrix.OMR_TARGET }}
-        path: /home/runner/work/omr/${{ matrix.OMR_TARGET }}/${{ matrix.OMR_KERNEL }}/source/bin
-        overwrite: true
     - if: startsWith(github.ref, 'refs/tags/')
       name: Deploy - Create directory
       uses: ysurac/ssh-action@5a841de87115730aff750ac127773e3b2b3f56dd # master as of 2026-10-12
@@ -177,6 +259,10 @@ jobs:
       with:
         command: |
           mkdir -p deploy/release/${{env.SOURCE_TAG}}/${{matrix.OMR_TARGET}}
+          for d in ${{ matrix.OMR_LINKS }}; do
+            [ -L "deploy/release/${{env.SOURCE_TAG}}/$d" ] || rm -rf "deploy/release/${{env.SOURCE_TAG}}/$d"
+            ln -sfn "${{matrix.OMR_TARGET}}" "deploy/release/${{env.SOURCE_TAG}}/$d"
+          done
         host: ${{ secrets.OMR_DEPLOY_HOST }}
         user: deploy
         port: ${{ secrets.OMR_DEPLOY_PORT }}
@@ -192,6 +278,10 @@ jobs:
       with:
         command: |
           mkdir -p deploy/${{env.SOURCE_BRANCH}}/${{matrix.OMR_KERNEL}}/${{matrix.OMR_TARGET}}
+          for d in ${{ matrix.OMR_LINKS }}; do
+            [ -L "deploy/${{env.SOURCE_BRANCH}}/${{matrix.OMR_KERNEL}}/$d" ] || rm -rf "deploy/${{env.SOURCE_BRANCH}}/${{matrix.OMR_KERNEL}}/$d"
+            ln -sfn "${{matrix.OMR_TARGET}}" "deploy/${{env.SOURCE_BRANCH}}/${{matrix.OMR_KERNEL}}/$d"
+          done
         host: ${{ secrets.OMR_DEPLOY_HOST }}
         user: deploy
         port: ${{ secrets.OMR_DEPLOY_PORT }}
