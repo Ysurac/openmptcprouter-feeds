@@ -6,13 +6,21 @@ This is the OpenWrt OpenMPTCProuter feed containing all modified and necessary p
 For More information, see [https://github.com/ysurac/openmptcprouter](https://github.com/ysurac/openmptcprouter) and [https://www.openmptcprouter.com](https://www.openmptcprouter.com/).
 
 
-## Glorytun
-*Source:* [https://github.com/angt/glorytun](https://github.com/angt/glorytun)
+## Glorytun TCP
+*Source:* [https://github.com/Ysurac/glorytun](https://github.com/Ysurac/glorytun)
 
 *Description:* A small, simple and secure VPN
 
 
 A LuCI interface was made to make it easier to use. It's used in OpenMPTCProuter to redirect ports from the VPS to the router and for UDP/ICMP traffic from the router.
+
+
+## Glorytun UDP
+*Source:* [https://github.com/Ysurac/glorytun](https://github.com/Ysurac/glorytun)
+
+*Description:* The UDP version of Glorytun, with multipath support
+
+This is used as VPN, alternative to Glorytun TCP. Paths are aggregated by Glorytun itself, not by MPTCP.
 
 
 ## Shadowsocks-rust
@@ -151,7 +159,7 @@ This is used to bypass a protocol
 
 *Description:* A platform for building proxies to bypass network restrictions.
 
-This is used as proxy, alternative to Shadowsocks
+This is used as proxy, alternative to Shadowsocks. VLESS, VMess, Trojan and SOCKS protocols are available, with a LuCI interface.
 
 
 ## Xray
@@ -159,13 +167,37 @@ This is used as proxy, alternative to Shadowsocks
 
 *Description:* A platform for building proxies, superset of V2Ray
 
-This is used as proxy, alternative to Shadowsocks
+This is used as proxy, alternative to Shadowsocks. VLESS (with or without Reality), VMess, Trojan, Shadowsocks and SOCKS protocols are available, with a LuCI interface.
 
 
 ## MQVPN
 *Source:* [https://github.com/mp0rta/mqvpn](https://github.com/mp0rta/mqvpn)
 
 *Description:* A multipath QUIC VPN
+
+This is used as VPN, alternative to Glorytun and OpenVPN
+
+
+## OpenVPN
+*Source:* [https://github.com/OpenVPN/openvpn](https://github.com/OpenVPN/openvpn)
+
+*Description:* A full-featured SSL VPN
+
+This is used as VPN, alternative to Glorytun. MPTCP support is added for the TCP mode.
+
+
+## ovpn-dco
+*Source:* [https://github.com/OpenVPN/ovpn-dco](https://github.com/OpenVPN/ovpn-dco)
+
+*Description:* OpenVPN Data Channel Offload kernel module
+
+Moves the OpenVPN data channel into the kernel to speed up the tunnel.
+
+
+## SoftEther VPN
+*Source:* [https://github.com/SoftEtherVPN/SoftEtherVPN](https://github.com/SoftEtherVPN/SoftEtherVPN)
+
+*Description:* A multi-protocol VPN
 
 This is used as VPN, alternative to Glorytun and OpenVPN
 
