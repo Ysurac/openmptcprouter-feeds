@@ -12,8 +12,12 @@ extern bool bpf_mptcp_subflow_queues_empty(struct sock *sk) __ksym;
 extern void mptcp_pm_subflow_chk_stale(const struct mptcp_sock *msk, struct sock *ssk) __ksym;
 extern void mptcp_set_timeout(struct sock *sk) __ksym;
 
-/* Bounds the walks for the verifier; same value and reason as bpf_dscp. */
-#define MAX_SUBFLOWS	8
+/* Most subflows a round takes turns between. The counters of the walks
+ * stop there, which bounds them for the verifier; a separate count of the
+ * subflows walked, on top of them, made it check every pair of values,
+ * past its 1M instruction limit at 16.
+ */
+#define MAX_SUBFLOWS	16
 
 struct mptcp_rr_storage {
 	struct sock *last_snd;
@@ -104,7 +108,6 @@ int BPF_PROG(bpf_rr_get_send, struct mptcp_sock *msk)
 	struct mptcp_rr_storage *ptr;
 	__u32 nr = 0, target, idx = 0;
 	bool use_backup = false;
-	int seen = 0;
 
 	/* the MPTCP retransmission timer follows the subflows' own timers
 	 * (see get_retrans below)
@@ -118,14 +121,11 @@ int BPF_PROG(bpf_rr_get_send, struct mptcp_sock *msk)
 
 	/* First walk: how many non-backup subflows can take data right now. */
 	bpf_for_each(mptcp_subflow, subflow, sk) {
-		if (seen >= MAX_SUBFLOWS)
-			break;
-		seen++;
-
 		if (rr_backup(subflow))
 			continue;
-		if (rr_usable(subflow, mptcp_subflow_tcp_sock(subflow)))
-			nr++;
+		if (rr_usable(subflow, mptcp_subflow_tcp_sock(subflow)) &&
+		    ++nr == MAX_SUBFLOWS)
+			break;
 	}
 
 	if (!nr) {
@@ -133,14 +133,10 @@ int BPF_PROG(bpf_rr_get_send, struct mptcp_sock *msk)
 			return -1;
 		/* only backup subflows are left: count them */
 		use_backup = true;
-		seen = 0;
 		bpf_for_each(mptcp_subflow, subflow, sk) {
-			if (seen >= MAX_SUBFLOWS)
+			if (rr_usable(subflow, mptcp_subflow_tcp_sock(subflow)) &&
+			    ++nr == MAX_SUBFLOWS)
 				break;
-			seen++;
-
-			if (rr_usable(subflow, mptcp_subflow_tcp_sock(subflow)))
-				nr++;
 		}
 		if (!nr)
 			return -1;
@@ -155,13 +151,8 @@ int BPF_PROG(bpf_rr_get_send, struct mptcp_sock *msk)
 	 * refuses the access ("math between fp pointer and register with
 	 * unbounded min value"); scheduling in place needs no index at all.
 	 */
-	seen = 0;
 	bpf_for_each(mptcp_subflow, subflow, sk) {
 		struct sock *ssk;
-
-		if (seen >= MAX_SUBFLOWS)
-			break;
-		seen++;
 
 		if (!use_backup && rr_backup(subflow))
 			continue;
@@ -175,7 +166,8 @@ int BPF_PROG(bpf_rr_get_send, struct mptcp_sock *msk)
 			ptr->turn++;
 			return 0;
 		}
-		idx++;
+		if (++idx == MAX_SUBFLOWS)
+			break;
 	}
 
 	return -1;

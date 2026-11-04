@@ -58,25 +58,6 @@
 char _license[] SEC("license") = "GPL";
 
 #define MPTCP_SEND_BURST_SIZE	65428
-/* Raised back to 8 to match bpf_weight_rr's MAX_SUBFLOWS, per explicit
- * request (2026-08-12). History: this was previously dropped to 4
- * because at 8 this function's extra branching factor (two
- * independently-nullable pin sources, dscp_iface AND dscp_remote_ids,
- * live across both loops -- see the file header comment -- versus
- * weight_rr's single sequential map-lookup-with-fallback) pushed the
- * verifier's state-space exploration over its 1,000,000 instruction
- * budget ("BPF program is too large") on one specific kernel/clang
- * combo at the time. Re-tested live at 8 on the bench (kernel 6.18.39,
- * clang/llvm 21, 2026-08-12): compiles clean and `bpftool struct_ops
- * register` loads it with no verifier error, so that combo no longer
- * reproduces the failure -- whatever changed (newer clang codegen,
- * newer kernel verifier), 8 is confirmed safe to load here. If "BPF
- * program is too large" resurfaces on some other kernel/toolchain,
- * drop back to 4 rather than fighting the verifier further -- see git
- * history for the prior state.
- */
-#define MAX_SUBFLOWS		8
-
 /* Weight ratio between the pinned target and everything else -- large
  * enough that the pinned subflow wins essentially every turn while
  * it's active (999 wins per 1 for a lone competitor), without needing
@@ -120,9 +101,9 @@ struct {
  * The ids are a 256-bit set, bit (id & 7) of byte (id >> 3), rather than
  * a count and an array: matching a subflow is then one bounded byte
  * read, with no loop inside the subflow loop to add to the verifier's
- * state space (see MAX_SUBFLOWS). Renamed from dscp_remote_id, whose
- * value was a single __u8: LIBBPF_PIN_BY_NAME would otherwise fail to
- * reuse a map still pinned with the old value_size after an upgrade.
+ * state space. Renamed from dscp_remote_id, whose value was a single
+ * __u8: LIBBPF_PIN_BY_NAME would otherwise fail to reuse a map still
+ * pinned with the old value_size after an upgrade.
  */
 struct dscp_remote_ids {
 	__u8 ids[32];
@@ -142,7 +123,7 @@ struct {
  * subflow ever matched a pin. Populated by mptcp-scheduler-dscp.sh set
  * <dscp> <interface> with the ids of the WAN's IPv6 endpoints; empty on the
  * VPS. Looked up only for an IPv6 subflow, inside the subflow loop, so it
- * adds no pointer that stays live across the loop (see MAX_SUBFLOWS).
+ * adds no pointer that stays live across the loop.
  */
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
@@ -186,13 +167,6 @@ struct {
 	__uint(max_entries, 4096);
 	__uint(pinning, LIBBPF_PIN_BY_NAME);
 } dscp_cw_map_v2 SEC(".maps");
-
-struct dscp_entry {
-	struct sock *ssk;
-	__u32 weight;
-	__s32 cw;
-	__u8 is_backup;
-};
 
 static __always_inline __u64 div_u64(__u64 dividend, __u32 divisor)
 {
@@ -268,91 +242,102 @@ void BPF_PROG(mptcp_sched_dscp_release, struct mptcp_sock *msk)
 {
 }
 
+/* Whether the subflow carries the class dscp: its local IPv4 address is
+ * the one pinned in dscp_iface, its remote id one of dscp_remote_ids (on the
+ * VPS), or, for an IPv6 subflow, its local id one of dscp_local_ids.
+ *
+ * The local address is a direct member access on this trusted pointer, like
+ * bpf_weight_rr_get_send's identical local_ip read -- NOT BPF_CORE_READ()
+ * (a separate read of the same field plus a redundant inet_saddr fallback,
+ * once mptcp_subflow_active() has confirmed the subflow is established).
+ */
+static __always_inline bool dscp_pinned(const struct mptcp_sock *msk,
+					struct mptcp_subflow_context *subflow,
+					struct sock *cur, __u8 dscp,
+					const __u32 *desired_ip,
+					const struct dscp_remote_ids *desired_remote_ids)
+{
+	__u32 local_ip = cur->__sk_common.skc_rcv_saddr;
+
+	if ((desired_ip && local_ip == *desired_ip) ||
+	    (desired_remote_ids && remote_id_matches(subflow, desired_remote_ids)))
+		return true;
+	return local_ip == LOOPBACK4_IPV6 && local_id_pinned(msk, subflow, dscp);
+}
+
+/* Whether the subflow is one the round is between: one that can take data
+ * right now, as in bpf_weight_rr (f2abf1d5): a winner whose send buffer was
+ * full was debited its turn and then dropped by the check after the round,
+ * so the round produced nothing. The pin target is kept when it is merely
+ * full: the round then waits for it (-1) instead of moving its class to
+ * another WAN whenever it is saturated. A stale one is screened like the
+ * others, so a class still fails over off a dead path. Its pacing rate is
+ * filled in when it has none yet.
+ */
+static __always_inline bool dscp_candidate(struct mptcp_subflow_context *subflow,
+					   struct sock *cur, bool is_pin_target)
+{
+	if (mptcp_subflow_stale(subflow) ||
+	    (!is_pin_target && !bpf_sk_stream_memory_free(cur)))
+		return false;
+	if (!subflow->avg_pacing_rate) {
+		subflow->avg_pacing_rate = cur->sk_pacing_rate;
+		if (!subflow->avg_pacing_rate)
+			return false;
+	}
+	return true;
+}
+
 SEC("struct_ops")
 int BPF_PROG(bpf_dscp_get_send, struct mptcp_sock *msk)
 {
-	struct dscp_entry entries[MAX_SUBFLOWS] = {};
 	struct mptcp_subflow_context *subflow;
 	struct sock *sk = (struct sock *)msk;
-	int nr_active = 0, nr_total = 0;
+	bool has_active = false, has_backup = false;
 	__u64 msk_key = (__u64)(unsigned long)msk;
-	__u32 total_weight = 0;
-	__u32 pace, burst, wmem;
-	struct sock *ssk = NULL;
-	int best_idx = -1;
-	__u32 *desired_ip;
+	struct sock *ssk = NULL, *best = NULL;
 	struct dscp_remote_ids *desired_remote_ids;
+	__u32 total_weight = 0;
+	__u32 burst, wmem;
+	__u32 *desired_ip;
+	__s32 best_cw = 0;
 	__u8 use_backup;
 	__u8 dscp, tos;
-	int i;
 
 	tos = BPF_CORE_READ(msk, sk.icsk_inet.tos);
 	dscp = tos >> 2;
 	desired_ip = bpf_map_lookup_elem(&dscp_iface, &dscp);
 	desired_remote_ids = bpf_map_lookup_elem(&dscp_remote_ids, &dscp);
 
+	/* Both walks below carry flags, pointers and values the verifier
+	 * doesn't track exactly, so it sees the same states at every turn and
+	 * stops, however many subflows there are. The candidates used to be
+	 * gathered into an array walked by index, which it checked one index
+	 * at a time: past its 1M instruction limit at 16 subflows (and once
+	 * already at 8, on an older kernel and clang).
+	 *
+	 * First walk: whether the round is between the active subflows or,
+	 * none being a candidate, the backup ones.
+	 */
 	bpf_for_each(mptcp_subflow, subflow, sk) {
-		__u8 is_backup = (subflow->backup || subflow->request_bkup) ? 1 : 0;
-		__u32 local_ip, weight;
-		bool is_pin_target;
-		struct sock *cur;
+		struct sock *cur = mptcp_subflow_tcp_sock(subflow);
 
-		if (nr_total >= MAX_SUBFLOWS)
-			break;
-
-		cur = mptcp_subflow_tcp_sock(subflow);
 		if (!mptcp_subflow_active(subflow))
 			continue;
-
-		/* Direct member access on this trusted pointer, like
-		 * bpf_weight_rr_get_send's identical local_ip read -- NOT
-		 * BPF_CORE_READ()/local_ip_matches() (which does its own,
-		 * separate BPF_CORE_READ of the same field plus an extra,
-		 * redundant inet_saddr fallback check once
-		 * mptcp_subflow_active() has already confirmed this subflow
-		 * is established). This alone wasn't sufficient, though --
-		 * see MAX_SUBFLOWS' comment for the rest of the fix.
-		 */
-		local_ip = cur->__sk_common.skc_rcv_saddr;
-		is_pin_target = (desired_ip && local_ip == *desired_ip) ||
-				(desired_remote_ids && remote_id_matches(subflow, desired_remote_ids));
-		if (!is_pin_target && local_ip == LOOPBACK4_IPV6)
-			is_pin_target = local_id_pinned(msk, subflow, dscp);
-
-		/* Only subflows that can take data right now are candidates,
-		 * as in bpf_weight_rr (f2abf1d5): a winner whose send buffer
-		 * was full was debited its turn and then dropped by the check
-		 * after the loop, so the round produced nothing. The pin
-		 * target is kept when it is merely full: the round then waits
-		 * for it (-1) instead of moving its class to another WAN
-		 * whenever it is saturated. A stale one is screened like the
-		 * others, so a class still fails over off a dead path.
-		 */
-		if (mptcp_subflow_stale(subflow) ||
-		    (!is_pin_target && !bpf_sk_stream_memory_free(cur)))
+		if (!dscp_candidate(subflow, cur,
+				    dscp_pinned(msk, subflow, cur, dscp, desired_ip,
+						desired_remote_ids)))
 			continue;
-
-		pace = subflow->avg_pacing_rate;
-		if (!pace) {
-			subflow->avg_pacing_rate = cur->sk_pacing_rate;
-			pace = subflow->avg_pacing_rate;
-			if (!pace)
-				continue;
+		if (!subflow->backup && !subflow->request_bkup) {
+			has_active = true;
+			break;
 		}
-
-		weight = is_pin_target ? DSCP_PIN_WEIGHT : DSCP_NEUTRAL_WEIGHT;
-
-		entries[nr_total].ssk = cur;
-		entries[nr_total].weight = weight;
-		entries[nr_total].is_backup = is_backup;
-		nr_total++;
-		if (!is_backup)
-			nr_active++;
+		has_backup = true;
 	}
 
 	mptcp_set_timeout(sk);
 
-	if (nr_total == 0)
+	if (!has_active && !has_backup)
 		return -1;
 
 	/* Prefer active subflows; fall back to backup if none active --
@@ -361,20 +346,17 @@ int BPF_PROG(bpf_dscp_get_send, struct mptcp_sock *msk)
 	 * mptcp_subflow_get_send() waits for those rather than loading the
 	 * backup WAN with every saturating upload.
 	 */
-	use_backup = (nr_active == 0) ? 1 : 0;
+	use_backup = has_active ? 0 : 1;
 	if (use_backup && has_active_nonbackup(sk))
 		return -1;
 
-	/* Smooth weighted round-robin (nginx-style), identical algorithm to
-	 * bpf_weight_rr_get_send: every candidate's current-weight
-	 * (persisted in dscp_cw_map_v2, keyed by (msk, ssk)) is bumped by its own weight and written back in
-	 * this same pass, while total_weight accumulates alongside it;
-	 * the winner isn't known
-	 * until the pass finishes, so its debit (cw -= total_weight) is
-	 * applied as a single extra map update right after the loop rather
-	 * than in a second pass over all candidates -- see
-	 * mptcp_bpf_weight_rr.c's identical comment for why a second full
-	 * loop blew up the BPF verifier's state space.
+	/* Second walk, smooth weighted round-robin (nginx-style), identical
+	 * algorithm to bpf_weight_rr_get_send: every candidate's
+	 * current-weight (persisted in dscp_cw_map_v2, keyed by (msk, ssk)) is
+	 * bumped by its own weight and written back in this same pass, while
+	 * total_weight accumulates alongside it; the winner isn't known until
+	 * the pass finishes, so its debit (cw -= total_weight) is applied as a
+	 * single extra map update right after the walk.
 	 *
 	 * With DSCP_PIN_WEIGHT >> DSCP_NEUTRAL_WEIGHT, the pinned subflow
 	 * wins essentially every turn while it's active (this reproduces
@@ -387,68 +369,56 @@ int BPF_PROG(bpf_dscp_get_send, struct mptcp_sock *msk)
 	 * fall out of sync, and no permanent loss of preference from one
 	 * missed round.
 	 */
-	for (i = 0; i < MAX_SUBFLOWS; i++) {
+	bpf_for_each(mptcp_subflow, subflow, sk) {
+		__u8 is_backup = (subflow->backup || subflow->request_bkup) ? 1 : 0;
 		struct dscp_cw_key key = {};
+		struct sock *cur;
+		bool is_pin_target;
 		__s32 *cw_ptr, cw;
+		__u32 weight;
 
-		if (i >= nr_total)
-			break;
-		if (entries[i].is_backup != use_backup)
+		if (is_backup != use_backup || !mptcp_subflow_active(subflow))
+			continue;
+		cur = mptcp_subflow_tcp_sock(subflow);
+		is_pin_target = dscp_pinned(msk, subflow, cur, dscp, desired_ip,
+					    desired_remote_ids);
+		if (!dscp_candidate(subflow, cur, is_pin_target))
 			continue;
 
-		total_weight += entries[i].weight;
+		weight = is_pin_target ? DSCP_PIN_WEIGHT : DSCP_NEUTRAL_WEIGHT;
+		total_weight += weight;
 
 		key.msk = msk_key;
-		key.ssk = (__u64)(unsigned long)entries[i].ssk;
+		key.ssk = (__u64)(unsigned long)cur;
 		cw_ptr = bpf_map_lookup_elem(&dscp_cw_map_v2, &key);
 		cw = cw_ptr ? *cw_ptr : 0;
-		cw += (__s32)entries[i].weight;
-		entries[i].cw = cw;
+		cw += (__s32)weight;
 		bpf_map_update_elem(&dscp_cw_map_v2, &key, &cw, BPF_ANY);
 
-		/* best_idx < 0 alone only proves a lower bound; without an explicit
-		 * upper bound too, the verifier can't prove entries[best_idx] below
-		 * stays inside the array once best_idx has been spilled to the
-		 * stack and reloaded ("invalid unbounded variable-offset read from
-		 * stack") -- confirmed live on this kernel/clang combo even though
-		 * best_idx is only ever assigned values in [0, MAX_SUBFLOWS) by
-		 * this same loop. bpf_weight_rr_get_send has the identical
-		 * best_idx pattern without this extra check and loads fine today,
-		 * but that's apparently down to incidental register allocation
-		 * from having less code ahead of it, not a guarantee -- add the
-		 * explicit bound here rather than rely on that.
-		 */
-		if (best_idx < 0 || best_idx >= MAX_SUBFLOWS || cw > entries[best_idx].cw)
-			best_idx = i;
-	}
-
-	if (!total_weight)
-		return -1;
-
-	if (best_idx >= 0 && best_idx < MAX_SUBFLOWS) {
-		struct dscp_cw_key key = {};
-		__s32 cw = entries[best_idx].cw - (__s32)total_weight;
-
-		key.msk = msk_key;
-		key.ssk = (__u64)(unsigned long)entries[best_idx].ssk;
-		bpf_map_update_elem(&dscp_cw_map_v2, &key, &cw, BPF_ANY);
-
-		ssk = entries[best_idx].ssk;
-	}
-
-	/* Safety fallback: pick first available in set */
-	if (!ssk) {
-		for (i = 0; i < MAX_SUBFLOWS; i++) {
-			if (i >= nr_total)
-				break;
-			if (entries[i].is_backup == use_backup) {
-				ssk = entries[i].ssk;
-				break;
-			}
+		if (!best || cw > best_cw) {
+			best = cur;
+			best_cw = cw;
 		}
 	}
 
-	if (!ssk || !bpf_sk_stream_memory_free(ssk))
+	/* Every weight is at least 1, so a winner means total_weight > 0.
+	 * Testing total_weight itself would have the verifier track its exact
+	 * value through the walk: the weights are constants here.
+	 */
+	if (!best)
+		return -1;
+
+	{
+		struct dscp_cw_key key = {};
+		__s32 cw = best_cw - (__s32)total_weight;
+
+		key.msk = msk_key;
+		key.ssk = (__u64)(unsigned long)best;
+		bpf_map_update_elem(&dscp_cw_map_v2, &key, &cw, BPF_ANY);
+	}
+
+	ssk = best;
+	if (!bpf_sk_stream_memory_free(ssk))
 		return -1;
 
 	subflow = bpf_mptcp_subflow_ctx(ssk);

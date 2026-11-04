@@ -12,9 +12,6 @@ extern bool bpf_mptcp_subflow_queues_empty(struct sock *sk) __ksym;
 extern void mptcp_pm_subflow_chk_stale(const struct mptcp_sock *msk, struct sock *ssk) __ksym;
 extern void mptcp_set_timeout(struct sock *sk) __ksym;
 
-/* Bounds the walk for the verifier; same value and reason as bpf_dscp. */
-#define MAX_SUBFLOWS	8
-
 SEC("struct_ops")
 void BPF_PROG(mptcp_sched_bkup_init, struct mptcp_sock *msk)
 {
@@ -45,8 +42,12 @@ int BPF_PROG(bpf_bkup_get_send, struct mptcp_sock *msk)
 	struct mptcp_subflow_context *subflow;
 	struct sock *sk = (struct sock *)msk;
 	struct sock *backup = NULL, *pick = NULL;
-	int nr_active = 0;
-	int seen = 0;
+	/* A flag, not a count, and no walk counter: the verifier then sees
+	 * the same few states at every turn of the walk and stops, however
+	 * many subflows there are. Counters made it check each turn apart,
+	 * past its 1M instruction limit from 16 subflows on.
+	 */
+	bool has_active = false;
 
 	/* the MPTCP retransmission timer follows the subflows' own timers
 	 * (see get_retrans below)
@@ -56,10 +57,6 @@ int BPF_PROG(bpf_bkup_get_send, struct mptcp_sock *msk)
 	bpf_for_each(mptcp_subflow, subflow, sk) {
 		struct sock *ssk;
 		bool usable;
-
-		if (seen >= MAX_SUBFLOWS)
-			break;
-		seen++;
 
 		ssk = mptcp_subflow_tcp_sock(subflow);
 		if (!ssk || !mptcp_subflow_active(subflow))
@@ -72,14 +69,14 @@ int BPF_PROG(bpf_bkup_get_send, struct mptcp_sock *msk)
 			continue;
 		}
 
-		nr_active++;
+		has_active = true;
 		if (usable) {
 			pick = ssk;
 			break;
 		}
 	}
 
-	if (!pick && !nr_active)
+	if (!pick && !has_active)
 		pick = backup;
 	if (!pick)
 		return -1;

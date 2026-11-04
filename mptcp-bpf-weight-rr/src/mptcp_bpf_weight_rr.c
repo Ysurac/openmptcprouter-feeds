@@ -12,7 +12,6 @@
 char _license[] SEC("license") = "GPL";
 
 #define MPTCP_SEND_BURST_SIZE	65428
-#define MAX_SUBFLOWS		8
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
@@ -25,13 +24,6 @@ extern __u64 mptcp_wnd_end(const struct mptcp_sock *msk) __ksym;
 extern bool bpf_sk_stream_memory_free(const struct sock *sk) __ksym;
 extern bool bpf_mptcp_subflow_queues_empty(struct sock *sk) __ksym;
 extern void mptcp_pm_subflow_chk_stale(const struct mptcp_sock *msk, struct sock *ssk) __ksym;
-
-struct subflow_entry {
-	struct sock *ssk;
-	__u32 weight;
-	__s32 cw;      /* bumped current-weight for this round (SWRR) */
-	__u8 is_backup;
-};
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
@@ -188,62 +180,113 @@ void BPF_PROG(mptcp_sched_weight_rr_release, struct mptcp_sock *msk)
 	 */
 }
 
+/* Whether the subflow is one the round is between: one that can take data
+ * right now. Its pacing rate is filled in when it has none yet.
+ *
+ * This used to be checked once, on the winner, after the SWRR bookkeeping
+ * had already run -- and the bookkeeping is what makes the weights mean
+ * anything. A candidate that won the round had its current-weight debited
+ * by total_weight and was then thrown away by the
+ * `!bpf_sk_stream_memory_free(ssk)` test, so it paid for a turn it never
+ * took. The heavy endpoint is exactly the one whose buffer fills, because
+ * it is the one carrying the traffic, so it burned its turns fastest and
+ * the light endpoints collected the sends that followed. Measured on a
+ * 40 MB upload with weights 250/10/10, which should put ~96% on the first
+ * WAN: it got 52-71%, the 10-weight WAN took 28-48%.
+ *
+ * Screening the candidates instead keeps the round among subflows that can
+ * actually send, so a turn is only spent when it is used, and a
+ * momentarily blocked endpoint costs itself nothing.
+ */
+static __always_inline bool wrr_candidate(struct mptcp_subflow_context *subflow,
+					  struct sock *ssk)
+{
+	if (!mptcp_subflow_active(subflow))
+		return false;
+	if (mptcp_subflow_stale(subflow) || !bpf_sk_stream_memory_free(ssk))
+		return false;
+	if (!subflow->avg_pacing_rate) {
+		subflow->avg_pacing_rate = ssk->sk_pacing_rate;
+		if (!subflow->avg_pacing_rate)
+			return false;
+	}
+	return true;
+}
+
 SEC("struct_ops")
 int BPF_PROG(bpf_weight_rr_get_send, struct mptcp_sock *msk)
 {
-	struct subflow_entry entries[MAX_SUBFLOWS] = {};
 	struct mptcp_subflow_context *subflow;
 	struct sock *sk = (struct sock *)msk;
-	int nr_active = 0, nr_total = 0;
+	bool has_active = false, has_backup = false;
 	__u64 msk_key = (__u64)(unsigned long)msk;
+	struct sock *ssk = NULL, *best = NULL;
 	__u32 total_weight = 0;
-	__u32 pace, burst, wmem;
-	struct sock *ssk = NULL;
-	int best_idx = -1;
+	__u32 burst, wmem;
+	__s32 best_cw = 0;
 	__u8 use_backup;
-	int i;
 
+	/* Both walks below carry flags, pointers and values the verifier
+	 * doesn't track exactly, so it sees the same states at every turn and
+	 * stops, however many subflows there are. The candidates used to be
+	 * gathered into an array walked by index, which it checked one index
+	 * at a time: past its 1M instruction limit at 16 subflows.
+	 *
+	 * First walk: whether the round is between the active subflows or,
+	 * none being a candidate, the backup ones.
+	 */
+	bpf_for_each(mptcp_subflow, subflow, sk) {
+		ssk = mptcp_subflow_tcp_sock(subflow);
+		if (!wrr_candidate(subflow, ssk))
+			continue;
+		if (!subflow->backup && !subflow->request_bkup) {
+			has_active = true;
+			break;
+		}
+		has_backup = true;
+	}
+
+	mptcp_set_timeout(sk);
+
+	if (!has_active && !has_backup)
+		return -1;
+
+	/* Prefer active subflows; fall back to backup if none active. Only
+	 * then: the screen above also drops active subflows that are merely
+	 * full, and the kernel's mptcp_subflow_get_send() waits for those
+	 * rather than loading the backup WAN with every saturating upload.
+	 */
+	use_backup = has_active ? 0 : 1;
+	if (use_backup && has_active_nonbackup(sk))
+		return -1;
+
+	/* Second walk, smooth weighted round-robin (nginx-style): every
+	 * candidate's current-weight (persisted in subflow_cw_map_v2, keyed
+	 * by (msk, ssk)) is bumped by its own weight and written back in this
+	 * same pass, while total_weight accumulates alongside it; the winner
+	 * isn't known until the pass finishes, so its debit
+	 * (cw -= total_weight) is applied as a single extra map update right
+	 * after the walk rather than in a third one.
+	 *
+	 * This interleaves picks turn-by-turn (e.g. 150:50 settles into a
+	 * steady ...,A,A,A,B,A,A,A,B,... pattern) instead of handing one
+	 * endpoint one long unbroken burst (the old "counter % total_weight,
+	 * contiguous cumulative range" scheme) — so a temporary
+	 * bpf_sk_stream_memory_free() failure on the heavy endpoint costs it
+	 * one turn, not the whole remainder of its burst.
+	 */
 	bpf_for_each(mptcp_subflow, subflow, sk) {
 		__u8 is_backup = (subflow->backup || subflow->request_bkup) ? 1 : 0;
+		struct cw_key key = {};
 		__u32 local_ip, weight;
+		__s32 *cw_ptr, cw;
 		__u32 *w_ptr;
 
-		if (nr_total >= MAX_SUBFLOWS)
-			break;
-
+		if (is_backup != use_backup)
+			continue;
 		ssk = mptcp_subflow_tcp_sock(subflow);
-		if (!mptcp_subflow_active(subflow))
+		if (!wrr_candidate(subflow, ssk))
 			continue;
-
-		/* Only subflows that can take data right now are candidates.
-		 *
-		 * This used to be checked once, on the winner, after the SWRR
-		 * bookkeeping had already run -- and the bookkeeping is what
-		 * makes the weights mean anything. A candidate that won the
-		 * round had its current-weight debited by total_weight and was
-		 * then thrown away by the `!bpf_sk_stream_memory_free(ssk)`
-		 * test below, so it paid for a turn it never took. The heavy
-		 * endpoint is exactly the one whose buffer fills, because it
-		 * is the one carrying the traffic, so it burned its turns
-		 * fastest and the light endpoints collected the sends that
-		 * followed. Measured on a 40 MB upload with weights
-		 * 250/10/10, which should put ~96% on the first WAN: it got
-		 * 52-71%, the 10-weight WAN took 28-48%.
-		 *
-		 * Screening here instead keeps the round among subflows that
-		 * can actually send, so a turn is only spent when it is used,
-		 * and a momentarily blocked endpoint costs itself nothing.
-		 */
-		if (mptcp_subflow_stale(subflow) || !bpf_sk_stream_memory_free(ssk))
-			continue;
-
-		pace = subflow->avg_pacing_rate;
-		if (!pace) {
-			subflow->avg_pacing_rate = ssk->sk_pacing_rate;
-			pace = subflow->avg_pacing_rate;
-			if (!pace)
-				continue;
-		}
 
 		local_ip = ssk->__sk_common.skc_rcv_saddr;
 		weight = 100;
@@ -268,98 +311,39 @@ int BPF_PROG(bpf_weight_rr_get_send, struct mptcp_sock *msk)
 		if (w_ptr && *w_ptr > 0)
 			weight = *w_ptr;
 
-		entries[nr_total].ssk = ssk;
-		entries[nr_total].weight = weight;
-		entries[nr_total].is_backup = is_backup;
-		nr_total++;
-		if (!is_backup)
-			nr_active++;
-	}
-
-	mptcp_set_timeout(sk);
-
-	if (nr_total == 0)
-		return -1;
-
-	/* Prefer active subflows; fall back to backup if none active. Only
-	 * then: the screen above also drops active subflows that are merely
-	 * full, and the kernel's mptcp_subflow_get_send() waits for those
-	 * rather than loading the backup WAN with every saturating upload.
-	 */
-	use_backup = (nr_active == 0) ? 1 : 0;
-	if (use_backup && has_active_nonbackup(sk))
-		return -1;
-
-	/* Smooth weighted round-robin (nginx-style): every candidate's
-	 * current-weight (persisted in subflow_cw_map_v2, keyed by
-	 * (msk, ssk)) is bumped by its own weight and
-	 * written back in this same pass, while total_weight accumulates
-	 * alongside it; the winner isn't known until the pass finishes, so
-	 * its debit
-	 * (cw -= total_weight) is applied as a single extra map update right
-	 * after the loop rather than in a second pass over all candidates —
-	 * a second full loop (tried first) plus this one made the BPF
-	 * verifier's state space explode ("BPF program is too large.
-	 * Processed 1000001 insn"); one pass here keeps it at parity with
-	 * the original single-pass scheme.
-	 *
-	 * This interleaves picks turn-by-turn (e.g. 150:50 settles into a
-	 * steady ...,A,A,A,B,A,A,A,B,... pattern) instead of handing one
-	 * endpoint one long unbroken burst (the old "counter % total_weight,
-	 * contiguous cumulative range" scheme) — so a temporary
-	 * bpf_sk_stream_memory_free() failure on the heavy endpoint costs it
-	 * one turn, not the whole remainder of its burst.
-	 */
-	for (i = 0; i < MAX_SUBFLOWS; i++) {
-		struct cw_key key = {};
-		__s32 *cw_ptr, cw;
-
-		if (i >= nr_total)
-			break;
-		if (entries[i].is_backup != use_backup)
-			continue;
-
-		total_weight += entries[i].weight;
+		total_weight += weight;
 
 		key.msk = msk_key;
-		key.ssk = (__u64)(unsigned long)entries[i].ssk;
+		key.ssk = (__u64)(unsigned long)ssk;
 		cw_ptr = bpf_map_lookup_elem(&subflow_cw_map_v2, &key);
 		cw = cw_ptr ? *cw_ptr : 0;
-		cw += (__s32)entries[i].weight;
-		entries[i].cw = cw;
+		cw += (__s32)weight;
 		bpf_map_update_elem(&subflow_cw_map_v2, &key, &cw, BPF_ANY);
 
-		if (best_idx < 0 || cw > entries[best_idx].cw)
-			best_idx = i;
-	}
-
-	if (!total_weight)
-		return -1;
-
-	if (best_idx >= 0) {
-		struct cw_key key = {};
-		__s32 cw = entries[best_idx].cw - (__s32)total_weight;
-
-		key.msk = msk_key;
-		key.ssk = (__u64)(unsigned long)entries[best_idx].ssk;
-		bpf_map_update_elem(&subflow_cw_map_v2, &key, &cw, BPF_ANY);
-
-		ssk = entries[best_idx].ssk;
-	}
-
-	/* Safety fallback: pick first available in set */
-	if (!ssk) {
-		for (i = 0; i < MAX_SUBFLOWS; i++) {
-			if (i >= nr_total)
-				break;
-			if (entries[i].is_backup == use_backup) {
-				ssk = entries[i].ssk;
-				break;
-			}
+		if (!best || cw > best_cw) {
+			best = ssk;
+			best_cw = cw;
 		}
 	}
 
-	if (!ssk || !bpf_sk_stream_memory_free(ssk))
+	/* Every weight is at least 1, so a winner means total_weight > 0.
+	 * Testing total_weight itself would have the verifier track its exact
+	 * value through the walk.
+	 */
+	if (!best)
+		return -1;
+
+	{
+		struct cw_key key = {};
+		__s32 cw = best_cw - (__s32)total_weight;
+
+		key.msk = msk_key;
+		key.ssk = (__u64)(unsigned long)best;
+		bpf_map_update_elem(&subflow_cw_map_v2, &key, &cw, BPF_ANY);
+	}
+
+	ssk = best;
+	if (!bpf_sk_stream_memory_free(ssk))
 		return -1;
 
 	subflow = bpf_mptcp_subflow_ctx(ssk);

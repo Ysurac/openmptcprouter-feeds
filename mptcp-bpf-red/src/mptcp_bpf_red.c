@@ -49,10 +49,10 @@ void BPF_PROG(mptcp_sched_red_release, struct mptcp_sock *msk)
 
 /* Bounding the walk keeps the verifier's state search finite: without it the
  * per-subflow branches below explode into "sequence of 8193 jumps is too
- * complex" and the program will not load. Same bound and same reason as
- * bpf_dscp / bpf_weight_rr.
+ * complex" and the program will not load. 16, for x86_64 routers that
+ * aggregate 16 WANs, still loads.
  */
-#define MAX_SUBFLOWS	8
+#define MAX_SUBFLOWS	16
 
 /* Whether a non-backup subflow is active, even one that cannot take data
  * right now. A walk of its own, run only when the main one found no
