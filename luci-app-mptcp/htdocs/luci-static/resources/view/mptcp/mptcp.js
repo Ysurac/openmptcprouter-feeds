@@ -63,6 +63,10 @@ return L.view.extend({
 		return kernelMajor > major || (kernelMajor == major && kernelMinor >= minor);
 	}
 
+	// x86_64 routers aggregate up to 16 WANs, the others 8: the most the
+	// mptcp init passes to "ip mptcp limits set"
+	var mptcpLimitMax = (boardinfo.release && boardinfo.release.target == 'x86/64') ? 16 : 8;
+
 	function normalizeSchedulerValue(value) {
 		if (value == null)
 			return value;
@@ -320,10 +324,10 @@ return L.view.extend({
 		o.depends("mptcp_pm_type","1");
 		o.retain = true;
 
-		// The kernel takes 8 at most for both limits, and one value above
-		// it made "ip mptcp limits set" fail for both
+		// One value above the kernel's maximum made "ip mptcp limits set"
+		// fail for both limits
 		o = s.option(form.Value, "mptcp_subflows", _("Max subflows"),_("specifies the maximum number of additional subflows allowed for each MPTCP connection"));
-		o.datatype = "range(0,8)";
+		o.datatype = "range(0," + mptcpLimitMax + ")";
 		o.rmempty = false;
 		o.default = 3;
 
@@ -333,7 +337,7 @@ return L.view.extend({
 		o.default = 4;
 
 		o = s.option(form.Value, "mptcp_add_addr_accepted", _("Max add address"),_("specifies the maximum number of ADD_ADDR (add address) suboptions accepted for each MPTCP connection"));
-		o.datatype = "range(0,8)";
+		o.datatype = "range(0," + mptcpLimitMax + ")";
 		o.rmempty = false;
 		o.default = 1;
 

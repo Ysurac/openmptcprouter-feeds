@@ -27,13 +27,21 @@ valid_subnet4() {
 	esac
 }
 
-# An MPTCP limit as the kernel takes it: a number from 0 to 8, $2 when $1
-# is not a number
+# Most subflows and accepted ADD_ADDR per connection: x86_64 routers
+# aggregate up to 16 WANs, the others 8
+case "$(uname -m)" in
+	x86_64) MPTCP_LIMIT_MAX=16 ;;
+	*) MPTCP_LIMIT_MAX=8 ;;
+esac
+
+# An MPTCP limit as the kernel takes it: a number from 0 to $3 (default
+# MPTCP_LIMIT_MAX), $2 when $1 is not a number
 _mptcp_limit() {
+	local max="${3:-${MPTCP_LIMIT_MAX:-8}}"
 	case "$1" in
 		''|*[!0-9]*) echo "$2" ;;
-		?|??) if [ "$1" -gt 8 ]; then echo 8; else echo "$1"; fi ;;
-		*) echo 8 ;;
+		?|??) if [ "$1" -gt "$max" ]; then echo "$max"; else echo "$1"; fi ;;
+		*) echo "$max" ;;
 	esac
 }
 
@@ -182,12 +190,14 @@ global_multipath_settings() {
 	elif [ -f /proc/sys/net/mptcp/enabled ]; then
 		sysctl -qew net.mptcp.enabled="$multipath_status"
 		_sysctl_conf_set net.mptcp.enabled "$multipath_status"
-		# The kernel takes at most 8 for each limit (MPTCP_PM_ADDR_MAX) and
-		# refuses the whole command when one is above, so a single value too
-		# high left both limits at whatever they were
+		# The kernel refuses the whole command when one limit is above its
+		# maximum, so a single value too high left both limits at whatever
+		# they were. That maximum is 8 on a kernel without the 64 limits
+		# backport: retry within it there.
 		mptcp_add_addr_accepted="$(_mptcp_limit "$mptcp_add_addr_accepted" 1)"
 		mptcp_subflows="$(_mptcp_limit "$mptcp_subflows" 3)"
-		ip mptcp limits set add_addr_accepted $mptcp_add_addr_accepted subflows $mptcp_subflows >/dev/null 2>&1
+		ip mptcp limits set add_addr_accepted $mptcp_add_addr_accepted subflows $mptcp_subflows >/dev/null 2>&1 || \
+			ip mptcp limits set add_addr_accepted "$(_mptcp_limit "$mptcp_add_addr_accepted" 1 8)" subflows "$(_mptcp_limit "$mptcp_subflows" 3 8)" >/dev/null 2>&1
 		# The subflow limit decides how many socket buffers one MPTCP connection
 		# can hold open at once, and they all draw on the same net.ipv4.tcp_mem
 		# pool, so re-run the sizing now that the limit is known. Cheap and

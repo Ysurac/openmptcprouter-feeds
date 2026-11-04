@@ -595,11 +595,18 @@ end
 -- What set_settings / set_interface_settings accept for each field. They
 -- wrote any string: the init script builds a file path from mptcp_scheduler
 -- ("../" in it registered an arbitrary .o as the scheduler), passes the
--- limits to "ip mptcp limits set" (a value above 8 made it fail for both)
--- and the rest to sysctl.
+-- limits to "ip mptcp limits set" (a value above the kernel's maximum made
+-- it fail for both) and the rest to sysctl.
 local function valid_uint(v, max)
 	local n = tonumber(v)
 	return v:match("^%d+$") ~= nil and n ~= nil and (max == nil or n <= max)
+end
+
+-- x86_64 routers aggregate up to 16 WANs, the others 8: the most the mptcp
+-- init passes to "ip mptcp limits set"
+local function valid_mptcp_limit(v)
+	local max = exec_output("uname -m 2>/dev/null") == "x86_64" and 16 or 8
+	return valid_uint(v, max)
 end
 
 -- 1 to 256, as "ip route" takes it and the forms ask: the BPF schedulers
@@ -671,9 +678,9 @@ local setting_checks = {
 	mptcp_disable_initial_config = function(v) return v == "0" or v == "1" end,
 	mptcp_force_multipath = function(v) return v == "0" or v == "1" end,
 	mptcpd_enable = function(v) return v == "enable" or v == "disable" end,
-	mptcp_subflows = function(v) return valid_uint(v, 8) end,
+	mptcp_subflows = valid_mptcp_limit,
 	mptcp_stale_loss_cnt = valid_uint,
-	mptcp_add_addr_accepted = function(v) return valid_uint(v, 8) end,
+	mptcp_add_addr_accepted = valid_mptcp_limit,
 	mptcp_add_addr_timeout = valid_uint,
 	mptcp_blackhole_timeout = valid_uint,
 	mptcp_close_timeout = valid_uint,
