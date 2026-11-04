@@ -601,18 +601,9 @@ inbound_section_validate() {
 		'ss_kcp_tti:and(min(10), max(100))' \
 		'ss_kcp_uplink_capacity:uinteger' \
 		'ss_kcp_downlink_capacity:uinteger' \
-		'ss_kcp_congestion:bool:0' \
-		'ss_kcp_read_buffer_size:uinteger' \
-		'ss_kcp_write_buffer_size:uinteger' \
 		'ss_kcp_header_type:or("none", "srtp", "utp", "wechat-video", "dtls", "wireguard")' \
 		'ss_websocket_path:string' \
 		'ss_websocket_headers:list(string)' \
-		'ss_http_host:list(host)' \
-		'ss_http_path:string' \
-		'ss_domainsocket_path:string' \
-		'ss_quic_security:or("aes-128-gcm", "chacha20-poly1305", "none")' \
-		'ss_quic_key:string' \
-		'ss_quic_header_type:or("none", "srtp", "utp", "wechat-video", "dtls", "wireguard")' \
 		'ss_sockopt_tcp_fast_open:or("0", "1")' \
 		'ss_sockopt_mptcp:or("0", "1")' \
 		'ss_sockopt_tproxy:or("redirect", "tproxy", "off")' \
@@ -713,18 +704,9 @@ outbound_section_validate() {
 		'ss_kcp_tti:and(min(10), max(100))' \
 		'ss_kcp_uplink_capacity:uinteger' \
 		'ss_kcp_downlink_capacity:uinteger' \
-		'ss_kcp_congestion:bool:0' \
-		'ss_kcp_read_buffer_size:uinteger' \
-		'ss_kcp_write_buffer_size:uinteger' \
 		'ss_kcp_header_type:or("none", "srtp", "utp", "wechat-video", "dtls", "wireguard")' \
 		'ss_websocket_path:string' \
 		'ss_websocket_headers:list(string)' \
-		'ss_http_host:list(host)' \
-		'ss_http_path:string' \
-		'ss_domainsocket_path:string' \
-		'ss_quic_security:or("aes-128-gcm", "chacha20-poly1305", "none")' \
-		'ss_quic_key:string' \
-		'ss_quic_header_type:or("none", "srtp", "utp", "wechat-video", "dtls", "wireguard")' \
 		'ss_sockopt_mark:uinteger' \
 		'ss_sockopt_tcp_fast_open:or("0", "1")' \
 		'ss_sockopt_mptcp:or("0", "1")' \
@@ -1331,6 +1313,47 @@ add_transport_settings() {
 	json_close_object # transport
 }
 
+# Xray dropped the HTTP/2, QUIC and domain socket transports and refuses
+# the whole config when one is named. Earlier pages offered them: use raw
+# TCP, what the OMR VPS listens on, rather than leave the proxy down
+add_stream_network() {
+	local section="$1"
+
+	case "$ss_network" in
+		http|domainsocket|quic)
+			_err "$section: transport $ss_network was removed from Xray, tcp used"
+			ss_network="tcp"
+			;;
+	esac
+	test -n "$ss_network" && \
+		json_add_string "network" "$ss_network"
+}
+
+# Xray ignores the mKCP header and its default checksum in kcpSettings
+# since they moved to finalmask. mkcp-legacy keeps the old wire format:
+# the header outside, then the checksum the old core added by default
+add_kcp_finalmask() {
+	local header="$ss_kcp_header_type"
+
+	[ "$header" = "wechat-video" ] && header="wechat"
+
+	json_add_object "finalmask"
+	json_add_array "udp"
+	if [ -n "$header" ] && [ "$header" != "none" ] ; then
+		json_add_object ""
+		json_add_string "type" "mkcp-legacy"
+		json_add_object "settings"
+		json_add_string "header" "$header"
+		json_close_object # settings
+		json_close_object
+	fi
+	json_add_object ""
+	json_add_string "type" "mkcp-legacy"
+	json_close_object
+	json_close_array # udp
+	json_close_object # finalmask
+}
+
 add_inbound_setting() {
 	local section="$1"
 
@@ -1590,8 +1613,7 @@ add_inbound_setting() {
 
 	json_add_object "streamSettings"
 
-	test -n "$ss_network" && \
-		json_add_string "network" "$ss_network"
+	add_stream_network "$section"
 
 	test -n "$ss_security" && \
 		json_add_string "security" "$ss_security"
@@ -1719,19 +1741,10 @@ add_inbound_setting() {
 				json_add_int "uplinkCapacity" "$ss_kcp_uplink_capacity"
 			test -n "$ss_kcp_downlink_capacity" && \
 				json_add_int "downlinkCapacity" "$ss_kcp_downlink_capacity"
-			json_add_boolean "congestion" "$ss_kcp_congestion"
-			test -n "$ss_kcp_read_buffer_size" && \
-				json_add_int "readBufferSize" "$ss_kcp_read_buffer_size"
-			test -n "$ss_kcp_write_buffer_size" && \
-				json_add_int "writeBufferSize" "$ss_kcp_write_buffer_size"
-
-			if [ -n "$ss_kcp_header_type" ] ; then
-				json_add_object "header"
-				json_add_string "type" "$ss_kcp_header_type"
-				json_close_object # header
-			fi
 
 			json_close_object # kcpSettings
+
+			add_kcp_finalmask
 			;;
 		"ws")
 			json_add_object "wsSettings"
@@ -1758,49 +1771,6 @@ add_inbound_setting() {
 			fi
 
 			json_close_object # wsSettings
-			;;
-		"http")
-			json_add_object "httpSettings"
-
-			if [ -n "$ss_http_host" ] ; then
-				json_add_array "host"
-
-				local h
-				for h in $ss_http_host ; do
-					json_add_string "" "$h"
-				done
-
-				json_close_array # host
-			fi
-
-			test -n "$ss_http_path" && \
-				json_add_string "path" "$ss_http_path"
-
-			json_close_object # httpSettings
-			;;
-		"domainsocket")
-			json_add_object "dsSettings"
-
-			test -n "$ss_domainsocket_path" && \
-				json_add_string "path" "$ss_domainsocket_path"
-
-			json_close_object # dsSettings
-			;;
-		"quic")
-			json_add_object "quicSettings"
-
-			test -n "$ss_quic_security" && \
-				json_add_string "security" "$ss_quic_security"
-			test -n "$ss_quic_key" && \
-				json_add_string "key" "$ss_quic_key"
-
-			if [ -n "$ss_quic_header_type" ] ; then
-				json_add_object "header"
-				json_add_string "type" "$ss_quic_header_type"
-				json_close_object # header
-			fi
-
-			json_close_object # quicSettings
 			;;
 	esac
 
@@ -2120,8 +2090,7 @@ add_outbound_setting() {
 	esac
 
 	json_add_object "streamSettings"
-	test -n "$ss_network" && \
-		json_add_string "network" "$ss_network"
+	add_stream_network "$section"
 
 	if [ "x$protocol" != "xshadowsocks" ]; then
 		test -n "$ss_security" && \
@@ -2282,20 +2251,9 @@ add_outbound_setting() {
 			test -n "$ss_kcp_downlink_capacity" && \
 				json_add_int "downlinkCapacity" "$ss_kcp_downlink_capacity"
 
-			json_add_boolean "congestion" "$ss_kcp_congestion"
-
-			test -n "$ss_kcp_read_buffer_size" && \
-				json_add_int "readBufferSize" "$ss_kcp_read_buffer_size"
-			test -n "$ss_kcp_write_buffer_size" && \
-				json_add_int "writeBufferSize" "$ss_kcp_write_buffer_size"
-
-			if [ -n "$ss_kcp_header_type" ] ; then
-				json_add_object "header"
-				json_add_string "type" "$ss_kcp_header_type"
-				json_close_object
-			fi
-
 			json_close_object # kcpSettings
+
+			add_kcp_finalmask
 			;;
 		"ws")
 			json_add_object "wsSettings"
@@ -2322,49 +2280,6 @@ add_outbound_setting() {
 			fi
 
 			json_close_object # wsSettings
-			;;
-		"http")
-			json_add_object "httpSettings"
-
-			if [ -n "$ss_http_host" ] ; then
-				json_add_array "host"
-
-				local h
-				for h in $ss_http_host ; do
-					json_add_string "" "$h"
-				done
-
-				json_close_array # host
-			fi
-
-			test -n "$ss_http_path" && \
-				json_add_string "path" "$ss_http_path"
-
-			json_close_object # httpSettings
-			;;
-		"domainsocket")
-			json_add_object "dsSettings"
-
-			test -n "$ss_domainsocket_path" && \
-				json_add_string "path" "$ss_domainsocket_path"
-
-			json_close_object # dsSettings
-			;;
-		"quic")
-			json_add_object "quicSettings"
-
-			test -n "$ss_quic_security" && \
-				json_add_string "security" "$ss_quic_security"
-			test -n "$ss_quic_key" && \
-				json_add_string "key" "$ss_quic_key"
-
-			if [ -n "$ss_quic_header_type" ] ; then
-				json_add_object "header"
-				json_add_string "type" "$ss_quic_header_type"
-				json_close_object # header
-			fi
-
-			json_close_object # quicSettings
 			;;
 	esac
 

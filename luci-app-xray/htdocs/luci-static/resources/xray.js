@@ -166,9 +166,6 @@ return L.Class.extend({
 		o.value('tcp', _('TCP'));
 		o.value('kcp', _('mKCP'));
 		o.value('ws', _('WebSocket'));
-		o.value('http', _('HTTP/2'));
-		o.value('domainsocket', _('Domain socket'));
-		o.value('quic', _('QUIC'));
 		o.value('grpc', _('gRPC'));
 		o.value('xhttp', _('XHTTP'));
 		/* the init leaves network out when unset: tcp in the core */
@@ -209,12 +206,6 @@ return L.Class.extend({
 		o.datatype = 'uinteger'; o.depends('ss_network', 'kcp');
 		o = s.taboption('transport', form.Value, 'ss_kcp_downlink_capacity', _('mKCP downlink capacity (MB/s)'));
 		o.datatype = 'uinteger'; o.depends('ss_network', 'kcp');
-		o = s.taboption('transport', form.Flag, 'ss_kcp_congestion', _('mKCP congestion control'));
-		o.depends('ss_network', 'kcp');
-		o = s.taboption('transport', form.Value, 'ss_kcp_read_buffer_size', _('mKCP read buffer size (MB)'));
-		o.datatype = 'uinteger'; o.depends('ss_network', 'kcp');
-		o = s.taboption('transport', form.Value, 'ss_kcp_write_buffer_size', _('mKCP write buffer size (MB)'));
-		o.datatype = 'uinteger'; o.depends('ss_network', 'kcp');
 		o = s.taboption('transport', form.ListValue, 'ss_kcp_header_type', _('mKCP header obfuscation'));
 		o.value('none', _('None'));
 		o.value('srtp', 'SRTP'); o.value('utp', 'uTP'); o.value('wechat-video', _('WeChat video'));
@@ -226,28 +217,6 @@ return L.Class.extend({
 		o.depends('ss_network', 'ws');
 		o = s.taboption('transport', form.DynamicList, 'ss_websocket_headers', _('WebSocket headers'));
 		o.placeholder = 'Name=Value'; o.depends('ss_network', 'ws');
-
-		/* http/2 */
-		o = s.taboption('transport', form.DynamicList, 'ss_http_host', _('HTTP/2 host(s)'));
-		o.datatype = 'host'; o.depends('ss_network', 'http');
-		o = s.taboption('transport', form.Value, 'ss_http_path', _('HTTP/2 path'));
-		o.depends('ss_network', 'http');
-
-		/* domain socket */
-		o = s.taboption('transport', form.Value, 'ss_domainsocket_path', _('Domain socket path'));
-		o.depends('ss_network', 'domainsocket');
-
-		/* quic */
-		o = s.taboption('transport', form.ListValue, 'ss_quic_security', _('QUIC encryption'));
-		o.value('none', _('None')); o.value('aes-128-gcm', 'AES-128-GCM'); o.value('chacha20-poly1305', 'ChaCha20-Poly1305');
-		o.depends('ss_network', 'quic');
-		o = s.taboption('transport', form.Value, 'ss_quic_key', _('QUIC key'));
-		o.password = true; o.depends('ss_network', 'quic');
-		o = s.taboption('transport', form.ListValue, 'ss_quic_header_type', _('QUIC header obfuscation'));
-		o.value('none', _('None'));
-		o.value('srtp', 'SRTP'); o.value('utp', 'uTP'); o.value('wechat-video', _('WeChat video'));
-		o.value('dtls', 'DTLS'); o.value('wireguard', 'WireGuard');
-		o.depends('ss_network', 'quic');
 
 		/* security / TLS */
 		o = s.taboption('tls', form.ListValue, 'ss_security', _('Security'));
