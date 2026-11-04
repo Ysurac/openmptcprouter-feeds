@@ -24,34 +24,42 @@ get_ip_from_server() {
 }
 
 get_ip_from_website() {
+	local host addresses address ipset_added="" nft_added="" getip
 	check_ipv4_website="$(uci -q get openmptcprouter.settings.check_ipv4_website)"
 	[ -z "$check_ipv4_website" ] && check_ipv4_website="http://ip.openmptcprouter.com"
-	checkip=$(echo $check_ipv4_website | sed -e 's/https:\/\///' -e 's/http:\/\///' | xargs dig +nocmd +noall +answer A | grep -v CNAME | awk '{print $5}' | tr -d "\n")
-	if [ -n "$(ipset list 2>/dev/null | grep ss_rules)" ]; then
-		for _checkip in $checkip; do
-			ipset add ss_rules_dst_bypass_all $_checkip > /dev/null 2>&1
-		done
-	fi
-	if [ -n "$(nft list set inet fw4 omr_dst_bypass_all_4 2>/dev/null)" ]; then
-		for _checkip in $checkip; do
-			nft add element inet fw4 omr_dst_bypass_all_4 { $_checkip } >/dev/null 2>&1
-		done
-	fi
-	getip="$(curl -s -4 -m ${timeout} --interface $intf $check_ipv4_website 2>/dev/null)"
-	if [ -n "$(ipset list 2>/dev/null | grep ss_rules)" ]; then
-		for _checkip in $checkip; do
-			ipset del ss_rules_dst_bypass_all $_checkip
-		done
-	fi
-	if [ -n "$(nft list set inet fw4 omr_dst_bypass_all_4 2>/dev/null)" ]; then
-		for _checkip in $checkip; do
-			nft delete element inet fw4 omr_dst_bypass_all_4 { $_checkip } >/dev/null 2>&1
-		done
-	fi
+	# Query the URL's host, keeping each DNS answer separate.
+	host="${check_ipv4_website#*://}"
+	host="${host%%[/?#]*}"
+	case "$host" in
+		\[*) host="${host#\[}"; host="${host%%\]*}" ;;
+		*) host="${host%%:*}" ;;
+	esac
+	addresses=$(dig +nocmd +noall +answer A "$host" | awk '$4 == "A" {print $5}')
+	for address in $addresses; do
+		# A failed add must not give this probe ownership of an entry.
+		if ! ipset test ss_rules_dst_bypass_all "$address" >/dev/null 2>&1 &&
+			ipset add ss_rules_dst_bypass_all "$address" >/dev/null 2>&1; then
+			ipset_added="$ipset_added $address"
+		fi
+		if ! nft get element inet fw4 omr_dst_bypass_all_4 "{ $address }" >/dev/null 2>&1 &&
+			nft add element inet fw4 omr_dst_bypass_all_4 "{ $address }" >/dev/null 2>&1; then
+			nft_added="$nft_added $address"
+		fi
+	done
+	getip="$(curl -s -4 -m "$timeout" --interface "$intf" "$check_ipv4_website" 2>/dev/null)"
+	# Preserve entries that belonged to bypass policy before the probe.
+	for address in $ipset_added; do
+		ipset del ss_rules_dst_bypass_all "$address" >/dev/null 2>&1
+	done
+	for address in $nft_added; do
+		nft delete element inet fw4 omr_dst_bypass_all_4 "{ $address }" >/dev/null 2>&1
+	done
 	if expr "$getip" : '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$' >/dev/null; then
 		ip=$getip
 	fi
-	[ "$ip" = "$checkip" ] && ip=""
+	for address in $addresses; do
+		[ "$ip" = "$address" ] && ip=""
+	done
 }
 
 [ -z "$intf" ] && return
