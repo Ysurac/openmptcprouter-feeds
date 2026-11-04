@@ -9,7 +9,7 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=mptcp-bpf-burst
-PKG_VERSION:=$(LINUX_VERSION)
+PKG_VERSION:=$(subst -rc,_rc,$(LINUX_VERSION))
 
 PKG_BUILD_DEPENDS:=HAS_BPF_TOOLCHAIN:bpf-headers
 
