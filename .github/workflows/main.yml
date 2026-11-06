@@ -27,6 +27,8 @@ permissions:
 
 env:
   REPO_URL: 'https://github.com/ysurac/openmptcprouter'
+  # Kernel that routers get from release/<tag>/<target>
+  OMR_RELEASE_KERNEL: '6.18'
 
 jobs:
   build:
@@ -37,7 +39,7 @@ jobs:
         # rockchip-armv8 build all their devices at once (config-<group> in
         # the openmptcprouter repository)
         OMR_TARGET: [mediatek-filogic, mediatek-filogic-bpi, rockchip-armv8, mvebu-cortexa9, bpi-r1, bpi-r2, bpi-r64, rpi2, rpi3, rpi4, rpi5, espressobin, x86, x86_64, ubnt-erx, r7800, rutx50, qnap-301w]
-        OMR_KERNEL: ["6.18"]
+        OMR_KERNEL: ["6.18", "7.3"]
         # Former per-device deploy directories, kept as links to the group
         include:
           - OMR_TARGET: mediatek-filogic
@@ -202,7 +204,7 @@ jobs:
       name: Upload build logs
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
-        name: logs-${{ matrix.OMR_TARGET }}
+        name: logs-${{ matrix.OMR_TARGET }}-${{ matrix.OMR_KERNEL }}
         path: /home/runner/work/omr/${{ matrix.OMR_TARGET }}/${{ matrix.OMR_KERNEL }}/source/logs
         retention-days: 7
         if-no-files-found: ignore
@@ -258,11 +260,19 @@ jobs:
           SOURCE_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
       with:
         command: |
-          mkdir -p deploy/release/${{env.SOURCE_TAG}}/${{matrix.OMR_TARGET}}
+          mkdir -p deploy/release/${{env.SOURCE_TAG}}/${{matrix.OMR_KERNEL}}/${{matrix.OMR_TARGET}}
           for d in ${{ matrix.OMR_LINKS }}; do
-            [ -L "deploy/release/${{env.SOURCE_TAG}}/$d" ] || rm -rf "deploy/release/${{env.SOURCE_TAG}}/$d"
-            ln -sfn "${{matrix.OMR_TARGET}}" "deploy/release/${{env.SOURCE_TAG}}/$d"
+            [ -L "deploy/release/${{env.SOURCE_TAG}}/${{matrix.OMR_KERNEL}}/$d" ] || rm -rf "deploy/release/${{env.SOURCE_TAG}}/${{matrix.OMR_KERNEL}}/$d"
+            ln -sfn "${{matrix.OMR_TARGET}}" "deploy/release/${{env.SOURCE_TAG}}/${{matrix.OMR_KERNEL}}/$d"
           done
+          # Installed routers and the sysupgrade server use the path without
+          # the kernel
+          if [ "${{matrix.OMR_KERNEL}}" = "${{env.OMR_RELEASE_KERNEL}}" ]; then
+            for d in ${{matrix.OMR_TARGET}} ${{ matrix.OMR_LINKS }}; do
+              [ -L "deploy/release/${{env.SOURCE_TAG}}/$d" ] || rm -rf "deploy/release/${{env.SOURCE_TAG}}/$d"
+              ln -sfn "${{matrix.OMR_KERNEL}}/$d" "deploy/release/${{env.SOURCE_TAG}}/$d"
+            done
+          fi
         host: ${{ secrets.OMR_DEPLOY_HOST }}
         user: deploy
         port: ${{ secrets.OMR_DEPLOY_PORT }}
@@ -300,7 +310,7 @@ jobs:
       uses: ysurac/action-rsync@1032c2593f9067e6ce901a1d77c6342dc50bcd24 # master as of 2026-10-12
       env:
         ARGS: -av --delete-after
-        TARGET: deploy/release/${{steps.branch_name.outputs.SOURCE_TAG}}/${{matrix.OMR_TARGET}}
+        TARGET: deploy/release/${{steps.branch_name.outputs.SOURCE_TAG}}/${{matrix.OMR_KERNEL}}/${{matrix.OMR_TARGET}}
         SOURCE: ./bin/
         KEY: ${{ secrets.PRIVATE_KEY }}
         USER: deploy
