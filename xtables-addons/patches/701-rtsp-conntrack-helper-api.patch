@@ -1,0 +1,86 @@
+Linux 7.2 registers a copy of each conntrack helper and 7.3 dropped the
+helper tuple: keep the registered copy to unregister it, and use
+nf_ct_helper_init() on 7.3 and later.
+
+--- a/extensions/rtsp/nf_conntrack_rtsp.c
++++ b/extensions/rtsp/nf_conntrack_rtsp.c
+@@ -676,6 +676,10 @@
+ }
+ 
+ static struct nf_conntrack_helper rtsp_helpers[MAX_PORTS];
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,2,0)
++/* the conntrack core registers its own copy of each helper */
++static struct nf_conntrack_helper *rtsp_helper_ptrs[MAX_PORTS];
++#endif
+ static char rtsp_names[MAX_PORTS][10];
+ 
+ /* This function is intentionally _NOT_ defined as __exit */
+@@ -685,7 +689,13 @@
+ 	int i;
+ 	for (i = 0; i < num_ports; i++) {
+ 		pr_debug("unregistering port %d\n", ports[i]);
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,2,0)
++		if (rtsp_helper_ptrs[i])
++			nf_conntrack_helper_unregister(rtsp_helper_ptrs[i]);
++		rtsp_helper_ptrs[i] = NULL;
++#else
+ 		nf_conntrack_helper_unregister(&rtsp_helpers[i]);
++#endif
+ 	}
+ 	kfree(rtsp_buffer);
+ }
+@@ -719,13 +729,6 @@
+ 
+ 	for (i = 0; (i < MAX_PORTS) && ports[i]; i++) {
+ 		hlpr = &rtsp_helpers[i];
+-		memset(hlpr, 0, sizeof(struct nf_conntrack_helper));
+-		hlpr->tuple.src.l3num = AF_INET;
+-		hlpr->tuple.src.u.tcp.port = htons(ports[i]);
+-		hlpr->tuple.dst.protonum = IPPROTO_TCP;
+-		hlpr->expect_policy = &rtsp_exp_policy;
+-		hlpr->me = THIS_MODULE;
+-		hlpr->help = help;
+ 
+ 		tmpname = &rtsp_names[i][0];
+ 		if (ports[i] == RTSP_PORT) {
+@@ -734,7 +737,27 @@
+ 			sprintf(tmpname, "rtsp-%d", i);
+ 		}
+ 
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,3,0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
++		/* helpers have no tuple anymore, they are attached by name */
++		nf_ct_helper_init(hlpr, NFPROTO_IPV4, IPPROTO_TCP, tmpname,
++				  &rtsp_exp_policy, 0, help, NULL, THIS_MODULE);
++#else
++		memset(hlpr, 0, sizeof(struct nf_conntrack_helper));
++		hlpr->tuple.src.l3num = AF_INET;
++		hlpr->tuple.src.u.tcp.port = htons(ports[i]);
++		hlpr->tuple.dst.protonum = IPPROTO_TCP;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,2,0)
++		hlpr->expect_policy[0] = rtsp_exp_policy;
++#else
++		hlpr->expect_policy = &rtsp_exp_policy;
++#endif
++		hlpr->me = THIS_MODULE;
++		hlpr->help = help;
++#endif
++
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,3,0)
++		/* name set by nf_ct_helper_init() */
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4,3,0)
+ 		strscpy(hlpr->name, tmpname, sizeof(hlpr->name));
+ #elif LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0)
+ 		strlcpy(hlpr->name, tmpname, sizeof(hlpr->name));
+@@ -743,7 +766,11 @@
+ #endif
+ 		pr_debug("port #%d: %d\n", i, ports[i]);
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7,2,0)
++		ret = nf_conntrack_helper_register(hlpr, &rtsp_helper_ptrs[i]);
++#else
+ 		ret = nf_conntrack_helper_register(hlpr);
++#endif
+ 
+ 		if (ret) {
+ 			printk("nf_conntrack_rtsp: ERROR registering port %d\n", ports[i]);

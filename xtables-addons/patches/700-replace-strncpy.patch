@@ -1,0 +1,76 @@
+Linux 7.3 has no strncpy() anymore. Use strscpy_pad() where the result
+is a NUL terminated name, and memcpy() of the same bytes elsewhere.
+
+--- a/extensions/xt_quota2.c
++++ b/extensions/xt_quota2.c
+@@ -142,7 +142,7 @@
+ 	if (!anon) {
+ 		INIT_LIST_HEAD(&e->list);
+ 		atomic_set(&e->ref, 1);
+-		strncpy(e->name, q->name, sizeof(e->name));
++		strscpy_pad(e->name, q->name, sizeof(e->name));
+ 	}
+ 	return e;
+ }
+--- a/extensions/LUA/xt_LUA_target.c
++++ b/extensions/LUA/xt_LUA_target.c
+@@ -150,7 +150,12 @@
+ 	lua_setfield(env->L, -2, "STATE_ID");
+ 	lua_pop(env->L, 1); /* pop _G */
+ 
+-	strncpy(buf, script_buf, script_size);
++	{
++		size_t n = strnlen(script_buf, script_size);
++
++		memcpy(buf, script_buf, n);
++		memset(buf + n, 0, script_size - n);
++	}
+ 	ret = luaL_loadbuffer(env->L, buf, script_size, "PacketScript, loadbuffer") ||
+ 	      lua_pcall(env->L, 0, 1, 0);
+ 
+--- a/extensions/LUA/lua/lobject.c
++++ b/extensions/LUA/lua/lobject.c
+@@ -180,8 +180,7 @@
+ 
+ void luaO_chunkid (char *out, const char *source, size_t bufflen) {
+   if (*source == '=') {
+-    strncpy(out, source+1, bufflen);  /* remove first char */
+-    out[bufflen-1] = '\0';  /* ensures null termination */
++    strscpy_pad(out, source+1, bufflen);  /* remove first char */
+   }
+   else {  /* out = "source", or "...source" */
+     if (*source == '@') {
+--- a/extensions/LUA/lua/lstrlib.c
++++ b/extensions/LUA/lua/lstrlib.c
+@@ -754,7 +754,7 @@
+   if (isdigit(uchar(*p)))
+     luaL_error(L, "invalid format (width or precision too long)");
+   *(form++) = '%';
+-  strncpy(form, strfrmt, p - strfrmt + 1);
++  memcpy(form, strfrmt, p - strfrmt + 1);
+   form += p - strfrmt + 1;
+   *form = '\0';
+   return p;
+--- a/extensions/ACCOUNT/xt_ACCOUNT.c
++++ b/extensions/ACCOUNT/xt_ACCOUNT.c
+@@ -221,7 +221,7 @@
+ 			int j;  /* needs to be signed, otherwise we risk endless loop */
+ 
+ 			pr_debug("ACCOUNT: Found free slot: %d\n", i);
+-			strncpy(ipt_acc_tables[i].name, name, ACCOUNT_TABLE_NAME_LEN-1);
++			strscpy_pad(ipt_acc_tables[i].name, name, ACCOUNT_TABLE_NAME_LEN);
+ 
+ 			ipt_acc_tables[i].ip = ip;
+ 			ipt_acc_tables[i].netmask = netmask;
+--- a/extensions/pknock/xt_pknock.c
++++ b/extensions/pknock/xt_pknock.c
+@@ -457,7 +457,8 @@
+ 		return false;
+ 
+ 	INIT_LIST_HEAD(&rule->head);
+-	strncpy(rule->rule_name, info->rule_name, info->rule_name_len);
++	memcpy(rule->rule_name, info->rule_name,
++	       strnlen(info->rule_name, info->rule_name_len));
+ 	rule->rule_name_len = info->rule_name_len;
+ 	rule->ref_count      = 1;
+ 	rule->max_time       = info->max_time;
