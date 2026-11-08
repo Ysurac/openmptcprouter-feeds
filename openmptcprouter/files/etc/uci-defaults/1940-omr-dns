@@ -256,6 +256,33 @@ fi
 if [ -z "$(grep unknown-server-time-limit /etc/unbound/unbound_srv.conf)" ]; then
 	echo "unknown-server-time-limit: 2500" > /etc/unbound/unbound_srv.conf
 fi
+# A server unbound saw time out during an outage was left alone for
+# infra-host-ttl (900 s): keep probing it, one query at a time
+if ! grep -q "infra-keep-probing" /etc/unbound/unbound_srv.conf 2>/dev/null; then
+	echo "infra-keep-probing: yes" >> /etc/unbound/unbound_srv.conf && _unbound_restart=1
+fi
+
+# Remote control on 127.0.0.1/::1 without certificates: dns_flush() in
+# omr-tracker runs unbound-control after each WAN down and up, and with the
+# package's 0 nothing was flushed. A 0 chosen by hand looks the same, so it
+# is set only once: unbound_control_migrated keeps a later 0 from being undone
+# by the next sysupgrade, which runs the uci-defaults again.
+if [ -n "$(uci -q get unbound.ub_main)" ] && [ "$(uci -q get openmptcprouter.settings.unbound_control_migrated)" != "1" ]; then
+	_unbound_control="$(uci -q get unbound.ub_main.unbound_control)"
+	if [ -z "$_unbound_control" ] || [ "$_unbound_control" = "0" ]; then
+		uci -q batch <<-EOF >/dev/null
+			set unbound.ub_main.unbound_control='1'
+			commit unbound
+		EOF
+		_unbound_restart=1
+	fi
+	uci -q batch <<-EOF >/dev/null
+		set openmptcprouter.settings=settings
+		set openmptcprouter.settings.unbound_control_migrated='1'
+		commit openmptcprouter
+	EOF
+fi
+[ "$_unbound_restart" = "1" ] && pidof unbound >/dev/null && /etc/init.d/unbound restart >/dev/null 2>&1
 
 # Root KSK rollover of 2026-10-11: the root DNSKEY set is signed by KSK-2024
 # (38696) only. The unbound package ships the 2017 anchors, and RFC 5011

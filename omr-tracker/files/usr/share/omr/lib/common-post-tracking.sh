@@ -1278,9 +1278,20 @@ disable_pihole() {
 }
 
 dns_flush() {
+	pidof unbound >/dev/null 2>&1 || return 0
 	_log "DNS flush"
-	unbound-control flush-negative >/dev/null 2>&1
-	unbound-control flush-bogus >/dev/null 2>&1
+	# Negative and bogus answers cached during the outage, and the servers
+	# unbound marked unreachable then: those stay down for infra-host-ttl
+	# (900 s) and their zones answered SERVFAIL long after the WAN was back.
+	# unbound-control takes underscores, and needs unbound_control set
+	# (1940-omr-dns): the hyphenated commands on a disabled control failed
+	# unseen and nothing was ever flushed.
+	if ! unbound-control flush_negative >/dev/null 2>&1; then
+		_log "DNS flush failed: unbound-control can't reach unbound (unbound.ub_main.unbound_control must not be 0)"
+		return 0
+	fi
+	unbound-control flush_bogus >/dev/null 2>&1
+	unbound-control flush_infra all >/dev/null 2>&1
 }
 
 set_vpn_balancing_routes() {
