@@ -767,12 +767,29 @@ local _ss_placeholder_addr = {
 	[""] = true, ["127.0.0.1"] = true, ["::1"] = true, ["192.168.1.3"] = true,
 }
 
-local function _ssrust_enable_flag(name, want_flag)
+local function _ss_enable_flag(config, name, want_flag)
 	if name ~= "sss0" and want_flag == "0"
-	   and _ss_placeholder_addr[ucic:get("shadowsocks-rust", name, "server") or ""] then
+	   and _ss_placeholder_addr[ucic:get(config, name, "server") or ""] then
 		return "1"
 	end
 	return want_flag
+end
+
+local function _ssrust_enable_flag(name, want_flag)
+	return _ss_enable_flag("shadowsocks-rust", name, want_flag)
+end
+
+-- shadowsocks-libev's sss1 carries the VPS address too (the VPS sync sets it
+-- on every server section) and hi2, hi4... use it when there are more than 2
+-- CPUs. Left enabled when switching away from shadowsocks-libev, its ss-redir
+-- started at every boot and shared port 1100 with the active proxy, every
+-- connection it took reset by the VPS (issue #4357). It follows sss0.
+local function _set_ss_libev_disabled(disabled_flag)
+	ucic:set("shadowsocks-libev","sss0","disabled",disabled_flag)
+	if ucic:get("shadowsocks-libev","sss1") ~= nil then
+		ucic:set("shadowsocks-libev","sss1","disabled",
+			_ss_enable_flag("shadowsocks-libev", "sss1", disabled_flag))
+	end
 end
 
 function default_proxy(proxy, start)
@@ -797,9 +814,9 @@ function default_proxy(proxy, start)
 	local is_v2ray     = on and (proxy:match("^v2ray.*") ~= nil)
 	local is_xray      = on and (proxy:match("^xray.*") ~= nil)
 
-	-- shadowsocks-libev: disabled flag on sss0
+	-- shadowsocks-libev: disabled flag on sss0 and sss1
 	if ucic:get("shadowsocks-libev","sss0") ~= nil then
-		ucic:set("shadowsocks-libev","sss0","disabled", is_ss_libev and "0" or "1")
+		_set_ss_libev_disabled(is_ss_libev and "0" or "1")
 		ucic:save("shadowsocks-libev")
 		ucic:commit("shadowsocks-libev")
 	end
@@ -1257,7 +1274,7 @@ local function set_proxy_backend_enabled(proxy, enabled)
 	local disabled_flag = enabled and "0" or "1"
 	if proxy == "shadowsocks" then
 		if ucic:get("shadowsocks-libev","sss0") ~= nil then
-			ucic:set("shadowsocks-libev","sss0","disabled",disabled_flag)
+			_set_ss_libev_disabled(disabled_flag)
 			ucic:save("shadowsocks-libev")
 			ucic:commit("shadowsocks-libev")
 		end

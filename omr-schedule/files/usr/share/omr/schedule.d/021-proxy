@@ -95,9 +95,21 @@ _ss_secondary_flag() {  # _ss_secondary_flag <package> <section> <want_flag>
 	echo "$3"
 }
 
+# Whether a backend's server flags differ from what the configured proxy
+# wants. sss1 counts only on the way down: it carries the VPS address too
+# (hi2, hi4... use it when there are more than 2 CPUs), and switching away
+# from shadowsocks-libev used to disable sss0 alone. sss1's ss-redir then
+# started at every boot and shared port 1100 with the active proxy, every
+# connection it took reset by the VPS (issue #4357). sss0 already being
+# right, this block never fired for it.
+_ss_flags_differ() {  # _ss_flags_differ <package> <want_flag>
+	[ "$(uci -q get "$1.sss0.disabled")" != "$2" ] && return 0
+	[ "$2" = "1" ] && [ -n "$(uci -q get "$1.sss1")" ] && [ "$(uci -q get "$1.sss1.disabled")" != "1" ]
+}
+
 changed=0
 
-if [ -f /etc/init.d/shadowsocks-libev ] && [ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "$ss_libev_disabled" ]; then
+if [ -f /etc/init.d/shadowsocks-libev ] && _ss_flags_differ shadowsocks-libev "$ss_libev_disabled"; then
 	_log "Proxy enforce: setting shadowsocks-libev.sss0.disabled=${ss_libev_disabled} (configured proxy: ${configured_proxy})"
 	uci -q set shadowsocks-libev.sss0.disabled="$ss_libev_disabled"
 	uci -q set shadowsocks-libev.sss1.disabled="$(_ss_secondary_flag shadowsocks-libev sss1 "$ss_libev_disabled")"
@@ -114,7 +126,7 @@ if [ -f /etc/init.d/shadowsocks-libev ] && [ "$(uci -q get shadowsocks-libev.sss
 	changed=1
 fi
 
-if [ -f /etc/init.d/shadowsocks-rust ] && [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "$ss_rust_disabled" ]; then
+if [ -f /etc/init.d/shadowsocks-rust ] && _ss_flags_differ shadowsocks-rust "$ss_rust_disabled"; then
 	_log "Proxy enforce: setting shadowsocks-rust.sss0.disabled=${ss_rust_disabled} (configured proxy: ${configured_proxy})"
 	uci -q set shadowsocks-rust.sss0.disabled="$ss_rust_disabled"
 	# sss1 is the dedicated IPv6 proxy slot: only follow sss0 up to enabled
