@@ -208,6 +208,12 @@ return view.extend({
 			link.rel = 'stylesheet';
 			link.type = 'text/css';
 			link.href = L.resource('openmptcprouter/css/wanstatus.css');
+			// The connectors are placed from measured positions: a status
+			// drawn before the stylesheet applied would keep them wrong
+			// until the next poll
+			link.addEventListener('load', L.bind(function() {
+				if (this.lastData) this.renderStatus(this.lastData);
+			}, this));
 			document.head.appendChild(link);
 		}
 
@@ -345,10 +351,6 @@ return view.extend({
 			this.getNetworkNodeTemplate('<img src="' + L.resource('computer.png') + '" />', clientTitle, clientStatusClass, clientMsg, '') +
 			'</a></li>';
 		temp += '<li id="networkRootNode"><table><tr><td><table>';
-		if (wans.length + tunnels.length > 0) {
-			for (var i = 0; i < (wans.length + tunnels.length - 1); i++)
-				temp += '<tr class="spaceline"><td></td></tr>';
-		}
 		temp += '<tr><td><a href="#" id="omr">' +
 			this.getNetworkNodeTemplate('<img src="' + L.resource('openmptcprouter.png') + '" />', routerTitle, routerWarn ? 'warning' : 'ok', routerWarn, routerDetails) +
 			'</a></td></tr>';
@@ -394,9 +396,37 @@ return view.extend({
 			}, this));
 		}, this));
 
+		var fig = c.querySelector('figure.tree');
+		// A lone WAN hangs off no bracket: draw its own line to the card
+		if (wans.length + tunnels.length === 1) {
+			var lone = c.querySelector('#networkRootNode td > ul > li');
+			if (lone) lone.classList.add('subnode-only-child');
+		}
+
 		requestAnimationFrame(function() {
 			var omrEl = c.querySelector('#omr .network-node');
 			var wanUl = c.querySelector('#networkRootNode td > ul');
+			var leftTable = omrEl ? omrEl.closest('table') : null;
+			// Both columns start at the top: push down the one whose middle
+			// sits higher, so that the router faces the middle of the WAN
+			// bracket whatever the number of WANs (1 to 16) and the height
+			// of their cards. Centring the columns on each other put the
+			// router beside the bracket when router + server outgrew the WANs
+			if (omrEl && leftTable && wanUl && wanUl.children.length) {
+				var first = wanUl.children[0].getBoundingClientRect();
+				var last = wanUl.children[wanUl.children.length - 1].getBoundingClientRect();
+				var omrBox = omrEl.getBoundingClientRect();
+				var routerMid = omrBox.top + omrBox.height / 2 - leftTable.getBoundingClientRect().top;
+				var wanMid = (first.top + first.height / 2 + last.top + last.height / 2) / 2 -
+					wanUl.getBoundingClientRect().top;
+				// .tree ul eases every property: the column would slide in
+				// on each poll and be measured below at its old place
+				wanUl.style.transition = 'none';
+				if (routerMid < wanMid)
+					leftTable.style.marginTop = (wanMid - routerMid) + 'px';
+				else
+					wanUl.style.marginTop = (routerMid - wanMid) + 'px';
+			}
 			if (omrEl && wanUl) {
 				var omrRect = omrEl.getBoundingClientRect();
 				var ulRect  = wanUl.getBoundingClientRect();
@@ -404,14 +434,17 @@ return view.extend({
 				if (connTop > 0)
 					wanUl.style.setProperty('--wan-connector-top', connTop + 'px');
 			}
+			// The router moves with the WANs: end the client line at its
+			// measured top
+			var clientLi = c.querySelector('li.remote-from-lease');
+			if (fig && omrEl && clientLi) {
+				var lineTop = clientLi.getBoundingClientRect().top +
+					(parseFloat(getComputedStyle(clientLi, '::after').top) || 0);
+				var remoteH = omrEl.getBoundingClientRect().top - lineTop;
+				if (remoteH > 0)
+					fig.style.setProperty('--remote-line-h', remoteH + 'px');
+			}
 		});
-
-		var fig = c.querySelector('figure.tree');
-		if (fig) {
-			var n = wans.length + tunnels.length;
-			var lineH = (70 + Math.max(0, n - 1) * 55) + 'px';
-			fig.style.setProperty('--remote-line-h', lineH);
-		}
 	},
 
 	handleSave: null,
