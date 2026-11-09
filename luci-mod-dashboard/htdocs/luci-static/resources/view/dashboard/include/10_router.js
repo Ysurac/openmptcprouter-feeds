@@ -140,21 +140,29 @@ return baseclass.extend({
 	},
 
 	// Internet is the aggregated connection as the VPS sees it, not the
-	// lowest metric WAN.
+	// lowest metric WAN. Its public address comes from the external check;
+	// with "Disable external check" ticked there is no address to show,
+	// and the VPN tunnel to the VPS answering tells the connection is up.
 	renderUpdateOpenMPTCProuterData(data) {
 		const omr = data.openmptcprouter;
 
 		if (!L.isObject(omr))
 			return;
 
-		if (omr.wan_addr) {
+		// external_check is also false when the DNS test failed and so
+		// skipped the check: that is no sign of a working connection
+		const unchecked = (omr.external_check === false && omr.dns !== false);
+
+		if (omr.wan_addr || (unchecked && omr.tun_state == 'UP')) {
 			this.params.internet.v4.connected.value = true;
-			this.params.internet.v4.addrsv4.value = omr.wan_addr;
+			if (omr.wan_addr)
+				this.params.internet.v4.addrsv4.value = omr.wan_addr;
 		}
 
-		if (omr.ipv6 != 'disabled' && omr.wan_addr6) {
+		if (omr.ipv6 != 'disabled' && (omr.wan_addr6 || (unchecked && omr.tun6_state == 'UP'))) {
 			this.params.internet.v6.connected.value = true;
-			this.params.internet.v6.addrsv6.value = omr.wan_addr6;
+			if (omr.wan_addr6)
+				this.params.internet.v6.addrsv6.value = omr.wan_addr6;
 		}
 
 		if (omr.vps_kernel)
