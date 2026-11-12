@@ -1,0 +1,38 @@
+#!/bin/sh
+# ZBT-Z8109AX: 1920-omr-network deletes all the bridges and puts lan right on
+# its ethernet device. netifd can't add a wireless interface to a device that
+# is not a bridge, so a radio with network=lan shows its SSID but its clients
+# get no DHCP lease and no access. Put the lan device in a bridge, br-lan.
+# Nothing is changed when lan is already on a bridge.
+case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in
+z8109ax*|zbtlink,zbt-z8109ax*) ;;
+*) exit 0 ;;
+esac
+
+. /lib/functions.sh
+dev="$(uci -q get network.lan.device)"
+[ -n "$dev" ] || exit 0
+
+isbr=0
+_chk() {
+	local n t
+	config_get n "$1" name
+	config_get t "$1" type
+	[ "$n" = "$dev" ] && [ "$t" = "bridge" ] && isbr=1
+}
+config_load network
+config_foreach _chk device
+[ "$isbr" = 1 ] && exit 0
+
+uci -q batch <<-EOT >/dev/null
+	delete network.br_lan
+	set network.br_lan=device
+	set network.br_lan.type='bridge'
+	set network.br_lan.name='br-lan'
+	add_list network.br_lan.ports='$dev'
+	set network.lan.device='br-lan'
+	set network.lan.ifname='br-lan'
+	commit network
+EOT
+logger -t omr-network "lan: $dev moved to bridge br-lan for Wi-Fi"
+exit 0
