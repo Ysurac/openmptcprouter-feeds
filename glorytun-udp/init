@@ -36,6 +36,29 @@ validate_section() {
 		'dev:string'
 }
 
+# persist keeps the device, and the address set on it, once glorytun is
+# disabled: the next VPN on that device (OpenVPN's tun0) got both, and
+# omr-tracker saw its gateway down. Only this exact address is removed,
+# the device may already belong to that VPN
+release_addr() {
+	[ -n "$1" ] && [ -n "$2" ] && [ -n "$3" ] || return 0
+	ip addr del "$2" peer "$3" dev "$1" 2>/dev/null
+	return 0
+}
+
+stopped_instance() {
+	local enable dev localip remoteip
+	validate_section "${1}" || return 0
+	[ "${enable}" = "1" ] || release_addr "$dev" "$localip" "$remoteip"
+}
+
+# force_stop_vpn disables then stops, without a start; an enabled instance
+# keeps its address across a restart
+service_stopped() {
+	config_load glorytun-udp
+	config_foreach stopped_instance glorytun-udp
+}
+
 start_instance() {
 	local enable key host port listener proto mtuauto chacha dev mode
 	local persist kxtimeout timetolerance keepalive localip remoteip
@@ -47,7 +70,10 @@ start_instance() {
 		return 1
 	}
 
-	[ "${enable}" = "1" ] || return 1
+	[ "${enable}" = "1" ] || {
+		release_addr "$dev" "$localip" "$remoteip"
+		return 1
+	}
 
 	[ -n "${key}" ] || return 1
 	[ "${key}" != "secretkey" ] || return 1
