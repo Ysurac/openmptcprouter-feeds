@@ -261,7 +261,11 @@ return view.extend({
 		o = s.taboption('general', form.Value, 'name', _('Name'));
 		o.validate = function(section_id, value) {
 			/* the state of a rule is kept by name */
-			return (value == '' && this.section.formvalue(section_id, 'daily_limit')) ? _('A rule with a daily limit needs a name') : true;
+			if (value == '' && this.section.formvalue(section_id, 'daily_limit'))
+				return _('A rule with a daily limit needs a name');
+			if (value != '' && uci.sections('omr-parental', 'rule').some(function(r) { return r['.name'] != section_id && r.name == value; }))
+				return _('Another rule has this name');
+			return true;
 		};
 
 		o = s.taboption('general', form.DynamicList, 'mac', _('Devices'));

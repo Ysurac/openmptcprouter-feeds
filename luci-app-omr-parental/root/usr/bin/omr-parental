@@ -117,6 +117,8 @@ _app() {
 
 # A domain as given by a device or a list: lower case, nothing else
 _domain() {
+	# grep checks line by line: a line break would pass two domains
+	case "$1" in ""|*[!A-Za-z0-9_.-]*) return 1 ;; esac
 	printf '%s' "$1" | tr 'A-Z' 'a-z' | grep -xE '[a-z0-9_]([a-z0-9_-]{0,62})(\.[a-z0-9_-]{1,63})+' | grep -xE '.{1,253}'
 }
 
@@ -149,7 +151,9 @@ _alert() {
 	mail_to="$(uci -q get mail.default.to | tr -d '\r\n')"
 	case "$mail_to" in ""|-*|*[[:space:]]*) return 0 ;; esac
 	sys="$(uci -q get system.@system[0].hostname | tr -cd 'A-Za-z0-9._-')"
-	printf 'Subject: %s\n\n%s\n' "$sys: parental control" "$msg." | sendmail "$mail_to" >/dev/null 2>&1
+	# in the background, without the lock: a slow mail server held up the
+	# minute that applies the time windows
+	( exec 9>&-; printf 'Subject: %s\n\n%s\n' "$sys: parental control" "$msg." | sendmail "$mail_to" ) </dev/null >/dev/null 2>&1 &
 	return 0
 }
 
@@ -171,6 +175,17 @@ _state_read() {
 	prev_day="$d"; prev_used="$used"
 	# a new day: the counter goes on, the minutes start again
 	[ "$d" = "$DATE" ] || { used=0; bonus=0; }
+}
+
+# _state_roll <key>: the use of the day _state_read found ended into the
+# history, before _state_write replaces it
+_state_roll() {
+	case "$prev_day" in
+		[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9])
+			[ "$prev_day" != "$DATE" ] && [ "$prev_used" -gt 0 ] && _history "$prev_day" "$1" "$prev_used"
+			;;
+	esac
+	return 0
 }
 
 _state_write() {
@@ -264,11 +279,7 @@ _rule() {
 		[ -n "$now_pkts" ] || now_pkts=0
 		# once a minute, whatever runs it (cron, fw4 reload, LuCI)
 		if [ "$minute" != "$DATE$NOW" ]; then
-			case "$prev_day" in
-				[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9])
-					[ "$prev_day" != "$DATE" ] && [ "$prev_used" -gt 0 ] && _history "$prev_day" "$key" "$prev_used"
-					;;
-			esac
+			_state_roll "$key"
 			# a lower value: fw4 reloaded, the counter starts again
 			[ "$now_pkts" -ge "$pkts" ] || pkts=0
 			[ $((now_pkts - pkts)) -ge "$activity" ] && used=$((used + 1))
@@ -298,7 +309,10 @@ _rule() {
 		blocked=0
 		reason="allowed $until_val"
 	fi
+	p=""
+	[ -f "$STATE_DIR/$key.state" ] && read -r p < "$STATE_DIR/$key.state"
 	echo "${reason:-ok}" > "$STATE_DIR/$key.state"
+	[ "$blocked" = 1 ] && case "$p" in ""|ok|allowed*) _cut_flows "$rmacs" "$rdevs" ;; esac
 
 	# before the drop: a cut device still asks the router for its names
 	[ -n "$port" ] && _targets omr_parental_dns "meta l4proto { tcp, udp } th dport 53 redirect to :$port"
@@ -316,6 +330,23 @@ _rule() {
 	done
 	# after the drop rules: blocked packets are no use
 	[ -n "$count" ] && _targets omr_parental "$count"
+}
+
+# _cut_flows <macs> <devices>: a flow offloaded by fw4 skips the prerouting
+# drop and kept going after the cut: its conntrack entry goes, and so the
+# offload, the next packet meets the drop
+_cut_flows() {
+	local m d ip
+	[ "$(uci -q get firewall.@defaults[0].flow_offloading)" = 1 ] || return 0
+	command -v conntrack >/dev/null 2>&1 || return 0
+	for ip in $( {
+		for m in $(echo "$1" | tr -d ,); do ip neigh show | awk -v m="$m" 'tolower($5) == m { print $1 }'; done
+		# the devices are quoted for nft
+		for d in $(echo "$2" | tr -d ',"'); do ip neigh show dev "$d" | awk '{ print $1 }'; done
+	} | sort -u); do
+		conntrack -D -s "$ip" >/dev/null 2>&1
+	done
+	return 0
 }
 
 # _scan <section> <key> <name>: the queries its dnsmasq logged. Blocked
@@ -679,6 +710,7 @@ _reward() {
 	_section "$1" || { echo "no such rule" >&2; return 1; }
 	key="$(_key "$1")"
 	_state_read "$key"
+	_state_roll "$key"
 	bonus=$((bonus + $2))
 	_state_write "$key"
 	_apply
@@ -692,6 +724,8 @@ _pause() {
 	_section "$1" || { echo "no such rule" >&2; return 1; }
 	key="$(_key "$1")"
 	mkdir -p "$DATA_DIR/pause"
+	# an approved request would let the device through the pause
+	rm -f "$STATE_DIR/$key.allow"
 	if [ "$2" = 0 ]; then echo 0; else echo $((EPOCH + $2 * 60)); fi > "$DATA_DIR/pause/$key"
 	_apply
 }
@@ -778,6 +812,7 @@ _request() {
 	local ip="$1" s="$2" type="$3" value="$4" msg mac id who pending last
 	_valid_ip "$ip" || { echo "invalid address"; return 1; }
 	[ "$(uci -q get omr-parental.settings.requests)" = 0 ] && { echo "requests are off"; return 1; }
+	case "$s" in ""|*[!A-Za-z0-9_]*) echo "no such rule for this device"; return 1 ;; esac
 	_client_rules "$ip"
 	case " $crules " in *" $s "*) ;; *) echo "no such rule for this device"; return 1 ;; esac
 	case "$type" in
