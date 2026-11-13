@@ -53,10 +53,10 @@ service_triggers() {
 	[ -s "$RUN_DIR/blocklist.gz" ] || procd_add_raw_trigger "interface.*.up" 5000 /etc/init.d/omr-adblock start
 }
 
-# _firewall_rules: one line per rule, "<interface> <port> <dnsmasq port>",
+# _firewall_rules: one line per rule, "<zone> <port> <dnsmasq port>",
 # empty when DNS is not forced
 _firewall_rules() {
-	local enabled force_dns ifaces ports iface port dport
+	local enabled force_dns ifaces ports iface port dport zone zones=" "
 	config_load omr-adblock
 	config_get_bool enabled config enabled 0
 	config_get_bool force_dns config force_dns 1
@@ -66,9 +66,14 @@ _firewall_rules() {
 	dport=$(uci -q get dhcp.@dnsmasq[0].port)
 	case "$dport" in ""|*[!0-9]*) dport=53 ;; esac
 	for iface in $ifaces; do
+		# the networks are chosen, fw4 takes the zone they are in
+		zone=$(fw4 -q network "$iface" 2>/dev/null)
+		[ -n "$zone" ] || continue
+		case "$zones" in *" $zone "*) continue ;; esac
+		zones="$zones$zone "
 		for port in $ports; do
 			case "$port" in ""|*[!0-9]*) continue ;; esac
-			echo "$iface $port $dport"
+			echo "$zone $port $dport"
 		done
 	done
 }
@@ -77,13 +82,13 @@ _firewall_rules() {
 # (DNS over TLS or QUIC on 853, ...) are refused, so a client falls back on
 # plain DNS
 service_data() {
-	local rules line iface port dport
+	local rules line zone port dport
 	# a loop in this shell: the json_add_* of a piped "while read" would
 	# run in a subshell and be lost
 	rules=$(_firewall_rules)
 	json_add_array firewall
 	for line in $(echo "$rules" | tr ' ' ','); do
-		iface=${line%%,*}
+		zone=${line%%,*}
 		port=${line#*,}
 		dport=${port#*,}
 		port=${port%%,*}
@@ -91,8 +96,8 @@ service_data() {
 		if [ "$port" = 53 ]; then
 			json_add_string type redirect
 			json_add_string target DNAT
-			json_add_string name "omr-adblock: force DNS on $iface"
-			json_add_string src "$iface"
+			json_add_string name "omr-adblock: force DNS on $zone"
+			json_add_string src "$zone"
 			json_add_string proto 'tcp udp'
 			json_add_string src_dport 53
 			json_add_string dest_port "$dport"
@@ -100,8 +105,8 @@ service_data() {
 			json_add_boolean reflection 0
 		else
 			json_add_string type rule
-			json_add_string name "omr-adblock: refuse DNS port $port from $iface"
-			json_add_string src "$iface"
+			json_add_string name "omr-adblock: refuse DNS port $port from $zone"
+			json_add_string src "$zone"
 			json_add_string dest '*'
 			json_add_string proto 'tcp udp'
 			json_add_string dest_port "$port"
