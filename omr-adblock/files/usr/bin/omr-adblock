@@ -496,8 +496,10 @@ _cancel_pause() {
 # allowed domain: it sorts before the same domain blocked.
 _normalize() {
 	local c='[a-z0-9_-]' valid
-	# any byte but ASCII punctuation, blanks and controls: UTF-8 labels too
-	[ "$allow_non_ascii" = 1 ] && c='[^][[:space:][:cntrl:]!-,./:-@\^`{-~]'
+	# any byte but ASCII punctuation, blanks and controls: UTF-8 labels too.
+	# No "/" in it: it would end the sed address below, and tr already
+	# split the lines on it
+	[ "$allow_non_ascii" = 1 ] && c='[^][[:space:][:cntrl:]!-,.:-@\^`{-~]'
 	valid="^$c+(\\.$c+)+\$"
 	tr 'A-Z\t\r' 'a-z  ' |
 	sed -E 's/[#!].*//; s/^(local|server)=\/(.*)\/[^/]*$/\2/; s/^address=\/([^/]*)\/.*/\1/; s/^\|\|([^/$^*|]+)\^(\$important)?$/\1/' |
@@ -695,7 +697,8 @@ _pack() {
 			# an allowed domain: it and its subdomains are not blocked, and
 			# when a parent is, it is let through with server=/<domain>/#
 			substr($2, 1, 1) == "\001" {
-				a = $1
+				# the outer allowed domain covers the ones under it
+				if (a == "" || index($1, a " ") != 1) a = $1
 				if (k != "" && index($1, k " ") == 1) srv[++ns] = substr($2, 2)
 				next
 			}
@@ -1216,15 +1219,20 @@ cmd_stats_reset() {
 # block: the domains go into the config and into the loaded blocklist
 # without a download
 cmd_block() {
-	local d domains="" new
+	local d domains="" new a
 	_load_config
 	[ "$#" -gt 0 ] || { echo "usage: omr-adblock block <domain>..." >&2; return 1; }
 	for d in "$@"; do
 		new=$(printf '%s\n' "$d" | _normalize block | cut -f2)
 		[ -n "$new" ] || { echo "invalid domain: $d" >&2; return 1; }
-		case " $allowed_domain " in
-			*" $new "*) echo "$new is an allowed domain: remove it from the allowed domains first" >&2; return 1 ;;
-		esac
+		# the next build lets an allowed domain and its subdomains through
+		set -f
+		for a in $allowed_domain; do
+			case "$new" in
+				"$a"|*".$a") echo "$new is allowed by $a: remove it from the allowed domains first" >&2; return 1 ;;
+			esac
+		done
+		set +f
 		domains="$domains $new"
 	done
 	_lock
@@ -1283,15 +1291,16 @@ cmd_check() {
 # check_lists: the lists are downloaded in parallel; only their lines that
 # hold the domain or one of its parents as a whole word are normalized
 cmd_check_lists() {
-	local d="$1" pattern tmp=/tmp/omr-adblock.check pids="" i=0 f
+	local d="$1" pattern tmp i=0 f failed
 	[ -n "$d" ] || { echo "usage: omr-adblock check_lists <domain>" >&2; return 1; }
 	_load_config
 	d=$(printf '%s' "$d" | tr 'A-Z' 'a-z')
 	pattern=$(printf '%s' "$d" | awk -F. '{
 		for (i = 1; i <= NF; i++) { s = $i; for (j = i + 1; j <= NF; j++) s = s "\\." $j; p = p (p == "" ? "" : "|") s }
 		print "(^|[^a-z0-9.-])(\\*?\\.)?(" p ")\\.?([^a-z0-9.-]|$)" }')
-	rm -rf "$tmp"
-	mkdir -p "$tmp"
+	tmp=$(mktemp -d /tmp/omr-adblock.check.XXXXXX) || return 1
+	# LuCI gives up on a call after 20 s: every list at once, 15 s each
+	download_max_time=15
 	_check_list() {
 		local en url name action
 		config_get_bool en "$1" enabled 1
@@ -1301,24 +1310,20 @@ cmd_check_lists() {
 		config_get action "$1" action block
 		i=$((i + 1))
 		(
-			_fetch "$url" /dev/null | tr 'A-Z' 'a-z' | grep -E "$pattern" | _normalize block | cut -f2 | awk -v d="$d" '
+			{ _fetch "$url" /dev/null || echo "$name ($action): not checked, the download failed or took too long" > "$tmp/$i.failed"; } |
+				tr 'A-Z' 'a-z' | grep -E "$pattern" | _normalize block | cut -f2 | awk -v d="$d" '
 				$0 == d || (length(d) > length($0) && substr(d, length(d) - length($0)) == "." $0) { print; f = 1; exit }
 				END { exit !f }' > "$tmp/$i" &&
 				echo "$name ($action): $(cat "$tmp/$i")" > "$tmp/$i.found"
 		) &
-		pids="$pids $!"
-		set -- $pids
-		if [ "$#" -ge "$parallel_downloads" ]; then
-			wait "$1"
-			shift
-			pids="$*"
-		fi
 	}
 	config_foreach _check_list file_url
 	wait
 	f=$(cat "$tmp"/*.found 2>/dev/null)
+	failed=$(cat "$tmp"/*.failed 2>/dev/null)
 	rm -rf "$tmp"
-	[ -n "$f" ] || { echo "$d is in no enabled list"; return 1; }
+	[ -n "$failed" ] && echo "$failed"
+	[ -n "$f" ] || { echo "$d is in no enabled list${failed:+ that could be checked}"; return 1; }
 	echo "$f"
 }
 

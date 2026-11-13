@@ -51,7 +51,8 @@ var codeLabels = {
 	heartbeatFailed: _('The heartbeat domain did not resolve'),
 	restoredPrevious: _('The previous blocklist was loaded again'),
 	badSchedule: _('The update schedule is not a cron time'),
-	badList: _('A tab or a line break in the name or the URL of a list')
+	badList: _('A tab or a line break in the name or the URL of a list'),
+	statsUnavailable: _('No query statistics for a dnsmasq instance')
 };
 
 function formatSize(bytes) {
