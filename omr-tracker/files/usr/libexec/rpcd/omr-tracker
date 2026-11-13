@@ -526,18 +526,14 @@ _rule() {
 	return 1
 }
 
-# An IPv4 or IPv6 address or a host name, as uci's "host" datatype
+# An IPv4 or IPv6 address or a host name: the init script's own check, as
+# it drops a host that fails it, and an interface left without hosts is not
+# tracked. It takes a leading dash, which ping would read as an option.
 _valid_host() {
-	[ "${#1}" -le 253 ] || return 1
 	case "$1" in
-		*:*)
-			case "$1" in
-				*[!0-9A-Fa-f:.]*|*:::*) return 1 ;;
-			esac
-			;;
-		''|*[!A-Za-z0-9.-]*|.*|*.|*..*|-*) return 1 ;;
+		-*) return 1 ;;
 	esac
-	return 0
+	validate_data host "$1" >/dev/null 2>&1
 }
 
 # _check_value <kind> <json type> <value>: the value to write in $_val, or
@@ -997,16 +993,6 @@ _input_load() {
 	json_load "$input"
 }
 
-# The interface argument, in $_iface
-_input_interface() {
-	local input
-	input=$(cat)
-	_iface=""
-	[ -n "$input" ] || return 0
-	json_load "$input" 2>/dev/null && json_get_var _iface interface
-	json_cleanup
-}
-
 case "$1" in
 	list)
 		echo '{'
@@ -1027,16 +1013,19 @@ case "$1" in
 		. /usr/share/libubox/jshn.sh
 		. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-state.sh"
 		case "$2" in
-			status)
-				_input_interface
-				_status "$_iface"
+			status|restart)
+				_input_load
+				_iface=""
+				json_get_var _iface interface
+				json_cleanup
+				if [ "$2" = "status" ]; then
+					_status "$_iface"
+				else
+					_restart "$_iface"
+				fi
 				;;
 			servers)
 				_servers
-				;;
-			restart)
-				_input_interface
-				_restart "$_iface"
 				;;
 			failback)
 				_failback
