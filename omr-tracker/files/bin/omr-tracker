@@ -534,6 +534,19 @@ _ping() {
 	fi
 	return 1
 }
+
+# _ping_gateway <gateway>: a local first hop answers in milliseconds, so one
+# echo with a 1 s deadline is enough. The configured count/timeout are sized
+# for the VPS, and made every cycle wait them out on carrier gateways that
+# drop ICMP. A remote gateway (omrvpn) keeps them: its ping is its quality.
+_ping_gateway() {
+	if [ "$OMR_TRACKER_GATEWAY_IS_REMOTE" = "yes" ]; then
+		_ping "$1" "$OMR_TRACKER_DEVICE" yes
+	else
+		# bash: assignments before a function call only last for that call
+		OMR_TRACKER_COUNT=1 OMR_TRACKER_TIMEOUT=1 _ping "$1" "$OMR_TRACKER_DEVICE" no
+	fi
+}
 #'
 _httping() {
 	local host=$1
@@ -913,10 +926,10 @@ while true; do
 						break
 					fi
 					if [ -n "$OMR_TRACKER_DEVICE_ROUTE" ]; then
-						_ping "$OMR_TRACKER_DEVICE_ROUTE" "$OMR_TRACKER_DEVICE" "$OMR_TRACKER_GATEWAY_IS_REMOTE"
+						_ping_gateway "$OMR_TRACKER_DEVICE_ROUTE"
 						status=$?
 					else
-						_ping "$OMR_TRACKER_DEVICE_GATEWAY" "$OMR_TRACKER_DEVICE" "$OMR_TRACKER_GATEWAY_IS_REMOTE"
+						_ping_gateway "$OMR_TRACKER_DEVICE_GATEWAY"
 						status=$?
 						[ "$status" -ne 0 ] && _gw4_failed="$OMR_TRACKER_DEVICE_GATEWAY"
 					fi
@@ -1060,7 +1073,7 @@ while true; do
 					#	_ping "$OMR_TRACKER_DEVICE_ROUTE" "$OMR_TRACKER_DEVICE" "no"
 					#	status=$?
 					#else
-						_ping "$OMR_TRACKER_DEVICE_GATEWAY6" "$OMR_TRACKER_DEVICE" "$OMR_TRACKER_GATEWAY_IS_REMOTE"
+						_ping_gateway "$OMR_TRACKER_DEVICE_GATEWAY6"
 						status=$?
 						[ "$status" -ne 0 ] && _gw6_failed="$OMR_TRACKER_DEVICE_GATEWAY6"
 					#fi
