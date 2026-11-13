@@ -1,0 +1,938 @@
+#!/bin/sh
+#
+# Copyright (C) 2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+# Each omr-parental rule targets devices (MAC) and networks (uci
+# interfaces). On the days of the rule:
+# - during its time window, their Internet access is cut;
+# - with a daily limit, each minute they use the Internet counts, and
+#   their access is cut once the limit (plus the reward of the day) is used;
+# - a pause cuts it until a time or until resumed; an approved request
+#   gives it back for a while, whatever cut it;
+# - their access to the blocked applications is cut;
+# - with SafeSearch, blocked categories or sites, or the log of the sites
+#   visited, their DNS queries go to a dnsmasq of their own (port 5360 + n,
+#   started by the init script), which answers from its blocklist and
+#   SafeSearch hosts, logs the queries, and forwards the rest to the main
+#   dnsmasq.
+#
+# Usage: omr-parental              apply (cron each minute, fw4 include)
+#        omr-parental apps         sync the dnsmasq nftsets of the apps
+#        omr-parental status       JSON: state of each rule
+#        omr-parental reward <rule section> <minutes>
+#        omr-parental pause <rule section> <minutes, 0: until resumed>
+#        omr-parental resume <rule section>
+#        omr-parental safesearch   write its hosts file, false when no rule needs it
+#        omr-parental filters      "<key> <port> <safesearch>" of each DNS filter
+#        omr-parental lists [force]  build the blocklist of each rule
+#        omr-parental client <ip>  what the request page shows to a device
+#        omr-parental request <ip> <rule section> <time|site> <minutes|domain> [message]
+#        omr-parental requests     JSON: the requests
+#        omr-parental answer <id> <1|0> [minutes]
+#        omr-parental report <rule section>  JSON: history, blocked and visited sites
+#
+# The window is checked here in local time, by cron each minute, instead of
+# with nft meta hour/day: nft converts them to UTC once, at load time, so a
+# window that crosses midnight in UTC or a weekday near midnight is wrong.
+#
+# Dropped in prerouting before the dstnat of the transparent proxies, so
+# what a proxy or the VPN would carry is cut too. The router itself
+# (DNS, DHCP, LuCI, the request page) stays reachable.
+
+. /lib/functions.sh
+
+STATE_DIR=/var/run/omr-parental
+# on flash: a pause must outlive a reboot; the history is written once a day
+DATA_DIR=/etc/omr-parental
+LOG_DIR=/var/log/omr-parental
+APP_DB=/usr/share/omr-bypass/omr-bypass.db
+SS_LIST=/usr/share/omr-parental/safesearch
+CATALOG=/usr/share/omr-adblock/catalog.tsv
+EVENTS_LIB=/usr/share/omr/lib/omr-events.sh
+PORT_BASE=5360
+PORT_MAX=40
+NOW="$(date +%H%M)"
+TODAY="$(date +%u)"
+DATE="$(date +%Y%m%d)"
+EPOCH="$(date +%s)"
+YESTERDAY=$(( (TODAY + 5) % 7 + 1 ))
+TAB="$(printf '\t')"
+macs=""
+ifs=""
+rules=""
+counters=""
+appsets=""
+filter_n=0
+
+# 1 (Monday) .. 7
+_day_num() {
+	case "$1" in
+		mon) echo 1 ;; tue) echo 2 ;; wed) echo 3 ;; thu) echo 4 ;;
+		fri) echo 5 ;; sat) echo 6 ;; sun) echo 7 ;;
+	esac
+}
+
+# Is day $1 (1..7) one of the days of the rule (none: every day)?
+_day_ok() {
+	local d
+	[ -z "$days" ] && return 0
+	for d in $days; do
+		[ "$(_day_num "$d")" = "$1" ] && return 0
+	done
+	return 1
+}
+
+# Echo HHMM from HH:MM, nothing when invalid
+_hhmm() {
+	echo "$1" | grep -E '^([01][0-9]|2[0-3]):[0-5][0-9]$' | tr -d :
+}
+
+# _add <list var> <element>: once, ", " separated
+_add() {
+	local __l
+	eval "__l=\"\$$1\""
+	case ", $__l, " in *", $2, "*) return ;; esac
+	eval "$1=\"\${__l:+\$__l, }\$2\""
+}
+
+_mac() {
+	local mac
+	mac="$(echo "$1" | tr 'A-F' 'a-f')"
+	echo "$mac" | grep -qE '^([0-9a-f]{2}:){5}[0-9a-f]{2}$' && _add rmacs "$mac"
+}
+
+# the device of a uci interface, quoted for nft
+_network() {
+	local dev
+	dev="$(ubus -S call "network.interface.$1" status 2>/dev/null | jsonfilter -q -e '@.l3_device')"
+	echo "$dev" | grep -qE '^[A-Za-z0-9._-]{1,15}$' && _add rdevs "\"$dev\""
+}
+
+_app() {
+	echo "$1" | grep -qE '^[A-Za-z0-9_]{1,40}$' && _add rapps "$1"
+}
+
+# A domain as given by a device or a list: lower case, nothing else
+_domain() {
+	printf '%s' "$1" | tr 'A-Z' 'a-z' | grep -xE '[a-z0-9_]([a-z0-9_-]{0,62})(\.[a-z0-9_-]{1,63})+' | grep -xE '.{1,253}'
+}
+
+# The state of a rule is kept by name: anonymous section ids change when a
+# rule above is deleted. Name is "", the section id.
+_key() {
+	local name
+	config_get name "$1" name
+	[ -n "$name" ] || name="$1"
+	printf '%s' "$name" | md5sum | cut -c1-12
+}
+
+# _clean <text>: safe in JSON, a mail, the log and HTML
+_clean() {
+	printf '%s' "$1" | tr -d '"\\<>&\000-\037\177' | cut -b1-200
+}
+
+# _alert <kind> <message>: syslog, the omr-events history and, when set, a mail
+_alert() {
+	local msg mail_to sys
+	msg="$(_clean "$2")"
+	logger -t omr-parental "$msg"
+	if [ -f "$EVENTS_LIB" ]; then
+		(
+			. "$EVENTS_LIB"
+			omr_events_write "$EPOCH" "$(printf '{"ts":%s,"device":"","event":"parental","reason":"%s","message":"%s"}' "$EPOCH" "$1" "$msg")"
+		) 2>/dev/null
+	fi
+	[ "$(uci -q get omr-parental.settings.alert_mail)" = 1 ] || return 0
+	mail_to="$(uci -q get mail.default.to | tr -d '\r\n')"
+	case "$mail_to" in ""|-*|*[[:space:]]*) return 0 ;; esac
+	sys="$(uci -q get system.@system[0].hostname | tr -cd 'A-Za-z0-9._-')"
+	printf 'Subject: %s\n\n%s\n' "$sys: parental control" "$msg." | sendmail "$mail_to" >/dev/null 2>&1
+	return 0
+}
+
+# _alert_on <setting> <default>: is this kind of alert wanted?
+_alert_on() {
+	local v
+	v="$(uci -q get "omr-parental.settings.$1")"
+	[ "${v:-$2}" = 1 ]
+}
+
+# _state_read <key>: used bonus pkts minute of today; prev_day and
+# prev_used: what was read, before a new day reset it
+# shortcut: in /var/run, a reboot resets the use of the day; flash would wear out with a write each minute
+_state_read() {
+	local d
+	used=0; bonus=0; pkts=0; minute=""
+	[ -f "$STATE_DIR/$1" ] && read -r d used bonus pkts minute < "$STATE_DIR/$1"
+	case "$used$bonus$pkts" in ""|*[!0-9]*) used=0; bonus=0; pkts=0 ;; esac
+	prev_day="$d"; prev_used="$used"
+	# a new day: the counter goes on, the minutes start again
+	[ "$d" = "$DATE" ] || { used=0; bonus=0; }
+}
+
+_state_write() {
+	mkdir -p "$STATE_DIR"
+	echo "$DATE $used $bonus $pkts $minute" > "$STATE_DIR/$1.tmp" && mv "$STATE_DIR/$1.tmp" "$STATE_DIR/$1"
+}
+
+# _history <day> <key> <minutes>: once a day per rule with a limit
+_history() {
+	mkdir -p "$DATA_DIR"
+	echo "$1 $2 $3" >> "$DATA_DIR/history"
+	[ "$(wc -l < "$DATA_DIR/history")" -gt 1200 ] || return 0
+	tail -n 1000 "$DATA_DIR/history" > "$DATA_DIR/history.tmp" && mv "$DATA_DIR/history.tmp" "$DATA_DIR/history"
+}
+
+# _until <file>: true while the epoch in it is to come, 0 for ever; an
+# ended one is removed
+_until() {
+	local u
+	[ -f "$1" ] || return 1
+	read -r u < "$1"
+	case "$u" in ""|*[!0-9]*) u=0 ;; esac
+	until_val="$u"
+	{ [ "$u" = 0 ] || [ "$EPOCH" -lt "$u" ]; } && return 0
+	rm -f "$1"
+	return 1
+}
+
+# _targets <chain> <match>: the rule matches its devices and its networks
+_targets() {
+	[ -n "$rmacs" ] && rules="$rules
+add rule inet fw4 $1 ether saddr { $rmacs } $2"
+	[ -n "$rdevs" ] && rules="$rules
+add rule inet fw4 $1 iifname { $rdevs } $2"
+}
+
+# Does the rule need a DNS filter of its own?
+_filter_need() {
+	local ss lg cat blk
+	config_get_bool ss "$1" safesearch 0
+	config_get_bool lg "$1" log 0
+	config_get cat "$1" category
+	config_get blk "$1" block_domain
+	[ "$ss$lg" != 00 ] || [ -n "$cat$blk" ]
+}
+
+_rule() {
+	local enabled start stop days limit key used bonus pkts minute now_pkts name
+	local rmacs="" rdevs="" rapps="" count="" blocked=0 reason="" p port="" until_val prev_day prev_used
+	config_get_bool enabled "$1" enabled 0
+	[ "$enabled" = "1" ] || return
+	# the port of its DNS filter, counted on the config alone as "filters" does
+	if _filter_need "$1"; then
+		[ "$filter_n" -lt "$PORT_MAX" ] && port=$((PORT_BASE + filter_n))
+		filter_n=$((filter_n + 1))
+	fi
+	key="$(_key "$1")"
+	config_get name "$1" name "$1"
+	[ -n "$port" ] && _scan "$1" "$key" "$name"
+	config_get days "$1" days
+	config_get limit "$1" daily_limit
+	case "$limit" in ""|*[!0-9]*|0) limit="" ;; esac
+	config_list_foreach "$1" mac _mac
+	config_list_foreach "$1" network _network
+	config_list_foreach "$1" app _app
+	[ -n "$rmacs$rdevs" ] || return
+	start="$(_hhmm "$(config_get "$1" start_time)")"
+	stop="$(_hhmm "$(config_get "$1" stop_time)")"
+	# half a window is invalid: block all day rather than not at all
+	[ -n "$start" ] && [ -n "$stop" ] || { start=""; stop=""; }
+	if [ -z "$start" ]; then
+		# no window: all of these days, unless the rule has a limit, apps or a filter
+		[ -z "$limit$rapps" ] && ! _filter_need "$1" && _day_ok "$TODAY" && blocked=1
+	elif [ "$start" = "$stop" ]; then
+		_day_ok "$TODAY" && blocked=1
+	elif [ "$start" -lt "$stop" ]; then
+		[ "$NOW" -ge "$start" ] && [ "$NOW" -lt "$stop" ] && _day_ok "$TODAY" && blocked=1
+	elif [ "$NOW" -ge "$start" ]; then
+		_day_ok "$TODAY" && blocked=1
+	elif [ "$NOW" -lt "$stop" ]; then
+		# after midnight: the window belongs to the day it started
+		_day_ok "$YESTERDAY" && blocked=1
+	fi
+	[ "$blocked" = 1 ] && reason=window
+
+	_day_ok "$TODAY" || { limit=""; rapps=""; port=""; }
+
+	if [ -n "$limit" ]; then
+		_state_read "$key"
+		now_pkts="$(nft list counter inet fw4 "omr_par_$key" 2>/dev/null | sed -n 's/.*packets \([0-9]*\).*/\1/p')"
+		[ -n "$now_pkts" ] || now_pkts=0
+		# once a minute, whatever runs it (cron, fw4 reload, LuCI)
+		if [ "$minute" != "$DATE$NOW" ]; then
+			case "$prev_day" in
+				[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9])
+					[ "$prev_day" != "$DATE" ] && [ "$prev_used" -gt 0 ] && _history "$prev_day" "$key" "$prev_used"
+					;;
+			esac
+			# a lower value: fw4 reloaded, the counter starts again
+			[ "$now_pkts" -ge "$pkts" ] || pkts=0
+			[ $((now_pkts - pkts)) -ge "$activity" ] && used=$((used + 1))
+			pkts="$now_pkts"
+			minute="$DATE$NOW"
+			_state_write "$key"
+		fi
+		_add counters "$key"
+		if [ "$used" -ge $((limit + bonus)) ]; then
+			blocked=1
+			[ -z "$reason" ] && reason=limit
+			if [ "$(cat "$STATE_DIR/$key.alerted" 2>/dev/null)" != "$DATE" ]; then
+				echo "$DATE" > "$STATE_DIR/$key.alerted"
+				_alert_on alert_limit 1 && _alert limit "$name: the daily limit of $((limit + bonus)) min is used"
+			fi
+		else
+			count="fib daddr type != { local, broadcast, multicast } counter name \"omr_par_$key\""
+		fi
+	fi
+
+	if _until "$DATA_DIR/pause/$key"; then
+		blocked=1
+		reason="paused $until_val"
+	fi
+	# an approved request: whatever cut it, for a while
+	if [ "$blocked" = 1 ] && _until "$STATE_DIR/$key.allow"; then
+		blocked=0
+		reason="allowed $until_val"
+	fi
+	echo "${reason:-ok}" > "$STATE_DIR/$key.state"
+
+	# before the drop: a cut device still asks the router for its names
+	[ -n "$port" ] && _targets omr_parental_dns "meta l4proto { tcp, udp } th dport 53 redirect to :$port"
+
+	if [ "$blocked" = 1 ]; then
+		for p in $(echo "$rmacs" | tr -d ,); do _add macs "$p"; done
+		for p in $(echo "$rdevs" | tr -d ,); do _add ifs "$p"; done
+		return
+	fi
+
+	for p in $(echo "$rapps" | tr -d ,); do
+		_add appsets "$p"
+		_targets omr_parental "ip daddr @omr_par_app_${p}_4 counter drop"
+		_targets omr_parental "ip6 daddr @omr_par_app_${p}_6 counter drop"
+	done
+	# after the drop rules: blocked packets are no use
+	[ -n "$count" ] && _targets omr_parental "$count"
+}
+
+# _scan <section> <key> <name>: the queries its dnsmasq logged. Blocked
+# names go to <key>.blocked ("epoch ip domain", the last 300), and with
+# "log" the names asked to <key>.sites.<date> ("count domain"). The log is
+# copied and emptied: dnsmasq appends to it, its next lines go at the start.
+_scan() {
+	local log="$LOG_DIR/$2.log" chunk="$STATE_DIR/$2.chunk" lg sites="" ip d n=0 alerted
+	[ -s "$log" ] || return 0
+	mkdir -p "$STATE_DIR"
+	cat "$log" > "$chunk" && : > "$log"
+	config_get_bool lg "$1" log 0
+	[ "$lg" = 1 ] && sites="$STATE_DIR/$2.sites.$DATE"
+	awk -v NOW="$EPOCH" -v BLK="$STATE_DIR/$2.blocked" -v SITES="$sites" -v LAN="$(uci -q get dhcp.@dnsmasq[0].domain)" '
+		BEGIN {
+			gsub(/[^a-z0-9.-]/, "", LAN)
+			gsub(/\./, "\\.", LAN)
+			special = "(^|\\.)(" (LAN != "" ? LAN "|" : "") "lan|local|invalid|localhost|test|onion|bind|arpa|home\\.arpa)$"
+			if (SITES != "")
+				while ((getline l < SITES) > 0) {
+					split(l, f, "\t")
+					s[f[2]] += f[1]
+				}
+		}
+		function valid(d) { return d ~ /^[a-z0-9_][a-z0-9_.-]*\.[a-z0-9_-]+$/ && length(d) <= 253 && d !~ special }
+		{
+			i = index($0, "]: ")
+			if (!i)
+				next
+			n = split(substr($0, i + 3), w, " ")
+			if (w[1] !~ /^[0-9]+$/ || !index(w[2], "/"))
+				next
+			id = w[1]
+			if (w[3] ~ /^query\[/) {
+				d = tolower(w[4])
+				if (!valid(d))
+					next
+				q[id] = d
+				cl = w[2]
+				sub(/\/[0-9]+$/, "", cl)
+				qc[id] = cl
+				if (SITES != "" && w[3] ~ /^query\[(A|AAAA|HTTPS)\]$/)
+					s[d]++
+			} else if (w[3] == "config" && (id in q)) {
+				if ($0 ~ / is (NXDOMAIN|NODATA|NODATA-IPv[46]|0\.0\.0\.0|::)$/ && qc[id] ~ /^[0-9a-fA-F.:]+$/) {
+					k = qc[id] " " q[id]
+					if (!(k in b)) {
+						b[k] = 1
+						print NOW " " k >> BLK
+						print k
+					}
+				}
+				delete q[id]
+			}
+		}
+		END {
+			if (SITES != "") {
+				for (d in s)
+					print s[d] "\t" d > (SITES ".tmp")
+				close(SITES ".tmp")
+			}
+		}' "$chunk" > "$chunk.new"
+	[ -n "$sites" ] && [ -f "$sites.tmp" ] && mv -f "$sites.tmp" "$sites"
+	if [ -f "$STATE_DIR/$2.blocked" ] && [ "$(wc -l < "$STATE_DIR/$2.blocked")" -gt 400 ]; then
+		tail -n 300 "$STATE_DIR/$2.blocked" > "$STATE_DIR/$2.blocked.tmp" && mv -f "$STATE_DIR/$2.blocked.tmp" "$STATE_DIR/$2.blocked"
+	fi
+	# one alert per site and day, at most 5 a minute
+	if _alert_on alert_blocked 0; then
+		alerted="$STATE_DIR/$2.alerted.$DATE"
+		while read -r ip d; do
+			grep -qxF "$d" "$alerted" 2>/dev/null && continue
+			echo "$d" >> "$alerted"
+			n=$((n + 1))
+			[ "$n" -le 5 ] && _alert blocked "$3: $d blocked for $ip"
+		done < "$chunk.new"
+	fi
+	rm -f "$chunk" "$chunk.new"
+	find "$STATE_DIR" -maxdepth 1 \( -name "$2.sites.*" -o -name "$2.alerted.*" \) -mtime +7 -exec rm -f {} + 2>/dev/null
+	return 0
+}
+
+# The static addresses of an app, in a set made now
+_app_ips() {
+	sqlite3 "$APP_DB" "select ip from ipproto where proto='$1';" 2>/dev/null |
+		grep -E "$2" | sed 's/$/,/' | tr -d '\n' | sed 's/,$//'
+}
+
+_apply() {
+	local p ips
+	activity="$(uci -q get omr-parental.settings.activity_packets)"
+	case "$activity" in ""|*[!0-9]*) activity=100 ;; esac
+
+	mkdir -p "$STATE_DIR"
+	config_load omr-parental
+	config_get_bool global settings enabled 1
+	[ "$global" = "1" ] && config_foreach _rule rule
+
+	_safesearch_refresh
+	# the blocklists that could not be downloaded (boot before the WANs)
+	[ -n "$(find "$STATE_DIR/lists.retry" -mmin +9 2>/dev/null)" ] && (/usr/bin/omr-parental lists 9>&- >/dev/null 2>&1 &)
+
+	if [ -z "$macs$ifs$rules" ]; then
+		for p in omr_parental omr_parental_dns; do
+			nft list chain inet fw4 $p >/dev/null 2>&1 && nft delete chain inet fw4 $p
+		done
+		for p in omr_parental_mac omr_parental_if; do
+			nft list set inet fw4 $p >/dev/null 2>&1 && nft delete set inet fw4 $p
+		done
+		return 0
+	fi
+
+	{
+		echo "add set inet fw4 omr_parental_mac { type ether_addr; }"
+		echo "add set inet fw4 omr_parental_if { type ifname; }"
+		for p in $(echo "$counters" | tr -d ,); do
+			echo "add counter inet fw4 omr_par_$p"
+		done
+		# dnsmasq adds the addresses of the app domains (omr-parental apps)
+		for p in $(echo "$appsets" | tr -d ,); do
+			if ! nft list set inet fw4 "omr_par_app_${p}_4" >/dev/null 2>&1; then
+				echo "add set inet fw4 omr_par_app_${p}_4 { type ipv4_addr; flags interval; auto-merge; }"
+				ips="$(_app_ips "$p" '^[0-9.]+(/[0-9]+)?$')"
+				[ -n "$ips" ] && echo "add element inet fw4 omr_par_app_${p}_4 { $ips }"
+			fi
+			if ! nft list set inet fw4 "omr_par_app_${p}_6" >/dev/null 2>&1; then
+				echo "add set inet fw4 omr_par_app_${p}_6 { type ipv6_addr; flags interval; auto-merge; }"
+				ips="$(_app_ips "$p" '^[0-9A-Fa-f:]+(/[0-9]+)?$')"
+				[ -n "$ips" ] && echo "add element inet fw4 omr_par_app_${p}_6 { $ips }"
+			fi
+		done
+		# raw: before conntrack and before the proxies' dstnat/tproxy
+		echo "add chain inet fw4 omr_parental { type filter hook prerouting priority -300; policy accept; }"
+		# the DNS filters: before fw4's dstnat, the DNS redirects included
+		echo "add chain inet fw4 omr_parental_dns { type nat hook prerouting priority -110; policy accept; }"
+		echo "flush chain inet fw4 omr_parental"
+		echo "flush chain inet fw4 omr_parental_dns"
+		echo "flush set inet fw4 omr_parental_mac"
+		echo "flush set inet fw4 omr_parental_if"
+		echo "add rule inet fw4 omr_parental ether saddr @omr_parental_mac fib daddr type != { local, broadcast, multicast } counter drop"
+		echo "add rule inet fw4 omr_parental iifname @omr_parental_if fib daddr type != { local, broadcast, multicast } counter drop"
+		[ -n "$macs" ] && echo "add element inet fw4 omr_parental_mac { $macs }"
+		[ -n "$ifs" ] && echo "add element inet fw4 omr_parental_if { $ifs }"
+		[ -n "$rules" ] && echo "$rules"
+		# the zone of a network may reject input (guest): accept what was redirected here
+		if ! nft list chain inet fw4 input 2>/dev/null | grep -q '"omr_parental_dns"'; then
+			echo "insert rule inet fw4 input meta l4proto { tcp, udp } th dport $PORT_BASE-$((PORT_BASE + PORT_MAX - 1)) ct status dnat accept comment \"omr_parental_dns\""
+		fi
+	} | nft -f -
+}
+
+_ss_rule() {
+	local enabled ss
+	config_get_bool enabled "$1" enabled 0
+	config_get_bool ss "$1" safesearch 0
+	[ "$enabled$ss" = 11 ] && ss_need=1
+}
+
+# The hosts file of the SafeSearch rules: the addresses of each safe host,
+# for its domains. Without DNS (boot before the WANs), the known addresses.
+_safesearch() {
+	local global host fb names ips ip ss_need=0
+	config_load omr-parental
+	config_get_bool global settings enabled 1
+	[ "$global" = "1" ] && config_foreach _ss_rule rule
+	[ "$ss_need" = 1 ] || return 1
+	mkdir -p "$STATE_DIR"
+	rm -f "$STATE_DIR/safesearch.fallback"
+	grep -v '^#' "$SS_LIST" | while read -r host fb names; do
+		# not 0.0.0.0: an ad blocker could have answered
+		ips="$(nslookup "$host" 127.0.0.1 2>/dev/null | awk '/^Name:/ { n = 1 } n && /^Address/ { print $NF }' |
+			grep -E '^[0-9A-Fa-f.:]+$' | grep -vxE '0\.0\.0\.0|::')"
+		if [ -z "$ips" ]; then
+			[ "$fb" = "-" ] && continue
+			ips="$(echo "$fb" | tr , ' ')"
+			: > "$STATE_DIR/safesearch.fallback"
+		fi
+		for ip in $ips; do echo "$ip $names"; done
+	done > "$STATE_DIR/safesearch.hosts.tmp"
+	mv "$STATE_DIR/safesearch.hosts.tmp" "$STATE_DIR/safesearch.hosts"
+	return 0
+}
+
+# Known addresses were used: look again every 10 minutes, and make the
+# DNS filters read the hosts again (SIGHUP) once DNS answers
+_safesearch_refresh() {
+	[ -n "$(find "$STATE_DIR/safesearch.fallback" -mmin +9 2>/dev/null)" ] || return 0
+	_safesearch || return 0
+	[ -f "$STATE_DIR/safesearch.fallback" ] && return 0
+	ubus call service signal '{"name":"omr-parental","signal":1}' >/dev/null 2>&1
+	return 0
+}
+
+_filters_rule() {
+	local enabled ss
+	config_get_bool enabled "$1" enabled 0
+	[ "$enabled" = 1 ] && _filter_need "$1" || return 0
+	if [ "$filter_n" -lt "$PORT_MAX" ]; then
+		config_get_bool ss "$1" safesearch 0
+		echo "$(_key "$1") $((PORT_BASE + filter_n)) $ss"
+	fi
+	filter_n=$((filter_n + 1))
+}
+
+# for the init script, in the order and with the ports of _rule
+_filters() {
+	local global
+	config_load omr-parental
+	config_get_bool global settings enabled 1
+	[ "$global" = "1" ] && config_foreach _filters_rule rule
+	return 0
+}
+
+_lists_rule() {
+	local enabled cats blk alw key id f parts="" h pack
+	config_get_bool enabled "$1" enabled 0
+	[ "$enabled" = 1 ] || return 0
+	config_get cats "$1" category
+	config_get blk "$1" block_domain
+	config_get alw "$1" allow_domain
+	key="$(_key "$1")"
+	keys="$keys $key "
+	pack="$STATE_DIR/$key.block.gz"
+	if [ -z "$cats$blk" ]; then
+		[ -f "$pack" ] && { rm -f "$pack" "$STATE_DIR/$key.hash"; changed=1; }
+		return 0
+	fi
+	for id in $cats; do
+		case "$id" in ""|*[!A-Za-z0-9._-]*) continue ;; esac
+		ids="$ids $id "
+		f="$STATE_DIR/lists/$id.gz"
+		if [ ! -s "$f" ] || { [ "$force" = force ] && [ -n "$(find "$f" -mmin +1200)" ]; }; then
+			if omr-adblock fetch "$id" "$f.new" >/dev/null 2>"$STATE_DIR/lists/$id.err"; then
+				mv -f "$f.new" "$f"
+				rm -f "$STATE_DIR/lists/$id.err"
+			else
+				rm -f "$f.new"
+				failed=1
+				logger -t omr-parental "list $id: $(head -n1 "$STATE_DIR/lists/$id.err")"
+			fi
+		fi
+		[ -s "$f" ] && parts="$parts $f"
+	done
+	h="$(for f in $parts; do date -r "$f" +%s; done; printf '%s\n' "$cats" "$blk" "$alw")"
+	h="$(printf '%s' "$h" | md5sum | cut -c1-32)"
+	[ -f "$pack" ] && [ "$h" = "$(cat "$STATE_DIR/$key.hash" 2>/dev/null)" ] && return 0
+	printf '%s\n' $blk | omr-adblock normalize block | gzip -c > "$STATE_DIR/$key.local.gz"
+	printf '%s\n' $alw | omr-adblock normalize allow | gzip -c > "$STATE_DIR/$key.allow.gz"
+	# shellcheck disable=SC2086 # one word per part
+	if omr-adblock pack "$pack" $parts "$STATE_DIR/$key.local.gz" "$STATE_DIR/$key.allow.gz" >/dev/null; then
+		echo "$h" > "$STATE_DIR/$key.hash"
+		changed=1
+	else
+		failed=1
+	fi
+	rm -f "$STATE_DIR/$key.local.gz" "$STATE_DIR/$key.allow.gz"
+}
+
+# lists [force]: the blocklist of each rule, from the lists of the omr-adblock
+# catalog (cached in RAM, downloaded again by "force" once a day) and its own
+# blocked and allowed sites. The DNS filters are restarted when one changed.
+_lists() {
+	local force="$1" keys="" ids="" changed=0 failed=0 global f k
+	mkdir -p "$STATE_DIR/lists" /var/lock
+	exec 8>/var/lock/omr-parental-lists.lock
+	flock -n 8 || return 0
+	config_load omr-parental
+	config_get_bool global settings enabled 1
+	[ "$global" = "1" ] && config_foreach _lists_rule rule
+	for f in "$STATE_DIR"/*.block.gz; do
+		[ -f "$f" ] || continue
+		k="${f##*/}"; k="${k%.block.gz}"
+		case "$keys" in *" $k "*) ;; *) rm -f "$f" "$STATE_DIR/$k.hash" "$STATE_DIR/$k.sh"; changed=1 ;; esac
+	done
+	for f in "$STATE_DIR"/lists/*.gz; do
+		[ -f "$f" ] || continue
+		k="${f##*/}"; k="${k%.gz}"
+		case "$ids" in *" $k "*) ;; *) rm -f "$f" ;; esac
+	done
+	if [ "$failed" = 1 ]; then : > "$STATE_DIR/lists.retry"; else rm -f "$STATE_DIR/lists.retry"; fi
+	[ "$changed" = 1 ] && /etc/init.d/omr-parental reload >/dev/null 2>&1
+	return 0
+}
+
+# The blocked apps of the enabled rules as dnsmasq nftset sections:
+# dnsmasq fills the sets with what the app domains resolve to. Only
+# devices that ask the router for DNS are seen (omr-adblock can force it).
+_apps_rule() {
+	local enabled
+	config_get_bool enabled "$1" enabled 0
+	[ "$enabled" = "1" ] && config_list_foreach "$1" app _app
+}
+
+_apps() {
+	local rapps="" p before
+	config_load omr-parental
+	config_foreach _apps_rule rule
+	before="$(md5sum /etc/config/dhcp 2>/dev/null)"
+	uci -q show dhcp | sed -n 's/^dhcp\.\(omr_parental_[A-Za-z0-9_]*\)=ipset$/delete dhcp.\1/p' | uci -q batch
+	for p in $(echo "$rapps" | tr -d ,); do
+		{
+			echo "set dhcp.omr_parental_$p=ipset"
+			echo "add_list dhcp.omr_parental_$p.name=omr_par_app_${p}_4"
+			echo "add_list dhcp.omr_parental_$p.name=omr_par_app_${p}_6"
+			sqlite3 "$APP_DB" "select host from hostproto where proto='$p';" 2>/dev/null |
+				sed 's/^\.//' | grep -E '^[A-Za-z0-9.-]+$' | sed "s/^/add_list dhcp.omr_parental_$p.domain=/"
+		} | uci -q batch
+	done
+	uci -q commit dhcp
+	[ "$(md5sum /etc/config/dhcp 2>/dev/null)" = "$before" ] || /etc/init.d/dnsmasq restart >/dev/null 2>&1
+}
+
+_status_rule() {
+	local enabled limit key used bonus pkts minute st until_val prev_day prev_used
+	config_get_bool enabled "$1" enabled 0
+	key="$(_key "$1")"
+	json_add_object "$1"
+	config_get limit "$1" daily_limit
+	case "$limit" in
+		""|*[!0-9]*) ;;
+		*)
+			_state_read "$key"
+			json_add_int limit "$limit"
+			json_add_int used "$used"
+			json_add_int bonus "$bonus"
+			;;
+	esac
+	if _until "$DATA_DIR/pause/$key"; then
+		json_add_int paused "$until_val"
+	fi
+	if _until "$STATE_DIR/$key.allow"; then
+		json_add_int allowed "$until_val"
+	fi
+	st=""
+	[ "$enabled" = 1 ] && [ -f "$STATE_DIR/$key.state" ] && read -r st _ < "$STATE_DIR/$key.state"
+	json_add_string state "${st:-off}"
+	json_close_object
+}
+
+_status() {
+	. /usr/share/libubox/jshn.sh
+	config_load omr-parental
+	json_init
+	json_add_object rules
+	config_foreach _status_rule rule
+	json_close_object
+	json_dump
+}
+
+# _section <section>: is it a rule?
+_section() {
+	case "$1" in ""|*[!A-Za-z0-9_]*) return 1 ;; esac
+	config_load omr-parental
+	[ "$(config_get "$1" TYPE 2>/dev/null)" = "rule" ]
+}
+
+# reward <section> <minutes>: more minutes today for a rule with a limit
+_reward() {
+	local key used bonus pkts minute prev_day prev_used
+	case "$2" in ""|*[!0-9]*) echo "invalid minutes" >&2; return 1 ;; esac
+	[ "$2" -ge 1 ] && [ "$2" -le 1440 ] || { echo "invalid minutes" >&2; return 1; }
+	_section "$1" || { echo "no such rule" >&2; return 1; }
+	key="$(_key "$1")"
+	_state_read "$key"
+	bonus=$((bonus + $2))
+	_state_write "$key"
+	_apply
+}
+
+# pause <section> <minutes>: 0 until resumed
+_pause() {
+	local key
+	case "$2" in ""|*[!0-9]*) echo "invalid minutes" >&2; return 1 ;; esac
+	[ "$2" -le 10080 ] || { echo "invalid minutes" >&2; return 1; }
+	_section "$1" || { echo "no such rule" >&2; return 1; }
+	key="$(_key "$1")"
+	mkdir -p "$DATA_DIR/pause"
+	if [ "$2" = 0 ]; then echo 0; else echo $((EPOCH + $2 * 60)); fi > "$DATA_DIR/pause/$key"
+	_apply
+}
+
+_resume() {
+	_section "$1" || { echo "no such rule" >&2; return 1; }
+	rm -f "$DATA_DIR/pause/$(_key "$1")"
+	_apply
+}
+
+# --- requests of the devices (the request page, /www/cgi-bin/omr-parental) ---
+
+_valid_ip() {
+	case "$1" in ""|*[!0-9A-Fa-f.:]*) return 1 ;; esac
+	[ "${#1}" -le 45 ]
+}
+
+# _client_mac <ip>: its MAC address from the neighbour table
+_client_mac() {
+	ip neigh show "$1" 2>/dev/null | sed -n 's/.* lladdr \([0-9a-fA-F:]\{17\}\).*/\1/p' | head -n1 | tr 'A-F' 'a-f'
+}
+
+# _client_dev <ip>: the device it is reached through
+_client_dev() {
+	ip route get "$1" 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -n1
+}
+
+_match_mac() {
+	[ "$(echo "$1" | tr 'A-F' 'a-f')" = "$cmac" ] && hit=1
+}
+
+_match_net() {
+	local dev
+	[ -n "$cdev" ] || return 0
+	dev="$(ubus -S call "network.interface.$1" status 2>/dev/null | jsonfilter -q -e '@.l3_device')"
+	[ "$dev" = "$cdev" ] && hit=1
+}
+
+# _client_rule <section>: the enabled rules of the device in crules
+_client_rule() {
+	local enabled hit=0
+	config_get_bool enabled "$1" enabled 0
+	[ "$enabled" = 1 ] || return 0
+	[ -n "$cmac" ] && config_list_foreach "$1" mac _match_mac
+	[ "$hit" = 1 ] || config_list_foreach "$1" network _match_net
+	[ "$hit" = 1 ] && crules="$crules $1"
+}
+
+_client_rules() {
+	cmac="$(_client_mac "$1")"
+	cdev="$(_client_dev "$1")"
+	crules=""
+	config_load omr-parental
+	config_foreach _client_rule rule
+}
+
+# client <ip>, for the request page, one line each:
+#   rule <section> <state> <until> <used> <limit> <name>
+#   blocked <section> <domain>       (the last 24 hours, newest first)
+#   request <section> <type> <value> <status>
+_client() {
+	local s key name st until used bonus pkts minute limit prev_day prev_used
+	_valid_ip "$1" || return 1
+	_client_rules "$1"
+	for s in $crules; do
+		key="$(_key "$s")"
+		config_get name "$s" name "$s"
+		st="ok"; until=""
+		[ -f "$STATE_DIR/$key.state" ] && read -r st until < "$STATE_DIR/$key.state"
+		config_get limit "$s" daily_limit
+		case "$limit" in ""|*[!0-9]*) limit=0; used=0 ;; *) _state_read "$key"; limit=$((limit + bonus)) ;; esac
+		printf 'rule\t%s\t%s\t%s\t%s\t%s\t%s\n' "$s" "$st" "${until:-0}" "$used" "$limit" "$(_clean "$name")"
+		[ -f "$STATE_DIR/$key.blocked" ] && awk -v ip="$1" -v since=$((EPOCH - 86400)) -v s="$s" \
+			'$1 >= since && $2 == ip { l[++n] = $3 } END { for (i = n; i > 0 && c < 10; i--) if (!(l[i] in seen)) { seen[l[i]] = 1; c++; print "blocked\t" s "\t" l[i] } }' \
+			"$STATE_DIR/$key.blocked"
+	done
+	[ -f "$STATE_DIR/requests" ] && awk -F "$TAB" -v ip="$1" -v since=$((EPOCH - 86400)) \
+		'$4 == ip && $2 >= since { print "request\t" $5 "\t" $6 "\t" $7 "\t" $8 }' "$STATE_DIR/requests"
+	return 0
+}
+
+# request <ip> <section> <time|site> <minutes|domain> [message]
+_request() {
+	local ip="$1" s="$2" type="$3" value="$4" msg mac id who pending last
+	_valid_ip "$ip" || { echo "invalid address"; return 1; }
+	[ "$(uci -q get omr-parental.settings.requests)" = 0 ] && { echo "requests are off"; return 1; }
+	_client_rules "$ip"
+	case " $crules " in *" $s "*) ;; *) echo "no such rule for this device"; return 1 ;; esac
+	case "$type" in
+		time) case "$value" in 15|30|60|120) ;; *) echo "invalid time"; return 1 ;; esac ;;
+		site) value="$(_domain "$value")"; [ -n "$value" ] || { echo "invalid site"; return 1; } ;;
+		*) echo "invalid request"; return 1 ;;
+	esac
+	msg="$(_clean "$5" | tr '\t' ' ')"
+	mac="${cmac:--}"
+	who="$mac"; [ "$mac" = "-" ] && who="$ip"
+	mkdir -p "$STATE_DIR"
+	touch "$STATE_DIR/requests"
+	pending="$(awk -F "$TAB" -v w="$who" '($3 == w || $4 == w) && $8 == "pending"' "$STATE_DIR/requests" | wc -l)"
+	[ "$pending" -lt 3 ] || { echo "too many requests waiting"; return 1; }
+	last="$(awk -F "$TAB" -v w="$who" '$3 == w || $4 == w { t = $2 } END { print t + 0 }' "$STATE_DIR/requests")"
+	[ $((EPOCH - last)) -ge 30 ] || { echo "wait a little"; return 1; }
+	id="$EPOCH$(printf '%05d' $$)"
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\tpending\t0\t%s\n' "$id" "$EPOCH" "$mac" "$ip" "$s" "$type" "$value" "$msg" >> "$STATE_DIR/requests"
+	if [ "$(wc -l < "$STATE_DIR/requests")" -gt 150 ]; then
+		tail -n 100 "$STATE_DIR/requests" > "$STATE_DIR/requests.tmp" && mv -f "$STATE_DIR/requests.tmp" "$STATE_DIR/requests"
+	fi
+	if _alert_on alert_request 1; then
+		config_get name "$s" name "$s"
+		if [ "$type" = time ]; then
+			_alert request "$name: $ip asks for $value more minutes${msg:+: $msg}"
+		else
+			_alert request "$name: $ip asks to unblock $value${msg:+: $msg}"
+		fi
+	fi
+	echo ok
+}
+
+_requests() {
+	. /usr/share/libubox/jshn.sh
+	json_init
+	json_add_array requests
+	[ -f "$STATE_DIR/requests" ] && while IFS="$TAB" read -r id ts mac ip s type value status answered msg; do
+		json_add_object
+		json_add_string id "$id"
+		json_add_int ts "$ts"
+		json_add_string mac "$mac"
+		json_add_string ip "$ip"
+		json_add_string rule "$s"
+		json_add_string type "$type"
+		json_add_string value "$value"
+		json_add_string status "$status"
+		json_add_int answered "$answered"
+		json_add_string message "$msg"
+		json_close_object
+	done < "$STATE_DIR/requests"
+	json_close_array
+	json_dump
+}
+
+# answer <id> <1|0> [minutes]: a time request gives the Internet back to
+# its rule for that long; a site is added to the allowed sites of the rule
+_answer() {
+	local id="$1" ok="$2" minutes="$3" line s type value key
+	case "$id" in ""|*[!0-9]*) echo "invalid request" >&2; return 1 ;; esac
+	line="$(awk -F "$TAB" -v id="$id" '$1 == id && $8 == "pending"' "$STATE_DIR/requests" 2>/dev/null)"
+	[ -n "$line" ] || { echo "no such request" >&2; return 1; }
+	s="$(echo "$line" | cut -f5)"
+	type="$(echo "$line" | cut -f6)"
+	value="$(echo "$line" | cut -f7)"
+	if [ "$ok" = 1 ]; then
+		_section "$s" || { echo "no such rule" >&2; return 1; }
+		key="$(_key "$s")"
+		if [ "$type" = time ]; then
+			case "$minutes" in ""|0|*[!0-9]*) minutes="$value" ;; esac
+			[ "$minutes" -ge 1 ] && [ "$minutes" -le 1440 ] || { echo "invalid minutes" >&2; return 1; }
+			echo $((EPOCH + minutes * 60)) > "$STATE_DIR/$key.allow"
+		else
+			value="$(_domain "$value")"
+			[ -n "$value" ] || { echo "invalid site" >&2; return 1; }
+			uci -q get "omr-parental.$s.allow_domain" | tr ' ' '\n' | grep -qxF "$value" ||
+				{ uci -q add_list "omr-parental.$s.allow_domain=$value" && uci -q commit omr-parental; }
+		fi
+	fi
+	awk -F "$TAB" -v OFS="$TAB" -v id="$id" -v st="$([ "$ok" = 1 ] && echo approved || echo denied)" -v now="$EPOCH" \
+		'$1 == id { $8 = st; $9 = now } { print }' "$STATE_DIR/requests" > "$STATE_DIR/requests.tmp" &&
+		mv -f "$STATE_DIR/requests.tmp" "$STATE_DIR/requests"
+	if [ "$ok" = 1 ]; then
+		if [ "$type" = time ]; then _apply; else (/usr/bin/omr-parental lists 9>&- >/dev/null 2>&1 &); fi
+	fi
+	return 0
+}
+
+# report <section>: the minutes used each day, the sites blocked and visited
+# (here-documents, not pipes: jshn must run in this shell)
+_report() {
+	local key d m ts ip c
+	_section "$1" || { echo '{}'; return 1; }
+	key="$(_key "$1")"
+	. /usr/share/libubox/jshn.sh
+	json_init
+	json_add_array history
+	while read -r d m; do
+		[ -n "$m" ] || continue
+		json_add_object
+		json_add_string date "$d"
+		json_add_int used "$m"
+		json_close_object
+	done <<-EOF
+	$(awk -v k="$key" '$2 == k { print $1, $3 }' "$DATA_DIR/history" 2>/dev/null | tail -n 30)
+	EOF
+	json_close_array
+	json_add_array blocked
+	while read -r ts ip d; do
+		[ -n "$d" ] || continue
+		json_add_object
+		json_add_int ts "$ts"
+		json_add_string ip "$ip"
+		json_add_string domain "$d"
+		json_close_object
+	done <<-EOF
+	$(tail -n 100 "$STATE_DIR/$key.blocked" 2>/dev/null)
+	EOF
+	json_close_array
+	json_add_array sites
+	while read -r c d; do
+		[ -n "$d" ] || continue
+		json_add_object
+		json_add_string domain "$d"
+		json_add_int count "$c"
+		json_close_object
+	done <<-EOF
+	$(cat "$STATE_DIR/$key".sites.* 2>/dev/null | awk -F "$TAB" '{ c[$2] += $1 } END { for (d in c) print c[d], d }' | sort -rn | head -n 100)
+	EOF
+	json_close_array
+	json_dump
+}
+
+# cron, fw4 include, init, rpcd and the request page: one at a time
+# (the state files); not the lists, which download for a while. What runs
+# in the background closes fd 9: "lists" reloads the init script, which
+# waits for this lock, and an inherited fd 9 would hold it.
+mkdir -p /var/lock
+case "$1" in
+	lists) _lists "$2"; exit 0 ;;
+	filters) _filters; exit 0 ;;
+esac
+exec 9>/var/lock/omr-parental.lock
+flock 9
+
+case "$1" in
+	apps) _apps; _apply ;;
+	status) _status ;;
+	reward) _reward "$2" "$3" ;;
+	pause) _pause "$2" "$3" ;;
+	resume) _resume "$2" ;;
+	safesearch) _safesearch ;;
+	client) _client "$2" ;;
+	request) _request "$2" "$3" "$4" "$5" "$6" ;;
+	requests) _requests ;;
+	answer) _answer "$2" "$3" "$4" ;;
+	report) _report "$2" ;;
+	*) _apply ;;
+esac

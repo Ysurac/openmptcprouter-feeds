@@ -1,0 +1,29 @@
+#!/bin/sh
+# Re-apply after each fw4 (re)load, which recreates the fw4 table
+if [ "$(uci -q get firewall.omr_parental)" = "" ]; then
+	uci -q batch <<-EOF >/dev/null
+		set firewall.omr_parental=include
+		set firewall.omr_parental.path=/usr/bin/omr-parental
+		commit firewall
+	EOF
+fi
+# The settings on by default, written out for an older config: the page saves
+# them as they are shown, and a save with no change must not add them
+for o in requests alert_limit alert_request; do
+	if [ -z "$(uci -q get "omr-parental.settings.$o")" ] && [ -n "$(uci -q get omr-parental.settings)" ]; then
+		uci -q set "omr-parental.settings.$o=1"
+		uci -q commit omr-parental
+	fi
+done
+# Start and end of each time window, and the blocklists of the categories once a day
+if ! grep -qs 'omr-parental$' /etc/crontabs/root; then
+	echo "* * * * * /usr/bin/omr-parental" >> /etc/crontabs/root
+	changed=1
+fi
+if ! grep -qs 'omr-parental lists' /etc/crontabs/root; then
+	echo "45 4 * * * /usr/bin/omr-parental lists force" >> /etc/crontabs/root
+	changed=1
+fi
+[ -n "$changed" ] && /etc/init.d/cron restart >/dev/null 2>&1
+rm -f /tmp/luci-indexcache*
+exit 0

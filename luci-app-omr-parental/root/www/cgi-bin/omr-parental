@@ -1,0 +1,145 @@
+#!/bin/sh
+#
+# Copyright (C) 2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# The page of the devices of the parental control rules, with no login:
+# what cuts their Internet access, the sites blocked for them, and forms to
+# ask for more time or for a site. It only shows the rules of the device
+# that opens it, and "omr-parental request" checks and limits the requests.
+
+ip="$REMOTE_ADDR"
+# an IPv4 client of an IPv6 socket
+case "$ip" in ::ffff:*.*) ip="${ip#::ffff:}" ;; esac
+case "$ip" in ""|*[!0-9A-Fa-f.:]*) ip="" ;; esac
+
+_html() {
+	sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&#39;/g"
+}
+
+# _field <name>: URL-decoded, from the posted form in $form
+_field() {
+	printf '%s' "$form" | tr '&' '\n' | sed -n "s/^$1=//p" | head -n1 | awk '
+		BEGIN { h = "0123456789abcdef" }
+		{
+			gsub(/\+/, " ")
+			out = ""
+			while ((i = index($0, "%")) > 0) {
+				out = out substr($0, 1, i - 1)
+				c = tolower(substr($0, i + 1, 2))
+				if (c ~ /^[0-9a-f][0-9a-f]$/) {
+					out = out sprintf("%c", (index(h, substr(c, 1, 1)) - 1) * 16 + index(h, substr(c, 2, 1)) - 1)
+					$0 = substr($0, i + 3)
+				} else {
+					out = out "%"
+					$0 = substr($0, i + 1)
+				}
+			}
+			printf "%s", out $0
+		}'
+}
+
+if [ "$REQUEST_METHOD" = POST ]; then
+	case "$CONTENT_LENGTH" in ""|*[!0-9]*) CONTENT_LENGTH=0 ;; esac
+	[ "$CONTENT_LENGTH" -le 2048 ] || CONTENT_LENGTH=0
+	form="$(head -c "$CONTENT_LENGTH")"
+	res="no address"
+	[ -n "$ip" ] && res="$(/usr/bin/omr-parental request "$ip" "$(_field rule)" "$(_field type)" "$(_field value)" "$(_field msg)")"
+	# 303: reloading the page does not send it again
+	printf 'Status: 303 See Other\r\nLocation: %s?r=%s\r\n\r\n' "${SCRIPT_NAME:-/cgi-bin/omr-parental}" "$(printf '%s' "$res" | tr ' ' '+' | tr -cd 'a-z+')"
+	exit 0
+fi
+
+printf 'Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n\r\n'
+cat <<'EOF'
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Internet access</title>
+<style>
+body { font-family: sans-serif; margin: 0 auto; max-width: 40em; padding: 1em; color: #222; background: #fff; }
+h1 { font-size: 1.4em; } h2 { font-size: 1.15em; margin-top: 1.5em; }
+.box { border: 1px solid #ccc; border-radius: 6px; padding: .8em 1em; margin: 1em 0; }
+.cut { color: #b00020; font-weight: bold; } .ok { color: #2e7d32; font-weight: bold; }
+.note { padding: .6em 1em; border-radius: 6px; background: #eef; }
+form.inline { display: inline; }
+input, select, button { font-size: 1em; margin: .2em 0; }
+input[type=text] { width: 100%; max-width: 24em; box-sizing: border-box; }
+ul { padding-left: 1.2em; } li { margin: .3em 0; }
+@media (prefers-color-scheme: dark) { body { color: #ddd; background: #121212; } .box { border-color: #444; } .note { background: #223; } }
+</style></head><body>
+<h1>Internet access</h1>
+EOF
+
+r="$(printf '%s' "$QUERY_STRING" | sed -n 's/^r=//p' | tr -cd 'a-z+' | tr + ' ')"
+case "$r" in
+	"") ;;
+	ok) echo '<p class="note">Your request was sent.</p>' ;;
+	*) printf '<p class="note">The request was not sent: %s.</p>\n' "$(printf '%s' "$r" | _html)" ;;
+esac
+
+data=""
+[ -n "$ip" ] && data="$(/usr/bin/omr-parental client "$ip")"
+requests_on=1
+[ "$(uci -q get omr-parental.settings.requests)" = 0 ] && requests_on=0
+TAB="$(printf '\t')"
+
+if ! printf '%s\n' "$data" | grep -q '^rule'; then
+	printf '<p>No parental control rule applies to this device (%s).</p>\n' "$(printf '%s' "$ip" | _html)"
+fi
+
+printf '%s\n' "$data" | while IFS="$TAB" read -r kind s a b c d e; do
+	[ "$kind" = rule ] || continue
+	# s: section, a: state, b: until, c: used, d: limit, e: name
+	until=""
+	[ "$b" -gt 0 ] 2>/dev/null && until="$(date -d "@$b" +%H:%M 2>/dev/null)"
+	echo '<div class="box">'
+	printf '<h2>%s</h2>\n' "$(printf '%s' "$e" | _html)"
+	case "$a" in
+		window) echo '<p class="cut">Internet access is cut at this time.</p>' ;;
+		limit) echo '<p class="cut">The Internet time of today is used.</p>' ;;
+		paused) if [ -n "$until" ]; then printf '<p class="cut">Internet access is paused until %s.</p>\n' "$until"; else echo '<p class="cut">Internet access is paused.</p>'; fi ;;
+		allowed) printf '<p class="ok">Internet access is given back until %s.</p>\n' "$until" ;;
+		*) echo '<p class="ok">Internet access is open.</p>' ;;
+	esac
+	[ "$d" -gt 0 ] 2>/dev/null && printf '<p>Used today: %s of %s minutes.</p>\n' "$c" "$d"
+	if [ "$requests_on" = 1 ]; then
+		cat <<-EOF
+		<form method="post">
+		<input type="hidden" name="rule" value="$s"><input type="hidden" name="type" value="time">
+		<label>Ask for more time:
+		<select name="value"><option value="15">15 min</option><option value="30" selected>30 min</option><option value="60">1 hour</option><option value="120">2 hours</option></select></label><br>
+		<input type="text" name="msg" maxlength="140" placeholder="Why? (optional)"><br>
+		<button type="submit">Ask</button>
+		</form>
+		EOF
+		blocked="$(printf '%s\n' "$data" | awk -F "$TAB" -v s="$s" '$1 == "blocked" && $2 == s { print $3 }')"
+		if [ -n "$blocked" ]; then
+			echo '<p>Sites blocked lately:</p><ul>'
+			for dom in $blocked; do
+				dom="$(printf '%s' "$dom" | _html)"
+				printf '<li>%s <form class="inline" method="post"><input type="hidden" name="rule" value="%s"><input type="hidden" name="type" value="site"><input type="hidden" name="value" value="%s"><button type="submit">Ask to unblock</button></form></li>\n' "$dom" "$s" "$dom"
+			done
+			echo '</ul>'
+		fi
+		cat <<-EOF
+		<form method="post">
+		<input type="hidden" name="rule" value="$s"><input type="hidden" name="type" value="site">
+		<label>Ask for a site: <input type="text" name="value" maxlength="253" placeholder="example.com"></label><br>
+		<input type="text" name="msg" maxlength="140" placeholder="Why? (optional)"><br>
+		<button type="submit">Ask</button>
+		</form>
+		EOF
+	fi
+	echo '</div>'
+done
+
+reqs="$(printf '%s\n' "$data" | awk -F "$TAB" '$1 == "request"')"
+if [ -n "$reqs" ]; then
+	echo '<h2>Your requests today</h2><ul>'
+	printf '%s\n' "$reqs" | while IFS="$TAB" read -r kind s type value status; do
+		[ "$type" = time ] && what="$value more minutes" || what="$value"
+		case "$status" in pending) status="waiting" ;; esac
+		printf '<li>%s: %s</li>\n' "$(printf '%s' "$what" | _html)" "$(printf '%s' "$status" | _html)"
+	done
+	echo '</ul>'
+fi
+echo '</body></html>'

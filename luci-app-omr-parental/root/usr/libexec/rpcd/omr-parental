@@ -1,0 +1,74 @@
+#!/bin/sh
+# rpcd plugin for omr-parental, used by luci-app-omr-parental
+#
+# Methods:
+#   status                    - state of each rule, use of the day of the ones with a limit
+#   reward {rule,minutes}     - more minutes today for a rule
+#   pause {rule,minutes}      - cut a rule's devices, for minutes or (0) until resumed
+#   resume {rule}             - end a pause
+#   requests                  - the requests sent from the request page
+#   answer {id,approve,minutes} - approve or deny a request
+#   report {rule}             - minutes used each day, sites blocked and visited
+
+. /usr/share/libubox/jshn.sh
+
+# _result <command...>: { result, message } of an omr-parental command
+_result() {
+	local out ok
+	out="$("$@" 2>&1)" && ok=1 || ok=0
+	json_init
+	json_add_boolean result "$ok"
+	json_add_string message "$out"
+	json_dump
+}
+
+_rule_ok() {
+	case "$1" in ""|*[!A-Za-z0-9_]*) return 1 ;; esac
+}
+
+case "$1" in
+	list)
+		echo '{ "status": {}, "reward": { "rule": "str", "minutes": 0 }, "pause": { "rule": "str", "minutes": 0 }, "resume": { "rule": "str" }, "requests": {}, "answer": { "id": "str", "approve": true, "minutes": 0 }, "report": { "rule": "str" } }'
+		;;
+	call)
+		read -r input
+		json_load "$input"
+		json_get_var rule rule
+		json_get_var minutes minutes
+		case "$2" in
+			status)
+				/usr/bin/omr-parental status
+				;;
+			reward|pause)
+				if _rule_ok "$rule"; then
+					_result /usr/bin/omr-parental "$2" "$rule" "$minutes"
+				else
+					_result sh -c 'echo "invalid rule"; exit 1'
+				fi
+				;;
+			resume)
+				if _rule_ok "$rule"; then
+					_result /usr/bin/omr-parental resume "$rule"
+				else
+					_result sh -c 'echo "invalid rule"; exit 1'
+				fi
+				;;
+			requests)
+				/usr/bin/omr-parental requests
+				;;
+			answer)
+				json_get_var id id
+				json_get_var approve approve
+				[ "$approve" = 1 ] || approve=0
+				_result /usr/bin/omr-parental answer "$id" "$approve" "$minutes"
+				;;
+			report)
+				if _rule_ok "$rule"; then
+					/usr/bin/omr-parental report "$rule"
+				else
+					echo '{}'
+				fi
+				;;
+		esac
+		;;
+esac

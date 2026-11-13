@@ -1,0 +1,44 @@
+#!/bin/sh /etc/rc.common
+# Applies a saved config right away instead of at the next cron minute, and
+# runs a dnsmasq for each rule with a DNS filter (SafeSearch, blocked
+# categories or sites, the log of the sites visited)
+
+START=99
+USE_PROCD=1
+
+STATE_DIR=/var/run/omr-parental
+LOG_DIR=/var/log/omr-parental
+
+start_service() {
+	local key port ss
+	/usr/bin/omr-parental apps
+	/usr/bin/omr-parental safesearch
+	mkdir -p "$STATE_DIR" "$LOG_DIR"
+	# not a pipe: procd_* must run in this shell
+	/usr/bin/omr-parental filters > "$STATE_DIR/filters"
+	while read -r key port ss; do
+		case "$key$port" in ""|*[!0-9a-f]*) continue ;; esac
+		# no dhcp-range: DNS only; the main dnsmasq does the rest (adblock, apps, local names)
+		set -- /usr/sbin/dnsmasq -k -C /dev/null --pid-file= -p "$port" \
+			--user=dnsmasq --group=dnsmasq --local-service --no-resolv --no-hosts \
+			--server=127.0.0.1#53 --log-queries=extra --log-facility="$LOG_DIR/$key.log"
+		[ "$ss" = 1 ] && set -- "$@" --addn-hosts="$STATE_DIR/safesearch.hosts"
+		procd_open_instance "filter$port"
+		if [ -s "$STATE_DIR/$key.block.gz" ]; then
+			# a truncated file would stop dnsmasq: check it all first, never fail
+			printf '%s\n' "busybox gzip -t $STATE_DIR/$key.block.gz 2>/dev/null && busybox zcat $STATE_DIR/$key.block.gz" "exit 0" > "$STATE_DIR/$key.sh"
+			set -- "$@" --conf-script="busybox sh $STATE_DIR/$key.sh"
+			# a new blocklist restarts it
+			procd_set_param file "$STATE_DIR/$key.block.gz"
+		fi
+		procd_set_param command "$@"
+		procd_set_param respawn
+		procd_close_instance
+	done < "$STATE_DIR/filters"
+	# downloads for a while; reloads this service when a blocklist changed
+	(/usr/bin/omr-parental lists >/dev/null 2>&1 &)
+}
+
+service_triggers() {
+	procd_add_reload_trigger omr-parental
+}
