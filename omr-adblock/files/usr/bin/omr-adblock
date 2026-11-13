@@ -128,6 +128,9 @@ _load_config() {
 	[ "$stats_hours" -ge 1 ] && [ "$stats_hours" -le 168 ] || stats_hours=24
 	# the cache directory is removed by killcache and the package: never
 	# let it be a system directory
+	# one spelling per directory: _move_cache would move the cache onto itself
+	# and then remove it
+	while [ "${compressed_cache_dir%/}" != "$compressed_cache_dir" ]; do compressed_cache_dir=${compressed_cache_dir%/}; done
 	case "$compressed_cache_dir" in
 		/?*/?*) ;;
 		*) compressed_cache_dir=/etc/omr-adblock ;;
@@ -416,6 +419,26 @@ _save_cache() {
 		return 0
 	fi
 	cp -f "$BLOCKLIST" "$CACHE_FILE.tmp" && mv -f "$CACHE_FILE.tmp" "$CACHE_FILE" && echo "$1" > "$CACHE_HASH"
+}
+
+# _move_cache: the cache follows compressed_cache_dir, and is removed when
+# it is turned off: left behind it only took flash space
+# shortcut: the old directory is known from /var/run, a change made while the router was off leaves its cache
+_move_cache() {
+	local old
+	old=$(cat "$RUN_DIR/cachedir" 2>/dev/null)
+	if [ -n "$old" ] && [ "$old" != "$compressed_cache_dir" ]; then
+		[ "$compressed_cache" = 1 ] && mkdir -p "$compressed_cache_dir" &&
+			mv -f "$old/blocklist.gz" "$old/blocklist.md5" "$compressed_cache_dir/" 2>/dev/null
+		rm -f "$old/blocklist.gz" "$old/blocklist.md5"
+		rmdir "$old" 2>/dev/null
+	fi
+	if [ "$compressed_cache" = 1 ]; then
+		echo "$compressed_cache_dir" > "$RUN_DIR/cachedir"
+	else
+		rm -f "$CACHE_FILE" "$CACHE_HASH" "$RUN_DIR/cachedir"
+		rmdir "$compressed_cache_dir" 2>/dev/null
+	fi
 }
 
 # _restore_cache <hash>: the cached blocklist, when it was made from the
@@ -821,6 +844,7 @@ cmd_start() {
 	fi
 	_reset_messages
 	_cancel_pause
+	_move_cache
 	if [ "$stats" = 1 ]; then
 		_stats_setup on && _restart_dnsmasq
 	else
