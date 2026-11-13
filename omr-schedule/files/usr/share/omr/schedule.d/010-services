@@ -882,6 +882,7 @@ _lan_ss_apply() {
 	done
 }
 set_lan_ips() {
+	_lan_ifaces="$_lan_ifaces $1"
 	config_get ip4table "$1" ip4table
 	config_get device "$1" device
 	config_get proto "$1" proto
@@ -913,6 +914,21 @@ set_lan_ips() {
 	_set_list dhcp.@dnsmasq[0].interface "$1" $lan
 	_set_list dhcp.@dnsmasq[0].notinterface "$1" $wan
 }
+# An interface deleted from the network config stayed in the dnsmasq and
+# unbound lists that set_lan_ips fills: drop the names that are neither an
+# interface nor a present device. Not ss_rules.ifnames: a stale device there
+# looks like the device of a Wi-Fi network whose radio is down.
+# shortcut: a raw device name the user put in these lists is dropped while that device is absent
+_lan_prune() {
+	local _key _v
+	for _key in unbound.ub_main.iface_lan unbound.ub_main.iface_wan dhcp.@dnsmasq[0].interface dhcp.@dnsmasq[0].notinterface; do
+		for _v in $(uci -q get "$_key"); do
+			case " $_lan_ifaces " in *" $_v "*) continue ;; esac
+			[ -e "/sys/class/net/$_v" ] && continue
+			_set_list "$_key" "$_v" 0
+		done
+	done
+}
 config_load network
 config_foreach restart_omrtracker interface
 # Kill any duplicate omr-tracker-server daemons (PPid-1 only: pgrep -f also
@@ -926,9 +942,10 @@ _srv_count=$(echo $_srv_daemons | wc -w)
 	done
 }
 if [ "$(uci -q get openmptcprouter.settings.restrict_to_lan)" = "1" ]; then
-	_lan_ss_devs="" _lan_ss_proxy=""
+	_lan_ss_devs="" _lan_ss_proxy="" _lan_ifaces=""
 	config_foreach set_lan_ips interface
 	_lan_ss_apply
+	_lan_prune
 fi
 [ "$(uci -q get openmptcprouter.settings.restrict_to_lan)" = "0" ] && ([ -n "$(uci -q get shadowsocks-libev.ss_rules.ifnames)" ] || [ -n "$(uci -q get shadowsocks-rust.ss_rules.ifnames)" ]) && {
 	uci -q batch <<-EOF
