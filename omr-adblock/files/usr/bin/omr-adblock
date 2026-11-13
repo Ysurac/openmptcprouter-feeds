@@ -57,6 +57,8 @@ SCRIPT_NAME=.omr-adblock.sh
 TEST_DOMAIN=omr-adblock-test.invalid
 CRON_TAG="# omr-adblock"
 TAB="$(printf '\t')"
+NL='
+'
 
 [ -t 1 ] && INTERACTIVE=1
 
@@ -418,8 +420,10 @@ _restore_cache() {
 _cron_sync() {
 	local cron=/etc/crontabs/root want="" old new
 	if [ "$1" = on ] && [ -n "$update_schedule" ]; then
-		# five fields of a cron time, nothing else goes into the crontab
-		if echo "$update_schedule" | grep -qE '^[0-9*/,-]+( +[0-9*/,-]+){4}$'; then
+		# five fields of a cron time, nothing else goes into the crontab:
+		# grep matches line by line, a second line would be a cron job
+		if case "$update_schedule" in *"$NL"*) false ;; esac &&
+			echo "$update_schedule" | grep -qE '^[0-9*/,-]+( +[0-9*/,-]+){4}$'; then
 			want="$update_schedule /etc/init.d/$NAME update $CRON_TAG"
 		else
 			_warn badSchedule "update_schedule '$update_schedule' is not a cron time"
@@ -477,6 +481,8 @@ _normalize() {
 # code, the size it downloaded and the content type to the stats file
 _download() {
 	case "$1" in
+		# curl would take it as an option
+		-*) return 1 ;;
 		file://*|/*)
 			cat "${1#file://}"
 			return
@@ -558,6 +564,10 @@ _build() {
 		config_get action "$1" action block
 		config_get name "$1" name "$1"
 		[ -n "$url" ] || return 0
+		# the jobs file is split on tabs and lines
+		case "$url$name" in
+			*"$TAB"*|*"$NL"*) _warn badList "$1: a tab or a line break in the name or the URL"; return 0 ;;
+		esac
 		[ "$action" = allow ] || action=block
 		n=$((n + 1))
 		printf '%s\t%s\t%s\t%s\n' "$n" "$action" "$url" "$name" >> "$WORK_DIR/jobs"

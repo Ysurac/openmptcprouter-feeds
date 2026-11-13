@@ -50,7 +50,8 @@ var codeLabels = {
 	emptyList: _('No domain in the downloaded list'),
 	heartbeatFailed: _('The heartbeat domain did not resolve'),
 	restoredPrevious: _('The previous blocklist was loaded again'),
-	badSchedule: _('The update schedule is not a cron time')
+	badSchedule: _('The update schedule is not a cron time'),
+	badList: _('A tab or a line break in the name or the URL of a list')
 };
 
 function formatSize(bytes) {
