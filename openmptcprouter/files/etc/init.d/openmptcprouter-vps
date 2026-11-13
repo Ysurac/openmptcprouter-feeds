@@ -2211,16 +2211,18 @@ _set_mptcp_vps() {
 	[ -z "$pm_type" ] && pm_type="0"
 	[ -z "$stale_loss_cnt" ] && stale_loss_cnt="0"
 	[ -z "$syn_retrans_before_tcp_fallback" ] && syn_retrans_before_tcp_fallback="0"
+	# The userspace path manager only works where mptcpd runs, on the router.
+	# The VPS has no mptcpd, and its kernel then refuses every MP_JOIN: all
+	# connections stay on one subflow. The VPS keeps the in-kernel one, and
+	# one an older router switched to userspace gets it back.
+	[ "$pm_type" = "1" ] && pm_type="0"
+	[ "$path_manager" = "userspace" ] && path_manager="kernel"
 	# The VPS reports the path manager its own kernel really registered, and
 	# maps the out-of-tree v0.9x vocabulary (default/fullmesh/ndiffports/
 	# binder/netlink, all of them in-kernel path managers) onto mainline's
 	# 'kernel' before applying it. So 'kernel' there against one of those
 	# names here is not a difference worth pushing -- re-sending 'fullmesh'
-	# at every sync only makes the VPS warn and renormalize it again -- while
-	# 'kernel' there against 'userspace' here is a real change and used to be
-	# swallowed by a blanket "ignore 'kernel'" test, leaving the switch to
-	# mptcpd's userspace PM stuck on the router until some *other* mptcp
-	# setting happened to change too.
+	# at every sync only makes the VPS warn and renormalize it again.
 	path_manager_changed=0
 	if [ -n "$path_manager_current" ] && [ "$path_manager_current" != "$path_manager" ]; then
 		path_manager_changed=1
@@ -4347,15 +4349,16 @@ _set_config_from_vps() {
 			commit network
 		EOF
 	fi
-	if [ "$mptcp_path_manager" != "" ] && [ "$mptcp_path_manager" != "kernel" ]; then
+	# 'kernel' is only the VPS normalizing the router's own name, 'userspace'
+	# what an older router pushed there. That one needs mptcpd: it stays the
+	# router's choice, as pm_type, which is never taken from the VPS.
+	if [ "$mptcp_path_manager" != "" ] && [ "$mptcp_path_manager" != "kernel" ] && [ "$mptcp_path_manager" != "userspace" ]; then
 		uci -q set network.globals.mptcp_path_manager="$mptcp_path_manager"
 	fi
 	mptcp_close_timeout="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.close_timeout')"
-	mptcp_pm_type="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.pm_type')"
 	mptcp_stale_loss_cnt="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.stale_loss_cnt')"
 	mptcp_syn_retrans_before_tcp_fallback="$(echo "$vps_config" | jsonfilter -q -e '@.mptcp.syn_retrans_before_tcp_fallback')"
 	[ -n "$mptcp_close_timeout" ] && [ "$mptcp_close_timeout" != "0" ] && uci -q set network.globals.mptcp_close_timeout="$mptcp_close_timeout"
-	[ -n "$mptcp_pm_type" ] && [ "$mptcp_pm_type" != "0" ] && uci -q set network.globals.mptcp_pm_type="$mptcp_pm_type"
 	[ -n "$mptcp_stale_loss_cnt" ] && [ "$mptcp_stale_loss_cnt" != "0" ] && uci -q set network.globals.mptcp_stale_loss_cnt="$mptcp_stale_loss_cnt"
 	[ -n "$mptcp_syn_retrans_before_tcp_fallback" ] && [ "$mptcp_syn_retrans_before_tcp_fallback" != "0" ] && uci -q set network.globals.mptcp_syn_retrans_before_tcp_fallback="$mptcp_syn_retrans_before_tcp_fallback"
 	if [ -n "$(uci -q changes network)" ]; then
