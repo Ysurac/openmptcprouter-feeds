@@ -39,6 +39,18 @@ return view.extend({
 		o.depends('enabled', '1');
 		o.retain = true;
 
+		o = s.option(form.Flag, 'newdevice_alert', _('New device alert'),
+			_('Log an event and a syslog line when a device never seen before gets a DHCP lease. The devices with a lease when this first runs are learned without an alert.'));
+		o.default = '1';
+		o.rmempty = false;
+
+		o = s.option(form.Flag, 'newdevice_mail', _('New device mail'),
+			_('Also send a mail to the address set in Services > E-Mail.'));
+		o.default = '0';
+		o.rmempty = false;
+		o.depends('newdevice_alert', '1');
+		o.retain = true;
+
 		return m.render();
 	}
 });

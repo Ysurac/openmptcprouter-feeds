@@ -7,16 +7,19 @@
 #   ubus call events get_events '{"reason":"packet_loss","since":1735000000}'
 #   ubus call events get_summary
 #   ubus call events clear
+#   ubus call events forget_devices
 
 EVENTS_DIR="${OMR_EVENTS_DIR:-/tmp/omr-events}"
 EVENTS_FILE="${EVENTS_DIR}/events.log"
+KNOWN_FILE="${OMR_EVENTS_KNOWN:-/etc/omr-events/known_devices}"
 
 case "$1" in
 	list)
 		echo '{'
 		echo '  "get_events":  { "interface": "str", "event": "str", "reason": "str", "since": 0, "limit": 0 },'
 		echo '  "get_summary": {},'
-		echo '  "clear":       {}'
+		echo '  "clear":       {},'
+		echo '  "forget_devices": {}'
 		echo '}'
 		;;
 	call)
@@ -88,6 +91,16 @@ case "$1" in
 				;;
 			clear)
 				: > "$EVENTS_FILE" 2>/dev/null
+				echo '{"result":"ok"}'
+				;;
+			forget_devices)
+				# The next lease event learns the devices with a current
+				# lease again, without alerts (see hotplug.d/dhcp)
+				mkdir -p "$EVENTS_DIR" 2>/dev/null
+				(
+					command -v flock >/dev/null 2>&1 && flock 8
+					rm -f "$KNOWN_FILE"
+				) 8>>"${EVENTS_DIR}/known.lock"
 				echo '{"result":"ok"}'
 				;;
 			*)

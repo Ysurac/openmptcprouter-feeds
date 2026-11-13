@@ -27,6 +27,12 @@ var callEventsClear = rpc.declare({
 	expect: { '': {} }
 });
 
+var callEventsForgetDevices = rpc.declare({
+	object: 'events',
+	method: 'forget_devices',
+	expect: { '': {} }
+});
+
 var REASON_LABELS = {
 	'link_down':    _('Link down'),
 	'gateway_down': _('Gateway down'),
@@ -72,8 +78,8 @@ return view.extend({
 	},
 
 	_eventBadge: function(evt) {
-		var color = (evt === 'up') ? '#4caf50' : (evt === 'down') ? '#f44336' : '#aaa';
-		var label = (evt === 'up') ? _('Up') : (evt === 'down') ? _('Down') : (evt || '—');
+		var color = (evt === 'up') ? '#4caf50' : (evt === 'down') ? '#f44336' : (evt === 'new_device') ? '#2196f3' : (evt === 'parental') ? '#9c27b0' : '#aaa';
+		var label = (evt === 'up') ? _('Up') : (evt === 'down') ? _('Down') : (evt === 'new_device') ? _('New device') : (evt === 'parental') ? _('Parental control') : (evt || '—');
 		return E('span', {
 			style: 'display:inline-block;padding:2px 8px;border-radius:4px;' +
 			       'background:' + color + ';color:#fff;font-size:0.85em;font-weight:bold'
@@ -192,9 +198,10 @@ return view.extend({
 		});
 
 		var eventSelect = E('select', { class: 'cbi-input-select' }, [
-			E('option', { value: '' }, [ _('Up & Down') ]),
+			E('option', { value: '' }, [ _('All events') ]),
 			E('option', { value: 'up' }, [ _('Up only') ]),
-			E('option', { value: 'down' }, [ _('Down only') ])
+			E('option', { value: 'down' }, [ _('Down only') ]),
+			E('option', { value: 'new_device' }, [ _('New devices only') ])
 		]);
 
 		var reasonSelect = E('select', { class: 'cbi-input-select' }, [
@@ -233,9 +240,28 @@ return view.extend({
 			]);
 		}));
 
+		var forgetBtn = E('button', { class: 'cbi-button cbi-button-negative' }, [ _('Forget known devices') ]);
+		forgetBtn.addEventListener('click', ui.createHandlerFn(this, function() {
+			return ui.showModal(_('Forget known devices'), [
+				E('p', {}, [ _('The devices with a current DHCP lease are learned again without an alert, any other device is reported as new on its next connection. Continue?') ]),
+				E('div', { class: 'right' }, [
+					E('button', { class: 'btn', click: ui.hideModal }, [ _('Cancel') ]),
+					E('button', {
+						class: 'btn cbi-button-negative',
+						click: ui.createHandlerFn(this, function() {
+							return callEventsForgetDevices().then(function() {
+								ui.hideModal();
+							});
+						})
+					}, [ _('Forget') ])
+				])
+			]);
+		}));
+
 		return E('div', { style: 'display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px' }, [
 			ifaceSelect, eventSelect, reasonSelect,
 			E('div', { style: 'flex:1' }),
+			forgetBtn,
 			clearBtn
 		]);
 	},

@@ -1,0 +1,81 @@
+#!/bin/sh
+#
+# Copyright (C) 2018-2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+# New device alert. dnsmasq's dhcp-script hands every DHCP lease event to
+# hotplug.d/dhcp with ACTION (add, update or remove), MACADDR, IPADDR,
+# HOSTNAME and DNSMASQ_INTERFACE. A MAC address never seen before is added
+# to a list kept on flash, so that a reboot doesn't report every device
+# again, and is reported in the event history, syslog and optionally by
+# mail. The flash is only written when a new device shows up.
+
+# "update" too: dnsmasq reports the leases it already has with it on start,
+# and a lease renewed after "Forget known devices" is a device to learn again
+case "$ACTION" in add|update) ;; *) exit 0 ;; esac
+[ "$(uci -q get omr-events.settings.newdevice_alert)" = "0" ] && exit 0
+
+# Everything below comes from the DHCP client: keep strictly what is valid
+mac=$(printf '%s' "$MACADDR" | tr 'A-F' 'a-f')
+case "$mac" in
+	[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]) ;;
+	*) exit 0 ;;
+esac
+case "$IPADDR" in
+	''|*[!0-9a-fA-F.:]*) ip="" ;;
+	*) ip=$(printf '%.45s' "$IPADDR") ;;
+esac
+# A whitelist: nothing left needs JSON, mail or log escaping
+# shellcheck disable=SC3028 # HOSTNAME is the lease's, set by dhcp-script.sh
+hostname=$(printf '%s' "$HOSTNAME" | tr -cd 'A-Za-z0-9._-' | cut -c1-63)
+dev=$(printf '%s' "$DNSMASQ_INTERFACE" | tr -cd 'A-Za-z0-9._@-' | cut -c1-15)
+
+KNOWN_FILE="${OMR_EVENTS_KNOWN:-/etc/omr-events/known_devices}"
+
+. "${OMR_LIB_DIR:-/usr/share/omr/lib}/omr-events.sh"
+
+[ -d "$EVENTS_DIR" ] || mkdir -p "$EVENTS_DIR" 2>/dev/null
+# Concurrent lease events must not both see the same MAC as new
+exec 8>>"${EVENTS_DIR}/known.lock"
+_omr_events_lock 8
+
+if [ ! -f "$KNOWN_FILE" ]; then
+	# First run (or after "Forget known devices"): what already has a lease
+	# is known, without an alert for each of them
+	leases=$(uci -q get 'dhcp.@dnsmasq[0].leasefile')
+	mkdir -p "${KNOWN_FILE%/*}"
+	{ awk '{ print tolower($2) }' "${leases:-/tmp/dhcp.leases}" 2>/dev/null; echo "$mac"; } \
+		| grep -E '^([0-9a-f]{2}:){5}[0-9a-f]{2}$' | sort -u > "${KNOWN_FILE}.tmp" \
+		&& mv "${KNOWN_FILE}.tmp" "$KNOWN_FILE"
+	rm -f "${KNOWN_FILE}.tmp"
+	exit 0
+fi
+grep -qxF "$mac" "$KNOWN_FILE" && exit 0
+# Not recorded (flash full...): no alert, or it would come on every renewal
+printf '%s\n' "$mac" >> "$KNOWN_FILE" 2>/dev/null || exit 0
+exec 8>&-
+
+now=$(date +%s)
+msg="New device $mac${hostname:+ ($hostname)}${ip:+ got $ip}${dev:+ on $dev}"
+# "ts" must stay the first key (see omr_events_write). The DHCP interface is
+# a Linux device, and "interface" is left out: it is the uci interface of
+# the tracker events, counted in the per-interface summary.
+omr_events_write "$now" "$(printf '{"ts":%s,"device":"%s","event":"new_device","message":"%s","mac":"%s","ip":"%s","hostname":"%s"}' \
+	"$now" "$dev" "$msg" "$mac" "$ip" "$hostname")"
+
+logger -t omr-events "$msg"
+
+if [ "$(uci -q get omr-events.settings.newdevice_mail)" = "1" ]; then
+	mail_to="$(uci -q get mail.default.to | tr -d '\r\n')"
+	case "$mail_to" in
+		-*|*[[:space:]]*) mail_to="" ;;
+	esac
+	if [ -n "$mail_to" ]; then
+		OMR_SYSNAME="$(uci -q get system.@system[0].hostname | tr -cd 'A-Za-z0-9._-')"
+		printf 'Subject: %s\n\n%s\n' "$OMR_SYSNAME: new device ${hostname:-$mac} connected" "$msg." | sendmail "$mail_to"
+	fi
+fi
+
+exit 0
