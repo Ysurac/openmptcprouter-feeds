@@ -36,12 +36,12 @@ MY_DEPENDS := \
     wireless-tools \
     libiwinfo-lua \
     ca-bundle \
-    luci-mod-admin-full luci-app-firewall luci-app-glorytun-tcp luci-app-glorytun-udp luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-theme-argon luci-theme-alpha luci-theme-design luci-base luci-theme-material luci-theme-bootstrap \
+    luci-mod-admin-full luci-app-firewall luci-app-glorytun-tcp luci-app-glorytun-udp luci-app-shadowsocks-libev luci-app-unbound luci-theme-openmptcprouter luci-theme-omr luci-theme-argon luci-theme-alpha luci-theme-design luci-base luci-theme-material luci-theme-bootstrap \
     luci-app-omr-tracker luci-app-omr-dscp \
     luci-app-sqm-autorate \
     luci-app-vnstat2 omr-quota luci-app-omr-quota \
     luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail \
-    luci-app-wol luci-app-opkg \
+    luci-app-wol luci-app-opkg luci-app-usteer luci-app-wifischedule omr-wifi-acs \
     luci-app-uhttpd \
     LINUX_5_4:luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
     luci-proto-openvpn \
