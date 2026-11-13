@@ -40,7 +40,7 @@ MY_DEPENDS := \
     luci-app-omr-tracker luci-app-omr-dscp \
     luci-app-sqm-autorate \
     luci-app-vnstat2 omr-quota luci-app-omr-quota \
-    luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-mail \
+    luci-app-mptcp luci-app-openmptcprouter luci-app-omr-bypass luci-app-omr-adblock luci-app-omr-parental luci-app-mail \
     luci-app-wol luci-app-opkg luci-app-usteer luci-app-wifischedule omr-wifi-acs \
     luci-app-uhttpd \
     LINUX_5_4:luci-mod-rpc rpcd-mod-rpcsys rpcd-mod-file rpcd-mod-iwinfo \
