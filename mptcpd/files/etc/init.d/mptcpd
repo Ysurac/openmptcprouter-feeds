@@ -36,6 +36,21 @@ validate_section() {
 	'mptcpd_notify_flags:list(string)'
 }
 
+# LuCI offers the file names of /usr/lib/mptcpd, mptcpd takes plugin
+# names: "addr_adv.so" matched no plugin and loaded nothing. Each name
+# once: mptcpd loads and initializes a plugin as often as it is listed
+_plugin_names() {
+	local n out=""
+	for n in $*; do
+		n="${n%.so}"
+		case ",$out," in
+			*",$n,"*) ;;
+			*) out="${out:+$out,}$n" ;;
+		esac
+	done
+	echo "$out"
+}
+
 start_service() {
 	local mptcpd_enable mptcp_pm_type mptcpd_path_manager mptcpd_plugins mptcpd_addr_flags mptcpd_notify_flags
 	validate_section "globals" || {
@@ -50,9 +65,15 @@ start_service() {
 
 	procd_open_instance
 
-	procd_set_param command ${PROG}
-	[ "${mptcpd_path_manager}" ] && procd_append_param command --path-manager=${mptcpd_path_manager// /,}
-	[ "${mptcpd_plugins}" ] && procd_append_param command --load-plugins=${mptcpd_plugins// /,}
+	# Built without a default logger: nothing was logged anywhere. ELL's
+	# syslog logger sends no ident nor facility (kern.info "[pid]:"),
+	# procd tags stderr as mptcpd
+	procd_set_param command ${PROG} --log=stderr
+	[ "${mptcpd_path_manager}" ] && procd_append_param command --path-manager="$(_plugin_names ${mptcpd_path_manager})"
+	# Without a list mptcpd loads every plugin of /usr/lib/mptcpd: addr_adv
+	# then adds and deletes endpoints on address changes, behind the
+	# multipath script. With one, the path manager must be in it.
+	[ "${mptcpd_path_manager}${mptcpd_plugins}" ] && procd_append_param command --load-plugins="$(_plugin_names ${mptcpd_path_manager} ${mptcpd_plugins})"
 	[ "${mptcpd_addr_flags}" ] && procd_append_param command --addr-flags=${mptcpd_addr_flags// /,}
 	[ "${mptcpd_notify_flags}" ] && procd_append_param command --notify-flags=${mptcpd_notify_flags// /,}
 
