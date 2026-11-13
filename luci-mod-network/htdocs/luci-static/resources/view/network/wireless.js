@@ -180,7 +180,7 @@ function render_modal_status(node, radioNet) {
 	const is_assoc = (bssid && bssid != '00:00:00:00:00:00' && channel && mode != 'Unknown' && !disabled);
 
 	if (node == null)
-		node = E('span', { 'class': 'ifacebadge large', 'data-network': radioNet.getName() }, [ E('small'), E('span') ]);
+		node = E('span', { 'class': 'ifacebadge large', 'data-network': radioNet.getID() ?? radioNet.getName() }, [ E('small'), E('span') ]);
 
 	dom.content(node.firstElementChild, render_signal_badge(
 		disabled ? -1 : radioNet.getSignalPercent(),
@@ -246,27 +246,24 @@ function radio_restart(id, ev) {
 }
 
 function network_updown(id, map, ev) {
-	const radio = uci.get('wireless', id, 'device');
+	// a section may span several radios (list device)
+	const radios = L.toArray(uci.get('wireless', id, 'device'));
 	const disabled = (uci.get('wireless', id, 'disabled') == '1') ||
-	               (uci.get('wireless', radio, 'disabled') == '1');
+	               radios.some(radio => uci.get('wireless', radio, 'disabled') == '1');
 
 	if (disabled) {
 		uci.unset('wireless', id, 'disabled');
-		uci.unset('wireless', radio, 'disabled');
+		radios.forEach(radio => uci.unset('wireless', radio, 'disabled'));
 	}
 	else {
 		uci.set('wireless', id, 'disabled', '1');
 
-		let all_networks_disabled = true;
 		const wifi_ifaces = uci.sections('wireless', 'wifi-iface');
 
-		wifi_ifaces.forEach(wifi_iface => {
-			if (wifi_iface.device == radio && wifi_iface.disabled != '1')
-				all_networks_disabled = false;
+		radios.forEach(radio => {
+			if (!wifi_ifaces.some(wifi_iface => L.toArray(wifi_iface.device).indexOf(radio) != -1 && wifi_iface.disabled != '1'))
+				uci.set('wireless', radio, 'disabled', '1');
 		});
-
-		if (all_networks_disabled)
-			uci.set('wireless', radio, 'disabled', '1');
 	}
 
 	return map.save().then(function() {
@@ -699,7 +696,7 @@ return view.extend({
 		rows.forEach(row => {
 			const section_id = row.getAttribute('data-sid');
 			const radioDev = data[1].filter(function(d) { return d.getName() == section_id; })[0];
-			const radioNet = data[2].filter(function(n) { return n.getName() == section_id; })[0];
+			const radioNet = data[2].filter(function(n) { return n.getID() == section_id || n.getName() == section_id; })[0];
 			const badge = row.querySelector('[data-name="_badge"] > div');
 			const stat = row.querySelector('[data-name="_stat"]');
 			const btns = row.querySelectorAll('.cbi-section-actions button');
@@ -816,7 +813,10 @@ return view.extend({
 		const status = document.querySelector('.cbi-modal [data-name="_wifistat_modal"] .ifacebadge.large');
 
 		if (status)
-			render_modal_status(status, data[2].filter(function(n) { return n.getName() == status.getAttribute('data-network'); })[0]);
+			render_modal_status(status, data[2].filter(function(n) {
+				const key = status.getAttribute('data-network');
+				return n.getID() == key || n.getName() == key;
+			})[0]);
 
 		return network.flushCache();
 	},
@@ -917,8 +917,15 @@ return view.extend({
 				rv.push(radio.getName());
 
 				this.wifis.forEach(wifi => {
-					if (wifi.getWifiDeviceName() == radio.getName())
-						rv.push(wifi.getName());
+					if (wifi.getWifiDeviceName() != radio.getName())
+						return;
+
+					/* Sections spanning several radios render one row per radio
+					 * and need the netid to stay unique. Single-radio sections
+					 * keep their UCI section name as before. */
+					const multiradio = (L.toArray(uci.get('wireless', wifi.getName(), 'device')).length > 1);
+
+					rv.push(multiradio ? (wifi.getID() || wifi.getName()) : wifi.getName());
 				});
 			});
 
@@ -926,8 +933,21 @@ return view.extend({
 		};
 
 		s.modaltitle = function(section_id) {
-			const radioNet = this.wifis.filter(function(w) { return w.getName() == section_id; })[0];
+			const radioNet = this.editWifiNetwork || this.wifis.filter(function(w) { return w.getID() == section_id || w.getName() == section_id; })[0];
 			return radioNet ? radioNet.getI18n() : _('Edit wireless network');
+		};
+
+		s.renderMoreOptionsModal = function(section_id, ev) {
+			const inst = this.lookupRadioOrNetwork(section_id);
+
+			this.editWifiNetwork = null;
+
+			if (inst && !inst.getWifiNetworks) {
+				this.editWifiNetwork = inst;
+				section_id = inst.getName();
+			}
+
+			return form.GridSection.prototype.renderMoreOptionsModal.apply(this, [section_id, ev]);
 		};
 
 		s.lookupRadioOrNetwork = function(section_id) {
@@ -935,7 +955,7 @@ return view.extend({
 			if (radioDev)
 				return radioDev;
 
-			const radioNet = this.wifis.filter(function(w) { return w.getName() == section_id; })[0];
+			const radioNet = this.wifis.filter(function(w) { return w.getID() == section_id || w.getName() == section_id; })[0];
 			if (radioNet)
 				return radioNet;
 
@@ -966,6 +986,7 @@ return view.extend({
 				];
 			}
 			else {
+				const sid = inst.getName();
 				const isDisabled = (inst.get('disabled') == '1' ||
 					uci.get('wireless', inst.getWifiDeviceName(), 'disabled') == '1');
 
@@ -973,7 +994,7 @@ return view.extend({
 					E('button', {
 						'class': 'cbi-button cbi-button-neutral enable-disable',
 						'title': isDisabled ? _('Enable this network') : _('Disable this network'),
-						'click': ui.createHandlerFn(this, network_updown, section_id, this.map)
+						'click': ui.createHandlerFn(this, network_updown, sid, this.map)
 					}, isDisabled ? _('Enable') : _('Disable')),
 					E('button', {
 						'class': 'cbi-button cbi-button-action important',
@@ -992,7 +1013,11 @@ return view.extend({
 		};
 
 		s.addModalOptions = function(s) {
+			const editWifiNetwork = this.editWifiNetwork;
+
 			return network.getWifiNetwork(s.section).then(function(radioNet) {
+				radioNet = editWifiNetwork || radioNet;
+
 				const hwtype = uci.get('wireless', radioNet.getWifiDeviceName(), 'type');
 				const have_mesh = L.hasSystemFeature('hostapd', 'mesh') || L.hasSystemFeature('wpasupplicant', 'mesh');
 				let o, ss;
@@ -1016,7 +1041,7 @@ return view.extend({
 				o = ss.taboption('general', form.Button, '_toggle', isDisabled ? _('Wireless network is disabled') : _('Wireless network is enabled'));
 				o.inputstyle = isDisabled ? 'apply' : 'reset';
 				o.inputtitle = isDisabled ? _('Enable') : _('Disable');
-				o.onclick = ui.createHandlerFn(s, network_updown, s.section, s.map);
+				o.onclick = ui.createHandlerFn(s, network_updown, radioNet.getName(), s.map);
 
 				o = ss.taboption('general', CBIWifiFrequencyValue, '_freq', '<br />' + _('Operating frequency'), _('Some channels may be restricted to Indoor Only use by your Regulatory Domain. Make sure to follow this advice if a channel is reported as such.'));
 				o.ucisection = s.section;
@@ -1080,6 +1105,46 @@ return view.extend({
 				o.value('ap', _('Access Point'));
 				o.value('sta', _('Client'));
 				o.value('adhoc', _('Ad-Hoc'));
+
+				// one wifi-iface section broadcast by several radios, as netifd and MLO use it
+				const radios = uci.sections('wireless', 'wifi-device');
+				if (radios.length > 1) {
+					o = ss.taboption('general', form.MultiValue, 'device', _('Radios'), _('The network is broadcast on each selected radio, with the same settings.'));
+					radios.forEach(function(r) {
+						const band = uci.get('wireless', r['.name'], 'band');
+						o.value(r['.name'], band ? '%s (%s)'.format(r['.name'], band.toUpperCase().replace('G', ' GHz')) : r['.name']);
+					});
+					o.rmempty = false;
+					o.depends('mode', 'ap');
+					// hidden in other modes: keep the radios, don't unset them
+					o.retain = true;
+					o.cfgvalue = function(section_id) {
+						return L.toArray(uci.get('wireless', section_id, 'device'));
+					};
+					o.write = function(section_id, value) {
+						// a single radio stays a plain option, as wifi scripts and older tools expect
+						value = L.toArray(value);
+						uci.set('wireless', section_id, 'device', value.length == 1 ? value[0] : value);
+					};
+
+					// hostapd reports 11be from its build options, also on Wi-Fi 6 hardware
+					const eht_radios = radios.filter(function(r) { return /^EHT/.test(r.htmode || ''); }).map(function(r) { return r['.name']; });
+					if (L.hasSystemFeature('hostapd', '11be') && eht_radios.length > 1) {
+						o = ss.taboption('general', form.Flag, 'mlo', _('Multi-Link Operation (MLO)'), _('Wi-Fi 7: the selected radios form a single multi-link network, so that a Wi-Fi 7 client uses them together. Needs at least two radios in an EHT mode and WPA3 (SAE).'));
+						o.depends('mode', 'ap');
+						o.retain = true;
+						o.validate = function(section_id, value) {
+							if (value != '1')
+								return true;
+							const sel = L.toArray(this.section.getOption('device').formvalue(section_id));
+							if (sel.length < 2)
+								return _('Select at least two radios');
+							if (sel.some(function(r) { return eht_radios.indexOf(r) < 0; }))
+								return _('Every selected radio must be in an EHT mode');
+							return true;
+						};
+					}
+				}
 
 				o = ss.taboption('general', form.Value, 'mesh_id', _('Mesh Id'));
 				o.depends('mode', 'mesh');
@@ -2222,8 +2287,38 @@ return view.extend({
 		};
 
 		s.handleRemove = function(section_id, ev) {
-			document.querySelector('.cbi-section-table-row[data-sid="%s"]'.format(section_id)).style.opacity = 0.5;
-			return form.TypedSection.prototype.handleRemove.apply(this, [section_id, ev]);
+			const inst = this.lookupRadioOrNetwork(section_id);
+			let sid = section_id;
+
+			if (inst && !inst.getWifiNetworks) {
+				sid = inst.getName();
+
+				const radioname = inst.getWifiDeviceName();
+				const devices = L.toArray(uci.get('wireless', sid, 'device'));
+
+				if (devices.length > 1 && devices.indexOf(radioname) != -1) {
+					const row = document.querySelector('.cbi-section-table-row[data-sid="%s"]'.format(section_id));
+
+					if (row)
+						row.style.opacity = 0.5;
+
+					uci.set('wireless', sid, 'device', devices.filter(d => d != radioname));
+
+					return this.map.save(null, true);
+				}
+			}
+
+			this.wifis.forEach(wifi => {
+				if (wifi.getName() != sid)
+					return;
+
+				const row = document.querySelector('.cbi-section-table-row[data-sid="%s"]'.format(wifi.getID() || wifi.getName()));
+
+				if (row)
+					row.style.opacity = 0.5;
+			});
+
+			return form.TypedSection.prototype.handleRemove.apply(this, [sid, ev]);
 		};
 
 		s.handleScan = function(radioDev, ev) {
@@ -2389,13 +2484,13 @@ return view.extend({
 
 				if (replopt.formvalue('_new_') == '1') {
 					for (let ws of wifi_sections)
-						if (ws.device == radioDev.getName())
+						if (L.toArray(ws.device).indexOf(radioDev.getName()) != -1)
 							uci.remove('wireless', ws['.name']);
 				}
 
 				if (uci.get('wireless', radioDev.getName(), 'disabled') == '1') {
 					for (let ws of wifi_sections)
-						if (ws.device == radioDev.getName())
+						if (L.toArray(ws.device).indexOf(radioDev.getName()) != -1)
 							uci.set('wireless', ws['.name'], 'disabled', '1');
 
 					uci.unset('wireless', radioDev.getName(), 'disabled');
