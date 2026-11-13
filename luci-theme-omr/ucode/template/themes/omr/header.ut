@@ -1,0 +1,152 @@
+{#
+ OpenMPTCProuter theme for LuCI
+ Copyright 2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org>
+
+ Based on luci-theme-bootstrap:
+ Copyright 2008 Steven Barth <steven@midlink.org>
+ Copyright 2012 David Menting <david@nut-bolt.nl>
+ Copyright 2008-2022 Jo-Philipp Wich <jo@mein.io>
+
+ Licensed to the public under the Apache License 2.0.
+-#}
+
+{%
+	import { getuid, getspnam } from 'luci.core';
+	import { cursor } from 'uci';
+
+	const boardinfo = ubus.call('system', 'board') ?? {};
+	const hostname = boardinfo.hostname ?? '?';
+	const darkpref = (theme == 'omr-dark' ? 'true' : (theme == 'omr-light' ? 'false' : null));
+
+	const uci = cursor();
+	const omr_version = uci.get('openmptcprouter', 'settings', 'version') ?? '';
+	const omr_latest = uci.get('openmptcprouter', 'latest_versions', 'omr') ?? '';
+
+	function version_parts(v) {
+		const m = match(v, /^v?([0-9.]+)/);
+
+		return m ? map(filter(split(m[1], '.'), n => n != ''), n => +n) : [];
+	}
+
+	// Numeric per dotted component of the release part ("0.64.10" of
+	// "0.64.10-6.18"): a string compare puts 0.64.10 before 0.64.9.
+	function omr_version_newer(cur, latest) {
+		const a = version_parts(cur), b = version_parts(latest);
+		const n = (length(a) > length(b)) ? length(a) : length(b);
+
+		if (!length(a) || !length(b))
+			return false;
+
+		for (let i = 0; i < n; i++) {
+			const x = a[i] ?? 0, y = b[i] ?? 0;
+
+			if (x != y)
+				return y > x;
+		}
+
+		return false;
+	}
+
+	http.prepare_content('text/html; charset=UTF-8');
+-%}
+
+<!DOCTYPE html>
+<html lang="{{ dispatcher.lang }}" {{ darkpref ? `data-darkmode="${darkpref}"` : '' }}>
+	<head>
+		<meta charset="utf-8">
+		<title>{{ striptags(`${hostname}${dispatched?.title ? ` | ${_(dispatched.title)}` : ''}`) }}</title>
+		{% if (!darkpref): %}
+			<script>
+				(function() {
+					var mediaQuery = window.matchMedia('(prefers-color-scheme: dark)'),
+					    rootElement = document.querySelector(':root'),
+					    setDarkMode = function() {
+					        var pref = null;
+					        try { pref = window.localStorage.getItem('omr-darkmode'); } catch (e) {}
+					        rootElement.setAttribute('data-darkmode', pref || mediaQuery.matches);
+					    };
+
+					mediaQuery.addEventListener('change', setDarkMode);
+					setDarkMode();
+				})();
+			</script>
+		{% endif %}
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="darkreader-lock">
+		<meta name="theme-color" content="#003380">
+		<link rel="stylesheet" href="{{ media }}/cascade.css">
+		<link rel="icon" href="{{ media }}/logo_48.png" sizes="48x48">
+		<link rel="icon" href="{{ media }}/logo.svg" sizes="any">
+		<link rel="apple-touch-icon" href="{{ media }}/logo_180.png">
+		{% if (dispatched?.css): %}
+		<link rel="stylesheet" href="{{ resource }}/{{ dispatched.css }}">
+		{% endif %}
+		{% if (css): %}
+		<style title="text/css">{{ css }}</style>
+		{% endif %}
+		<script src="{{ dispatcher.build_url('admin/translations', dispatcher.lang) }}"></script>
+		<script src="{{ resource }}/cbi.js"></script>
+	</head>
+
+	<body class="lang_{{ dispatcher.lang }}{{ blank_page ? ' blank-page' : '' }}" data-page="{{ entityencode(join('-', length(ctx.request_path) ? ctx.request_path : ctx.path), true) }}">
+		{% if (!blank_page): %}
+		<aside id="sidebar" aria-label="{{ _('Navigation') }}">
+			<a class="brand" href="{{ dispatcher.build_url() }}">
+				<span class="brand-logo"><img src="{{ media }}/logo.svg" alt="" width="30" height="30"></span>
+				<span class="brand-text">
+					<strong>OpenMPTCProuter</strong>
+					<small>{{ striptags(hostname) }}</small>
+				</span>
+			</a>
+			<nav id="mainmenu" style="display:none"></nav>
+			<ul id="modemenu" style="display:none"></ul>
+		</aside>
+		<div id="sidebar-mask"></div>
+
+		<div class="main">
+			<header>
+				<button type="button" class="menu-toggle" aria-controls="sidebar" aria-expanded="false" title="{{ _('Menu') }}"><span></span></button>
+				<div id="breadcrumb"></div>
+				<div id="indicators" class="pull-right"></div>
+				{% if (!darkpref): %}
+				<button type="button" class="darkmode-toggle" style="display:none" title="{{ _('Toggle dark mode') }}"><span></span></button>
+				{% endif %}
+			</header>
+
+			<div id="maincontent" class="container">
+				{% if (getuid() == 0 && getspnam('root')?.pwdp === ''): %}
+					<div class="alert-message warning">
+						<h4>{{ _('No password set!') }}</h4>
+						<p>{{ _('There is no password set on this router. Please configure a root password to protect the web interface.') }}</p>
+						{% if (dispatcher.lookup("admin/system/admin")): %}
+						  <div class="right"><a class="btn" href="{{ dispatcher.build_url("admin/system/admin") }}">{{ _('Go to password configuration...') }}</a></div>
+						{% endif %}
+					</div>
+				{% endif %}
+
+				{% if (boardinfo.rootfs_type == "initramfs"): %}
+					<div class="alert-message warning">
+						<h4>{{ _('System running in recovery (initramfs) mode.') }}</h4>
+						<p>{{ _('No changes to settings will be stored and are lost after rebooting. This mode should only be used to install a firmware upgrade') }}</p>
+						{% if (dispatcher.lookup("admin/system/flash")): %}
+						  <div class="right"><a class="btn" href="{{ dispatcher.build_url("admin/system/flash") }}">{{ _('Go to firmware upgrade...') }}</a></div>
+						{% endif %}
+					</div>
+				{% endif %}
+
+				{% if (omr_version_newer(omr_version, omr_latest)): %}
+					<div class="alert-message notice">
+						<p>{{ sprintf(_('You have OpenMPTCProuter version %s and version %s is now available'), entityencode(omr_version), entityencode(omr_latest)) }}</p>
+						<div class="right"><a class="btn" href="https://www.openmptcprouter.com/" target="_blank" rel="noreferrer">{{ _('Download latest version...') }}</a></div>
+					</div>
+				{% endif %}
+
+				<noscript>
+					<div class="alert-message warning">
+						<h4>{{ _('JavaScript required!') }}</h4>
+						<p>{{ _('You must enable JavaScript in your browser or LuCI will not work properly.') }}</p>
+					</div>
+				</noscript>
+
+				<div id="tabmenu" style="display:none"></div>
+		{% endif %}
