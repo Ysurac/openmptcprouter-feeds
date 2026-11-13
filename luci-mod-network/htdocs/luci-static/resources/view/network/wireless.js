@@ -827,6 +827,8 @@ return view.extend({
 			uci.load('wireless'),
 			uci.load('system'),
 			firewall.getZones(),
+			// omr-wifi-acs, when installed
+			L.resolveDefault(uci.load('omr-wifi-acs'), null),
 		]);
 	},
 
@@ -883,6 +885,8 @@ return view.extend({
 		m = new form.Map('wireless');
 		m.chain('network');
 		m.chain('firewall');
+		if (uci.get('omr-wifi-acs', 'settings'))
+			m.chain('omr-wifi-acs');
 
 		s = m.section(form.GridSection, 'wifi-device', _('Wireless Overview'));
 		s.anonymous = true;
@@ -1055,6 +1059,30 @@ return view.extend({
 
 					o = ss.taboption('general', CBIWifiCountryValue, 'country', _('Country Code'));
 					o.wifiNetwork = radioNet;
+
+					if (uci.get('omr-wifi-acs', 'settings')) {
+						// a list of radios in omr-wifi-acs: an unknown option in the
+						// wifi-device section is logged by the wifi scripts
+						o = ss.taboption('advanced', form.Flag, '_omr_wifi_acs', _('Re-optimize the channel'),
+							_('With the channel set to auto: when the channel stays busy with the traffic of others, the radio restarts so that a less busy channel is chosen again. Only with no client connected, or between %s and %s, every 6 hours at most.')
+								.format(uci.get('omr-wifi-acs', 'settings', 'quiet_start') || '03:00', uci.get('omr-wifi-acs', 'settings', 'quiet_stop') || '05:00'));
+						o.cfgvalue = function(section_id) {
+							return L.toArray(uci.get('omr-wifi-acs', 'settings', 'radio')).indexOf(section_id) > -1 ? '1' : '0';
+						};
+						o.write = function(section_id, value) {
+							const radios = L.toArray(uci.get('omr-wifi-acs', 'settings', 'radio'));
+							if (value == '1' && radios.indexOf(section_id) < 0)
+								uci.set('omr-wifi-acs', 'settings', 'radio', radios.concat([ section_id ]));
+						};
+						o.remove = function(section_id) {
+							const radios = L.toArray(uci.get('omr-wifi-acs', 'settings', 'radio')).filter(function(r) { return r != section_id; });
+							// an empty list fails to save (the modal then stays open): unset it
+							if (radios.length)
+								uci.set('omr-wifi-acs', 'settings', 'radio', radios);
+							else
+								uci.unset('omr-wifi-acs', 'settings', 'radio');
+						};
+					}
 
 					o = ss.taboption('advanced', form.ListValue, 'cell_density', _('Coverage cell density'), _('Configures data rates based on the coverage cell density. Normal configures basic rates to 6, 12, 24 Mbps if legacy 802.11b rates are not used else to 5.5, 11 Mbps. High configures basic rates to 12, 24 Mbps if legacy 802.11b rates are not used else to the 11 Mbps rate. Very High configures 24 Mbps as the basic rate. Supported rates lower than the minimum basic rate are not offered.'));
 					o.value('0', _('Disabled'));

@@ -1,0 +1,116 @@
+#!/bin/sh
+#
+# Copyright (C) 2026 Ycarus (Yannick Chabanois) <ycarus@zugaina.org> for OpenMPTCProuter
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+# Channel re-optimization. hostapd picks the least busy channel (ACS) of a
+# radio set to channel "auto" only when the radio starts: the neighbours
+# that were quiet then can make it the worst channel hours later. Run by
+# cron every 10 minutes, for each radio listed in omr-wifi-acs: when the
+# share of time its channel is busy with what the router did not send stays
+# above the threshold for several runs in a row, the radio is restarted so
+# that hostapd chooses again.
+#
+# Restarting a radio drops its clients for about 20 s (hostapd scans the
+# channels again, more with a DFS channel): it is only done
+# with no client connected, or in the quiet hours, and once every 6 hours
+# at most. A channel switch announcement would keep the clients, but
+# hostapd's switch_chan takes no EHT (Wi-Fi 7) setting and would need the
+# center frequencies of each width worked out here.
+
+. /lib/functions.sh
+
+STATE_DIR=/var/run/omr-wifi-acs
+COOLDOWN=21600
+NOW="$(date +%s)"
+HHMM="$(date +%H%M)"
+
+_hhmm() {
+	echo "$1" | grep -E '^([01][0-9]|2[0-3]):[0-5][0-9]$' | tr -d :
+}
+
+# In the quiet hours: a window may cross midnight
+_quiet() {
+	local start stop
+	start="$(_hhmm "$quiet_start")"; stop="$(_hhmm "$quiet_stop")"
+	[ -n "$start" ] && [ -n "$stop" ] || return 1
+	if [ "$start" -le "$stop" ]; then
+		[ "$HHMM" -ge "$start" ] && [ "$HHMM" -lt "$stop" ]
+	else
+		[ "$HHMM" -ge "$start" ] || [ "$HHMM" -lt "$stop" ]
+	fi
+}
+
+# "active busy own" (ms, since the radio started) of the channel in use:
+# own is what the radio sent plus what it received from its own clients
+# (BSS receive time, mt76 has it), as far as the driver reports them
+_survey() {
+	iw dev "$1" survey dump 2>/dev/null | awk '
+		/^Survey data/ { use = 0 }
+		/frequency:/ { use = /in use/ }
+		use && /channel active time:/ { a = $4 }
+		use && /channel busy time:/ { b = $4 }
+		use && /channel transmit time:/ { o += $4 }
+		use && /channel BSS receive time:/ { o += $5 }
+		END { if (a != "" && b != "") print a, b, o + 0 }'
+}
+
+_radio() {
+	local radio="$1" ifaces ifname survey active busy tx pa pb pt count last ratio stations i
+	echo "$radio" | grep -qE '^[A-Za-z0-9_]+$' || return
+	[ "$(uci -q get "wireless.$radio.channel")" = "auto" ] || return
+	[ "$(uci -q get "wireless.$radio.disabled")" = "1" ] && return
+	ifaces="$(ubus -S call network.wireless status 2>/dev/null | jsonfilter -q -e "@['$radio'].interfaces[*].ifname")"
+	ifname="${ifaces%%[[:space:]]*}"
+	[ -n "$ifname" ] || return
+	survey="$(_survey "$ifname")"
+	[ -n "$survey" ] || return
+	set -- $survey
+	active="$1"; busy="$2"; tx="$3"
+
+	pa=0; pb=0; pt=0; count=0; last=0
+	[ -f "$STATE_DIR/$radio" ] && read -r pa pb pt count last < "$STATE_DIR/$radio"
+	case "$pa$pb$pt$count$last" in ""|*[!0-9]*) pa=0; pb=0; pt=0; count=0; last=0 ;; esac
+	# counters lower than last time: the radio restarted, start again
+	if [ "$active" -le "$pa" ] || [ "$busy" -lt "$pb" ] || [ "$tx" -lt "$pt" ]; then
+		pa=0; pb=0; pt=0; count=0
+	fi
+
+	if [ "$pa" -gt 0 ]; then
+		# what others (and noise) kept the channel busy with, in %
+		ratio=$(( ( (busy - pb) - (tx - pt) ) * 100 / (active - pa) ))
+		if [ "$ratio" -ge "$threshold" ]; then
+			count=$((count + 1))
+		else
+			count=0
+		fi
+	fi
+
+	mkdir -p "$STATE_DIR"
+	if [ "$count" -ge "$checks" ] && [ $((NOW - last)) -ge "$COOLDOWN" ]; then
+		stations=0
+		for i in $ifaces; do
+			stations=$((stations + $(iw dev "$i" station dump 2>/dev/null | grep -c '^Station')))
+		done
+		if [ "$stations" = 0 ] || _quiet; then
+			logger -t omr-wifi-acs "$radio: channel busy ${ratio}% for $count checks, choosing a channel again"
+			echo "0 0 0 0 $NOW" > "$STATE_DIR/$radio"
+			# not "wifi up <radio>": it also reloads the whole network config
+			ubus call network.wireless down "{\"device\":\"$radio\"}"
+			ubus call network.wireless up "{\"device\":\"$radio\"}"
+			return
+		fi
+	fi
+	echo "$active $busy $tx $count $last" > "$STATE_DIR/$radio"
+}
+
+config_load omr-wifi-acs
+config_get threshold settings threshold 50
+config_get checks settings checks 3
+config_get quiet_start settings quiet_start "03:00"
+config_get quiet_stop settings quiet_stop "05:00"
+case "$threshold" in ""|*[!0-9]*) threshold=50 ;; esac
+case "$checks" in ""|*[!0-9]*|0) checks=3 ;; esac
+config_list_foreach settings radio _radio
