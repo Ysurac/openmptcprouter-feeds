@@ -1,0 +1,1420 @@
+#!/bin/sh
+# omr-adblock: DNS ad blocking with dnsmasq, light on RAM and CPU.
+#
+# The lists are downloaded in parallel and normalized as a stream (tr, sed and
+# one awk pass) into gzip parts. The parts are merged with one sort: every
+# domain carries its labels reversed ("com example ads"), so a domain comes
+# right before its subdomains, which are dropped. The rest is packed into
+# "local=/a/b/c/" lines of up to 1024 bytes, which dnsmasq parses much faster
+# than one line per domain, and the result stays gzip-compressed in RAM:
+# dnsmasq reads it through a conf-script that unpacks it when it starts.
+#
+# Usage: omr-adblock <command> [args]
+#   start [boot|start|reload|download]   load the blocklist (download if needed)
+#   stop                                  unload the blocklist
+#   pause [seconds] | resume              unload it for a while
+#   allow <domain>...                     allow domains in the config and live
+#   block <domain>...                     block domains in the config and live
+#   check <domain>                        is the domain blocked by the active list
+#   check_lists <domain>                  which enabled list has the domain
+#   show_blocklist                        print the blocked domains
+#   sizes                                 store the size of each list in the config
+#   catalog                               print the lists that can be added
+#   add <id>...                           add lists of the catalog to the config
+#   fetch <id> <out.gz>                   download a catalog list, normalized
+#   normalize <block|allow>               normalize the domains on stdin
+#   pack <out.gz> <normalized.gz>...      merge normalized parts into dnsmasq lines
+#   killcache                             remove the cached blocklists
+#   stats | stats_collect | stats_reset   query statistics (JSON) for LuCI
+#   status | version
+
+. /lib/functions.sh
+. /usr/share/libubox/jshn.sh
+
+NAME=omr-adblock
+VERSION=1.0.0
+RUN_DIR=/var/run/omr-adblock
+WORK_DIR=/tmp/omr-adblock.work
+BLOCKLIST="$RUN_DIR/blocklist.gz"
+PREV_BLOCKLIST="$RUN_DIR/blocklist.prev.gz"
+STATUS_FILE="$RUN_DIR/status.json"
+STATS_FILE="$RUN_DIR/stats"
+LISTS_FILE="$RUN_DIR/lists.tsv"
+HASH_FILE="$RUN_DIR/lists.md5"
+PAUSE_FILE="$RUN_DIR/paused"
+CATALOG=/usr/share/omr-adblock/catalog.tsv
+# query statistics: dnsmasq logs the queries to STATS_LOG, every minute
+# stats_collect adds them up in one file per hour of STATS_DIR
+STATS_LOG=/var/log/omr-adblock-dns.log
+STATS_DIR="$RUN_DIR/querystats"
+STATS_LOCK=/var/lock/omr-adblock-stats.lock
+DHCP_OPTS_FILE=/etc/omr-adblock.dhcp
+ADDNMOUNT_FILE=/etc/omr-adblock.addnmount
+LOCK_FILE=/var/lock/omr-adblock.lock
+CONF_NAME=omr-adblock.conf
+SCRIPT_NAME=.omr-adblock.sh
+# answered 0.0.0.0 by the blocklist itself: it shows the list is loaded
+TEST_DOMAIN=omr-adblock-test.invalid
+CRON_TAG="# omr-adblock"
+TAB="$(printf '\t')"
+
+[ -t 1 ] && INTERACTIVE=1
+
+_log() {
+	[ "$1" -le "${verbosity:-2}" ] 2>/dev/null || return 0
+	shift
+	logger -t "$NAME" "$*"
+	[ -n "$INTERACTIVE" ] && printf '%s\n' "$*"
+	return 0
+}
+
+_err() {
+	printf '%s\t%s\n' "$1" "$2" >> "$RUN_DIR/errors"
+	verbosity=2 _log 0 "ERROR: $2"
+}
+
+_warn() {
+	printf '%s\t%s\n' "$1" "$2" >> "$RUN_DIR/warnings"
+	_log 1 "WARNING: $2"
+}
+
+_uptime() { cut -d. -f1 /proc/uptime; }
+
+# _num <value> <default>: a uci value used in arithmetic or as a curl option,
+# the default when it is not a plain number
+_num() {
+	case "$1" in
+		""|*[!0-9]*) printf '%s' "$2" ;;
+		*) printf '%s' "$1" ;;
+	esac
+}
+
+_load_config() {
+	config_load "$NAME"
+	config_get_bool enabled config enabled 0
+	config_get_bool force_dns config force_dns 1
+	config_get dnsmasq_instance config dnsmasq_instance '*'
+	config_get_bool compressed_cache config compressed_cache 1
+	config_get compressed_cache_dir config compressed_cache_dir /etc/omr-adblock
+	config_get parallel_downloads config parallel_downloads 4
+	config_get download_timeout config download_timeout 10
+	config_get download_max_time config download_max_time 120
+	config_get curl_retry config curl_retry 3
+	config_get curl_max_file_size config curl_max_file_size 30000000
+	config_get unload_before_update config unload_before_update auto
+	config_get update_schedule config update_schedule ''
+	config_get pause_timeout config pause_timeout 60
+	config_get heartbeat_domain config heartbeat_domain ''
+	config_get_bool allow_non_ascii config allow_non_ascii 0
+	config_get_bool canary_icloud config canary_domains_icloud 0
+	config_get_bool canary_mozilla config canary_domains_mozilla 0
+	config_get allowed_domain config allowed_domain ''
+	config_get blocked_domain config blocked_domain ''
+	config_get led config led ''
+	config_get verbosity config verbosity 2
+	config_get_bool stats config stats 1
+	config_get stats_hours config stats_hours 24
+	parallel_downloads=$(_num "$parallel_downloads" 4)
+	[ "$parallel_downloads" -ge 1 ] || parallel_downloads=1
+	download_timeout=$(_num "$download_timeout" 10)
+	download_max_time=$(_num "$download_max_time" 120)
+	curl_retry=$(_num "$curl_retry" 3)
+	curl_max_file_size=$(_num "$curl_max_file_size" 30000000)
+	pause_timeout=$(_num "$pause_timeout" 60)
+	verbosity=$(_num "$verbosity" 2)
+	stats_hours=$(_num "$stats_hours" 24)
+	[ "$stats_hours" -ge 1 ] && [ "$stats_hours" -le 168 ] || stats_hours=24
+	# the cache directory is removed by killcache and the package: never
+	# let it be a system directory
+	case "$compressed_cache_dir" in
+		/?*/?*) ;;
+		*) compressed_cache_dir=/etc/omr-adblock ;;
+	esac
+	CACHE_FILE="$compressed_cache_dir/blocklist.gz"
+	CACHE_HASH="$compressed_cache_dir/blocklist.md5"
+}
+
+_lock() {
+	exec 9>"$LOCK_FILE"
+	flock 9
+}
+
+# --- dnsmasq ---------------------------------------------------------------
+
+# _instances: the dnsmasq sections the blocklist goes to
+_instances() {
+	local _all="" s
+	_add_instance() { _all="$_all $1"; }
+	config_load dhcp
+	config_foreach _add_instance dnsmasq
+	# matched as a string: in "for s in $dnsmasq_instance" the shell made
+	# the "*" a glob of the current directory
+	case " $dnsmasq_instance " in
+		*" * "*) echo $_all; return ;;
+	esac
+	set -f
+	for s in $dnsmasq_instance; do
+		case " $_all " in *" $s "*) printf '%s ' "$s" ;; esac
+	done
+	set +f
+	echo
+}
+
+# _confdir <section>: the conf-dir the dnsmasq init generated for the
+# instance (/tmp/dnsmasq.<section>.d unless "confdir" moved it)
+_confdir() {
+	local d
+	d=$(sed -n '/^conf-dir=/{s/^conf-dir=//;s/,.*//;p;q}' "/var/etc/dnsmasq.conf.$1" 2>/dev/null)
+	[ -z "$d" ] && d=$(uci -q get "dhcp.$1.confdir")
+	printf '%s' "${d:-/tmp/dnsmasq.$1.d}"
+}
+
+_dnsmasq_port() {
+	local p
+	p=$(uci -q get "dhcp.$1.port")
+	_num "$p" 53
+}
+
+# dnsmasq runs in a jail: the conf-script runs "busybox sh" and reads the
+# blocklist, both must be mounted in it. Without them dnsmasq fails to start
+# at all, so they are added before the conf-script is, and the ones added
+# here are listed for the package removal.
+_ensure_addnmounts() {
+	local s p changed=""
+	for s in $(_instances); do
+		for p in /bin/busybox "$RUN_DIR"; do
+			uci -q get "dhcp.$s.addnmount" | tr ' ' '\n' | grep -qxF "$p" && continue
+			uci -q add_list "dhcp.$s.addnmount=$p" || continue
+			echo "$s $p" >> "$ADDNMOUNT_FILE"
+			changed=1
+		done
+	done
+	[ -n "$changed" ] && uci -q commit dhcp
+	return 0
+}
+
+_addnmounts_ok() {
+	local s p
+	for s in $(_instances); do
+		for p in /bin/busybox "$RUN_DIR"; do
+			uci -q get "dhcp.$s.addnmount" | tr ' ' '\n' | grep -qxF "$p" || return 1
+		done
+	done
+	return 0
+}
+
+_install_conf() {
+	local s d
+	for s in $(_instances); do
+		d=$(_confdir "$s")
+		mkdir -p "$d" || return 1
+		# a truncated file would give dnsmasq half a line and stop it: check
+		# the whole file before printing any of it, and never fail
+		printf '%s\n' "busybox gzip -t $BLOCKLIST 2>/dev/null && busybox zcat $BLOCKLIST" "exit 0" > "$d/$SCRIPT_NAME" &&
+		printf 'conf-script="busybox sh %s/%s"\n' "$d" "$SCRIPT_NAME" > "$d/$CONF_NAME" || return 1
+	done
+}
+
+# _remove_conf: from every dnsmasq instance, also the ones no longer
+# configured; returns 0 when there was one to remove
+_remove_conf() {
+	local f found=1
+	for f in /tmp/dnsmasq.d/$CONF_NAME /tmp/dnsmasq*.d/$CONF_NAME /var/etc/dnsmasq*.d/$CONF_NAME $(for s in $(_instances); do printf '%s/%s ' "$(_confdir "$s")" "$CONF_NAME"; done); do
+		[ -f "$f" ] || continue
+		rm -f "$f" "${f%/*}/$SCRIPT_NAME"
+		found=0
+	done
+	return $found
+}
+
+_conf_installed() {
+	local s
+	for s in $(_instances); do
+		[ -f "$(_confdir "$s")/$CONF_NAME" ] || return 1
+	done
+	[ -n "$(_instances)" ]
+}
+
+# _lookup <domain>: the IPv4 address the first instance answers, empty when
+# the lookup failed
+_lookup() {
+	local s port
+	set -- "$1" $(_instances)
+	port=$(_dnsmasq_port "$2")
+	nslookup -type=a -timeout=2 -port="$port" "$1" 127.0.0.1 2>/dev/null |
+		awk -v d="$1" '$1 == "Name:" && $2 == d { n = 1; next } n && /^Address/ { sub(/^Address:? */, ""); print; exit }'
+}
+
+_restart_dnsmasq() {
+	/etc/init.d/dnsmasq restart >/dev/null 2>&1
+}
+
+# _check_loaded: dnsmasq answers again and the blocklist is in it
+_check_loaded() {
+	local i=0
+	while [ "$i" -lt 20 ]; do
+		[ "$(_lookup "$TEST_DOMAIN")" = 0.0.0.0 ] && return 0
+		i=$((i + 1))
+		sleep 1
+	done
+	return 1
+}
+
+# _check_unloaded: dnsmasq answers again (localhost, from /etc/hosts),
+# without the blocklist
+_check_unloaded() {
+	local i=0
+	while [ "$i" -lt 20 ]; do
+		[ "$(_lookup localhost)" = 127.0.0.1 ] && [ "$(_lookup "$TEST_DOMAIN")" != 0.0.0.0 ] && return 0
+		i=$((i + 1))
+		sleep 1
+	done
+	return 1
+}
+
+_heartbeat() {
+	local a
+	[ -n "$heartbeat_domain" ] || return 0
+	a=$(_lookup "$heartbeat_domain")
+	case "$a" in
+		""|0.0.0.0|127.0.0.1) _warn heartbeatFailed "$heartbeat_domain did not resolve with the blocklist loaded" ;;
+	esac
+}
+
+_led() {
+	[ -n "$led" ] && [ -w "/sys/class/leds/$led/trigger" ] || return 0
+	echo "$1" > "/sys/class/leds/$led/trigger" 2>/dev/null
+	return 0
+}
+
+_unload() {
+	if _remove_conf; then
+		_restart_dnsmasq
+		_check_unloaded || _err dnsmasqRestartFailed "dnsmasq did not answer after the blocklist was unloaded"
+	fi
+	_led none
+}
+
+# --- state -----------------------------------------------------------------
+
+_reset_messages() {
+	mkdir -p "$RUN_DIR"
+	: > "$RUN_DIR/errors"
+	: > "$RUN_DIR/warnings"
+}
+
+# _write_status <state> [message]: status.json read by "status", rpcd and LuCI
+_write_status() {
+	local entries=0 size_gz=0 size_raw=0 lines=0 updated=0 duration=0 source="" until=0
+	local code info name url action result count bytes
+	mkdir -p "$RUN_DIR"
+	[ -f "$STATS_FILE" ] && . "$STATS_FILE"
+	[ -f "$PAUSE_FILE" ] && until=$(_num "$(cat "$PAUSE_FILE")" 0)
+	json_init
+	json_add_string version "$VERSION"
+	json_add_string status "$1"
+	json_add_string message "$2"
+	json_add_int entries "$(_num "$entries" 0)"
+	json_add_int size_gz "$(_num "$size_gz" 0)"
+	json_add_int size_raw "$(_num "$size_raw" 0)"
+	json_add_int lines "$(_num "$lines" 0)"
+	json_add_int updated "$(_num "$updated" 0)"
+	json_add_int duration "$(_num "$duration" 0)"
+	json_add_string source "$source"
+	json_add_int paused_until "$until"
+	json_add_int time "$(date +%s)"
+	for kind in errors warnings; do
+		json_add_array "$kind"
+		[ -f "$RUN_DIR/$kind" ] && while IFS="$TAB" read -r code info; do
+			json_add_object ''
+			json_add_string code "$code"
+			json_add_string info "$info"
+			json_close_object
+		done < "$RUN_DIR/$kind"
+		json_close_array
+	done
+	json_add_array lists
+	[ -f "$LISTS_FILE" ] && while IFS="$TAB" read -r name url action result count bytes; do
+		json_add_object ''
+		json_add_string name "$name"
+		json_add_string url "$url"
+		json_add_string action "$action"
+		json_add_string result "$result"
+		json_add_int entries "$(_num "$count" 0)"
+		json_add_int bytes "$(_num "$bytes" 0)"
+		json_close_object
+	done < "$LISTS_FILE"
+	json_close_array
+	json_dump > "$STATUS_FILE.tmp" && mv -f "$STATUS_FILE.tmp" "$STATUS_FILE"
+}
+
+_status_get() {
+	jsonfilter -q -i "$STATUS_FILE" -e "@.$1" 2>/dev/null
+}
+
+_save_stats() { # <source> <duration>
+	local gz raw lines
+	gz=$(wc -c < "$BLOCKLIST")
+	raw=$(zcat "$BLOCKLIST" | wc -c)
+	lines=$(zcat "$BLOCKLIST" | wc -l)
+	{
+		echo "entries=$(_num "$ENTRIES" 0)"
+		echo "size_gz=$gz"
+		echo "size_raw=$raw"
+		echo "lines=$lines"
+		echo "updated=$(date +%s)"
+		echo "duration=$2"
+		echo "source=$1"
+	} > "$STATS_FILE"
+}
+
+# the entries of a blocklist, counted from the file itself
+_count_entries() {
+	zcat "$1" | sed -n 's/^local=\///p' | tr '/' '\n' | grep -c .
+}
+
+# _lists_hash: what the blocklist is made of; when it did not change since
+# the last download, a start or a reload only has to load it again
+_lists_hash() {
+	local _h=""
+	_hash_list() {
+		local en url action
+		config_get_bool en "$1" enabled 1
+		[ "$en" = 1 ] || return 0
+		config_get url "$1" url
+		config_get action "$1" action block
+		_h="$_h|$action $url"
+	}
+	config_load "$NAME"
+	config_foreach _hash_list file_url
+	# word-split: "allow" appends with a space, uci gives none in front
+	set -f
+	printf '%s|%s|%s|%s|%s|%s|%s\n' "$VERSION" "$_h" "$(echo $allowed_domain)" "$(echo $blocked_domain)" \
+		"$canary_icloud" "$canary_mozilla" "$allow_non_ascii" | md5sum | cut -d' ' -f1
+	set +f
+}
+
+_save_cache() {
+	[ "$compressed_cache" = 1 ] || return 0
+	mkdir -p "$compressed_cache_dir" || return 0
+	# a flash write only when the blocklist changed
+	if [ -f "$CACHE_FILE" ] && [ "$(md5sum < "$CACHE_FILE")" = "$(md5sum < "$BLOCKLIST")" ]; then
+		[ "$(cat "$CACHE_HASH" 2>/dev/null)" = "$1" ] || echo "$1" > "$CACHE_HASH"
+		return 0
+	fi
+	cp -f "$BLOCKLIST" "$CACHE_FILE.tmp" && mv -f "$CACHE_FILE.tmp" "$CACHE_FILE" && echo "$1" > "$CACHE_HASH"
+}
+
+# _restore_cache <hash>: the cached blocklist, when it was made from the
+# same lists
+_restore_cache() {
+	[ "$compressed_cache" = 1 ] && [ -s "$CACHE_FILE" ] || return 1
+	[ "$(cat "$CACHE_HASH" 2>/dev/null)" = "$1" ] || return 1
+	gzip -t "$CACHE_FILE" 2>/dev/null || return 1
+	mkdir -p "$RUN_DIR"
+	cp -f "$CACHE_FILE" "$BLOCKLIST.tmp" && mv -f "$BLOCKLIST.tmp" "$BLOCKLIST"
+}
+
+_cron_sync() {
+	local cron=/etc/crontabs/root want="" old new
+	if [ "$1" = on ] && [ -n "$update_schedule" ]; then
+		# five fields of a cron time, nothing else goes into the crontab
+		if echo "$update_schedule" | grep -qE '^[0-9*/,-]+( +[0-9*/,-]+){4}$'; then
+			want="$update_schedule /etc/init.d/$NAME update $CRON_TAG"
+		else
+			_warn badSchedule "update_schedule '$update_schedule' is not a cron time"
+		fi
+	fi
+	if [ "$1" = on ] && [ "$stats" = 1 ]; then
+		want="${want:+$want
+}* * * * * /usr/bin/$NAME stats_collect $CRON_TAG"
+	fi
+	mkdir -p /etc/crontabs
+	old=$(grep -F "$CRON_TAG" "$cron" 2>/dev/null)
+	[ "$old" = "$want" ] && return 0
+	new=$(grep -vF "$CRON_TAG" "$cron" 2>/dev/null)
+	# not in /etc/crontabs: crond would read it as the crontab of a user
+	{
+		[ -z "$new" ] || printf '%s\n' "$new"
+		[ -z "$want" ] || printf '%s\n' "$want"
+	} > /etc/.omr-adblock.crontab && mv -f /etc/.omr-adblock.crontab "$cron"
+	/etc/init.d/cron restart >/dev/null 2>&1
+	return 0
+}
+
+_cancel_pause() {
+	local pid
+	pid=$(cat "$RUN_DIR/pause.pid" 2>/dev/null)
+	[ -n "$pid" ] && [ "$pid" != "$$" ] && kill "$pid" 2>/dev/null
+	rm -f "$PAUSE_FILE" "$RUN_DIR/pause.pid"
+}
+
+# --- processing ------------------------------------------------------------
+
+# _normalize <block|allow>: any list format on stdin (hosts, plain or
+# wildcard domains, dnsmasq, Adblock Plus "||domain^" and
+# "||domain^$important") to lines of
+# "<reversed labels><TAB>[\001]<domain>", lower case. The \001 marks an
+# allowed domain: it sorts before the same domain blocked.
+_normalize() {
+	local c='[a-z0-9_-]' valid
+	# any byte but ASCII punctuation, blanks and controls: UTF-8 labels too
+	[ "$allow_non_ascii" = 1 ] && c='[^][[:space:][:cntrl:]!-,./:-@\^`{-~]'
+	valid="^$c+(\\.$c+)+\$"
+	tr 'A-Z\t\r' 'a-z  ' |
+	sed -E 's/[#!].*//; s/^(local|server)=\/(.*)\/[^/]*$/\2/; s/^address=\/([^/]*)\/.*/\1/; s/^\|\|([^/$^*|]+)\^(\$important)?$/\1/' |
+	tr ' /' '\n\n' |
+	sed -nE "s/^\*?\.//; s/\.\$//; /^[0-9.]+\$/d; /$valid/p" |
+	# awk turns the "\001" of the -v assignment into the byte
+	awk -F. -v m="$([ "$1" = allow ] && printf '%s' '\001')" '
+		NF == 2 { print $2 " " $1 "\t" m $0; next }
+		NF == 3 { print $3 " " $2 " " $1 "\t" m $0; next }
+		NF == 4 { print $4 " " $3 " " $2 " " $1 "\t" m $0; next }
+		{ o = $NF; for (i = NF - 1; i > 0; i--) o = o " " $i; print o "\t" m $0 }'
+}
+
+# _download <url> <stats file>: the file on stdout; curl writes the HTTP
+# code, the size it downloaded and the content type to the stats file
+_download() {
+	case "$1" in
+		file://*|/*)
+			cat "${1#file://}"
+			return
+			;;
+	esac
+	if [ -x /usr/bin/curl ]; then
+		curl -sfL --compressed --connect-timeout "$download_timeout" --max-time "$download_max_time" \
+			--retry "$curl_retry" --max-filesize "$curl_max_file_size" \
+			-w '%{stderr}%{http_code} %{size_download} %{content_type}\n' "$1" 2>"$2"
+	else
+		uclient-fetch -q -T "$download_max_time" -O - "$1"
+	fi
+}
+
+# _fetch <url>[#<member>] <stats file>: the list on stdout. From a .tar.gz
+# only one member is taken, <member> or else "<archive name>/domains" (the
+# layout of the UT1 Capitole archives): the other files of such an archive
+# hold URLs and expressions, not domains to block.
+_fetch() {
+	local url="${1%%#*}" member=""
+	case "$1" in *'#'*) member="${1#*#}" ;; esac
+	case "$url" in
+		*.tar.gz|*.tgz)
+			if [ -z "$member" ]; then
+				member="${url##*/}"
+				member="${member%.tar.gz}"
+				member="${member%.tgz}/domains"
+			fi
+			;;
+	esac
+	if [ -n "$member" ]; then
+		_download "$url" "$2" | tar -xzOf - "$member"
+	else
+		_download "$url" "$2"
+	fi
+}
+
+# _job <index> <action> <url> <name>: one list into <index>.<action>.gz
+_job() {
+	local idx="$1" action="$2" url="$3" name="$4" part="$WORK_DIR/$1.$2.gz" count bytes
+	set -o pipefail
+	if _fetch "$url" "$WORK_DIR/$idx.curl" | _normalize "$action" | gzip -c > "$part"; then
+		count=$(zcat "$part" | wc -l)
+		bytes=$(awk '{ print $2 }' "$WORK_DIR/$idx.curl" 2>/dev/null)
+		# an error or login page: its text would give "domains" such as
+		# www.w3.org from a DOCTYPE
+		if grep -qi 'html' "$WORK_DIR/$idx.curl" 2>/dev/null; then
+			printf '%s\t%s\t%s\thtml\t0\t%s\n' "$name" "$url" "$action" "${bytes:-0}" > "$WORK_DIR/$idx.result"
+		elif [ "$count" -gt 0 ]; then
+			printf '%s\t%s\t%s\tok\t%s\t%s\n' "$name" "$url" "$action" "$count" "${bytes:-0}" > "$WORK_DIR/$idx.result"
+			_log 2 "Processed $action-list '$name': $count entries"
+			return 0
+		else
+			printf '%s\t%s\t%s\tempty\t0\t%s\n' "$name" "$url" "$action" "${bytes:-0}" > "$WORK_DIR/$idx.result"
+		fi
+	else
+		printf '%s\t%s\t%s\tfailed\t0\t0\n' "$name" "$url" "$action" > "$WORK_DIR/$idx.result"
+	fi
+	rm -f "$part"
+	return 1
+}
+
+_has_route() {
+	awk '$2 == "00000000" { f = 1 } END { exit !f }' /proc/net/route 2>/dev/null ||
+		grep -q '^00000000000000000000000000000000 00 ' /proc/net/ipv6_route 2>/dev/null
+}
+
+# _build <output>: download, normalize and merge every enabled list
+_build() {
+	local out="$1" n=0 pids="" idx action url name result count
+	rm -rf "$WORK_DIR"
+	mkdir -p "$WORK_DIR" || return 1
+
+	_collect() {
+		local en url action name
+		config_get_bool en "$1" enabled 1
+		[ "$en" = 1 ] || return 0
+		config_get url "$1" url
+		config_get action "$1" action block
+		config_get name "$1" name "$1"
+		[ -n "$url" ] || return 0
+		[ "$action" = allow ] || action=block
+		n=$((n + 1))
+		printf '%s\t%s\t%s\t%s\n' "$n" "$action" "$url" "$name" >> "$WORK_DIR/jobs"
+	}
+	config_load "$NAME"
+	config_foreach _collect file_url
+
+	# the local entries; the hosts of the lists are always allowed, a list
+	# blocking its own server would stop the next update
+	{
+		printf '%s\n' $blocked_domain
+		[ "$canary_mozilla" = 1 ] && echo use-application-dns.net
+		[ "$canary_icloud" = 1 ] && printf '%s\n' mask.icloud.com mask-h2.icloud.com
+	} | _normalize block | gzip -c > "$WORK_DIR/local.block.gz"
+	{
+		printf '%s\n' $allowed_domain
+		[ -f "$WORK_DIR/jobs" ] && cut -f3 "$WORK_DIR/jobs" | sed -n 's#^[a-z]*://##; s#[/:?].*##p'
+	} | _normalize allow | gzip -c > "$WORK_DIR/local.allow.gz"
+
+	if [ ! -f "$WORK_DIR/jobs" ] && [ -z "$(zcat "$WORK_DIR/local.block.gz" | head -n1)" ]; then
+		_err noLists "no list nor blocked domain is enabled"
+		return 1
+	fi
+
+	_log 2 "Downloading and processing the lists ($parallel_downloads at a time)"
+	[ -f "$WORK_DIR/jobs" ] && while IFS="$TAB" read -r idx action url name; do
+		_job "$idx" "$action" "$url" "$name" &
+		pids="$pids $!"
+		set -- $pids
+		if [ "$#" -ge "$parallel_downloads" ]; then
+			wait "$1"
+			shift
+			pids="$*"
+		fi
+	done < "$WORK_DIR/jobs"
+	wait
+
+	: > "$LISTS_FILE"
+	local ok_block=0
+	[ -f "$WORK_DIR/jobs" ] && while IFS="$TAB" read -r idx action url name; do
+		if [ -f "$WORK_DIR/$idx.result" ]; then
+			cat "$WORK_DIR/$idx.result" >> "$LISTS_FILE"
+			result=$(cut -f4 "$WORK_DIR/$idx.result")
+		else
+			printf '%s\t%s\t%s\tfailed\t0\t0\n' "$name" "$url" "$action" >> "$LISTS_FILE"
+			result=failed
+		fi
+		case "$result" in
+			ok) [ "$action" = block ] && ok_block=$((ok_block + 1)) ;;
+			empty) _warn emptyList "$name: no domain in the downloaded list" ;;
+			html) _warn htmlList "$name: the server sent a web page, not a list" ;;
+			*) _warn downloadFailed "$name: download failed ($(cat "$WORK_DIR/$idx.curl" 2>/dev/null | cut -d' ' -f1))" ;;
+		esac
+	done < "$WORK_DIR/jobs"
+
+	if [ "$ok_block" = 0 ] && [ -z "$(zcat "$WORK_DIR/local.block.gz" | head -n1)" ]; then
+		_has_route || _err noRoute "no default route: the lists can not be downloaded"
+		_err allListsFailed "no block-list could be downloaded"
+		return 1
+	fi
+
+	_log 2 "Merging and packing the blocklist"
+	(
+	set -o pipefail
+	{
+		_pack "$WORK_DIR/count" "$WORK_DIR"/*.gz
+		printf 'address=/%s/#\n' "$TEST_DOMAIN"
+	} | gzip -c > "$out"
+	) || { _err processingFailed "the lists could not be merged"; return 1; }
+	ENTRIES=$(cat "$WORK_DIR/count" 2>/dev/null)
+	return 0
+}
+
+# _pack <count file> <normalized .gz>...: the dnsmasq lines of the merged
+# parts on stdout, the number of blocked domains in <count file>
+_pack() {
+	local count="$1"
+	shift
+	zcat "$@" | sort -u |
+		awk -F "$TAB" -v COUNT="$count" '
+			function pack(d) {
+				if (len && len + length(d) + 1 > 1024) { print ""; len = 0 }
+				if (!len) { printf "local=/"; len = 7 }
+				printf "%s/", d
+				len += length(d) + 1
+			}
+			# an allowed domain: it and its subdomains are not blocked, and
+			# when a parent is, it is let through with server=/<domain>/#
+			substr($2, 1, 1) == "\001" {
+				a = $1
+				if (k != "" && index($1, k " ") == 1) srv[++ns] = substr($2, 2)
+				next
+			}
+			a != "" && ($1 == a || index($1, a " ") == 1) { next }
+			k != "" && index($1, k " ") == 1 { next }
+			{ k = $1; pack($2); n++ }
+			END {
+				if (len) print ""
+				len = 0
+				for (i = 1; i <= ns; i++) {
+					if (len && len + length(srv[i]) + 1 > 1022) { print "#"; len = 0 }
+					if (!len) { printf "server=/"; len = 8 }
+					printf "%s/", srv[i]
+					len += length(srv[i]) + 1
+				}
+				if (len) print "#"
+				print n + 0 > COUNT
+			}'
+}
+
+# _test <file>: what dnsmasq would say of the blocklist
+_test() {
+	local res
+	gzip -t "$1" 2>/dev/null || { _err processingFailed "the new blocklist is not a valid gzip file"; return 1; }
+	res=$(zcat "$1" | dnsmasq --test -C - 2>&1)
+	case "$res" in
+		*"syntax check OK"*) return 0 ;;
+	esac
+	_err dnsmasqTestFailed "dnsmasq refused the new blocklist: $(printf '%s' "$res" | head -n1)"
+	return 1
+}
+
+# _activate: load $BLOCKLIST into dnsmasq; on failure go back to the
+# previous blocklist, or run without one rather than without DNS
+_activate() {
+	if [ -z "$(_instances)" ]; then
+		_err noInstance "no dnsmasq instance matches dnsmasq_instance '$dnsmasq_instance'"
+		return 1
+	fi
+	_ensure_addnmounts
+	if ! _addnmounts_ok; then
+		_err addnmountMissing "the dnsmasq jail mounts could not be added to /etc/config/dhcp"
+		return 1
+	fi
+	_install_conf || { _err confWriteFailed "the dnsmasq configuration could not be written"; return 1; }
+	_restart_dnsmasq
+	if _check_loaded; then
+		rm -f "$PREV_BLOCKLIST"
+		_led default-on
+		return 0
+	fi
+	_err blocklistNotLoaded "dnsmasq did not load the new blocklist"
+	if [ -s "$PREV_BLOCKLIST" ]; then
+		mv -f "$PREV_BLOCKLIST" "$BLOCKLIST"
+		_restart_dnsmasq
+		if _check_loaded; then
+			_warn restoredPrevious "the previous blocklist was loaded again"
+			ENTRIES=$(_count_entries "$BLOCKLIST")
+			return 2
+		fi
+	fi
+	rm -f "$BLOCKLIST"
+	_unload
+	return 1
+}
+
+_update() {
+	local hash="$1" t0 rc mem
+	t0=$(_uptime)
+	_write_status processing "downloading and processing the lists"
+
+	# a small router frees the RAM dnsmasq holds for the current list first
+	if [ -f "$BLOCKLIST" ] && _conf_installed; then
+		case "$unload_before_update" in
+			1) _unload ;;
+			auto)
+				mem=$(awk '/^MemTotal/ { print $2 }' /proc/meminfo)
+				[ "$(_num "$mem" 0)" -lt 400000 ] && _unload
+				;;
+		esac
+	fi
+
+	if ! _build "$WORK_DIR.blocklist.gz" || ! _test "$WORK_DIR.blocklist.gz"; then
+		rm -rf "$WORK_DIR" "$WORK_DIR.blocklist.gz"
+		if [ -f "$BLOCKLIST" ]; then
+			_conf_installed || { _activate; rc=$?; }
+			_write_status error "the blocklist was not updated, the previous one is still loaded"
+		else
+			_unload
+			if _has_route; then
+				_write_status error "no blocklist could be built"
+			else
+				_write_status waiting "waiting for a default route to download the lists"
+			fi
+		fi
+		return 1
+	fi
+	rm -rf "$WORK_DIR"
+
+	[ -f "$BLOCKLIST" ] && mv -f "$BLOCKLIST" "$PREV_BLOCKLIST"
+	mv -f "$WORK_DIR.blocklist.gz" "$BLOCKLIST"
+	_activate
+	rc=$?
+	case "$rc" in
+		0) ;;
+		2)
+			_write_status error "dnsmasq did not load the new blocklist, the previous one is loaded"
+			return 1
+			;;
+		*)
+			_write_status error "dnsmasq could not load the blocklist"
+			return 1
+			;;
+	esac
+	_save_stats download "$(($(_uptime) - t0))"
+	echo "$hash" > "$HASH_FILE"
+	_save_cache "$hash"
+	_heartbeat
+	_write_status active "blocking $ENTRIES domains"
+	_log 1 "Blocking $ENTRIES domains ($(wc -c < "$BLOCKLIST") bytes compressed)"
+}
+
+# --- commands --------------------------------------------------------------
+
+cmd_start() {
+	local mode="${1:-start}" hash t0
+	_load_config
+	_lock
+	mkdir -p "$RUN_DIR"
+	if [ "$enabled" != 1 ]; then
+		_cancel_pause
+		_stats_setup off && [ ! -f "$(_confdir "$(_instances | cut -d' ' -f1)")/$CONF_NAME" ] && _restart_dnsmasq
+		_unload
+		rm -f "$BLOCKLIST" "$PREV_BLOCKLIST" "$STATS_LOG"
+		_cron_sync off
+		_write_status disabled "omr-adblock is disabled"
+		return 0
+	fi
+	_reset_messages
+	_cancel_pause
+	if [ "$stats" = 1 ]; then
+		_stats_setup on && _restart_dnsmasq
+	else
+		_stats_setup off && _restart_dnsmasq
+		rm -f "$STATS_LOG"
+	fi
+	_cron_sync on
+	if ! dnsmasq --help 2>/dev/null | grep -q -- --conf-script; then
+		_err confScriptUnsupported "this dnsmasq has no --conf-script"
+		_write_status error "dnsmasq is too old"
+		return 1
+	fi
+	hash=$(_lists_hash)
+	t0=$(_uptime)
+
+	# the blocklist is up to date: it only has to be loaded
+	if [ "$mode" != download ] && [ -s "$BLOCKLIST" ] && [ "$(cat "$HASH_FILE" 2>/dev/null)" = "$hash" ]; then
+		if _conf_installed && [ "$(_lookup "$TEST_DOMAIN")" = 0.0.0.0 ]; then
+			_led default-on
+			_write_status active "blocking $(_status_get entries) domains"
+			return 0
+		fi
+		ENTRIES=$(_count_entries "$BLOCKLIST")
+		_activate && { _write_status active "blocking $ENTRIES domains"; return 0; }
+	fi
+
+	# at boot, or when the lists did not change: the cached blocklist
+	if [ "$mode" != download ] && _restore_cache "$hash"; then
+		ENTRIES=$(_count_entries "$BLOCKLIST")
+		if _activate; then
+			echo "$hash" > "$HASH_FILE"
+			_save_stats cache "$(($(_uptime) - t0))"
+			_write_status active "blocking $ENTRIES domains (cached blocklist)"
+			_log 1 "Blocking $ENTRIES domains from the cached blocklist"
+			return 0
+		fi
+	fi
+
+	# no network yet at boot: the interface trigger starts it again
+	if [ "$mode" = boot ] || ! _has_route; then
+		_write_status waiting "waiting for a default route to download the lists"
+		return 0
+	fi
+	_update "$hash"
+}
+
+cmd_stop() {
+	_load_config
+	_lock
+	_cancel_pause
+	_stats_setup off && [ ! -f "$(_confdir "$(_instances | cut -d' ' -f1)")/$CONF_NAME" ] && _restart_dnsmasq
+	_unload
+	rm -f "$BLOCKLIST" "$PREV_BLOCKLIST" "$HASH_FILE" "$STATS_LOG"
+	_cron_sync off
+	_write_status stopped "omr-adblock is stopped"
+}
+
+cmd_pause() {
+	local secs
+	_load_config
+	secs=$(_num "$1" "$pause_timeout")
+	_lock
+	[ -s "$BLOCKLIST" ] && _conf_installed || { echo "omr-adblock is not active" >&2; return 1; }
+	_cancel_pause
+	_unload
+	echo $(($(date +%s) + secs)) > "$PAUSE_FILE"
+	# without fd 9 the timer does not keep the lock its resume waits for
+	( exec 9>&-; sleep "$secs"; /usr/bin/omr-adblock resume ) </dev/null >/dev/null 2>&1 &
+	echo $! > "$RUN_DIR/pause.pid"
+	_write_status paused "paused for $secs seconds"
+	_log 1 "Paused for $secs seconds"
+}
+
+cmd_resume() {
+	_load_config
+	_lock
+	[ -f "$PAUSE_FILE" ] || return 0
+	rm -f "$PAUSE_FILE" "$RUN_DIR/pause.pid"
+	[ -s "$BLOCKLIST" ] || { _write_status stopped "no blocklist to resume"; return 1; }
+	ENTRIES=$(_status_get entries)
+	if _activate; then
+		_write_status active "blocking $ENTRIES domains"
+		_log 1 "Resumed"
+	else
+		_write_status error "dnsmasq could not load the blocklist"
+		return 1
+	fi
+}
+
+# allow: the domains go into the config and out of the loaded blocklist
+# without a download
+cmd_allow() {
+	local d domains="" new
+	_load_config
+	[ "$#" -gt 0 ] || { echo "usage: omr-adblock allow <domain>..." >&2; return 1; }
+	for d in "$@"; do
+		new=$(printf '%s\n' "$d" | _normalize allow | cut -f2 | tr -d '\001')
+		[ -n "$new" ] || { echo "invalid domain: $d" >&2; return 1; }
+		domains="$domains $new"
+	done
+	_lock
+	_reset_messages
+	for d in $domains; do
+		case " $allowed_domain " in *" $d "*) continue ;; esac
+		uci -q add_list "$NAME.config.allowed_domain=$d"
+		allowed_domain="$allowed_domain $d"
+	done
+	if [ -s "$BLOCKLIST" ]; then
+		( set -o pipefail
+		zcat "$BLOCKLIST" | awk -v list="$domains" '
+			BEGIN { n = split(list, a, " ") }
+			function under(x, p) { return x == p || (length(x) > length(p) && substr(x, length(x) - length(p)) == "." p) }
+			/^local=\// {
+				line = substr($0, 8); out = ""
+				m = split(line, d, "/")
+				for (i = 1; i < m; i++) {
+					drop = 0
+					for (j = 1; j <= n; j++) {
+						if (under(d[i], a[j])) { drop = 1; break }
+						if (under(a[j], d[i])) srv[a[j]] = 1
+					}
+					if (!drop) out = out d[i] "/"
+				}
+				if (out != "") print "local=/" out
+				next
+			}
+			/^address=/ { last = $0; next }
+			{ print }
+			END {
+				for (s in srv) print "server=/" s "/#"
+				if (last != "") print last
+			}' | gzip -c > "$BLOCKLIST.new" ) && _test "$BLOCKLIST.new" || {
+			rm -f "$BLOCKLIST.new"
+			uci -q revert "$NAME"
+			_write_status "$(_status_get status)" "the domains could not be allowed"
+			return 1
+		}
+		mv -f "$BLOCKLIST" "$PREV_BLOCKLIST"
+		mv -f "$BLOCKLIST.new" "$BLOCKLIST"
+		ENTRIES=$(_count_entries "$BLOCKLIST")
+		if [ -f "$PAUSE_FILE" ]; then
+			rm -f "$PREV_BLOCKLIST"
+		else
+			_activate || { uci -q revert "$NAME"; _write_status error "dnsmasq could not load the blocklist"; return 1; }
+		fi
+		sed -i "s/^entries=.*/entries=$ENTRIES/" "$STATS_FILE" 2>/dev/null
+		# the reload the config change triggers finds nothing to download
+		_lists_hash > "$HASH_FILE"
+		_save_cache "$(cat "$HASH_FILE")"
+		[ -f "$PAUSE_FILE" ] || _write_status active "blocking $ENTRIES domains"
+	fi
+	uci -q commit "$NAME"
+	echo "allowed:$domains"
+}
+
+# --- query statistics ------------------------------------------------------
+
+# _stats_setup <on|off>: dnsmasq logs its queries to STATS_LOG, through the
+# logqueries and logfacility options of its sections (the dnsmasq init
+# mounts that file writable in the jail). The options set here are listed
+# in DHCP_OPTS_FILE, to be removed again. Returns 0 when /etc/config/dhcp
+# changed: dnsmasq has to be restarted.
+_stats_setup() {
+	local s cur opt changed=1
+	if [ "$1" = on ]; then
+		for s in $(_instances); do
+			cur=$(uci -q get "dhcp.$s.logfacility")
+			if [ -z "$cur" ]; then
+				uci -q set "dhcp.$s.logfacility=$STATS_LOG"
+				echo "$s logfacility" >> "$DHCP_OPTS_FILE"
+				changed=0
+			elif [ "$cur" != "$STATS_LOG" ]; then
+				_warn statsUnavailable "dnsmasq $s already logs to $cur: no query statistics for it"
+				continue
+			fi
+			if [ "$(uci -q get "dhcp.$s.logqueries")" != 1 ]; then
+				uci -q set "dhcp.$s.logqueries=1"
+				echo "$s logqueries" >> "$DHCP_OPTS_FILE"
+				changed=0
+			fi
+		done
+	elif [ -f "$DHCP_OPTS_FILE" ]; then
+		# what is still in the log goes to the system log first
+		cmd_stats_collect
+		while read -r s opt; do
+			uci -q delete "dhcp.$s.$opt"
+			changed=0
+		done < "$DHCP_OPTS_FILE"
+		rm -f "$DHCP_OPTS_FILE"
+	fi
+	[ "$changed" = 0 ] && uci -q commit dhcp
+	return $changed
+}
+
+# stats_collect: STATS_LOG is copied and emptied (dnsmasq appends to it, the
+# lines it writes go on at its new end), then one awk pass adds the queries
+# up in the file of the current hour: "<count>\t<kind>\t<key>", kinds
+# q (queried domain), b (blocked domain), c (client), k (blocked for a
+# client) and t (totals). A query is blocked when dnsmasq answers it from
+# its configuration with NXDOMAIN, NODATA or a null address, but not the
+# local and special-use domains of OpenWrt (lan, local, arpa...). Every
+# other line (DHCP, start-up) goes back to the system log.
+cmd_stats_collect() {
+	local hour old f
+	[ -s "$STATS_LOG" ] || return 0
+	exec 8>"$STATS_LOCK"
+	flock -n 8 || return 0
+	mkdir -p "$STATS_DIR"
+	hour=$(($(date +%s) / 3600))
+	cat "$STATS_LOG" > "$STATS_DIR/.chunk" && : > "$STATS_LOG"
+	awk -v OUT="$STATS_DIR/$hour" -v LAN="$(uci -q get dhcp.@dnsmasq[0].domain)" -v TEST="$TEST_DOMAIN" '
+		BEGIN {
+			while ((getline l < OUT) > 0) {
+				split(l, f, "\t")
+				c[f[2] "\t" f[3]] += f[1]
+			}
+			close(OUT)
+			gsub(/[^a-z0-9.-]/, "", LAN)
+			gsub(/\./, "\\.", LAN)
+			special = "(^|\\.)(" (LAN != "" ? LAN "|" : "") "local|invalid|localhost|test|onion|bind|arpa)$"
+		}
+		{
+			i = index($0, "]: ")
+			if (!i)
+				next
+			msg = substr($0, i + 3)
+			tag = substr($0, 1, i - 1)
+			sub(/\[[0-9]*$/, "", tag)
+			sub(/^.* /, "", tag)
+			n = split(msg, w, " ")
+			# dnsmasq numbers its queries from 1 again when it restarts
+			if (tag == "dnsmasq" && msg ~ /^started, version /)
+				for (k in q)
+					delete q[k]
+			if (tag == "dnsmasq" && w[1] ~ /^[0-9]+$/ && index(w[2], "/")) {
+				id = w[1]
+				if (w[3] ~ /^query\[/) {
+					q[id] = w[4]
+					# the checks of omr-adblock itself: their number is
+					# taken, they are not counted
+					if (w[4] == TEST || w[4] == "localhost")
+						next
+					cl = w[2]
+					sub(/\/[0-9]+$/, "", cl)
+					qc[id] = cl
+					c["q\t" w[4]]++
+					c["c\t" cl]++
+					c["t\tqueries"]++
+				} else if (w[3] == "config" && (id in q)) {
+					# also after "forwarded": a CNAME answer can lead to a
+					# blocked name
+					if (q[id] !~ special && q[id] != TEST && q[id] != "localhost" &&
+					    msg ~ / is (NXDOMAIN|NODATA|NODATA-IPv[46]|0\.0\.0\.0|::)$/) {
+						c["b\t" q[id]]++
+						c["k\t" qc[id]]++
+						c["t\tblocked"]++
+					}
+					delete q[id]
+				}
+				next
+			}
+			if (tag !~ /^[a-z0-9-]+$/)
+				tag = "dnsmasq"
+			print msg | ("logger -p daemon.info -t " tag)
+		}
+		END {
+			for (k in c)
+				print c[k] "\t" k > (OUT ".tmp")
+			close(OUT ".tmp")
+		}' "$STATS_DIR/.chunk"
+	rm -f "$STATS_DIR/.chunk"
+	[ -f "$STATS_DIR/$hour.tmp" ] || return 0
+	# a busy hour keeps its 2000 first domains and clients of each kind
+	if [ "$(wc -l < "$STATS_DIR/$hour.tmp")" -gt 8000 ]; then
+		sort -rn "$STATS_DIR/$hour.tmp" | awk -F "$TAB" '$2 == "t" || n[$2]++ < 2000' > "$STATS_DIR/$hour.trim"
+		mv -f "$STATS_DIR/$hour.trim" "$STATS_DIR/$hour.tmp"
+	fi
+	mv -f "$STATS_DIR/$hour.tmp" "$STATS_DIR/$hour"
+	_load_config >/dev/null 2>&1
+	old=$((hour - ${stats_hours:-24}))
+	for f in "$STATS_DIR"/*; do
+		case "${f##*/}" in
+			*[!0-9]*) ;;
+			*) [ "${f##*/}" -gt "$old" ] || rm -f "$f" ;;
+		esac
+	done
+	return 0
+}
+
+# stats: the statistics of the last stats_hours hours as JSON, for LuCI
+cmd_stats() {
+	local hour from files="" h
+	_load_config
+	if [ "$stats" != 1 ]; then
+		echo '{ "enabled": false }'
+		return 0
+	fi
+	cmd_stats_collect
+	hour=$(($(date +%s) / 3600))
+	from=$((hour - stats_hours + 1))
+	h=$from
+	while [ "$h" -le "$hour" ]; do
+		[ -f "$STATS_DIR/$h" ] && files="$files $STATS_DIR/$h"
+		h=$((h + 1))
+	done
+	awk -F "$TAB" -v FROM="$from" -v TO="$hour" -v N=10 '
+		function ins(t, key, val,   i, j) {
+			for (i = 1; i <= nt[t]; i++)
+				if (val > tv[t, i])
+					break
+			if (i > N)
+				return
+			if (nt[t] < N)
+				nt[t]++
+			for (j = nt[t]; j > i; j--) {
+				tk[t, j] = tk[t, j - 1]
+				tv[t, j] = tv[t, j - 1]
+			}
+			tk[t, i] = key
+			tv[t, i] = val
+		}
+		function str(x) {
+			gsub(/\\/, "\\\\", x)
+			gsub(/"/, "\\\"", x)
+			gsub(/[\001-\037]/, "", x)
+			return "\"" x "\""
+		}
+		function top(t, name, extra,   i, out) {
+			out = ""
+			for (i = 1; i <= nt[t]; i++)
+				out = out (i > 1 ? ", " : "") "{ \"name\": " str(tk[t, i]) ", \"count\": " tv[t, i] \
+					(extra != "" ? ", \"" extra "\": " (v["k", tk[t, i]] + 0) : "") " }"
+			return "\"" name "\": [ " out " ]"
+		}
+		FNR == 1 {
+			h = FILENAME
+			sub(/.*\//, "", h)
+		}
+		$2 == "t" {
+			tot[$3] += $1
+			if ($3 == "queries")
+				hq[h] += $1
+			else if ($3 == "blocked")
+				hb[h] += $1
+			next
+		}
+		{ v[$2, $3] += $1 }
+		END {
+			for (k in v) {
+				split(k, p, SUBSEP)
+				if (p[1] != "k")
+					ins(p[1], p[2], v[k])
+				n[p[1]]++
+			}
+			printf "{ \"enabled\": true, \"hours\": %d, \"queries\": %d, \"blocked\": %d, \"clients\": %d, \"domains\": %d, ",
+				TO - FROM + 1, tot["queries"], tot["blocked"], n["c"], n["q"]
+			printf "\"series\": [ "
+			for (i = FROM; i <= TO; i++)
+				printf "%s{ \"time\": %d, \"queries\": %d, \"blocked\": %d }", (i > FROM ? ", " : ""), i * 3600, hq[i], hb[i]
+			printf " ], %s, %s, %s }\n", top("q", "top_queried", ""), top("b", "top_blocked", ""), top("c", "top_clients", "blocked")
+		}' $files /dev/null
+}
+
+cmd_stats_reset() {
+	rm -rf "$STATS_DIR"
+	echo "statistics reset"
+}
+
+# block: the domains go into the config and into the loaded blocklist
+# without a download
+cmd_block() {
+	local d domains="" new
+	_load_config
+	[ "$#" -gt 0 ] || { echo "usage: omr-adblock block <domain>..." >&2; return 1; }
+	for d in "$@"; do
+		new=$(printf '%s\n' "$d" | _normalize block | cut -f2)
+		[ -n "$new" ] || { echo "invalid domain: $d" >&2; return 1; }
+		case " $allowed_domain " in
+			*" $new "*) echo "$new is an allowed domain: remove it from the allowed domains first" >&2; return 1 ;;
+		esac
+		domains="$domains $new"
+	done
+	_lock
+	_reset_messages
+	for d in $domains; do
+		case " $blocked_domain " in *" $d "*) continue ;; esac
+		uci -q add_list "$NAME.config.blocked_domain=$d"
+		blocked_domain="$blocked_domain $d"
+	done
+	if [ -s "$BLOCKLIST" ]; then
+		( set -o pipefail
+		{ zcat "$BLOCKLIST"; printf 'local=/%s/\n' $domains; } | gzip -c > "$BLOCKLIST.new" ) && _test "$BLOCKLIST.new" || {
+			rm -f "$BLOCKLIST.new"
+			uci -q revert "$NAME"
+			_write_status "$(_status_get status)" "the domains could not be blocked"
+			return 1
+		}
+		mv -f "$BLOCKLIST" "$PREV_BLOCKLIST"
+		mv -f "$BLOCKLIST.new" "$BLOCKLIST"
+		ENTRIES=$(_count_entries "$BLOCKLIST")
+		if [ -f "$PAUSE_FILE" ]; then
+			rm -f "$PREV_BLOCKLIST"
+		else
+			_activate || { uci -q revert "$NAME"; _write_status error "dnsmasq could not load the blocklist"; return 1; }
+		fi
+		sed -i "s/^entries=.*/entries=$ENTRIES/" "$STATS_FILE" 2>/dev/null
+		# the reload the config change triggers finds nothing to download
+		_lists_hash > "$HASH_FILE"
+		_save_cache "$(cat "$HASH_FILE")"
+		[ -f "$PAUSE_FILE" ] || _write_status active "blocking $ENTRIES domains"
+	fi
+	uci -q commit "$NAME"
+	echo "blocked:$domains"
+}
+
+cmd_check() {
+	local d="$1"
+	[ -n "$d" ] || { echo "usage: omr-adblock check <domain>" >&2; return 1; }
+	[ -s "$BLOCKLIST" ] || { echo "no blocklist is loaded"; return 1; }
+	d=$(printf '%s' "$d" | tr 'A-Z' 'a-z')
+	zcat "$BLOCKLIST" | awk -v d="$d" '
+		function under(x, p) { return x == p || (length(x) > length(p) && substr(x, length(x) - length(p)) == "." p) }
+		/^(local|server)=\// {
+			allow = ($0 ~ /#$/)
+			sub(/^[a-z]+=\//, ""); sub(/\/#?$/, "")
+			m = split($0, e, "/")
+			for (i = 1; i <= m; i++) if (under(d, e[i])) { if (allow) al = e[i]; else bl = e[i] }
+		}
+		END {
+			if (al != "") { print d " is allowed (server=/" al "/#)"; exit 1 }
+			if (bl != "") { print d " is blocked" (bl == d ? "" : " by " bl); exit 0 }
+			print d " is not blocked"; exit 1
+		}'
+}
+
+# check_lists: the lists are downloaded in parallel; only their lines that
+# hold the domain or one of its parents as a whole word are normalized
+cmd_check_lists() {
+	local d="$1" pattern tmp=/tmp/omr-adblock.check pids="" i=0 f
+	[ -n "$d" ] || { echo "usage: omr-adblock check_lists <domain>" >&2; return 1; }
+	_load_config
+	d=$(printf '%s' "$d" | tr 'A-Z' 'a-z')
+	pattern=$(printf '%s' "$d" | awk -F. '{
+		for (i = 1; i <= NF; i++) { s = $i; for (j = i + 1; j <= NF; j++) s = s "\\." $j; p = p (p == "" ? "" : "|") s }
+		print "(^|[^a-z0-9.-])(\\*?\\.)?(" p ")\\.?([^a-z0-9.-]|$)" }')
+	rm -rf "$tmp"
+	mkdir -p "$tmp"
+	_check_list() {
+		local en url name action
+		config_get_bool en "$1" enabled 1
+		[ "$en" = 1 ] || return 0
+		config_get url "$1" url
+		config_get name "$1" name "$1"
+		config_get action "$1" action block
+		i=$((i + 1))
+		(
+			_fetch "$url" /dev/null | tr 'A-Z' 'a-z' | grep -E "$pattern" | _normalize block | cut -f2 | awk -v d="$d" '
+				$0 == d || (length(d) > length($0) && substr(d, length(d) - length($0)) == "." $0) { print; f = 1; exit }
+				END { exit !f }' > "$tmp/$i" &&
+				echo "$name ($action): $(cat "$tmp/$i")" > "$tmp/$i.found"
+		) &
+		pids="$pids $!"
+		set -- $pids
+		if [ "$#" -ge "$parallel_downloads" ]; then
+			wait "$1"
+			shift
+			pids="$*"
+		fi
+	}
+	config_foreach _check_list file_url
+	wait
+	f=$(cat "$tmp"/*.found 2>/dev/null)
+	rm -rf "$tmp"
+	[ -n "$f" ] || { echo "$d is in no enabled list"; return 1; }
+	echo "$f"
+}
+
+cmd_show_blocklist() {
+	[ -s "$BLOCKLIST" ] || { echo "no blocklist is loaded" >&2; return 1; }
+	zcat "$BLOCKLIST" | sed -n 's/^local=\///p' | tr '/' '\n' | sed '/^$/d'
+}
+
+cmd_sizes() {
+	_load_config
+	_size() {
+		local url size
+		config_get url "$1" url
+		case "$url" in http*) ;; *) return 0 ;; esac
+		size=$(curl -sIL --connect-timeout "$download_timeout" --max-time 30 "$url" 2>/dev/null |
+			awk 'tolower($1) == "content-length:" { s = $2 } END { sub(/\r/, "", s); print s }')
+		size=$(_num "$size" "")
+		[ -n "$size" ] || return 0
+		uci -q set "$NAME.$1.size=$size"
+		echo "$(uci -q get "$NAME.$1.name"): $size"
+	}
+	config_foreach _size file_url
+	uci -q commit "$NAME"
+}
+
+cmd_catalog() {
+	grep -v '^#' "$CATALOG" | awk -F "$TAB" '{ printf "%-36s %-4s %-6s %s\n", $1, $4, $5, $3 }'
+}
+
+# add: the lists are added enabled, or enabled when they are in the config
+# already; they are downloaded at the next reload
+cmd_add() {
+	local id line s added=""
+	[ "$#" -gt 0 ] || { echo "usage: omr-adblock add <id>... (ids from: omr-adblock catalog)" >&2; return 1; }
+	for id in "$@"; do
+		line=$(grep -v '^#' "$CATALOG" | awk -F "$TAB" -v id="$id" '$1 == id')
+		[ -n "$line" ] || { echo "unknown list: $id" >&2; return 1; }
+		set -- "$(echo "$line" | cut -f6)" "$(echo "$line" | cut -f3)" "$(echo "$line" | cut -f5)"
+		s=$(uci -q show "$NAME" | grep -F ".url='$1'" | head -n1 | cut -d. -f2)
+		if [ -n "$s" ]; then
+			if [ "$(uci -q get "$NAME.$s.enabled")" = 0 ]; then
+				uci -q set "$NAME.$s.enabled=1"
+				echo "enabled: $2"
+				added=1
+			else
+				echo "already in the config: $2"
+			fi
+			continue
+		fi
+		s=$(uci -q add "$NAME" file_url) || return 1
+		uci -q set "$NAME.$s.name=$2"
+		uci -q set "$NAME.$s.url=$1"
+		uci -q set "$NAME.$s.action=$3"
+		uci -q set "$NAME.$s.enabled=1"
+		echo "added: $2"
+		added=1
+	done
+	[ -n "$added" ] || return 0
+	uci -q commit "$NAME"
+	echo "run '/etc/init.d/$NAME reload' to download them"
+}
+
+# fetch, normalize and pack: for omr-parental, which builds a blocklist of
+# its own for each rule from the lists of the catalog
+
+cmd_fetch() {
+	local line url name dir rc=1
+	[ "$#" -eq 2 ] || { echo "usage: omr-adblock fetch <id> <out.gz>" >&2; return 1; }
+	line=$(grep -v '^#' "$CATALOG" | awk -F "$TAB" -v id="$1" '$1 == id')
+	[ -n "$line" ] || { echo "unknown list: $1" >&2; return 1; }
+	url=$(echo "$line" | cut -f6)
+	name=$(echo "$line" | cut -f3)
+	_load_config
+	dir=$(mktemp -d /tmp/omr-adblock.fetch.XXXXXX) || return 1
+	if WORK_DIR="$dir" _job 1 block "$url" "$name" && mv -f "$dir/1.block.gz" "$2"; then
+		rc=0
+	else
+		echo "$name: $(cut -f4 "$dir/1.result" 2>/dev/null)" >&2
+	fi
+	rm -rf "$dir"
+	return $rc
+}
+
+cmd_normalize() {
+	case "$1" in block|allow) ;; *) echo "usage: omr-adblock normalize <block|allow>" >&2; return 1 ;; esac
+	_load_config
+	_normalize "$1"
+}
+
+cmd_pack() {
+	local out="$1" count
+	[ "$#" -ge 2 ] || { echo "usage: omr-adblock pack <out.gz> <normalized.gz>..." >&2; return 1; }
+	shift
+	count=$(mktemp /tmp/omr-adblock.count.XXXXXX) || return 1
+	if (set -o pipefail; _pack "$count" "$@" | gzip -c > "$out.tmp") && mv -f "$out.tmp" "$out"; then
+		cat "$count"
+		rm -f "$count"
+		return 0
+	fi
+	rm -f "$count" "$out.tmp"
+	return 1
+}
+
+cmd_killcache() {
+	_load_config
+	rm -f "$CACHE_FILE" "$CACHE_HASH" "$PREV_BLOCKLIST"
+	rmdir "$compressed_cache_dir" 2>/dev/null
+	echo "cache removed"
+}
+
+cmd_status() {
+	local st
+	[ -f "$STATUS_FILE" ] || { echo "omr-adblock has not run"; return 1; }
+	st=$(_status_get status)
+	echo "omr-adblock $VERSION: $st: $(_status_get message)"
+	if [ "$st" = active ] || [ "$st" = paused ]; then
+		echo "  $(_status_get entries) domains, $(_status_get lines) lines, $(_status_get size_gz) bytes compressed ($(_status_get size_raw) uncompressed)"
+		echo "  updated $(date -d "@$(_status_get updated)" 2>/dev/null) from $(_status_get source) in $(_status_get duration)s"
+	fi
+	jsonfilter -q -i "$STATUS_FILE" -e '@.lists[*]' 2>/dev/null | while read -r l; do
+		echo "  list $(echo "$l" | jsonfilter -e '@.name'): $(echo "$l" | jsonfilter -e '@.result'), $(echo "$l" | jsonfilter -e '@.entries') entries"
+	done
+	jsonfilter -q -i "$STATUS_FILE" -e '@.warnings[*].info' 2>/dev/null | sed 's/^/  warning: /'
+	jsonfilter -q -i "$STATUS_FILE" -e '@.errors[*].info' 2>/dev/null | sed 's/^/  error: /'
+	return 0
+}
+
+cmd="$1"
+[ "$#" -gt 0 ] && shift
+case "$cmd" in
+	start) cmd_start "$@" ;;
+	stop) cmd_stop ;;
+	pause) cmd_pause "$@" ;;
+	resume) cmd_resume ;;
+	allow) cmd_allow "$@" ;;
+	block) cmd_block "$@" ;;
+	stats) cmd_stats ;;
+	stats_collect) cmd_stats_collect ;;
+	stats_reset) cmd_stats_reset ;;
+	check) cmd_check "$@" ;;
+	check_lists) cmd_check_lists "$@" ;;
+	show_blocklist) cmd_show_blocklist ;;
+	sizes) cmd_sizes ;;
+	catalog) cmd_catalog ;;
+	add) cmd_add "$@" ;;
+	fetch) cmd_fetch "$@" ;;
+	normalize) cmd_normalize "$@" ;;
+	pack) cmd_pack "$@" ;;
+	killcache) cmd_killcache ;;
+	status) cmd_status ;;
+	version) echo "$VERSION" ;;
+	*)
+		sed -n '/^# Usage:/,/^$/{s/^# \{0,1\}//;p}' "$0"
+		exit 1
+		;;
+esac

@@ -1,0 +1,142 @@
+#!/bin/sh
+# rpcd plugin for omr-adblock, used by luci-app-omr-adblock
+#
+# Methods:
+#   status                  - status.json of the last run, and whether it is enabled
+#   catalog                 - the lists that can be added (catalog.tsv)
+#   stats                   - query statistics of the last hours (JSON)
+#   stats_reset             - reset the query statistics
+#   action  {action,seconds} - start, reload, dl, stop, pause, resume, enable,
+#                             disable, killcache, sizes
+#   check   {domain}        - is the domain blocked by the loaded blocklist
+#   check_lists {domain}    - which enabled list has the domain
+#   allow   {domain}        - allow the domain, in the config and live
+#   block   {domain}        - block the domain, in the config and live
+#
+# Every action that takes the omr-adblock lock runs in the background: it
+# waits for a download in progress, longer than an rpcd call may last. LuCI
+# follows them through "status".
+
+. /usr/share/libubox/jshn.sh
+
+PROG=/usr/bin/omr-adblock
+INIT=/etc/init.d/omr-adblock
+STATUS_FILE=/var/run/omr-adblock/status.json
+CATALOG=/usr/share/omr-adblock/catalog.tsv
+TAB="$(printf '\t')"
+
+# _domain <value>: the value when it can only be a domain, empty otherwise;
+# it is passed on as an argument, never evaluated
+_domain() {
+	case "$1" in
+		""|-*|*[!A-Za-z0-9.*_-]*) return 1 ;;
+	esac
+	printf '%s' "$1"
+}
+
+_background() {
+	( "$@" ) </dev/null >/dev/null 2>&1 &
+}
+
+_reply() { # <ok 0|1> <message>
+	json_init
+	json_add_boolean result "$1"
+	json_add_string message "$2"
+	json_dump
+}
+
+case "$1" in
+	list)
+		echo '{ "status": {}, "catalog": {}, "stats": {}, "stats_reset": {}, "action": { "action": "str", "seconds": 0 }, "check": { "domain": "str" }, "check_lists": { "domain": "str" }, "allow": { "domain": "str" }, "block": { "domain": "str" } }'
+		;;
+	call)
+		read -r input
+		json_load "$input"
+		case "$2" in
+			status)
+				enabled=$(uci -q get omr-adblock.config.enabled)
+				$INIT enabled && init_enabled=true || init_enabled=false
+				printf '{ "enabled": %s, "init_enabled": %s, "run": %s }\n' \
+					"$([ "$enabled" = 1 ] && echo true || echo false)" "$init_enabled" \
+					"$(cat "$STATUS_FILE" 2>/dev/null || echo '{}')"
+				;;
+			catalog)
+				json_init
+				json_add_array lists
+				grep -v '^#' "$CATALOG" | {
+					while IFS="$TAB" read -r id group name size action url; do
+						json_add_object ''
+						json_add_string id "$id"
+						json_add_string group "$group"
+						json_add_string name "$name"
+						json_add_string size "$size"
+						json_add_string action "$action"
+						json_add_string url "$url"
+						json_close_object
+					done
+					json_close_array
+					json_dump
+				}
+				;;
+			stats)
+				$PROG stats
+				;;
+			stats_reset)
+				_reply 1 "$($PROG stats_reset 2>&1)"
+				;;
+			action)
+				json_get_var action action
+				json_get_var seconds seconds
+				case "$seconds" in ""|*[!0-9]*) seconds="" ;; esac
+				case "$action" in
+					start|reload|dl|stop|resume)
+						_background $INIT "$action"
+						_reply 1 "$action started"
+						;;
+					pause)
+						_background $PROG pause $seconds
+						_reply 1 "pause started"
+						;;
+					killcache)
+						out=$($PROG killcache 2>&1)
+						_reply 1 "$out"
+						;;
+					enable)
+						uci -q set omr-adblock.config.enabled=1
+						uci -q commit omr-adblock
+						$INIT enable
+						_background $INIT start
+						_reply 1 "enabled"
+						;;
+					disable)
+						uci -q set omr-adblock.config.enabled=0
+						uci -q commit omr-adblock
+						$INIT disable
+						_background $INIT stop
+						_reply 1 "disabled"
+						;;
+					sizes)
+						out=$($PROG sizes 2>&1)
+						_reply 1 "$out"
+						;;
+					*)
+						_reply 0 "unknown action"
+						;;
+				esac
+				;;
+			check|check_lists|allow|block)
+				json_get_var domain domain
+				if ! domain=$(_domain "$domain"); then
+					_reply 0 "invalid domain"
+				elif [ "$2" = allow ] || [ "$2" = block ]; then
+					_background $PROG "$2" "$domain"
+					_reply 1 "$domain: the blocklist is updated in a few seconds"
+				elif out=$($PROG "$2" "$domain" 2>&1); then
+					_reply 1 "$out"
+				else
+					_reply 0 "$out"
+				fi
+				;;
+		esac
+		;;
+esac

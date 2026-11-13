@@ -1,0 +1,158 @@
+#!/bin/sh /etc/rc.common
+# omr-adblock does its work in /usr/bin/omr-adblock and then exits: nothing
+# stays running. procd keeps the service for its triggers and for the force
+# DNS rules, which fw4 reads from the service data.
+
+START=30
+USE_PROCD=1
+
+extra_command 'dl' 'Download the lists again and load the new blocklist'
+extra_command 'update' 'Download the lists again unless the service is stopped (cron)'
+extra_command 'pause' 'Unload the blocklist for some seconds (default: pause_timeout)'
+extra_command 'resume' 'Load the blocklist again after a pause'
+extra_command 'allow' 'Allow domains, in the config and in the loaded blocklist'
+extra_command 'block' 'Block domains, in the config and in the loaded blocklist'
+extra_command 'stats_reset' 'Reset the query statistics'
+extra_command 'check' 'Check whether a domain is blocked by the loaded blocklist'
+extra_command 'check_lists' 'Check which enabled list has a domain'
+extra_command 'show_blocklist' 'Print the blocked domains'
+extra_command 'sizes' 'Store the size of each list in the config'
+extra_command 'catalog' 'Print the lists that can be added'
+extra_command 'add' 'Add lists of the catalog to the config'
+extra_command 'killcache' 'Remove the cached blocklists'
+extra_command 'version' 'Print the version'
+
+PROG=/usr/bin/omr-adblock
+RUN_DIR=/var/run/omr-adblock
+FW_STATE="$RUN_DIR/firewall"
+
+boot() {
+	rc_procd start_service boot && service_started
+}
+
+start_service() {
+	$PROG start "${1:-start}"
+}
+
+reload_service() {
+	rc_procd start_service reload && service_started
+}
+
+stop_service() {
+	$PROG stop
+}
+
+status_service() {
+	$PROG status
+}
+
+service_triggers() {
+	procd_add_config_trigger "config.change" "omr-adblock" /etc/init.d/omr-adblock reload
+	# no blocklist yet (no cache at boot, or no network for the download):
+	# try again when an interface comes up
+	[ -s "$RUN_DIR/blocklist.gz" ] || procd_add_raw_trigger "interface.*.up" 5000 /etc/init.d/omr-adblock start
+}
+
+# _firewall_rules: one line per rule, "<interface> <port> <dnsmasq port>",
+# empty when DNS is not forced
+_firewall_rules() {
+	local enabled force_dns ifaces ports iface port dport
+	config_load omr-adblock
+	config_get_bool enabled config enabled 0
+	config_get_bool force_dns config force_dns 1
+	[ "$enabled" = 1 ] && [ "$force_dns" = 1 ] || return 0
+	config_get ifaces config force_dns_interface lan
+	config_get ports config force_dns_port '53 853'
+	dport=$(uci -q get dhcp.@dnsmasq[0].port)
+	case "$dport" in ""|*[!0-9]*) dport=53 ;; esac
+	for iface in $ifaces; do
+		for port in $ports; do
+			case "$port" in ""|*[!0-9]*) continue ;; esac
+			echo "$iface $port $dport"
+		done
+	done
+}
+
+# DNS sent to another server on port 53 goes to dnsmasq; the other ports
+# (DNS over TLS or QUIC on 853, ...) are refused, so a client falls back on
+# plain DNS
+service_data() {
+	local rules line iface port dport
+	# a loop in this shell: the json_add_* of a piped "while read" would
+	# run in a subshell and be lost
+	rules=$(_firewall_rules)
+	json_add_array firewall
+	for line in $(echo "$rules" | tr ' ' ','); do
+		iface=${line%%,*}
+		port=${line#*,}
+		dport=${port#*,}
+		port=${port%%,*}
+		json_add_object ''
+		if [ "$port" = 53 ]; then
+			json_add_string type redirect
+			json_add_string target DNAT
+			json_add_string name "omr-adblock: force DNS on $iface"
+			json_add_string src "$iface"
+			json_add_string proto 'tcp udp'
+			json_add_string src_dport 53
+			json_add_string dest_port "$dport"
+			json_add_string family any
+			json_add_boolean reflection 0
+		else
+			json_add_string type rule
+			json_add_string name "omr-adblock: refuse DNS port $port from $iface"
+			json_add_string src "$iface"
+			json_add_string dest '*'
+			json_add_string proto 'tcp udp'
+			json_add_string dest_port "$port"
+			json_add_string target REJECT
+		fi
+		json_close_object
+	done
+	json_close_array
+}
+
+# fw4 reads the rules again only on a reload: one when they changed
+service_started() {
+	local rules
+	rules=$(_firewall_rules)
+	[ "$rules" = "$(cat "$FW_STATE" 2>/dev/null)" ] && return 0
+	mkdir -p "$RUN_DIR"
+	if [ -n "$rules" ]; then
+		echo "$rules" > "$FW_STATE"
+	else
+		rm -f "$FW_STATE"
+	fi
+	procd_set_config_changed firewall
+}
+
+service_stopped() {
+	[ -s "$FW_STATE" ] || return 0
+	rm -f "$FW_STATE"
+	procd_set_config_changed firewall
+}
+
+dl() {
+	rc_procd start_service download && service_started
+}
+
+update() {
+	case "$(jsonfilter -q -i "$RUN_DIR/status.json" -e '@.status')" in
+		""|stopped|disabled) return 0 ;;
+	esac
+	dl
+}
+
+pause() { $PROG pause "$@"; }
+resume() { $PROG resume; }
+allow() { $PROG allow "$@"; }
+block() { $PROG block "$@"; }
+stats_reset() { $PROG stats_reset; }
+check() { $PROG check "$@"; }
+check_lists() { $PROG check_lists "$@"; }
+show_blocklist() { $PROG show_blocklist; }
+sizes() { $PROG sizes; }
+catalog() { $PROG catalog; }
+add() { $PROG add "$@"; }
+killcache() { $PROG killcache; }
+version() { $PROG version; }
