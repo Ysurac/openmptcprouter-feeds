@@ -229,6 +229,17 @@ _remove_conf() {
 	return $found
 }
 
+# _conf_stray: the blocklist is on an instance no longer in dnsmasq_instance
+_conf_stray() {
+	local s f dirs=" "
+	for s in $(_instances); do dirs="$dirs$(_confdir "$s") "; done
+	for f in /tmp/dnsmasq*.d/$CONF_NAME /var/etc/dnsmasq*.d/$CONF_NAME; do
+		[ -f "$f" ] || continue
+		case "$dirs" in *" ${f%/*} "*) ;; *) return 0 ;; esac
+	done
+	return 1
+}
+
 _conf_installed() {
 	local s
 	for s in $(_instances); do
@@ -623,7 +634,11 @@ _build() {
 		esac
 	done < "$WORK_DIR/jobs"
 
-	if [ "$ok_block" = 0 ] && [ -z "$(zcat "$WORK_DIR/local.block.gz" | head -n1)" ]; then
+	# with block-lists configured, the canary domains alone are no blocklist:
+	# loaded and cached, they would replace the last good one until the next
+	# update
+	if [ "$ok_block" = 0 ] && { cut -f2 "$WORK_DIR/jobs" 2>/dev/null | grep -qx block ||
+		[ -z "$(zcat "$WORK_DIR/local.block.gz" | head -n1)" ]; }; then
 		_has_route || _err noRoute "no default route: the lists can not be downloaded"
 		_err allListsFailed "no block-list could be downloaded"
 		return 1
@@ -702,6 +717,8 @@ _activate() {
 		_err addnmountMissing "the dnsmasq jail mounts could not be added to /etc/config/dhcp"
 		return 1
 	fi
+	# also from an instance taken out of dnsmasq_instance: dnsmasq restarts
+	_remove_conf
 	_install_conf || { _err confWriteFailed "the dnsmasq configuration could not be written"; return 1; }
 	_restart_dnsmasq
 	if _check_loaded; then
@@ -743,8 +760,14 @@ _update() {
 	if ! _build "$WORK_DIR.blocklist.gz" || ! _test "$WORK_DIR.blocklist.gz"; then
 		rm -rf "$WORK_DIR" "$WORK_DIR.blocklist.gz"
 		if [ -f "$BLOCKLIST" ]; then
+			rc=0
 			_conf_installed || { _activate; rc=$?; }
-			_write_status error "the blocklist was not updated, the previous one is still loaded"
+			# _activate drops the list it could not load
+			if [ "$rc" = 1 ]; then
+				_write_status error "dnsmasq could not load the blocklist"
+			else
+				_write_status error "the blocklist was not updated, the previous one is still loaded"
+			fi
 		else
 			_unload
 			if _has_route; then
@@ -815,7 +838,7 @@ cmd_start() {
 
 	# the blocklist is up to date: it only has to be loaded
 	if [ "$mode" != download ] && [ -s "$BLOCKLIST" ] && [ "$(cat "$HASH_FILE" 2>/dev/null)" = "$hash" ]; then
-		if _conf_installed && [ "$(_lookup "$TEST_DOMAIN")" = 0.0.0.0 ]; then
+		if _conf_installed && ! _conf_stray && [ "$(_lookup "$TEST_DOMAIN")" = 0.0.0.0 ]; then
 			_led default-on
 			_write_status active "blocking $(_status_get entries) domains"
 			return 0
