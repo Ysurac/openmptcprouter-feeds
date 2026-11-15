@@ -89,7 +89,7 @@ MY_DEPENDS := \
     luci-proto-external omr-schedule jq luci-app-ddns \
     mbim-utils (TARGET_x86||TARGET_x86_64||TARGET_rockchip_armv8):kmod-r8169 !(TARGET_ipq40xx||TARGET_x86_64):kmod-mt7601u !TARGET_x86_64:kmod-ath9k-htc \
     TARGET_mvebu:kmod-mwlwifi TARGET_mvebu:mwlwifi-firmware-88w8864 TARGET_mvebu:mwlwifi-firmware-88w8897 TARGET_mvebu:mwlwifi-firmware-88w8964 TARGET_mvebu:mwlwifi-firmware-88w8997 \
-    TARGET_x86_64:kmod-atlantic \
+    TARGET_x86_64:kmod-atlantic TARGET_x86_64:kmod-usb4 \
     !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-bkup !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-burst !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-first !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-red !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):mptcp-bpf-rr !(LINUX_5_4||LINUX_6_1||TARGET_ramips||TARGET_ipq806x):bpftool-full \
     !(LINUX_6_18||LINUX_7_3||LINUX_7_4):kmod-ovpn-dco-v2 pciutils \
     TARGET_mediatek_filogic:kmod-mt7915-firmware TARGET_mediatek_filogic:kmod-mt7916-firmware TARGET_mediatek_filogic:kmod-mt7986-firmware TARGET_mediatek_filogic:kmod-mt7996-firmware TARGET_mediatek_filogic:kmod-mt7996-233-firmware TARGET_mediatek_filogic:mt7988-wo-firmware TARGET_mediatek_filogic:mt7988-2p5g-phy-firmware \
