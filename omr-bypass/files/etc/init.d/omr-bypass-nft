@@ -3259,7 +3259,18 @@ start_service() {
 		return 0
 	}
 	_dhcp_regen=""
-	_omr_hash_gate fw "$_fw_uci_batch" "$([ "$(uci -q get firewall.omr_bypass.enabled)" = "1" ] && uci -q get firewall.omr_dst_bypass_all_4)" "$_fw_delete_batch" "$FORCE" \
+	# A generated rule that lost its enabled option is live in fw4: a
+	# DROP or MARK with no port, MAC or set to match (a "none" UDP source
+	# port rule dropped all of a zone's UDP). The skeleton is written again.
+	_fw_lost_enabled=""
+	uci -q show firewall | awk -F'[.=]' '
+		/^firewall\.omr6?_dst_bypass_[^.]+=rule$/ { r[$2] = 1 }
+		$3 == "enabled" { delete r[$2] }
+		END { for (s in r) exit 0; exit 1 }' && {
+		_fw_lost_enabled=1
+		logger -t "omr-bypass" "Firewall bypass rules without enabled option, regenerating"
+	}
+	_omr_hash_gate fw "$_fw_uci_batch" "$([ -z "$_fw_lost_enabled" ] && [ "$(uci -q get firewall.omr_bypass.enabled)" = "1" ] && uci -q get firewall.omr_dst_bypass_all_4)" "$_fw_delete_batch" "$FORCE" \
 		&& logger -t "omr-bypass" "Firewall bypass rules regenerated"
 	_omr_hash_gate dhcp "$_dhcp_uci_batch" "$(uci -q get dhcp.omr_dst_bypass_all)" "$_dhcp_delete_batch" "$FORCE" && _dhcp_regen=1
 	_omr_hash_gate net "$_net_uci_batch" "$(uci -q get network.all_fw_rule)" "$_net_delete_batch"
