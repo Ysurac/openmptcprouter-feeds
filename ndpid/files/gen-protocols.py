@@ -4,6 +4,7 @@ Generate protocols.json from nDPI source files at package build time.
 Usage: gen-protocols.py <ndpi_src_dir> <output.json>
 """
 
+import glob
 import sys
 import re
 import json
@@ -97,6 +98,29 @@ def parse_protocols(ndpi_main_c):
     return protos
 
 
+def parse_host_matches(ndpi_dir):
+    """Parse ndpi_protocol_match tables: protocols without a dissector are
+    only registered from these (init_app_protocol: app, not cleartext)."""
+    files = [f"{ndpi_dir}/src/lib/ndpi_content_match.c.inc"] + \
+        sorted(glob.glob(f"{ndpi_dir}/src/lib/inc_generated/ndpi_domains_*_match.c.inc"))
+    entry = re.compile(r'\{\s*"[^"]*"\s*,\s*"([^"]+)"\s*,\s*NDPI_PROTOCOL_\w+\s*,'
+                       r'\s*NDPI_PROTOCOL_CATEGORY_([A-Z0-9_]+)')
+    protos = []
+    for path in files:
+        try:
+            text = open(path).read()
+        except FileNotFoundError:
+            continue
+        for m in entry.finditer(text):
+            protos.append({
+                'name':          m.group(1),
+                'category_enum': m.group(2),
+                'app':           True,
+                'cleartext':     False,
+            })
+    return protos
+
+
 def category_display(enum_name, cat_enum_to_idx, cat_idx_to_str):
     idx = cat_enum_to_idx.get(enum_name)
     if idx is not None:
@@ -120,15 +144,16 @@ def main():
 
     cat_enum_to_idx = parse_category_enum(typedefs)
     cat_idx_to_str  = parse_category_strings(main_c)
-    raw_protos      = parse_protocols(main_c)
+    raw_protos      = parse_protocols(main_c) + parse_host_matches(ndpi_dir)
 
-    # Deduplicate by name, keeping first occurrence
+    # Deduplicate case-insensitively, keeping first occurrence: nDPI ignores a
+    # strcasecmp-equal re-registration, and dissector names are registered first
     seen      = set()
     proto_out = []
     for p in raw_protos:
-        if p['name'] in seen:
+        if p['name'].lower() in seen:
             continue
-        seen.add(p['name'])
+        seen.add(p['name'].lower())
         cat = category_display(p['category_enum'], cat_enum_to_idx, cat_idx_to_str)
         proto_out.append({
             'name':      p['name'],
