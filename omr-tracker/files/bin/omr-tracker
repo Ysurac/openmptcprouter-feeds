@@ -47,6 +47,7 @@ export OMR_TRACKER_NO_BIND
 export OMR_TRACKER_TYPE
 export OMR_TRACKER_GATEWAY_IS_REMOTE
 export OMR_TRACKER_RECOVERING
+export OMR_TRACKER_DEGRADED
 
 #dscp=56   # set DSCP CS7 (56) in outgoing packets
 
@@ -605,6 +606,10 @@ case "$OMR_TRACKER_INTERFACE_PROTO" in
 	*) _probe_route="" ;;
 esac
 OMR_TRACKER_PREV_STATUS=""
+# Set by the quality gate while quality_action backup keeps the link in
+# MPTCP as backup only
+OMR_TRACKER_DEGRADED=""
+_prev_degraded=""
 # A tracker (re)started while its WAN is still marked down (omr-tracker
 # restart, a reload for a settings change) has no previous status: its first
 # good probe made it OK at once, without the tries_up streak or the recovery
@@ -1219,7 +1224,12 @@ while true; do
 	fi
 	if [ "$OMR_TRACKER_CHECK_QUALITY" = "1" ]; then
 		_read_congestion
-		if [ "$OMR_TRACKER_PREV_STATUS" = "OK" ] && [ "$OMR_TRACKER_STATUS" = "OK" ]; then
+		_quality_status="$OMR_TRACKER_STATUS"
+		_quality_prev="$OMR_TRACKER_PREV_STATUS"
+		# A link the gate put in backup leaves it on the recovery limits, as
+		# a link the gate took down
+		[ -n "$OMR_TRACKER_DEGRADED" ] && [ "$_quality_prev" = "OK" ] && _quality_prev="ERROR"
+		if [ "$_quality_prev" = "OK" ] && [ "$OMR_TRACKER_STATUS" = "OK" ]; then
 			if [ -n "$OMR_TRACKER_LOSS" ] && [ -n "$OMR_TRACKER_FAILURE_LOSS" ] && [ "$OMR_TRACKER_LOSS" -ge "$OMR_TRACKER_FAILURE_LOSS" ]; then
 				OMR_TRACKER_STATUS="ERROR"
 				OMR_TRACKER_STATUS_MSG="Packet loss is $OMR_TRACKER_LOSS this is more than failure limit defined at $OMR_TRACKER_FAILURE_LOSS"
@@ -1230,7 +1240,7 @@ while true; do
 				OMR_TRACKER_STATUS="ERROR"
 				OMR_TRACKER_STATUS_MSG="Congestion score is $OMR_TRACKER_CONGESTION_SCORE this is more than failure limit defined at $OMR_TRACKER_FAILURE_CONGESTION"
 			fi
-		elif { [ "$OMR_TRACKER_PREV_STATUS" = "ERROR" ] || [ -n "$_started_down" ]; } && [ "$OMR_TRACKER_STATUS" = "OK" ]; then
+		elif { [ "$_quality_prev" = "ERROR" ] || [ -n "$_started_down" ]; } && [ "$OMR_TRACKER_STATUS" = "OK" ]; then
 			if [ -n "$OMR_TRACKER_LOSS" ] && [ -n "$OMR_TRACKER_RECOVERY_LOSS" ] && [ "$OMR_TRACKER_LOSS" -ge "$OMR_TRACKER_RECOVERY_LOSS" ]; then
 				OMR_TRACKER_STATUS="ERROR"
 				OMR_TRACKER_STATUS_MSG="Packet loss is $OMR_TRACKER_LOSS this is more than recovery limit defined at $OMR_TRACKER_RECOVERY_LOSS"
@@ -1240,6 +1250,19 @@ while true; do
 			elif [ -n "$OMR_TRACKER_CONGESTION_SCORE" ] && [ -n "$OMR_TRACKER_RECOVERY_CONGESTION" ] && [ "$OMR_TRACKER_CONGESTION_SCORE" -ge "$OMR_TRACKER_RECOVERY_CONGESTION" ] 2>/dev/null; then
 				OMR_TRACKER_STATUS="ERROR"
 				OMR_TRACKER_STATUS_MSG="Congestion score is $OMR_TRACKER_CONGESTION_SCORE this is more than recovery limit defined at $OMR_TRACKER_RECOVERY_CONGESTION"
+			fi
+		fi
+		# quality_action backup: a poor link stays up and 003-up sets its
+		# MPTCP endpoint backup. A WAN the user set backup stays as it is.
+		# The master holds the default route, so it still goes down.
+		if [ "$OMR_TRACKER_QUALITY_ACTION" = "backup" ] && [ "$_quality_status" = "OK" ]; then
+			if [ "$OMR_TRACKER_STATUS" = "OK" ]; then
+				[ -n "$OMR_TRACKER_DEGRADED" ] && logger -t "omr-tracker" "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) quality recovered, leaving MPTCP backup"
+				OMR_TRACKER_DEGRADED=""
+			elif _quality_mode="$(uci -q get "openmptcprouter.$OMR_TRACKER_INTERFACE.multipath")" && { [ "$_quality_mode" = "on" ] || [ "$_quality_mode" = "backup" ]; }; then
+				[ -z "$OMR_TRACKER_DEGRADED" ] && logger -t "omr-tracker" "$OMR_TRACKER_INTERFACE ($OMR_TRACKER_DEVICE) kept as MPTCP backup only: $OMR_TRACKER_STATUS_MSG"
+				OMR_TRACKER_STATUS="OK"
+				OMR_TRACKER_DEGRADED=1
 			fi
 		fi
 	fi
@@ -1310,12 +1333,14 @@ while true; do
 	if [ "$OMR_TRACKER_STATUS" != "$OMR_TRACKER_PREV_STATUS" ] \
 		|| [ "$OMR_TRACKER_DEVICE_IP" != "$OMR_TRACKER_PREV_DEVICE_IP" ] \
 		|| [ "$OMR_TRACKER_DEVICE_IP6" != "$OMR_TRACKER_PREV_DEVICE_IP6" ] \
+		|| [ "$OMR_TRACKER_DEGRADED" != "$_prev_degraded" ] \
 		|| [ $((_post_tracking_now - _post_tracking_last)) -ge "$_post_tracking_due" ]; then
 		_post_tracking
 		_post_tracking_last=$_post_tracking_now
 	fi
 	[ "$OMR_TRACKER_STATUS" = "ERROR" ] && sleep $wait_test
 	OMR_TRACKER_PREV_STATUS="$OMR_TRACKER_STATUS"
+	_prev_degraded="$OMR_TRACKER_DEGRADED"
 	# Until a cycle the streak doesn't hold
 	[ -n "$OMR_TRACKER_RECOVERING" ] || _started_down=""
 	OMR_TRACKER_PREV_DEVICE_IP="$OMR_TRACKER_DEVICE_IP"

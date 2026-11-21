@@ -143,7 +143,7 @@ return view.extend({
 	},
 
 	renderWanNode: function(wan, anonymize) {
-		var statusClass = wan.status === 'ERROR' ? 'error' : (wan.status === 'WARNING' ? 'warning' : 'ok');
+		var statusClass = wan.status === 'ERROR' ? 'error' : ((wan.status === 'WARNING' || wan.quality_backup) ? 'warning' : 'ok');
 		var title = this.esc(wan.label || wan.name || 'WAN');
 		/* No inline handler: the browser decodes the entities esc() puts in
 		 * an attribute before it runs it as JavaScript, so a name in a JS
@@ -161,6 +161,7 @@ return view.extend({
 		if (wan.server_ping === 'DOWN') statusMessage += _('No Server ping response after 1 second') + '<br />';
 		if (wan.server_http === 'DOWN') statusMessage += _('No Server http response after 1 second') + '<br />';
 		if (wan.zonewan === 'NO') statusMessage += _('Network interface not in WAN firewall zone') + '<br />';
+		if (wan.quality_backup) statusMessage += _('Poor link quality, used as MPTCP backup only') + '<br />';
 
 		var wanip = wan.wanip || '';
 		var gateway = wan.gateway || '';
@@ -185,7 +186,11 @@ return view.extend({
 		if (wan.ifname && wan.ifname !== wan.label) details += _('interface:') + ' ' + this.esc(wan.ifname) + '<br />';
 		if (gateway) details += _('gateway:') + ' <strong>' + this.esc(gateway) + '</strong><br />';
 		if (wan.latency) details += _('latency:') + ' ' + this.esc(wan.latency) + ' ms<br />';
-		details += _('multipath:') + ' ' + this.esc(wan.multipath || 'off') + '<br />';
+		details += _('multipath:') + ' ' + this.esc(wan.multipath || 'off');
+		// The endpoint's mode when OMR changed it (quality gate, ...)
+		if (wan.multipath_state && wan.multipath_state !== (wan.multipath === 'master' ? 'on' : wan.multipath))
+			details += ' (' + this.esc(wan.multipath_state) + ')';
+		details += '<br />';
 		if (wan.operator) details += _('operator:') + ' <strong>' + this.esc(wan.operator) + '</strong><br />';
 		if (wan.whois && wan.whois !== 'unknown') details += _('ASN:') + ' ' + this.esc(wan.whois) + '<br />';
 		if (phonenumber) details += _('number:') + ' <strong>' + this.esc(phonenumber) + '</strong><br />';

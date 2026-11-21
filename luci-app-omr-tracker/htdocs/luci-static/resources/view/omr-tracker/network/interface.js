@@ -337,6 +337,15 @@ return view.extend({
 		inheritFlag(o, '0');
 		o.modalonly = true;
 
+		o = s.option(form.ListValue, 'quality_action', _('On poor quality'),
+			_('Set as MPTCP backup keeps an interface in MPTCP "on" as backup only, used when no other connection is available. A master interface is still marked down.'));
+		o.depends({ check_quality: '1', _show_adv: '1' });
+		o.value('down', _('Mark down'));
+		o.value('backup', _('Set as MPTCP backup'));
+		o.default = 'down';
+		inheritValue(o);
+		o.modalonly = true;
+
 		o = s.option(form.Value, 'failure_latency', _('Failure latency [ms]'),
 			_('Latency above this value is treated as a failure while quality checks are enabled.'));
 		o.depends({ check_quality: '1', _show_adv: '1' });

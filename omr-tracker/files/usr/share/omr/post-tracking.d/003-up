@@ -413,6 +413,16 @@ if [ -n "$OMR_TRACKER_INTERFACE" ]; then
 		esac
 	fi
 	[ -z "$multipath_config" ] && multipath_config="${_multipath_setting:-off}"
+	# The quality gate (quality_action backup) keeps a poor "on" WAN in MPTCP
+	# as backup only. The state tells mptcp's init, whose reloads would set
+	# the endpoint back to on.
+	_omr_uci_get_var _quality_backup "openmptcprouter.$OMR_TRACKER_INTERFACE.quality_backup"
+	if [ -n "$OMR_TRACKER_DEGRADED" ] && [ "$multipath_config" = "on" ]; then
+		multipath_config="backup"
+		[ "$_quality_backup" = "1" ] || omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" quality_backup 1
+	elif [ -n "$_quality_backup" ]; then
+		omr_state_del openmptcprouter "$OMR_TRACKER_INTERFACE" quality_backup
+	fi
 	[ "$_multipathvpn" = "1" ] && {
 		_omr_uci_get_var _mptcpovervpn openmptcprouter.settings.mptcpovervpn
 		[ "$_mptcpovervpn" = "openvpn" ] && _omr_uci_get_var multipath_config_route "openmptcprouter.ovpn${OMR_TRACKER_INTERFACE}.multipath" "off"
