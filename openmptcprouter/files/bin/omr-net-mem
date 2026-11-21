@@ -553,9 +553,26 @@ _apply() {
 	return 0
 }
 
+# _wanted <key> <computed> <live>: whether <computed> has to be written.
+# /etc/init.d/mptcp runs us on every interface event, so putting the computed
+# value back whenever the live one differs undid a "sysctl -w" within minutes
+# and made tuning tests meaningless. A live value that differs from what our
+# last run persisted was set by hand: keep it until the computed value itself
+# changes, or the next boot applies the persisted file.
+_wanted() {
+	[ "$3" != "$2" ] || return 1
+	[ "$PERSIST" -eq 1 ] && [ -f "$PERSIST_FILE" ] &&
+		[ "$(awk -F' = ' -v k="$1" '$1 == k { print $2 }' "$PERSIST_FILE")" = "$2" ] && return 1
+	return 0
+}
+
 _say ""
-_apply net.ipv4.tcp_mem "$TCP_MEM" && _say "applied net.ipv4.tcp_mem = $TCP_MEM"
-_apply net.ipv4.udp_mem "$UDP_MEM" && _say "applied net.ipv4.udp_mem = $UDP_MEM"
+if _wanted net.ipv4.tcp_mem "$TCP_MEM" "$CUR_TCP_MEM"; then
+	_apply net.ipv4.tcp_mem "$TCP_MEM" && _say "applied net.ipv4.tcp_mem = $TCP_MEM"
+fi
+if _wanted net.ipv4.udp_mem "$UDP_MEM" "$CUR_UDP_MEM"; then
+	_apply net.ipv4.udp_mem "$UDP_MEM" && _say "applied net.ipv4.udp_mem = $UDP_MEM"
+fi
 
 CT_APPLIED=0
 if [ "$DO_CONNTRACK" -eq 1 ] && [ "$CT_SUPPORTED" -eq 1 ]; then
@@ -582,10 +599,10 @@ fi
 
 # Applied whether capped or not: with the cap disabled this puts the
 # configured value back after an earlier capped run.
-if [ "$CUR_RMEM" != "$NEW_RMEM" ]; then
+if _wanted net.ipv4.tcp_rmem "$NEW_RMEM" "$CUR_RMEM"; then
 	_apply net.ipv4.tcp_rmem "$NEW_RMEM" && _say "applied net.ipv4.tcp_rmem = $NEW_RMEM"
 fi
-if [ "$CUR_WMEM" != "$NEW_WMEM" ]; then
+if _wanted net.ipv4.tcp_wmem "$NEW_WMEM" "$CUR_WMEM"; then
 	_apply net.ipv4.tcp_wmem "$NEW_WMEM" && _say "applied net.ipv4.tcp_wmem = $NEW_WMEM"
 fi
 
