@@ -46,6 +46,29 @@ release_addr() {
 	return 0
 }
 
+# glorytun sets the MTU of its device to what a datagram on its paths
+# carries (mud's path MTU probe), and sets it again only when that changes
+# or when it restarts. A static MTU on the netifd device (2020-omr-vpn gave
+# tun0 1500 for the other VPNs) was applied over it at each ifup, and
+# glorytun then dropped every packet larger than its paths carry, with no
+# ICMP to the sender
+_drop_static_tun_mtu() {
+	local dev="$1" sec mtu changed=0
+	[ -n "$dev" ] || return 0
+	for sec in $(uci -q show network 2>/dev/null | sed -n "s/^network\.\([^.]*\)\.name='\{0,1\}${dev}'\{0,1\}\$/\1/p"); do
+		[ "$(uci -q get "network.$sec")" = "device" ] || continue
+		mtu="$(uci -q get "network.$sec.mtu")"
+		[ -n "$mtu" ] || continue
+		_log "Removing static MTU $mtu from netifd device $dev (network.$sec): glorytun sets the tunnel MTU itself"
+		uci -q delete "network.$sec.mtu"
+		changed=1
+	done
+	[ "$changed" = "1" ] || return 0
+	uci -q commit network
+	ubus -t 5 call network reload >/dev/null 2>&1
+	return 0
+}
+
 stopped_instance() {
 	local enable dev localip remoteip
 	validate_section "${1}" || return 0
@@ -94,6 +117,7 @@ start_instance() {
 		uci -q set network.omrvpn.device=$dev
 		uci -q commit network
 	fi
+	_drop_static_tun_mtu "$dev"
 
 	_log "starting ${PROG_NAME} ${1} instance $*"
 
