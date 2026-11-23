@@ -282,7 +282,14 @@ if [ "$OMR_TRACKER_INTERFACE" = "glorytun" ] || [ "$OMR_TRACKER_INTERFACE" = "om
 				OMR_NETWORK_DEVICE=$(find_network_device ${OMR_TRACKER_INTERFACE})
 				[ -n "$OMR_NETWORK_DEVICE" ] && mtu=$(_omr_uci_get network.${OMR_NETWORK_DEVICE}.mtu)
 			fi
-			if [ -n "$mtu" ]; then
+			if [ "$OMR_TRACKER_INTERFACE" = "omrvpn" ] && [ "$(_omr_uci_get openmptcprouter.settings.vpn)" = "glorytun_udp" ]; then
+				# Nor for Glorytun UDP: glorytun sets tun0 to mud's path MTU
+				# less its 22 bytes header, and sets it again only when that
+				# path MTU changes or glorytun restarts (gt_setup_mtu). A
+				# value set here stayed, and glorytun dropped every larger
+				# packet: nothing is logged, no ICMP goes back to the sender
+				omr_state_set openmptcprouter "$OMR_TRACKER_INTERFACE" lc "$_omr_now"
+			elif [ -n "$mtu" ]; then
 				_omr_cfg_set openmptcprouter.${OMR_TRACKER_INTERFACE}.mtu "$mtu"
 				[ -n "$mtu" ] && [ "$(ip --json link show dev $OMR_TRACKER_DEVICE | jsonfilter -e '@[0].mtu' | tr -d '\n')" != "$mtu" ] && ip link set dev $OMR_TRACKER_DEVICE mtu $mtu > /dev/null 2>&1
 				omr_state_set openmptcprouter $OMR_TRACKER_INTERFACE lc "$_omr_now"
